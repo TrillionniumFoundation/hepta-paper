@@ -38,7 +38,7 @@ export function dispatchPath(plan, step) {
   return path.join(planControlScopePath(plan), 'dispatches', `${ordinal}-${step.stepId}.json`);
 }
 
-export function runtimeRootActivation(plan) {
+export function runtimeRootIdentity(plan) {
   const selected = path.resolve(plan.runtimeRoot);
   let stat;
   try { stat = fs.lstatSync(selected, { bigint: true }); }
@@ -52,8 +52,7 @@ export function runtimeRootActivation(plan) {
   }
   const body = Object.freeze({
     version: 1,
-    kind: 'StrictFullAutoAcceptanceRuntimeRootActivation',
-    planHash: plan.planHash,
+    kind: 'StrictFullAutoAcceptanceRuntimeRootIdentity',
     resolvedPath: selected,
     device: String(stat.dev),
     inode: String(stat.ino),
@@ -61,8 +60,25 @@ export function runtimeRootActivation(plan) {
     uid: String(stat.uid),
     gid: String(stat.gid),
   });
-  return Object.freeze({
-    ...body,
-    runtimeRootActivationHash: strictFullAutoAcceptanceHash(body),
+  return Object.freeze({ ...body, runtimeRootIdentityHash: strictFullAutoAcceptanceHash(body) });
+}
+
+export function runtimeRootActivation(plan, { adoptionReceiptHash = null } = {}) {
+  const identity = runtimeRootIdentity(plan);
+  if (adoptionReceiptHash !== null && !SHA256.test(String(adoptionReceiptHash || ''))) {
+    throw new Error('strict_full_auto_acceptance_runtime_root_adoption_hash_invalid');
+  }
+  const body = Object.freeze({
+    version: adoptionReceiptHash === null ? 1 : 2,
+    kind: 'StrictFullAutoAcceptanceRuntimeRootActivation',
+    planHash: plan.planHash,
+    resolvedPath: identity.resolvedPath,
+    device: identity.device,
+    inode: identity.inode,
+    mode: identity.mode,
+    uid: identity.uid,
+    gid: identity.gid,
+    ...(adoptionReceiptHash === null ? {} : { adoptionReceiptHash }),
   });
+  return Object.freeze({ ...body, runtimeRootActivationHash: strictFullAutoAcceptanceHash(body) });
 }

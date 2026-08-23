@@ -7,8 +7,12 @@ export {
   createDefaultPaperStore,
   createReadOnlyPaperStore,
   openExistingWritablePaperStore,
+  preflightStoreMigrations,
 } from '../../paper-adapters/persistence/store-provider.mjs';
 export { copySqliteDatabase } from '../../paper-adapters/persistence/sqlite-consistent-copy.mjs';
+export {
+  createHeptaStoreBackupFileRepository,
+} from '../../paper-adapters/persistence/hepta-store-backup-file-repository.mjs';
 export { buildSqliteLogicalIntegrityReport } from '../../paper-adapters/persistence/sqlite-logical-integrity.mjs';
 export {
   composeAutomationReconcilerReceiptLedger,

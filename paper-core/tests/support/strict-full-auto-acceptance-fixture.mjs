@@ -56,6 +56,7 @@ const EXAMPLE_CONFIGURATION = JSON.parse(fs.readFileSync(new URL(
 const SEMANTIC_CONFIGURATION_REFERENCES = new Set([
   'research-author-identity-config',
   'release-attestor-config',
+  'runtime-reproducibility-principal',
 ]);
 const AUTHOR_IDENTITY_ROLE = 'external_principal_identity_attestor';
 const RELEASE_ATTESTOR_ROLE = 'research_execution_release_attestor';
@@ -452,6 +453,8 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
   const referenceRoot = path.join(root, 'references');
   fs.mkdirSync(controlRoot, { mode: 0o700 });
   fs.mkdirSync(referenceRoot, { recursive: true });
+  const ownerAcceptanceRoot = path.join(referenceRoot, 'capabilities-public');
+  fs.mkdirSync(ownerAcceptanceRoot, { recursive: true, mode: 0o700 });
   fs.mkdirSync(assetRoot, { mode: 0o700 });
   fs.mkdirSync(datasetRoot, { recursive: true, mode: 0o700 });
   fs.mkdirSync(restoreBundle, { recursive: true });
@@ -461,7 +464,11 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
   for (const [referenceId, kind] of Object.entries(
     STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY,
   )) {
-    const candidate = path.join(referenceRoot, `${referenceId}.ref`);
+    const candidate = referenceId === 'owner-trust-store'
+      ? path.join(ownerAcceptanceRoot, 'OWNER_TRUST_STORE.json')
+      : referenceId === 'owner-acceptance-document'
+        ? path.join(ownerAcceptanceRoot, 'CAPABILITY_OWNER_ACCEPTANCE.json')
+        : path.join(referenceRoot, `${referenceId}.ref`);
     subjectOrdinal += 1;
     const subjectId = kind.startsWith('opaque-')
       ? `secret-reference-${subjectOrdinal}` : `authority-${subjectOrdinal}`;
@@ -474,6 +481,7 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
       'submission-portal-descriptor-config',
       'prior-art-service-config',
       'external-replay-config',
+      'runtime-reproducibility-principal',
       'research-author-identity-config',
     ].includes(referenceId);
     const portalDocument = referenceId === 'submission-portal-descriptor-config';
@@ -514,7 +522,8 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
         path: candidate,
         subjectId,
         ...(SEMANTIC_CONFIGURATION_REFERENCES.has(referenceId)
-          ? referenceId === 'research-author-identity-config'
+          ? ['research-author-identity-config', 'runtime-reproducibility-principal']
+            .includes(referenceId)
             ? {
               expectedConfigurationIdentityHash:
                 JSON.parse(fs.readFileSync(candidate, 'utf8')).configurationHash,
@@ -527,6 +536,7 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
     'empirical-plugin-signer-command',
     'release-attestor-signer-command',
     'release-attestor-probe-command',
+    'package-recovery-readiness-command',
   ]) {
     fs.chmodSync(references[referenceId].path, 0o555);
   }
@@ -589,6 +599,25 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
       operationalEnvironment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER;
   }
   const finalVerification = structuredClone(EXAMPLE_CONFIGURATION.finalVerification);
+  for (const [referenceId, pathFlag, hashFlag] of [
+    ['owner-trust-store', '--owner-trust-store', '--owner-trust-store-sha256'],
+    [
+      'owner-acceptance-document',
+      '--owner-acceptance-document',
+      '--owner-acceptance-document-sha256',
+    ],
+    [
+      'package-recovery-readiness-command',
+      '--package-recovery-readiness-command',
+      '--package-recovery-readiness-command-sha256',
+    ],
+  ]) {
+    const reference = references[referenceId];
+    finalVerification.arguments[finalVerification.arguments.indexOf(pathFlag) + 1] =
+      reference.path;
+    finalVerification.arguments[finalVerification.arguments.indexOf(hashFlag) + 1] =
+      reference.expectedSha256;
+  }
   const configuration = {
     version: 1,
     kind: 'StrictFullAutoAcceptanceConfiguration',
@@ -596,6 +625,15 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
     runtimeRoot,
     assetRoot,
     datasetRoot,
+    runtimeRootAdoption: {
+      version: 1,
+      kind: 'StrictFullAutoAcceptanceRuntimeRootAdoptionPolicy',
+      mode: 'fresh-runtime-only',
+      expectedRuntimeRootIdentityHash: null,
+      expectedPristineRuntimeStateHash: null,
+      adoptionMutationPerformed: false,
+      preResidentSchemaRebindRequired: false,
+    },
     operationalEnvironment,
     references,
     steps,
@@ -615,19 +653,34 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
     rotateAuthorIdentity() {
       const reference = references['research-author-identity-config'];
       const rotated = authorIdentity.rotate();
-      assert.equal(rotated.configurationHash, reference.expectedConfigurationIdentityHash);
+      // v2 pins the complete attested subject/envelope/trust material.  A
+      // short-lived attestation rotation therefore requires a new acceptance
+      // configuration/plan; it may not silently reuse the old plan hash.
+      assert.notEqual(rotated.configurationHash, reference.expectedConfigurationIdentityHash);
       fs.chmodSync(reference.path, 0o600);
       fs.writeFileSync(reference.path, `${JSON.stringify(rotated, null, 2)}\n`);
       fs.chmodSync(reference.path, 0o444);
+      reference.expectedConfigurationIdentityHash = rotated.configurationHash;
+      fs.chmodSync(configurationPath, 0o600);
+      fs.writeFileSync(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`);
+      fs.chmodSync(configurationPath, 0o444);
       return rotated;
     },
     rotateReleaseHardwareAuthority: releaseAttestor.rotate,
   };
 }
 
-export function strictFullAutoAcceptanceOrchestratorFor(configurationPath, runner) {
+export function strictFullAutoAcceptanceOrchestratorFor(
+  configurationPath,
+  runner,
+  { pristineRuntimeInspector = null } = {},
+) {
   return new StrictFullAutoAcceptanceOrchestrator({
-    repository: new StrictFullAutoAcceptanceRepository({ configurationPath }),
+    repository: new StrictFullAutoAcceptanceRepository({
+      configurationPath,
+      pristineRuntimeInspector,
+      clock: { now: () => new Date(STRICT_FULL_AUTO_ACCEPTANCE_TEST_NOW) },
+    }),
     commandRunner: strictFullAutoAcceptanceRuntimeActivatingRunner(runner),
     now: () => STRICT_FULL_AUTO_ACCEPTANCE_TEST_NOW,
   });
@@ -825,4 +878,36 @@ export async function strictFullAutoAcceptanceProductionRunnerBindingTest(t) {
     portalReference.documentPins.configurationHash);
   assert.equal(captured[4].env.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH,
     portalReference.documentPins.portalDescriptorHash);
+  const finalStep = Object.freeze({ stepId: 'final-aggregate-live-verification' });
+  assert.deepEqual(await runner.run({
+    plan: restoreVerificationPlan,
+    step: finalStep,
+    phase: 'verify',
+    invocation: plan.finalVerification,
+    signal: controller.signal,
+  }), { ready: true });
+  assert.match(captured[5].args[0],
+    /paper-core\/bin\/full-production-readiness\.mjs$/);
+  assert.deepEqual(captured[5].args.slice(1), plan.finalVerification.arguments);
+  for (const [referenceId, pathFlag, hashFlag] of [
+    ['owner-trust-store', '--owner-trust-store', '--owner-trust-store-sha256'],
+    [
+      'owner-acceptance-document',
+      '--owner-acceptance-document',
+      '--owner-acceptance-document-sha256',
+    ],
+    [
+      'package-recovery-readiness-command',
+      '--package-recovery-readiness-command',
+      '--package-recovery-readiness-command-sha256',
+    ],
+  ]) {
+    const reference = plan.referenceBindings.find((item) => (
+      item.referenceId === referenceId
+    ));
+    assert.equal(captured[5].args[captured[5].args.indexOf(pathFlag) + 1],
+      reference.resolvedPath);
+    assert.equal(captured[5].args[captured[5].args.indexOf(hashFlag) + 1],
+      reference.contentHash);
+  }
 }

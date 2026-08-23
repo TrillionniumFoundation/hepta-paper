@@ -9,14 +9,22 @@ import {
   assertIntentReachabilityManifest,
   freshReachabilityManifestForIntent,
 } from './runtime-retention-live-authority.mjs';
-import { restoreRetentionQuarantines } from './runtime-retention-quarantine-repository.mjs';
+import {
+  finalizeRetentionRemovalRecoveries,
+  restoreRetentionQuarantines,
+} from './runtime-retention-quarantine-repository.mjs';
+import { reconcilePublishedPackageDeletionFencesSync }
+  from './runtime-retention-published-package-deletion-lease.mjs';
 import {
   assertRuntimeRetentionTrustedLedger,
   assertTrustedRetentionReceipt,
   findUniqueTrustedRetentionTombstone,
   recordTrustedRetentionReceipt,
 } from './runtime-retention-trusted-receipt-repository.mjs';
-import { retentionPathExists } from './runtime-retention-scope-repository.mjs';
+import {
+  retentionMemberIdentity,
+  retentionPathExists,
+} from './runtime-retention-scope-repository.mjs';
 import {
   REACHABILITY_GOVERNED,
   assertRetentionReceiptDerivedFromIntent,
@@ -36,6 +44,7 @@ export function reconcileRuntimeRetentionIntents({
   reachabilityManifestProvider = null,
   activeNodeIds = [],
   retentionReceiptLedger,
+  packageRecoveryDeletionLeasePort = null,
   faultInjector = null,
 } = {}) {
   const root = path.resolve(runtimeRoot || '.');
@@ -81,6 +90,10 @@ export function reconcileRuntimeRetentionIntents({
         if (committedReceipt?.runtimeRetentionReceiptHash !== existingReceipt.runtimeRetentionReceiptHash) {
           throw new Error('runtime_retention_tombstone_ledger_identity_conflict');
         }
+        finalizeRetentionRemovalRecoveries(intent, {
+          tombstone: committedReceipt,
+          retentionReceiptLedger,
+        });
         recovered.push(Object.freeze({ intentPath, receiptPath, status: 'runtime_retention_already_converged' }));
         continue;
       }
@@ -92,6 +105,10 @@ export function reconcileRuntimeRetentionIntents({
           freshReachabilityManifest: intentReachabilityManifest,
         });
         writeDurableJsonSync(receiptPath, committedReceipt);
+        finalizeRetentionRemovalRecoveries(intent, {
+          tombstone: committedReceipt,
+          retentionReceiptLedger,
+        });
         recovered.push(Object.freeze({
           intentPath,
           receiptPath,
@@ -99,10 +116,31 @@ export function reconcileRuntimeRetentionIntents({
         }));
         continue;
       }
-      restoreRetentionQuarantines(intent, { faultInjector });
+      const fenceReconciliation =
+        reconcilePublishedPackageDeletionFencesSync({
+          intent,
+          packageRecoveryDeletionLeasePort,
+          phase: 'before_restore',
+          faultInjector,
+        });
+      restoreRetentionQuarantines(intent, {
+        faultInjector,
+        ...fenceReconciliation,
+      });
+      reconcilePublishedPackageDeletionFencesSync({
+        intent,
+        packageRecoveryDeletionLeasePort,
+        phase: 'after_restore',
+        faultInjector,
+      });
       const governedDeletionPending = intent.entries.some((entry) => entry.authorized
         && REACHABILITY_GOVERNED.has(entry.category)
-        && entry.members.some((member) => retentionPathExists(member.path)));
+        && entry.members.some((member) => {
+          if (!retentionPathExists(member.path)) return false;
+          const current = retentionMemberIdentity(member.path);
+          return ['dev', 'ino', 'mode', 'size', 'mtimeNs', 'nlink', 'entryKind', 'realPath']
+            .every((field) => String(current[field]) === String(member.identity?.[field]));
+        }));
       const freshReachabilityManifest = governedDeletionPending
         ? freshReachabilityManifestForIntent({
           intent,
@@ -119,6 +157,7 @@ export function reconcileRuntimeRetentionIntents({
         reachabilityManifestProvider,
         activeNodeIds,
         retentionReceiptLedger,
+        packageRecoveryDeletionLeasePort,
         faultInjector,
       });
       recovered.push(Object.freeze({ intentPath, receiptPath: receipt.receiptPath, status: receipt.status }));
@@ -141,6 +180,7 @@ export function executeRuntimeRetentionPlan(plan, {
   reachabilityManifestProvider = null,
   activeNodeIds = [],
   retentionReceiptLedger = null,
+  packageRecoveryDeletionLeasePort = null,
   faultInjector = null,
 } = {}) {
   const { runtimeRetentionPlanHash, ...planPayload } = plan || {};
@@ -202,6 +242,7 @@ export function executeRuntimeRetentionPlan(plan, {
     reachabilityManifestProvider,
     activeNodeIds,
     retentionReceiptLedger,
+    packageRecoveryDeletionLeasePort,
     faultInjector,
   });
 }

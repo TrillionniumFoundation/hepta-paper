@@ -95,6 +95,15 @@ function fixture(planOverride = null) {
     workspaceRegistry: { retentionRecords: () => [{ workspaceId: 'workspace-1' }] },
     receiptLedger: { kind: 'receipt-ledger' },
     runtimeRetentionReceiptLedger: { kind: 'retention-ledger' },
+    packageLifecycleAuthority: {
+      retentionRecoveryReadiness: () => ({
+        status: 'package_retention_recovery_authority_ready',
+      }),
+      provisionRetentionRecovery: (input) => {
+        calls.push(['provisionRetentionRecovery', input]);
+        return { status: 'package_retention_recovery_recorded', ...input };
+      },
+    },
     runtimeRoot: '/tmp/runtime',
     buildRuntimeRetentionPlan: (input) => ({
       version: 1,
@@ -333,4 +342,28 @@ test('CampaignCommandService fails closed for unsupported commands and missing l
     campaignId: 'campaign-1',
     options: { kind: 'missing' },
   }), /campaign node not found/);
+});
+
+test('CampaignCommandService provisions retention recovery only through explicit apply', () => {
+  const { service, calls } = fixture();
+  const packageLifecycleReceiptHash = `sha256:${'a'.repeat(64)}`;
+  assert.throws(() => service.execute({
+    action: 'provision-retention-recovery',
+    options: { 'package-lifecycle-receipt-hash': packageLifecycleReceiptHash },
+  }), /package_retention_recovery_explicit_apply_required/);
+  const response = service.execute({
+    action: 'provision-retention-recovery',
+    options: {
+      apply: true,
+      'package-lifecycle-receipt-hash': packageLifecycleReceiptHash,
+    },
+  });
+  assert.equal(response.result.status, 'package_retention_recovery_recorded');
+  assert.deepEqual(
+    calls.find(([name]) => name === 'provisionRetentionRecovery')[1],
+    { packageLifecycleReceiptHash },
+  );
+  assert.equal(service.execute({
+    action: 'retention-recovery-readiness',
+  }).result.status, 'package_retention_recovery_authority_ready');
 });

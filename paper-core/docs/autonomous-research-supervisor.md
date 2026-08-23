@@ -360,9 +360,15 @@ allowlist into a root-only build directory, builds the native C helper with the
 checked hardening and warning-as-error flags, records source/compiler/binary
 hashes, installs and re-hashes every fragment/unit/binary, verifies all units,
 reloads systemd, and enables only the core authority, handoff-layout, and
-backup chain. The research supervisor, submission dispatcher, and strict
-acceptance service/timer remain disabled and stopped as the default production
-hold. The explicit `--enable-full-auto` request currently fails before mutation
+backup chain after the root-owned immutable-release recovery gate. Every
+release consumer and activator waits for that unconditional boot oneshot to
+close any durable deployment intent using the pinned predecessor executor.
+The research supervisor, submission dispatcher, and strict
+runtime-adoption/acceptance service/timer remain disabled and stopped as the
+default production hold. The installed manifest also binds the root-owned
+executable package-recovery readiness wrapper; the stock wrapper supplies no
+external recovery authority and therefore remains fail-closed. The explicit
+`--enable-full-auto` request currently fails before mutation
 because no repository command can prove current accepted readiness without
 acquiring a lease or launching verification processes. A non-mutating host
 image test uses

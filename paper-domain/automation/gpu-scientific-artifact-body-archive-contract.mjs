@@ -17,6 +17,7 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_MAXIMUM_MANIFEST_BYTES =
 const PDE_TASK_TYPE = 'pde-poisson-2d-gpu-v1';
 const DEEP_LEARNING_TASK_TYPE = 'deep-learning-cupy-mlp-v1';
 const PDE_DIAGNOSTICS_MAXIMUM_BYTES = 1024 * 1024;
+const PDE_REPLAY_INPUT_MAXIMUM_BYTES = 4 * 1024 * 1024;
 const DEEP_LEARNING_ARTIFACT_MAXIMUM_BYTES = 64 * 1024 * 1024;
 
 export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
@@ -28,6 +29,17 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/deep-learning/model-spec.json',
       maximumBytes: DEEP_LEARNING_ARTIFACT_MAXIMUM_BYTES,
       exactBytes: null,
+      archiveSource: 'worker-artifact',
+    },
+    {
+      taskType: DEEP_LEARNING_TASK_TYPE,
+      role: 'deep_learning_training_dataset',
+      producerRelativePath: 'training-dataset.json',
+      packageRelativePath:
+        'evidence/gpu-scientific/deep-learning/training-dataset.json',
+      maximumBytes: DEEP_LEARNING_ARTIFACT_MAXIMUM_BYTES,
+      exactBytes: null,
+      archiveSource: 'execution-plan-derived',
     },
     {
       taskType: DEEP_LEARNING_TASK_TYPE,
@@ -36,6 +48,7 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/deep-learning/tensor-bundle.bin',
       maximumBytes: DEEP_LEARNING_ARTIFACT_MAXIMUM_BYTES,
       exactBytes: null,
+      archiveSource: 'worker-artifact',
     },
     {
       taskType: DEEP_LEARNING_TASK_TYPE,
@@ -44,6 +57,7 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/deep-learning/training-predictions.json',
       maximumBytes: DEEP_LEARNING_ARTIFACT_MAXIMUM_BYTES,
       exactBytes: null,
+      archiveSource: 'worker-artifact',
     },
     {
       taskType: DEEP_LEARNING_TASK_TYPE,
@@ -52,6 +66,7 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/deep-learning/training-summary.json',
       maximumBytes: DEEP_LEARNING_ARTIFACT_MAXIMUM_BYTES,
       exactBytes: null,
+      archiveSource: 'worker-artifact',
     },
     {
       taskType: DEEP_LEARNING_TASK_TYPE,
@@ -60,6 +75,7 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/deep-learning/training-trace.json',
       maximumBytes: DEEP_LEARNING_ARTIFACT_MAXIMUM_BYTES,
       exactBytes: null,
+      archiveSource: 'worker-artifact',
     },
     {
       taskType: PDE_TASK_TYPE,
@@ -68,6 +84,16 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/pde/producer-diagnostics.json',
       maximumBytes: PDE_DIAGNOSTICS_MAXIMUM_BYTES,
       exactBytes: null,
+      archiveSource: 'worker-artifact',
+    },
+    {
+      taskType: PDE_TASK_TYPE,
+      role: 'pde_offline_replay_input',
+      producerRelativePath: 'replay-input.json',
+      packageRelativePath: 'evidence/gpu-scientific/pde/replay-input.json',
+      maximumBytes: PDE_REPLAY_INPUT_MAXIMUM_BYTES,
+      exactBytes: null,
+      archiveSource: 'execution-result-derived',
     },
     {
       taskType: PDE_TASK_TYPE,
@@ -76,6 +102,7 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/pde/solutions/n127.f64le',
       maximumBytes: 127 * 127 * Float64Array.BYTES_PER_ELEMENT,
       exactBytes: 127 * 127 * Float64Array.BYTES_PER_ELEMENT,
+      archiveSource: 'worker-artifact',
     },
     {
       taskType: PDE_TASK_TYPE,
@@ -84,6 +111,7 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/pde/solutions/n31.f64le',
       maximumBytes: 31 * 31 * Float64Array.BYTES_PER_ELEMENT,
       exactBytes: 31 * 31 * Float64Array.BYTES_PER_ELEMENT,
+      archiveSource: 'worker-artifact',
     },
     {
       taskType: PDE_TASK_TYPE,
@@ -92,6 +120,7 @@ export const GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS =
       packageRelativePath: 'evidence/gpu-scientific/pde/solutions/n63.f64le',
       maximumBytes: 63 * 63 * Float64Array.BYTES_PER_ELEMENT,
       exactBytes: 63 * 63 * Float64Array.BYTES_PER_ELEMENT,
+      archiveSource: 'worker-artifact',
     },
   ]);
 
@@ -170,7 +199,7 @@ function canonicalEntry(entry) {
 
 function bodySetHash(entries) {
   return hashRecord('GpuScientificArtifactBodySet', {
-    version: 1,
+    version: 2,
     bodyCount: entries.length,
     entries,
   });
@@ -344,10 +373,10 @@ export function buildGpuScientificArtifactBodyArchiveManifest({
     );
   }
   const payload = {
-    version: 1,
+    version: 2,
     kind: 'GpuScientificArtifactBodyArchiveManifest',
     status:
-      'gpu_scientific_artifact_body_archive_ready_for_offline_integrity_verification',
+      'gpu_scientific_artifact_body_archive_ready_for_offline_semantic_replay',
     campaignId: String(campaignId || ''),
     paperId: String(paperId || ''),
     campaignPlanHash: String(campaignPlanHash || '').toLowerCase(),
@@ -405,7 +434,8 @@ export function buildGpuScientificArtifactBodyArchiveManifest({
     entries: normalizedEntries,
     artifactBodySetHash: bodySetHash(normalizedEntries),
     scientificOutputCommitmentHash,
-    archivePolicy: 'package-contained-exact-body-set-no-cas-fallback-v1',
+    archivePolicy:
+      'package-contained-exact-body-set-and-semantic-replay-no-cas-fallback-v2',
     productionPromotionEligible: false,
     externalActionPerformed: false,
     createdAt: String(createdAt || ''),
@@ -430,10 +460,10 @@ export function verifyGpuScientificArtifactBodyArchiveManifest(
 ) {
   const blockers = [];
   if (!hasExactObjectKeys(manifest, MANIFEST_KEYS)
-    || manifest?.version !== 1
+    || manifest?.version !== 2
     || manifest?.kind !== 'GpuScientificArtifactBodyArchiveManifest'
     || manifest?.status
-      !== 'gpu_scientific_artifact_body_archive_ready_for_offline_integrity_verification') {
+      !== 'gpu_scientific_artifact_body_archive_ready_for_offline_semantic_replay') {
     blockers.push('gpu_scientific_artifact_body_archive_shape_invalid');
   }
   const payload = recordPayload(
@@ -498,11 +528,13 @@ export function verifyGpuScientificArtifactBodyArchiveManifest(
   const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
   if (entries.length !== GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS.length
     || manifest?.bodyCount !== entries.length
-    || entries.some((entry, index) => !entryValid(
-      entry,
-      GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS[index],
-      manifest,
-    ))
+    || entries.some((entry) => {
+      const specification =
+        GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS.find(
+          (candidate) => candidate.packageRelativePath === entry?.packageRelativePath,
+        );
+      return !specification || !entryValid(entry, specification, manifest);
+    })
     || new Set(entries.map((entry) => entry.role)).size !== entries.length
     || new Set(entries.map((entry) => entry.packageRelativePath)).size !== entries.length
     || new Set(entries.map((entry) => (
@@ -537,7 +569,7 @@ export function verifyGpuScientificArtifactBodyArchiveManifest(
     blockers.push('gpu_scientific_artifact_body_archive_output_commitment_invalid');
   }
   if (manifest?.archivePolicy
-      !== 'package-contained-exact-body-set-no-cas-fallback-v1'
+      !== 'package-contained-exact-body-set-and-semantic-replay-no-cas-fallback-v2'
     || manifest?.productionPromotionEligible !== false
     || manifest?.externalActionPerformed !== false) {
     blockers.push('gpu_scientific_artifact_body_archive_policy_invalid');

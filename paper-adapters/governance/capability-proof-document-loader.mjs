@@ -15,14 +15,16 @@ export function loadCapabilityProofDocuments({
   verifiedStatus,
   hashField,
   listField,
+  ownerTrustStoreSnapshot = null,
 }) {
   const verified = new Map();
   let trustStoreRead = null;
   try {
-    trustStoreRead = readBoundRegularJsonSnapshot(
+    trustStoreRead = ownerTrustStoreSnapshot || readBoundRegularJsonSnapshot(
       runtimeRoot,
       path.join(runtimeRoot, 'owner-acceptance', 'OWNER_TRUST_STORE.json'),
     );
+    assertBoundRegularJsonSnapshot(trustStoreRead);
   } catch {
     return verified;
   }

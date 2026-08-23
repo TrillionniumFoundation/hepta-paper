@@ -27,10 +27,24 @@ function temporaryRoot(t, prefix) {
   return root;
 }
 
+function isolatedGitOptions(cwd) {
+  const env = { ...process.env };
+  for (const key of [
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_WORK_TREE',
+  ]) delete env[key];
+  return { cwd, env };
+}
+
 function initializeGitRepository(root) {
-  execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Hepta Test'], { cwd: root });
+  const options = isolatedGitOptions(root);
+  execFileSync('git', ['init', '-q'], options);
+  execFileSync('git', ['config', 'user.email', 'test@example.invalid'], options);
+  execFileSync('git', ['config', 'user.name', 'Hepta Test'], options);
 }
 
 test('repair executor facade preserves the original API bindings', () => {
@@ -86,8 +100,9 @@ test('repair patch bundle covers ready and already-present source states', async
     '',
   ].join('\n'));
   initializeGitRepository(root);
-  execFileSync('git', ['add', 'paper/main.tex'], { cwd: root });
-  execFileSync('git', ['commit', '-qm', 'baseline'], { cwd: root });
+  const gitOptions = isolatedGitOptions(root);
+  execFileSync('git', ['add', 'paper/main.tex'], gitOptions);
+  execFileSync('git', ['commit', '-qm', 'baseline'], gitOptions);
   const row = { task: { paperId: 'paper', sourceWorkspace: 'paper', mainTex: 'paper/main.tex' } };
   const issueQueue = {
     issueCount: 1,
@@ -126,7 +141,7 @@ test('repair patch bundle covers ready and already-present source states', async
     assert.equal(fs.existsSync(patchPath), true);
     assert.equal(fs.existsSync(path.join(root, ready.manifestPath)), true);
 
-    execFileSync('git', ['apply', '--whitespace=nowarn', patchPath], { cwd: root });
+    execFileSync('git', ['apply', '--whitespace=nowarn', patchPath], gitOptions);
     const alreadyPresent = await buildAgentRepairPatchBundle({ root, runtimeRoot, row, issueQueue });
     assert.equal(alreadyPresent.status, 'agent_repair_patch_already_present');
     assert.deepEqual(alreadyPresent.blockers, ['agent_repair_notes_already_present']);

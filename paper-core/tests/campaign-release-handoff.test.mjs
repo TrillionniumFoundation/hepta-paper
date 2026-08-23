@@ -7,59 +7,48 @@ import test from 'node:test';
 import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
 import { consumeCampaignReleaseBundleForSubmission, verifyCampaignReleaseBundleForSubmission } from '../../paper-adapters/submission/campaign-release-bundle-consumer.mjs';
 import { prepareSubmissionAuthorities } from '../../paper-adapters/submission/submission-authority-orchestrator.mjs';
+import { exportSubmissionHandoffBundle } from '../../paper-adapters/submission/handoff-bundle-exporter.mjs';
+import { executeSubmissionHandoffExport } from '../../paper-composition/submission/submission-handoff-export-composition.mjs';
+import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createSqliteCampaignReleaseQueryRepository } from '../../paper-adapters/persistence/sqlite-campaign-release-query-repository.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
-import {
-  createAutomationPromotionCandidate,
-  createCampaignReleaseBundle,
-  verifyCampaignReleaseBundle,
-} from '../../paper-domain/automation/campaign-release-contracts.mjs';
+import { createAutomationPromotionCandidate, createCampaignReleaseBundle, verifyCampaignReleaseBundle } from '../../paper-domain/automation/campaign-release-contracts.mjs';
 import { buildCampaignResearchSourceSnapshot } from '../../paper-domain/automation/campaign-research-contract.mjs';
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { buildTargetScopeReceipt } from '../../paper-domain/automation/target-scope-policy.mjs';
 import { createPaperTask } from '../../paper-domain/contracts/index.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { bootstrapAutomationContext } from '../../paper-composition/bootstrap/automation-context-bootstrap.mjs';
-import {
-  convergeAutonomousSubmissionHandoff,
-} from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
+import { convergeAutonomousSubmissionHandoff } from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
 import { bootstrapSubmissionContext } from '../../paper-composition/bootstrap/capability-scoped-bootstrap.mjs';
 import { verifyCampaignReleaseEvidenceCapsuleDirectory } from '../../paper-adapters/build-package/research-evidence-capsule.mjs';
 import { createCampaignReleasePackager } from '../../paper-adapters/automation/campaign-release-packager.mjs';
-import { createTrustedIndependentPdfRebuildVerifierFixture }
-  from './fixtures/trusted-independent-pdf-rebuild-verifier.mjs';
-import { buildDeterministicPdfFixture }
-  from './support/deterministic-pdf-fixture.mjs';
-
+import { createTrustedIndependentPdfRebuildVerifierFixture } from './fixtures/trusted-independent-pdf-rebuild-verifier.mjs';
+import { buildDeterministicPdfFixture } from './support/deterministic-pdf-fixture.mjs';
+import { assertSubmissionHandoffDetachedRecoveryConsistency, buildSubmissionHandoffExportLifecycleFixture, createCampaignReleaseAuthorityRepositoryFixture, createProviderCapabilityCurrentSignatureRevalidatorFixture, persistSubmissionHandoffExportLifecycle } from './support/submission-handoff-export-lifecycle-fixture.mjs';
 const submissionHandoffCli = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'paper-submission-handoff.mjs');
 
 function testHandoffMutationCoordinator() {
   const coveredDatabaseRoles = Object.freeze(['submission-handoff']);
   return Object.freeze({
-    implemented: true,
-    coveredDatabaseRoles,
+    implemented: true, coveredDatabaseRoles,
     executeMutation() {
       throw new Error('campaign_release_handoff_test_mutation_unexpected');
     },
     recoverPendingMutations() { return Object.freeze([]); },
-    inspectStatus() {
-      return Object.freeze({
-        status: 'externally_fenced_sqlite_mutation_coordinator_ready',
-        implemented: true,
-        coveredDatabaseRoles,
-        blockers: Object.freeze([]),
-      });
-    },
+    inspectStatus: () => Object.freeze({
+      status: 'externally_fenced_sqlite_mutation_coordinator_ready',
+      implemented: true, coveredDatabaseRoles, blockers: Object.freeze([]),
+    }),
   });
 }
 
 function bootstrapTestAutomationContext(options) {
   return bootstrapAutomationContext({
-    ...options,
-    submissionHandoffMutationCoordinator: testHandoffMutationCoordinator(),
+    ...options, submissionHandoffMutationCoordinator: testHandoffMutationCoordinator(),
   });
 }
 
@@ -75,18 +64,14 @@ function runSubmissionHandoffCli({ campaignId, root, runtimeRoot } = {}) {
 function removeFixtureTree(root) {
   function restoreOwnerWrite(candidate) {
     let entry;
-    try {
-      entry = fs.lstatSync(candidate);
-    } catch (error) {
+    try { entry = fs.lstatSync(candidate); } catch (error) {
       if (error?.code === 'ENOENT') return;
       throw error;
     }
     if (entry.isSymbolicLink()) return;
     fs.chmodSync(candidate, entry.isDirectory() ? 0o700 : 0o600);
-    if (entry.isDirectory()) {
-      for (const name of fs.readdirSync(candidate)) {
-        restoreOwnerWrite(path.join(candidate, name));
-      }
+    if (entry.isDirectory()) for (const name of fs.readdirSync(candidate)) {
+      restoreOwnerWrite(path.join(candidate, name));
     }
   }
   restoreOwnerWrite(root);
@@ -262,11 +247,9 @@ function createTrustedReleasePackagerFixture({ context, store, runtimeRoot, fixt
 }
 
 async function prepareFencedPackage({
-  context,
-  workspace,
-  runtimeRoot,
+  context, workspace, runtimeRoot,
   campaignId = 'campaign',
-  releasePackager = context?.services?.releasePackager,
+  releasePackager = context?.services?.releasePackager, executionBudget = null,
 } = {}) {
   const campaignStore = context.services.campaignStore;
   const { finalCompileNode, researchVerifyNode, packageNode } = nodes(workspace);
@@ -291,28 +274,21 @@ async function prepareFencedPackage({
   campaignStore.createCampaign(spec);
   const finalClaim = campaignStore.claimReady({ campaignId, workerId: 'worker', leaseSeconds: 600, limit: 1 })[0];
   const finalRunning = campaignStore.startNode({
-    nodeId: finalClaim.nodeId,
-    workerId: 'worker',
-    attemptId: finalClaim.attemptId,
+    nodeId: finalClaim.nodeId, workerId: 'worker', attemptId: finalClaim.attemptId,
     leaseGeneration: finalClaim.leaseGeneration,
   });
   campaignStore.completeNode({
-    nodeId: finalRunning.nodeId,
-    workerId: 'worker',
-    attemptId: finalRunning.attemptId,
-    leaseGeneration: finalRunning.leaseGeneration,
+    nodeId: finalRunning.nodeId, workerId: 'worker',
+    attemptId: finalRunning.attemptId, leaseGeneration: finalRunning.leaseGeneration,
     result: finalCompileNode.result,
   });
   const researchClaim = campaignStore.claimReady({ campaignId, workerId: 'worker', leaseSeconds: 600, limit: 1 })[0];
   const researchRunning = campaignStore.startNode({
-    nodeId: researchClaim.nodeId,
-    workerId: 'worker',
-    attemptId: researchClaim.attemptId,
+    nodeId: researchClaim.nodeId, workerId: 'worker', attemptId: researchClaim.attemptId,
     leaseGeneration: researchClaim.leaseGeneration,
   });
-  const sourceSnapshot = inspectWorkspaceExecutionSnapshot(workspace, {
-    excludeNames: sourceTreeExcludedNames(workspace),
-  });
+  const sourceSnapshot = inspectWorkspaceExecutionSnapshot(workspace,
+    { excludeNames: sourceTreeExcludedNames(workspace) });
   const campaignResearchSourceSnapshot = buildCampaignResearchSourceSnapshot({
     campaignId,
     paperId: 'paper',
@@ -335,43 +311,33 @@ async function prepareFencedPackage({
     campaignResearchSourceSnapshot,
   });
   campaignStore.completeNode({
-    nodeId: researchRunning.nodeId,
-    workerId: 'worker',
-    attemptId: researchRunning.attemptId,
-    leaseGeneration: researchRunning.leaseGeneration,
+    nodeId: researchRunning.nodeId, workerId: 'worker',
+    attemptId: researchRunning.attemptId, leaseGeneration: researchRunning.leaseGeneration,
     result: readyResearchResult({ campaignId, report: researchReport }),
   });
   const packageClaim = campaignStore.claimReady({ campaignId, workerId: 'worker', leaseSeconds: 600, limit: 1 })[0];
   const packageRunning = campaignStore.startNode({
-    nodeId: packageClaim.nodeId,
-    workerId: 'worker',
-    attemptId: packageClaim.attemptId,
+    nodeId: packageClaim.nodeId, workerId: 'worker', attemptId: packageClaim.attemptId,
     leaseGeneration: packageClaim.leaseGeneration,
   });
   const executor = createCampaignNodeExecutor({
-    runtimeRoot,
-    releasePackager,
+    runtimeRoot, releasePackager,
     agentExecutor: { async execute() { throw new Error('agent_not_expected'); } },
     empiricalExecutor: { execute() { throw new Error('empirical_not_expected'); } },
   });
   const campaign = campaignStore.getCampaign(campaignId);
   const packageResult = await executor.execute({
-    campaign,
-    node: packageRunning,
+    campaign, node: packageRunning,
     allNodes: campaignStore.listNodes(campaignId),
-    deferWorkspaceIntegration: true,
+    executionBudget, deferWorkspaceIntegration: true,
   });
   const result = packageResult;
   const descriptorHash = result.workspaceAttemptIntegration?.workspaceAttemptIntegrationDescriptorHash;
   if (!descriptorHash) throw new Error('test_campaign_release_workspace_attempt_descriptor_missing');
   const prepared = campaignStore.prepareNodeResult({
-    nodeId: packageRunning.nodeId,
-    workerId: 'worker',
-    attemptId: packageRunning.attemptId,
+    nodeId: packageRunning.nodeId, workerId: 'worker', attemptId: packageRunning.attemptId,
     leaseGeneration: packageRunning.leaseGeneration,
-    result,
-    requiresIntegration: true,
-    integrationKey: descriptorHash,
+    result, requiresIntegration: true, integrationKey: descriptorHash,
   });
   return { campaignStore, campaign, executor, packageRunning, prepared, result, descriptorHash };
 }
@@ -437,6 +403,38 @@ test('campaign plan packages only after final compile and research verification'
   assert.equal(packageNode.language, null);
   assert.equal(plan.nodes.at(-1).kind, 'package');
 });
+
+test('expired engine budget reaches the real packager without creating a build transaction',
+  async (t) => {
+    const { workspace, runtimeRoot } = fixture(t);
+    const store = createDefaultPaperStore({ root: workspace, runtimeRoot });
+    convergeAutonomousSubmissionHandoff({ nativeStore: store, runtimeRoot });
+    const context = bootstrapTestAutomationContext({
+      root: workspace, runtimeRoot, mode: 'campaign-release-expired-budget-test', execute: true,
+      serviceOverrides: { store },
+    });
+    t.after(() => context.services.persistenceSession.close());
+    const releasePackager = createTrustedReleasePackagerFixture({
+      context, store, runtimeRoot, fixtureId: 'expired-generation-budget',
+    });
+    const campaignId = 'expired-generation-budget';
+    const observedAtMs = context.services.clock.now().getTime();
+    await assert.rejects(() => prepareFencedPackage({
+      context, workspace, runtimeRoot, campaignId, releasePackager,
+      executionBudget: {
+        remainingWallTimeMs: 60_000,
+        absoluteDeadlineEpochMs: observedAtMs - 1,
+      },
+    }), (error) => {
+      assert.equal(error?.code, 'campaign_release_execution_budget_exhausted');
+      assert.equal(error?.stateRecoverabilityDeferred, true);
+      return true;
+    });
+    for (const directory of ['campaign-releases', 'packages']) {
+      const outputRoot = path.join(runtimeRoot, directory);
+      assert.deepEqual(fs.existsSync(outputRoot) ? fs.readdirSync(outputRoot) : [], []);
+    }
+  });
 
 test('submission authority entry composes the normal non-campaign authority inputs', async () => {
   const now = new Date('2026-07-14T00:00:00.000Z');
@@ -846,28 +844,50 @@ test('prepared bundle becomes submission-consumable only through the current com
   assert.equal(authority.promotionReceipt.verifiedSourceMerkleHash, first.releaseBundle.verifiedSourceMerkleHash);
   assert.deepEqual(first.releaseBundle.promotionCandidate.sourceTreeManifest.rows.map((row) => row.path).sort(), ['SOURCE_PACKAGE_CONTRACT.json', 'main.tex']);
   assert.equal(authorityRepository.promoteCompletedRelease({ campaignId: 'campaign' }).promotionReceipt.campaignReleasePromotionReceiptHash, authority.promotionReceipt.campaignReleasePromotionReceiptHash);
+  const exportObservedAt = new Date();
+  const exportLifecycle = buildSubmissionHandoffExportLifecycleFixture({ artifactPackage: first.releaseBundle.artifactPackage, manuscriptPromotionGate: first.releaseBundle.manuscriptPromotionGate, campaignId: 'campaign', now: exportObservedAt });
+  persistSubmissionHandoffExportLifecycle({ store, records: exportLifecycle, clock: Object.freeze({ now: () => new Date(exportObservedAt), nowIso: () => exportLifecycle.createdAt }) });
+  const productionExportRequestPath = path.join(root, 'production-submission-handoff-request.json');
+  fs.writeFileSync(productionExportRequestPath, JSON.stringify(exportLifecycle.request));
+  const productionExportRoot = path.join(root, 'production-submission-handoff-bundle');
+  const productionExport = await executeSubmissionHandoffExport({
+    root: workspace, runtimeRoot, campaignId: 'campaign',
+    bundleRoot: productionExportRoot, requestPath: productionExportRequestPath,
+    serviceOverrides: {
+      providerCapabilitySignatureRevalidator:
+        createProviderCapabilityCurrentSignatureRevalidatorFixture(
+          exportLifecycle,
+        ),
+    },
+  });
+  assert.equal(productionExport.status, 'submission_handoff_export_completed', JSON.stringify(productionExport.blockers));
+  assert.equal(productionExport.campaignReleaseBundleHash, first.releaseBundle.campaignReleaseBundleHash);
+  assert.equal(productionExport.bundleExportReceipt.status, 'submission_handoff_bundle_exported');
+  assert.equal(productionExport.externalActionPerformed, false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(productionExportRoot, 'SUBMISSION_HANDOFF_MANIFEST.json'), 'utf8')).sealedPackageOutput.immutableCampaignPackageOutputHash, first.releaseBundle.packageOutput.immutableCampaignPackageOutputHash);
+  const recoveredProductionExport = await executeSubmissionHandoffExport({ root: workspace, runtimeRoot, campaignId: 'campaign', bundleRoot: productionExportRoot, requestPath: productionExportRequestPath, serviceOverrides: { providerCapabilitySignatureRevalidator: createProviderCapabilityCurrentSignatureRevalidatorFixture(exportLifecycle) } });
+  assertSubmissionHandoffDetachedRecoveryConsistency(productionExport, recoveredProductionExport);
 
-  // Exercise recovery from a missing derived current-release row. The durable
-  // completed package remains authoritative, so a fresh repository promotion
-  // must reconstruct the exact same release instead of relying on the normal
-  // campaign-completion callback having populated the projection already.
-  const removedProjection = store.execute(
-    "DELETE FROM campaign_current_releases WHERE campaign_id='campaign';",
-  );
+  // Reconstruct a missing projection through the strict StorePort mutation path.
+  const removedProjection = store.execute("DELETE FROM campaign_current_releases WHERE campaign_id='campaign';");
   assert.equal(removedProjection.ok, true);
   assert.equal(authorityRepository.getCurrentRelease({ campaignId: 'campaign' }), null);
-  const recoveredAuthority = authorityRepository.promoteCompletedRelease({
-    campaignId: 'campaign',
+  let mutationInput = null;
+  const mutationStore = Object.freeze({
+    query: store.query.bind(store), execute: store.execute.bind(store),
+    mutate(input) {
+      mutationInput = input;
+      const value = input.mutate(Object.freeze({ run() { authorityRepository.promoteCompletedRelease({ campaignId: 'campaign' }); return Object.freeze({ changes: 1 }); } }));
+      return Object.freeze({ status: 'externally_fenced_sqlite_mutation_finalized', value });
+    },
   });
+  const recoveredAuthority = createCampaignReleaseAuthorityRepositoryFixture({ store: mutationStore, clock: context.services.clock, runtimeRoot }).promoteCompletedRelease({ campaignId: 'campaign' });
+  assert.equal(mutationInput.databaseRole, 'native-store');
+  assert.equal(mutationInput.operationId, 'native-store.campaign-release-authority-repository.promoteCompletedRelease.v1');
+  assert.equal(mutationInput.packageDeletionWriterSelector.packagePath, packageDir);
   assert.equal(recoveredAuthority.status, 'current_completed_release');
-  assert.equal(
-    recoveredAuthority.promotionReceipt.campaignReleasePromotionReceiptHash,
-    authority.promotionReceipt.campaignReleasePromotionReceiptHash,
-  );
-  assert.equal(
-    recoveredAuthority.campaignReleaseBundleHash,
-    authority.campaignReleaseBundleHash,
-  );
+  assert.equal(recoveredAuthority.promotionReceipt.campaignReleasePromotionReceiptHash, authority.promotionReceipt.campaignReleasePromotionReceiptHash);
+  assert.equal(recoveredAuthority.campaignReleaseBundleHash, authority.campaignReleaseBundleHash);
 
   const verified = verifyCampaignReleaseBundleForSubmission({
     releaseAuthority: authority,
@@ -876,6 +896,266 @@ test('prepared bundle becomes submission-consumable only through the current com
     sourceScopeRoots: [workspace, runtimeRoot],
   });
   assert.equal(verified.status, 'submission_campaign_release_verified', JSON.stringify(verified.blockers));
+
+  const handoffArtifactPackage = first.releaseBundle.artifactPackage;
+  const handoffPackageVerification = first.releaseBundle.packageVerificationReceipt;
+  const handoffManifest = {
+    status: 'ready_for_adapter',
+    paperId: 'paper',
+    taskKey: 'paper:campaign-release-handoff',
+    manifestHash: hashRecord('CampaignReleaseHandoffManifestFixture', {}),
+    payload: { artifactPackageHash: handoffArtifactPackage.artifactPackageHash },
+  };
+  const handoffEnvelope = {
+    status: 'dry_run_ready',
+    envelopeHash: hashRecord('CampaignReleaseHandoffEnvelopeFixture', {}),
+    manifestHash: handoffManifest.manifestHash,
+  };
+  const replayGuard = {
+    status: 'dry_run_replay_allowed',
+    submissionReplayGuardHash: hashRecord('CampaignReleaseReplayGuardFixture', {}),
+    manifestHash: handoffManifest.manifestHash,
+  };
+  const reviewedPreflight = {
+    status: 'reviewed_submit_preflight_ready_for_external_executor',
+    reviewedSubmitPreflightPacketHash:
+      hashRecord('CampaignReleaseReviewedPreflightFixture', {}),
+    outboxHash: hashRecord('CampaignReleaseOutboxFixture', {}),
+  };
+  const reviewedDecision = {
+    status: 'reviewed_submission_decision_verified',
+    reviewedSubmissionDecisionPacketHash:
+      hashRecord('CampaignReleaseReviewedDecisionFixture', {}),
+    metadata: { title: 'Campaign release handoff fixture' },
+  };
+  const dispatchAuthorization = {
+    status: 'submission_dispatch_authorization_ready',
+    submissionDispatchAuthorizationHash:
+      hashRecord('CampaignReleaseDispatchAuthorizationFixture', {}),
+    artifactPackageHash: handoffArtifactPackage.artifactPackageHash,
+    preflightHash: reviewedPreflight.reviewedSubmitPreflightPacketHash,
+    outboxHash: reviewedPreflight.outboxHash,
+    reviewedSubmissionDecisionPacketHash:
+      reviewedDecision.reviewedSubmissionDecisionPacketHash,
+    provider: 'fixture-provider',
+    accountId: 'fixture-account',
+    nonce: 'fixture-nonce',
+  };
+  const handoffBundleRoot = path.join(root, 'submission-handoff-bundle');
+  const handoffRepository = createFilesystemArtifactRepository({
+    scopeRoot: root,
+    casRoot: path.join(root, '.submission-handoff-cas'),
+    receiptLedger: { record: () => ({ receiptId: 'handoff-ledger-fixture' }) },
+    clock: {
+      now: () => new Date('2026-07-14T00:00:00.000Z'),
+      nowIso: () => '2026-07-14T00:00:00.000Z',
+    },
+  });
+  const handoffExportInput = {
+    artifactPackage: handoffArtifactPackage,
+    packageVerificationReceipt: handoffPackageVerification,
+    manifest: handoffManifest,
+    handoff: handoffEnvelope,
+    replayGuard,
+    reviewedSubmitPreflightPacket: reviewedPreflight,
+    dispatchAuthorization,
+    submissionDecisionPacket: reviewedDecision,
+    artifactBaseRoot: first.releaseBundle.packageOutput.artifactBaseRoot,
+    artifactScopeRoots: [workspace, runtimeRoot],
+    campaignReleaseBundle: first.releaseBundle,
+    campaignReleaseAuthority: authority,
+  };
+  const handoffExport = await exportSubmissionHandoffBundle({
+    ...handoffExportInput,
+    artifactRepository: handoffRepository,
+    bundleRoot: handoffBundleRoot,
+  });
+  assert.equal(
+    handoffExport.status,
+    'submission_handoff_bundle_exported',
+    JSON.stringify(handoffExport.blockers),
+  );
+  const handoffBundleManifest = JSON.parse(fs.readFileSync(
+    path.join(handoffBundleRoot, 'SUBMISSION_HANDOFF_MANIFEST.json'),
+    'utf8',
+  ));
+  assert.equal(
+    handoffBundleManifest.campaignReleaseBundleHash,
+    first.releaseBundle.campaignReleaseBundleHash,
+  );
+  assert.equal(
+    handoffBundleManifest.sealedPackageOutput.immutableCampaignPackageOutputHash,
+    first.releaseBundle.packageOutput.immutableCampaignPackageOutputHash,
+  );
+  assert.equal(
+    handoffBundleManifest.sealedPackageFileCount,
+    first.releaseBundle.packageOutput.fileCount,
+  );
+  assert.equal(
+    handoffBundleManifest.sealedPackageOutput.fileCount,
+    first.releaseBundle.packageOutput.fileCount,
+  );
+  assert.equal(
+    handoffBundleManifest.sealedPackageOutput.files.length,
+    first.releaseBundle.packageOutput.files.length,
+  );
+  const sealedSourceByRelative = new Map(first.releaseBundle.packageOutput.files.map(
+    (file) => [path.relative(
+      first.releaseBundle.packageOutput.packageDir,
+      file.path,
+    ).replace(/\\/g, '/'), file],
+  ));
+  for (const copied of handoffBundleManifest.sealedPackageOutput.files) {
+    const source = sealedSourceByRelative.get(copied.packageRelativePath);
+    assert.ok(source, copied.packageRelativePath);
+    assert.deepEqual({
+      role: copied.role,
+      capsuleRole: copied.capsuleRole,
+      executionRole: copied.executionRole,
+      experimentId: copied.experimentId,
+      hash: copied.hash,
+      bytes: copied.bytes,
+    }, {
+      role: source.role,
+      capsuleRole: source.capsuleRole || null,
+      executionRole: source.executionRole || null,
+      experimentId: source.experimentId || null,
+      hash: source.hash,
+      bytes: source.bytes,
+    });
+    const copiedBytes = fs.readFileSync(path.join(
+      handoffBundleRoot,
+      copied.bundlePath,
+    ));
+    assert.equal(hashBytes(copiedBytes), source.hash);
+    assert.equal(copiedBytes.length, source.bytes);
+  }
+  assert.equal(
+    handoffExport.sealedPackageWriteReceiptHashes.length,
+    first.releaseBundle.packageOutput.fileCount,
+  );
+  const failingBaseRepository = createFilesystemArtifactRepository({
+    scopeRoot: root,
+    casRoot: path.join(root, '.submission-handoff-failure-cas'),
+    receiptLedger: { record: () => ({ receiptId: 'handoff-failure-ledger' }) },
+    clock: {
+      now: () => new Date('2026-07-14T00:00:00.000Z'),
+      nowIso: () => '2026-07-14T00:00:00.000Z',
+    },
+  });
+  let sealedPackageWriteCount = 0;
+  const originalFailingLinkSync = fs.linkSync;
+  fs.linkSync = (source, target, ...rest) => {
+    const parent = fs.realpathSync.native(path.dirname(String(target)));
+    if (parent.includes(`${path.sep}sealed-package`)) {
+      sealedPackageWriteCount += 1;
+      if (sealedPackageWriteCount === 2) {
+        throw new Error('injected_handoff_sealed_package_copy_failure');
+      }
+    }
+    return originalFailingLinkSync(source, target, ...rest);
+  };
+  let failedHandoffExport;
+  try {
+    failedHandoffExport = await exportSubmissionHandoffBundle({
+      ...handoffExportInput,
+      artifactRepository: failingBaseRepository,
+      bundleRoot: path.join(root, 'failed-submission-handoff-bundle'),
+    });
+  } finally {
+    fs.linkSync = originalFailingLinkSync;
+  }
+  assert.equal(failedHandoffExport.status, 'submission_handoff_bundle_blocked');
+  assert.deepEqual(failedHandoffExport.blockers, [
+    'handoff_sealed_package_copy_invalid:injected_handoff_sealed_package_copy_failure',
+  ]);
+  assert.equal(failedHandoffExport.localFilesystemMutationPerformed, true);
+  assert.equal(failedHandoffExport.externalActionPerformed, false);
+
+  const exportWithManifestMutation = async (label, bundleRoot, mutate) => {
+    const base = createFilesystemArtifactRepository({
+      scopeRoot: root,
+      casRoot: path.join(root, `.submission-handoff-${label}-cas`),
+      receiptLedger: { record: () => ({ receiptId: `handoff-${label}-ledger` }) },
+      clock: {
+        now: () => new Date('2026-07-14T00:00:00.000Z'),
+        nowIso: () => '2026-07-14T00:00:00.000Z',
+      },
+    });
+    const originalLinkSync = fs.linkSync;
+    let mutated = false;
+    fs.linkSync = (source, target, ...rest) => {
+      const write = originalLinkSync(source, target, ...rest);
+      if (!mutated
+        && path.basename(String(target)) === 'SUBMISSION_HANDOFF_MANIFEST.json') {
+        mutated = true;
+        mutate(fs.realpathSync.native(path.dirname(String(target))));
+      }
+      return write;
+    };
+    try {
+      const receipt = await exportSubmissionHandoffBundle({
+        ...handoffExportInput,
+        artifactRepository: base,
+        bundleRoot,
+      });
+      assert.equal(mutated, true);
+      return receipt;
+    } finally {
+      fs.linkSync = originalLinkSync;
+    }
+  };
+  for (const targetKind of ['artifact', 'sealed-package']) {
+    const attackedBundleRoot = path.join(
+      root,
+      `manifest-mutates-${targetKind}-bundle`,
+    );
+    const attackedExport = await exportWithManifestMutation(
+      targetKind,
+      attackedBundleRoot,
+      (stagingRoot) => {
+        const relative = targetKind === 'artifact'
+          ? path.join('artifacts', fs.readdirSync(
+            path.join(stagingRoot, 'artifacts'),
+          )[0])
+          : path.join(
+            'sealed-package',
+            path.relative(
+              first.releaseBundle.packageOutput.packageDir,
+              first.releaseBundle.packageOutput.files[0].path,
+            ),
+          );
+        const candidate = path.join(stagingRoot, relative);
+        fs.chmodSync(candidate, 0o644);
+        fs.appendFileSync(candidate, 'manifest-write-tamper');
+      },
+    );
+    assert.equal(attackedExport.status, 'submission_handoff_bundle_blocked');
+    assert.equal(attackedExport.localFilesystemMutationPerformed, true);
+    assert.equal(attackedExport.externalActionPerformed, false);
+    assert.ok(attackedExport.blockers.some((blocker) => blocker.startsWith(
+      'handoff_bundle_sealing_invalid:',
+    )));
+  }
+  const sourceMutationRoot = path.join(root, 'manifest-mutates-release-source');
+  const releaseSourceFile = first.releaseBundle.packageOutput.files[0];
+  let sourceMutationExport;
+  try {
+    sourceMutationExport = await exportWithManifestMutation(
+      'release-source',
+      sourceMutationRoot,
+      () => fs.chmodSync(releaseSourceFile.path, 0o644),
+    );
+  } finally {
+    fs.chmodSync(releaseSourceFile.path, 0o444);
+  }
+  assert.equal(sourceMutationExport.status, 'submission_handoff_bundle_blocked');
+  assert.equal(sourceMutationExport.localFilesystemMutationPerformed, true);
+  assert.equal(sourceMutationExport.externalActionPerformed, false);
+  assert.ok(sourceMutationExport.blockers.some((blocker) => blocker.startsWith(
+    'campaign_release_package_output_seal_invalid:',
+  )));
+
   const consumed = consumeCampaignReleaseBundleForSubmission({
     releaseAuthorityRepository: authorityRepository,
     campaignId: 'campaign',

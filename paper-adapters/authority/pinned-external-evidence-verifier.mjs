@@ -11,6 +11,7 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
 const ENVELOPE_KEYS = Object.freeze([
   'expiresAt', 'kind', 'signatures', 'signedAt', 'subjectHash', 'subjectKind', 'version',
 ]);
+const SIGNATURE_KEYS = Object.freeze(['algorithm', 'keyId', 'role', 'value']);
 const VERIFICATION_RECEIPT_HASH_FIELD =
   'pinnedExternalEvidenceVerificationReceiptHash';
 const verifiedReceiptCapabilities = new WeakSet();
@@ -149,7 +150,8 @@ export function buildPinnedExternalEvidenceEnvelope({
   if (!SAFE_ID.test(String(subjectKind || '')) || !SHA256.test(String(subjectHash || ''))
     || !selectedSignedAt || !selectedExpiresAt
     || Date.parse(selectedExpiresAt) <= Date.parse(selectedSignedAt)
-    || !Array.isArray(signatures) || signatures.length < 1 || signatures.length > 16) {
+    || !Array.isArray(signatures) || signatures.length < 1 || signatures.length > 16
+    || signatures.some((signature) => !hasExactObjectKeys(signature, SIGNATURE_KEYS))) {
     throw new Error('pinned_external_evidence_envelope_invalid');
   }
   return Object.freeze({

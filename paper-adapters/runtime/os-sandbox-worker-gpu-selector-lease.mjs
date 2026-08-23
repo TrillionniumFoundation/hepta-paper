@@ -81,6 +81,38 @@ export function blockedOsSandboxWorkerGpuSelectorLease(
   ]);
 }
 
+export function createDockerWorkerGpuSelectorLeaseStaleRecovery({
+  docker = 'docker',
+  dockerContainerRecoveryExecutor = null,
+  environment = process.env,
+} = {}) {
+  return function recoverStaleState({ state, absoluteDeadlineEpochMs } = {}) {
+    if (Date.now() >= absoluteDeadlineEpochMs) {
+      return { recovered: false, receipt: null };
+    }
+    if (!state?.workerInvocationAuthorityHash) {
+      return {
+        recovered: state?.status !== 'recovery_required',
+        receipt: null,
+      };
+    }
+    const receipt = recoverAbandonedDockerWorkerContainer({
+      docker,
+      ownership: state.dockerWorkerContainerOwnership,
+      trigger: 'gpu_selector_lease_owner_process_lost',
+      ...(dockerContainerRecoveryExecutor ? {
+        spawnSyncImpl: dockerContainerRecoveryExecutor,
+      } : {}),
+      environment,
+    });
+    return {
+      recovered: receipt.removalConfirmed === true
+        && receipt.blockers.length === 0,
+      receipt,
+    };
+  };
+}
+
 export function createOsSandboxWorkerGpuSelectorLeaseCoordinator({
   allowGpu,
   runtimeRoot,
@@ -92,31 +124,11 @@ export function createOsSandboxWorkerGpuSelectorLeaseCoordinator({
   const repository = allowGpu && runtimeRoot
     ? createGpuSelectorExecutionLeaseRepository({
       root: gpuSelectorExecutionLeaseRootForRuntime(runtimeRoot),
-      recoverStaleState({ state, absoluteDeadlineEpochMs }) {
-        if (Date.now() >= absoluteDeadlineEpochMs) {
-          return { recovered: false, receipt: null };
-        }
-        if (!state.workerInvocationAuthorityHash) {
-          return {
-            recovered: state.status !== 'recovery_required',
-            receipt: null,
-          };
-        }
-        const receipt = recoverAbandonedDockerWorkerContainer({
-          docker,
-          ownership: state.dockerWorkerContainerOwnership,
-          trigger: 'gpu_selector_lease_owner_process_lost',
-          ...(dockerContainerRecoveryExecutor ? {
-            spawnSyncImpl: dockerContainerRecoveryExecutor,
-          } : {}),
-          environment,
-        });
-        return {
-          recovered: receipt.removalConfirmed === true
-            && receipt.blockers.length === 0,
-          receipt,
-        };
-      },
+      recoverStaleState: createDockerWorkerGpuSelectorLeaseStaleRecovery({
+        docker,
+        dockerContainerRecoveryExecutor,
+        environment,
+      }),
     }) : null;
   return Object.freeze({
     run(spec, operation) {

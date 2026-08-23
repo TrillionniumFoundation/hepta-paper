@@ -5,8 +5,17 @@ import {
   buildGpuScientificCampaignAttemptAuthority,
   verifyGpuScientificCampaignExecutionPlan,
 } from '../../paper-domain/automation/gpu-scientific-campaign-execution-contract.mjs';
+import {
+  verifyGpuScientificDeepLearningTaskReceiptRequestBinding,
+} from '../../paper-domain/automation/gpu-scientific-campaign-evidence-verifier.mjs';
 import { verifyEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
 import { verifyWorkerProcessExecutionIdentity } from '../../paper-domain/automation/worker-process-execution-contract.mjs';
+import {
+  verifyDeepLearningInlineTrainingDataset,
+} from '../../paper-domain/research/deep-learning-training-dataset-contract.mjs';
+import {
+  verifyPdePoisson2dGpuProducerSpecification,
+} from '../../paper-domain/research/pde-poisson-2d-gpu-capability-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -92,6 +101,11 @@ export function validateGpuScientificArtifactBodyArchiveResultAuthority({
       !== executionPlan.gpuScientificCampaignExecutionPlanHash
     || result.gpuScientificCampaignAttemptAuthorityHash
       !== attemptAuthority.gpuScientificCampaignAttemptAuthorityHash
+    || result.taskSetHash !== executionPlan.taskSetHash
+    || !Number.isSafeInteger(result.effectiveExecutionDeadlineEpochMs)
+    || result.effectiveExecutionDeadlineEpochMs < 1
+    || result.effectiveExecutionDeadlineEpochMs
+      > executionPlan.absoluteExecutionDeadlineEpochMs
     || result.productionQualified !== false
     || result.promotionEligible !== false
     || result.networkActionPerformed !== false
@@ -100,7 +114,50 @@ export function validateGpuScientificArtifactBodyArchiveResultAuthority({
     || result.executionCompletedAtEpochMs < 0
     || !Array.isArray(result.taskResults)
     || result.taskResults.length !== 2) {
-    throw new Error('gpu_scientific_artifact_body_archive_result_invalid');
+    const reasons = [
+      recordHashValid(
+        result,
+        'GpuScientificCampaignExecutionResult',
+        'gpuScientificCampaignExecutionResultHash',
+      ) ? null : 'record_hash',
+      result.status
+        === 'gpu_scientific_campaign_execution_completed_non_promotable'
+        ? null : `status:${(result.taskResults || []).map((taskResult) => (
+          `${taskResult?.taskType || 'unknown'}=${taskResult?.status || 'missing'}:${(
+            taskResult?.blockers || []
+          ).join('+')}`
+        )).join('|')}`,
+      result.campaignId === campaign.campaignId ? null : 'campaign_id',
+      result.paperId === campaign.paperId ? null : 'paper_id',
+      result.campaignPlanHash === campaign.spec.campaignPlanHash
+        ? null : 'campaign_plan_hash',
+      result.nodeId === node.nodeId ? null : 'node_id',
+      result.attemptId === node.attemptId ? null : 'attempt_id',
+      result.leaseGeneration === node.leaseGeneration ? null : 'lease_generation',
+      result.executionPlanHash
+        === executionPlan.gpuScientificCampaignExecutionPlanHash
+        ? null : 'execution_plan_hash',
+      result.gpuScientificCampaignAttemptAuthorityHash
+        === attemptAuthority.gpuScientificCampaignAttemptAuthorityHash
+        ? null : 'attempt_authority_hash',
+      result.taskSetHash === executionPlan.taskSetHash ? null : 'task_set_hash',
+      Number.isSafeInteger(result.effectiveExecutionDeadlineEpochMs)
+        && result.effectiveExecutionDeadlineEpochMs >= 1
+        && result.effectiveExecutionDeadlineEpochMs
+          <= executionPlan.absoluteExecutionDeadlineEpochMs
+        ? null : 'effective_deadline',
+      result.productionQualified === false ? null : 'production_qualified',
+      result.promotionEligible === false ? null : 'promotion_eligible',
+      result.networkActionPerformed === false ? null : 'network_action',
+      result.externalActionPerformed === false ? null : 'external_action',
+      Number.isSafeInteger(result.executionCompletedAtEpochMs)
+        && result.executionCompletedAtEpochMs >= 0 ? null : 'completion_time',
+      Array.isArray(result.taskResults) && result.taskResults.length === 2
+        ? null : 'task_results',
+    ].filter(Boolean);
+    throw new Error(
+      `gpu_scientific_artifact_body_archive_result_invalid:${reasons.join(',')}`,
+    );
   }
   const [pdeTaskResult, deepLearningTaskResult] = result.taskResults;
   for (const [index, taskResult] of result.taskResults.entries()) {
@@ -131,6 +188,7 @@ export function validateGpuScientificArtifactBodyArchivePdeSource(taskResult) {
   const scientificReceipt = taskResult?.receipt;
   const gpuReceipt = scientificReceipt?.gpuReceipt;
   const artifactManifest = gpuReceipt?.artifactManifest;
+  const producerSpecification = gpuReceipt?.producerSpecification;
   const workerReceipt = artifactManifest?.osSandboxWorkerReceipt;
   if (taskResult?.taskType !== PDE_TASK_TYPE
     || taskResult.receiptHash
@@ -156,11 +214,16 @@ export function validateGpuScientificArtifactBodyArchivePdeSource(taskResult) {
     || gpuReceipt.workerReceiptHash !== workerReceipt.receiptHash
     || artifactManifest.workerReceiptHash !== workerReceipt.receiptHash
     || artifactManifest.requestHash !== gpuReceipt.requestHash
+    || !verifyPdePoisson2dGpuProducerSpecification(producerSpecification)
+    || artifactManifest.producerSpecificationHash
+      !== producerSpecification.pdePoisson2dGpuProducerSpecificationHash
     || !SHA256.test(String(gpuReceipt.requestHash || ''))) {
     throw new Error('gpu_scientific_artifact_body_archive_pde_receipt_invalid');
   }
   const expectedPaths = GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS
-    .filter((item) => item.taskType === PDE_TASK_TYPE)
+    .filter((item) => (
+      item.taskType === PDE_TASK_TYPE && item.archiveSource === 'worker-artifact'
+    ))
     .map((item) => item.producerRelativePath);
   const artifactMap = exactArtifactMap(workerReceipt, expectedPaths);
   const manifestArtifacts = new Map(
@@ -185,16 +248,32 @@ export function validateGpuScientificArtifactBodyArchivePdeSource(taskResult) {
     artifactManifest,
     workerReceipt,
     artifactMap,
+    producerSpecification,
   };
 }
 
 export function validateGpuScientificArtifactBodyArchiveDeepLearningSource(
   taskResult,
-  expectedTrainingRunId,
+  {
+    task,
+    gpuDeviceSelector,
+    deadline,
+    executionAuthorityHash,
+  } = {},
 ) {
   const receipt = taskResult?.receipt;
   const workerReceipt = receipt?.workerReceipt;
   const trainingExecutionReceipt = receipt?.trainingExecutionReceipt;
+  if (!verifyGpuScientificDeepLearningTaskReceiptRequestBinding(receipt, {
+    task,
+    gpuDeviceSelector,
+    deadline,
+    executionAuthorityHash,
+  })) {
+    throw new Error(
+      'gpu_scientific_artifact_body_archive_deep_learning_task_request_binding_invalid',
+    );
+  }
   if (taskResult?.taskType !== DEEP_LEARNING_TASK_TYPE
     || taskResult.receiptHash
       !== receipt?.canonicalCupyDeepLearningTrainingReceiptHash
@@ -209,8 +288,11 @@ export function validateGpuScientificArtifactBodyArchiveDeepLearningSource(
       'DeepLearningTrainingExecutionReceipt',
       'deepLearningTrainingExecutionReceiptHash',
     )
-    || receipt.trainingRunId !== expectedTrainingRunId
-    || trainingExecutionReceipt.trainingRunId !== expectedTrainingRunId
+    || !verifyDeepLearningInlineTrainingDataset(task?.trainingDataset)
+    || receipt.trainingDatasetManifestHash
+      !== task.trainingDataset.deepLearningTrainingDatasetManifestHash
+    || trainingExecutionReceipt.trainingDatasetManifestHash
+      !== task.trainingDataset.deepLearningTrainingDatasetManifestHash
     || receipt.workerReceiptHash !== workerReceipt.receiptHash
     || receipt.workerArtifactManifestHash !== workerReceipt.artifactManifestHash
     || receipt.trainingExecutionReceiptHash
@@ -218,7 +300,10 @@ export function validateGpuScientificArtifactBodyArchiveDeepLearningSource(
     throw new Error('gpu_scientific_artifact_body_archive_deep_learning_receipt_invalid');
   }
   const expectedPaths = GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS
-    .filter((item) => item.taskType === DEEP_LEARNING_TASK_TYPE)
+    .filter((item) => (
+      item.taskType === DEEP_LEARNING_TASK_TYPE
+      && item.archiveSource === 'worker-artifact'
+    ))
     .map((item) => item.producerRelativePath);
   const artifactMap = exactArtifactMap(workerReceipt, expectedPaths);
   if (JSON.stringify(receipt.artifacts) !== JSON.stringify(workerReceipt.artifacts)
@@ -238,7 +323,13 @@ export function validateGpuScientificArtifactBodyArchiveDeepLearningSource(
       'gpu_scientific_artifact_body_archive_deep_learning_artifact_binding_invalid',
     );
   }
-  return { receipt, workerReceipt, trainingExecutionReceipt, artifactMap };
+  return {
+    receipt,
+    workerReceipt,
+    trainingExecutionReceipt,
+    artifactMap,
+    task,
+  };
 }
 
 export function deriveGpuScientificArtifactBodyArchiveRuntimeBindings({

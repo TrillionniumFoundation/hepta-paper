@@ -1,5 +1,7 @@
 [Unit]
 Description=Hepta Paper dedicated-UID release attestor
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
 After=local-fs.target
 Before=hepta-paper-release-attestor-probe.service autonomous-research-supervisor.service
 StartLimitIntervalSec=0

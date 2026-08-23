@@ -1,5 +1,7 @@
 [Unit]
 Description=Hepta Paper native submission-handoff DAC convergence
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
 Requires=hepta-paper-host-bootstrap.service
 After=hepta-paper-host-bootstrap.service
 ConditionPathExists=/var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/submission-handoff.sqlite

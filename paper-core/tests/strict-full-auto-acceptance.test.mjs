@@ -4,8 +4,12 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { StrictFullAutoAcceptanceRepository } from '../../paper-adapters/automation/strict-full-auto-acceptance-repository.mjs';
+import { StrictFullAutoAcceptancePlanControlStore } from '../../paper-adapters/automation/strict-full-auto-acceptance-plan-control-store.mjs';
 import { StrictFullAutoAcceptanceCommandRunner } from '../../paper-adapters/automation/strict-full-auto-acceptance-command-runner.mjs';
 import { StrictFullAutoAcceptanceOrchestrator } from '../../paper-application/automation/strict-full-auto-acceptance-orchestrator.mjs';
+import {
+  composeStrictFullAutoAcceptance,
+} from '../../paper-composition/automation/strict-full-auto-acceptance-composition.mjs';
 import {
   assertInvocationOutput,
   finalVerificationStep,
@@ -16,6 +20,10 @@ import {
   STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER,
   strictFullAutoAcceptanceHash,
 } from '../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
+import {
+  buildStrictFullAutoAcceptancePlan,
+  verifyStrictFullAutoAcceptancePlan,
+} from '../../paper-domain/automation/strict-full-auto-acceptance-plan.mjs';
 import {
   parseStrictFullAutoAcceptanceArguments,
   runStrictFullAutoAcceptance,
@@ -42,8 +50,13 @@ test('systemd convergence retries unattended without receiving portal secrets', 
   const timer = fs.readFileSync(new URL(
     '../deploy/strict-full-auto-acceptance.timer', import.meta.url,
   ), 'utf8');
+  const adoptionUnit = fs.readFileSync(new URL(
+    '../deploy/strict-full-auto-runtime-adoption.service', import.meta.url,
+  ), 'utf8');
   assert.match(unit, /strict-full-auto-acceptance -- --action converge/);
   assert.match(unit, /--execute --require-accepted/);
+  assert.match(unit, /--action adoption-status .*--require-adopted/);
+  assert.match(unit, /Requires=.*strict-full-auto-runtime-adoption\.service/);
   assert.doesNotMatch(unit, /--plan-hash/);
   assert.match(unit, /^Restart=on-failure$/m);
   for (const requiredPath of [
@@ -80,12 +93,55 @@ test('systemd convergence retries unattended without receiving portal secrets', 
   assert.match(unit, /^ReadOnlyPaths=.*\/srv\/hepta-paper\/datasets(?:\s|$)/m);
   assert.doesNotMatch(unit, /^ReadWritePaths=.*\/srv\/hepta-paper\/datasets(?:\s|$)/m);
   assert.doesNotMatch(unit, /\/srv\/hepta-paper\/assets\/datasets/);
-  assert.equal(environment.trim(),
-    'HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION=/run/hepta/strict-full-auto-acceptance.json');
+  assert.match(environment,
+    /^HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION=\/run\/hepta\/strict-full-auto-acceptance\.json$/m);
+  assert.match(environment,
+    new RegExp(`^HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH=sha256:${'0'.repeat(64)}$`, 'm'));
+  assert.match(environment,
+    /^HEPTA_PAPER_RUNTIME_ROOT=\/var\/lib\/hepta-paper\/runtime$/m);
+  assert.match(adoptionUnit,
+    /Before=.*autonomous-research-supervisor\.service.*autonomous-submission-dispatcher\.service/);
+  assert.match(adoptionUnit,
+    /--action adopt-runtime .*--plan-hash \$\{HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH\} --execute/);
+  assert.match(adoptionUnit,
+    /ExecStartPre=\/usr\/bin\/test -r \/run\/hepta\/online-state-authority-process\.json/);
+  assert.match(adoptionUnit,
+    /ExecStartPre=\/usr\/bin\/test -r \/run\/hepta-authority\/pre-resident-writer-quiescence\.json/);
+  assert.match(adoptionUnit, /^ReadOnlyPaths=.*\/var\/lib\/hepta-paper\/runtime(?:\s|$)/m);
+  assert.match(adoptionUnit, /^ReadOnlyPaths=.*\/run\/hepta(?:\s|$)/m);
+  assert.match(adoptionUnit,
+    /^ReadWritePaths=\/var\/lib\/hepta-paper\/strict-full-auto-acceptance-control(?:\s|$)/m);
+  assert.doesNotMatch(adoptionUnit, /autonomous-research-provider\.secrets\.env/);
+  assert.doesNotMatch(adoptionUnit, /After=.*autonomous-research-supervisor\.service/);
   assert.match(timer, /^OnBootSec=2min$/m);
   assert.match(timer, /^OnUnitInactiveSec=5min$/m);
   assert.match(timer, /^Persistent=true$/m);
   assert.match(timer, /^Unit=strict-full-auto-acceptance\.service$/m);
+});
+
+test('production composition injects the real pristine inspector by default', (t) => {
+  const value = fixture(t);
+  const production = composeStrictFullAutoAcceptance({
+    workspaceRoot: path.resolve('.'),
+    configurationPath: value.configurationPath,
+  });
+  assert.equal(typeof production.repository.pristineRuntimeInspector?.inspect, 'function');
+  assert.equal(typeof production.repository.pristineRuntimeInspector?.verify, 'function');
+  assert.equal(
+    production.repository.pristineRuntimeInspector.authorityProcessConfigurationPath,
+    '/run/hepta/online-state-authority-process.json',
+  );
+  assert.equal(
+    production.repository.pristineRuntimeInspector.writerQuiescenceReceiptPath,
+    '/run/hepta-authority/pre-resident-writer-quiescence.json',
+  );
+
+  const explicitlyUnavailable = composeStrictFullAutoAcceptance({
+    workspaceRoot: path.resolve('.'),
+    configurationPath: value.configurationPath,
+    pristineRuntimeInspector: null,
+  });
+  assert.equal(explicitlyUnavailable.repository.pristineRuntimeInspector, null);
 });
 
 test('plan preflights all external references without reading opaque material or creating runtime state', (t) => {
@@ -124,7 +180,129 @@ test('plan preflights all external references without reading opaque material or
   )).equals;
   assert.deepEqual(requiredProfiles, ['python', 'pythonGpu', 'r']);
   assert.equal(Object.isFrozen(requiredProfiles), true);
+  assert.equal(first.finalVerification.command, 'full-production-readiness');
+  for (const [referenceId, pathFlag, hashFlag] of [
+    ['owner-trust-store', '--owner-trust-store', '--owner-trust-store-sha256'],
+    [
+      'owner-acceptance-document',
+      '--owner-acceptance-document',
+      '--owner-acceptance-document-sha256',
+    ],
+    [
+      'package-recovery-readiness-command',
+      '--package-recovery-readiness-command',
+      '--package-recovery-readiness-command-sha256',
+    ],
+  ]) {
+    const reference = first.referenceBindings.find((item) => (
+      item.referenceId === referenceId
+    ));
+    assert.equal(first.finalVerification.arguments[
+      first.finalVerification.arguments.indexOf(pathFlag) + 1
+    ], reference.resolvedPath);
+    assert.equal(first.finalVerification.arguments[
+      first.finalVerification.arguments.indexOf(hashFlag) + 1
+    ], reference.contentHash);
+  }
+  assert.deepEqual(first.finalVerification.assertions.find((assertion) => (
+    assertion.path === '/blockers'
+  )).equals, []);
   assert.equal(fs.existsSync(path.join(value.controlRoot, 'state.json')), false);
+});
+
+test('plan validators and control-store boundaries fail closed before any state mutation', (t) => {
+  assert.throws(() => buildStrictFullAutoAcceptancePlan(),
+    /strict_full_auto_acceptance_plan_input_invalid/u);
+  assert.throws(() => verifyStrictFullAutoAcceptancePlan({}),
+    /strict_full_auto_acceptance_plan_invalid/u);
+  const value = fixture(t);
+  const plan = orchestratorFor(value.configurationPath, successfulRunner()).plan();
+  assert.doesNotThrow(() => verifyStrictFullAutoAcceptancePlan(plan));
+  assert.throws(() => verifyStrictFullAutoAcceptancePlan({
+    ...plan,
+    planHash: `sha256:${'f'.repeat(64)}`,
+  }), /strict_full_auto_acceptance_plan_hash_mismatch/u);
+
+  const store = new StrictFullAutoAcceptancePlanControlStore();
+  assert.throws(() => store.ensurePlanScope({ controlRoot: value.controlRoot }),
+    /strict_full_auto_acceptance_plan_scope_lease_required/u);
+  assert.throws(() => store.dispositionPath({ controlRoot: value.controlRoot }, 'invalid'),
+    /strict_full_auto_acceptance_plan_disposition_hash_invalid/u);
+});
+
+test('final full-production command, path, hash and executable mode are fail-closed', (t) => {
+  const legacyFinal = fixture(t, ({ configuration }) => {
+    configuration.finalVerification.command = 'automation-status';
+  });
+  assert.throws(() => orchestratorFor(
+    legacyFinal.configurationPath,
+    successfulRunner(),
+  ).plan(), /invocation_policy_mismatch:final-aggregate-live-verification/);
+
+  const pathDrift = fixture(t, ({ configuration }) => {
+    const index = configuration.finalVerification.arguments.indexOf(
+      '--package-recovery-readiness-command',
+    );
+    configuration.finalVerification.arguments[index + 1] = '/tmp/unbound-package-command';
+  });
+  assert.throws(() => orchestratorFor(
+    pathDrift.configurationPath,
+    successfulRunner(),
+  ).plan(), /argument_reference_mismatch:final-aggregate-live-verification/);
+
+  const hashDrift = fixture(t, ({ configuration }) => {
+    const index = configuration.finalVerification.arguments.indexOf(
+      '--package-recovery-readiness-command-sha256',
+    );
+    configuration.finalVerification.arguments[index + 1] = `sha256:${'f'.repeat(64)}`;
+  });
+  assert.throws(() => orchestratorFor(
+    hashDrift.configurationPath,
+    successfulRunner(),
+  ).plan(), /argument_reference_hash_mismatch:final-aggregate-live-verification/);
+
+  const nonExecutable = fixture(t, ({ configuration }) => {
+    fs.chmodSync(
+      configuration.references['package-recovery-readiness-command'].path,
+      0o444,
+    );
+  });
+  assert.throws(() => orchestratorFor(
+    nonExecutable.configurationPath,
+    successfulRunner(),
+  ).plan(), /executable_reference_invalid:package-recovery-readiness-command/);
+
+  const substitutedOwnerRoot = fixture(t, ({ configuration, referenceRoot }) => {
+    const alternateRoot = path.join(referenceRoot, 'substituted-public');
+    fs.mkdirSync(alternateRoot, { mode: 0o700 });
+    const alternate = path.join(alternateRoot, 'OWNER_TRUST_STORE.json');
+    fs.writeFileSync(alternate, '{}\n', { mode: 0o444 });
+    fs.chmodSync(alternate, 0o444);
+    const reference = configuration.references['owner-trust-store'];
+    reference.path = alternate;
+    reference.expectedSha256 = sha256File(alternate);
+    const pathIndex = configuration.finalVerification.arguments.indexOf('--owner-trust-store');
+    const hashIndex = configuration.finalVerification.arguments.indexOf(
+      '--owner-trust-store-sha256',
+    );
+    configuration.finalVerification.arguments[pathIndex + 1] = alternate;
+    configuration.finalVerification.arguments[hashIndex + 1] = reference.expectedSha256;
+  });
+  assert.throws(() => orchestratorFor(
+    substitutedOwnerRoot.configurationPath,
+    successfulRunner(),
+  ).plan(), /owner_reference_path_mismatch/);
+
+  const ownerHashDrift = fixture(t, ({ configuration }) => {
+    const index = configuration.finalVerification.arguments.indexOf(
+      '--owner-acceptance-document-sha256',
+    );
+    configuration.finalVerification.arguments[index + 1] = `sha256:${'e'.repeat(64)}`;
+  });
+  assert.throws(() => orchestratorFor(
+    ownerHashDrift.configurationPath,
+    successfulRunner(),
+  ).plan(), /argument_reference_hash_mismatch:final-aggregate-live-verification/);
 });
 
 test('final verification compares parsed array assertions by canonical JSON value', async (t) => {
@@ -190,6 +368,7 @@ test('final verification compares parsed array assertions by canonical JSON valu
   ).plan(), /invocation_policy_mismatch:final-aggregate-live-verification/);
 });
 
+
 test('strict acceptance requires v3 KMS authority and preflights its pinned bundle', (t) => {
   const downgraded = fixture(t, ({ configuration }) => {
     const reference = configuration.references['release-attestor-config'];
@@ -227,7 +406,7 @@ test('strict acceptance requires v3 KMS authority and preflights its pinned bund
   );
 });
 
-test('short-lived author and KMS evidence rotates beneath stable acceptance pins', (t) => {
+test('short-lived author evidence requires a fresh acceptance plan while KMS evidence may rotate', async (t) => {
   const value = fixture(t);
   const service = orchestratorFor(value.configurationPath, successfulRunner());
   const authorReference =
@@ -246,20 +425,35 @@ test('short-lived author and KMS evidence rotates beneath stable acceptance pins
   const rotatedRelease = value.rotateReleaseHardwareAuthority();
   const second = service.plan();
 
-  assert.equal(second.planHash, first.planHash);
-  for (const referenceId of [
-    'research-author-identity-config',
-    'release-attestor-config',
-  ]) {
-    const before = first.referenceBindings.find((item) => item.referenceId === referenceId);
-    const after = second.referenceBindings.find((item) => item.referenceId === referenceId);
-    assert.equal(after.identity, before.identity);
-    assert.equal(after.contentHash, before.contentHash);
-    assert.deepEqual(after.documentPins, before.documentPins);
-  }
+  assert.notEqual(second.planHash, first.planHash);
+  const beforeAuthor = first.referenceBindings.find((item) => (
+    item.referenceId === 'research-author-identity-config'
+  ));
+  const afterAuthor = second.referenceBindings.find((item) => (
+    item.referenceId === 'research-author-identity-config'
+  ));
+  assert.notEqual(afterAuthor.identity, beforeAuthor.identity);
+  assert.notEqual(afterAuthor.contentHash, beforeAuthor.contentHash);
+  assert.notDeepEqual(afterAuthor.documentPins, beforeAuthor.documentPins);
+  const beforeRelease = first.referenceBindings.find((item) => (
+    item.referenceId === 'release-attestor-config'
+  ));
+  const afterRelease = second.referenceBindings.find((item) => (
+    item.referenceId === 'release-attestor-config'
+  ));
+  assert.equal(afterRelease.identity, beforeRelease.identity);
+  assert.equal(afterRelease.contentHash, beforeRelease.contentHash);
+  assert.deepEqual(afterRelease.documentPins, beforeRelease.documentPins);
   assert.notEqual(sha256File(authorReference.path), originalRawHashes.author);
   assert.equal(rotatedRelease.configurationFileHash, originalRawHashes.release);
   assert.notEqual(rotatedRelease.bundleHash, originalRawHashes.bundle);
+
+  // The old plan was bound to the previous author attestation and cannot be
+  // replayed after rotation.
+  await assert.rejects(
+    service.execute({ expectedPlanHash: first.planHash }),
+    /strict_full_auto_acceptance_explicit_plan_hash_required/,
+  );
 
   const driftedAuthor = JSON.parse(fs.readFileSync(authorReference.path, 'utf8'));
   driftedAuthor.identityPolicy.providerAccountIdentityHash =
@@ -951,7 +1145,8 @@ test('any skipped operational check is a hard failure and remains resumable', as
   assert.equal((await service.status()).strictFullAutoAccepted, false);
 });
 
-test('CLI exposes plan/status/execute/converge and requires explicit mutation confirmation', () => {
+test('CLI exposes adoption, plan/status/execute/converge and requires explicit mutation confirmation',
+  () => {
   const configuration = '/tmp/strict-full-auto-acceptance.json';
   assert.equal(parseStrictFullAutoAcceptanceArguments([
     '--action', 'plan', '--configuration', configuration,
@@ -974,6 +1169,19 @@ test('CLI exposes plan/status/execute/converge and requires explicit mutation co
   assert.equal(parseStrictFullAutoAcceptanceArguments([
     '--action', 'converge', '--configuration', configuration, '--execute',
   ]).action, 'converge');
+  assert.equal(parseStrictFullAutoAcceptanceArguments([
+    '--action', 'inspect-runtime-adoption-candidate', '--configuration', configuration,
+  ]).action, 'inspect-runtime-adoption-candidate');
+  assert.equal(parseStrictFullAutoAcceptanceArguments([
+    '--action', 'adoption-status', '--configuration', configuration, '--require-adopted',
+  ]).requireAdopted, true);
+  assert.throws(() => parseStrictFullAutoAcceptanceArguments([
+    '--action', 'adopt-runtime', '--configuration', configuration, '--execute',
+  ]), /runtime_adoption_confirmation_required/);
+  assert.equal(parseStrictFullAutoAcceptanceArguments([
+    '--action', 'adopt-runtime', '--configuration', configuration,
+    '--plan-hash', `sha256:${'c'.repeat(64)}`, '--execute',
+  ]).action, 'adopt-runtime');
 });
 
 test('converge binds the freshly inspected plan hash without an operator handoff', async () => {

@@ -181,6 +181,80 @@ export class StrictFullAutoAcceptanceOrchestrator
     });
   }
 
+  runtimeAdoptionStatus() {
+    const plan = verifyStrictFullAutoAcceptancePlan(this.repository.inspectPlan());
+    if (plan.runtimeRootAdoption.mode === 'fresh-runtime-only') {
+      return Object.freeze({
+        version: 1,
+        kind: 'StrictFullAutoAcceptanceRuntimeAdoptionStatus',
+        planHash: plan.planHash,
+        mode: plan.runtimeRootAdoption.mode,
+        ready: true,
+        adoptionRequired: false,
+        adoptionReceiptHash: null,
+        runtimeRootActivationHash: null,
+        blockers: Object.freeze([]),
+      });
+    }
+    const adoption = this.repositoryCapability('readPristineRuntimeAdoption')?.(plan) || null;
+    const activation = this.repository.readRuntimeRootActivation(plan);
+    const ready = Boolean(adoption
+      && activation?.version === 2
+      && activation.adoptionReceiptHash === adoption.adoptionReceiptHash);
+    return Object.freeze({
+      version: 1,
+      kind: 'StrictFullAutoAcceptanceRuntimeAdoptionStatus',
+      planHash: plan.planHash,
+      mode: plan.runtimeRootAdoption.mode,
+      ready,
+      adoptionRequired: true,
+      adoptionReceiptHash: adoption?.adoptionReceiptHash || null,
+      runtimeRootActivationHash: activation?.runtimeRootActivationHash || null,
+      blockers: Object.freeze(ready
+        ? [] : ['strict_full_auto_acceptance_pristine_runtime_adoption_required']),
+    });
+  }
+
+  inspectRuntimeAdoptionCandidate() {
+    const plan = verifyStrictFullAutoAcceptancePlan(this.repository.inspectPlan());
+    const inspection = this.repositoryCapability(
+      'inspectPristineRuntimeAdoptionCandidate',
+    )?.(plan);
+    if (!inspection) {
+      throw new Error('strict_full_auto_acceptance_pristine_runtime_inspector_required');
+    }
+    const rechecked = verifyStrictFullAutoAcceptancePlan(this.repository.inspectPlan());
+    if (rechecked.planHash !== plan.planHash) {
+      throw new Error('strict_full_auto_acceptance_plan_or_reference_drift');
+    }
+    return inspection;
+  }
+
+  async adoptRuntime({ expectedPlanHash } = {}) {
+    const plan = verifyStrictFullAutoAcceptancePlan(this.repository.inspectPlan());
+    if (expectedPlanHash !== plan.planHash) {
+      throw new Error('strict_full_auto_acceptance_explicit_plan_hash_required');
+    }
+    if (plan.runtimeRootAdoption.mode === 'fresh-runtime-only') {
+      return this.runtimeAdoptionStatus();
+    }
+    return this.withExclusiveLease(plan, 'runtime-adoption', ({ lease }) => {
+      this.repositoryCapability('ensureCandidate')?.(plan, { lease });
+      if (this.repository.readState(plan)) {
+        throw new Error('strict_full_auto_acceptance_pristine_runtime_adoption_after_state_forbidden');
+      }
+      const adopted = this.repositoryCapability('preparePristineRuntimeRootAdoption')?.(
+        plan,
+        { lease },
+      );
+      if (!adopted) {
+        throw new Error('strict_full_auto_acceptance_pristine_runtime_adoption_unavailable');
+      }
+      this.assertStablePlan(plan, lease);
+      return this.runtimeAdoptionStatus();
+    });
+  }
+
   async executeUnderLease({ plan, lease, signal }) {
     let state = this.repository.readState(plan);
     let inheritedRuntimeRootActivation = null;
@@ -188,6 +262,17 @@ export class StrictFullAutoAcceptanceOrchestrator
       inheritedRuntimeRootActivation = this.repositoryCapability(
         'prepareCandidateRuntimeRootActivation',
       )?.(plan, { lease }) || null;
+      if (!inheritedRuntimeRootActivation
+        && plan.runtimeRootAdoption.mode === 'verified-pristine-existing-runtime') {
+        const adoption = this.repositoryCapability('readPristineRuntimeAdoption')?.(plan) || null;
+        const activation = this.repository.readRuntimeRootActivation(plan);
+        if (!adoption
+          || activation?.version !== 2
+          || activation.adoptionReceiptHash !== adoption.adoptionReceiptHash) {
+          throw new Error('strict_full_auto_acceptance_pristine_runtime_adoption_required');
+        }
+        inheritedRuntimeRootActivation = activation;
+      }
       if (!inheritedRuntimeRootActivation) this.repository.assertRuntimeRootAbsent(plan);
     }
     state = state ? verifyState(plan, state) : initialState(plan, this.now, lease, {
@@ -207,19 +292,29 @@ export class StrictFullAutoAcceptanceOrchestrator
 
     for (let index = state.completedStepReceipts.length; index < plan.steps.length; index += 1) {
       const step = plan.steps[index];
+      const runtimeActivation = this.repository.readRuntimeRootActivation(plan);
+      const adoptedProvisioning = step.stepId === 'state-provisioning'
+        && runtimeActivation?.version === 2;
+      const adoptedProvisioningBasis = adoptedProvisioning ? Object.freeze({
+        version: 1,
+        kind: 'StrictFullAutoAcceptanceAdoptedProvisioningExecutionBasis',
+        adoptionReceiptHash: runtimeActivation.adoptionReceiptHash,
+        runtimeRootActivationHash: runtimeActivation.runtimeRootActivationHash,
+      }) : null;
       let active = state.activeStep;
       this.repository.ensureIntent(plan, step, { lease });
       if (!active) {
         active = Object.freeze({
           stepId: step.stepId,
           idempotencyKey: step.idempotencyKey,
-          phase: 'execute',
+          phase: adoptedProvisioning ? 'verify' : 'execute',
           intentHash: strictFullAutoAcceptanceHash({
             planHash: plan.planHash,
             stepId: step.stepId,
             idempotencyKey: step.idempotencyKey,
           }),
-          executionOutputHash: null,
+          executionOutputHash: adoptedProvisioning
+            ? strictFullAutoAcceptanceHash(adoptedProvisioningBasis) : null,
           attempt: 1,
         });
         state = this.checkpointState(plan, state, lease, {
@@ -229,6 +324,12 @@ export class StrictFullAutoAcceptanceOrchestrator
 
       try {
         let executionOutputHash = active.executionOutputHash;
+        if (adoptedProvisioning
+          && (active.phase !== 'verify'
+            || active.executionOutputHash
+              !== strictFullAutoAcceptanceHash(adoptedProvisioningBasis))) {
+          throw new Error('strict_full_auto_acceptance_adopted_provisioning_state_invalid');
+        }
         if (active.phase === 'execute') {
           const dispatchStart = this.repository.ensureDispatchStarted(plan, step, { lease });
           // A verify-first recovery closes the crash window after an external command succeeded
@@ -264,6 +365,7 @@ export class StrictFullAutoAcceptanceOrchestrator
                 verificationOutputHash: verified.outputHash,
               });
               const receipt = stepReceipt({ plan, step, executionOutputHash,
+                executionBasis: null,
                 verificationOutputHash: verified.outputHash, now: this.now });
               state = this.checkpointState(plan, state, lease, {
                 status: 'executing',
@@ -313,6 +415,7 @@ export class StrictFullAutoAcceptanceOrchestrator
           `${step.stepId}:verify`,
         );
         const receipt = stepReceipt({ plan, step, executionOutputHash,
+          executionBasis: adoptedProvisioningBasis,
           verificationOutputHash: verified.outputHash, now: this.now });
         state = this.checkpointState(plan, state, lease, {
           status: 'executing',

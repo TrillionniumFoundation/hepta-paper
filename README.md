@@ -41,6 +41,7 @@ local automation decision, never an academic acceptance or submission grant.
 npm run hepta-paper -- operator store-migrate
 npm run hepta-paper -- operator automation
 npm run hepta-paper -- operator research-readiness
+npm run hepta-paper -- operator full-production-readiness -- --help
 npm run automation:selftest
 HEPTA_AGENT_LOCAL_PROVIDER=ollama \
   HEPTA_AGENT_MODEL=<local-model> npm run automation:agent-smoke

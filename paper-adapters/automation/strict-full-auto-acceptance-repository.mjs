@@ -5,6 +5,9 @@ import path from 'node:path';
 import {
   STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY,
   STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER,
+  assertAutonomousResearchPristineRuntimeInspectionReceipt,
+  assertStrictFullAutoAcceptanceRuntimeRootAdoptionPolicy,
+  autonomousResearchPristineRuntimeInspectionStateHash,
   buildStrictFullAutoAcceptancePlan,
   strictFullAutoAcceptanceHash,
 } from '../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
@@ -16,6 +19,9 @@ import {
   inspectStrictFullAutoAcceptanceRootBinding,
   preflightStrictFullAutoAcceptanceInputDirectory,
 } from './strict-full-auto-acceptance-root-binding.mjs';
+import {
+  runtimeRootIdentity,
+} from './strict-full-auto-acceptance-control-paths.mjs';
 import {
   autonomousSubmissionPortalPublicDescriptorHash,
 } from './autonomous-submission-portal-public-adapter.mjs';
@@ -30,6 +36,10 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SEMANTIC_CONFIGURATION_REFERENCES = new Set([
   'research-author-identity-config',
   'release-attestor-config',
+  // The runtime verifier's pin is the resolved process/trust identity (which
+  // includes executable, backend and credential-root identities), not the raw
+  // JSON file bytes. Keep that out-of-band identity in the plan binding.
+  'runtime-reproducibility-principal',
 ]);
 const OBSERVED_CONTENT_HASH = Symbol('strictFullAutoAcceptanceObservedContentHash');
 
@@ -185,6 +195,7 @@ function inspectReference(referenceId, value) {
       'submission-portal-descriptor-config',
       'prior-art-service-config',
       'external-replay-config',
+      'runtime-reproducibility-principal',
       'research-author-identity-config',
       'release-attestor-config',
     ]).has(referenceId);
@@ -265,7 +276,7 @@ function inspectReference(referenceId, value) {
 function validatedConfiguration(configuration) {
   if (!exactKeys(configuration, [
     'version', 'kind', 'controlRoot', 'runtimeRoot', 'assetRoot', 'datasetRoot',
-    'operationalEnvironment', 'references', 'steps', 'finalVerification',
+    'runtimeRootAdoption', 'operationalEnvironment', 'references', 'steps', 'finalVerification',
   ])
     || configuration.version !== 1
     || configuration.kind !== 'StrictFullAutoAcceptanceConfiguration'
@@ -277,6 +288,9 @@ function validatedConfiguration(configuration) {
     || !path.isAbsolute(configuration.assetRoot)
     || typeof configuration.datasetRoot !== 'string'
     || !path.isAbsolute(configuration.datasetRoot)
+    || !configuration.runtimeRootAdoption
+    || typeof configuration.runtimeRootAdoption !== 'object'
+    || Array.isArray(configuration.runtimeRootAdoption)
     || !configuration.operationalEnvironment
     || typeof configuration.operationalEnvironment !== 'object'
     || Array.isArray(configuration.operationalEnvironment)
@@ -288,6 +302,7 @@ function validatedConfiguration(configuration) {
     throw new Error('strict_full_auto_acceptance_configuration_invalid');
   }
   const referenceIds = Object.keys(configuration.references).sort();
+  assertStrictFullAutoAcceptanceRuntimeRootAdoptionPolicy(configuration.runtimeRootAdoption);
   const expectedReferenceIds = Object.keys(STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY).sort();
   if (referenceIds.join('\0') !== expectedReferenceIds.join('\0')) {
     throw new Error('strict_full_auto_acceptance_configuration_reference_set_invalid');
@@ -334,6 +349,10 @@ function parseBoundJsonReference(reference, label) {
 
 function assertPrivateAuthorityConfigurations(referenceBindings) {
   const references = new Map(referenceBindings.map((item) => [item.referenceId, item]));
+  assertExecutableReference(
+    references.get('package-recovery-readiness-command'),
+    'package-recovery-readiness-command',
+  );
   const empiricalConfig = references.get('empirical-plugin-signing-config');
   const empirical = parseBoundJsonReference(
     empiricalConfig,
@@ -435,12 +454,24 @@ function parseJsonFile(candidate, label, inspected = regularFileNoSymlink(candid
 }
 
 export class StrictFullAutoAcceptanceRepository {
-  constructor({ configurationPath, controlStore = new StrictFullAutoAcceptanceControlStore() } = {}) {
+  constructor({
+    configurationPath,
+    controlStore = new StrictFullAutoAcceptanceControlStore(),
+    pristineRuntimeInspector = null,
+    clock = { now: () => new Date() },
+  } = {}) {
+    if ((pristineRuntimeInspector !== null
+      && typeof pristineRuntimeInspector?.inspect !== 'function')
+      || typeof clock?.now !== 'function') {
+      throw new Error('strict_full_auto_acceptance_pristine_runtime_inspector_invalid');
+    }
     this.configurationPath = regularFileNoSymlink(
       configurationPath,
       'configuration',
     ).absolute;
     this.controlStore = controlStore;
+    this.pristineRuntimeInspector = pristineRuntimeInspector;
+    this.clock = clock;
   }
 
   inspectPlan() {
@@ -478,6 +509,7 @@ export class StrictFullAutoAcceptanceRepository {
       runtimeRoot,
       assetRoot,
       datasetRoot,
+      runtimeRootAdoption: configuration.runtimeRootAdoption,
       rootBindings: [
         inspectStrictFullAutoAcceptanceRootBinding(controlRoot, 'control-root', {
           targetRequired: true, accessMode: 'read-write',
@@ -559,5 +591,95 @@ export class StrictFullAutoAcceptanceRepository {
 
   readRuntimeRootActivation(plan) {
     return this.controlStore.readRuntimeRootActivation(plan);
+  }
+
+  readPristineRuntimeAdoption(plan) {
+    return this.controlStore.readPristineRuntimeAdoption(plan);
+  }
+
+  inspectPristineRuntimeAdoptionCandidate(plan) {
+    const policy = assertStrictFullAutoAcceptanceRuntimeRootAdoptionPolicy(
+      plan.runtimeRootAdoption,
+    );
+    if (policy.mode !== 'verified-pristine-existing-runtime'
+      || !this.pristineRuntimeInspector) {
+      throw new Error('strict_full_auto_acceptance_pristine_runtime_inspector_required');
+    }
+    const inspect = () => {
+      const now = this.clock.now();
+      if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+        throw new Error('strict_full_auto_acceptance_pristine_runtime_inspection_clock_invalid');
+      }
+      const receipt = this.pristineRuntimeInspector.inspect(Object.freeze({
+        runtimeRoot: plan.runtimeRoot,
+        planHash: plan.planHash,
+        configurationHash: plan.configurationHash,
+        clock: Object.freeze({ now: () => new Date(now) }),
+      }));
+      return assertAutonomousResearchPristineRuntimeInspectionReceipt(
+        receipt,
+        { now },
+      );
+    };
+    const before = inspect();
+    const after = inspect();
+    const beforeInspectionStateHash = autonomousResearchPristineRuntimeInspectionStateHash(
+      before,
+    );
+    const afterInspectionStateHash = autonomousResearchPristineRuntimeInspectionStateHash(
+      after,
+    );
+    const observedIdentityHash = runtimeRootIdentity(plan).runtimeRootIdentityHash;
+    if (beforeInspectionStateHash !== afterInspectionStateHash
+      || before.runtimeRootIdentityHash !== observedIdentityHash
+      || after.runtimeRootIdentityHash !== observedIdentityHash
+      || Date.parse(after.inspectedAt) < Date.parse(before.inspectedAt)) {
+      throw new Error('strict_full_auto_acceptance_pristine_runtime_double_inspection_drift');
+    }
+    return Object.freeze({
+      version: 1,
+      kind: 'StrictFullAutoAcceptancePristineRuntimeAdoptionCandidateInspection',
+      status: 'strict_full_auto_acceptance_pristine_runtime_adoption_candidate_ready',
+      planHash: plan.planHash,
+      configurationHash: plan.configurationHash,
+      expectedRuntimeRootIdentityHash: observedIdentityHash,
+      expectedPristineRuntimeStateHash: after.pristineRuntimeStateHash,
+      inspectionStateHash: afterInspectionStateHash,
+      inspectionReceiptHash: after.receiptHash,
+      inspectionEvidenceFreshThrough: after.evidenceFreshThrough,
+      adoptionMutationPerformed: false,
+      preResidentSchemaRebindVerified: true,
+      blockers: Object.freeze([]),
+      inspectionReceipt: after,
+    });
+  }
+
+  preparePristineRuntimeRootAdoption(plan, { lease }) {
+    this.controlStore.assertLease(plan, lease);
+    const policy = assertStrictFullAutoAcceptanceRuntimeRootAdoptionPolicy(
+      plan.runtimeRootAdoption,
+    );
+    if (policy.mode !== 'verified-pristine-existing-runtime') return null;
+    const existing = this.controlStore.readPristineRuntimeAdoption(plan);
+    if (existing) {
+      return this.controlStore.ensurePristineRuntimeRootAdoption(plan, { lease });
+    }
+    const candidate = this.inspectPristineRuntimeAdoptionCandidate(plan);
+    this.controlStore.assertLease(plan, lease);
+    if (candidate.expectedPristineRuntimeStateHash
+        !== policy.expectedPristineRuntimeStateHash
+      || candidate.expectedRuntimeRootIdentityHash
+        !== policy.expectedRuntimeRootIdentityHash) {
+      throw new Error('strict_full_auto_acceptance_pristine_runtime_double_inspection_drift');
+    }
+    const adoptedAt = this.clock.now();
+    if (!(adoptedAt instanceof Date) || !Number.isFinite(adoptedAt.getTime())) {
+      throw new Error('strict_full_auto_acceptance_pristine_runtime_inspection_clock_invalid');
+    }
+    return this.controlStore.ensurePristineRuntimeRootAdoption(plan, {
+      lease,
+      inspectionReceipt: candidate.inspectionReceipt,
+      adoptedAt: adoptedAt.toISOString(),
+    });
   }
 }

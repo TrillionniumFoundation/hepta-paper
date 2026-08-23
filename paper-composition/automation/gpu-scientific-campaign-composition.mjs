@@ -22,6 +22,9 @@ import {
 import {
   safeRetentionNodeKey,
 } from '../../paper-adapters/automation/runtime-retention-scope-repository.mjs';
+import {
+  createDockerWorkerGpuSelectorLeaseStaleRecovery,
+} from '../../paper-adapters/runtime/os-sandbox-worker-gpu-selector-lease.mjs';
 
 function preparePrivateDirectory(selected) {
   if (typeof selected !== 'string' || !path.isAbsolute(selected)) {
@@ -46,6 +49,9 @@ export function composeCampaignGpuScientificExecution({
   outputRoot,
   runtimeRoot,
   plans = [],
+  docker = 'docker',
+  dockerContainerRecoveryExecutor = null,
+  environment = process.env,
 } = {}) {
   if (!Array.isArray(plans) || !plans.length
     || plans.some((plan) => !verifyGpuScientificCampaignExecutionPlan(plan))) {
@@ -54,6 +60,11 @@ export function composeCampaignGpuScientificExecution({
   const root = preparePrivateDirectory(outputRoot);
   const selectorExecutionLeases = createGpuSelectorExecutionLeaseRepository({
     root: gpuSelectorExecutionLeaseRootForRuntime(runtimeRoot),
+    recoverStaleState: createDockerWorkerGpuSelectorLeaseStaleRecovery({
+      docker,
+      dockerContainerRecoveryExecutor,
+      environment,
+    }),
   });
   const allowedPlanHashes = new Set(plans.map(
     (plan) => plan.gpuScientificCampaignExecutionPlanHash,

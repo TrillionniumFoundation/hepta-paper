@@ -218,6 +218,9 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
       || Object.freeze([]),
     qualificationAuthorityRoles:
       productionQualification?.qualificationAuthorityRoles || Object.freeze([]),
+    evidenceReceiptHashes: Object.freeze({
+      ...(productionQualification?.evidenceReceiptHashes || {}),
+    }),
     qualificationExpiresAt: productionQualification?.expiresAt || null,
     referenceExecutionProcessIdentityHash:
       productionQualification?.referenceExecutionProcessIdentityHash || null,

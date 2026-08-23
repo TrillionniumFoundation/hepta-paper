@@ -241,23 +241,34 @@ const plans = [
       status='queued',attempt_count=attempt_count-1,lease_owner=NULL,
       lease_expires_at=NULL,attempt_id=NULL,failure_class=NULL,failure_json=NULL,
       failure_sha256=NULL,node_revision=node_revision+1,updated_at=?
-      WHERE node_id=? AND status='running' AND lease_owner=? AND attempt_id=?
-        AND lease_generation=? AND attempt_count=? AND attempt_count>0
+      WHERE node_id=? AND lease_generation=? AND attempt_count=? AND attempt_count>0
         AND prepared_result_sha256 IS NULL
         AND NOT EXISTS(SELECT 1 FROM campaign_events e
           WHERE e.campaign_id=campaign_nodes.campaign_id
             AND e.node_id=campaign_nodes.node_id
             AND e.kind='campaign_node_external_action_started'
-            AND json_extract(e.event_json,'$.detail.attemptId')=campaign_nodes.attempt_id
-            AND CAST(json_extract(e.event_json,'$.detail.leaseGeneration') AS INTEGER)=campaign_nodes.lease_generation)
-        AND julianday(lease_expires_at)>=julianday(?)
-        AND EXISTS(SELECT 1 FROM paper_campaigns c
-          WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')`),
+            AND json_extract(e.event_json,'$.detail.attemptId')=?
+            AND CAST(json_extract(e.event_json,'$.detail.leaseGeneration') AS INTEGER)=?)
+        AND ((status='running' AND lease_owner=? AND attempt_id=?
+          AND julianday(lease_expires_at)>=julianday(?)
+          AND EXISTS(SELECT 1 FROM paper_campaigns c
+            WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running'))
+          OR (status='queued' AND lease_owner IS NULL AND lease_expires_at IS NULL
+            AND attempt_id IS NULL AND EXISTS(SELECT 1 FROM paper_campaigns c
+              WHERE c.campaign_id=campaign_nodes.campaign_id
+                AND c.status IN ('paused','running'))
+            AND EXISTS(SELECT 1 FROM campaign_events s
+              WHERE s.campaign_id=campaign_nodes.campaign_id
+                AND s.node_id=campaign_nodes.node_id AND s.kind='campaign_node_started'
+                AND json_extract(s.event_json,'$.detail.workerId')=?
+                AND json_extract(s.event_json,'$.detail.attemptId')=?
+                AND CAST(json_extract(s.event_json,'$.detail.leaseGeneration') AS INTEGER)=?
+                AND CAST(json_extract(s.event_json,'$.detail.attempt') AS INTEGER)=campaign_nodes.attempt_count)))`),
     statement(S.cancelInfrastructureUsage, `UPDATE paper_campaigns SET
       agent_call_count=agent_call_count-?,
       cpu_job_count=cpu_job_count-?,
       gpu_job_count=gpu_job_count-?,revision=revision+1,updated_at=?
-      WHERE campaign_id=? AND status='running'
+      WHERE campaign_id=? AND status IN ('running','paused')
         AND agent_call_count>=? AND cpu_job_count>=? AND gpu_job_count>=?`),
   ]),
   operation(NATIVE_STORE_CAMPAIGN_OPERATION_IDS.reserveNodeInfrastructureUsage, [

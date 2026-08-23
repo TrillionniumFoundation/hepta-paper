@@ -140,10 +140,15 @@ function fileSha256(candidate) {
   return hash.digest('hex');
 }
 
-function verifySqliteCopy(candidate) {
+function immutableSqliteLocation(candidate) {
   const location = pathToFileURL(candidate);
   location.searchParams.set('mode', 'ro');
   location.searchParams.set('immutable', '1');
+  return location;
+}
+
+function verifySqliteCopy(candidate) {
+  const location = immutableSqliteLocation(candidate);
   const database = new DatabaseSync(location, { readOnly: true });
   try {
     const quickCheck = String(database.prepare('PRAGMA quick_check;').get()?.quick_check || 'unknown');
@@ -164,9 +169,16 @@ function syncDirectory(directory) {
   try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
 }
 
-export async function copySqliteDatabase({ sourcePath, destinationPath } = {}) {
+export async function copySqliteDatabase({
+  sourcePath,
+  destinationPath,
+  sourceImmutable = false,
+} = {}) {
   if (!sourcePath || !destinationPath) {
     throw new Error('existing SQLite source and destination paths are required');
+  }
+  if (typeof sourceImmutable !== 'boolean') {
+    throw new Error('sqlite_copy_source_immutable_flag_invalid');
   }
   const source = path.resolve(sourcePath);
   const destination = path.resolve(destinationPath);
@@ -199,7 +211,10 @@ export async function copySqliteDatabase({ sourcePath, destinationPath } = {}) {
     fs.closeSync(descriptor);
     descriptor = undefined;
 
-    database = new DatabaseSync(source, { readOnly: true });
+    database = new DatabaseSync(
+      sourceImmutable ? immutableSqliteLocation(source) : source,
+      { readOnly: true },
+    );
     await backup(database, stagingPath);
     database.close();
     database = undefined;

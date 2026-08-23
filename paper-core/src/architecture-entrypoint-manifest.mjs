@@ -9,6 +9,8 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/workspace-status.mjs',
     'paper-core/bin/hepta-store.mjs',
     'paper-core/bin/automation-status.mjs',
+    'paper-core/bin/full-production-readiness.mjs',
+    'paper-core/bin/immutable-release-deploy.mjs',
     'paper-core/bin/production-external-authority-intake.mjs',
     // Production process boundaries invoked by systemd or a pinned executable
     // path (including the reviewed /usr/libexec launchers) cannot be discovered
@@ -46,6 +48,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/paper-campaign-dispatcher.mjs',
     'paper-core/bin/paper-production-core.mjs',
     'paper-core/bin/paper-submission-handoff.mjs',
+    'paper-core/bin/paper-submission-handoff-export.mjs',
     // Spawned by file URL from the process-isolated numeric assurance adapter.
     // It is an internal executable boundary and therefore has no static importer.
     'paper-adapters/research-verify/independent-system-benchmark-recomputation-worker.mjs',
@@ -74,6 +77,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/release-state-check.mjs',
     'paper-core/bin/release-trust-gate.mjs',
     'paper-core/bin/critical-module-coverage.mjs',
+    'paper-core/bin/strict-npm-audit.mjs',
     'paper-core/bin/repository-asset-status.mjs',
     'paper-core/bin/operational-proof-status.mjs',
     'paper-core/bin/owner-acceptance-status.mjs',
@@ -85,6 +89,16 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/tests/legacy-history-snapshot.test.mjs',
     'paper-core/tests/hotcrp-api-connector.test.mjs',
     'paper-core/tests/journal-connector-coverage.test.mjs',
+    'paper-core/tests/immutable-release-candidate-repository.test.mjs',
+    'paper-core/tests/immutable-release-deployment-cli.test.mjs',
+    'paper-core/tests/immutable-release-deployment-closure-builder.test.mjs',
+    'paper-core/tests/immutable-release-deployment-intent-repository.test.mjs',
+    'paper-core/tests/immutable-release-deployment-lock.test.mjs',
+    'paper-core/tests/immutable-release-deployment-recovery.test.mjs',
+    'paper-core/tests/immutable-release-deployment-transaction.test.mjs',
+    'paper-core/tests/immutable-release-linux-host-adapter.test.mjs',
+    'paper-core/tests/strict-full-auto-online-runtime-adoption.test.mjs',
+    'paper-core/tests/autonomous-research-online-schema-transition.test.mjs',
     'paper-core/tests/portal-target-qualification.test.mjs',
     'paper-core/tests/release-environment-entrypoint.test.mjs',
     'paper-core/tests/ojs-api-connector.test.mjs',

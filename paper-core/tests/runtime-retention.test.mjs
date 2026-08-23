@@ -6,7 +6,11 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { buildRuntimeRetentionPlan, executeRuntimeRetentionPlan, reconcileRuntimeRetentionIntents } from '../../paper-adapters/automation/runtime-retention.mjs';
-import { preflightRemoval } from '../../paper-adapters/automation/runtime-retention-intent-operations.mjs';
+import {
+  preflightRemoval,
+  reachabilityManifestForIntent,
+  verifyRetentionIntent,
+} from '../../paper-adapters/automation/runtime-retention-intent-operations.mjs';
 import {
   assertPinnedRetentionCategoryLive,
   openPinnedRetentionCategory,
@@ -22,6 +26,16 @@ import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
+function makeTestDirectoriesOwnerWritable(candidate) {
+  if (!fs.existsSync(candidate)) return;
+  const stat = fs.lstatSync(candidate);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+  fs.chmodSync(candidate, 0o700);
+  for (const name of fs.readdirSync(candidate)) {
+    makeTestDirectoriesOwnerWritable(path.join(candidate, name));
+  }
+}
+
 function trustedRetentionLedger(store, clock) {
   return createSqliteReceiptLedger({ store, clock, issuerCapability: issueRuntimeRetentionWriter() });
 }
@@ -29,6 +43,67 @@ function trustedRetentionLedger(store, clock) {
 function trustedStoreAdminLedger(store, clock) {
   return createSqliteReceiptLedger({ store, clock, issuerCapability: issueStoreAdministratorWriter() });
 }
+
+test('retention intent authority selects one exact persisted reachability manifest', (t) => {
+  const firstHash = hashRecord('ReachabilityManifestFixture', { generation: 1 });
+  const secondHash = hashRecord('ReachabilityManifestFixture', { generation: 2 });
+  const supplied = Object.freeze({ runtimeRetentionReachabilityManifestHash: firstHash });
+  const entry = (manifestHash) => Object.freeze({
+    authorized: true,
+    category: 'packages',
+    reachabilityManifestHash: manifestHash,
+  });
+  assert.equal(reachabilityManifestForIntent({ entries: [] }, supplied, null), supplied);
+  assert.equal(reachabilityManifestForIntent({ entries: [entry(firstHash)] }, supplied, null), supplied);
+  const loaded = Object.freeze({ runtimeRetentionReachabilityManifestHash: firstHash });
+  assert.equal(reachabilityManifestForIntent(
+    { entries: [entry(firstHash)] },
+    null,
+    { loadManifest: ({ manifestHash }) => manifestHash === firstHash ? loaded : null },
+  ), loaded);
+  assert.equal(reachabilityManifestForIntent(
+    { entries: [entry(firstHash)] },
+    supplied,
+    { loadManifest: () => null },
+  ), supplied);
+  assert.equal(reachabilityManifestForIntent({ entries: [entry(firstHash)] }, null, null), null);
+  assert.throws(() => reachabilityManifestForIntent({
+    entries: [entry(firstHash), entry(secondHash)],
+  }, supplied, null), /runtime_retention_intent_reachability_manifest_ambiguous/);
+
+  const payload = {
+    version: 2,
+    kind: 'RuntimeRetentionIntent',
+    status: 'runtime_retention_intent_recorded',
+    operationId: 'coverage-authority',
+    runtimeRoot: '/runtime',
+    planHash: hashRecord('RuntimeRetentionPlanFixture', {}),
+    entries: [],
+    createdAt: '2026-08-20T00:00:00.000Z',
+  };
+  const intent = Object.freeze({
+    ...payload,
+    runtimeRetentionIntentReceiptHash: hashRecord('RuntimeRetentionIntent', payload),
+  });
+  assert.equal(verifyRetentionIntent(intent, '/runtime'), intent);
+  assert.throws(() => verifyRetentionIntent({}, '/runtime'), /runtime_retention_intent_invalid/);
+  assert.throws(() => verifyRetentionIntent(null, '/runtime'), /runtime_retention_intent_invalid/);
+  const invalidScopePayload = { ...payload, entries: [{ category: 'reports', path: '/outside', members: [] }] };
+  assert.throws(() => verifyRetentionIntent({
+    ...invalidScopePayload,
+    runtimeRetentionIntentReceiptHash: hashRecord('RuntimeRetentionIntent', invalidScopePayload),
+  }, '/runtime'), /runtime_retention_intent_scope_invalid/);
+
+  const fixture = reportRetentionFixture(t, 'hepta-retention-sparse-preflight-');
+  const sparseRemoval = { ...fixture.plan.removals[0], categoryScope: null };
+  delete sparseRemoval.companionPaths;
+  delete sparseRemoval.bytes;
+  const preflight = preflightRemoval(fixture.plan, sparseRemoval, null, null, null);
+  assert.equal(preflight.authorized, false);
+  assert.equal(preflight.blockers.includes('retention_entry_scope_invalid'), true);
+  assert.deepEqual(preflight.companionPaths, []);
+  assert.equal(preflight.bytes, 0);
+});
 
 function reportRetentionFixture(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -920,7 +995,7 @@ test('backup retention rejects valid-shaped receipts from an untrusted ledger wr
   assert.equal(plan.categories.find((entry) => entry.category === 'backups').evidenceProtectedCount, 3);
 });
 
-test('trusted retention intent converges after a crash between deletion and tombstone', (t) => {
+test('crash recovery restores the interrupted directory and requires a fresh plan for it', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-recovery-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = createDefaultPaperStore({ root, runtimeRoot: root, dbPath: path.join(root, 'ledger.sqlite') });
@@ -936,25 +1011,48 @@ test('trusted retention intent converges after a crash between deletion and tomb
     policies: { 'automation-workspaces': { maxBytes: 1, maxAgeMs: 0 } },
   });
   let injected = false;
+  let interruptedWorkspace = null;
   assert.throws(() => executeRuntimeRetentionPlan(plan, {
     apply: true,
     workspaceRegistry: qualified.registry,
     receiptLedger: qualified.receiptLedger,
     retentionReceiptLedger,
     faultInjector(event) {
-      if (!injected && event.stage === 'after_member_removed') { injected = true; throw new Error('simulated_process_crash'); }
+      if (!injected && event.stage === 'after_member_removed') {
+        injected = true;
+        interruptedWorkspace = event.member.path;
+        throw new Error('simulated_process_crash');
+      }
     },
   }), /simulated_process_crash/);
+  assert.equal(workspaces.includes(interruptedWorkspace), true);
+  assert.equal(fs.existsSync(interruptedWorkspace), false);
   assert.equal(workspaces.filter((workspace) => fs.existsSync(workspace)).length, 1);
   const retentionRoot = path.join(root, 'retention');
   assert.equal(fs.readdirSync(retentionRoot).filter((name) => name.endsWith('.intent.json')).length, 1);
   assert.equal(fs.readdirSync(retentionRoot).filter((name) => name.endsWith('.tombstone.json')).length, 0);
   const recovered = reconcileRuntimeRetentionIntents({ runtimeRoot: root, workspaceRegistry: qualified.registry, receiptLedger: qualified.receiptLedger, retentionReceiptLedger: trustedRetentionLedger(store, clock) });
   assert.equal(recovered.status, 'runtime_retention_recovery_complete');
-  assert.equal(workspaces.some((workspace) => fs.existsSync(workspace)), false);
+  assert.equal(fs.existsSync(interruptedWorkspace), true);
+  assert.equal(workspaces.filter((workspace) => fs.existsSync(workspace)).length, 1);
   assert.equal(fs.readdirSync(retentionRoot).filter((name) => name.endsWith('.tombstone.json')).length, 1);
   const replayed = reconcileRuntimeRetentionIntents({ runtimeRoot: root, workspaceRegistry: qualified.registry, receiptLedger: qualified.receiptLedger, retentionReceiptLedger: trustedRetentionLedger(store, clock) });
   assert.equal(replayed.recovered[0].status, 'runtime_retention_already_converged');
+  assert.equal(fs.existsSync(interruptedWorkspace), true);
+
+  const freshPlan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    workspaceRecords: qualified.records,
+    receiptLedger: qualified.receiptLedger,
+    policies: { 'automation-workspaces': { maxBytes: 1, maxAgeMs: 0 } },
+  });
+  executeRuntimeRetentionPlan(freshPlan, {
+    apply: true,
+    workspaceRegistry: qualified.registry,
+    receiptLedger: qualified.receiptLedger,
+    retentionReceiptLedger,
+  });
+  assert.equal(workspaces.some((workspace) => fs.existsSync(workspace)), false);
 });
 
 test('retention recovery converges after the trusted tombstone commits but before its local file is published', (t) => {
@@ -1103,7 +1201,10 @@ test('concurrent recovery of one intent converges on one deterministic trusted t
 
 test('recovery refuses to promote a locally forged self-hashed tombstone into the trusted ledger', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-forged-tombstone-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    makeTestDirectoriesOwnerWritable(root);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const store = createDefaultPaperStore({ root, runtimeRoot: root, dbPath: path.join(root, 'ledger.sqlite') });
   t.after(() => store.close());
   const clock = { nowIso: () => '2026-07-14T00:00:00.000Z' };

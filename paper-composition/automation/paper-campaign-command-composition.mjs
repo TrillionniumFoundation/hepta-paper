@@ -127,7 +127,13 @@ function gpuScientificExecutionPlanFactory({ options, clock }) {
 }
 
 export async function executePaperCampaignCommand({
-  options = {}, root, runtimeRoot, environment = {},
+  options = {},
+  root,
+  runtimeRoot,
+  environment = {},
+  packageRecoveryAuthority = null,
+  packageRecoveryAuthorityReadinessVerifier = null,
+  packageRecoveryDeletionLeasePort = null,
 } = {}) {
   if (!root || !runtimeRoot) throw new Error('paper_campaign_command_roots_required');
   if (options['local-only'] === true
@@ -138,7 +144,10 @@ export async function executePaperCampaignCommand({
   const runId = options['run-id'] ? String(options['run-id']).replace(/[^A-Za-z0-9_.-]/g, '_') : null;
   if (options['run-id'] && !runId) throw new Error('--run-id must contain at least one safe character');
   const planOnly = !options.action && !options.execute;
-  const readOnlyAction = ['list', 'status', 'events', 'logs', 'slo', 'gc'].includes(String(options.action || ''))
+  const readOnlyAction = [
+    'list', 'status', 'events', 'logs', 'slo', 'gc',
+    'retention-recovery-readiness',
+  ].includes(String(options.action || ''))
     && !options.apply;
   const campaignExecutionContext = bootstrapCampaignExecutionContext({
     root,
@@ -148,6 +157,10 @@ export async function executePaperCampaignCommand({
     readOnly: Boolean(planOnly || readOnlyAction),
     allowMissingReadOnlyStore: planOnly,
     submissionHandoffReadOnly: options['local-only'] === true,
+    environment,
+    packageRecoveryAuthority,
+    packageRecoveryAuthorityReadinessVerifier,
+    packageRecoveryDeletionLeasePort,
   });
   const { context } = campaignExecutionContext;
   const campaignStore = context.services.campaignStore;

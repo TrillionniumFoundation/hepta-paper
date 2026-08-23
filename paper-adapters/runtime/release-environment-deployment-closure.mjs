@@ -16,11 +16,11 @@ const DEPLOYED_AD55DFB_PREDECESSOR_CLOSURE_HASH =
 // Every release source explicitly pins the closure hashes from which its v2
 // deployment closure may inherit. A later v2 -> v2 release must add or replace
 // this entry with the actually deployed predecessor before its source is frozen.
-const APPROVED_PREDECESSOR_CLOSURE_HASHES = Object.freeze([
+export const APPROVED_PREDECESSOR_CLOSURE_HASHES = Object.freeze([
   DEPLOYED_AD55DFB_PREDECESSOR_CLOSURE_HASH,
 ]);
-const CODEX_DIRECTORY = 'codex-cli-0.144.1';
-const EXACT_SEAL_POLICY = Object.freeze({
+export const CODEX_DIRECTORY = 'codex-cli-0.144.1';
+export const EXACT_SEAL_POLICY = Object.freeze({
   owner: 'root:root',
   directoriesMode: '0555',
   executableFilesMode: '0555',
@@ -381,6 +381,7 @@ export function inspectSealedDeploymentClosure({
   expectedGid = 0,
   legacyV1ClosureHash = LEGACY_V1_CLOSURE_HASH,
   approvedPredecessorClosureHashes = APPROVED_PREDECESSOR_CLOSURE_HASHES,
+  expectedClosureHash = null,
 }) {
   requireCondition(typeof workspaceRoot === 'string'
     && path.isAbsolute(workspaceRoot)
@@ -390,6 +391,7 @@ export function inspectSealedDeploymentClosure({
   requireCondition(Number.isSafeInteger(expectedUid) && expectedUid >= 0
     && Number.isSafeInteger(expectedGid) && expectedGid >= 0
     && SHA256.test(String(legacyV1ClosureHash || ''))
+    && (expectedClosureHash === null || SHA256.test(String(expectedClosureHash || '')))
     && Array.isArray(approvedPredecessorClosureHashes)
     && approvedPredecessorClosureHashes.length > 0
     && approvedPredecessorClosureHashes.every((hash) => SHA256.test(String(hash || '')))
@@ -397,9 +399,20 @@ export function inspectSealedDeploymentClosure({
   'release_environment_deployment_inspection_options_invalid');
   const metadata = Object.freeze({ expectedUid, expectedGid });
   const closure = readClosure(workspaceRoot, metadata);
+  // A caller may arrive with the exact closure digest from a separately
+  // verified immutable executor/root boundary. This self-anchor lets an
+  // already deployed v2 closure be inspected on the next generation without
+  // baking every future predecessor into old source. It cannot authorize a
+  // different closure: the complete payload hash is checked immediately.
+  if (expectedClosureHash !== null) {
+    requireCondition(closure.closureHash === expectedClosureHash,
+      'release_environment_deployment_expected_closure_mismatch');
+  }
   validateClosureSchema(closure, {
     legacyV1ClosureHash,
-    approvedPredecessorClosureHashes,
+    approvedPredecessorClosureHashes: expectedClosureHash !== null && closure.version === 2
+      ? Object.freeze([closure.inheritedFromClosureHash])
+      : approvedPredecessorClosureHashes,
   });
   validateCodeProvenance(provenance);
   requireCondition(same(closure.codeProvenance, provenance),

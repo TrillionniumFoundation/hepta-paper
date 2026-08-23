@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { PAPER_BATCH_MODES, assertPaperMode } from '../../paper-domain/workflow/mode-registry.mjs';
-import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
+import {
+  createPackageDeletionWriterScopedFilesystemArtifactRepositoryFactory,
+} from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createAuthorityVerifier } from '../../paper-adapters/authority/authority-verifier.mjs';
 import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
 import { createSqliteWorkflowStateStore } from '../../paper-adapters/persistence/sqlite-workflow-state-store.mjs';
@@ -39,7 +41,11 @@ export function composeBatchServices({
   schemaVersion = null,
   exposeRawStore = false,
 }) {
-  const { store, clock, receiptLedger } = foundation;
+  const {
+    store, clock, receiptLedger,
+    packageDeletionWriterBoundary,
+    packageDeletionWriterOperationId,
+  } = foundation;
   const trustedLedgers = composeTrustedReceiptLedgers({ store, clock, overrides: serviceOverrides });
   const artifactReceiptLedger = serviceOverrides.receiptLedger ? receiptLedger : trustedLedgers.artifact;
   const jobReceiptStore = serviceOverrides.jobReceiptStore || createSqliteJobReceiptStore({
@@ -55,14 +61,15 @@ export function composeBatchServices({
       clock,
       allowedReceiptKinds: ['NativeResearchWorkerExecutionReceipt'],
     });
-  const artifactRepositoryFactory = serviceOverrides.artifactRepositoryFactory || ((scopeRoot) => (
-    createFilesystemArtifactRepository({
-      scopeRoot,
+  const artifactRepositoryFactory = serviceOverrides.artifactRepositoryFactory
+    || createPackageDeletionWriterScopedFilesystemArtifactRepositoryFactory({
       casRoot: path.join(runtimeRoot, 'artifact-cas'),
       receiptLedger: artifactReceiptLedger,
       clock,
-    })
-  ));
+      runtimeRoot,
+      packageDeletionWriterBoundary,
+      packageDeletionWriterOperationId,
+    });
   const operatorDatasetHarnessAuthorityVerifier = serviceOverrides.operatorDatasetHarnessAuthorityVerifier
     || createOperatorDatasetHarnessAuthorityReceiptVerifier({
       trustStoreProvider: () => loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot }),

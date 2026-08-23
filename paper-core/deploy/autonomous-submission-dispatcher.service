@@ -1,7 +1,9 @@
 [Unit]
 Description=Hepta Paper autonomous submission dispatcher
-Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service
-After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service network-online.target autonomous-research-supervisor.service
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
+Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service strict-full-auto-runtime-adoption.service
+After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service strict-full-auto-runtime-adoption.service network-online.target autonomous-research-supervisor.service
 Wants=autonomous-submission-handoff-layout-provision.path network-online.target
 # Missing provisioning is a skipped start, while repeated runtime failures are
 # bounded and require an operator to inspect the failed generation.

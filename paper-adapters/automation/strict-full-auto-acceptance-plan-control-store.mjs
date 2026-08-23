@@ -67,6 +67,10 @@ export class StrictFullAutoAcceptancePlanControlStore {
       : path.join(this.planScopePath(plan), 'runtime-root-activation.json');
   }
 
+  pristineRuntimeAdoptionPath(plan) {
+    return path.join(this.planScopePath(plan), 'pristine-runtime-adoption.json');
+  }
+
   candidatePath(plan) { return path.join(this.planScopePath(plan), 'candidate.json'); }
 
   activePlanPath(plan) { return path.join(plan.controlRoot, 'active-plan.json'); }

@@ -25,6 +25,10 @@ import {
   rollbackGpuScientificArtifactBodyArchiveFilesSync,
 } from './gpu-scientific-artifact-body-archive-file-repository.mjs';
 import {
+  buildPdePoisson2dOfflineReplayInput,
+  verifyGpuScientificArtifactBodyArchiveSemanticReplay,
+} from './gpu-scientific-artifact-body-offline-replay.mjs';
+import {
   PDE_TASK_TYPE,
   deriveGpuScientificArtifactBodyArchiveRuntimeBindings,
   validateGpuScientificArtifactBodyArchiveDeepLearningSource,
@@ -40,10 +44,10 @@ const EXPECTED_ARCHIVE_DIRECTORY_ENTRIES = Object.freeze({
   ]),
   'evidence/gpu-scientific/deep-learning': Object.freeze([
     'model-spec.json', 'tensor-bundle.bin', 'training-predictions.json',
-    'training-summary.json', 'training-trace.json',
+    'training-dataset.json', 'training-summary.json', 'training-trace.json',
   ]),
   'evidence/gpu-scientific/pde': Object.freeze([
-    'producer-diagnostics.json', 'solutions',
+    'producer-diagnostics.json', 'replay-input.json', 'solutions',
   ]),
   'evidence/gpu-scientific/pde/solutions': Object.freeze([
     'n127.f64le', 'n31.f64le', 'n63.f64le',
@@ -73,7 +77,13 @@ function deriveSourceEvidence({
   );
   const deepLearning = validateGpuScientificArtifactBodyArchiveDeepLearningSource(
     authority.deepLearningTaskResult,
-    executionPlan.tasks[1].trainingRunId,
+    {
+      task: executionPlan.tasks[1],
+      gpuDeviceSelector: executionPlan.gpuDeviceSelector,
+      deadline: authority.result.effectiveExecutionDeadlineEpochMs,
+      executionAuthorityHash:
+        authority.attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
+    },
   );
   const attemptRoot = path.join(
     runtime,
@@ -111,6 +121,7 @@ function deriveSourceEvidence({
     }),
     pdeRoot,
     deepLearningRoot,
+    trainingDataset: executionPlan.tasks[1].trainingDataset,
   };
 }
 
@@ -154,38 +165,94 @@ function sourceArchiveEntries(source) {
         ? source.pde : source.deepLearning;
       const sourceRoot = specification.taskType === PDE_TASK_TYPE
         ? source.pdeRoot : source.deepLearningRoot;
-      const declared = selected.artifactMap.get(specification.producerRelativePath);
-      if (!declared || declared.bytes > specification.maximumBytes
-        || (specification.exactBytes !== null
-          && declared.bytes !== specification.exactBytes)) {
-        throw new Error('gpu_scientific_artifact_body_archive_declared_size_invalid');
-      }
-      const read = readScopedFileSync({
-        scopeRoot: sourceRoot,
-        candidate: path.join(
-          sourceRoot,
-          ...specification.producerRelativePath.split('/'),
-        ),
-        maximumBytes: specification.maximumBytes,
-      });
-      if (read.status !== 'scoped_file_read_verified'
-        || read.hash !== declared.sha256
-        || read.bytes !== declared.bytes) {
-        throw new Error('gpu_scientific_artifact_body_archive_source_receipt_mismatch');
-      }
-      if (specification.producerRelativePath.endsWith('.json')) {
-        try { JSON.parse(read.content.toString('utf8')); }
-        catch {
-          throw new Error('gpu_scientific_artifact_body_archive_source_json_invalid');
+      let installedContent = null;
+      let selectedSourceRoot = sourceRoot;
+      let selectedSourceRelativePath = specification.producerRelativePath;
+      let observed;
+      if (specification.archiveSource === 'execution-plan-derived') {
+        installedContent = Buffer.from(
+          `${JSON.stringify(source.trainingDataset, null, 2)}\n`,
+          'utf8',
+        );
+        selectedSourceRoot = null;
+        selectedSourceRelativePath = null;
+        observed = {
+          hash: hashBytes(installedContent),
+          bytes: installedContent.length,
+        };
+      } else if (specification.archiveSource === 'execution-result-derived') {
+        const replayInput = buildPdePoisson2dOfflineReplayInput({
+          producerSpecification: source.pde.producerSpecification,
+          artifactManifest: source.pde.artifactManifest,
+        });
+        installedContent = Buffer.from(
+          `${JSON.stringify(replayInput, null, 2)}\n`,
+          'utf8',
+        );
+        selectedSourceRoot = null;
+        selectedSourceRelativePath = null;
+        observed = {
+          hash: hashBytes(installedContent),
+          bytes: installedContent.length,
+        };
+      } else {
+        const declared = selected.artifactMap.get(
+          specification.producerRelativePath,
+        );
+        if (!declared || declared.bytes > specification.maximumBytes
+          || (specification.exactBytes !== null
+            && declared.bytes !== specification.exactBytes)) {
+          throw new Error(
+            'gpu_scientific_artifact_body_archive_declared_size_invalid',
+          );
         }
+        const read = readScopedFileSync({
+          scopeRoot: sourceRoot,
+          candidate: path.join(
+            sourceRoot,
+            ...specification.producerRelativePath.split('/'),
+          ),
+          maximumBytes: specification.maximumBytes,
+        });
+        if (read.status !== 'scoped_file_read_verified'
+          || read.hash !== declared.sha256
+          || read.bytes !== declared.bytes) {
+          throw new Error(
+            'gpu_scientific_artifact_body_archive_source_receipt_mismatch',
+          );
+        }
+        if (specification.producerRelativePath.endsWith('.json')) {
+          let parsed;
+          try { parsed = JSON.parse(read.content.toString('utf8')); }
+          catch {
+            throw new Error(
+              'gpu_scientific_artifact_body_archive_source_json_invalid',
+            );
+          }
+          if (specification.role === 'deep_learning_model_specification'
+            && (JSON.stringify(parsed?.profile)
+                !== JSON.stringify(source.deepLearning.task.profile)
+              || JSON.stringify(parsed?.modelIr)
+                !== JSON.stringify(source.deepLearning.task.modelIr))) {
+            throw new Error(
+              'gpu_scientific_artifact_body_archive_deep_learning_model_binding_invalid',
+            );
+          }
+        }
+        observed = { hash: read.hash, bytes: read.bytes };
+      }
+      if (observed.bytes > specification.maximumBytes
+        || (specification.exactBytes !== null
+          && observed.bytes !== specification.exactBytes)) {
+        throw new Error('gpu_scientific_artifact_body_archive_declared_size_invalid');
       }
       const entry = {
         taskType: specification.taskType,
         role: specification.role,
         producerRelativePath: specification.producerRelativePath,
         packageRelativePath: specification.packageRelativePath,
-        sha256: declared.sha256,
-        bytes: declared.bytes,
+        sha256: observed.hash,
+        bytes: observed.bytes,
         sourceTaskResultHash: specification.taskType === PDE_TASK_TYPE
           ? pdeTaskResult.gpuScientificCampaignTaskResultHash
           : deepLearningTaskResult.gpuScientificCampaignTaskResultHash,
@@ -204,10 +271,11 @@ function sourceArchiveEntries(source) {
       };
       return Object.freeze({
         specification,
-        sourceRoot,
-        sourceRelativePath: specification.producerRelativePath,
-        expectedHash: read.hash,
-        expectedBytes: read.bytes,
+        sourceRoot: selectedSourceRoot,
+        sourceRelativePath: selectedSourceRelativePath,
+        content: installedContent,
+        expectedHash: observed.hash,
+        expectedBytes: observed.bytes,
         entry: Object.freeze(entry),
       });
     },
@@ -352,6 +420,8 @@ export function verifyOfflineGpuScientificArtifactBodyArchiveDirectorySync({
     }
   }
   const verifiedEntries = [];
+  const bodyByRole = new Map();
+  let semanticReplay = null;
   if (!blockers.length) {
     let totalBytes = 0;
     for (const entry of manifest.entries) {
@@ -390,11 +460,19 @@ export function verifyOfflineGpuScientificArtifactBodyArchiveDirectorySync({
         hash: read.hash,
         bytes: read.bytes,
       }));
+      bodyByRole.set(entry.role, read.content);
     }
     if (totalBytes !== manifest.totalBytes
       || verifiedEntries.length !== manifest.bodyCount) {
       blockers.push('gpu_scientific_artifact_body_archive_body_count_invalid');
     }
+  }
+  if (!blockers.length) {
+    semanticReplay = verifyGpuScientificArtifactBodyArchiveSemanticReplay({
+      manifest,
+      bodyByRole,
+    });
+    blockers.push(...semanticReplay.blockers);
   }
   return Object.freeze({
     valid: blockers.length === 0,
@@ -403,6 +481,7 @@ export function verifyOfflineGpuScientificArtifactBodyArchiveDirectorySync({
     manifestFileHash: manifestRead?.hash || null,
     manifestFileBytes: manifestRead?.bytes ?? null,
     verifiedEntries: Object.freeze(verifiedEntries),
+    semanticReplay,
     casFallbackUsed: false,
   });
 }
@@ -440,8 +519,10 @@ export function materializeGpuScientificArtifactBodyArchiveSync({
         maximumBytes: descriptor.specification.maximumBytes,
         expectedHash: descriptor.expectedHash,
         expectedBytes: descriptor.expectedBytes,
-        sourceRoot: descriptor.sourceRoot,
-        sourceRelative: descriptor.sourceRelativePath,
+        ...(descriptor.content === null ? {
+          sourceRoot: descriptor.sourceRoot,
+          sourceRelative: descriptor.sourceRelativePath,
+        } : { content: descriptor.content }),
       });
       owners.push(installed.owner);
     }

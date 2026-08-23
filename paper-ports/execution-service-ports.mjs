@@ -5,6 +5,10 @@ import { assertReceiptLedgerPort } from './receipt-ledger-port.mjs';
 import { assertRuntimeRetentionReachabilityProvider } from './runtime-retention-reachability-provider-port.mjs';
 import { assertStorePort } from './store-port.mjs';
 
+const ARTIFACT_REPOSITORY_FACTORY_WRITER_SCOPE = Symbol(
+  'artifact-repository-factory-package-deletion-writer-scope',
+);
+
 function requireMethods(value, kind, methods) {
   for (const method of methods) {
     if (typeof value?.[method] !== 'function') throw new Error(`${kind}.${method} is required`);
@@ -12,9 +16,40 @@ function requireMethods(value, kind, methods) {
   return value;
 }
 
+export function packageDeletionWriterScopeForArtifactRepositoryFactory(factory) {
+  const scope = typeof factory === 'function'
+    ? factory[ARTIFACT_REPOSITORY_FACTORY_WRITER_SCOPE] : null;
+  if (scope == null) return null;
+  if (scope?.version !== 1
+    || scope?.kind !== 'PackageDeletionWriterScopePort'
+    || typeof scope.runAsync !== 'function') {
+    throw new Error('ArtifactRepositoryFactoryPort writer scope is invalid');
+  }
+  return scope;
+}
+
+export function bindArtifactRepositoryFactoryPackageDeletionWriterScope(
+  factory,
+  writerScope,
+) {
+  if (typeof factory !== 'function') {
+    throw new Error('ArtifactRepositoryFactoryPort must be a function');
+  }
+  packageDeletionWriterScopeForArtifactRepositoryFactory(
+    Object.defineProperty(factory, ARTIFACT_REPOSITORY_FACTORY_WRITER_SCOPE, {
+      configurable: false, enumerable: false, writable: false, value: writerScope,
+    }),
+  );
+  return factory;
+}
+
 export function assertArtifactRepositoryFactoryPort(factory) {
   if (typeof factory !== 'function') throw new Error('ArtifactRepositoryFactoryPort must be a function');
-  return (...args) => assertArtifactRepository(factory(...args));
+  const validated = (...args) => assertArtifactRepository(factory(...args));
+  const writerScope = packageDeletionWriterScopeForArtifactRepositoryFactory(factory);
+  return writerScope
+    ? bindArtifactRepositoryFactoryPackageDeletionWriterScope(validated, writerScope)
+    : validated;
 }
 
 export function assertPersistenceSessionPort(session) {
@@ -63,12 +98,13 @@ export function assertTheoremQualityRevisionSinkPort(sink) {
 }
 
 export function assertPackageLifecycleAuthorityPort(authority) {
-  if (Number(authority?.version || 0) < 1
+  if (Number(authority?.version || 0) < 2
     || authority?.kind !== 'PackageLifecycleAuthorityService') {
-    throw new Error('PackageLifecycleAuthorityPort.version 1 is required');
+    throw new Error('PackageLifecycleAuthorityPort.version 2 is required');
   }
   return requireMethods(authority, 'PackageLifecycleAuthorityPort', [
-    'prepareCurrentReleaseRecording', 'reconcileCampaign', 'reconcile',
+    'prepareCurrentReleaseRecording', 'provisionRetentionRecovery',
+    'retentionRecoveryReadiness', 'reconcileCampaign', 'reconcile',
   ]);
 }
 

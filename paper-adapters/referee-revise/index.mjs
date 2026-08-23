@@ -43,6 +43,7 @@ export async function runRefereeReviseAdapter({
   execute = false,
   limit = 64,
   store = null,
+  postRepairPackageAdapter = null,
 } = {}) {
   if (!store) throw new Error('Referee revision requires StorePort injection');
   const dbPath = heptaStorePath(root, runtimeRoot);
@@ -133,6 +134,7 @@ export async function runRefereeReviseAdapter({
       agentRepairPatchBundle,
       appliedPatchReceipt,
       execute: Boolean(execute),
+      packageAdapter: postRepairPackageAdapter,
     })
     : null;
   const postRepairBuildPackage = buildPostRepairBuildPackage({

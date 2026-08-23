@@ -48,3 +48,15 @@ then pins every per-family runtime configuration. Version-1 runtime
 configuration remains available only for explicitly unqualified execution.
 The runner reports `productionQualified=true` only after the complete evidence,
 signature, freshness, identity, and independence chain succeeds.
+
+The production dependency handoff revalidates that projection instead of
+trusting a stale readiness boolean: all three families must carry their
+registry/runtime/document hashes, expiring qualification, five distinct
+authority identities (plugin plus oracle/replay/uncertainty/scientific roles),
+the five signed evidence-receipt hashes (reference, replay, numeric oracle,
+typed uncertainty, and scientific review), and distinct reference/replay
+process identities. Missing detail remains a typed blocker for each family.
+The same downstream handoff independently
+revalidates the submission dispatcher snapshot, including its portal binding,
+signed cycle, fresh expiry, no-side-effect canary, and canary-authority
+independence; a local or fixture canary cannot satisfy either gate.

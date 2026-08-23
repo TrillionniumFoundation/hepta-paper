@@ -26,10 +26,31 @@ function createCampaignNodeInfrastructureReservationOperations({
         `SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`,
       ).rows[0]);
       const now = clock.nowIso();
-      if (!node || node.status !== 'running' || node.leaseOwner !== workerId
-        || node.attemptId !== attemptId
-        || node.leaseGeneration !== Number(leaseGeneration)
-        || node.preparedResultHash) {
+      const campaignStatus = node ? store.query(
+        `SELECT status FROM paper_campaigns WHERE campaign_id=${sqlText(node.campaignId)} LIMIT 1;`,
+      ).rows[0]?.status : null;
+      const runningFence = node?.status === 'running'
+        && node.leaseOwner === workerId
+        && node.attemptId === attemptId
+        && node.leaseGeneration === Number(leaseGeneration)
+        && campaignStatus === 'running';
+      const pausedStartEvent = node ? store.query(
+        `SELECT 1 AS present FROM campaign_events
+          WHERE campaign_id=${sqlText(node.campaignId)}
+            AND node_id=${sqlText(nodeId)} AND kind='campaign_node_started'
+            AND json_extract(event_json,'$.detail.workerId')=${sqlText(workerId)}
+            AND json_extract(event_json,'$.detail.attemptId')=${sqlText(attemptId)}
+            AND CAST(json_extract(event_json,'$.detail.leaseGeneration') AS INTEGER)=${Number(leaseGeneration)}
+            AND CAST(json_extract(event_json,'$.detail.attempt') AS INTEGER)=${Number(node.attemptCount)}
+          LIMIT 1;`,
+      ).rows[0]?.present === 1 : false;
+      const controlRequeuedFence = node?.status === 'queued'
+        && node.leaseOwner === null
+        && node.attemptId === null
+        && node.leaseGeneration === Number(leaseGeneration)
+        && ['paused', 'running'].includes(campaignStatus)
+        && pausedStartEvent;
+      if (!node || (!runningFence && !controlRequeuedFence) || node.preparedResultHash) {
         throw new Error('campaign_node_infrastructure_cancel_fence_lost');
       }
       const identity = Object.freeze({
@@ -59,8 +80,8 @@ function createCampaignNodeInfrastructureReservationOperations({
           databaseRole: 'native-store',
           operationId: 'native-store.campaign-lease.cancelNodeInfrastructureDeferred.v1',
           statements: [
-            guarded(`UPDATE campaign_nodes SET status='queued',attempt_count=attempt_count-1,lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,failure_class=NULL,failure_json=NULL,failure_sha256=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND attempt_count=${Number(node.attemptCount)} AND attempt_count>0 AND prepared_result_sha256 IS NULL AND NOT EXISTS(SELECT 1 FROM campaign_events e WHERE e.campaign_id=campaign_nodes.campaign_id AND e.node_id=campaign_nodes.node_id AND e.kind='campaign_node_external_action_started' AND json_extract(e.event_json,'$.detail.attemptId')=campaign_nodes.attempt_id AND CAST(json_extract(e.event_json,'$.detail.leaseGeneration') AS INTEGER)=campaign_nodes.lease_generation) AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
-            guarded(`UPDATE paper_campaigns SET agent_call_count=agent_call_count-${refund.agentCalls},cpu_job_count=cpu_job_count-${refund.cpuJobs},gpu_job_count=gpu_job_count-${refund.gpuJobs},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status='running' AND agent_call_count>=${refund.agentCalls} AND cpu_job_count>=${refund.cpuJobs} AND gpu_job_count>=${refund.gpuJobs};`),
+            guarded(`UPDATE campaign_nodes SET status='queued',attempt_count=attempt_count-1,lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,failure_class=NULL,failure_json=NULL,failure_sha256=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND lease_generation=${Number(leaseGeneration)} AND attempt_count=${Number(node.attemptCount)} AND attempt_count>0 AND prepared_result_sha256 IS NULL AND NOT EXISTS(SELECT 1 FROM campaign_events e WHERE e.campaign_id=campaign_nodes.campaign_id AND e.node_id=campaign_nodes.node_id AND e.kind='campaign_node_external_action_started' AND json_extract(e.event_json,'$.detail.attemptId')=${sqlText(attemptId)} AND CAST(json_extract(e.event_json,'$.detail.leaseGeneration') AS INTEGER)=${Number(leaseGeneration)}) AND ((status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')) OR (status='queued' AND lease_owner IS NULL AND lease_expires_at IS NULL AND attempt_id IS NULL AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status IN ('paused','running')) AND EXISTS(SELECT 1 FROM campaign_events s WHERE s.campaign_id=campaign_nodes.campaign_id AND s.node_id=campaign_nodes.node_id AND s.kind='campaign_node_started' AND json_extract(s.event_json,'$.detail.workerId')=${sqlText(workerId)} AND json_extract(s.event_json,'$.detail.attemptId')=${sqlText(attemptId)} AND CAST(json_extract(s.event_json,'$.detail.leaseGeneration') AS INTEGER)=${Number(leaseGeneration)} AND CAST(json_extract(s.event_json,'$.detail.attempt') AS INTEGER)=campaign_nodes.attempt_count)));`),
+            guarded(`UPDATE paper_campaigns SET agent_call_count=agent_call_count-${refund.agentCalls},cpu_job_count=cpu_job_count-${refund.cpuJobs},gpu_job_count=gpu_job_count-${refund.gpuJobs},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status IN ('running','paused') AND agent_call_count>=${refund.agentCalls} AND cpu_job_count>=${refund.cpuJobs} AND gpu_job_count>=${refund.gpuJobs};`),
             eventRow.sql,
           ],
           fallback: 'campaign_node_infrastructure_cancel_failed',

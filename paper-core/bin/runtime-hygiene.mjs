@@ -2,23 +2,21 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { openScopedPaperStore } from '../../paper-composition/bootstrap/context-foundation-composition.mjs';
+import {
+  openScopedPaperStore,
+  runWithScopedFoundationWriter,
+} from '../../paper-composition/bootstrap/context-foundation-composition.mjs';
 import { composeLedgerAdministratorServices } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { createSystemClock } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
-import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const execute = process.argv.includes('--execute');
 const runtimeRoot = defaultPaperRuntimeRoot();
-if (execute) assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: defaultPaperAssetRoot(), runtimeRoot });
-const { store } = openScopedPaperStore({
-  root: defaultPaperAssetRoot(),
-  runtimeRoot,
-  readOnly: !execute,
-  serviceOverrides: {},
-  rootKind: 'runtime-hygiene',
-});
+const root = defaultPaperAssetRoot();
 const clock = createSystemClock();
+
+function runRuntimeHygiene(store) {
 const administratorServices = execute ? composeLedgerAdministratorServices({ store, clock }) : null;
 const ledger = administratorServices?.ledger || null;
 const qualifications = administratorServices?.qualifications || null;
@@ -110,5 +108,30 @@ const ledgerReceipt = execute ? ledger.record({ ...payload, receiptHash }, {
   environment: 'administrative',
   evidenceClass: 'evidence_hygiene',
 }) : null;
-process.stdout.write(`${JSON.stringify({ ...payload, runtimeEvidenceHygieneReceiptHash: receiptHash, ledgerReceipt }, null, 2)}\n`);
-store.close?.();
+return { ...payload, runtimeEvidenceHygieneReceiptHash: receiptHash, ledgerReceipt };
+}
+
+let output;
+if (execute) {
+  output = runWithScopedFoundationWriter({
+    root,
+    runtimeRoot,
+    writerId: 'runtime-hygiene-entrypoint',
+    rootKind: 'runtime-hygiene',
+    serviceOverrides: { clock },
+    writerSelector: {
+      packagePath: path.join(runtimeRoot, 'packages', 'migration_plugin_fixture'),
+    },
+  }, ({ store }) => runRuntimeHygiene(store));
+} else {
+  const { store } = openScopedPaperStore({
+    root,
+    runtimeRoot,
+    readOnly: true,
+    serviceOverrides: {},
+    rootKind: 'runtime-hygiene',
+  });
+  try { output = runRuntimeHygiene(store); }
+  finally { store.close?.(); }
+}
+process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);

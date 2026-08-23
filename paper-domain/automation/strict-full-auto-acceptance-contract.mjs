@@ -15,6 +15,14 @@ export {
   verifyStrictFullAutoAcceptancePlan,
 } from './strict-full-auto-acceptance-plan.mjs';
 export {
+  assertAutonomousResearchPristineRuntimeInspectionReceipt,
+  assertStrictFullAutoAcceptanceRuntimeRootAdoptionPolicy,
+  autonomousResearchPristineRuntimeInspectionReceiptHash,
+  autonomousResearchPristineRuntimeInspectionStateHash,
+  buildStrictFullAutoAcceptancePristineRuntimeAdoptionReceipt,
+  verifyStrictFullAutoAcceptancePristineRuntimeAdoptionReceipt,
+} from './strict-full-auto-acceptance-runtime-adoption.mjs';
+export {
   buildStrictFullAutoAcceptanceReceipt,
   buildStrictFullAutoFinalVerificationReceipt,
   buildStrictFullAutoLiveVerificationReceipt,

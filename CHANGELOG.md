@@ -2,6 +2,87 @@
 
 ## Unreleased (0.21.0 development)
 
+- Registered the outer full-production readiness gate, pre-resident pristine
+  runtime adoption service, and immutable deployment conformance inventory.
+  The systemd installer now snapshots, installs, hashes, mode-checks and
+  manifest-binds root-owned package-recovery readiness and immutable release
+  deployment launchers; the strict configuration pins the recovery wrapper's
+  exact bytes. The stock recovery wrapper deliberately
+  supplies no external recovery authority, so a separately qualified and pinned
+  launcher remains required for a ready production result.
+  A root-owned boot recovery oneshot gates every immutable-release consumer and
+  activator, loads an interrupted transaction only from its pinned predecessor,
+  and preserves its launcher/unit bootstrap TCB across cutover. Hosts without a
+  sealed live deployment executor remain on HOLD pending an externally reviewed
+  one-time predecessor bootstrap; candidate code cannot self-bootstrap it.
+- Made campaign release package publication crash-safe and generation-fenced.
+  Durable build and prepared-publication transactions recover partial builds,
+  marker interruption, pre-commit rename and already-published exact packages;
+  higher lease generations fence stale writers, publication is no-clobber and
+  inode/tree pinned, and races or noncanonical bytes fail closed. The writer
+  holds one opaque generation lease across asynchronous build and publication;
+  contention waits with bounded probes and hard deadlines, while pre-action
+  timeout, abort, pause and immediate-resume races atomically refund the exact
+  attempt and reserved CPU budget without starting package materialization.
+  Retention now
+  inventories fenced staging and authorizes cleanup only after current-node,
+  release and CAS rechecks. A supersession receipt now records lineage only and
+  can never make a different predecessor body recoverable. Published
+  predecessor cleanup requires one unique version-2 recovery receipt bound to
+  the exact predecessor lifecycle, release, path and complete path/bytes/mode/
+  ownership inventory; a signed, externally ledger-bound immutable object and
+  version; an active retention-lock version; and a persisted restore attestation
+  from an exclusive descriptor-pinned disjoint temporary directory. Storage
+  signatures bind the verification time and trust epoch, and live object,
+  ledger and lock state is queried from the external authority. A crash-stable
+  local deletion fence and external object/lock/ledger/trust lease wrap every
+  destructive step; commit and abort survive lost responses through exact
+  idempotent replay, including a signed authority lookup of the already-issued
+  terminal receipt after process restart or lease expiry. Every unlink/rmdir
+  revalidates the lease and live authority. Repository StorePort, receipt, CAS
+  and release-package writers use
+  the same reentrant writer-only fence. Legacy version-1 recovery rows remain
+  audit-only and never authorize deletion. Recovery provisioning is
+  serialized across processes by a descriptor-pinned per-lifecycle flock, and
+  duplicate receipts, trust-store/issuer drift, source replacement, lock drift
+  or verifier revocation restore and reseal a quarantined package before any
+  successful tombstone. The operator surface now exposes explicit recovery
+  readiness plus an `--apply`-gated provisioning action. Readiness requires an
+  independently verified short-lived signed challenge, storage/restore
+  canaries, a real external lease acquire/assert/abort canary and the production
+  lifecycle-lock probe. The stock composition deliberately reports unavailable
+  until separately qualified WORM/KMS, storage-ledger, restore-attestor,
+  deletion-lease and readiness-verifier authorities are injected.
+- Archived all eleven GPU scientific bodies required for offline replay and
+  made the PDE and deep-learning tasks share one campaign-attempt-owned GPU UUID
+  lease, including deadline, owner, lease/fence and lock identities. The
+  offline verifier recomputes PDE metrics and CPU inference after source
+  deletion, rejects body/tree/model/tensor substitution, and remains explicitly
+  non-promotable without independently qualified replay, same-device GPU
+  retraining, external production qualification and release authority.
+- Added `operator submission-handoff-export` as an explicit local-only handoff
+  boundary. It reads a snapshot of current persisted submission authority,
+  requires an effective trusted provider-capability receipt plus current
+  signature revalidation, consumes the verified current campaign release, and
+  publishes an exact sealed bundle through a recoverable, owner-fenced journal.
+  Detached verification survives origin deletion. The command grants no
+  execution permission, performs no provider/portal/upload/email/network action,
+  and requires fresh authority revalidation before any later live dispatch.
+- Hardened production readiness around the current canonical campaign head.
+  Agenda inspection no longer falls back to an older valid campaign; Experiment
+  IR selects the plan-canonical replay and its exact original dependency; and
+  research assurance binds formal, empirical, GPU and research nodes across
+  campaign/node generation, revision, status, dependency/specification and
+  result identities. Two-read snapshot checks reject concurrent generation
+  splicing, while legacy or merely self-shaped authority rows fail closed.
+- Kept the production boundary explicit: local packages, replays and exports do
+  not supply live portal/email/upload capability, real KMS/HSM protection,
+  independent author/reviewer/qualifier/replay authorities, runtime
+  qualification, generic-domain evidence convergence, dispatcher isolation or
+  signed live canaries. A compliance/WORM package-recovery storage authority,
+  its independently pinned issuer/trust store and operational retention lock
+  are also not bundled. Those remain external blockers until independently
+  evidenced.
 - Formally retired THUNDERO and all 15 historical `NDU_Nature_work` derived
   entries from the 0.21 release scope. Their prior six-rebuildable/nine-missing
   disposition remains in the hash-bound contract for audit, while the active

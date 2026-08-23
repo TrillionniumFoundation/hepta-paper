@@ -1,16 +1,29 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
 import {
   retentionMemberHash,
   retentionPathExists,
 } from './runtime-retention-scope-repository.mjs';
+import {
+  assertPackageDeletionAuthorization,
+  revalidatePackageDeletionAuthorization,
+} from './runtime-retention-package-deletion-authority.mjs';
+import {
+  createPackageRemovalIrreversibleBoundary,
+  packageRemovalDetachedRecoveryEntry,
+} from './runtime-retention-package-removal-live-boundary.mjs';
+import {
+  prepareRetentionRemovalRecoverySync,
+  recoverRetentionRemovalSync,
+} from './runtime-retention-removal-recovery-repository.mjs';
+import { withFencedStagingDeletionAuthority }
+  from './runtime-retention-fenced-staging-deletion-authority.mjs';
 
 const DIRECTORY_ONLY = fs.constants.O_DIRECTORY || 0;
 const NO_FOLLOW = fs.constants.O_NOFOLLOW || 0;
-const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const PROC_DESCRIPTOR_PATH = /^\/proc\/self\/fd\/[0-9]+$/;
 const MV = '/usr/bin/mv';
 const STABLE_FIELDS = Object.freeze([
@@ -165,20 +178,31 @@ function sealDirectoryTree(directoryDescriptor, expectedDevice) {
   for (const name of safeNames(descriptorPath)) {
     const child = path.join(descriptorPath, name);
     const observed = fs.lstatSync(child, { bigint: true });
-    if (!observed.isDirectory() || observed.isSymbolicLink()) continue;
-    const pinned = openPinned(child, 'directory', expectedDevice);
-    try { sealDirectoryTree(pinned.descriptor, expectedDevice); }
-    finally { fs.closeSync(pinned.descriptor); }
+    const kind = observed.isDirectory() && !observed.isSymbolicLink()
+      ? 'directory' : observed.isFile() && !observed.isSymbolicLink()
+        ? 'file' : null;
+    if (!kind || (kind === 'file' && observed.nlink !== 1n)) {
+      throw new Error('runtime_retention_package_removal_entry_unsafe');
+    }
+    const pinned = openPinned(child, kind, expectedDevice);
+    try {
+      if (kind === 'directory') sealDirectoryTree(pinned.descriptor, expectedDevice);
+      else {
+        fs.fchmodSync(pinned.descriptor, Number(pinned.opened.mode) & 0o5555);
+        fs.fsyncSync(pinned.descriptor);
+      }
+    } finally { fs.closeSync(pinned.descriptor); }
   }
   const before = fs.fstatSync(directoryDescriptor, { bigint: true });
   fs.fchmodSync(directoryDescriptor, Number(before.mode) & 0o5555);
   fs.fsyncSync(directoryDescriptor);
 }
 
-function assertSealedRegularTree(directoryDescriptor, expectedDevice) {
+function assertSealedRegularTree(directoryDescriptor, expectedDevice, sealed = true) {
   const directory = fs.fstatSync(directoryDescriptor, { bigint: true });
   if (!directory.isDirectory() || directory.dev !== expectedDevice
-    || (Number(directory.mode) & 0o222) !== 0) {
+    || (sealed ? (Number(directory.mode) & 0o222) !== 0
+      : (Number(directory.mode) & 0o200) === 0)) {
     throw new Error('runtime_retention_package_removal_tree_not_sealed');
   }
   const descriptorPath = `/proc/self/fd/${directoryDescriptor}`;
@@ -192,7 +216,7 @@ function assertSealedRegularTree(directoryDescriptor, expectedDevice) {
         entries.push(Object.freeze({
           name,
           kind: 'directory',
-          tree: assertSealedRegularTree(pinned.descriptor, expectedDevice),
+          tree: assertSealedRegularTree(pinned.descriptor, expectedDevice, sealed),
         }));
       }
       finally { fs.closeSync(pinned.descriptor); }
@@ -200,7 +224,8 @@ function assertSealedRegularTree(directoryDescriptor, expectedDevice) {
       const pinned = openPinned(child, 'file', expectedDevice);
       try {
         const completed = fs.fstatSync(pinned.descriptor, { bigint: true });
-        if (completed.nlink !== 1n || (Number(completed.mode) & 0o222) !== 0) {
+        if (completed.nlink !== 1n
+          || (sealed && (Number(completed.mode) & 0o222) !== 0)) {
           throw new Error('runtime_retention_package_removal_tree_not_sealed');
         }
         entries.push(Object.freeze({
@@ -227,6 +252,32 @@ function assertSealedRegularTree(directoryDescriptor, expectedDevice) {
     identity: descriptorIdentity(completed),
     entries: Object.freeze(entries),
   });
+}
+
+function snapshotTreeIdentity(snapshot, relativePath = '') {
+  return Object.freeze({
+    relativePath,
+    ...snapshot.identity,
+    entries: Object.freeze(snapshot.entries.map((entry) => (
+      entry.kind === 'directory'
+        ? snapshotTreeIdentity(
+          entry.tree,
+          relativePath ? `${relativePath}/${entry.name}` : entry.name,
+        )
+        : Object.freeze({
+          relativePath: relativePath ? `${relativePath}/${entry.name}` : entry.name,
+          ...entry.identity,
+          entries: null,
+        })
+    ))),
+  });
+}
+
+function snapshotTreeIdentityHash(snapshot) {
+  return hashRecord(
+    'CampaignReleasePackageFencedStagingTreeIdentity',
+    snapshotTreeIdentity(snapshot),
+  );
 }
 
 function unsealRegularTree(
@@ -289,69 +340,11 @@ function unsealRegularTree(
   }
 }
 
-function isolatePinnedEntry(
-  source,
-  sourceDirectoryDescriptor,
-  pinned,
-  deletionLaneDescriptor,
-) {
-  const laneDescriptorPath = `/proc/self/fd/${deletionLaneDescriptor}`;
-  const containerEntry = fs.mkdtempSync(path.join(laneDescriptorPath, '.entry-'));
-  const container = openPinned(containerEntry, 'directory', pinned.opened.dev);
-  fs.fsyncSync(deletionLaneDescriptor);
-  const isolatedEntry = path.join(`/proc/self/fd/${container.descriptor}`, 'entry');
-  let moved = false;
-  try {
-    moveNoReplaceSync(
-      sourceDirectoryDescriptor,
-      path.basename(source),
-      container.descriptor,
-      'entry',
-    );
-    moved = true;
-    fs.fsyncSync(sourceDirectoryDescriptor);
-    fs.fsyncSync(container.descriptor);
-    const atPath = fs.lstatSync(isolatedEntry, { bigint: true });
-    const opened = fs.fstatSync(pinned.descriptor, { bigint: true });
-    if (atPath.dev !== opened.dev || atPath.ino !== opened.ino) {
-      throw new Error('runtime_retention_package_removal_isolation_identity_changed');
-    }
-    if (retentionPathExists(source)) {
-      throw new Error('runtime_retention_package_removal_source_advanced');
-    }
-    return Object.freeze({ container, containerEntry, isolatedEntry });
-  } catch (error) {
-    if (moved && retentionPathExists(isolatedEntry) && !retentionPathExists(source)) {
-      try {
-        moveNoReplaceSync(
-          container.descriptor,
-          'entry',
-          sourceDirectoryDescriptor,
-          path.basename(source),
-        );
-        fs.fsyncSync(sourceDirectoryDescriptor);
-        fs.fsyncSync(container.descriptor);
-      } catch {
-        // Preserve both names in quarantine rather than deleting either one.
-      }
-    }
-    if (safeNames(`/proc/self/fd/${container.descriptor}`).length === 0) {
-      fs.rmdirSync(containerEntry);
-      fs.fsyncSync(deletionLaneDescriptor);
-    } else {
-      fs.fchmodSync(container.descriptor, 0o500);
-      fs.fsyncSync(container.descriptor);
-    }
-    fs.closeSync(container.descriptor);
-    throw error;
-  }
-}
-
 function removePinnedTreeContents(
   directoryDescriptor,
   expectedDevice,
   snapshot,
-  deletionLaneDescriptor,
+  irreversibleBoundary,
 ) {
   const descriptorPath = `/proc/self/fd/${directoryDescriptor}`;
   const directory = descriptorIdentity(fs.fstatSync(directoryDescriptor, { bigint: true }));
@@ -372,45 +365,42 @@ function removePinnedTreeContents(
       if (!identityMatches || (expected.kind === 'file' && pinned.opened.nlink !== 1n)) {
         throw new Error('runtime_retention_package_removal_isolated_tree_changed');
       }
-      const isolated = isolatePinnedEntry(
-        child,
-        directoryDescriptor,
-        pinned,
-        deletionLaneDescriptor,
-      );
-      try {
-        if (expected.kind === 'directory') {
-          removePinnedTreeContents(
-            pinned.descriptor,
-            expectedDevice,
-            expected.tree,
-            deletionLaneDescriptor,
-          );
-          const pathIdentity = fs.lstatSync(isolated.isolatedEntry, { bigint: true });
-          const openIdentity = fs.fstatSync(pinned.descriptor, { bigint: true });
-          if (pathIdentity.dev !== openIdentity.dev || pathIdentity.ino !== openIdentity.ino) {
-            throw new Error('runtime_retention_package_removal_isolated_tree_changed');
-          }
-          fs.rmdirSync(isolated.isolatedEntry);
-          if (fs.fstatSync(pinned.descriptor, { bigint: true }).nlink !== 0n) {
-            throw new Error('runtime_retention_package_removal_isolated_tree_changed');
-          }
-        } else {
-          const completed = fs.lstatSync(isolated.isolatedEntry, { bigint: true });
-          if (!sameTreeIdentity(expected.identity, descriptorIdentity(completed))) {
-            throw new Error('runtime_retention_package_removal_isolated_tree_changed');
-          }
-          fs.unlinkSync(isolated.isolatedEntry);
-          if (fs.fstatSync(pinned.descriptor, { bigint: true }).nlink !== 0n) {
-            throw new Error('runtime_retention_package_removal_isolated_tree_changed');
-          }
-        }
-        fs.fsyncSync(isolated.container.descriptor);
-        fs.rmdirSync(isolated.containerEntry);
-        fs.fsyncSync(deletionLaneDescriptor);
-      } finally {
-        fs.closeSync(isolated.container.descriptor);
+      if (expected.kind === 'directory') {
+        removePinnedTreeContents(
+          pinned.descriptor,
+          expectedDevice,
+          expected.tree,
+          irreversibleBoundary,
+        );
       }
+      const pathIdentity = fs.lstatSync(child, { bigint: true });
+      const openIdentity = fs.fstatSync(pinned.descriptor, { bigint: true });
+      const completedMatches = expected.kind === 'directory'
+        ? pathIdentity.dev === openIdentity.dev && pathIdentity.ino === openIdentity.ino
+          && openIdentity.isDirectory()
+        : sameTreeIdentity(expected.identity, descriptorIdentity(pathIdentity))
+          && pathIdentity.dev === openIdentity.dev && pathIdentity.ino === openIdentity.ino
+          && openIdentity.isFile() && openIdentity.nlink === 1n;
+      if (!completedMatches) {
+        throw new Error('runtime_retention_package_removal_isolated_tree_changed');
+      }
+      irreversibleBoundary.commit(() => {
+        const afterBoundary = fs.lstatSync(child, { bigint: true });
+        const pinnedAfterBoundary = fs.fstatSync(pinned.descriptor, { bigint: true });
+        if (afterBoundary.dev !== pinnedAfterBoundary.dev
+          || afterBoundary.ino !== pinnedAfterBoundary.ino
+          || (expected.kind === 'directory'
+            ? !pinnedAfterBoundary.isDirectory()
+            : !pinnedAfterBoundary.isFile() || pinnedAfterBoundary.nlink !== 1n)) {
+          throw new Error('runtime_retention_package_removal_isolated_tree_changed');
+        }
+        if (expected.kind === 'directory') fs.rmdirSync(child);
+        else fs.unlinkSync(child);
+        if (fs.fstatSync(pinned.descriptor, { bigint: true }).nlink !== 0n) {
+          throw new Error('runtime_retention_package_removal_isolated_tree_changed');
+        }
+        fs.fsyncSync(directoryDescriptor);
+      });
     } finally { fs.closeSync(pinned.descriptor); }
   }
   if (safeNames(descriptorPath).length !== 0) {
@@ -453,31 +443,34 @@ function restoreSealedModes(rootDescriptor, changedDirectories) {
   }
 }
 
-function assertPackageDeletionAuthorization(authorization, expectedContentHash) {
-  const evidence = authorization?.retentionDeletionEvidence;
-  const { runtimeRetentionDeletionEvidenceHash = null, ...payload } = evidence || {};
-  if (authorization?.authorized !== true
-    || authorization.category !== 'packages'
-    || evidence?.status !== 'retention_deletion_authorized'
-    || evidence.category !== 'packages'
-    || path.resolve(String(evidence.path || '')) !== path.resolve(String(authorization.sourcePath || ''))
-    || evidence.contentHash !== expectedContentHash
-    || !SHA256_PATTERN.test(String(runtimeRetentionDeletionEvidenceHash || ''))
-    || hashRecord('RuntimeRetentionDeletionEvidence', payload)
-      !== runtimeRetentionDeletionEvidenceHash) {
-    throw new Error('runtime_retention_package_removal_authorization_invalid');
-  }
-}
-
-export function removeAuthorizedSealedPackageTreeSync({
+function removeAuthorizedPackageTreeSync({
   candidate,
   expectedContentHash,
   expectedIdentity,
   authorization,
+  revalidateAuthorization,
+  recoveryBinding,
+  assertFencedGenerationLock = () => {},
+  assertLiveLocks = () => {},
+  assertExternalDeletionLease = () => {},
+  withDeletionFenceGuard = (operation) => operation(),
+  faultInjector = null,
 } = {}) {
   assertPackageDeletionAuthorization(authorization, expectedContentHash);
+  const fencedStaging = authorization.retentionDeletionEvidence.evidenceKind
+    === 'package_fenced_staging_generation_verified';
+  if (typeof revalidateAuthorization !== 'function') {
+    throw new Error('runtime_retention_package_removal_live_authority_required');
+  }
   const resolvedCandidate = path.resolve(String(candidate || ''));
-  if (path.dirname(resolvedCandidate) === resolvedCandidate) {
+  const authorizedSource = path.resolve(String(authorization.sourcePath || ''));
+  if (path.dirname(resolvedCandidate) === resolvedCandidate
+    || path.dirname(authorizedSource) === authorizedSource) {
+    throw new Error('runtime_retention_package_removal_preimage_changed');
+  }
+  const authorizedSourceStat = fs.lstatSync(authorizedSource, { bigint: true });
+  if (!authorizedSourceStat.isDirectory() || authorizedSourceStat.isSymbolicLink()
+    || fs.realpathSync.native(resolvedCandidate) !== fs.realpathSync.native(authorizedSource)) {
     throw new Error('runtime_retention_package_removal_preimage_changed');
   }
   const parent = openPinnedParent(path.dirname(resolvedCandidate));
@@ -485,10 +478,9 @@ export function removeAuthorizedSealedPackageTreeSync({
   const candidateEntry = path.join(parentDescriptorPath, path.basename(resolvedCandidate));
   let pinned = null;
   let staging = null;
-  let deletionLane = null;
   let stagingEntry = null;
-  let deletionLaneEntry = null;
   let isolatedEntry = null;
+  let recovery = null;
   const changedDirectories = [];
   let isolated = false;
   let removalStarted = false;
@@ -499,16 +491,36 @@ export function removeAuthorizedSealedPackageTreeSync({
     if (!sameIdentity(observedIdentity, expectedIdentity)
       || retentionMemberHash(candidateEntry) !== expectedContentHash
       || fs.realpathSync.native(candidateEntry)
-        !== fs.realpathSync.native(`/proc/self/fd/${pinned.descriptor}`)) {
+        !== fs.realpathSync.native(`/proc/self/fd/${pinned.descriptor}`)
+      || fs.realpathSync.native(candidateEntry) !== fs.realpathSync.native(authorizedSource)) {
       throw new Error('runtime_retention_package_removal_preimage_changed');
     }
-    const snapshot = assertSealedRegularTree(pinned.descriptor, pinned.opened.dev);
-    unsealRegularTree(
+    const snapshot = assertSealedRegularTree(
       pinned.descriptor,
       pinned.opened.dev,
-      changedDirectories,
-      snapshot,
+      !fencedStaging,
     );
+    const sourceTreeIdentityHash = snapshotTreeIdentityHash(snapshot);
+    recovery = prepareRetentionRemovalRecoverySync({
+      candidate: candidateEntry,
+      binding: recoveryBinding,
+      expectedIdentity,
+    });
+    revalidatePackageDeletionAuthorization({
+      authorization,
+      expectedContentHash,
+      revalidateAuthorization,
+      stage: 'before_package_tree_unsealed',
+    });
+    recovery.beginMutation({ sourceTreeIdentityHash });
+    if (!fencedStaging) {
+      unsealRegularTree(
+        pinned.descriptor,
+        pinned.opened.dev,
+        changedDirectories,
+        snapshot,
+      );
+    }
     if (retentionMemberHash(candidateEntry) !== expectedContentHash) {
       throw new Error('runtime_retention_package_removal_preimage_changed');
     }
@@ -518,14 +530,13 @@ export function removeAuthorizedSealedPackageTreeSync({
       throw new Error('runtime_retention_package_removal_preimage_changed');
     }
 
-    stagingEntry = fs.mkdtempSync(path.join(
-      parentDescriptorPath,
-      '.hepta-retention-package-delete-',
-    ));
+    stagingEntry = path.join(
+      recoveryBinding.runtimeRoot,
+      'retention',
+      'removal-recovery',
+      recovery.locations.stageName,
+    );
     staging = openPinned(stagingEntry, 'directory', parent.opened.dev);
-    deletionLaneEntry = path.join(`/proc/self/fd/${staging.descriptor}`, 'entries');
-    fs.mkdirSync(deletionLaneEntry, { mode: 0o700 });
-    deletionLane = openPinned(deletionLaneEntry, 'directory', parent.opened.dev);
     isolatedEntry = path.join(`/proc/self/fd/${staging.descriptor}`, 'package');
     moveNoReplaceSync(
       parent.descriptor,
@@ -547,12 +558,59 @@ export function removeAuthorizedSealedPackageTreeSync({
       throw new Error('runtime_retention_package_removal_source_advanced');
     }
 
-    removalStarted = true;
+    faultInjector?.({ stage: 'before_package_tree_irreversible_removal' });
+    faultInjector?.({ stage: 'before_package_tree_final_revalidation' });
+    const finalIsolatedIdentity = fs.lstatSync(isolatedEntry, { bigint: true });
+    const finalOpenIdentity = fs.fstatSync(pinned.descriptor, { bigint: true });
+    if (finalIsolatedIdentity.dev !== finalOpenIdentity.dev
+      || finalIsolatedIdentity.ino !== finalOpenIdentity.ino
+      || retentionMemberHash(isolatedEntry) !== expectedContentHash) {
+      throw new Error('runtime_retention_package_removal_isolation_identity_changed');
+    }
+    const canonicalIsolatedEntry = path.join(
+      recoveryBinding.runtimeRoot,
+      'retention',
+      'removal-recovery',
+      recovery.locations.stageName,
+      'package',
+    );
+    revalidatePackageDeletionAuthorization({
+      authorization,
+      expectedContentHash,
+      revalidateAuthorization,
+      stage: 'before_package_tree_irreversible_removal',
+      detachedRetentionEntries: [packageRemovalDetachedRecoveryEntry({
+        authorization,
+        expectedContentHash,
+        expectedIdentity,
+        recoveryBinding,
+        recovery,
+        sourcePath: canonicalIsolatedEntry,
+        sourceTreeIdentityHash,
+      })],
+    });
+    const irreversibleBoundary = createPackageRemovalIrreversibleBoundary({
+      authorization,
+      expectedContentHash,
+      expectedIdentity,
+      recoveryBinding,
+      recovery,
+      sourceTreeIdentityHash,
+      revalidateAuthorization,
+      assertFencedGenerationLock,
+      assertLiveLocks: () => {
+        assertLiveLocks();
+        assertExternalDeletionLease();
+      },
+      withDeletionFenceGuard,
+      markRemovalStarted: () => { removalStarted = true; },
+      faultInjector,
+    });
     removePinnedTreeContents(
       pinned.descriptor,
       pinned.opened.dev,
       snapshot,
-      deletionLane.descriptor,
+      irreversibleBoundary,
     );
     if (retentionPathExists(candidateEntry)) {
       throw new Error('runtime_retention_package_removal_source_advanced');
@@ -563,30 +621,29 @@ export function removeAuthorizedSealedPackageTreeSync({
       || isolatedRootIdentity.ino !== openRootIdentity.ino) {
       throw new Error('runtime_retention_package_removal_isolation_identity_changed');
     }
-    fs.rmdirSync(isolatedEntry);
-    if (fs.fstatSync(pinned.descriptor, { bigint: true }).nlink !== 0n) {
-      throw new Error('runtime_retention_package_removal_postimage_invalid');
-    }
-    fs.fsyncSync(staging.descriptor);
-    if (safeNames(`/proc/self/fd/${deletionLane.descriptor}`).length !== 0) {
-      throw new Error('runtime_retention_package_removal_postimage_invalid');
-    }
-    fs.rmdirSync(deletionLaneEntry);
-    fs.fsyncSync(staging.descriptor);
-    fs.rmdirSync(stagingEntry);
-    fs.fsyncSync(parent.descriptor);
+    irreversibleBoundary.commit(() => {
+      const afterBoundaryRoot = fs.lstatSync(isolatedEntry, { bigint: true });
+      const pinnedAfterBoundaryRoot = fs.fstatSync(pinned.descriptor, { bigint: true });
+      if (afterBoundaryRoot.dev !== pinnedAfterBoundaryRoot.dev
+        || afterBoundaryRoot.ino !== pinnedAfterBoundaryRoot.ino
+        || !pinnedAfterBoundaryRoot.isDirectory()) {
+        throw new Error('runtime_retention_package_removal_isolation_identity_changed');
+      }
+      fs.rmdirSync(isolatedEntry);
+      if (fs.fstatSync(pinned.descriptor, { bigint: true }).nlink !== 0n) {
+        throw new Error('runtime_retention_package_removal_postimage_invalid');
+      }
+      fs.fsyncSync(staging.descriptor);
+    });
     removed = true;
     if (retentionPathExists(candidateEntry)
-      || retentionPathExists(stagingEntry)) {
+      || !retentionPathExists(stagingEntry)) {
       throw new Error('runtime_retention_package_removal_postimage_invalid');
     }
   } catch (error) {
     const recoveryErrors = [];
-    if (!removed && pinned && changedDirectories.length) {
-      try { restoreSealedModes(pinned.descriptor, changedDirectories); }
-      catch (restoreError) { recoveryErrors.push(restoreError); }
-    }
-    if (isolated && !removalStarted && isolatedEntry && retentionPathExists(isolatedEntry)) {
+    if (isolated && !removalStarted && !recovery
+      && isolatedEntry && retentionPathExists(isolatedEntry)) {
       try {
         if (!retentionPathExists(candidateEntry)) {
           moveNoReplaceSync(
@@ -601,15 +658,22 @@ export function removeAuthorizedSealedPackageTreeSync({
         }
       } catch (restoreError) { recoveryErrors.push(restoreError); }
     }
-    if (staging && stagingEntry && retentionPathExists(stagingEntry)) {
+    if (!removed && !removalStarted && pinned && changedDirectories.length) {
+      try { restoreSealedModes(pinned.descriptor, changedDirectories); }
+      catch (restoreError) { recoveryErrors.push(restoreError); }
+    }
+    if (!removed && !removalStarted && fencedStaging && pinned) {
+      try { sealDirectoryTree(pinned.descriptor, pinned.opened.dev); }
+      catch (restoreError) { recoveryErrors.push(restoreError); }
+    }
+    if (!removed && recovery) {
       try {
-        if (safeNames(`/proc/self/fd/${staging.descriptor}`).length === 0) {
-          fs.rmdirSync(stagingEntry);
-          fs.fsyncSync(parent.descriptor);
-        } else {
-          sealDirectoryTree(staging.descriptor, parent.opened.dev);
-        }
-      } catch (quarantineError) { recoveryErrors.push(quarantineError); }
+        recoverRetentionRemovalSync({
+          binding: recovery.binding,
+          parentDescriptor: parent.descriptor,
+          parentDescriptorPath,
+        });
+      } catch (recoveryError) { recoveryErrors.push(recoveryError); }
     }
     if (recoveryErrors.length) {
       throw new AggregateError(
@@ -620,8 +684,19 @@ export function removeAuthorizedSealedPackageTreeSync({
     throw error;
   } finally {
     if (pinned) fs.closeSync(pinned.descriptor);
-    if (deletionLane) fs.closeSync(deletionLane.descriptor);
     if (staging) fs.closeSync(staging.descriptor);
+    recovery?.close();
     fs.closeSync(parent.descriptor);
   }
+  return Object.freeze({ recoveryBinding: recovery.binding });
+}
+
+export function removeAuthorizedSealedPackageTreeSync(options = {}) {
+  return withFencedStagingDeletionAuthority({
+    authorization: options.authorization,
+    operation: ({ assertHeld }) => removeAuthorizedPackageTreeSync({
+      ...options,
+      assertFencedGenerationLock: assertHeld,
+    }),
+  });
 }

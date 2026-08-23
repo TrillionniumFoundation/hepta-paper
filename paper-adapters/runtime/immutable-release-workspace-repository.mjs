@@ -4,6 +4,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { currentCodeProvenance } from './code-provenance.mjs';
+import {
+  materializeImmutableReleaseSubmodules,
+} from './immutable-release-submodule-materializer.mjs';
 import { assertReleaseDependencyTreeContract } from './release-dependency-tree.mjs';
 
 const NO_FOLLOW = fs.constants.O_NOFOLLOW || 0;
@@ -402,6 +405,7 @@ export function prepareImmutableReleaseWorkspace({
   codeProvenanceMatches,
   inspectReleaseState,
   verifyDependencyTree = assertReleaseDependencyTreeContract,
+  materializeSubmodules = materializeImmutableReleaseSubmodules,
   modeMutationFaultInjector = null,
 } = {}) {
   const candidateRoot = fs.realpathSync(candidateWorkspaceRoot);
@@ -494,6 +498,15 @@ export function prepareImmutableReleaseWorkspace({
     }
     assertCandidateAndDependencySourceBound();
     assertNoSharedObjectFiles(candidateRoot, cloneRoot);
+    assertCandidateAndDependencySourceBound();
+    const submoduleMaterialization = materializeSubmodules({
+      candidateWorkspaceRoot: candidateRoot,
+      cloneWorkspaceRoot: cloneRoot,
+      expectedCommit,
+    });
+    if (submoduleMaterialization?.status !== 'immutable_release_submodules_materialized') {
+      throw codedError('immutable_release_workspace_submodule_materialization_invalid');
+    }
     assertCandidateAndDependencySourceBound();
 
     const dependencyCopyParent = path.join(tempRoot, 'dependencies');
@@ -644,6 +657,7 @@ export function prepareImmutableReleaseWorkspace({
       dependencyTreeInspection: dependencyInspection,
       dependencyTreeCopyInspection: copiedDependencyInspection,
       immutableDependencyTreeInspection: immutableDependencyInspection,
+      submoduleMaterialization,
       cleanup,
     });
   } catch (error) {

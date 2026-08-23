@@ -23,6 +23,47 @@ const IDENTITY_KEYS = Object.freeze([
   'topicProducerProfileHash',
   'writerManifestHash',
 ]);
+const PROVISIONING_CAPABILITIES = new WeakMap();
+
+function stagingDirectoryIdentity(candidate) {
+  const stat = fs.lstatSync(candidate, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink()
+    || Number(stat.mode & 0o777n) !== 0o700) {
+    throw new Error('autonomous_research_state_provisioning_staging_identity_invalid');
+  }
+  return Object.freeze({
+    realpath: fs.realpathSync(candidate),
+    device: String(stat.dev),
+    inode: String(stat.ino),
+    mode: String(stat.mode),
+    uid: String(stat.uid),
+    gid: String(stat.gid),
+  });
+}
+
+export function assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+  capability,
+  runtimeRoot,
+  provisioningPlanId,
+} = {}) {
+  const bound = PROVISIONING_CAPABILITIES.get(capability);
+  const resolvedRuntimeRoot = path.resolve(String(runtimeRoot || ''));
+  let observed = null;
+  try { observed = stagingDirectoryIdentity(resolvedRuntimeRoot); } catch {}
+  if (!bound
+    || provisioningPlanId !== bound.provisioningPlanId
+    || resolvedRuntimeRoot !== bound.stagingRoot
+    || observed?.realpath !== bound.stagingIdentity.realpath
+    || observed?.device !== bound.stagingIdentity.device
+    || observed?.inode !== bound.stagingIdentity.inode
+    || observed?.mode !== bound.stagingIdentity.mode
+    || observed?.uid !== bound.stagingIdentity.uid
+    || observed?.gid !== bound.stagingIdentity.gid
+    || fs.existsSync(bound.targetRuntimeRoot)) {
+    throw new Error('autonomous_research_state_provisioning_capability_invalid');
+  }
+  return capability;
+}
 
 function assertSecureParent(runtimeRoot) {
   const parent = path.dirname(runtimeRoot);
@@ -140,9 +181,31 @@ export function provisionAutonomousResearchStateBusinessSchemas({
     `.${path.basename(plan.runtimeRoot)}.provisioning-`,
   ));
   fs.chmodSync(stagingRoot, 0o700);
+  const provisioningCapability = Object.freeze({});
+  PROVISIONING_CAPABILITIES.set(provisioningCapability, Object.freeze({
+    provisioningPlanId: plan.provisioningPlanId,
+    targetRuntimeRoot: plan.runtimeRoot,
+    stagingRoot,
+    stagingIdentity: stagingDirectoryIdentity(stagingRoot),
+  }));
   let installationCommitted = false;
   try {
-    provisionBusinessSchemas({ runtimeRoot: stagingRoot });
+    assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+      capability: provisioningCapability,
+      runtimeRoot: stagingRoot,
+      provisioningPlanId: plan.provisioningPlanId,
+    });
+    provisionBusinessSchemas({
+      runtimeRoot: stagingRoot,
+      provisioningCapability,
+      provisioningPlanId: plan.provisioningPlanId,
+    });
+    assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+      capability: provisioningCapability,
+      runtimeRoot: stagingRoot,
+      provisioningPlanId: plan.provisioningPlanId,
+    });
+    PROVISIONING_CAPABILITIES.delete(provisioningCapability);
     const stagedInventory = resolveAutonomousResearchStateDatabaseInventory({
       runtimeRoot: stagingRoot,
       manifest: stateDatabaseManifest,
@@ -196,6 +259,7 @@ export function provisionAutonomousResearchStateBusinessSchemas({
       ),
     });
   } finally {
+    PROVISIONING_CAPABILITIES.delete(provisioningCapability);
     if (!installationCommitted) fs.rmSync(stagingRoot, { recursive: true, force: true });
   }
 }

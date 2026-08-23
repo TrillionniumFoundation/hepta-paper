@@ -69,6 +69,9 @@ export const STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY = Object.freeze({
   'release-attestor-probe-credential-root': 'opaque-directory-reference',
   'release-attestor-signer-command': 'public-reference',
   'release-attestor-probe-command': 'public-reference',
+  'owner-trust-store': 'public-reference',
+  'owner-acceptance-document': 'public-reference',
+  'package-recovery-readiness-command': 'public-reference',
   'machine-intake-principal': 'public-reference',
   'topic-producer-profile': 'public-reference',
   'backup-restore-authority-principal': 'public-reference',
@@ -102,8 +105,17 @@ export const READINESS_ENVIRONMENT_REFERENCES = Object.freeze({
     'backup-restore-authority-principal',
   HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG: 'external-qualifier-principal',
   HEPTA_PRIOR_ART_SERVICE_CONFIG: 'prior-art-service-config',
+  // The service configuration itself is not enough to establish a pinned
+  // production identity.  Pass the document's canonical configuration hash
+  // through the plan-bound child environment so the adapter cannot silently
+  // downgrade to its bounded, unpinned mode.
+  HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH: 'prior-art-service-config',
   HEPTA_PRIOR_ART_SERVICE_TOKEN_FILE: 'prior-art-service-credential-reference',
   HEPTA_EXTERNAL_REPLAY_CONFIG: 'external-replay-config',
+  // External replay has the same explicit out-of-band hash requirement.  A
+  // missing binding must remain a hard blocker instead of relying on ambient
+  // process environment state.
+  HEPTA_EXTERNAL_REPLAY_CONFIG_HASH: 'external-replay-config',
   HEPTA_EXTERNAL_REPLAY_SERVICE_TOKEN_FILE: 'external-replay-credential-reference',
   HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG: 'research-author-identity-config',
   HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH: 'research-author-identity-config',
@@ -201,12 +213,21 @@ export const STEP_INVOCATION_POLICY = Object.freeze({
     execute: Object.freeze({ command: 'runtime-image-reproducibility',
       requiredArguments: ['--action', 'publish'], requiredFlagValues: { '--action': 'publish' },
       argumentReferenceFlags: { '--config': 'runtime-reproducibility-principal' },
-      environmentReferences: {},
+      // The verifier refuses to read or invoke an unpinned process
+      // configuration. Bind its resolved identity hash from the plan
+      // reference instead of inheriting an ambient value.
+      environmentReferences: {
+        HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH:
+          'runtime-reproducibility-principal',
+      },
       assertions: [['/status', 'runtime_image_reproducibility_verified']] }),
     verify: Object.freeze({ command: 'runtime-image-reproducibility',
       requiredArguments: ['--action', 'status'], requiredFlagValues: { '--action': 'status' },
       argumentReferenceFlags: { '--config': 'runtime-reproducibility-principal' },
-      environmentReferences: {},
+      environmentReferences: {
+        HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH:
+          'runtime-reproducibility-principal',
+      },
       assertions: [['/status', 'runtime_image_reproducibility_verified']] }),
   }),
   'advanced-numeric-activation': Object.freeze({
@@ -371,10 +392,33 @@ export const STEP_INVOCATION_POLICY = Object.freeze({
 });
 
 export const FINAL_VERIFICATION_INVOCATION_POLICY = Object.freeze({
-  command: 'automation-status',
+  command: 'full-production-readiness',
   requiredArguments: [
-    '--live-provider-canary', '--live-release-attestor', '--require-fully-autonomous',
+    '--owner-trust-store',
+    '--owner-trust-store-sha256',
+    '--owner-acceptance-document',
+    '--owner-acceptance-document-sha256',
+    '--package-recovery-readiness-command',
+    '--package-recovery-readiness-command-sha256',
+    '--live-provider-canary',
+    '--live-release-attestor',
+    '--require-full-production',
   ],
+  requiredSha256ValueFlags: [
+    '--owner-trust-store-sha256',
+    '--owner-acceptance-document-sha256',
+    '--package-recovery-readiness-command-sha256',
+  ],
+  argumentReferenceFlags: {
+    '--owner-trust-store': 'owner-trust-store',
+    '--owner-acceptance-document': 'owner-acceptance-document',
+    '--package-recovery-readiness-command': 'package-recovery-readiness-command',
+  },
+  argumentReferenceHashFlags: {
+    '--owner-trust-store-sha256': 'owner-trust-store',
+    '--owner-acceptance-document-sha256': 'owner-acceptance-document',
+    '--package-recovery-readiness-command-sha256': 'package-recovery-readiness-command',
+  },
   environmentReferences: READINESS_ENVIRONMENT_REFERENCES,
   assertions: [
     ['/fullyAutonomousResearchSystemStatus',
@@ -387,8 +431,14 @@ export const FINAL_VERIFICATION_INVOCATION_POLICY = Object.freeze({
     ['/gpuDeepLearningOperationalProofReady', true],
     ['/gpuDeepLearningProductionQualificationReady', true],
     ['/fullResearchQualification/paperId', QUALIFICATION_PAPER_ID_ASSERTION],
+    ['/fullProductionStatus', 'full_production_ready'],
+    ['/fullProductionReady', true],
+    ['/packageRetentionRecoveryReady', true],
+    ['/offhostWormCustodyReady', true],
+    ['/independentExternalOwnerAcceptanceReady', true],
+    ['/independentProductionOperationalProofReady', true],
+    ['/blockers', []],
   ],
-  exactArguments: true,
 });
 
 export const FORBIDDEN_INVOCATION_ARGUMENTS = new Set(['--help', '-h', '--root', '--runtime-root']);
@@ -481,13 +531,22 @@ export const STEP_ARGUMENT_GRAMMAR = Object.freeze({
 
 export const FINAL_VERIFICATION_ARGUMENT_GRAMMAR = Object.freeze({
   booleanFlags: [
-    '--live-provider-canary', '--live-release-attestor', '--require-fully-autonomous',
+    '--live-provider-canary', '--live-release-attestor', '--require-full-production',
   ],
-  valueFlags: [],
+  valueFlags: [
+    '--owner-trust-store',
+    '--owner-trust-store-sha256',
+    '--owner-acceptance-document',
+    '--owner-acceptance-document-sha256',
+    '--package-recovery-readiness-command',
+    '--package-recovery-readiness-command-sha256',
+  ],
 });
 
 export const ABSOLUTE_PATH_FLAGS = new Set([
   '--activation', '--authority-config', '--authority-process-config', '--bundle', '--config',
   '--dataset-root', '--external-qualification-config', '--install-root',
   '--machine-intake-config', '--receipt', '--signing-config', '--topic-producer-profile',
+  '--owner-trust-store', '--owner-acceptance-document',
+  '--package-recovery-readiness-command',
 ]);

@@ -196,6 +196,10 @@ test('every campaign DML entrypoint binds a unique fixed strict-store operation'
     .map((match) => match[1])
     .sort();
   assert.deepEqual(bindings, expected);
+  assert.match(
+    sources,
+    /packageDeletionWriterSelector[\s\S]*packagePath:\s*prepared\.releaseBundle\.packageOutput\.packageDir/,
+  );
   assert.doesNotMatch(
     sources.replace(/function transaction[\s\S]*?\n  }\n/, ''),
     /store\.(?:run|execute)\s*\(/,

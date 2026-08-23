@@ -61,8 +61,8 @@ export function buildStrictFullAutoAcceptanceReceipt({
   for (const [index, receipt] of stepReceipts.entries()) {
     if (!exactKeys(receipt, [
       'stepId', 'stepDefinitionHash', 'idempotencyKey', 'planHash', 'configurationHash',
-      'referenceSetHash', 'executionOutputHash', 'verificationOutputHash', 'completedAt',
-      'skippedCount', 'receiptHash',
+      'referenceSetHash', 'executionBasis', 'executionOutputHash',
+      'verificationOutputHash', 'completedAt', 'skippedCount', 'receiptHash',
     ]) || receipt.stepId !== STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER[index]
       || receipt.stepDefinitionHash !== strictFullAutoAcceptanceHash(verifiedPlan.steps[index])
       || receipt.idempotencyKey !== verifiedPlan.steps[index].idempotencyKey
@@ -73,6 +73,20 @@ export function buildStrictFullAutoAcceptanceReceipt({
       || !SHA256.test(String(receipt.verificationOutputHash || ''))
       || !canonicalTimestamp(receipt.completedAt)
       || receipt.skippedCount !== 0 || !SHA256.test(String(receipt.receiptHash || ''))) {
+      throw new Error(`strict_full_auto_acceptance_step_receipt_invalid:${index}`);
+    }
+    if (receipt.executionBasis !== null
+      && (receipt.stepId !== 'state-provisioning'
+        || !exactKeys(receipt.executionBasis, [
+          'version', 'kind', 'adoptionReceiptHash', 'runtimeRootActivationHash',
+        ])
+        || receipt.executionBasis.version !== 1
+        || receipt.executionBasis.kind
+          !== 'StrictFullAutoAcceptanceAdoptedProvisioningExecutionBasis'
+        || !SHA256.test(String(receipt.executionBasis.adoptionReceiptHash || ''))
+        || !SHA256.test(String(receipt.executionBasis.runtimeRootActivationHash || ''))
+        || receipt.executionOutputHash
+          !== strictFullAutoAcceptanceHash(receipt.executionBasis))) {
       throw new Error(`strict_full_auto_acceptance_step_receipt_invalid:${index}`);
     }
     const { receiptHash, ...body } = receipt;

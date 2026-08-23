@@ -1,5 +1,6 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
+  GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS,
   GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_MANIFEST_PATH,
   verifyGpuScientificArtifactBodyArchiveManifest,
 } from './gpu-scientific-artifact-body-archive-contract.mjs';
@@ -219,7 +220,8 @@ export function verifyCampaignReleaseGpuScientificEvidenceDescriptor(manifest) {
     && SHA256.test(String(descriptor.gpuScientificArtifactBodyArchiveManifestHash || ''))
     && SHA256.test(String(descriptor.artifactBodySetHash || ''))
     && SHA256.test(String(descriptor.scientificOutputCommitmentHash || ''))
-    && archiveEntries.length === 9
+    && archiveEntries.length
+      === GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS.length
     && Number(descriptor.archiveBodyCount) === archiveEntries.length
     && Number(descriptor.archiveTotalBytes)
       === archiveEntries.reduce((total, entry) => total + Number(entry?.bytes || 0), 0)

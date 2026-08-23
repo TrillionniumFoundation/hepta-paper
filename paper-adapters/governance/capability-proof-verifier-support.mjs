@@ -213,6 +213,7 @@ export function readBoundRegularJsonSnapshot(root, candidate) {
     }
     return Object.freeze({
       document: JSON.parse(bytes.toString('utf8')),
+      contentHash: `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`,
       fileIdentity: before,
       pathSnapshot: Object.freeze([...pathSnapshot]),
       selected,

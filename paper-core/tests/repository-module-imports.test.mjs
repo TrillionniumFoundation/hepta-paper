@@ -123,11 +123,16 @@ function dynamicImportExpressions(source) {
     const node = pending.pop();
     if (!node || typeof node !== 'object') continue;
     if (node.type === 'ImportExpression') {
+      const expression = source.slice(node.source.start, node.source.end);
+      const literalValue = node.source.type === 'Literal'
+        && typeof node.source.value === 'string'
+        ? node.source.value
+        : null;
       expressions.push({
-        expression: source.slice(node.source.start, node.source.end),
-        nodeBuiltin: node.source.type === 'Literal'
-          && typeof node.source.value === 'string'
-          && node.source.value.startsWith('node:'),
+        expression,
+        internalRelative: literalValue?.startsWith('.') === true
+          && relativeModuleSpecifiers(`import(${expression})`).includes(literalValue),
+        nodeBuiltin: literalValue?.startsWith('node:') === true,
       });
     }
     for (const value of Object.values(node)) {
@@ -699,7 +704,7 @@ test('production inventory is reachable only from declared executable entrypoint
   for (const file of production) {
     const source = fs.readFileSync(file, 'utf8');
     for (const dynamicImport of dynamicImportExpressions(source)) {
-      if (dynamicImport.nodeBuiltin) continue;
+      if (dynamicImport.nodeBuiltin || dynamicImport.internalRelative) continue;
       externalRuntimeImports.push({
         file: posix(path.relative(workspaceRoot, file)),
         expression: dynamicImport.expression,

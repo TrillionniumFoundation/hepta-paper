@@ -696,6 +696,30 @@ test('restore drill replays a complete signed finalized journal across databases
   assert.deepEqual(productionValuesAfter, productionValuesBefore);
 });
 
+test('journal replay rejects unexpected SQLite sidecars in a backup bundle', async (t) => {
+  const setup = await preparedJournalFixture(t);
+  const databaseRoot = path.join(setup.backup.bundlePath, 'databases');
+  const firstDatabase = path.join(
+    databaseRoot,
+    fs.readdirSync(databaseRoot).find((name) => name.endsWith('.sqlite')),
+  );
+  fs.writeFileSync(`${firstDatabase}-shm`, 'unexpected-sidecar', { mode: 0o600 });
+
+  const drill = await drillAutonomousResearchStateRestore({
+    bundlePath: setup.backup.bundlePath,
+    backupRoot: setup.backupRoot,
+    stateDatabaseManifest,
+    authorityClient: setup.backupAuthority.client,
+    authorityTrust: setup.backupAuthority.trust,
+    onlineMutationVerifier: setup.onlineAuthority.verifier,
+    clock: setup.clock,
+  });
+  assert.equal(drill.status, 'autonomous_research_state_restore_drill_blocked');
+  assert.ok(drill.blockers.includes(
+    'autonomous_research_state_backup_database_set_mismatch',
+  ));
+});
+
 test('snapshot creation rejects a marker row that no longer matches its signed receipts', async (t) => {
   const setup = fixture(t);
   const clock = clockFixture();

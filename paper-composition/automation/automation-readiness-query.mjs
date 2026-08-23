@@ -327,16 +327,19 @@ export function queryAutomationReadiness({
     });
   const operationalIntegrity = inspectAutomationStoreOperationalIntegrity({ store, now });
   let qualificationReleaseContext = null;
+  let gpuScientificPromotionAuthorityVerifier = null;
   let fullResearchQualification;
   try {
     const qualificationReceipt = qualificationReceiptRead.receipt;
-    if (qualificationReceipt) {
+    try {
       qualificationReleaseContext = openAutomationFullResearchReleaseQueryContext({
         root,
         runtimeRoot,
         environment,
       });
-    }
+      gpuScientificPromotionAuthorityVerifier =
+        qualificationReleaseContext.gpuScientificPromotionAuthorityVerifier;
+    } catch { qualificationReleaseContext = null; }
     const releaseAttestor = releaseAttestorTrust.attestor;
     const observedRuntimeImageDigests = Object.freeze(Object.fromEntries(
       REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES.map((profile) => [
@@ -368,7 +371,7 @@ export function queryAutomationReadiness({
       verifyReleaseAttestation: (input) => releaseAttestor.verifyAttestation(input),
       verifyQualificationSignature: (input) => releaseAttestor.verifyDetachedSignature(input),
       gpuScientificPromotionAuthorityVerifier:
-        qualificationReleaseContext?.gpuScientificPromotionAuthorityVerifier || null,
+        gpuScientificPromotionAuthorityVerifier,
     });
   } finally {
     qualificationReleaseContext?.close?.();
@@ -404,6 +407,7 @@ export function queryAutomationReadiness({
     providerInspections,
     providerSpawnSync,
     currentDynamicFormalExecutionAuthority,
+    gpuScientificPromotionAuthorityVerifier,
   });
   const capabilityScopeManifest = capabilityScopeInspection.manifest;
   const publishedDynamicFormalExecutionAuthority =

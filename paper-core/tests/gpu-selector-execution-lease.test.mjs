@@ -7,6 +7,9 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import {
+  GPU_SELECTOR_EXECUTION_LEASE_MECHANISM,
+  GPU_SELECTOR_EXECUTION_LEASE_RESIDUAL_RISK_DISCLOSURES,
+  GPU_SELECTOR_EXECUTION_LEASE_SCOPE,
   buildGpuSelectorExecutionLeaseReceipt,
   buildGpuSelectorExecutionLeaseReleaseReceipt,
   buildGpuSelectorExecutionLeaseWorkerBinding,
@@ -15,6 +18,9 @@ import {
   verifyGpuSelectorExecutionLeaseReleaseReceipt,
   verifyGpuSelectorExecutionLeaseWorkerBinding,
 } from '../../paper-domain/automation/gpu-selector-execution-lease-contract.mjs';
+import {
+  assertGpuSelectorExecutionLeasePort,
+} from '../../paper-ports/gpu-selector-execution-lease-port.mjs';
 import {
   createGpuSelectorExecutionLeaseRepository,
   gpuSelectorExecutionLockFileName,
@@ -38,12 +44,8 @@ function fixture(t, label) {
   return { temporaryRoot, root };
 }
 
-function runChild(source) {
+function captureChild(child) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '--eval', source], {
-      env: { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
@@ -51,6 +53,17 @@ function runChild(source) {
     child.once('error', reject);
     child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
   });
+}
+
+function runChild(source) {
+  return captureChild(spawn(
+    process.execPath,
+    ['--input-type=module', '--eval', source],
+    {
+      env: { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  ));
 }
 
 test('GPU selector lease receipts are exact, hash-bound, and never claim production exclusivity', () => {
@@ -99,9 +112,63 @@ test('GPU selector lease receipts are exact, hash-bound, and never claim product
   assert.equal(workerBinding.multiTenantExclusivityClaimed, false);
   assert.equal(workerBinding
     .dockerDeterministicContainerNameCrashRecoveryBackstopVerified, false);
+  assert.deepEqual(
+    workerBinding.residualRiskDisclosures,
+    GPU_SELECTOR_EXECUTION_LEASE_RESIDUAL_RISK_DISCLOSURES,
+  );
+  assert.ok(workerBinding.residualRiskDisclosures.includes(
+    'gpu_selector_lease_holder_deadline_requires_responsive_event_loop',
+  ));
   const hiddenRisk = structuredClone(workerBinding);
   hiddenRisk.residualRiskDisclosures = [];
   assert.equal(verifyGpuSelectorExecutionLeaseWorkerBinding(hiddenRisk), false);
+});
+
+test('lease capabilities distinguish bounded acquisition from cooperative holder expiry', (t) => {
+  const { root } = fixture(t, 'gpu-selector-lease-capabilities');
+  const repository = createGpuSelectorExecutionLeaseRepository({ root });
+  const capabilities = repository.capabilities();
+  assert.deepEqual(Object.keys(capabilities).sort(), [
+    'abortableWait',
+    'acquisitionWaitDeadlineBound',
+    'asyncContextReentrant',
+    'crossProcess',
+    'deadlineBound',
+    'holderDeadlineEnforcement',
+    'holderHardDeadlineBound',
+    'kind',
+    'lockScopeIdentityHash',
+    'mechanism',
+    'perGpuUuid',
+    'productionExclusivityClaimed',
+    'scope',
+    'version',
+  ].sort());
+  assert.deepEqual({
+    deadlineBound: capabilities.deadlineBound,
+    acquisitionWaitDeadlineBound:
+      capabilities.acquisitionWaitDeadlineBound,
+    holderHardDeadlineBound: capabilities.holderHardDeadlineBound,
+    holderDeadlineEnforcement: capabilities.holderDeadlineEnforcement,
+  }, {
+    deadlineBound: false,
+    acquisitionWaitDeadlineBound: true,
+    holderHardDeadlineBound: false,
+    holderDeadlineEnforcement:
+      'cooperative_same_event_loop_watchdog_v1',
+  });
+  assert.equal(capabilities.mechanism,
+    GPU_SELECTOR_EXECUTION_LEASE_MECHANISM);
+  assert.equal(capabilities.scope, GPU_SELECTOR_EXECUTION_LEASE_SCOPE);
+  assert.match(capabilities.lockScopeIdentityHash, /^sha256:[0-9a-f]{64}$/);
+
+  assert.throws(() => assertGpuSelectorExecutionLeasePort({
+    ...repository,
+    capabilities: () => Object.freeze({
+      ...capabilities,
+      deadlineBound: true,
+    }),
+  }), /GpuSelectorExecutionLeasePort capabilities invalid/);
 });
 
 test('secure flock lease exposes held identity and idempotent release receipts', async (t) => {
@@ -323,6 +390,159 @@ test('contended acquisition honors AbortSignal and absolute deadline', async (t)
     absoluteDeadlineEpochMs: Date.now() + 60,
   }), /gpu_selector_execution_lease_deadline_exhausted/);
   holder.release();
+});
+
+test('responsive holder deadline watchdog fences expiry and releases its OFD lock', async (t) => {
+  const { root } = fixture(t, 'gpu-selector-lease-holder-deadline');
+  const holderRepository = createGpuSelectorExecutionLeaseRepository({ root });
+  let recoveredState = null;
+  const waiterRepository = createGpuSelectorExecutionLeaseRepository({
+    root,
+    recoverStaleState({ state }) {
+      recoveredState = state;
+      return { recovered: true, receipt: null };
+    },
+  });
+  const holderDeadlineEpochMs = Date.now() + 250;
+  const holder = await holderRepository.acquire({
+    gpuDeviceSelector: GPU_UUID,
+    ownerAuthorityHash: H('8'),
+    absoluteDeadlineEpochMs: holderDeadlineEpochMs,
+  });
+  assert.equal(holder.assertHeld(), true);
+
+  const waiter = await waiterRepository.acquire({
+    gpuDeviceSelector: GPU_UUID,
+    ownerAuthorityHash: H('9'),
+    absoluteDeadlineEpochMs: Date.now() + 3_000,
+  });
+  assert.equal(Date.now() >= holderDeadlineEpochMs, true);
+  assert.equal(recoveredState?.leaseId, holder.leaseId);
+  assert.equal(recoveredState?.fencingToken, holder.fencingToken);
+  assert.equal(recoveredState?.absoluteDeadlineEpochMs, holderDeadlineEpochMs);
+  assert.notEqual(waiter.fencingToken, holder.fencingToken);
+  assert.equal(waiter.assertHeld(), true);
+
+  assert.throws(() => holder.assertHeld(), (error) => (
+    error?.code === 'gpu_selector_execution_lease_deadline_exhausted'
+  ));
+  assert.throws(() => holder.release(), (error) => (
+    error?.code === 'gpu_selector_execution_lease_deadline_exhausted'
+  ));
+  assert.equal(waiter.assertHeld(), true);
+  waiter.release();
+});
+
+test('busy-loop holder cannot be hard-preempted and capabilities disclose cooperative expiry', async (t) => {
+  const { root } = fixture(t, 'gpu-selector-lease-busy-holder');
+  const repository = createGpuSelectorExecutionLeaseRepository({ root });
+  assert.equal(repository.capabilities().deadlineBound, false);
+  assert.equal(repository.capabilities().acquisitionWaitDeadlineBound, true);
+  assert.equal(repository.capabilities().holderHardDeadlineBound, false);
+  assert.equal(
+    repository.capabilities().holderDeadlineEnforcement,
+    'cooperative_same_event_loop_watchdog_v1',
+  );
+
+  const moduleUrl = pathToFileURL(path.resolve(
+    'paper-adapters/runtime/gpu-selector-execution-lease-repository.mjs',
+  )).href;
+  const holder = spawn(process.execPath, ['--input-type=module', '--eval', `
+    import fs from 'node:fs';
+    import { createGpuSelectorExecutionLeaseRepository } from ${JSON.stringify(moduleUrl)};
+    const repository = createGpuSelectorExecutionLeaseRepository({
+      root: ${JSON.stringify(root)},
+    });
+    const absoluteDeadlineEpochMs = Date.now() + 400;
+    const lease = await repository.acquire({
+      gpuDeviceSelector: ${JSON.stringify(GPU_UUID)},
+      ownerAuthorityHash: ${JSON.stringify(H('a'))},
+      absoluteDeadlineEpochMs,
+    });
+    fs.writeSync(1, JSON.stringify({
+      status: 'held',
+      absoluteDeadlineEpochMs,
+      leaseId: lease.leaseId,
+    }) + '\\n');
+    while (true) { /* deliberately block the watchdog event loop */ }
+  `], {
+    env: { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => {
+    if (holder.exitCode === null && holder.signalCode === null) {
+      holder.kill('SIGKILL');
+    }
+  });
+  const holderOutcome = captureChild(holder);
+  let readinessBuffer = '';
+  const readiness = await Promise.race([
+    new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(
+        new Error('busy holder readiness timed out'),
+      ), 5_000);
+      holder.stdout.on('data', (chunk) => {
+        readinessBuffer += chunk;
+        const newline = readinessBuffer.indexOf('\n');
+        if (newline < 0) return;
+        clearTimeout(timeout);
+        resolve(JSON.parse(readinessBuffer.slice(0, newline)));
+      });
+    }),
+    holderOutcome.then((outcome) => {
+      throw new Error(`busy holder exited before readiness: ${JSON.stringify(outcome)}`);
+    }),
+  ]);
+  assert.equal(readiness.status, 'held');
+
+  const waiter = await runChild(`
+    import fs from 'node:fs';
+    import { createGpuSelectorExecutionLeaseRepository } from ${JSON.stringify(moduleUrl)};
+    const repository = createGpuSelectorExecutionLeaseRepository({
+      root: ${JSON.stringify(root)},
+      recoverStaleState() { return { recovered: true, receipt: null }; },
+    });
+    const requestedAtEpochMs = Date.now();
+    const absoluteDeadlineEpochMs = requestedAtEpochMs + 900;
+    try {
+      const lease = await repository.acquire({
+        gpuDeviceSelector: ${JSON.stringify(GPU_UUID)},
+        ownerAuthorityHash: ${JSON.stringify(H('b'))},
+        absoluteDeadlineEpochMs,
+      });
+      fs.writeSync(1, JSON.stringify({
+        status: 'acquired',
+        observedAtEpochMs: Date.now(),
+        leaseId: lease.leaseId,
+      }));
+    } catch (error) {
+      fs.writeSync(1, JSON.stringify({
+        status: 'blocked',
+        code: error.code || error.message,
+        requestedAtEpochMs,
+        absoluteDeadlineEpochMs,
+        observedAtEpochMs: Date.now(),
+      }));
+    }
+  `);
+  assert.equal(waiter.code, 0, waiter.stderr);
+  const waiterResult = JSON.parse(waiter.stdout);
+  assert.equal(waiterResult.status, 'blocked');
+  assert.equal(
+    waiterResult.code,
+    'gpu_selector_execution_lease_deadline_exhausted',
+  );
+  assert.ok(waiterResult.observedAtEpochMs
+    >= readiness.absoluteDeadlineEpochMs);
+  assert.ok(waiterResult.observedAtEpochMs
+    >= waiterResult.absoluteDeadlineEpochMs);
+  assert.equal(holder.exitCode, null);
+  assert.equal(holder.signalCode, null);
+
+  assert.equal(holder.kill('SIGKILL'), true);
+  const killedHolder = await holderOutcome;
+  assert.equal(killedHolder.code, null, killedHolder.stderr);
+  assert.equal(killedHolder.signal, 'SIGKILL');
 });
 
 test('the same secure flock lease serializes a separate Node process', async (t) => {

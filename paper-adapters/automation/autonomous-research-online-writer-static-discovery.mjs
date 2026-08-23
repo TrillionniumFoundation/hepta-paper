@@ -3,12 +3,16 @@ import * as espree from 'espree';
 import { analyze } from 'eslint-scope';
 
 import {
+  AUTHORITY_PRINCIPAL_WRITER_ENTRYPOINTS,
   DIRECT_SQL_ALLOWED_ENTRYPOINT_EXCLUSIONS,
   GENERIC_MUTATION_SURFACES,
   MUTATION_SQL,
   NON_WRITER_ENTRYPOINT_EXCLUSIONS,
   NON_WRITER_EXCLUSIONS,
+  PRIVATE_COPY_SIMULATION_WRITER_ENTRYPOINTS,
+  QUIESCED_MAINTENANCE_WRITER_ENTRYPOINTS,
   SQL_CALLS,
+  STAGED_PROVISIONING_WRITER_ENTRYPOINTS,
   WRITABLE_FACTORY_IMPORT_SOURCES,
 } from './autonomous-research-online-writer-static-config.mjs';
 import {
@@ -163,6 +167,18 @@ function candidateWriterModule(relativePath, source) {
     || relativePath.startsWith('paper-adapters/submission/');
 }
 
+function classifiedWriterExclusion(key) {
+  for (const [classification, registry] of [
+    ['authority-principal-writer', AUTHORITY_PRINCIPAL_WRITER_ENTRYPOINTS],
+    ['quiesced-maintenance-writer', QUIESCED_MAINTENANCE_WRITER_ENTRYPOINTS],
+    ['private-copy-simulation-writer', PRIVATE_COPY_SIMULATION_WRITER_ENTRYPOINTS],
+    ['staged-provisioning-writer', STAGED_PROVISIONING_WRITER_ENTRYPOINTS],
+  ]) {
+    if (registry[key]) return Object.freeze({ classification, reason: registry[key] });
+  }
+  return null;
+}
+
 export function discoverAutonomousResearchOnlineWriterMutationEntrypoints(
   relativePath,
   source,
@@ -304,7 +320,8 @@ export function discoverAutonomousResearchOnlineWriterMutationEntrypoints(
   const excludedEntrypointNames = new Set();
   const exclusionApplies = (entrypoint) => {
     const key = `${relativePath}:${entrypoint}`;
-    return Boolean(NON_WRITER_ENTRYPOINT_EXCLUSIONS[key]
+    return Boolean((classifiedWriterExclusion(key)?.reason
+      || NON_WRITER_ENTRYPOINT_EXCLUSIONS[key])
       && (!directSqlMutationEntrypoints.has(entrypoint)
         || DIRECT_SQL_ALLOWED_ENTRYPOINT_EXCLUSIONS.has(key)));
   };
@@ -317,10 +334,14 @@ export function discoverAutonomousResearchOnlineWriterMutationEntrypoints(
     if (!exclusionApplies(entrypoint)) continue;
     mutations.delete(entrypoint);
     excludedEntrypointNames.add(entrypoint);
+    const classifiedWriter = classifiedWriterExclusion(key);
     excludedEntrypoints.push(Object.freeze({
       sourceFile: relativePath,
       entrypoint,
-      reason: NON_WRITER_ENTRYPOINT_EXCLUSIONS[key],
+      ...(classifiedWriter
+        ? { classification: classifiedWriter.classification }
+        : {}),
+      reason: classifiedWriter?.reason || NON_WRITER_ENTRYPOINT_EXCLUSIONS[key],
     }));
   }
   const uniqueCoordinatorBindings = [...new Map(coordinatorBindings.map((binding) => [

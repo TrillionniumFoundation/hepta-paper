@@ -7,12 +7,26 @@ and internal classification. Maintenance commands rewrite accepted repository
 evidence; compatibility and experimental scripts are not production operator
 entrypoints.
 
-Machine protocol executables are installed separately from this human command
-surface. Before configuring `codexBinary`, a same-host state-authority client,
-or the bounded local release-attestor client, follow
+Machine protocol executables and the root-only immutable release deployment
+transaction are installed separately from this human command surface. Before
+configuring `codexBinary`, a same-host state-authority client, the bounded local
+release-attestor client, or planning a host release cutover, follow
 [`operational-process-entrypoints.md`](operational-process-entrypoints.md).
 Their source files are non-executable; the reviewed host installer creates the
 root-owned `/usr/libexec/hepta-paper` launchers and records their hashes.
+At boot, `hepta-immutable-release-recovery.service` completes or verifies any
+durable deployment rollback before systemd may start an allowlisted release
+consumer, timer or path. A failed gate is a production HOLD; do not bypass its
+`Requires=`/`After=` dependencies or run a candidate-based recovery command.
+Before the first immutable deployment on an older host, run the ordinary
+reviewed host installer once to establish both the gate and those semantic
+dependencies, but only after an externally reviewed one-time migration has put
+the executor and its complete module closure in the already sealed live
+predecessor. The installer cannot create that application trust boundary, and
+candidate deployment code cannot bootstrap it. The current host remains on
+HOLD while the live executor, launcher, gate or dependency graph is missing.
+Deployment preflight rejects any present allowlisted unit that is not already
+ordered after and requires the recovery service.
 
 ## Before running campaigns
 
@@ -87,13 +101,75 @@ passes that exact in-memory plan hash to `execute`; no operator copies or approv
 an intermediate hash. The separate `plan` and hash-confirmed `execute` actions
 remain available for controlled deployments.
 
+An existing runtime is never adopted implicitly. Before any resident writer is
+started, double-inspect the candidate, put the reported root/state hashes in
+`runtimeRootAdoption`, review the complete strict plan, and confirm that exact
+plan hash:
+
+```bash
+npm run hepta-paper -- operator strict-full-auto-acceptance -- \
+  --action inspect-runtime-adoption-candidate \
+  --configuration /run/hepta/strict-full-auto-acceptance.json
+
+npm run hepta-paper -- operator strict-full-auto-acceptance -- \
+  --action plan \
+  --configuration /run/hepta/strict-full-auto-acceptance.json
+
+npm run hepta-paper -- operator strict-full-auto-acceptance -- \
+  --action adopt-runtime \
+  --configuration /run/hepta/strict-full-auto-acceptance.json \
+  --plan-hash sha256:<reviewed-plan-hash> --execute
+
+npm run hepta-paper -- operator strict-full-auto-acceptance -- \
+  --action adoption-status \
+  --configuration /run/hepta/strict-full-auto-acceptance.json \
+  --require-adopted
+```
+
+The adoption action is limited to the explicitly configured pristine runtime,
+holds the pre-resident authority lease, double-inspects it, and performs only
+the required schema-authority rebind. It does not run a strict-acceptance step
+or permit a resident to start. `strict-full-auto-runtime-adoption.service`
+replays this same exact plan under systemd; set
+`HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH` to the reviewed plan hash before
+starting it. Never copy an inspection hash into the plan-hash field.
+
+The outer production check is the registered command below. Replace every
+owner/command pin with an independently delivered value; the live flags may
+perform provider and release-attestor actions.
+
+```bash
+npm run hepta-paper -- operator full-production-readiness -- \
+  --owner-trust-store /etc/hepta-paper/capabilities-public/OWNER_TRUST_STORE.json \
+  --owner-trust-store-sha256 sha256:<owner-trust-store-hash> \
+  --owner-acceptance-document /etc/hepta-paper/capabilities-public/CAPABILITY_OWNER_ACCEPTANCE.json \
+  --owner-acceptance-document-sha256 sha256:<owner-acceptance-hash> \
+  --package-recovery-readiness-command /usr/libexec/hepta-paper/hepta-package-recovery-readiness \
+  --package-recovery-readiness-command-sha256 sha256:<installed-launcher-hash> \
+  --live-provider-canary --live-release-attestor \
+  --require-full-production
+```
+
+The installer records the exact launcher digest in
+`/usr/share/hepta-paper/deploy/hepta-paper-systemd-host.manifest.sha256`; verify
+the installed byte pin directly with
+`sha256sum /usr/libexec/hepta-paper/hepta-package-recovery-readiness`. The
+checked-in hash in the example configuration covers the checked-in stock
+wrapper bytes. That wrapper uses fixed Node/application paths and makes the
+stock fail-closed recovery inspection reachable; it does not inject WORM, KMS,
+ledger, lease, attestor or readiness-verifier authority. A qualified external
+launcher must replace the command reference and both configuration hash pins
+before a production-ready result is possible.
+
 For reboot-persistent convergence, install
+`paper-core/deploy/strict-full-auto-runtime-adoption.service`,
 `paper-core/deploy/strict-full-auto-acceptance.service` and its
 `strict-full-auto-acceptance.timer`, copy
 `paper-core/deploy/strict-full-auto-acceptance.env.example` to
 `/etc/hepta-paper/strict-full-auto-acceptance.env`. The reviewed host installer
-leaves the timer, service, resident research supervisor, and submission
-dispatcher disabled and stopped. Enable the timer only as a separate reviewed
+leaves the adoption unit, timer, acceptance service, resident research
+supervisor, and submission dispatcher disabled and stopped. Enable the timer
+only as a separate reviewed
 activation after the strict operator has produced current accepted readiness;
 `--enable-full-auto` on the installer remains fail-closed until that readiness
 can be proven by a non-mutating repository preflight.
@@ -350,6 +426,39 @@ specifications, fixed stopping schedule, dataset contract, execution adapter,
 plugin authority and typed numeric-oracle ABI. A release plan may carry an
 advanced IR while it is pending external signature, but that IR records
 `productionAuthorized=false` and cannot authorize a production campaign.
+
+### Production external-root contract
+
+The immutable workspace is code only. A production launch must bind the
+following non-overlapping absolute roots explicitly; it must not rely on the
+development-only sibling-directory defaults:
+
+- code: `/opt/hepta-paper` (sealed read-only mount),
+- assets and datasets: `/srv/hepta-paper/assets` and
+  `/srv/hepta-paper/datasets` (read-only to workers),
+- mutable runtime and databases: `/var/lib/hepta-paper/runtime`,
+- compatibility-only legacy snapshot: `/var/lib/hepta-paper/legacy-reference`
+  through `PAPER_FACTORY_LEGACY_ROOT` (or the isolated
+  `HEPTA_LEGACY_REFERENCE_ARCHIVE` prepared by a verification runner), and
+- formal closure: `/srv/hepta-paper/formal/mathlib-project`, with the pinned
+  sandbox configuration under `/etc/hepta-paper/formal` and the independently
+  signed Mathlib build authority under `/run/hepta-authority`.
+
+`autonomous-research-supervisor.env.example` lists every corresponding path
+and out-of-band configuration hash. The systemd unit checks the formal sandbox
+and Mathlib authority files before starting. `strict-full-auto-acceptance` also
+binds `/var/lib/hepta-paper/runtime`; the JSON configuration's `runtimeRoot`
+must name the same root. Missing, relative, overlapping, symlinked, writable,
+or differently pinned roots remain blockers and are never filled from
+`/opt/hepta-paper`.
+
+On a sealed release, ordinary `git status` must not inspect the hydrated R
+source CAS: Git LFS would try to run its clean filter and write beneath the
+read-only `.git/modules` tree. Code provenance therefore first verifies the
+deployment closure's two gitlinks, submodule HEAD commits, Git trees and
+sealed content-tree hashes, then probes the parent with
+`--ignore-submodules=dirty`. Development worktrees keep the strict status
+policy and still report dirty submodules.
 
 Dynamic formal claims may use the Real no-division ordered-ring polynomial
 fragment only when the theorem authority permits `Mathlib` and the trusted Lean
@@ -725,6 +834,50 @@ and is never a routine verification command. Use it only for an explicitly
 reviewed reference-package update.
 
 ## Recovery and retention
+
+Package-recovery readiness and provisioning are explicit campaign operator
+actions:
+
+```bash
+npm run hepta-paper -- operator campaign -- \
+  --action retention-recovery-readiness \
+  --root <paper-root> --runtime-root <runtime-root>
+
+npm run hepta-paper -- operator campaign -- \
+  --action provision-retention-recovery --apply \
+  --package-lifecycle-receipt-hash sha256:<exact-lifecycle-hash> \
+  --root <paper-root> --runtime-root <runtime-root>
+```
+
+The stock launcher intentionally returns unavailable: it does not bundle a
+WORM/KMS storage authority, historical trust store, append-only storage and
+restore ledgers, live object-lock authority, restore attestor, external
+deletion-lease authority, or independent readiness verifier. A production
+launcher must inject all of them. Readiness is positive only after a fresh
+signed challenge verifies storage and persisted-restore canaries, completes an
+external lease acquire/assert/abort canary, probes the real lifecycle lock, and
+passes the final expiry check. Never treat interface presence or a local chmod
+as readiness evidence. Package GC remains fail-closed while any dependency is
+missing, stale, revoked, replayed, or inconsistent.
+
+The qualified launcher is a code-level boundary, not a provider-loading CLI
+flag: import `main` from `paper-core/bin/paper-campaign.mjs` and supply all of
+`packageRecoveryAuthorityFactory`,
+`packageRecoveryAuthorityReadinessVerifier`,
+`packageRecoveryDeletionLeaseAuthority`, and `packageRecoveryRestoreRoot`, or
+supply none. The factory must be a version-1
+`PackageRecoveryAuthorityFactory`; its synchronous `create(context)` receives
+the repository-owned `PackageRecoveryExactRestoreRepositoryFactory` and must
+return the complete `PackageRecoveryAuthority`, including authenticated
+readiness inspection. The raw deletion-lease authority must implement
+acquire, terminal lookup, assert, renew, commit, and abort/release; the launcher
+never passes it directly to GC. The restore root must be a pre-provisioned,
+canonical absolute 0700 directory owned by the process identity, disjoint from
+the canonical runtime root and every immutable storage object. Exact restore
+also requires Linux `/proc/self/fd`; deployment preflight must reject a runtime
+without that descriptor namespace. This wiring supplies validation and local
+restore mechanics only—it does not supply or qualify WORM, KMS, ledger,
+attestor, trust-store, or lease-provider evidence.
 
 ```bash
 npm run hepta-paper -- operator reconcile

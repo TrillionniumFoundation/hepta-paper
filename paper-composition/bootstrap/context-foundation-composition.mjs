@@ -7,12 +7,107 @@ import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqli
 import { composeTypedPersistenceServices } from './typed-persistence-composition.mjs';
 import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
 import { assertWorkspaceLayoutPhysicallyDecoupled } from '../../paper-adapters/runtime/workspace-layout.mjs';
+import {
+  createRuntimeRetentionPackageDeletionWriterBoundary,
+} from '../../paper-adapters/automation/runtime-retention-package-deletion-writer-boundary.mjs';
+import {
+  createRuntimeRetentionPackageDeletionWriterStore,
+} from '../../paper-adapters/persistence/runtime-retention-package-deletion-writer-store.mjs';
 
-function resolveStore({ root, runtimeRoot, readOnly, allowMissingReadOnlyStore, serviceOverrides }) {
+const WRITER_OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,191}$/;
+
+function packageDeletionWriterOperationId(writerId) {
+  const operationId = `store:${String(writerId || '')}`;
+  if (!WRITER_OPERATION_ID.test(operationId)) {
+    throw new Error('foundation_package_deletion_writer_id_invalid');
+  }
+  return operationId;
+}
+
+function assertMutableOverridesSafe({ readOnly, serviceOverrides }) {
+  if (readOnly === true) return;
+  for (const name of [
+    'packageDeletionWriterBoundary',
+    'receiptLedger',
+  ]) {
+    if (Object.hasOwn(serviceOverrides, name)) {
+      throw new Error(`foundation_mutable_${name}_override_forbidden`);
+    }
+  }
+}
+
+function resolveStore({
+  root,
+  runtimeRoot,
+  readOnly,
+  allowMissingReadOnlyStore,
+  serviceOverrides,
+  writableStoreFactory = null,
+}) {
   if (serviceOverrides.store) return serviceOverrides.store;
+  if (!readOnly && writableStoreFactory) return writableStoreFactory();
   return readOnly
     ? createReadOnlyPaperStore({ root, runtimeRoot, allowMissing: allowMissingReadOnlyStore })
     : openExistingWritablePaperStore({ root, runtimeRoot });
+}
+
+function createWriterContext({ readOnly, runtimeRoot, writerId }) {
+  if (readOnly === true) {
+    return Object.freeze({ boundary: null, operationId: null });
+  }
+  return Object.freeze({
+    boundary: createRuntimeRetentionPackageDeletionWriterBoundary({ runtimeRoot }),
+    operationId: packageDeletionWriterOperationId(writerId),
+  });
+}
+
+function composeResolvedFoundationServices({
+  root,
+  runtimeRoot,
+  readOnly,
+  allowMissingReadOnlyStore,
+  serviceOverrides,
+  writableStoreFactory,
+  writerContext,
+  writerId,
+}) {
+  const openStore = () => resolveStore({
+    root,
+    runtimeRoot,
+    readOnly,
+    allowMissingReadOnlyStore,
+    serviceOverrides,
+    writableStoreFactory,
+  });
+  let resolvedStore = null;
+  try {
+    resolvedStore = readOnly === true
+      ? openStore()
+      : writerContext.boundary.run({ operationId: writerContext.operationId }, openStore);
+    const store = readOnly === true ? resolvedStore
+      : createRuntimeRetentionPackageDeletionWriterStore({
+        store: resolvedStore,
+        writerBoundary: writerContext.boundary,
+        operationId: writerContext.operationId,
+      });
+    const clock = serviceOverrides.clock || createSystemClock();
+    const receiptLedger = serviceOverrides.receiptLedger || createSqliteReceiptLedger({
+      store,
+      clock,
+      writerIdentity: { writerId, writerKind: 'in-process-service' },
+    });
+    return Object.freeze({
+      store,
+      clock,
+      receiptLedger,
+      packageDeletionWriterBoundary: writerContext.boundary,
+      packageDeletionWriterOperationId: writerContext.operationId,
+      ...composeTypedPersistenceServices({ store, overrides: serviceOverrides }),
+    });
+  } catch (error) {
+    if (!serviceOverrides.store) resolvedStore?.close?.();
+    throw error;
+  }
 }
 
 export function inspectScopedPaperStoreSchema({
@@ -42,24 +137,33 @@ export function composeFoundationServices({
   readOnly,
   mutableOutputs = false,
   allowMissingReadOnlyStore,
-  serviceOverrides,
+  serviceOverrides = {},
   writerId,
+  writableStoreFactory = null,
 }) {
+  assertMutableOverridesSafe({ readOnly, serviceOverrides });
+  if (writableStoreFactory && (readOnly === true || serviceOverrides.store)) {
+    throw new Error('foundation_writable_store_factory_invalid');
+  }
   if (!readOnly || mutableOutputs) {
     assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: root, runtimeRoot });
   }
-  const store = resolveStore({ root, runtimeRoot, readOnly, allowMissingReadOnlyStore, serviceOverrides });
-  const clock = serviceOverrides.clock || createSystemClock();
-  const receiptLedger = serviceOverrides.receiptLedger || createSqliteReceiptLedger({
-    store,
-    clock,
-    writerIdentity: { writerId, writerKind: 'in-process-service' },
-  });
-  return Object.freeze({
-    store,
-    clock,
-    receiptLedger,
-    ...composeTypedPersistenceServices({ store, overrides: serviceOverrides }),
+  if (!readOnly && !serviceOverrides.store && !writableStoreFactory) {
+    const dbPath = heptaStorePath(root, runtimeRoot);
+    if (!fs.existsSync(dbPath)) {
+      throw new Error(`paper_store_not_initialized:run_store_migrate:${dbPath}`);
+    }
+  }
+  const writerContext = createWriterContext({ readOnly, runtimeRoot, writerId });
+  return composeResolvedFoundationServices({
+    root,
+    runtimeRoot,
+    readOnly,
+    allowMissingReadOnlyStore,
+    serviceOverrides,
+    writableStoreFactory,
+    writerContext,
+    writerId,
   });
 }
 
@@ -126,10 +230,45 @@ export function composeScopedFoundationServices({
   mutableOutputs = false,
   allowMissingReadOnlyStore,
   immutableReadOnlyStore = false,
-  serviceOverrides,
+  serviceOverrides = {},
   writerId,
   rootKind,
+  writableStoreFactory = null,
 }) {
+  if (!readOnly || mutableOutputs) {
+    assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: root, runtimeRoot });
+  }
+  if (readOnly !== true) {
+    let schemaVersion;
+    if (serviceOverrides.store) {
+      schemaVersion = assertScopedSchemaVersion({
+        store: serviceOverrides.store,
+        rootKind,
+      });
+    } else {
+      const inspector = createReadOnlyPaperStore({
+        root,
+        runtimeRoot,
+        immutable: true,
+      });
+      try {
+        schemaVersion = assertScopedSchemaVersion({ store: inspector, rootKind });
+      } finally {
+        inspector.close();
+      }
+    }
+    const foundation = composeFoundationServices({
+      root,
+      runtimeRoot,
+      readOnly: false,
+      mutableOutputs,
+      allowMissingReadOnlyStore,
+      serviceOverrides,
+      writerId,
+      writableStoreFactory,
+    });
+    return Object.freeze({ foundation, schemaVersion });
+  }
   const scopedStore = openScopedPaperStore({
     root,
     runtimeRoot,
@@ -158,8 +297,121 @@ export function composeScopedFoundationServices({
   }
 }
 
+function standaloneWriterServices(foundation, schemaVersion) {
+  const {
+    packageDeletionWriterBoundary: _packageDeletionWriterBoundary,
+    packageDeletionWriterOperationId: _packageDeletionWriterOperationId,
+    ...services
+  } = foundation;
+  return Object.freeze({ ...services, schemaVersion });
+}
+
+function createStandaloneWriterScope({
+  root,
+  runtimeRoot,
+  writerId,
+  rootKind = null,
+  serviceOverrides = {},
+  writableStoreFactory = null,
+  writerSelector = {},
+}) {
+  assertMutableOverridesSafe({ readOnly: false, serviceOverrides });
+  if (serviceOverrides.store || (writableStoreFactory !== null
+    && typeof writableStoreFactory !== 'function')) {
+    throw new Error('foundation_standalone_writer_store_factory_invalid');
+  }
+  assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: root, runtimeRoot });
+  let schemaVersion = null;
+  if (rootKind !== null) {
+    const inspector = createReadOnlyPaperStore({
+      root,
+      runtimeRoot,
+      immutable: true,
+    });
+    try {
+      schemaVersion = assertScopedSchemaVersion({ store: inspector, rootKind });
+    } finally {
+      inspector.close();
+    }
+  }
+  const writerContext = createWriterContext({
+    readOnly: false,
+    runtimeRoot,
+    writerId,
+  });
+  return Object.freeze({
+    root,
+    runtimeRoot,
+    serviceOverrides,
+    writableStoreFactory,
+    writerId,
+    writerContext,
+    schemaVersion,
+    selector: Object.freeze({
+      ...writerSelector,
+      operationId: writerContext.operationId,
+    }),
+  });
+}
+
+function composeStandaloneWriterFoundation(scope) {
+  return composeResolvedFoundationServices({
+    root: scope.root,
+    runtimeRoot: scope.runtimeRoot,
+    readOnly: false,
+    allowMissingReadOnlyStore: false,
+    serviceOverrides: scope.serviceOverrides,
+    writableStoreFactory: scope.writableStoreFactory,
+    writerContext: scope.writerContext,
+    writerId: scope.writerId,
+  });
+}
+
+export function runWithScopedFoundationWriter(options, operation) {
+  if (typeof operation !== 'function') {
+    throw new Error('foundation_standalone_writer_operation_invalid');
+  }
+  const scope = createStandaloneWriterScope(options || {});
+  return scope.writerContext.boundary.run(scope.selector, () => {
+    let foundation = null;
+    try {
+      foundation = composeStandaloneWriterFoundation(scope);
+      return operation(standaloneWriterServices(
+        foundation,
+        scope.schemaVersion,
+      ));
+    } finally {
+      foundation?.store.close?.();
+    }
+  });
+}
+
+export function runWithScopedFoundationWriterAsync(options, operation) {
+  if (typeof operation !== 'function') {
+    throw new Error('foundation_standalone_writer_operation_invalid');
+  }
+  const scope = createStandaloneWriterScope(options || {});
+  return scope.writerContext.boundary.runAsync(scope.selector, async () => {
+    let foundation = null;
+    try {
+      foundation = composeStandaloneWriterFoundation(scope);
+      return await operation(standaloneWriterServices(
+        foundation,
+        scope.schemaVersion,
+      ));
+    } finally {
+      foundation?.store.close?.();
+    }
+  });
+}
+
 export function exposeScopedFoundationServices(foundation, { schemaVersion } = {}) {
-  const { store, ...typed } = foundation;
+  const {
+    store,
+    packageDeletionWriterBoundary: _packageDeletionWriterBoundary,
+    packageDeletionWriterOperationId: _packageDeletionWriterOperationId,
+    ...typed
+  } = foundation;
   if (!store) throw new Error('scoped foundation requires an internal StorePort');
   return Object.freeze({
     ...typed,

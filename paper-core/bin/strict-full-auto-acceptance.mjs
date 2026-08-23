@@ -12,9 +12,12 @@ export function strictFullAutoAcceptanceUsage() {
   return Object.freeze({
     version: 1,
     kind: 'StrictFullAutoAcceptanceUsage',
-    usage: 'hepta-paper operator strict-full-auto-acceptance -- --action plan|status|execute|converge --configuration PATH [--plan-hash sha256:... --execute]',
+    usage: 'hepta-paper operator strict-full-auto-acceptance -- --action plan|inspect-runtime-adoption-candidate|adoption-status|adopt-runtime|status|execute|converge --configuration PATH [--plan-hash sha256:... --execute]',
     actions: Object.freeze({
       plan: 'preflight every public/opaque external reference and emit an immutable plan hash without mutation',
+      'inspect-runtime-adoption-candidate': 'double-inspect a pre-resident pristine runtime without control writes and emit the reviewed root/state hashes required by the configuration',
+      'adoption-status': 'read-only verification that an explicitly configured pristine existing runtime was adopted before resident writers started',
+      'adopt-runtime': 'requires --execute; performs only the lease-fenced, double-inspected, pre-resident pristine runtime adoption and never creates a step checkpoint',
       status: 'revalidate configuration/reference identity and live-verify all external readiness gates; local checkpoint files are never acceptance authority',
       execute: 'requires --execute plus the exact plan hash; converges the fixed dependency order and resumes crash checkpoints',
       converge: 'requires --execute; atomically preflights the complete plan, binds its exact hash, executes it and performs fresh live verification without a human hash handoff',
@@ -35,17 +38,21 @@ export function strictFullAutoAcceptanceUsage() {
 
 export function parseStrictFullAutoAcceptanceArguments(argv = []) {
   const args = parseStrictCliArguments(argv, {
-    booleanFlags: ['execute', 'help', 'require-accepted'],
+    booleanFlags: ['execute', 'help', 'require-accepted', 'require-adopted'],
     valueFlags: ['action', 'configuration', 'plan-hash'],
     positional: false,
   });
   if (args.help) return Object.freeze({ help: true });
   const action = String(args.action || 'plan');
-  if (!['plan', 'status', 'execute', 'converge'].includes(action)) {
+  if (![
+    'plan', 'inspect-runtime-adoption-candidate', 'adoption-status', 'adopt-runtime',
+    'status', 'execute', 'converge',
+  ].includes(action)) {
     throw new Error(`strict_full_auto_acceptance_action_invalid:${action}`);
   }
   if (!args.configuration) throw new Error('strict_full_auto_acceptance_configuration_required');
-  if (!['execute', 'converge'].includes(action) && (args.execute || args['plan-hash'])) {
+  if (!['execute', 'converge', 'adopt-runtime'].includes(action)
+    && (args.execute || args['plan-hash'])) {
     throw new Error('strict_full_auto_acceptance_execute_options_forbidden');
   }
   if (action === 'execute' && (args.execute !== true
@@ -55,12 +62,21 @@ export function parseStrictFullAutoAcceptanceArguments(argv = []) {
   if (action === 'converge' && (args.execute !== true || args['plan-hash'])) {
     throw new Error('strict_full_auto_acceptance_converge_confirmation_required');
   }
+  if (action === 'adopt-runtime' && (args.execute !== true
+    || !SHA256.test(String(args['plan-hash'] || '')))) {
+    throw new Error('strict_full_auto_acceptance_runtime_adoption_confirmation_required');
+  }
+  if (action !== 'adoption-status' && args['require-adopted']) {
+    throw new Error('strict_full_auto_acceptance_require_adopted_forbidden');
+  }
   return Object.freeze({
     help: false,
     action,
     configurationPath: path.resolve(args.configuration),
-    expectedPlanHash: action === 'execute' ? args['plan-hash'] : null,
+    expectedPlanHash: ['execute', 'adopt-runtime'].includes(action)
+      ? args['plan-hash'] : null,
     requireAccepted: args['require-accepted'] === true,
+    requireAdopted: args['require-adopted'] === true,
   });
 }
 
@@ -79,6 +95,13 @@ export async function runStrictFullAutoAcceptance({
   });
   let report;
   if (options.action === 'plan') report = orchestrator.plan();
+  else if (options.action === 'inspect-runtime-adoption-candidate') {
+    report = orchestrator.inspectRuntimeAdoptionCandidate();
+  }
+  else if (options.action === 'adoption-status') report = orchestrator.runtimeAdoptionStatus();
+  else if (options.action === 'adopt-runtime') {
+    report = await orchestrator.adoptRuntime({ expectedPlanHash: options.expectedPlanHash });
+  }
   else if (options.action === 'status') report = await orchestrator.status();
   else if (options.action === 'converge') {
     const plan = orchestrator.plan();
@@ -86,7 +109,11 @@ export async function runStrictFullAutoAcceptance({
   } else {
     report = await orchestrator.execute({ expectedPlanHash: options.expectedPlanHash });
   }
-  return Object.freeze({ report, requireAccepted: options.requireAccepted });
+  return Object.freeze({
+    report,
+    requireAccepted: options.requireAccepted,
+    requireAdopted: options.requireAdopted,
+  });
 }
 
 const invokedAsEntrypoint = process.argv[1]
@@ -101,6 +128,7 @@ if (invokedAsEntrypoint) {
       if (result.requireAccepted && result.report?.strictFullAutoAccepted !== true) {
         process.exitCode = 2;
       }
+      if (result.requireAdopted && result.report?.ready !== true) process.exitCode = 2;
     }
   } catch (error) {
     process.stderr.write(`${String(error?.stack || error)}\n`);

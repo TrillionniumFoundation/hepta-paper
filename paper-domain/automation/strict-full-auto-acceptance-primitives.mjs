@@ -29,7 +29,6 @@ export function normalizeStrictFullAutoAcceptanceAssertionValue(value) {
     return value;
   }
   if (Array.isArray(value)
-    && value.length > 0
     && value.every((item) => typeof item === 'string' && item.length > 0)) {
     return Object.freeze([...value]);
   }

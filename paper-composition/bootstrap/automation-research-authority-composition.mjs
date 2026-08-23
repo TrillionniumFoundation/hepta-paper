@@ -20,6 +20,8 @@ import { createPackageLifecycleAuthorityService }
   from '../../paper-application/automation/package-lifecycle-authority-service.mjs';
 import { createPackageLifecycleMaterializationInspector }
   from '../../paper-adapters/automation/package-lifecycle-materialization-inspector.mjs';
+import { createPackageRetentionRecoveryLockRepository }
+  from '../../paper-adapters/automation/package-retention-recovery-lock-repository.mjs';
 import { receiptIssuerPolicies }
   from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
 
@@ -33,6 +35,9 @@ export function composePackageLifecycleAuthority({
   rawEventRecomputationVerifier,
   operatorDatasetAuthorityTrustStoreProvider,
   gpuScientificPromotionAuthorityVerifier,
+  packageRecoveryAuthority = null,
+  packageRecoveryAuthorityReadinessVerifier = null,
+  packageRecoveryDeletionLeasePort = null,
 } = {}) {
   const campaignReleaseQuery = createSqliteCampaignReleaseQueryRepository({
     store,
@@ -51,6 +56,11 @@ export function composePackageLifecycleAuthority({
     campaignReleaseQuery,
     materializationInspector:
       createPackageLifecycleMaterializationInspector({ runtimeRoot }),
+    packageRecoveryAuthority,
+    packageRecoveryAuthorityReadinessVerifier,
+    packageRecoveryDeletionLeasePort,
+    packageRetentionRecoveryLockRepository: packageRecoveryAuthority
+      ? createPackageRetentionRecoveryLockRepository({ runtimeRoot }) : null,
     receiptLedger,
     receiptWriterAuthority: Object.freeze({
       ...policy,
@@ -71,6 +81,7 @@ export function composeRuntimeRetentionReachabilityAuthority({
   rawEventRecomputationVerifier,
   operatorDatasetAuthorityTrustStoreProvider,
   gpuScientificPromotionAuthorityVerifier,
+  packageRecoveryAuthority = null,
 } = {}) {
   const campaignReleaseQuery = createSqliteCampaignReleaseQueryRepository({
     store,
@@ -88,6 +99,7 @@ export function composeRuntimeRetentionReachabilityAuthority({
     campaignReleaseQuery,
     workspaceRegistry,
     receiptLedger,
+    packageRecoveryAuthority,
     clock,
   });
 }

@@ -21,6 +21,9 @@ import {
   strictFullAutoAcceptanceHash,
   strictFullAutoAcceptanceJsonEqual,
 } from './strict-full-auto-acceptance-primitives.mjs';
+import {
+  assertStrictFullAutoAcceptanceRuntimeRootAdoptionPolicy,
+} from './strict-full-auto-acceptance-runtime-adoption.mjs';
 
 function assertReferenceBindings(bindings) {
   if (!Array.isArray(bindings)
@@ -56,6 +59,7 @@ function assertReferenceBindings(bindings) {
         'prior-art-service-config',
         'external-replay-config',
         'research-author-identity-config',
+        'runtime-reproducibility-principal',
         'release-attestor-config',
       ]).has(referenceId)
         && !SHA256.test(String(binding.documentPins.configurationHash || '')))
@@ -423,6 +427,7 @@ export function buildStrictFullAutoAcceptancePlan({
   runtimeRoot,
   assetRoot,
   datasetRoot,
+  runtimeRootAdoption,
   rootBindings,
   operationalEnvironment,
   referenceBindings,
@@ -497,6 +502,9 @@ export function buildStrictFullAutoAcceptancePlan({
     runtimeRoot,
     assetRoot,
     datasetRoot,
+    runtimeRootAdoption: assertStrictFullAutoAcceptanceRuntimeRootAdoptionPolicy(
+      runtimeRootAdoption,
+    ),
     qualificationPaperId,
     rootBindings: verifiedRootBindings,
     operationalEnvironment: assertOperationalEnvironment(operationalEnvironment),
@@ -508,23 +516,68 @@ export function buildStrictFullAutoAcceptancePlan({
     selfSignedAuthorityPermitted: false,
   });
   const references = new Map(canonical.referenceBindings.map((item) => [item.referenceId, item]));
+  const trustStorePath = references.get('owner-trust-store')?.resolvedPath || '';
+  const acceptanceDocumentPath = references.get('owner-acceptance-document')?.resolvedPath || '';
+  const trustStoreSuffix = '/OWNER_TRUST_STORE.json';
+  const acceptanceDocumentSuffix = '/CAPABILITY_OWNER_ACCEPTANCE.json';
+  const trustStoreRoot = trustStorePath.endsWith(trustStoreSuffix)
+    ? trustStorePath.slice(0, -trustStoreSuffix.length) : '';
+  const acceptanceDocumentRoot = acceptanceDocumentPath.endsWith(acceptanceDocumentSuffix)
+    ? acceptanceDocumentPath.slice(0, -acceptanceDocumentSuffix.length) : '';
+  const runtimePrefix = canonical.runtimeRoot === '/'
+    ? '/' : `${canonical.runtimeRoot}/`;
+  if (!trustStoreRoot
+    || trustStoreRoot !== acceptanceDocumentRoot
+    || !trustStoreRoot.endsWith('/capabilities-public')
+    || trustStoreRoot === canonical.runtimeRoot
+    || trustStoreRoot.startsWith(runtimePrefix)) {
+    throw new Error('strict_full_auto_acceptance_owner_reference_path_mismatch');
+  }
+  const assertInvocationReferenceBindings = (invocation, policy, label) => {
+    for (const [flag, referenceId] of Object.entries(policy.argumentReferenceFlags || {})) {
+      const index = invocation.arguments.indexOf(flag);
+      if (index < 0 || invocation.arguments[index + 1]
+        !== references.get(referenceId)?.resolvedPath) {
+        throw new Error(
+          `strict_full_auto_acceptance_argument_reference_mismatch:${label}:${flag}`,
+        );
+      }
+    }
+    for (const [flag, referenceId] of Object.entries(
+      policy.argumentReferenceHashFlags || {},
+    )) {
+      const index = invocation.arguments.indexOf(flag);
+      if (index < 0 || invocation.arguments[index + 1]
+        !== references.get(referenceId)?.contentHash) {
+        throw new Error(
+          `strict_full_auto_acceptance_argument_reference_hash_mismatch:${label}:${flag}`,
+        );
+      }
+    }
+  };
   for (const step of canonical.steps) {
     for (const phase of ['execute', 'verify']) {
       const policy = STEP_INVOCATION_POLICY[step.stepId][phase];
-      for (const [flag, referenceId] of Object.entries(policy.argumentReferenceFlags || {})) {
-        const index = step[phase].arguments.indexOf(flag);
-        if (index < 0 || step[phase].arguments[index + 1]
-          !== references.get(referenceId)?.resolvedPath) {
-          throw new Error(
-            `strict_full_auto_acceptance_argument_reference_mismatch:${step.stepId}:${phase}:${flag}`,
-          );
-        }
-      }
+      assertInvocationReferenceBindings(
+        step[phase],
+        policy,
+        `${step.stepId}:${phase}`,
+      );
       for (const name of Object.keys(step[phase].environmentReferences)) {
         if (Object.prototype.hasOwnProperty.call(canonical.operationalEnvironment, name)) {
           throw new Error(`strict_full_auto_acceptance_environment_binding_conflict:${name}`);
         }
       }
+    }
+  }
+  assertInvocationReferenceBindings(
+    canonical.finalVerification,
+    FINAL_VERIFICATION_INVOCATION_POLICY,
+    STRICT_FULL_AUTO_ACCEPTANCE_FINAL_VERIFICATION_STEP_ID,
+  );
+  for (const name of Object.keys(canonical.finalVerification.environmentReferences)) {
+    if (Object.prototype.hasOwnProperty.call(canonical.operationalEnvironment, name)) {
+      throw new Error(`strict_full_auto_acceptance_environment_binding_conflict:${name}`);
     }
   }
   const runtimeStep = stepById.get('runtime-reproducibility');
@@ -575,7 +628,8 @@ export function buildStrictFullAutoAcceptancePlan({
 export function verifyStrictFullAutoAcceptancePlan(plan) {
   if (!exactKeys(plan, [
     'version', 'kind', 'configurationHash', 'controlRoot', 'runtimeRoot', 'assetRoot', 'datasetRoot',
-    'qualificationPaperId', 'rootBindings', 'operationalEnvironment', 'referenceBindings', 'steps',
+    'runtimeRootAdoption', 'qualificationPaperId', 'rootBindings', 'operationalEnvironment',
+    'referenceBindings', 'steps',
     'finalVerification', 'zeroSkipRequired', 'privateKeyMaterialHandled',
     'selfSignedAuthorityPermitted', 'planHash',
   ]) || !SHA256.test(String(plan.planHash || ''))) {

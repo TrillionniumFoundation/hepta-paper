@@ -26,6 +26,23 @@ import {
 import {
   HEPTA_PAPER_COMMAND_REGISTRY,
 } from '../src/command-registry.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  createGpuScientificCampaignPromotionAuthorityVerifier,
+} from '../../paper-adapters/automation/gpu-scientific-campaign-promotion-authority-verifier.mjs';
+import {
+  inspectPersistedCampaignResearchGpuScientificReleaseChain,
+} from '../../paper-composition/automation/automation-readiness-research-assurance-authority-inspection.mjs';
+import {
+  blockGpuScientificInspectionSnapshot,
+  gpuScientificInspectionMatchesResearchNode,
+  inspectAutomationReadinessCanonicalAuthorityRows,
+  sameGpuScientificInspectionSnapshot,
+} from '../../paper-composition/automation/automation-readiness-gpu-scientific-snapshot-binding.mjs';
+import {
+  GPU_RELEASE_TIME,
+  createGpuScientificCampaignReleaseFixture,
+} from './support/gpu-scientific-campaign-release-fixture.mjs';
 
 function readyInput() {
   const proofHash = `sha256:${'b'.repeat(64)}`;
@@ -475,6 +492,676 @@ test('automation readiness query completes a passive blocked report with exact s
     'autonomous_research_online_anti_rollback_coordinator_deployment_not_ready',
   ));
   assert.ok(query.report.fullAutomaticResearchWritingBlockers.length > 0);
+});
+
+test('readiness query never infers campaign lineage from persisted GPU rows',
+  (t) => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'paper-readiness-gpu-chain-'));
+    t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+    const root = path.join(base, 'assets');
+    const runtimeRoot = path.join(base, 'runtime');
+    fs.mkdirSync(root, { recursive: true });
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+    const campaignId = 'readiness-gpu-chain-campaign';
+    const paperId = 'readiness-gpu-chain-paper';
+    const observedAt = '2026-07-17T00:00:00.000Z';
+    const planPayload = {
+      version: 4,
+      kind: 'PaperCampaignPlan',
+      campaignId,
+      paperId,
+      autonomousResearchPreparation: { launchMode: 'production-run' },
+      gpuScientificExecutionPlan: { status: 'persisted-plan-fixture' },
+    };
+    const plan = {
+      ...planPayload,
+      campaignPlanHash: hashRecord('PaperCampaignPlan', planPayload),
+    };
+    const researchResult = {
+      version: 1,
+      kind: 'CampaignResearchVerificationResult',
+      status: 'campaign_research_verification_completed',
+      campaignId,
+      paperId,
+      researchPromotionStatus: 'research_promotion_ready',
+    };
+    const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+    const store = createDefaultPaperStore({ root, runtimeRoot });
+    const seeded = store.execute(`
+INSERT INTO paper_campaigns(
+  campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at
+) VALUES(
+  ${quote(campaignId)},${quote(paperId)},'running',1,
+  ${quote(JSON.stringify(plan))},${quote(observedAt)},${quote(observedAt)}
+);
+INSERT INTO campaign_nodes(
+  node_id,campaign_id,kind,status,dependencies_json,spec_json,result_json,
+  result_sha256,created_at,updated_at
+) VALUES(
+  ${quote(`${campaignId}:research`)},${quote(campaignId)},'research-verify',
+  'completed','[]','{}',${quote(JSON.stringify(researchResult))},
+  ${quote(hashRecord('PaperCampaignNodeResult', researchResult))},
+  ${quote(observedAt)},${quote(observedAt)}
+);`);
+    assert.equal(seeded.ok, true, seeded.error);
+    store.close();
+
+    const query = queryAutomationReadiness({
+      root,
+      runtimeRoot,
+      environment: {},
+      spawnSyncImpl: () => ({
+        status: 1,
+        signal: null,
+        stdout: '',
+        stderr: 'simulated_unavailable',
+      }),
+      now: new Date(observedAt),
+    });
+    const assurance = query.report.autonomousResearchAssuranceAuthorityInspection;
+    assert.equal(assurance.ready, false);
+    assert.equal(assurance.gpuScientificReleaseChainInspection.ready, false);
+    assert.deepEqual(
+      assurance.gpuScientificReleaseChainInspection.blockers,
+      ['gpu_scientific_persisted_lineage_required'],
+    );
+    assert.ok(assurance.blockers.includes(
+      'gpu_scientific_persisted_lineage_required',
+    ));
+  });
+
+test('readiness ignores later noncanonical research rows outside the current plan topology',
+  async (t) => {
+    const fixture = await createGpuScientificCampaignReleaseFixture(t, {
+      campaignId: 'readiness-gpu-generation-binding',
+      persistedProductionPlan: true,
+    });
+    const verifier = createGpuScientificCampaignPromotionAuthorityVerifier({
+      trustStoreProvider: () => fixture.qualification.trustStore,
+      clock: { now: () => new Date(GPU_RELEASE_TIME) },
+    });
+    const oldResearchNode = fixture.packageInput.researchVerifyNode;
+    const canonicalResearchSpec = fixture.campaign.spec.nodes.find((node) => (
+      node.nodeId === oldResearchNode.nodeId
+    ));
+    const canonicalGpuSpec = fixture.campaign.spec.nodes.find((node) => (
+      node.nodeId === fixture.gpu.node.nodeId
+    ));
+    const canonicalFormalSpec = fixture.campaign.spec.nodes.find((node) => (
+      node.kind === 'formal-verify' && node.sourceClosureTerminal === true
+    ));
+    const latestResearchResult = structuredClone(oldResearchNode.result);
+    delete latestResearchResult.gpuScientificQualificationEvidence;
+    delete latestResearchResult.gpuScientificCampaignExecutionResultHash;
+    delete latestResearchResult.gpuScientificArtifactBodyArchiveManifestHash;
+    delete latestResearchResult.gpuScientificCampaignQualificationEvidenceHash;
+    const latestResearchRow = {
+      campaign_id: fixture.campaign.campaignId,
+      paper_id: fixture.campaign.paperId,
+      campaign_status: 'running',
+      campaign_revision: 1,
+      spec_json: JSON.stringify(fixture.campaign.spec),
+      node_id: `${oldResearchNode.nodeId}:latest`,
+      node_kind: 'research-verify',
+      node_status: 'completed',
+      attempt_id: `${oldResearchNode.attemptId}:latest`,
+      lease_generation: Number(oldResearchNode.leaseGeneration) + 1,
+      round_index: canonicalResearchSpec.roundIndex + 1,
+      node_revision: 99,
+      dependencies_json: JSON.stringify([]),
+      node_spec_json: JSON.stringify({
+        nodeId: `${oldResearchNode.nodeId}:latest`,
+        kind: 'research-verify',
+        roundIndex: canonicalResearchSpec.roundIndex + 1,
+        dependencies: [],
+      }),
+      result_json: JSON.stringify(latestResearchResult),
+      result_sha256: hashRecord(
+        'PaperCampaignNodeResult',
+        latestResearchResult,
+      ),
+      updated_at: '2026-07-14T00:00:01.000Z',
+    };
+    const oldResearchRow = {
+      campaign_id: fixture.campaign.campaignId,
+      paper_id: fixture.campaign.paperId,
+      campaign_status: 'running',
+      campaign_revision: 1,
+      spec_json: JSON.stringify(fixture.campaign.spec),
+      node_id: oldResearchNode.nodeId,
+      node_kind: 'research-verify',
+      node_status: 'completed',
+      attempt_id: oldResearchNode.attemptId,
+      lease_generation: oldResearchNode.leaseGeneration,
+      round_index: canonicalResearchSpec.roundIndex,
+      node_revision: 8,
+      dependencies_json: JSON.stringify(canonicalResearchSpec.dependencies),
+      node_spec_json: JSON.stringify(canonicalResearchSpec),
+      result_json: JSON.stringify(oldResearchNode.result),
+      result_sha256: oldResearchNode.resultSha256,
+      updated_at: '2026-07-14T00:00:00.000Z',
+    };
+    const gpuRow = {
+      campaign_id: fixture.campaign.campaignId,
+      paper_id: fixture.campaign.paperId,
+      campaign_status: 'running',
+      campaign_revision: 1,
+      spec_json: JSON.stringify(fixture.campaign.spec),
+      node_id: fixture.gpu.node.nodeId,
+      node_kind: 'gpu-scientific-execution',
+      node_status: 'completed',
+      attempt_id: fixture.gpu.node.attemptId,
+      lease_generation: fixture.gpu.node.leaseGeneration,
+      round_index: canonicalGpuSpec.roundIndex,
+      node_revision: 6,
+      dependencies_json: JSON.stringify(canonicalGpuSpec.dependencies),
+      node_spec_json: JSON.stringify(canonicalGpuSpec),
+      result_json: JSON.stringify(fixture.gpu.node.result),
+      result_sha256: fixture.gpu.node.resultSha256,
+      updated_at: '2026-07-13T23:59:59.000Z',
+    };
+    const formalResult = { status: 'formal-fixture-completed' };
+    const formalRow = {
+      campaign_id: fixture.campaign.campaignId,
+      paper_id: fixture.campaign.paperId,
+      campaign_status: 'running',
+      campaign_revision: 1,
+      spec_json: JSON.stringify(fixture.campaign.spec),
+      node_id: canonicalFormalSpec.nodeId,
+      node_kind: canonicalFormalSpec.kind,
+      node_status: 'completed',
+      attempt_id: 'formal-fixture-attempt',
+      lease_generation: 1,
+      round_index: canonicalFormalSpec.roundIndex,
+      node_revision: 5,
+      dependencies_json: JSON.stringify(canonicalFormalSpec.dependencies),
+      node_spec_json: JSON.stringify(canonicalFormalSpec),
+      result_json: JSON.stringify(formalResult),
+      result_sha256: hashRecord('PaperCampaignNodeResult', formalResult),
+      updated_at: '2026-07-13T23:59:58.000Z',
+    };
+    const inspectRows = (rows) => (
+      inspectPersistedCampaignResearchGpuScientificReleaseChain({
+        store: {
+          query(statement, parameters) {
+            assert.match(statement, /gpu-scientific-execution/);
+            assert.deepEqual(parameters, [fixture.campaign.campaignId]);
+            return { ok: true, rows };
+          },
+        },
+        campaignId: fixture.campaign.campaignId,
+        paperId: fixture.campaign.paperId,
+        gpuScientificPromotionAuthorityVerifier: verifier,
+        runtimeRoot: fixture.runtimeRoot,
+        now: new Date(GPU_RELEASE_TIME),
+      })
+    );
+    const oldInspection = inspectRows([oldResearchRow, gpuRow, formalRow]);
+    assert.equal(
+      oldInspection.ready,
+      true,
+      JSON.stringify(oldInspection, null, 2),
+    );
+    assert.equal(oldInspection.researchNodeId, oldResearchRow.node_id);
+
+    const inspection = inspectRows([
+      latestResearchRow,
+      oldResearchRow,
+      gpuRow,
+      formalRow,
+    ]);
+    assert.equal(inspection.ready, true, JSON.stringify(inspection, null, 2));
+    assert.equal(inspection.researchNodeId, oldResearchRow.node_id);
+    assert.equal(inspection.researchAttemptId, oldResearchRow.attempt_id);
+    assert.equal(
+      inspection.researchLeaseGeneration,
+      oldResearchRow.lease_generation,
+    );
+    assert.equal(
+      inspection.researchResultHash,
+      oldResearchRow.result_sha256,
+    );
+  });
+
+test('persisted GPU readiness requires explicit campaign and paper lineage before querying', () => {
+  let queryCount = 0;
+  const store = {
+    query() {
+      queryCount += 1;
+      return { ok: true, rows: [] };
+    },
+  };
+  for (const input of [
+    { campaignId: null, paperId: 'lineage-paper' },
+    { campaignId: 'lineage-campaign', paperId: null },
+  ]) {
+    const inspection = inspectPersistedCampaignResearchGpuScientificReleaseChain({
+      store,
+      ...input,
+    });
+    assert.equal(inspection.ready, false);
+    assert.deepEqual(inspection.blockers, [
+      'gpu_scientific_persisted_lineage_required',
+    ]);
+  }
+  assert.equal(queryCount, 0);
+});
+
+test('real SQLite readiness fails closed on the current plan research node state',
+  async (t) => {
+    const fixture = await createGpuScientificCampaignReleaseFixture(t, {
+      campaignId: 'readiness-gpu-sqlite-canonical-head',
+      persistedProductionPlan: true,
+    });
+    const verifier = createGpuScientificCampaignPromotionAuthorityVerifier({
+      trustStoreProvider: () => fixture.qualification.trustStore,
+      clock: { now: () => new Date(GPU_RELEASE_TIME) },
+    });
+    const plan = fixture.campaign.spec;
+    const researchSpec = plan.nodes.find((node) => node.kind === 'research-verify');
+    const gpuSpec = plan.nodes.find((node) => node.kind === 'gpu-scientific-execution');
+    const formalSpec = plan.nodes.find((node) => node.kind === 'formal-verify');
+    const canonicalResearch = fixture.packageInput.researchVerifyNode;
+    const staleNodeId = `${canonicalResearch.nodeId}:superseded`;
+    const staleAttemptId = `${canonicalResearch.attemptId}:superseded`;
+    const currentLeaseThreeResult = structuredClone(canonicalResearch.result);
+    currentLeaseThreeResult.researchLeaseGeneration = 3;
+    const staleSpec = {
+      nodeId: staleNodeId,
+      kind: 'research-verify',
+      roundIndex: researchSpec.roundIndex - 1,
+      dependencies: [...researchSpec.dependencies],
+    };
+    const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+    const sqlValue = (value) => value === null ? 'NULL' : quote(value);
+    const cases = [
+      {
+        name: 'running', status: 'running', attemptId: 'current-running-attempt',
+        leaseGeneration: 2, nodeRevision: 12, result: null, ready: false,
+        staleLeaseGeneration: 99, staleNodeRevision: 99,
+        staleUpdatedAt: '2026-08-15T00:00:00.000Z',
+      },
+      {
+        name: 'failed-terminal', status: 'failed_terminal', attemptId: null,
+        leaseGeneration: 3, nodeRevision: 13, result: null, ready: false,
+        staleLeaseGeneration: 99, staleNodeRevision: 99,
+        staleUpdatedAt: '2026-08-15T00:00:00.000Z',
+      },
+      {
+        name: 'low-lease-later-touch', status: 'completed',
+        attemptId: canonicalResearch.attemptId,
+        leaseGeneration: 3,
+        nodeRevision: 8, result: currentLeaseThreeResult, ready: true,
+        staleStatus: 'completed', staleLeaseGeneration: 1,
+        staleNodeRevision: 1, staleUpdatedAt: '2026-08-15T00:00:00.000Z',
+      },
+    ];
+    for (const scenario of cases) {
+      const root = path.join(fixture.root, `readiness-store-${scenario.name}`);
+      fs.mkdirSync(root, { recursive: true });
+      const store = createDefaultPaperStore({
+        root,
+        runtimeRoot: fixture.runtimeRoot,
+        dbPath: path.join(root, 'hepta-paper.sqlite'),
+      });
+      const formalResult = { status: 'formal-fixture-completed' };
+      const staleResearchResult = structuredClone(canonicalResearch.result);
+      staleResearchResult.researchNodeId = staleNodeId;
+      staleResearchResult.researchAttemptId = staleAttemptId;
+      staleResearchResult.researchLeaseGeneration =
+        scenario.staleLeaseGeneration;
+      const currentResultJson = scenario.result
+        ? JSON.stringify(scenario.result) : null;
+      const currentResultHash = scenario.result
+        ? hashRecord('PaperCampaignNodeResult', scenario.result) : null;
+      const seeded = store.execute(`
+INSERT INTO paper_campaigns(
+  campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at
+) VALUES(
+  ${quote(fixture.campaign.campaignId)},${quote(fixture.campaign.paperId)},
+  'running',3,${quote(JSON.stringify(plan))},
+  '2026-08-14T00:00:00.000Z','2026-08-14T00:00:00.000Z'
+);
+INSERT INTO campaign_nodes(
+  node_id,campaign_id,kind,round_index,status,dependencies_json,spec_json,
+  attempt_id,lease_generation,node_revision,result_json,result_sha256,
+  created_at,updated_at
+) VALUES
+(${quote(researchSpec.nodeId)},${quote(fixture.campaign.campaignId)},
+ 'research-verify',${researchSpec.roundIndex},${quote(scenario.status)},
+ ${quote(JSON.stringify(researchSpec.dependencies))},${quote(JSON.stringify(researchSpec))},
+ ${sqlValue(scenario.attemptId)},${scenario.leaseGeneration},${scenario.nodeRevision},
+ ${sqlValue(currentResultJson)},${sqlValue(currentResultHash)},
+ '2026-08-14T00:00:00.000Z','2026-08-14T00:01:00.000Z'),
+(${quote(staleNodeId)},${quote(fixture.campaign.campaignId)},
+ 'research-verify',${staleSpec.roundIndex},${quote(scenario.staleStatus || 'completed')},
+ ${quote(JSON.stringify(staleSpec.dependencies))},${quote(JSON.stringify(staleSpec))},
+ ${sqlValue(scenario.staleAttemptId || staleAttemptId)},
+ ${scenario.staleLeaseGeneration},${scenario.staleNodeRevision},
+ ${quote(JSON.stringify(staleResearchResult))},
+ ${quote(hashRecord('PaperCampaignNodeResult', staleResearchResult))},
+ '2026-08-13T00:00:00.000Z',${quote(scenario.staleUpdatedAt
+    || '2026-08-13T00:01:00.000Z')}),
+(${quote(gpuSpec.nodeId)},${quote(fixture.campaign.campaignId)},
+ 'gpu-scientific-execution',${gpuSpec.roundIndex},'completed',
+ ${quote(JSON.stringify(gpuSpec.dependencies))},${quote(JSON.stringify(gpuSpec))},
+ ${quote(fixture.gpu.node.attemptId)},${fixture.gpu.node.leaseGeneration},6,
+ ${quote(JSON.stringify(fixture.gpu.node.result))},
+ ${quote(fixture.gpu.node.resultSha256)},
+ '2026-08-13T00:00:00.000Z','2026-08-13T00:01:00.000Z'),
+(${quote(formalSpec.nodeId)},${quote(fixture.campaign.campaignId)},
+ 'formal-verify',${formalSpec.roundIndex},'completed',
+ ${quote(JSON.stringify(formalSpec.dependencies))},${quote(JSON.stringify(formalSpec))},
+ 'formal-fixture-attempt',1,5,${quote(JSON.stringify(formalResult))},
+ ${quote(hashRecord('PaperCampaignNodeResult', formalResult))},
+ '2026-08-13T00:00:00.000Z','2026-08-13T00:01:00.000Z');`);
+      assert.equal(seeded.ok, true, seeded.error);
+      const inspection = inspectPersistedCampaignResearchGpuScientificReleaseChain({
+        store,
+        campaignId: fixture.campaign.campaignId,
+        paperId: fixture.campaign.paperId,
+        gpuScientificPromotionAuthorityVerifier: verifier,
+        runtimeRoot: fixture.runtimeRoot,
+        now: new Date(GPU_RELEASE_TIME),
+      });
+      assert.equal(inspection.ready, scenario.ready, JSON.stringify(inspection, null, 2));
+      assert.equal(inspection.researchNodeId, researchSpec.nodeId);
+      assert.equal(inspection.researchNodeStatus, scenario.status);
+      if (!scenario.ready) assert.ok(inspection.blockers.includes(
+        'gpu_scientific_research_canonical_node_not_completed',
+      ));
+      store.close();
+    }
+  });
+
+test('outer assurance selects the plan-canonical formal dependency before receipt binding', () => {
+  const formalOld = {
+    nodeId: 'formal-old', kind: 'formal-verify', roundIndex: 1,
+    dependencies: [],
+  };
+  const formalCurrent = {
+    nodeId: 'formal-current', kind: 'formal-verify', roundIndex: 2,
+    dependencies: [], sourceClosureTerminal: true,
+  };
+  const gpu = {
+    nodeId: 'gpu-current', kind: 'gpu-scientific-execution', roundIndex: 2,
+    dependencies: [],
+  };
+  const finalCompile = {
+    nodeId: 'final-compile-current', kind: 'final-compile', roundIndex: 3,
+    dependencies: [formalCurrent.nodeId],
+    sourceClosureTerminal: true, sourceMutationPolicy: 'forbid',
+  };
+  const research = {
+    nodeId: 'research-current', kind: 'research-verify', roundIndex: 3,
+    dependencies: [
+      formalOld.nodeId,
+      formalCurrent.nodeId,
+      gpu.nodeId,
+      finalCompile.nodeId,
+    ],
+  };
+  const packageNode = {
+    nodeId: 'package-current', kind: 'release-package', roundIndex: 4,
+    dependencies: [finalCompile.nodeId, research.nodeId],
+  };
+  const payload = {
+    version: 4,
+    kind: 'PaperCampaignPlan',
+    campaignId: 'outer-canonical-campaign',
+    paperId: 'outer-canonical-paper',
+    gpuScientificExecutionPlan: { nodeId: gpu.nodeId },
+    nodes: [
+      formalOld,
+      formalCurrent,
+      gpu,
+      finalCompile,
+      research,
+      packageNode,
+    ],
+  };
+  const plan = {
+    ...payload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', payload),
+  };
+  const row = (node, status, revision) => ({
+    campaign_id: plan.campaignId,
+    paper_id: plan.paperId,
+    node_id: node.nodeId,
+    node_kind: node.kind,
+    node_status: status,
+    attempt_id: `${node.nodeId}:attempt`,
+    round_index: node.roundIndex,
+    lease_generation: 1,
+    node_revision: revision,
+    dependencies_json: JSON.stringify(node.dependencies),
+    node_spec_json: JSON.stringify(node),
+    result_json: JSON.stringify({ status: `${node.nodeId}:result` }),
+    result_sha256: hashRecord(
+      'PaperCampaignNodeResult', { status: `${node.nodeId}:result` },
+    ),
+  });
+  const inspected = inspectAutomationReadinessCanonicalAuthorityRows(plan, [
+    row(formalOld, 'completed', 50),
+    row(formalCurrent, 'running', 2),
+    row(gpu, 'completed', 3),
+    row(research, 'completed', 4),
+  ], { requireFormal: true });
+  assert.equal(inspected.ready, false);
+  assert.equal(inspected.formal.row.node_id, formalCurrent.nodeId);
+  assert.ok(inspected.formal.blockers.includes(
+    'autonomous_research_formal_canonical_node_not_completed',
+  ));
+});
+
+test('canonical authority rejects hash-valid plans with ambiguous source-closure formal nodes', () => {
+  const formalA = {
+    nodeId: 'formal-terminal-a', kind: 'formal-verify', roundIndex: 2,
+    dependencies: [], sourceClosureTerminal: true,
+  };
+  const formalB = {
+    nodeId: 'formal-terminal-b', kind: 'formal-verify', roundIndex: 2,
+    dependencies: [], sourceClosureTerminal: true,
+  };
+  const gpu = {
+    nodeId: 'gpu-current', kind: 'gpu-scientific-execution', roundIndex: 2,
+    dependencies: [],
+  };
+  const finalCompile = {
+    nodeId: 'final-compile-current', kind: 'final-compile', roundIndex: 3,
+    dependencies: [formalB.nodeId],
+    sourceClosureTerminal: true, sourceMutationPolicy: 'forbid',
+  };
+  const research = {
+    nodeId: 'research-current', kind: 'research-verify', roundIndex: 3,
+    dependencies: [
+      formalA.nodeId,
+      formalB.nodeId,
+      gpu.nodeId,
+      finalCompile.nodeId,
+    ],
+  };
+  const packageNode = {
+    nodeId: 'package-current', kind: 'release-package', roundIndex: 4,
+    dependencies: [finalCompile.nodeId, research.nodeId],
+  };
+  const payload = {
+    version: 4,
+    kind: 'PaperCampaignPlan',
+    campaignId: 'ambiguous-formal-campaign',
+    paperId: 'ambiguous-formal-paper',
+    gpuScientificExecutionPlan: { nodeId: gpu.nodeId },
+    nodes: [formalA, formalB, gpu, finalCompile, research, packageNode],
+  };
+  const plan = {
+    ...payload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', payload),
+  };
+  const row = (node) => ({
+    campaign_id: plan.campaignId,
+    paper_id: plan.paperId,
+    node_id: node.nodeId,
+    node_kind: node.kind,
+    node_status: 'completed',
+    attempt_id: `${node.nodeId}:attempt`,
+    round_index: node.roundIndex,
+    lease_generation: 1,
+    node_revision: 1,
+    dependencies_json: JSON.stringify(node.dependencies),
+    node_spec_json: JSON.stringify(node),
+  });
+  const inspected = inspectAutomationReadinessCanonicalAuthorityRows(plan, [
+    row(formalA),
+    row(formalB),
+    row(gpu),
+    row(research),
+  ], { requireFormal: true });
+
+  assert.equal(inspected.ready, false);
+  assert.equal(inspected.topology.formalNode, null);
+  assert.ok(inspected.blockers.includes(
+    'automation_readiness_canonical_plan_topology_invalid',
+  ));
+  assert.ok(inspected.blockers.includes(
+    'campaign_release_formal_source_closure_invalid:package-current',
+  ));
+
+  const priorFormal = { ...formalA, sourceClosureTerminal: false };
+  const detachedFinalCompile = { ...finalCompile, dependencies: [] };
+  const detachedPayload = {
+    ...payload,
+    nodes: [
+      priorFormal,
+      formalB,
+      gpu,
+      detachedFinalCompile,
+      research,
+      packageNode,
+    ],
+  };
+  const detachedPlan = {
+    ...detachedPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', detachedPayload),
+  };
+  const detached = inspectAutomationReadinessCanonicalAuthorityRows(
+    detachedPlan,
+    [row(priorFormal), row(formalB), row(gpu), row(research)],
+    { requireFormal: true },
+  );
+  assert.equal(detached.ready, false);
+  assert.ok(detached.blockers.includes(
+    'campaign_release_final_compile_formal_source_closure_dependency_missing:'
+      + 'package-current',
+  ));
+});
+
+test('two-query GPU inspection snapshots cannot splice research generations', () => {
+  const oldResult = Object.freeze({
+    generation: 'old',
+    researchNodeId: 'research-old',
+    researchAttemptId: 'attempt-old',
+    researchLeaseGeneration: 4,
+  });
+  const latestResult = Object.freeze({
+    generation: 'latest',
+    researchNodeId: 'research-latest',
+    researchAttemptId: 'attempt-latest',
+    researchLeaseGeneration: 5,
+  });
+  const oldNode = Object.freeze({
+    node_id: 'research-old',
+    attempt_id: 'attempt-old',
+    lease_generation: 4,
+    round_index: 4,
+    node_revision: 9,
+    node_status: 'completed',
+    result_sha256: hashRecord('PaperCampaignNodeResult', oldResult),
+  });
+  const latestNode = Object.freeze({
+    node_id: 'research-latest',
+    attempt_id: 'attempt-latest',
+    lease_generation: 5,
+    round_index: 5,
+    node_revision: 11,
+    node_status: 'completed',
+    result_sha256: hashRecord('PaperCampaignNodeResult', latestResult),
+  });
+  const oldInspection = Object.freeze({
+    ready: true,
+    campaignId: 'campaign-generation-snapshot',
+    paperId: 'paper-generation-snapshot',
+    researchNodeId: oldNode.node_id,
+    researchAttemptId: oldNode.attempt_id,
+    researchLeaseGeneration: oldNode.lease_generation,
+    researchRoundIndex: oldNode.round_index,
+    researchNodeRevision: oldNode.node_revision,
+    researchNodeStatus: oldNode.node_status,
+    researchResultHash: oldNode.result_sha256,
+    nodeId: 'gpu-node',
+    executionResultHash: hashRecord(
+      'ReadinessGpuSnapshotFixture',
+      { value: 'gpu-execution' },
+    ),
+    artifactArchiveManifestHash: hashRecord(
+      'ReadinessGpuSnapshotFixture',
+      { value: 'gpu-archive' },
+    ),
+    qualificationEvidenceHash: hashRecord(
+      'ReadinessGpuSnapshotFixture',
+      { value: 'gpu-qualification' },
+    ),
+    producerArchiveManifestHash: hashRecord(
+      'ReadinessGpuSnapshotFixture',
+      { value: 'gpu-archive' },
+    ),
+    gpuScientificCampaignQualificationAuthorityInspectionHash: hashRecord(
+      'ReadinessGpuSnapshotFixture',
+      { value: 'current-authority' },
+    ),
+    blockers: Object.freeze([]),
+  });
+  const latestInspection = Object.freeze({
+    ...oldInspection,
+    researchNodeId: latestNode.node_id,
+    researchAttemptId: latestNode.attempt_id,
+    researchLeaseGeneration: latestNode.lease_generation,
+    researchRoundIndex: latestNode.round_index,
+    researchNodeRevision: latestNode.node_revision,
+    researchNodeStatus: latestNode.node_status,
+    researchResultHash: latestNode.result_sha256,
+  });
+  assert.equal(
+    gpuScientificInspectionMatchesResearchNode(
+      oldInspection,
+      oldNode,
+      oldResult,
+    ),
+    true,
+  );
+  assert.equal(
+    gpuScientificInspectionMatchesResearchNode(
+      oldInspection,
+      latestNode,
+      latestResult,
+    ),
+    false,
+  );
+  assert.equal(
+    sameGpuScientificInspectionSnapshot(oldInspection, latestInspection),
+    false,
+  );
+  assert.equal(sameGpuScientificInspectionSnapshot(oldInspection, {
+    ...oldInspection,
+    gpuScientificCampaignQualificationAuthorityInspectionHash: hashRecord(
+      'ReadinessGpuSnapshotFixture',
+      { value: 'rotated-current-authority' },
+    ),
+  }), false);
+  const blocked = blockGpuScientificInspectionSnapshot(latestInspection);
+  assert.equal(blocked.ready, false);
+  assert.ok(blocked.blockers.includes(
+    'gpu_scientific_release_chain_snapshot_mismatch',
+  ));
 });
 
 test('handoff readiness can inspect an uninitialized store without weakening default status', (t) => {

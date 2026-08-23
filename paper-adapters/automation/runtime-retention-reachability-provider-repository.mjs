@@ -6,11 +6,20 @@ import { pathWithin, sha256FileSync } from '../../workflow-kernel/runtime/file-u
 import { fsyncDirectorySync } from '../runtime/durable-json-repository.mjs';
 import { readRegularJsonFileSync } from '../runtime/pinned-file-reader.mjs';
 import { packageLifecycleDeclaration } from './runtime-retention-package-lifecycle-authority.mjs';
+import { inspectPackageRecoveryTreeInventorySync }
+  from './package-recovery-tree-inventory-repository.mjs';
+import {
+  assertDetachedRetentionRemovalSourceSync,
+} from './runtime-retention-removal-recovery-repository.mjs';
+import {
+  inspectFencedCampaignReleasePackageTransactionsSync,
+} from './campaign-release-package-fenced-transaction-inventory.mjs';
 import { verifyWorkspaceRetentionEvidence } from './workspace-retention-evidence.mjs';
 import {
   REACHABILITY_GOVERNED_RETENTION_CATEGORIES,
   buildRuntimeRetentionReachabilityManifest,
   listRuntimeRetentionEntries,
+  runtimeRetentionCategoryRoot,
   safeRetentionNodeKey,
 } from './runtime-retention-scope-repository.mjs';
 
@@ -423,32 +432,133 @@ function envelopeFor({ runtimeRoot, manifest, authoritySnapshot }) {
   });
 }
 
+function withDetachedRetentionRevalidationEntries(
+  runtimeRoot,
+  inventories,
+  detachedEntries,
+) {
+  if (!Array.isArray(detachedEntries)) {
+    throw new Error('runtime_retention_detached_revalidation_invalid');
+  }
+  const updated = { ...inventories };
+  for (const detached of detachedEntries) {
+    const category = String(detached?.category || '');
+    const candidate = path.resolve(String(detached?.path || ''));
+    const binding = detached?.recoveryBinding;
+    const categoryRoot = runtimeRetentionCategoryRoot(runtimeRoot, category);
+    if (!REACHABILITY_GOVERNED_RETENTION_CATEGORIES.includes(category)
+      || path.dirname(candidate) !== categoryRoot
+      || detached?.name !== path.basename(candidate)
+      || !SHA256.test(String(detached?.contentHash || ''))
+      || !Array.isArray(detached?.companionPaths)
+      || detached.companionPaths.length !== 0
+      || typeof detached?.sourcePath !== 'string'
+      || !path.isAbsolute(detached.sourcePath)
+      || binding?.sourcePath !== candidate
+      || binding?.category !== category
+      || binding?.contentHash !== detached.contentHash
+      || detached.identity?.realPath !== candidate) {
+      throw new Error('runtime_retention_detached_revalidation_invalid');
+    }
+    const detachedWitness = assertDetachedRetentionRemovalSourceSync({
+      binding: detached.recoveryBinding,
+      candidate: detached.sourcePath,
+      expectedIdentity: detached.identity,
+      stageCapability: detached.recoveryStageCapability,
+    });
+    if ((detached.sourceTreeIdentityHash ?? null)
+      !== detachedWitness.mutationMarker.sourceTreeIdentityHash
+      || (detachedWitness.rollbackWitness
+        && detachedWitness.mutationMarker.sourceTreeIdentityHash === null)) {
+      throw new Error('runtime_retention_detached_revalidation_invalid');
+    }
+    const inventory = updated[category];
+    if (!inventory || inventory.blocker) {
+      throw new Error('runtime_retention_detached_revalidation_invalid');
+    }
+    const byPath = new Map(inventory.entries.map((entry) => [path.resolve(entry.path), entry]));
+    const existing = byPath.get(candidate);
+    if (existing) {
+      throw new Error('runtime_retention_detached_revalidation_conflict');
+    }
+    const packageRecoveryTreeInventoryHash =
+      inspectPackageRecoveryTreeInventorySync({
+        packagePath: detachedWitness.rollbackWitness
+          ? detached.sourcePath
+          : path.join(path.dirname(detached.sourcePath), 'rollback'),
+      }).inventory.packageRecoveryTreeInventoryHash;
+    if (detached.packageRecoveryTreeInventoryHash !== null
+      && detached.packageRecoveryTreeInventoryHash !== undefined
+      && (!SHA256.test(String(detached.packageRecoveryTreeInventoryHash))
+        || detached.packageRecoveryTreeInventoryHash
+          !== packageRecoveryTreeInventoryHash)) {
+      throw new Error('runtime_retention_detached_revalidation_invalid');
+    }
+    byPath.set(candidate, Object.freeze({
+      path: candidate,
+      name: detached.name,
+      contentHash: detached.contentHash,
+      packageRecoveryTreeInventoryHash,
+      companionPaths: Object.freeze([]),
+      symbolicLink: false,
+    }));
+    updated[category] = Object.freeze({
+      ...inventory,
+      entries: Object.freeze([...byPath.values()].sort((left, right) =>
+        left.path.localeCompare(right.path))),
+    });
+  }
+  return updated;
+}
+
 export function createLedgerBackedRuntimeRetentionReachabilityProvider({
   runtimeRoot,
   campaignStore,
   campaignReleaseQuery,
   workspaceRegistry,
   receiptLedger,
+  packageRecoveryAuthority = null,
   clock = { nowIso: () => new Date().toISOString() },
 } = {}) {
   const root = path.resolve(runtimeRoot || '.');
   const authorityRoot = path.join(root, 'retention-authority', 'manifests');
-  const createManifest = ({
-    activeNodeIds = [],
-    persist = false,
-    createdAt: canonicalCreatedAt = null,
-  } = {}) => {
+  const createManifest = (options = {}) => {
+    if (!options || typeof options !== 'object' || Array.isArray(options)
+      || Object.hasOwn(options, 'detachedPackageEntries')) {
+      throw new Error('runtime_retention_detached_package_revalidation_invalid');
+    }
+    const {
+      activeNodeIds = [],
+      persist = false,
+      createdAt: canonicalCreatedAt = null,
+      detachedRetentionEntries = [],
+    } = options;
     const createdAt = canonicalCreatedAt || clock.nowIso();
     if (!Number.isFinite(Date.parse(createdAt))) {
       throw new Error('runtime_retention_authority_created_at_invalid');
     }
+    if (!Array.isArray(detachedRetentionEntries)) {
+      throw new Error('runtime_retention_detached_package_revalidation_invalid');
+    }
     const categories = {};
     const sourceBindings = {};
     const blockers = [];
-    const entries = Object.fromEntries(REACHABILITY_GOVERNED_RETENTION_CATEGORIES.map((category) => [
+    let entries = Object.fromEntries(REACHABILITY_GOVERNED_RETENTION_CATEGORIES.map((category) => [
       category,
       listRuntimeRetentionEntries(root, category),
     ]));
+    if (detachedRetentionEntries.length) {
+      if (persist || canonicalCreatedAt === null) {
+        throw new Error('runtime_retention_detached_package_revalidation_invalid');
+      }
+    }
+    if (detachedRetentionEntries.length) {
+      entries = withDetachedRetentionRevalidationEntries(
+        root,
+        entries,
+        detachedRetentionEntries,
+      );
+    }
     for (const [category, inventory] of Object.entries(entries)) {
       if (inventory.blocker) blockers.push(`${category}:${inventory.blocker}`);
     }
@@ -485,6 +595,14 @@ export function createLedgerBackedRuntimeRetentionReachabilityProvider({
     } catch (error) { blockers.push(`cas_authority:${String(error?.message || error)}`); }
     if (campaigns && releases && !entries.packages.blocker) {
       try {
+        const fencedTransactions =
+          inspectFencedCampaignReleasePackageTransactionsSync({
+            runtimeRoot: root,
+            detachedStagingEntries: detachedRetentionEntries
+              .filter((entry) => entry.category === 'packages'),
+          });
+        sourceBindings.fencedPackageTransactionInventoryHash =
+          fencedTransactions.hash;
         const packages = packageLifecycleDeclaration({
           runtimeRoot: root,
           entries: entries.packages.entries,
@@ -493,11 +611,22 @@ export function createLedgerBackedRuntimeRetentionReachabilityProvider({
           receiptLedger,
           casInventory: cas,
           activeNodeIds,
+          fencedTransactions,
+          packageRecoveryAuthority,
+          now: clock.nowIso(),
         });
         categories.packages = packages.declaration;
         if (packages.authority.ledgerInventoryHash) {
           sourceBindings.packageLifecycleLedgerInventoryHash =
             packages.authority.ledgerInventoryHash;
+        }
+        if (packages.authority.recoveryAuthoritySnapshotHashes?.length) {
+          sourceBindings.packageRecoveryAuthoritySnapshotHashes =
+            packages.authority.recoveryAuthoritySnapshotHashes;
+        }
+        if (packages.authority.recoverySourceInventoryHashes?.length) {
+          sourceBindings.packageRecoverySourceInventoryHashes =
+            packages.authority.recoverySourceInventoryHashes;
         }
         blockers.push(...packages.authority.blockers.map((blocker) =>
           `package_lifecycle_authority:${blocker}`));

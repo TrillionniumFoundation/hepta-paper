@@ -30,6 +30,13 @@ const ENTRY_KEYS = Object.freeze([
 const REQUIRED_QUALIFICATION_ROLES = Object.freeze(
   [...ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES].sort(),
 );
+const REQUIRED_EVIDENCE_RECEIPT_HASH_FIELDS = Object.freeze([
+  'independentNumericOracleReceiptHash',
+  'referenceExecutionReceiptHash',
+  'replayExecutionReceiptHash',
+  'scientificReviewReceiptHash',
+  'typedUncertaintyReviewReceiptHash',
+]);
 
 function configuredPath(configDirectory, value) {
   const selected = String(value || '').trim();
@@ -80,6 +87,7 @@ function baseCandidate({
     qualificationAuthorityOrganizations: Object.freeze([]),
     qualificationAuthorityPublicKeySpkiHashes: Object.freeze([]),
     qualificationAuthorityRoles: Object.freeze([]),
+    evidenceReceiptHashes: null,
     referenceExecutionProcessIdentityHash: null,
     replayExecutionProcessIdentityHash: null,
     qualificationResultHash: null,
@@ -122,6 +130,9 @@ function capabilitiesValid(capabilities, {
   const pluginOrganizations = capabilities?.pluginAuthorityOrganizations;
   const qualificationPublicKeys =
     capabilities?.qualificationAuthorityPublicKeySpkiHashes;
+  const evidenceReceiptHashes = capabilities?.evidenceReceiptHashes;
+  const evidenceReceiptHashValues = REQUIRED_EVIDENCE_RECEIPT_HASH_FIELDS
+    .map((field) => evidenceReceiptHashes?.[field]);
   const pluginPublicKeys = capabilities?.pluginAuthorityPublicKeySpkiHashes;
   const expiresAtMs = Date.parse(String(capabilities?.qualificationExpiresAt || ''));
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now || ''));
@@ -168,6 +179,14 @@ function capabilitiesValid(capabilities, {
     ))
     && JSON.stringify(capabilities.qualificationAuthorityRoles)
       === JSON.stringify(REQUIRED_QUALIFICATION_ROLES)
+    && evidenceReceiptHashes !== null
+    && typeof evidenceReceiptHashes === 'object'
+    && !Array.isArray(evidenceReceiptHashes)
+    && JSON.stringify(Object.keys(evidenceReceiptHashes).sort())
+      === JSON.stringify([...REQUIRED_EVIDENCE_RECEIPT_HASH_FIELDS].sort())
+    && evidenceReceiptHashValues.every((value) => SHA256.test(String(value || '')))
+    && new Set(evidenceReceiptHashValues).size
+      === REQUIRED_EVIDENCE_RECEIPT_HASH_FIELDS.length
     && Number.isFinite(nowMs) && Number.isFinite(expiresAtMs) && expiresAtMs > nowMs
     && SHA256.test(String(
       capabilities.referenceExecutionProcessIdentityHash || '',
@@ -277,6 +296,9 @@ function inspectEntry({
       ]),
     qualificationAuthorityRoles:
       Object.freeze([...capabilities.qualificationAuthorityRoles]),
+    evidenceReceiptHashes: Object.freeze({
+      ...(capabilities.evidenceReceiptHashes || {}),
+    }),
     referenceExecutionProcessIdentityHash:
       capabilities.referenceExecutionProcessIdentityHash,
     replayExecutionProcessIdentityHash:

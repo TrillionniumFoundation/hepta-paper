@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import {
@@ -25,6 +26,11 @@ import {
   AUTONOMOUS_SUBMISSION_HANDOFF_MUTATION_PLANS,
 } from '../../paper-adapters/persistence/autonomous-submission-handoff-mutation-plan.mjs';
 import {
+  applySchemaTransitionStatements,
+  schemaTransitionTargetSchema,
+} from '../../paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs';
+import {
+  AUTONOMOUS_SUBMISSION_HANDOFF_SCHEMA_MIGRATIONS,
   autonomousSubmissionHandoffDatabasePath,
   openAutonomousSubmissionHandoffStore,
   provisionAutonomousSubmissionHandoffStore,
@@ -109,6 +115,72 @@ function insertLegacy(store, row) {
     created_at,updated_at
   ) VALUES(?,?,?,?,?,?,?,?,?,?)`, values);
   assert.equal(result.ok, true, result.error);
+}
+
+function provisionLegacyHandoffV1(fixture, {
+  migrationHash = AUTONOMOUS_SUBMISSION_HANDOFF_SCHEMA_MIGRATIONS[0].migrationHash,
+  outboxRow = null,
+} = {}) {
+  const databasePath = autonomousSubmissionHandoffDatabasePath({
+    runtimeRoot: fixture.runtimeRoot,
+  });
+  fs.mkdirSync(path.dirname(databasePath), { recursive: true, mode: 0o770 });
+  fs.chmodSync(path.dirname(databasePath), 0o2770);
+  const database = new DatabaseSync(databasePath);
+  try {
+    const migration = AUTONOMOUS_SUBMISSION_HANDOFF_SCHEMA_MIGRATIONS[0];
+    database.exec(migration.sql);
+    database.prepare(`INSERT INTO handoff_schema_migrations(
+      version,name,migration_sha256,applied_at
+    ) VALUES(?,?,?,?);`).run(
+      migration.version,
+      migration.name,
+      migrationHash,
+      NOW.toISOString(),
+    );
+    database.prepare(`INSERT INTO handoff_instance(
+      singleton,instance_nonce,provisioned_at
+    ) VALUES(1,?,?);`).run(crypto.randomUUID(), NOW.toISOString());
+    database.prepare(`INSERT INTO handoff_cutover(
+      singleton,cutover_id,native_cutover_identity_hash,status,
+      prepared_at,activated_at
+    ) VALUES(1,?,?,?, ?,?);`).run(
+      'autonomous-submission-handoff-cutover-v1',
+      H('legacy-handoff-cutover'),
+      'active',
+      NOW.toISOString(),
+      NOW.toISOString(),
+    );
+    if (outboxRow) {
+      database.prepare(`INSERT INTO submission_outbox(
+        message_id,paper_id,dispatch_hash,provider,account_id,nonce,status,payload_json,
+        created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?);`).run(
+        outboxRow.messageId,
+        outboxRow.paperId,
+        outboxRow.requestHash,
+        outboxRow.portalId,
+        outboxRow.portalHash,
+        outboxRow.nonce,
+        outboxRow.status,
+        JSON.stringify(outboxRow.payload),
+        NOW.toISOString(),
+        NOW.toISOString(),
+      );
+    }
+  } finally { database.close(); }
+  fs.chmodSync(databasePath, 0o660);
+  return databasePath;
+}
+
+function applyHandoffV2SchemaTransition(database, appliedAt = NOW.toISOString()) {
+  return applySchemaTransitionStatements(
+    database,
+    schemaTransitionTargetSchema(
+      { role: 'submission-handoff' },
+      { appliedAt },
+    ),
+  );
 }
 
 function migrateLegacyFixture(fixture, rows) {
@@ -459,6 +531,97 @@ test('nonterminal native autonomous rows block cutover before the handoff databa
   })), false);
 });
 
+test('authority-transaction schema transition upgrades exact empty handoff v1 once', (t) => {
+  const fixture = roots(t, 'hepta-handoff-schema-v2');
+  const databasePath = provisionLegacyHandoffV1(fixture);
+  assert.throws(() => openAutonomousSubmissionHandoffStore({
+    runtimeRoot: fixture.runtimeRoot,
+    readOnly: true,
+  }), /schema_mismatch/);
+
+  const database = new DatabaseSync(databasePath);
+  assert.throws(
+    () => applyHandoffV2SchemaTransition(database),
+    /authority_transaction_required/,
+  );
+  database.exec('BEGIN EXCLUSIVE;');
+  applyHandoffV2SchemaTransition(database);
+  database.exec('COMMIT;');
+
+  const row = legacyEnvelope({ label: 'post-upgrade-idempotence' });
+  database.prepare(`INSERT INTO submission_outbox(
+    message_id,paper_id,dispatch_hash,provider,account_id,nonce,status,payload_json,
+    created_at,updated_at
+  ) VALUES(?,?,?,?,?,?,?,?,?,?);`).run(
+    row.messageId,
+    row.paperId,
+    row.requestHash,
+    row.portalId,
+    row.portalHash,
+    row.nonce,
+    row.status,
+    JSON.stringify(row.payload),
+    NOW.toISOString(),
+    NOW.toISOString(),
+  );
+  database.exec('BEGIN EXCLUSIVE;');
+  applyHandoffV2SchemaTransition(database);
+  database.exec('COMMIT;');
+  database.close();
+
+  const store = openAutonomousSubmissionHandoffStore({
+    runtimeRoot: fixture.runtimeRoot,
+    readOnly: true,
+  });
+  t.after(() => store.close());
+  assert.deepEqual(store.query(`SELECT version,name,migration_sha256
+    FROM handoff_schema_migrations ORDER BY version;`).rows,
+  AUTONOMOUS_SUBMISSION_HANDOFF_SCHEMA_MIGRATIONS.map((migration) => ({
+    version: migration.version,
+    name: migration.name,
+    migration_sha256: migration.migrationHash,
+  })));
+  assert.equal(store.query(
+    'SELECT count(*) AS count FROM submission_authorization_consumptions;',
+  ).rows[0].count, 0);
+  assert.equal(store.query('SELECT count(*) AS count FROM submission_outbox;').rows[0].count, 1);
+});
+
+test('handoff v2 transition rejects a changed v1 preimage and nonempty legacy outbox', (t) => {
+  const wrongFixture = roots(t, 'hepta-handoff-schema-wrong-v1');
+  const wrongPath = provisionLegacyHandoffV1(wrongFixture, {
+    migrationHash: H('wrong-handoff-v1-migration'),
+  });
+  const wrongDatabase = new DatabaseSync(wrongPath);
+  wrongDatabase.exec('BEGIN EXCLUSIVE;');
+  assert.throws(
+    () => applyHandoffV2SchemaTransition(wrongDatabase),
+    /preimage_mismatch/,
+  );
+  wrongDatabase.exec('ROLLBACK;');
+  assert.equal(wrongDatabase.prepare(`SELECT count(*) AS count FROM sqlite_schema
+    WHERE type='table' AND name='submission_authorization_consumptions';`).get().count, 0);
+  wrongDatabase.close();
+
+  const occupiedFixture = roots(t, 'hepta-handoff-schema-occupied-v1');
+  const occupiedPath = provisionLegacyHandoffV1(occupiedFixture, {
+    outboxRow: legacyEnvelope({ label: 'legacy-occupied' }),
+  });
+  const occupiedDatabase = new DatabaseSync(occupiedPath);
+  occupiedDatabase.exec('BEGIN EXCLUSIVE;');
+  assert.throws(
+    () => applyHandoffV2SchemaTransition(occupiedDatabase),
+    /empty_outbox_required/,
+  );
+  occupiedDatabase.exec('ROLLBACK;');
+  assert.equal(occupiedDatabase.prepare(`SELECT count(*) AS count FROM sqlite_schema
+    WHERE type='table' AND name='submission_authorization_consumptions';`).get().count, 0);
+  assert.equal(occupiedDatabase.prepare(
+    'SELECT count(*) AS count FROM submission_outbox;',
+  ).get().count, 1);
+  occupiedDatabase.close();
+});
+
 test('repository-owned store migrate closes the cold-start dependency and verifies both stores', (t) => {
   const fixture = roots(t, 'hepta-handoff-cold-start');
   const assetRoot = path.join(fixture.parent, 'assets');
@@ -757,7 +920,9 @@ test('deployment grants native writes only to research and exact handoff writes 
     'autonomous-research-supervisor.service',
   ), 'utf8');
   assert.match(supervisorService,
-    /^Requires=hepta-paper-host-bootstrap\.service autonomous-submission-handoff-layout-provision\.service hepta-paper-state-authority\.service$/m);
+    /^Requires=hepta-immutable-release-recovery\.service$/m);
+  assert.match(supervisorService,
+    /^Requires=hepta-paper-host-bootstrap\.service autonomous-submission-handoff-layout-provision\.service hepta-paper-state-authority\.service strict-full-auto-runtime-adoption\.service$/m);
   assert.match(supervisorService,
     /^Wants=.*autonomous-submission-handoff-layout-provision\.path/m);
   assert.doesNotMatch(supervisorService, /^ExecStartPre=\+/m);

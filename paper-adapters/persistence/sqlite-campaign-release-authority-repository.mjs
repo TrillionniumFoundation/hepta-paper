@@ -87,6 +87,9 @@ export function createSqliteCampaignReleaseAuthorityRepository({
         experimentRegistryAuthorityVerifier,
         gpuScientificPromotionAuthorityVerifier,
       });
+      const packageDeletionWriterSelector = Object.freeze({
+        packagePath: packageResult.releaseBundle.packageOutput.packageDir,
+      });
       let insert;
       if (typeof store.mutate === 'function') {
         insert = store.mutate({
@@ -95,6 +98,7 @@ export function createSqliteCampaignReleaseAuthorityRepository({
             'native-store.campaign-release-authority-repository.promoteCompletedRelease.v1',
           authorizationReceiptHashes: [],
           sideEffectReservationHashes: [],
+          packageDeletionWriterSelector,
           mutate: (transaction) => transaction.run(
             NATIVE_STORE_QUALITY_RELEASE_STATEMENT_IDS
               .insertCurrentCampaignRelease,
@@ -152,7 +156,7 @@ export function createSqliteCampaignReleaseAuthorityRepository({
             AND n.prepared_integration_receipt_sha256=${sqlText(promotion.integrationReceiptHash)}
             AND c.status='completed' AND c.paper_id=${sqlText(promotion.paperId)}
             AND json_extract(c.spec_json,'$.campaignPlanHash')=${sqlText(promotion.campaignPlanHash)});
-        COMMIT;`);
+        COMMIT;`, { packageDeletionWriterSelector });
         if (!insert.ok) throw new Error(insert.error || 'campaign_release_authority_promotion_failed');
       }
       const promoted = repository.getCurrentRelease({ campaignId });

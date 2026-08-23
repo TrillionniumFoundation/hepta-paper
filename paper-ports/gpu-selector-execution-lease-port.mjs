@@ -12,7 +12,11 @@ export function assertGpuSelectorExecutionLeasePort(port) {
     || capabilities?.kind !== 'GpuSelectorExecutionLeaseCapabilities'
     || capabilities?.crossProcess !== true
     || capabilities?.perGpuUuid !== true
-    || capabilities?.deadlineBound !== true
+    || capabilities?.deadlineBound !== false
+    || capabilities?.acquisitionWaitDeadlineBound !== true
+    || capabilities?.holderHardDeadlineBound !== false
+    || capabilities?.holderDeadlineEnforcement
+      !== 'cooperative_same_event_loop_watchdog_v1'
     || capabilities?.abortableWait !== true
     || capabilities?.asyncContextReentrant !== false
     || capabilities?.productionExclusivityClaimed !== false) {

@@ -32,12 +32,15 @@ as unsupported production vocabulary. Both preview and execution through the
 production batch command fail closed because no campaign node executor exists;
 legacy projection work must choose the explicit compatibility entrypoint.
 
-The managed-Codex, local state-authority, and local release-attestor clients are
-machine-protocol executables, not npm or `hepta-paper operator` commands. They
-remain absent from the registry so raw mutation/signing JSON and protocol stdout
-cannot be widened into a general operator surface. Their root-owned deployment
-launchers, strict help/failure behavior, and bounded trust profiles are defined
-in [`operational-process-entrypoints.md`](operational-process-entrypoints.md).
+The managed-Codex, local state-authority, local release-attestor and immutable
+release deployment entrypoints are deliberately not npm or `hepta-paper
+operator` commands. The first three are machine-protocol executables; the last
+is a root-only, plan-hash-confirmed host transaction. They remain absent from
+the registry so raw mutation/signing JSON, protocol stdout and privileged host
+deployment cannot be widened into the general operator surface. Their
+root-owned deployment launchers, strict help/failure behavior and bounded trust
+profiles are defined in
+[`operational-process-entrypoints.md`](operational-process-entrypoints.md).
 
 Historical retirement commands are not production paper modes. In particular,
 there is no `paper:legacy-cleanup`, `store:migrate-legacy`, or
@@ -94,6 +97,22 @@ replay, numerical plugins, state, or submission; it cannot start a service,
 probe a KMS, or request a signature. A successful result means only that the
 four external-authority inputs are ready for one explicit live author/KMS
 verification. It never reports full production readiness.
+`hepta-paper operator full-production-readiness -- <arguments>` is the outer
+production gate. It combines fully autonomous research readiness with a fresh
+package-retention recovery challenge, off-host WORM custody, independently
+signed external owner acceptance, and release-bound independent operational
+proofs. The package-recovery command path and SHA-256 are mandatory; the
+command is opened once, checked as a root-owned non-writable executable, and
+invoked through its pinned `/proc/self/fd` descriptor. The explicit
+`--live-provider-canary` and `--live-release-attestor` flags retain their
+network, credential, external-action and possible-cost classification.
+`--require-full-production` returns exit code 2 only for a complete semantic
+not-ready report; malformed evidence or an infrastructure failure returns 1.
+The host installer supplies a manifest-bound stock package-recovery wrapper so
+the reference is executable and hashable, but that stock campaign composition
+deliberately reports recovery authority unavailable. A separately qualified
+launcher must inject the complete recovery authority set and be pinned by its
+own independently delivered hash before this gate can become ready.
 `hepta-paper operator automation -- --handoff` remains the complete read-only
 dependency view and is accepted by the canonical router.
 `hepta-paper operator generic-domain-capability-evidence -- <arguments>` is the

@@ -1,7 +1,9 @@
 [Unit]
 Description=Hepta Paper unattended strict full-auto acceptance convergence
-Requires=hepta-paper-host-bootstrap.service
-After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.path network-online.target docker.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
+Requires=hepta-paper-host-bootstrap.service strict-full-auto-runtime-adoption.service
+After=hepta-paper-host-bootstrap.service strict-full-auto-runtime-adoption.service autonomous-submission-handoff-layout-provision.path network-online.target docker.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service
 Wants=autonomous-submission-handoff-layout-provision.path network-online.target docker.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service
 ConditionPathExists=/opt/hepta-paper/paper-core/bin/hepta-paper.mjs
 ConditionPathExists=/etc/hepta-paper/strict-full-auto-acceptance.env
@@ -38,6 +40,7 @@ EnvironmentFile=/etc/hepta-paper/strict-full-auto-acceptance.env
 # submission portal token remains isolated in the dispatcher principal.
 EnvironmentFile=/etc/hepta-paper/autonomous-research-provider.secrets.env
 ExecStartPre=/usr/bin/test -r ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION}
+ExecCondition=/usr/bin/node paper-core/bin/hepta-paper.mjs operator strict-full-auto-acceptance -- --action adoption-status --configuration ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION} --require-adopted
 ExecStart=/usr/bin/node paper-core/bin/hepta-paper.mjs operator strict-full-auto-acceptance -- --action converge --configuration ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION} --execute --require-accepted
 Restart=on-failure
 RestartSec=1min

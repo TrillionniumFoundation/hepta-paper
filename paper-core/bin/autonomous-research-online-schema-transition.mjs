@@ -45,6 +45,8 @@ export function autonomousResearchOnlineSchemaTransitionUsage() {
     '  --required-execution-window-ms N',
     '                                 Required execution window (default 30000).',
     '  --commit-safety-margin-ms N    Per-commit lease margin (default 1000).',
+    '  --expected-pre-rebind-pristine-runtime-state-hash sha256:...',
+    '                                 Reviewed exact pristine-state preimage for v2 rebind.',
     '',
     'Plan never creates transition control state or mutates a database. Execute fails',
     'closed unless both confirmations bind the current plan and pinned authority.',
@@ -67,6 +69,7 @@ export function parseAutonomousResearchOnlineSchemaTransitionArguments(argv = []
       'action', 'runtime-root', 'authority-process-config', 'transition-id',
       'requested-lease-ms', 'required-execution-window-ms',
       'commit-safety-margin-ms',
+      'expected-pre-rebind-pristine-runtime-state-hash',
     ],
     positional: false,
   });
@@ -91,6 +94,14 @@ export function parseAutonomousResearchOnlineSchemaTransitionArguments(argv = []
   }
   if (action === 'plan' && (args['transition-id'] || args['commit-safety-margin-ms'])) {
     throw new Error('autonomous_research_online_schema_transition_execute_option_forbidden_in_plan');
+  }
+  const expectedPreRebindPristineRuntimeStateHash =
+    args['expected-pre-rebind-pristine-runtime-state-hash'] || null;
+  if (expectedPreRebindPristineRuntimeStateHash !== null
+    && !SHA256.test(String(expectedPreRebindPristineRuntimeStateHash))) {
+    throw new Error(
+      'autonomous_research_online_schema_transition_expected_pre_rebind_state_hash_invalid',
+    );
   }
   const requestedLeaseMs = positiveInteger(
     args['requested-lease-ms'], 120000, 'requested_lease_ms', 1000,
@@ -117,6 +128,7 @@ export function parseAutonomousResearchOnlineSchemaTransitionArguments(argv = []
     requestedLeaseMs,
     requiredExecutionWindowMs,
     commitSafetyMarginMs,
+    expectedPreRebindPristineRuntimeStateHash,
   });
 }
 
@@ -139,12 +151,16 @@ export function runAutonomousResearchOnlineSchemaTransition({
     ? service.plan({
       requestedLeaseMs: options.requestedLeaseMs,
       requiredExecutionWindowMs: options.requiredExecutionWindowMs,
+      expectedPreRebindPristineRuntimeStateHash:
+        options.expectedPreRebindPristineRuntimeStateHash,
     })
     : service.execute({
       expectedTransitionId: options.expectedTransitionId,
       requestedLeaseMs: options.requestedLeaseMs,
       requiredExecutionWindowMs: options.requiredExecutionWindowMs,
       commitSafetyMarginMs: options.commitSafetyMarginMs,
+      expectedPreRebindPristineRuntimeStateHash:
+        options.expectedPreRebindPristineRuntimeStateHash,
     });
 }
 

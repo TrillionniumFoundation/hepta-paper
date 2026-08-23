@@ -42,7 +42,7 @@
       "cardinality": "singleton",
       "relativePath": "autonomous-research/submission-handoff/submission-handoff.sqlite",
       "minimumInstances": 1,
-      "schemaContractId": "autonomous-submission-handoff-schema-v1",
+      "schemaContractId": "autonomous-submission-handoff-schema-v2",
       "requiredSchemaObjects": [
         "index:idx_autonomous_research_online_mutation_marker_head",
         "index:idx_handoff_outbox_campaign",
@@ -56,6 +56,7 @@
         "table:handoff_schema_migrations",
         "table:receipt_ledger",
         "table:receipt_ledger_qualifications",
+        "table:submission_authorization_consumptions",
         "table:submission_outbox",
         "trigger:autonomous_research_online_mutation_finalization_marker_required",
         "trigger:autonomous_research_online_mutation_finalization_no_delete",

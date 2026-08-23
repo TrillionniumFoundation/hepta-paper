@@ -2,11 +2,8 @@ import { createResourceGovernor, resourcesForCampaignNode } from './resource-gov
 import { formatProcessIdentitySuffix } from '../../workflow-kernel/runtime/process-identity.mjs';
 import { createCampaignEmpiricalCellRunner } from './campaign-empirical-cell-budget.mjs';
 import { buildCampaignConvergenceDecision } from './campaign-convergence-evaluator.mjs';
-import {
-  campaignInfrastructureControlError,
-  cancelCampaignNodeInfrastructureReservation,
-  createCampaignNodeExternalSideEffectGate,
-} from './campaign-node-infrastructure-control.mjs';
+import { recoverCampaignGenerationLockWaitAbort } from './campaign-generation-lock-wait-abort-recovery.mjs';
+import { campaignInfrastructureControlError, cancelCampaignNodeInfrastructureReservation, createCampaignNodeExternalSideEffectGate } from './campaign-node-infrastructure-control.mjs';
 import {
   abortCampaignExecution,
   campaignExecutionAbortError,
@@ -420,6 +417,8 @@ export async function runPaperCampaign({
           campaignStore.stopCampaign(campaignId, 'referee_convergence_not_reached_within_budget');
         }
       } catch (error) {
+        if (recoverCampaignGenerationLockWaitAbort({ error, controllerSignal: controller.signal, supervisorSignal: signal, externalActionStarted: nodeExternalSideEffectStarted(), campaignStore, campaignId, node, workerId, observedAtEpochMs: nowEpochMs() })) return;
+        if (signal?.aborted) return;
         if (campaignInfrastructureControlError(error)) {
           cancelCampaignNodeInfrastructureReservation({
             campaignStore,
@@ -430,7 +429,6 @@ export async function runPaperCampaign({
           });
           throw error;
         }
-        if (signal?.aborted) return;
         const latestNode = campaignStore.listNodes(campaignId).find((item) => item.nodeId === node.nodeId);
         if (latestNode?.status !== 'running' || latestNode?.attemptId !== node.attemptId || latestNode?.leaseGeneration !== node.leaseGeneration) return;
         const campaignStatus = campaignStore.getCampaign(campaignId)?.status;

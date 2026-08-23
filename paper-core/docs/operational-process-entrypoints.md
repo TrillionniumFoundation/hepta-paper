@@ -1,32 +1,53 @@
 # Operational process entrypoints
 
-Three repository entrypoints implement machine protocols rather than human
-operator commands:
+Four restricted production entrypoints sit outside the general operator
+command registry. Three implement machine protocols and one is the root-only,
+plan-hash-confirmed release deployment boundary:
 
 - `codex-openclaw-managed` is a Codex-compatible executable selected through
   `codexBinary`;
 - `hepta-paper-state-authority-client` carries one authority request over the
   fixed local Unix socket;
 - `hepta-paper-release-attestor-client` carries one bounded signer or probe
-  request to an explicitly selected local Unix socket.
+  request to an explicitly selected local Unix socket;
+- `immutable-release-deploy` plans, executes, or recovers an immutable host
+  release deployment under the exclusive deployment lock.
 
 They are deliberately absent from the npm and `hepta-paper operator` command
 registries. Routing a raw signing or mutation protocol as a general operator
 command would widen its authority surface and could corrupt its stdout
-protocol. Their supported invocation surface is a pinned executable path in a
-reviewed process configuration.
+protocol. Exposing privileged host deployment through the unprivileged
+operator router would likewise erase its deliberate root-only boundary. Their
+supported invocation surface is a pinned executable path in a reviewed process
+configuration or deployment procedure.
+
+The installed `hepta-package-recovery-readiness` executable is a different,
+bounded boundary: it forwards only to the campaign recovery-readiness action
+through a fixed Node/application path so full-production readiness can pin and
+open an executable descriptor. It is not an authority provider. The stock
+campaign composition remains unavailable until a separately qualified launcher
+injects the complete recovery authority, deletion-lease and independent
+readiness-verifier set.
 
 ## Installation
 
 The release application tree must first be installed read-only at
-`/opt/hepta-paper`. The host installer then snapshots the launcher templates,
-verifies that they did not change during installation, and installs these
-root-owned executable paths:
+`/opt/hepta-paper`. For immutable deployment this is a strict bridge
+prerequisite: the already sealed predecessor must contain
+`paper-core/bin/immutable-release-deploy.mjs` and its complete production
+module closure. The host installer does not put application code into that
+live trust boundary. It only snapshots the launcher/unit templates, verifies
+that they did not change during installation, and installs these root-owned
+launcher and recovery-gate paths:
 
 ```text
 /usr/libexec/hepta-paper/codex-openclaw-managed
 /usr/libexec/hepta-paper/hepta-paper-state-authority-client
 /usr/libexec/hepta-paper/hepta-paper-release-attestor-client
+/usr/libexec/hepta-paper/hepta-paper-release-env
+/usr/libexec/hepta-paper/hepta-package-recovery-readiness
+/usr/libexec/hepta-paper/hepta-immutable-release-deploy
+/etc/systemd/system/hepta-immutable-release-recovery.service
 ```
 
 Run the existing installer from the exact release tree:
@@ -35,12 +56,14 @@ Run the existing installer from the exact release tree:
 sudo /opt/hepta-paper/paper-core/deploy/install-hepta-paper-systemd-host.sh
 ```
 
-The default installation is a production hold. It enables and starts only the
-host bootstrap, state authority, release-attestor pair, handoff-layout watcher,
-and state-backup timer. It explicitly disables and stops the autonomous
+The default installation is a production hold. It enables and starts the
+immutable-release recovery gate before the host bootstrap, state authority,
+release-attestor pair, handoff-layout watcher and state-backup timer. It
+explicitly disables and stops the autonomous
 research supervisor, submission dispatcher, strict-acceptance service, and
-strict-acceptance timer. Installing reviewed units therefore cannot implicitly
-start research or submission.
+strict-acceptance timer. It also keeps the pre-resident runtime-adoption unit
+disabled and stopped. Installing reviewed units therefore cannot implicitly
+adopt a runtime, start research, or start submission.
 
 `--enable-full-auto` is parsed as an explicit high-risk request, but currently
 fails before any target or systemd mutation with
@@ -72,16 +95,133 @@ The installed launchers are mode `0755` and are included in
 `/usr/share/hepta-paper/deploy/hepta-paper-systemd-host.manifest.sha256`.
 The `.mjs` source files and launcher templates remain non-executable mode
 `0644` in the source tree. Executability is therefore a deployment decision,
-not an accidental Git worktree bit. Every launcher uses the absolute
-`/usr/bin/node` interpreter and the exact `/opt/hepta-paper` entrypoint; it does
-not resolve `node` or application code through `PATH`, use `eval`, or add
-arguments. The caller's already restricted environment and exact argument list
-are forwarded unchanged.
+not an accidental Git worktree bit. Every launcher uses absolute system
+executables and does not resolve Node or application code through ambient
+`PATH` or `eval`. The protocol and readiness launchers select exact
+`/opt/hepta-paper` entrypoints. The deployment launcher instead selects a
+sealed live or intent-pinned predecessor executor as described below.
 
 The launcher content hash does not replace release-graph verification. The
 read-only `/opt/hepta-paper` tree, launcher manifest, exact release commit, and
 tracked production graph must all be frozen and verified together. Any
 launcher or application-tree drift invalidates the candidate.
+
+The checked-in strict-acceptance example pins the stock package-recovery
+wrapper's exact SHA-256. After installation, compare it against both the host
+manifest and:
+
+```bash
+sha256sum /usr/libexec/hepta-paper/hepta-package-recovery-readiness
+```
+
+If a separately qualified recovery launcher is installed, do not reuse that
+stock hash. Pin the qualified executable independently in both the
+`package-recovery-readiness-command` reference and the final full-production
+arguments, and preserve its root ownership, single link, executable/non-writable
+mode, canonical real path, and trusted parent directories.
+
+## Immutable release deployment boundary
+
+The immutable release deployment transaction is available only through the
+root-owned `/usr/libexec/hepta-paper/hepta-immutable-release-deploy` launcher;
+it is intentionally not a general `hepta-paper operator` command. Its contract
+fixes the exclusive deployment lock, immutable candidate/closure,
+consumer-unit inventory, host snapshot, cutover/postverification sequence,
+durable intent phases and exact rollback verification. The launcher discards
+the ambient environment and invokes an exact sealed executor with the absolute
+`/usr/bin/node` interpreter. With no durable intent it uses the verified live
+release. When an intent exists it selects the intent-pinned predecessor release
+from `/opt/hepta-paper-releases`; recovery never loads the partially installed
+target executor.
+
+From an authenticated root shell, generate a plan against the exact clean
+candidate worktree and persist the complete JSON response outside that tree:
+
+```bash
+/usr/libexec/hepta-paper/hepta-immutable-release-deploy \
+  plan --workspace /absolute/clean/candidate \
+  > /root/immutable-release-deployment-plan.json
+```
+
+Review the complete plan, including the predecessor closure, deployment-lock
+identity, configuration identity, installed artifacts, consumer-unit state and
+target release path. The plan, inspection and host snapshot all bind the
+recovery gate through `recoveryGateIdentityHash`; progress at and after
+`install_completed` also binds the installed artifact set through
+`installedArtifactIdentityHash`. Then pass the exact `plan.planHash` back as
+an explicit confirmation; execution re-inspects the host and rejects drift
+before making a deployment change:
+
+```bash
+/usr/libexec/hepta-paper/hepta-immutable-release-deploy \
+  execute --workspace /absolute/clean/candidate \
+  --plan-file /root/immutable-release-deployment-plan.json \
+  --confirm-plan-hash sha256:REVIEWED_64_HEX_DIGEST
+```
+
+After an interrupted process, recover the durable deployment intent under the
+same lock before creating another plan:
+
+```bash
+/usr/libexec/hepta-paper/hepta-immutable-release-deploy \
+  recover
+```
+
+Unknown, duplicate, relative-path or command-inapplicable arguments fail
+closed. None of these actions can perform provider submission, release-tag
+mutation or other general operator work. Do not substitute manual shell
+cutover steps for the transaction or its verified rollback path.
+
+`hepta-immutable-release-recovery.service` runs that `recover` operation with
+no candidate or workspace arguments as an unconditional root oneshot on every
+boot and remains active after a clean no-op result. Every allowlisted release
+consumer and activator has both
+`Requires=` and `After=` on this gate; a failed recovery therefore prevents
+resident processes, timers and paths from starting against an unresolved
+deployment. The gate waits for the live release mount, release store, durable
+intent root, local filesystems and the system tmpfiles pass. Its launcher
+requires no candidate workspace.
+
+The recovery unit and launcher are deployment-bootstrap TCB, not ordinary
+mid-transaction artifacts. They must already be installed, root-owned,
+single-link, non-symlink files with mode `0644` and `0755` respectively. During
+a deployment, the host adapter invokes the installer only as:
+
+```text
+--root / --no-systemctl --preserve-deployment-bootstrap
+```
+
+That mode compares the installed unit and launcher with the snapshotted
+candidate bytes before any destination mutation, then preserves them and
+records the installed hashes in the host manifest. Missing, changed or
+mis-moded bootstrap files place the candidate on HOLD; they cannot first be
+introduced or replaced by a partially completed cutover. Establish or upgrade
+this TCB separately with the reviewed ordinary installer before admitting a
+candidate that expects the exact same bytes. That one-time bootstrap must also
+install the recovery dependency on every currently present allowlisted
+consumer and activator. Before planning a deployment, production preflight
+checks each loaded unit's semantic systemd `Requires` and `After` sets and
+places the candidate on HOLD if either recovery edge is missing. It also
+requires canonical `/etc/systemd/system` fragments, forbids drop-ins and
+rejects a manager that still needs `daemon-reload`. An allowlisted unit which
+is explicitly permitted to be absent may remain absent; an installed legacy
+unit may differ byte-for-byte from the candidate but may not be ungated.
+
+Consequently, a host upgrading from a predecessor without this recovery graph
+cannot use candidate code to bootstrap itself. An externally reviewed,
+one-time sealed-predecessor migration must first place the executor and its
+closure in live `/opt/hepta-paper` trust with the required root ownership,
+read-only modes, mount identity and release provenance. Only then may the
+ordinary reviewed host installer, invoked from that exact predecessor, install
+the launcher, recovery unit and gated consumer-unit graph and confirm the gate
+is enabled and active. A current host missing any of these bridge artifacts is
+explicitly on HOLD; the immutable `plan`, `execute` and `recover` paths are not
+a migration shortcut.
+
+After the bridge, all present consumers and activators must expose both
+dependencies before an immutable plan is admitted. Preserve mode skips only
+the two byte-identical TCB files; it still installs candidate consumer units,
+whose recovery edges are verified again with the rest of the host manifest.
 
 For an offline installation test without systemd mutation:
 
@@ -93,6 +233,9 @@ paper-core/deploy/install-hepta-paper-systemd-host.sh \
 That staging root must already contain a valid configuration pair and its
 referenced test keys. The preflight runs before the installer creates `usr/` or
 `etc/systemd/` below the staging root.
+`--preserve-deployment-bootstrap` is intentionally rejected for staging roots
+or systemctl-managed installs; it is reserved for the lock-held immutable
+deployment transaction with the exact `--root / --no-systemctl` pair.
 
 ## Release-attestor v1 to v2 migration
 

@@ -27,6 +27,8 @@ import {
   preflightCampaignFormalRuntime,
   resolveCampaignWorkerModelConfiguration,
 } from '../../paper-composition/automation/campaign-worker-composition.mjs';
+import { executePaperCampaignCommand }
+  from '../../paper-composition/automation/paper-campaign-command-composition.mjs';
 import {
   inspectAutomationStoreOperationalIntegrity,
   inspectFullResearchQualification,
@@ -336,7 +338,15 @@ test('execution contexts validate service overrides and factory products at the 
       execute: true,
       serviceOverrides: { store, campaignStore: { version: 2 } },
     }),
-    /CampaignStorePort\.createCampaign is required/,
+    /automation_mutable_campaignStore_override_forbidden/,
+  );
+  assert.throws(
+    () => bootstrapTestAutomationContext({
+      ...roots,
+      execute: true,
+      serviceOverrides: { store, workspaceRegistry: {} },
+    }),
+    /automation_mutable_workspaceRegistry_override_forbidden/,
   );
 
   const context = bootstrapTestAutomationContext({
@@ -727,6 +737,44 @@ test('campaign CLI plans without a store but writable execution requires migrati
     const rows = store.query(`SELECT count(*) AS count FROM paper_campaigns WHERE paper_id='${paperId}';`).rows;
     assert.equal(Number(rows[0]?.count || 0), 0);
   } finally { store.close(); }
+});
+
+test('campaign command composition covers plan and fail-closed authority branches in one process', async (t) => {
+  const roots = temporaryRoots(t, 'hepta-campaign-command-authority-');
+  const planned = await executePaperCampaignCommand({ ...roots, options: {} });
+  assert.equal(planned.status, 'paper_campaigns_planned');
+  await assert.rejects(
+    executePaperCampaignCommand(),
+    /paper_campaign_command_roots_required/,
+  );
+  await assert.rejects(
+    executePaperCampaignCommand({
+      root: '/unused-assets',
+      runtimeRoot: '/unused-runtime',
+      options: { 'local-only': true },
+    }),
+    /paper_campaign_local_only_mode_invalid/,
+  );
+  await assert.rejects(
+    executePaperCampaignCommand({
+      root: '/unused-assets',
+      runtimeRoot: '/unused-runtime',
+      options: { 'campaign-id': 'campaign', 'run-id': 'run' },
+    }),
+    /--campaign-id and --run-id cannot be combined/,
+  );
+  for (const [options, expected] of [
+    [{ 'dataset-license': ['broken'] }, /--dataset-license must use name=SPDX syntax/],
+    [{
+      'dataset-license': ['sample=MIT', 'sample=Apache-2.0'],
+    }, /duplicate --dataset-license name/],
+    [{ 'dataset-license': ['unknown=MIT'] }, /dataset metadata references an unknown mount/],
+  ]) {
+    await assert.rejects(
+      executePaperCampaignCommand({ ...roots, options }),
+      expected,
+    );
+  }
 });
 
 test('scoped writable roots reject schema 20 read-only and leave database bytes unchanged', (t) => {

@@ -1,5 +1,7 @@
 [Unit]
 Description=Periodically revalidate Hepta Paper strict full-auto acceptance
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
 
 [Timer]
 OnBootSec=2min

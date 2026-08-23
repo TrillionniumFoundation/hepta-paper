@@ -84,11 +84,11 @@ export function finalVerificationStep(plan) {
   });
 }
 
-function verifyStepReceipt(receipt, expectedStep, index) {
+function verifyStepReceipt(receipt, expectedStep, index, runtimeRootActivationHash) {
   if (!exactKeys(receipt, [
     'stepId', 'stepDefinitionHash', 'idempotencyKey', 'planHash', 'configurationHash',
-    'referenceSetHash', 'executionOutputHash', 'verificationOutputHash', 'completedAt',
-    'skippedCount', 'receiptHash',
+    'referenceSetHash', 'executionBasis', 'executionOutputHash', 'verificationOutputHash',
+    'completedAt', 'skippedCount', 'receiptHash',
   ]) || receipt.stepId !== STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER[index]
     || receipt.stepDefinitionHash !== strictFullAutoAcceptanceHash(expectedStep)
     || receipt.idempotencyKey !== expectedStep.idempotencyKey
@@ -97,6 +97,23 @@ function verifyStepReceipt(receipt, expectedStep, index) {
     || !canonicalTimestamp(receipt.completedAt)
     || receipt.skippedCount !== 0) {
     throw new Error(`strict_full_auto_acceptance_state_step_receipt_invalid:${index}`);
+  }
+  if (receipt.executionBasis !== null) {
+    if (expectedStep.stepId !== 'state-provisioning'
+      || !exactKeys(receipt.executionBasis, [
+        'version', 'kind', 'adoptionReceiptHash', 'runtimeRootActivationHash',
+      ])
+      || receipt.executionBasis.version !== 1
+      || receipt.executionBasis.kind
+        !== 'StrictFullAutoAcceptanceAdoptedProvisioningExecutionBasis'
+      || !/^sha256:[0-9a-f]{64}$/.test(String(
+        receipt.executionBasis.adoptionReceiptHash || '',
+      ))
+      || receipt.executionBasis.runtimeRootActivationHash !== runtimeRootActivationHash
+      || receipt.executionOutputHash
+        !== strictFullAutoAcceptanceHash(receipt.executionBasis)) {
+      throw new Error(`strict_full_auto_acceptance_state_step_receipt_invalid:${index}`);
+    }
   }
   const { receiptHash, ...body } = receipt;
   if (strictFullAutoAcceptanceHash(body) !== receiptHash) {
@@ -131,7 +148,7 @@ export function verifyState(plan, state) {
   const referenceSetHash = strictFullAutoAcceptanceHash(plan.referenceBindings);
   let previousCompletedAt = Number.NEGATIVE_INFINITY;
   state.completedStepReceipts.forEach((receipt, index) => {
-    verifyStepReceipt(receipt, plan.steps[index], index);
+    verifyStepReceipt(receipt, plan.steps[index], index, state.runtimeRootActivationHash);
     const completedAt = Date.parse(receipt.completedAt);
     if (receipt.planHash !== plan.planHash
       || receipt.configurationHash !== plan.configurationHash
@@ -250,7 +267,18 @@ export function isStrictFullAutoAcceptanceNotReady(error) {
   return error?.code === 'STRICT_FULL_AUTO_ACCEPTANCE_NOT_READY';
 }
 
-export function stepReceipt({ plan, step, executionOutputHash, verificationOutputHash, now }) {
+export function stepReceipt({
+  plan,
+  step,
+  executionBasis = null,
+  executionOutputHash,
+  verificationOutputHash,
+  now,
+}) {
+  if (executionBasis !== null
+    && executionOutputHash !== strictFullAutoAcceptanceHash(executionBasis)) {
+    throw new Error('strict_full_auto_acceptance_step_execution_basis_invalid');
+  }
   const body = Object.freeze({
     stepId: step.stepId,
     stepDefinitionHash: strictFullAutoAcceptanceHash(step),
@@ -258,6 +286,7 @@ export function stepReceipt({ plan, step, executionOutputHash, verificationOutpu
     planHash: plan.planHash,
     configurationHash: plan.configurationHash,
     referenceSetHash: strictFullAutoAcceptanceHash(plan.referenceBindings),
+    executionBasis,
     executionOutputHash,
     verificationOutputHash,
     completedAt: now(),

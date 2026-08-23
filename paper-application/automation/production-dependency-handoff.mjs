@@ -1,4 +1,8 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  advancedNumericalCandidateReady,
+  submissionDispatcherReadinessCurrent,
+} from './production-dependency-handoff-readiness.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const REQUIRED_STATE_DATABASE_ROLES = Object.freeze([
@@ -117,6 +121,13 @@ export function buildProductionDependencyHandoff({
   const numericalFamilies = numericalCandidates.map((candidate) => (
     candidate?.analysisFamily
   ));
+  const numericalDetailInvalidFamilies = numericalCandidates
+    .filter((candidate) => !advancedNumericalCandidateReady(
+      candidate,
+      candidate?.analysisFamily,
+      observedAt,
+    ))
+    .map((candidate) => String(candidate?.analysisFamily || 'unknown'));
   const numericalReady =
     numericalCandidates.length === REQUIRED_ADVANCED_NUMERICAL_REFERENCE_FAMILIES.length
     && new Set(numericalFamilies).size
@@ -124,17 +135,18 @@ export function buildProductionDependencyHandoff({
     && REQUIRED_ADVANCED_NUMERICAL_REFERENCE_FAMILIES.every((analysisFamily) => (
       numericalFamilies.includes(analysisFamily)
     ))
-    && numericalCandidates.every((candidate) => (
-      candidate.productionQualified === true
-      && candidate.fullProductionReady === true
-      && candidate.registryPinned === true
-      && candidate.runtimeConfigurationPinned === true
-      && candidate.dependentDocumentsPinned === true
+    && numericalCandidates.every((candidate) => advancedNumericalCandidateReady(
+      candidate,
+      candidate?.analysisFamily,
+      observedAt,
     ));
   const numericalBlockers = Object.freeze([...new Set([
     ...(numericalReady ? [] : [
       'three_advanced_numerical_reference_families_full_production_qualification_required',
     ]),
+    ...numericalDetailInvalidFamilies.map((analysisFamily) => (
+      `advanced_numerical_reference_qualification_detail_invalid:${analysisFamily}`
+    )),
     ...numericalCandidates.flatMap((candidate) => (
       candidate?.qualificationBlockers || []
     )),
@@ -233,7 +245,16 @@ export function buildProductionDependencyHandoff({
   const stateSafetyReady = readiness.autonomousStateDatabaseInventoryReady === true
     && readiness.autonomousStateOnlineAntiRollbackReady === true
     && readiness.autonomousStateLatestValidRestoreDrillReady === true;
-  const submissionReady = readiness.autonomousSubmissionDispatcherReady === true;
+  const submissionReadinessCurrent = submissionDispatcherReadinessCurrent(
+    readiness,
+    observedAt,
+  );
+  const submissionReady = submissionReadinessCurrent;
+  const submissionBlockers = Object.freeze([...new Set([
+    ...(readiness.autonomousSubmissionDispatcherReadiness?.blockers || []),
+    ...(submissionReadinessCurrent
+      ? [] : ['autonomous_submission_dispatcher_readiness_detail_invalid']),
+  ])].sort());
   const fullyProductionReady = readiness.fullyAutonomousResearchSystemReady === true
     && repositoryAssetInspection.fullyExternalized === true
     && readiness.dynamicFormalProjectClosureReady === true
@@ -553,16 +574,23 @@ export function buildProductionDependencyHandoff({
         portalFullProductionReady:
           readiness.autonomousSubmissionDispatcherReadiness
             ?.portalFullProductionReady === true,
+        signatureVerified:
+          readiness.autonomousSubmissionDispatcherReadiness?.signatureVerified === true,
+        portalBindingVerified:
+          readiness.autonomousSubmissionDispatcherReadiness?.portalBindingVerified === true,
+        livePortalCanaryVerified:
+          readiness.autonomousSubmissionDispatcherReadiness?.livePortalCanaryVerified === true,
         livePortalCanaryAuthorityIndependentFromDispatcher:
           readiness.autonomousSubmissionDispatcherReadiness
             ?.livePortalCanaryAuthorityIndependentFromDispatcher === true,
+        livePortalCanaryCycleVerificationReceiptHash:
+          readiness.autonomousSubmissionDispatcherReadiness
+            ?.livePortalCanaryCycleVerificationReceiptHash || null,
         livePortalCanaryIndependentVerificationReceiptHash:
           readiness.autonomousSubmissionDispatcherReadiness
             ?.livePortalCanaryIndependentVerificationReceiptHash || null,
       }),
-      blockers: Object.freeze(
-        readiness.autonomousSubmissionDispatcherReadiness?.blockers || [],
-      ),
+      blockers: submissionBlockers,
     }),
     advancedNumericalQualification: Object.freeze({
       ready: numericalReady,

@@ -9,6 +9,7 @@ import {
   buildAutonomousResearchAuthorIdentityConfiguration,
   inspectAutonomousResearchAuthorIdentity,
   readAutonomousResearchAuthorIdentityConfiguration,
+  verifyAutonomousResearchAuthorIdentityConfiguration,
 } from '../../paper-adapters/automation/autonomous-research-author-identity-configuration.mjs';
 import {
   buildPinnedExternalEvidenceEnvelope,
@@ -86,12 +87,19 @@ const NOW = new Date('2026-07-19T02:00:00.000Z');
 const ROLE = 'external_principal_identity_attestor';
 const H = (label) => hashRecord('AutonomousResearchAuthorIdentityTest', { label });
 
-function signedEnvelope(pair, subject) {
+function signedEnvelope(
+  pair,
+  subject,
+  {
+    signedAt = '2026-07-19T01:59:00.000Z',
+    expiresAt = '2026-07-19T02:01:00.000Z',
+  } = {},
+) {
   const unsigned = buildPinnedExternalEvidenceEnvelope({
     subjectKind: subject.kind,
     subjectHash: subject.externalPrincipalIdentityAttestationSubjectHash,
-    signedAt: '2026-07-19T01:59:00.000Z',
-    expiresAt: '2026-07-19T02:01:00.000Z',
+    signedAt,
+    expiresAt,
     signatures: [{
       keyId: 'author-identity-key', role: ROLE, algorithm: 'ed25519', value: 'placeholder',
     }],
@@ -460,7 +468,29 @@ test('author identity configuration is pinned, file-safe, and bound to the live 
   }
 });
 
-test('v2 author policy pin survives short-lived attestation rotation', () => {
+test('author identity configuration rejects private or extension fields in signatures', () => {
+  const selected = fixture();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-author-signature-schema-'));
+  const configPath = path.join(root, 'author-identity.json');
+  const tampered = JSON.parse(JSON.stringify(selected.configuration));
+  // Keep the negative fixture non-secret and invisible to the repository's
+  // tracked PEM scanner; the verifier only cares that an unexpected field is
+  // present, not that it contains key material.
+  tampered.authorityEnvelope.signatures[0].privateKeyPem = [
+    '-----BEGIN', ' PRIVATE KEY-----',
+  ].join('');
+  fs.writeFileSync(configPath, `${JSON.stringify(tampered)}\n`, { mode: 0o600 });
+  try {
+    assert.throws(
+      () => readAutonomousResearchAuthorIdentityConfiguration({ configPath }),
+      /configuration_verification_failed/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('v2 author configuration pin covers rotating attestation material', () => {
   const selected = fixture();
   const initial = buildAutonomousResearchAuthorIdentityConfiguration({
     version: 2,
@@ -489,12 +519,18 @@ test('v2 author policy pin survives short-lived attestation rotation', () => {
     rotated.subject.externalPrincipalIdentityAttestationSubjectHash,
   );
   assert.notEqual(initial.authorityEnvelope.subjectHash, rotated.authorityEnvelope.subjectHash);
-  assert.equal(initial.configurationHash, rotated.configurationHash);
+  // The stable policy remains the same, but the full configuration pin must
+  // change whenever the attested subject/envelope changes.
+  assert.notEqual(initial.configurationHash, rotated.configurationHash);
+  assert.equal(
+    hashRecord('AutonomousResearchAuthorIdentityPolicy', initial.identityPolicy),
+    hashRecord('AutonomousResearchAuthorIdentityPolicy', rotated.identityPolicy),
+  );
   const inspection = inspectAutonomousResearchAuthorIdentity({
     configuration: rotated,
     author: selected.author,
     now: NOW,
-    expectedConfigurationHash: initial.configurationHash,
+    expectedConfigurationHash: rotated.configurationHash,
   });
   assert.equal(inspection.ready, true);
   assert.equal(inspection.configurationVersion, 2);
@@ -514,6 +550,63 @@ test('v2 author policy pin survives short-lived attestation rotation', () => {
     maximumLifetimeMs: 5 * 60 * 1000,
   });
   assert.notEqual(initial.configurationHash, changedAccount.configurationHash);
+});
+
+test('v2 author configuration rejects stale pins for subject, envelope, and trust store tampering', () => {
+  const selected = fixture();
+  const configuration = buildAutonomousResearchAuthorIdentityConfiguration({
+    version: 2,
+    subject: selected.subject,
+    authorityEnvelope: signedEnvelope(selected.pair, selected.subject),
+    trustStore: selected.configuration.trustStore,
+    signerKeyIds: ['author-identity-key'],
+    maximumLifetimeMs: 5 * 60 * 1000,
+  });
+  assert.equal(verifyAutonomousResearchAuthorIdentityConfiguration(configuration), true);
+
+  const changedSubject = buildExternalPrincipalIdentityAttestationSubject({
+    ...selected.subject,
+    hostIdentityHash: H('tampered-author-host'),
+    processIdentityHash: H('tampered-author-process'),
+    challengeHash: H('tampered-author-challenge'),
+  });
+  const subjectTampered = {
+    ...configuration,
+    subject: changedSubject,
+  };
+  assert.equal(
+    verifyAutonomousResearchAuthorIdentityConfiguration(subjectTampered),
+    false,
+  );
+
+  const envelopeTampered = {
+    ...configuration,
+    // A freshly signed, otherwise valid envelope must still invalidate the
+    // stale full-configuration pin.
+    authorityEnvelope: signedEnvelope(selected.pair, selected.subject, {
+      signedAt: '2026-07-19T01:58:30.000Z',
+      expiresAt: '2026-07-19T02:00:30.000Z',
+    }),
+  };
+  assert.equal(
+    verifyAutonomousResearchAuthorIdentityConfiguration(envelopeTampered),
+    false,
+  );
+
+  const trustStoreTampered = {
+    ...configuration,
+    trustStore: {
+      ...configuration.trustStore,
+      keys: configuration.trustStore.keys.map((key) => ({
+        ...key,
+        organization: 'Tampered organization',
+      })),
+    },
+  };
+  assert.equal(
+    verifyAutonomousResearchAuthorIdentityConfiguration(trustStoreTampered),
+    false,
+  );
 });
 
 test('fresh author sessions provide the default runtime identity without external account attestation', () => {

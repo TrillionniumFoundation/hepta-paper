@@ -354,8 +354,7 @@ export async function drillDatabaseCopiesWithReplay({
   const expectedPaths = new Set(databases.map((entry) => entry.backupRelativePath));
   const databaseRoot = path.join(bundleRoot, 'databases');
   const present = fs.existsSync(databaseRoot)
-    ? fs.readdirSync(databaseRoot).filter((name) => name.endsWith('.sqlite'))
-      .map((name) => `databases/${name}`)
+    ? fs.readdirSync(databaseRoot).map((name) => `databases/${name}`)
     : [];
   if (present.some((entry) => !expectedPaths.has(entry))
     || present.length !== expectedPaths.size) {
@@ -379,8 +378,12 @@ export async function drillDatabaseCopiesWithReplay({
         throw new Error(`autonomous_research_state_backup_database_hash_mismatch:${entry.instanceId}`);
       }
       const drillPath = path.join(drillRoot, path.basename(entry.backupRelativePath));
-      await copySqliteDatabase({ sourcePath, destinationPath: drillPath });
-      const inspection = inspectSqliteDatabase(drillPath);
+      await copySqliteDatabase({
+        sourcePath,
+        destinationPath: drillPath,
+        sourceImmutable: true,
+      });
+      const inspection = inspectSqliteDatabase(drillPath, { immutable: true });
       if (inspection.quickCheck !== 'ok'
         || inspection.foreignKeyViolationCount !== 0
         || inspection.schemaHash !== entry.schemaHash) {

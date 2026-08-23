@@ -4,12 +4,18 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   createDefaultPaperStore,
+  createHeptaStoreBackupFileRepository,
   createReadOnlyPaperStore,
   createReadOnlySqliteStore,
   copySqliteDatabase,
   heptaStorePath,
   openExistingWritablePaperStore,
+  preflightStoreMigrations,
 } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import {
+  runWithScopedFoundationWriter,
+  runWithScopedFoundationWriterAsync,
+} from '../../paper-composition/bootstrap/context-foundation-composition.mjs';
 import {
   createSystemClock,
   fileSha256HashSync,
@@ -26,7 +32,6 @@ import {
   buildHeptaStoreRestoreDrillLedgerSubjectV3,
 } from '../../paper-domain/evidence/hepta-store-restore-drill-receipt-contract.mjs';
 import { assertWorkspaceLayoutPhysicallyDecoupled, resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
-import { pathWithin } from '../../workflow-kernel/runtime/file-utils.mjs';
 
 const layout = resolveWorkspaceLayout();
 const root = layout.assetRoot;
@@ -34,16 +39,8 @@ const dbPath = heptaStorePath(root, layout.runtimeRoot);
 const clock = createSystemClock();
 let mutableStore = null;
 let mutableReceiptLedger = null;
-
-function writableStore({ migrate = false } = {}) {
-  assertWorkspaceLayoutPhysicallyDecoupled({
-    assetRoot: layout.assetRoot,
-    runtimeRoot: layout.runtimeRoot,
-    legacyRoot: layout.legacyRoot,
-  });
-  if (!mutableStore) mutableStore = migrate
-    ? createDefaultPaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath })
-    : openExistingWritablePaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath });
+function writableStore() {
+  if (!mutableStore) throw new Error('hepta_store_writer_scope_required');
   return mutableStore;
 }
 
@@ -59,37 +56,8 @@ function runSql(store, sql, { json = false } = {}) {
 }
 
 const fileSha256 = (file) => fileSha256HashSync(file, { prefix: false });
-const within = pathWithin;
 const writeDurableJson = writeDurableJsonSync;
 const jsonFile = readRegularJsonFileSync;
-
-async function liveDatabaseSha256() {
-  const snapshotRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-store-live-hash-'));
-  const snapshotPath = path.join(snapshotRoot, 'live.sqlite');
-  try {
-    await copySqliteDatabase({ sourcePath: dbPath, destinationPath: snapshotPath });
-    return `sha256:${fileSha256(snapshotPath)}`;
-  } finally {
-    fs.rmSync(snapshotRoot, { recursive: true, force: true });
-  }
-}
-
-function regularFileIdentity(candidate) {
-  const stat = fs.lstatSync(candidate);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('hepta_store_backup_file_unsafe');
-  return Object.freeze({ dev: stat.dev, ino: stat.ino });
-}
-
-function removeIdentityFile(candidate, identity) {
-  if (!identity) return;
-  try {
-    const stat = fs.lstatSync(candidate);
-    if (stat.dev === identity.dev && stat.ino === identity.ino) fs.unlinkSync(candidate);
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
-}
-
 function ledgerIdentity(receipt, evidenceClass) {
   return receiptLedger().prepare(receipt, {
     stream: 'store-admin',
@@ -113,40 +81,23 @@ function assertTrustedStoreReceipt(identity, expectedKind) {
   return row;
 }
 
-function resolveBackupReceipt(requestedPath = null) {
-  const backupRoot = path.resolve(layout.runtimeRoot, 'backups');
-  const candidates = requestedPath ? [path.resolve(requestedPath)] : (fs.existsSync(backupRoot)
-    ? fs.readdirSync(backupRoot)
-      .filter((name) => name.endsWith('.sqlite'))
-      .map((name) => path.join(backupRoot, name))
-      .filter((candidate) => {
-        try { const stat = fs.lstatSync(candidate); return stat.isFile() && !stat.isSymbolicLink(); } catch { return false; }
-      })
-      .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs || right.localeCompare(left))
-    : []);
-  if (!candidates.length) return null;
-  const backupPath = candidates[0];
-  const stat = fs.lstatSync(backupPath);
-  if (!within(backupRoot, backupPath) || stat.isSymbolicLink() || !stat.isFile() || !within(backupRoot, fs.realpathSync(backupPath))) {
-    throw new Error('hepta_store_backup_path_unsafe');
-  }
-  const receipt = jsonFile(`${backupPath}.receipt.json`);
-  if (receipt?.version !== 1
-    || receipt.kind !== 'HeptaStoreBackupReceipt'
-    || receipt.status !== 'hepta_store_backup_recorded'
-    || path.resolve(String(receipt.sourcePath || '')) !== path.resolve(dbPath)
-    || path.resolve(String(receipt.backupPath || '')) !== backupPath
-    || receipt.backupSha256 !== `sha256:${fileSha256(backupPath)}`
-    || Number(receipt.bytes) !== stat.size) {
-    throw new Error('hepta_store_backup_receipt_invalid');
-  }
-  const identity = ledgerIdentity(receipt, 'backup');
-  assertTrustedStoreReceipt(identity, 'HeptaStoreBackupReceipt');
-  return Object.freeze({ receipt, identity });
-}
+const {
+  liveDatabaseSha256,
+  regularFileIdentity,
+  removeIdentityFile,
+  resolveBackupReceipt,
+} = createHeptaStoreBackupFileRepository({
+  runtimeRoot: layout.runtimeRoot,
+  dbPath,
+  copySqliteDatabase,
+  fileSha256,
+  jsonFile,
+  ledgerIdentity,
+  assertTrustedStoreReceipt,
+});
 
 function initialize() {
-  const store = writableStore({ migrate: true });
+  const store = writableStore();
   convergeAutonomousSubmissionHandoff({
     nativeStore: store,
     runtimeRoot: layout.runtimeRoot,
@@ -337,9 +288,65 @@ const backupOptionIndex = process.argv.indexOf('--backup');
 const selectedBackupPath = backupOptionIndex >= 0 ? process.argv[backupOptionIndex + 1] : null;
 if (backupOptionIndex >= 0 && !selectedBackupPath) throw new Error('--backup requires a path');
 let output = null;
-if (command === 'init' || command === 'migrate') output = initialize();
-else if (command === 'backup') output = await backup();
-else if (command === 'restore-drill') output = await restoreDrill({ backupPath: selectedBackupPath });
+if (command === 'init' || command === 'migrate') {
+  assertWorkspaceLayoutPhysicallyDecoupled({
+    assetRoot: layout.assetRoot,
+    runtimeRoot: layout.runtimeRoot,
+    legacyRoot: layout.legacyRoot,
+  });
+  fs.mkdirSync(layout.runtimeRoot, { recursive: true, mode: 0o700 });
+  if (fs.existsSync(dbPath)) {
+    const inspector = createReadOnlySqliteStore({ dbPath, immutable: true });
+    try {
+      preflightStoreMigrations(inspector, { requireOfflineFilesystem: true });
+    } finally { inspector.close(); }
+  }
+  output = runWithScopedFoundationWriter({
+    root,
+    runtimeRoot: layout.runtimeRoot,
+    writerId: 'hepta-store-migrate-entrypoint',
+    serviceOverrides: { clock },
+    writableStoreFactory: () => createDefaultPaperStore({
+      root,
+      runtimeRoot: layout.runtimeRoot,
+      dbPath,
+    }),
+  }, ({ store }) => {
+    mutableStore = store;
+    try { return initialize(); }
+    finally {
+      mutableReceiptLedger = null;
+      mutableStore = null;
+    }
+  });
+} else if (command === 'backup' || command === 'restore-drill') {
+  assertWorkspaceLayoutPhysicallyDecoupled({
+    assetRoot: layout.assetRoot,
+    runtimeRoot: layout.runtimeRoot,
+    legacyRoot: layout.legacyRoot,
+  });
+  output = await runWithScopedFoundationWriterAsync({
+    root,
+    runtimeRoot: layout.runtimeRoot,
+    writerId: `hepta-store-${command}-entrypoint`,
+    serviceOverrides: { clock },
+    writableStoreFactory: () => openExistingWritablePaperStore({
+      root,
+      runtimeRoot: layout.runtimeRoot,
+      dbPath,
+    }),
+  }, async ({ store }) => {
+    mutableStore = store;
+    try {
+      return command === 'backup'
+        ? await backup()
+        : await restoreDrill({ backupPath: selectedBackupPath });
+    } finally {
+      mutableReceiptLedger = null;
+      mutableStore = null;
+    }
+  });
+}
 else if (command === 'status') output = status({ allowIsolatedVerificationEvidence: process.argv.includes('--allow-isolated-verification-evidence') });
 else throw new Error(`Unknown hepta-store command: ${command}`);
 process.stdout.write(`${JSON.stringify(output || status(), null, 2)}\n`);

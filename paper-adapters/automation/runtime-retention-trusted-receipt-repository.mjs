@@ -6,6 +6,7 @@ const STREAM = 'runtime-retention';
 const ENVIRONMENT = 'administrative';
 const PAGE_SIZE = 1000;
 const MAX_OFFSET = 9_999_000;
+const TOMBSTONE_CAPABILITIES = new WeakSet();
 
 function ledgerIdentity(retentionReceiptLedger, receipt, evidenceClass) {
   if (!retentionReceiptLedger || typeof retentionReceiptLedger.prepare !== 'function') {
@@ -129,4 +130,36 @@ export function findUniqueTrustedRetentionTombstone(retentionReceiptLedger, inte
   }
   if (matches.length > 1) throw new Error('runtime_retention_tombstone_ledger_ambiguous');
   return matches[0] || null;
+}
+
+export function withTrustedRetentionTombstoneCapability({
+  retentionReceiptLedger,
+  intent,
+  tombstone,
+  operation,
+} = {}) {
+  if (typeof operation !== 'function') {
+    throw new Error('runtime_retention_tombstone_capability_operation_invalid');
+  }
+  const trusted = findUniqueTrustedRetentionTombstone(retentionReceiptLedger, intent);
+  if (!trusted
+    || trusted.runtimeRetentionReceiptHash !== tombstone?.runtimeRetentionReceiptHash
+    || trusted.intentHash !== intent?.runtimeRetentionIntentReceiptHash) {
+    throw new Error('runtime_retention_tombstone_capability_invalid');
+  }
+  const capability = Object.freeze({
+    intentHash: intent.runtimeRetentionIntentReceiptHash,
+    receiptHash: trusted.runtimeRetentionReceiptHash,
+  });
+  TOMBSTONE_CAPABILITIES.add(capability);
+  try { return operation(capability); }
+  finally { TOMBSTONE_CAPABILITIES.delete(capability); }
+}
+
+export function assertTrustedRetentionTombstoneCapability(capability, intentHash) {
+  if (!TOMBSTONE_CAPABILITIES.has(capability)
+    || capability?.intentHash !== intentHash) {
+    throw new Error('runtime_retention_tombstone_capability_invalid');
+  }
+  return capability;
 }

@@ -24,6 +24,9 @@ export function composeAutomationCampaignState({
   rawEventRecomputationVerifier,
   operatorDatasetAuthorityTrustStoreProvider,
   gpuScientificPromotionAuthorityVerifier,
+  packageRecoveryAuthority = null,
+  packageRecoveryAuthorityReadinessVerifier = null,
+  packageRecoveryDeletionLeasePort = null,
 } = {}) {
   const campaignStore = assertCampaignStorePort(campaignStoreOverride
     || createSqliteCampaignStore({
@@ -45,6 +48,9 @@ export function composeAutomationCampaignState({
     rawEventRecomputationVerifier,
     operatorDatasetAuthorityTrustStoreProvider,
     gpuScientificPromotionAuthorityVerifier,
+    packageRecoveryAuthority,
+    packageRecoveryAuthorityReadinessVerifier,
+    packageRecoveryDeletionLeasePort,
   });
   const runtimeRetentionReachabilityProvider =
     composeRuntimeRetentionReachabilityAuthority({
@@ -58,6 +64,7 @@ export function composeAutomationCampaignState({
       rawEventRecomputationVerifier,
       operatorDatasetAuthorityTrustStoreProvider,
       gpuScientificPromotionAuthorityVerifier,
+      packageRecoveryAuthority,
     });
   return Object.freeze({
     campaignStore,

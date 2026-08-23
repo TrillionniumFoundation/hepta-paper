@@ -23,6 +23,29 @@ import { verifyCampaignResearchSourceSnapshot } from '../../paper-domain/automat
 import { createOperatorDatasetHarnessAuthorityReceiptVerifier } from '../automation/operator-dataset-harness-authority-receipt-verifier.mjs';
 import { loadOperatorDatasetAuthorityTrustStoreSync } from '../automation/operator-dataset-harness-reader.mjs';
 import { createIndependentRawEventArtifactRecomputationVerifier } from './raw-event-artifact-recomputation-verifier.mjs';
+import {
+  buildDeepLearningReplayPlan,
+  DEEP_LEARNING_REPLAY_ERROR_BUDGET,
+  DEEP_LEARNING_REPLAY_SCOPES,
+  replayDeepLearningCheckpoint,
+  verifyDeepLearningIndependentReplayReceipt,
+  verifyDeepLearningReplayExecutionBinding,
+  verifyDeepLearningReplayPlan,
+} from './deep-learning-independent-replay.mjs';
+
+// A single facade keeps the research-verify entrypoint's responsibility
+// surface bounded while making the independent replay interface reachable
+// from the production graph.  The underlying functions remain fail-closed
+// and never mint production authority.
+export const DEEP_LEARNING_INDEPENDENT_REPLAY = Object.freeze({
+  buildDeepLearningReplayPlan,
+  errorBudget: DEEP_LEARNING_REPLAY_ERROR_BUDGET,
+  scopes: DEEP_LEARNING_REPLAY_SCOPES,
+  replayDeepLearningCheckpoint,
+  verifyDeepLearningIndependentReplayReceipt,
+  verifyDeepLearningReplayExecutionBinding,
+  verifyDeepLearningReplayPlan,
+});
 
 export async function runResearchVerifyAdapter({
   root,

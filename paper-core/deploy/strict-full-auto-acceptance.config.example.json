@@ -5,6 +5,15 @@
   "runtimeRoot": "/var/lib/hepta-paper/runtime",
   "assetRoot": "/srv/hepta-paper/assets",
   "datasetRoot": "/srv/hepta-paper/datasets",
+  "runtimeRootAdoption": {
+    "version": 1,
+    "kind": "StrictFullAutoAcceptanceRuntimeRootAdoptionPolicy",
+    "mode": "verified-pristine-existing-runtime",
+    "expectedRuntimeRootIdentityHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "expectedPristineRuntimeStateHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "adoptionMutationPerformed": false,
+    "preResidentSchemaRebindRequired": true
+  },
   "operationalEnvironment": {
     "HEPTA_RESEARCH_AUTHOR_PROVIDER": "codex",
     "HEPTA_RESEARCH_AUTHOR_CODEX_BINARY": "/usr/local/bin/codex",
@@ -26,7 +35,7 @@
     "research-author-identity-config": { "kind": "public-reference", "path": "/run/hepta/research-author-identity.json", "subjectId": "research-author-identity-production", "expectedConfigurationIdentityHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "online-state-authority-principal": { "kind": "public-reference", "path": "/run/hepta/online-state-authority.json", "subjectId": "online-state-authority-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "online-state-authority-process-config": { "kind": "public-reference", "path": "/run/hepta/online-state-authority-process.json", "subjectId": "online-state-authority-process-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
-    "runtime-reproducibility-principal": { "kind": "public-reference", "path": "/run/hepta/runtime-reproducibility-authority.json", "subjectId": "runtime-reproducibility-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "runtime-reproducibility-principal": { "kind": "public-reference", "path": "/run/hepta/runtime-reproducibility-authority.json", "subjectId": "runtime-reproducibility-production", "expectedConfigurationIdentityHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "formal-sandbox-runtime-config": { "kind": "public-reference", "path": "/run/hepta/formal-sandbox-runtime.json", "subjectId": "formal-sandbox-runtime-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "production-mathlib-build-authority-config": { "kind": "public-reference", "path": "/run/hepta-authority/production-mathlib-build-authority.json", "subjectId": "production-mathlib-build-authority", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "empirical-plugin-signing-config": { "kind": "private-configuration-reference", "path": "/run/hepta/empirical-plugin-signing-authority.json", "subjectId": "empirical-plugin-signing-authority-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
@@ -42,6 +51,9 @@
     "release-attestor-probe-credential-root": { "kind": "opaque-directory-reference", "path": "/var/lib/hepta-paper/principals/release-attestor-probe", "subjectId": "release-attestor-probe-credential-root-production" },
     "release-attestor-signer-command": { "kind": "public-reference", "path": "/usr/local/libexec/hepta-release-attestor-sign", "subjectId": "release-attestor-signer-command-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "release-attestor-probe-command": { "kind": "public-reference", "path": "/usr/local/libexec/hepta-release-attestor-probe", "subjectId": "release-attestor-probe-command-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "owner-trust-store": { "kind": "public-reference", "path": "/etc/hepta-paper/capabilities-public/OWNER_TRUST_STORE.json", "subjectId": "owner-trust-store-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "owner-acceptance-document": { "kind": "public-reference", "path": "/etc/hepta-paper/capabilities-public/CAPABILITY_OWNER_ACCEPTANCE.json", "subjectId": "owner-acceptance-document-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "package-recovery-readiness-command": { "kind": "public-reference", "path": "/usr/libexec/hepta-paper/hepta-package-recovery-readiness", "subjectId": "package-recovery-readiness-command-production", "expectedSha256": "sha256:7c8136ee87b584993f82b160ed48145e3b95bc48481c1353154a8c11e973a462" },
     "machine-intake-principal": { "kind": "public-reference", "path": "/run/hepta/machine-intake.json", "subjectId": "machine-intake-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "topic-producer-profile": { "kind": "public-reference", "path": "/run/hepta/topic-producer.json", "subjectId": "topic-producer-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "backup-restore-authority-principal": { "kind": "public-reference", "path": "/run/hepta/backup-restore-authority.json", "subjectId": "backup-restore-authority-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
@@ -68,8 +80,8 @@
     },
     "runtime-reproducibility": {
       "idempotencyKey": "sha256:4000000000000000000000000000000000000000000000000000000000000000",
-      "execute": { "command": "runtime-image-reproducibility", "arguments": ["--action", "publish", "--config", "/run/hepta/runtime-reproducibility-authority.json", "--receipt", "/run/hepta/runtime-reproducibility-receipt.json"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "runtime_image_reproducibility_verified" }] },
-      "verify": { "command": "runtime-image-reproducibility", "arguments": ["--action", "status", "--config", "/run/hepta/runtime-reproducibility-authority.json", "--receipt", "/run/hepta/runtime-reproducibility-receipt.json"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "runtime_image_reproducibility_verified" }] }
+      "execute": { "command": "runtime-image-reproducibility", "arguments": ["--action", "publish", "--config", "/run/hepta/runtime-reproducibility-authority.json", "--receipt", "/run/hepta/runtime-reproducibility-receipt.json"], "environmentReferences": { "HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH": "runtime-reproducibility-principal" }, "assertions": [{ "path": "/status", "equals": "runtime_image_reproducibility_verified" }] },
+      "verify": { "command": "runtime-image-reproducibility", "arguments": ["--action", "status", "--config", "/run/hepta/runtime-reproducibility-authority.json", "--receipt", "/run/hepta/runtime-reproducibility-receipt.json"], "environmentReferences": { "HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH": "runtime-reproducibility-principal" }, "assertions": [{ "path": "/status", "equals": "runtime_image_reproducibility_verified" }] }
     },
     "advanced-numeric-activation": {
       "idempotencyKey": "sha256:5000000000000000000000000000000000000000000000000000000000000000",
@@ -128,9 +140,9 @@
     }
   },
   "finalVerification": {
-    "command": "automation-status",
-    "arguments": ["--live-provider-canary", "--live-release-attestor", "--require-fully-autonomous"],
+    "command": "full-production-readiness",
+    "arguments": ["--owner-trust-store", "/etc/hepta-paper/capabilities-public/OWNER_TRUST_STORE.json", "--owner-trust-store-sha256", "sha256:0000000000000000000000000000000000000000000000000000000000000000", "--owner-acceptance-document", "/etc/hepta-paper/capabilities-public/CAPABILITY_OWNER_ACCEPTANCE.json", "--owner-acceptance-document-sha256", "sha256:0000000000000000000000000000000000000000000000000000000000000000", "--package-recovery-readiness-command", "/usr/libexec/hepta-paper/hepta-package-recovery-readiness", "--package-recovery-readiness-command-sha256", "sha256:7c8136ee87b584993f82b160ed48145e3b95bc48481c1353154a8c11e973a462", "--live-provider-canary", "--live-release-attestor", "--require-full-production"],
     "environmentReferences": { "@profile": "readiness" },
-    "assertions": [{ "path": "/fullyAutonomousResearchSystemStatus", "equals": "generic_domain_autonomous_research_system_ready" }, { "path": "/runtimeImageReproducibilityReady", "equals": true }, { "path": "/runtimeImageReproducibility/requiredProfiles", "equals": ["python", "pythonGpu", "r"] }, { "path": "/gpuScientificRuntimeReady", "equals": true }, { "path": "/gpuPdeOperationalProofReady", "equals": true }, { "path": "/gpuPdeProductionQualificationReady", "equals": true }, { "path": "/gpuDeepLearningOperationalProofReady", "equals": true }, { "path": "/gpuDeepLearningProductionQualificationReady", "equals": true }, { "path": "/fullResearchQualification/paperId", "equals": "strict-acceptance-golden-paper" }]
+    "assertions": [{ "path": "/fullyAutonomousResearchSystemStatus", "equals": "generic_domain_autonomous_research_system_ready" }, { "path": "/runtimeImageReproducibilityReady", "equals": true }, { "path": "/runtimeImageReproducibility/requiredProfiles", "equals": ["python", "pythonGpu", "r"] }, { "path": "/gpuScientificRuntimeReady", "equals": true }, { "path": "/gpuPdeOperationalProofReady", "equals": true }, { "path": "/gpuPdeProductionQualificationReady", "equals": true }, { "path": "/gpuDeepLearningOperationalProofReady", "equals": true }, { "path": "/gpuDeepLearningProductionQualificationReady", "equals": true }, { "path": "/fullResearchQualification/paperId", "equals": "strict-acceptance-golden-paper" }, { "path": "/fullProductionStatus", "equals": "full_production_ready" }, { "path": "/fullProductionReady", "equals": true }, { "path": "/packageRetentionRecoveryReady", "equals": true }, { "path": "/offhostWormCustodyReady", "equals": true }, { "path": "/independentExternalOwnerAcceptanceReady", "equals": true }, { "path": "/independentProductionOperationalProofReady", "equals": true }, { "path": "/blockers", "equals": [] }]
   }
 }

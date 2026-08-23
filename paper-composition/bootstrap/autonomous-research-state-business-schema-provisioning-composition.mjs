@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import {
+  assertAutonomousResearchStateBusinessSchemaProvisioningCapability,
   buildAutonomousResearchStateBusinessSchemaProvisioningPlan,
   provisionAutonomousResearchStateBusinessSchemas,
 } from '../../paper-adapters/automation/autonomous-research-state-business-schema-provisioning-repository.mjs';
@@ -100,15 +101,22 @@ function provisioningIdentity({
   });
 }
 
-function provisionCanonicalBusinessSchemas({
+function provisionCanonicalAutonomousResearchBusinessSchemas({
   workspaceRoot,
   runtimeRoot,
+  provisioningCapability,
+  provisioningPlanId,
   machineIntakeConfiguration,
   machineIntakeGenesisAuthorityMode,
   topicProducerProfile,
   providerCanaryPairMaximumCostUsd,
   runtimeRefreshPolicy,
 }) {
+  assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+    capability: provisioningCapability,
+    runtimeRoot,
+    provisioningPlanId,
+  });
   const repositories = [];
   try {
     const nativeStore = createDefaultPaperStore({
@@ -174,6 +182,11 @@ function provisionCanonicalBusinessSchemas({
   } finally {
     closeRepositories(repositories);
   }
+  assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+    capability: provisioningCapability,
+    runtimeRoot,
+    provisioningPlanId,
+  });
 }
 
 export function composeAutonomousResearchStateBusinessSchemaProvisioningService({
@@ -229,10 +242,16 @@ export function composeAutonomousResearchStateBusinessSchemaProvisioningService(
       const receipt = provisionAutonomousResearchStateBusinessSchemas({
         ...shared,
         expectedProvisioningPlanId,
-        provisionBusinessSchemas: ({ runtimeRoot: stagingRuntimeRoot }) => (
-          provisionCanonicalBusinessSchemas({
+        provisionBusinessSchemas: ({
+          runtimeRoot: stagingRuntimeRoot,
+          provisioningCapability,
+          provisioningPlanId,
+        }) => (
+          provisionCanonicalAutonomousResearchBusinessSchemas({
             workspaceRoot: resolvedWorkspaceRoot,
             runtimeRoot: stagingRuntimeRoot,
+            provisioningCapability,
+            provisioningPlanId,
             machineIntakeConfiguration,
             machineIntakeGenesisAuthorityMode,
             topicProducerProfile,

@@ -22,6 +22,10 @@ import {
   autonomousResearchStateDatabaseScopeHash,
 } from '../../paper-domain/automation/autonomous-research-state-backup-contract.mjs';
 import {
+  assertAutonomousResearchOnlineRuntimeActivationReceipt,
+  autonomousResearchOnlineRuntimeActivationReceiptHash,
+} from '../../paper-domain/automation/autonomous-research-online-runtime-activation-contract.mjs';
+import {
   AUTONOMOUS_RESEARCH_ONLINE_MUTATION_PROTOCOL,
 } from '../../paper-domain/automation/autonomous-research-online-mutation-contract.mjs';
 import {
@@ -362,6 +366,29 @@ test('canonical database activation persists derived evidence before exposing th
   };
   const result = activateAutonomousResearchOnlineMutationRuntime(activationOptions);
   assert.equal(result.receipt.databaseActivations.length, ROLES.length);
+  assert.doesNotThrow(() => assertAutonomousResearchOnlineRuntimeActivationReceipt(
+    result.receipt,
+  ));
+  const duplicateRoleBody = Object.freeze({
+    ...result.receipt,
+    databaseActivations: Object.freeze(result.receipt.databaseActivations.map(
+      (entry, index) => index === 1
+        ? Object.freeze({
+          ...entry,
+          databaseRole: result.receipt.databaseActivations[0].databaseRole,
+        })
+        : entry,
+    )),
+  });
+  assert.throws(
+    () => assertAutonomousResearchOnlineRuntimeActivationReceipt(Object.freeze({
+      ...duplicateRoleBody,
+      activationReceiptHash: autonomousResearchOnlineRuntimeActivationReceiptHash(
+        duplicateRoleBody,
+      ),
+    })),
+    /runtime_activation_receipt_invalid/,
+  );
   assert.equal(result.receipt.coordinatorRuntimeReady, true);
   assert.equal(result.receipt.schemaTransitionReceiptHash, H('schema-transition-receipt'));
   assert.equal(result.coordinator.inspectStatus().blockers.length, 0);
@@ -418,6 +445,67 @@ test('canonical database activation persists derived evidence before exposing th
       },
     }),
     /autonomous_research_online_runtime_activation_cache_mutated_state_inventory/,
+  );
+
+  const extraInstanceBody = Object.freeze({
+    ...closedInventory,
+    instances: Object.freeze([
+      ...closedInventory.instances,
+      Object.freeze({
+        ...closedInventory.instances[0],
+        instanceId: 'native-store:unexpected-extra',
+        sourceRelativePath: 'autonomous-research/unexpected-extra.sqlite',
+      }),
+    ]),
+  });
+  const extraInstanceInventory = Object.freeze({
+    ...extraInstanceBody,
+    databaseScopeHash: autonomousResearchStateDatabaseScopeHash(extraInstanceBody.instances),
+    inventoryHash: autonomousResearchStateDatabaseInventoryHash(extraInstanceBody),
+  });
+  assert.throws(
+    () => activateAutonomousResearchOnlineMutationRuntime({
+      ...activationOptions,
+      inventory: extraInstanceInventory,
+    }),
+    /autonomous_research_online_runtime_activation_inventory_invalid/,
+  );
+
+  const duplicateIdBody = Object.freeze({
+    ...closedInventory,
+    instances: Object.freeze(closedInventory.instances.map((entry, index) => (
+      index === 1
+        ? Object.freeze({ ...entry, instanceId: closedInventory.instances[0].instanceId })
+        : entry
+    ))),
+  });
+  const duplicateIdInventory = Object.freeze({
+    ...duplicateIdBody,
+    databaseScopeHash: autonomousResearchStateDatabaseScopeHash(duplicateIdBody.instances),
+    inventoryHash: autonomousResearchStateDatabaseInventoryHash(duplicateIdBody),
+  });
+  assert.throws(
+    () => activateAutonomousResearchOnlineMutationRuntime({
+      ...activationOptions,
+      inventory: duplicateIdInventory,
+    }),
+    /autonomous_research_online_runtime_activation_inventory_invalid/,
+  );
+
+  const staleScopeBody = Object.freeze({
+    ...closedInventory,
+    databaseScopeHash: H('stale-scope'),
+  });
+  const staleScopeInventory = Object.freeze({
+    ...staleScopeBody,
+    inventoryHash: autonomousResearchStateDatabaseInventoryHash(staleScopeBody),
+  });
+  assert.throws(
+    () => activateAutonomousResearchOnlineMutationRuntime({
+      ...activationOptions,
+      inventory: staleScopeInventory,
+    }),
+    /autonomous_research_online_runtime_activation_inventory_invalid/,
   );
 });
 

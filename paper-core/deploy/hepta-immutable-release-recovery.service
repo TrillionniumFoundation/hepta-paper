@@ -1,0 +1,19 @@
+[Unit]
+Description=Recover an interrupted Hepta Paper immutable release deployment
+Wants=local-fs.target systemd-tmpfiles-setup.service
+After=local-fs.target systemd-tmpfiles-setup.service
+Before=autonomous-submission-handoff-layout-provision.path autonomous-research-state-backup-renew.timer strict-full-auto-acceptance.timer autonomous-research-state-backup-renew.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service autonomous-submission-handoff-layout-provision.service hepta-paper-host-bootstrap.service hepta-paper-release-attestor-probe.service hepta-paper-release-attestor.service hepta-paper-state-authority.service strict-full-auto-runtime-adoption.service strict-full-auto-acceptance.service
+RequiresMountsFor=/opt/hepta-paper /opt/hepta-paper-releases /var/lib/hepta-paper-deployment
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/libexec/hepta-paper/hepta-immutable-release-deploy recover
+RemainAfterExit=yes
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

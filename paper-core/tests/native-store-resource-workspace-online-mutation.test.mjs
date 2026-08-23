@@ -272,6 +272,10 @@ test('native-store tail plans pin all thirteen remaining DML operations', () => 
     releaseSource,
     /native-store\.campaign-release-authority-repository\.promoteCompletedRelease\.v1/,
   );
+  assert.match(
+    releaseSource,
+    /packageDeletionWriterSelector[\s\S]*packageResult\.releaseBundle\.packageOutput\.packageDir/,
+  );
 });
 
 test('strict legacy terminal residue settlement uses its least-privilege fixed plan', (t) => {

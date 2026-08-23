@@ -16,6 +16,9 @@ import {
   expandAutonomousResearchStateSafetyBlockerCodeCompatibility,
 } from '../../paper-domain/automation/autonomous-research-state-safety-contract.mjs';
 import {
+  AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES,
+} from '../../paper-domain/automation/autonomous-research-state-backup-contract.mjs';
+import {
   createAutonomousResearchOnlineAuthorityEvidenceCacheReader,
 } from './autonomous-research-online-authority-evidence-cache.mjs';
 import {
@@ -34,7 +37,7 @@ function fail(code) {
 function expectedDatabaseInstances(inventory) {
   if (inventory?.status !== 'autonomous_research_state_database_inventory_ready'
     || !Array.isArray(inventory.instances)
-    || inventory.instances.length < 9) {
+    || inventory.instances.length !== AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.length) {
     fail('autonomous_research_online_mutation_closed_inventory_required');
   }
   const rows = inventory.instances.map((instance) => Object.freeze({
@@ -42,11 +45,15 @@ function expectedDatabaseInstances(inventory) {
     databaseInstanceId: instance.instanceId,
     schemaHash: instance.schemaHash,
   })).sort((left, right) => left.databaseInstanceId.localeCompare(right.databaseInstanceId));
-  if (rows.some((row) => (
+  if (new Set(rows.map((row) => row.databaseRole)).size !== rows.length
+    || new Set(rows.map((row) => row.databaseInstanceId)).size !== rows.length
+    || [...rows.map((row) => row.databaseRole)].sort().join('\0')
+      !== [...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort().join('\0')
+    || rows.some((row) => (
     typeof row.databaseRole !== 'string'
     || typeof row.databaseInstanceId !== 'string'
     || !SHA256.test(String(row.schemaHash || ''))
-  ))) {
+    ))) {
     fail('autonomous_research_online_mutation_inventory_identity_invalid');
   }
   return Object.freeze(rows);

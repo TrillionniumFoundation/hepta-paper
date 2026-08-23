@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { executePaperCampaignCommand } from '../../paper-composition/automation/paper-campaign-command-composition.mjs';
+import { composeProductionPackageRecoveryAuthorities }
+  from '../../paper-composition/automation/package-recovery-production-composition.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
+
+const modulePath = fileURLToPath(import.meta.url);
 
 function args(argv) {
   const parsed = parseStrictCliArguments(argv, {
@@ -68,6 +73,7 @@ function args(argv) {
       'recovery-of-campaign-id',
       'worker-memory-mib',
       'worker-cpu-seconds',
+      'package-lifecycle-receipt-hash',
     ],
     repeatableValueFlags: ['paper', 'dataset', 'dataset-license', 'dataset-authorization', 'dataset-harness'],
     positional: false,
@@ -82,10 +88,20 @@ function args(argv) {
   };
 }
 
-async function main() {
-  const options = args(process.argv.slice(2));
+export async function main({
+  argv = process.argv.slice(2),
+  stdout = process.stdout,
+  environment = process.env,
+  executeCampaignCommand = executePaperCampaignCommand,
+  packageRecoveryAuthorityFactory = null,
+  packageRecoveryAuthorityReadinessVerifier = null,
+  packageRecoveryDeletionLeaseAuthority = null,
+  packageRecoveryRestoreRoot = null,
+  packageRecoveryObserveNow = () => new Date().toISOString(),
+} = {}) {
+  const options = args(argv);
   if (options.help) {
-    process.stdout.write([
+    stdout.write([
       'Usage: hepta-paper operator campaign -- [options]',
       '',
       '  --paper <id>              select a paper; repeat for several papers',
@@ -115,7 +131,7 @@ async function main() {
       '  --max-gpu-jobs <n>        per-campaign GPU-job budget',
       '  --max-tokens <n>          per-campaign model-token budget',
       '  --max-cost-usd <n>        per-campaign model-cost budget',
-      '  --action <name>           list|status|events|logs|pause|resume|extend|cancel|cancel-node|retry|work|gc|slo',
+      '  --action <name>           list|status|events|logs|pause|resume|extend|cancel|cancel-node|retry|work|gc|slo|retention-recovery-readiness|provision-retention-recovery',
       '  --campaign-id <id>        campaign for an operational action',
       '  --run-id <id>             suffix new campaign ids so a paper can be rerun',
       '  --node-id <id>            failed node for retry',
@@ -137,6 +153,7 @@ async function main() {
       '  --details                 include full specs, nodes and receipts (default is concise)',
       '  --retain-failed-workspaces  keep failed COW trees (default; retained unless explicitly exported/eligible)',
       '  --apply                   apply a GC plan (GC is dry-run by default)',
+      '  --package-lifecycle-receipt-hash <sha256:...>  lifecycle receipt to provision through an injected recovery authority',
       '  --root <path>             paper asset root',
       '  --runtime-root <path>     runtime and campaign store root',
       '',
@@ -161,10 +178,29 @@ async function main() {
   }
   const root = path.resolve(options.root || defaultPaperAssetRoot());
   const runtimeRoot = path.resolve(options['runtime-root'] || defaultPaperRuntimeRoot());
-  const response = await executePaperCampaignCommand({
-    options, root, runtimeRoot, environment: process.env,
+  const packageRecovery = composeProductionPackageRecoveryAuthorities({
+    runtimeRoot,
+    restoreRoot: packageRecoveryRestoreRoot,
+    packageRecoveryAuthorityFactory,
+    packageRecoveryAuthorityReadinessVerifier,
+    packageRecoveryDeletionLeaseAuthority,
+    observeNow: packageRecoveryObserveNow,
   });
-  process.stdout.write(`${JSON.stringify(response, null, 2)}\n`);
+  const commandRequest = {
+    options, root, runtimeRoot, environment,
+    ...packageRecovery,
+  };
+  const response = executeCampaignCommand === executePaperCampaignCommand
+    ? await executePaperCampaignCommand({ ...commandRequest })
+    : await executeCampaignCommand(commandRequest);
+  stdout.write(`${JSON.stringify(response, null, 2)}\n`);
 }
 
-main().catch((error) => { process.stderr.write(`${error?.stack || error}\n`); process.exitCode = 1; });
+const invokedAsEntrypoint = process.argv[1]
+  && path.resolve(process.argv[1]) === modulePath;
+if (invokedAsEntrypoint) {
+  main().catch((error) => {
+    process.stderr.write(`${error?.stack || error}\n`);
+    process.exitCode = 1;
+  });
+}

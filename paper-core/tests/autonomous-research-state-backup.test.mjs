@@ -39,10 +39,11 @@ const stateDatabaseManifest = JSON.parse(fs.readFileSync(path.join(
   'autonomous-research-state-databases.v1.json',
 ), 'utf8'));
 
-function createDatabase(candidate, marker, requiredSchemaObjects = []) {
+function createDatabase(candidate, marker, requiredSchemaObjects = [], { wal = false } = {}) {
   fs.mkdirSync(path.dirname(candidate), { recursive: true, mode: 0o700 });
   const database = new DatabaseSync(candidate);
   try {
+    if (wal) database.exec('PRAGMA journal_mode=WAL;');
     database.exec(`
 PRAGMA foreign_keys=ON;
 CREATE TABLE parent(id TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -79,7 +80,9 @@ function fixture(t) {
       ? definition.relativePathPattern.replace('{paperId}', 'paper-alpha')
       : definition.relativePath;
     const candidate = path.join(runtimeRoot, relative);
-    createDatabase(candidate, `db-${index + 1}`, definition.requiredSchemaObjects);
+    createDatabase(candidate, `db-${index + 1}`, definition.requiredSchemaObjects, {
+      wal: definition.role === 'native-store',
+    });
     return candidate;
   });
   t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
@@ -217,7 +220,7 @@ test('state manifest cannot omit the per-database online authority schema', () =
   ));
   assert.equal(
     autonomousResearchStateDatabaseManifestHash(stateDatabaseManifest),
-    'sha256:bab1b625bfba87ac4cc375406b6be3cb335fbacb56fe1ec0deef749cca5871e6',
+    'sha256:e199f82419f89a0bb4bda32db8d494104ffec76cd62de95355164c48dfd668a1',
   );
   const weakened = structuredClone(stateDatabaseManifest);
   weakened.databases[0].requiredSchemaObjects = weakened.databases[0]
@@ -243,7 +246,8 @@ async function successfulBackup(t) {
     authorityTrust: authority.trust,
     clock,
   });
-  assert.equal(receipt.status, 'autonomous_research_state_backup_recorded');
+  assert.equal(receipt.status, 'autonomous_research_state_backup_recorded',
+    JSON.stringify(receipt.blockers || []));
   return { ...setup, clock, authority, backupRoot, receipt };
 }
 
@@ -290,7 +294,8 @@ test('backup repository validates injected clocks and derives safe default bundl
     authorityTrust: validAuthority.trust,
     clock: validClock,
   });
-  assert.equal(backup.status, 'autonomous_research_state_backup_recorded');
+  assert.equal(backup.status, 'autonomous_research_state_backup_recorded',
+    JSON.stringify(backup.blockers || []));
   assert.equal(
     path.dirname(backup.bundlePath),
     path.join(setup.runtimeRoot, 'backups', 'autonomous-research-state'),
@@ -492,6 +497,36 @@ test('canonical inventory covers every autonomous trust database and blocks unkn
   assert.ok(nonEmptyExclusion.blockers.includes(
     'autonomous_research_state_database_exclusion_invalid:paper-automation.sqlite',
   ));
+});
+
+test('sidecar-free WAL-mode inventory rejects tampering without filesystem mutation', (t) => {
+  const setup = fixture(t);
+  const nativeStoreIndex = stateDatabaseManifest.databases.findIndex((entry) => (
+    entry.role === 'native-store'
+  ));
+  const databasePath = setup.databasePaths[nativeStoreIndex];
+  const original = fs.readFileSync(databasePath);
+  assert.equal(original[18], 2);
+  assert.equal(original[19], 2);
+  assert.equal(fs.existsSync(`${databasePath}-wal`), false);
+  assert.equal(fs.existsSync(`${databasePath}-shm`), false);
+
+  const tampered = Buffer.from(original);
+  tampered[0] ^= 0xff;
+  fs.writeFileSync(databasePath, tampered);
+  const before = runtimeTreeSnapshot(setup.runtimeRoot);
+  const inventory = resolveAutonomousResearchStateDatabaseInventory({
+    runtimeRoot: setup.runtimeRoot,
+    manifest: stateDatabaseManifest,
+  });
+  assert.equal(inventory.status, 'autonomous_research_state_database_inventory_blocked');
+  assert.ok(inventory.blockers.some((entry) => entry.startsWith(
+    'autonomous_research_state_database_inspection_failed:native-store:',
+  )));
+  assert.deepEqual(runtimeTreeSnapshot(setup.runtimeRoot), before);
+  assert.equal(fs.existsSync(`${databasePath}-wal`), false);
+  assert.equal(fs.existsSync(`${databasePath}-shm`), false);
+  fs.writeFileSync(databasePath, original);
 });
 
 test('production CLI status is wired to the canonical closed database inventory', (t) => {
@@ -709,13 +744,21 @@ test('backup and restore drill close over all databases without mutating product
     backup.bundlePath,
     'AUTONOMOUS_RESEARCH_STATE_BACKUP.json',
   ), 'utf8'));
+  const databaseRoot = path.join(backup.bundlePath, 'databases');
   assert.equal(fs.statSync(backup.bundlePath).mode & 0o777, 0o700);
-  assert.equal(fs.statSync(path.join(backup.bundlePath, 'databases')).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(databaseRoot).mode & 0o777, 0o700);
+  assert.deepEqual(
+    fs.readdirSync(databaseRoot).sort(),
+    bundle.content.databases.map((entry) => path.basename(entry.backupRelativePath)).sort(),
+  );
   for (const entry of bundle.content.databases) {
     const databasePath = path.join(backup.bundlePath, entry.backupRelativePath);
     assert.equal(fs.lstatSync(databasePath).isSymbolicLink(), false);
     assert.equal(fs.statSync(databasePath).nlink, 1);
     assert.equal(fs.statSync(databasePath).mode & 0o777, 0o600);
+    for (const suffix of ['-journal', '-wal', '-shm']) {
+      assert.equal(fs.existsSync(`${databasePath}${suffix}`), false);
+    }
   }
   assert.equal(fs.statSync(path.join(
     backup.bundlePath,
@@ -762,6 +805,32 @@ test('backup and restore drill close over all databases without mutating product
   assert.equal(offhostSources.headHash, restoreReceipt.authorityCurrentHeadReceipt.headHash);
   assert.equal(Object.hasOwn(offhostSources, 'authorityConfigurationPath'), false);
   assert.doesNotMatch(JSON.stringify(offhostSources), /privateKey|signature/);
+});
+
+test('restore drill rejects unexpected SQLite sidecars in a backup bundle', async (t) => {
+  const setup = await successfulBackup(t);
+  const bundle = JSON.parse(fs.readFileSync(path.join(
+    setup.receipt.bundlePath,
+    'AUTONOMOUS_RESEARCH_STATE_BACKUP.json',
+  ), 'utf8'));
+  const firstDatabase = path.join(
+    setup.receipt.bundlePath,
+    bundle.content.databases[0].backupRelativePath,
+  );
+  fs.writeFileSync(`${firstDatabase}-wal`, 'unexpected-sidecar', { mode: 0o600 });
+
+  const drill = await drillAutonomousResearchStateRestore({
+    bundlePath: setup.receipt.bundlePath,
+    backupRoot: setup.backupRoot,
+    stateDatabaseManifest,
+    authorityClient: setup.authority.client,
+    authorityTrust: setup.authority.trust,
+    clock: setup.clock,
+  });
+  assert.equal(drill.status, 'autonomous_research_state_restore_drill_blocked');
+  assert.ok(drill.blockers.includes(
+    'autonomous_research_state_backup_database_set_mismatch',
+  ));
 });
 
 test('backup cannot be authorized by a local option or incomplete signed database scope', async (t) => {
@@ -1154,6 +1223,13 @@ test('WORM resolver rejects extra, missing, and content-drifted database copies'
     'autonomous_research_state_backup_source_database_set_invalid',
   ));
   fs.rmSync(extraDatabase);
+
+  const unexpectedSidecar = `${firstDatabase}-shm`;
+  fs.writeFileSync(unexpectedSidecar, 'unexpected-sidecar', { mode: 0o600 });
+  assert.ok(resolve().skippedCandidates[0].blockers.includes(
+    'autonomous_research_state_backup_source_database_set_invalid',
+  ));
+  fs.rmSync(unexpectedSidecar);
 
   const original = fs.readFileSync(firstDatabase);
   fs.appendFileSync(firstDatabase, Buffer.from('content-drift'));

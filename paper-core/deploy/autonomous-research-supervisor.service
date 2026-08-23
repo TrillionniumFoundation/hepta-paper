@@ -1,7 +1,9 @@
 [Unit]
 Description=Hepta Paper autonomous research supervisor
-Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service
-After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service network-online.target docker.service
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
+Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service strict-full-auto-runtime-adoption.service
+After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service strict-full-auto-runtime-adoption.service network-online.target docker.service
 Wants=autonomous-submission-handoff-layout-provision.path network-online.target docker.service
 # Missing provisioning is a skipped start, while repeated runtime failures are
 # bounded and require an operator to inspect the failed generation.
@@ -58,6 +60,8 @@ ExecCondition=/usr/bin/test -d ${HEPTA_FORMAL_REVIEW_CODEX_HOME}
 ExecCondition=/usr/bin/test -d ${ELAN_HOME}
 ExecCondition=/usr/bin/test -d ${HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT}
 ExecCondition=/usr/bin/test -d ${HEPTA_DYNAMIC_FORMAL_PROJECT_SCOPE_ROOT}
+ExecCondition=/usr/bin/test -r ${HEPTA_FORMAL_SANDBOX_RUNTIME_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIG}
 ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG}
 ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_PROFILE}
 ExecCondition=/usr/bin/test -r ${HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG}

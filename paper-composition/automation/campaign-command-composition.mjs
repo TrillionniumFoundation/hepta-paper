@@ -13,6 +13,8 @@ export function composeCampaignCommandService({ runtimeRoot, services = {} } = {
     receiptLedger: services.receiptLedger,
     runtimeRetentionReceiptLedger: services.runtimeRetentionReceiptLedger,
     runtimeRetentionReachabilityProvider: services.runtimeRetentionReachabilityProvider,
+    packageRecoveryDeletionLeasePort: services.packageRecoveryDeletionLeasePort,
+    packageLifecycleAuthority: services.packageLifecycleAuthority,
     buildRuntimeRetentionPlan,
     executeRuntimeRetentionPlan,
     reconcileRuntimeRetentionIntents,

@@ -34,13 +34,13 @@ export function bootstrapLegacyPaperExecutionContext({
     serviceOverrides: compatibilityOverrides,
     writerId: 'hepta-paper-legacy-bootstrap',
   });
+  const operatorDatasetAuthorityTrustStoreProvider =
+    loadOperatorDatasetAuthorityTrustStoreSync.bind(null, { runtimeRoot });
   const operatorDatasetHarnessAuthorityVerifier = serviceOverrides.operatorDatasetHarnessAuthorityVerifier
     || createOperatorDatasetHarnessAuthorityReceiptVerifier({
-      trustStoreProvider: () => loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot }),
+      trustStoreProvider: operatorDatasetAuthorityTrustStoreProvider,
       clock: foundation.clock,
     });
-  const operatorDatasetAuthorityTrustStoreProvider = () =>
-    loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot });
   const gpuScientificPromotionAuthorityVerifier =
     serviceOverrides.gpuScientificPromotionAuthorityVerifier
     || createGpuScientificCampaignPromotionAuthorityVerifier({
@@ -65,6 +65,10 @@ export function bootstrapLegacyPaperExecutionContext({
     registry: paperStageAdapters,
     store: foundation.store,
     campaignReleaseAuthorityRepository,
+    runtimeRoot,
+    packageDeletionWriterBoundary: foundation.packageDeletionWriterBoundary,
+    packageDeletionWriterOperationId:
+      foundation.packageDeletionWriterOperationId,
   });
   const typedCompatibilityOverrides = {
     ...compatibilityOverrides,

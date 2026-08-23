@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { createReadOnlyPaperStore, openExistingWritablePaperStore, composeLedgerAdministratorServices } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { createReadOnlyPaperStore, composeLedgerAdministratorServices } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { runWithScopedFoundationWriter } from '../../paper-composition/bootstrap/context-foundation-composition.mjs';
 import { createSystemClock } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { selectReceiptHash } from '../../paper-domain/evidence/receipt-hash-selector.mjs';
 import { sqlText } from '../../paper-ports/store-port.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
-import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const execute = process.argv.includes('--execute');
 const runtimeRoot = defaultPaperRuntimeRoot();
 const root = defaultPaperAssetRoot();
-if (execute) assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: root, runtimeRoot });
 const readStore = createReadOnlyPaperStore({ root, runtimeRoot });
 const rows = readStore.query('SELECT receipt_id,stream,receipt_json,receipt_sha256 FROM receipt_ledger ORDER BY receipt_id;').rows;
 const invalid = rows.flatMap((row) => {
@@ -32,9 +32,8 @@ const blockers = [
 ];
 const repaired = [];
 readStore.close?.();
-if (execute && !blockers.length) {
-  const store = openExistingWritablePaperStore({ root, runtimeRoot });
-  const clock = createSystemClock();
+
+function executeIntegrityRepair({ store, clock }) {
   const administratorServices = composeLedgerAdministratorServices({ store, clock });
   const qualifications = administratorServices.qualifications;
   const replacementLedger = administratorServices.replacementLedger;
@@ -96,6 +95,17 @@ if (execute && !blockers.length) {
   const outputRoot = path.join(runtimeRoot, 'store-integrity');
   fs.mkdirSync(outputRoot, { recursive: true });
   fs.writeFileSync(path.join(outputRoot, `RECEIPT_LEDGER_INTEGRITY_REPAIR_${Date.now()}.json`), `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o444 });
+}
+
+if (execute && !blockers.length) {
+  const clock = createSystemClock();
+  runWithScopedFoundationWriter({
+    root,
+    runtimeRoot,
+    writerId: 'repair-receipt-ledger-integrity-entrypoint',
+    rootKind: 'repair-receipt-ledger-integrity',
+    serviceOverrides: { clock },
+  }, (services) => executeIntegrityRepair(services));
 }
 const report = {
   version: 1,

@@ -119,26 +119,28 @@ export function buildAutonomousResearchAuthorIdentityConfiguration({
     signerRole: SIGNER_ROLE,
     maximumLifetimeMs: lifetime,
   };
-  const identity = version === 2 ? {
-    ...common,
-    identityPolicy: selectedIdentityPolicy,
-  } : {
-    ...common,
-    subject,
-    authorityEnvelope: envelope,
-    trustStore: trust.canonicalTrustStore,
-  };
-  const configurationHash = hashRecord(
-    'AutonomousResearchAuthorIdentityConfiguration',
-    identity,
-  );
   const payload = version === 2 ? {
     ...common,
     identityPolicy: selectedIdentityPolicy,
     subject,
     authorityEnvelope: envelope,
     trustStore: trust.canonicalTrustStore,
-  } : identity;
+  } : {
+    ...common,
+    subject,
+    authorityEnvelope: envelope,
+    trustStore: trust.canonicalTrustStore,
+  };
+  // Every authorization-bearing material must be covered by the pinned
+  // configuration hash.  v2 deliberately exposes a stable identity policy,
+  // but that policy hash is only an informational/rotation-stability value;
+  // it must never replace the full configuration pin.  The previous v2
+  // implementation hashed only `common + identityPolicy`, allowing a valid
+  // subject or envelope to be swapped without changing configurationHash.
+  const configurationHash = hashRecord(
+    'AutonomousResearchAuthorIdentityConfiguration',
+    payload,
+  );
   return Object.freeze({
     ...payload,
     configurationHash,

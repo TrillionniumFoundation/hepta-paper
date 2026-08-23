@@ -1,7 +1,9 @@
 [Unit]
 Description=Hepta Paper fresh-host identities and durable parent bootstrap
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
 After=local-fs.target
-Before=autonomous-submission-handoff-layout-provision.path autonomous-submission-handoff-layout-provision.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service strict-full-auto-acceptance.service
+Before=autonomous-submission-handoff-layout-provision.path autonomous-submission-handoff-layout-provision.service strict-full-auto-runtime-adoption.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service strict-full-auto-acceptance.service
 RequiresMountsFor=/etc /var/lib
 
 [Service]

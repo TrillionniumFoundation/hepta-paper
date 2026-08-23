@@ -5,8 +5,18 @@ import {
   verifyPackageRetentionLegalHoldReceipt,
   verifyPackageSupersessionReceipt,
 } from '../../paper-domain/automation/package-lifecycle-authority-contract.mjs';
+import {
+  inspectTrustedLivePackageRecoverySource,
+  verifyTrustedPackageRecoveryReceipt,
+} from '../../paper-ports/package-recovery-authority-port.mjs';
+import { PACKAGE_LIFECYCLE_LEGACY_ISSUER_POLICY_HASHES }
+  from '../../paper-domain/evidence/receipt-issuer-policy-registry.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys }
+  from '../../workflow-kernel/exact-object-keys.mjs';
 import { receiptIssuerPolicies } from '../persistence/receipt-issuer-policy.mjs';
+import { inspectPackageRecoveryTreeInventorySync }
+  from './package-recovery-tree-inventory-repository.mjs';
 
 const STREAM = 'package-lifecycle';
 const POLICY_ID = 'package-lifecycle-authority';
@@ -16,20 +26,34 @@ const TERMINAL_NODE_STATUSES = new Set(['completed', 'skipped', 'failed_terminal
 const KINDS = new Set([
   'PackageLifecycleReceipt',
   'PackageSupersessionReceipt',
+  'PackageRetentionRecoveryReceipt',
   'PackageRetentionLegalHoldReceipt',
 ]);
 const EVIDENCE_CLASS = Object.freeze({
   PackageLifecycleReceipt: 'package_lifecycle',
   PackageSupersessionReceipt: 'package_supersession',
+  PackageRetentionRecoveryReceipt: 'package_recovery',
   PackageRetentionLegalHoldReceipt: 'package_legal_hold',
 });
 const HASH_FIELD = Object.freeze({
   PackageLifecycleReceipt: 'packageLifecycleReceiptHash',
   PackageSupersessionReceipt: 'packageSupersessionReceiptHash',
+  PackageRetentionRecoveryReceipt: 'packageRetentionRecoveryReceiptHash',
   PackageRetentionLegalHoldReceipt: 'packageRetentionLegalHoldReceiptHash',
 });
 const LEDGER_PAGE_SIZE = 1000;
 const LEDGER_MAX_OFFSET = 9_999_000;
+const LEGACY_POLICY_KINDS = new Set([
+  'PackageLifecycleReceipt',
+  'PackageSupersessionReceipt',
+  'PackageRetentionLegalHoldReceipt',
+]);
+
+function acceptedPolicyHash(row) {
+  return row.issuer_policy_hash === POLICY.issuerPolicyHash
+    || (LEGACY_POLICY_KINDS.has(row.kind)
+      && PACKAGE_LIFECYCLE_LEGACY_ISSUER_POLICY_HASHES.includes(row.issuer_policy_hash));
+}
 
 function emptyDeclaration() {
   return {
@@ -46,7 +70,7 @@ function receiptJson(row) {
   try { return JSON.parse(row?.receipt_json || ''); } catch { return null; }
 }
 
-function receiptValid(receipt) {
+function receiptValid(receipt, receipts, packageRecoveryAuthority) {
   if (receipt?.kind === 'PackageLifecycleReceipt') {
     return verifyPackageLifecycleReceipt(receipt).valid;
   }
@@ -56,17 +80,29 @@ function receiptValid(receipt) {
   if (receipt?.kind === 'PackageRetentionLegalHoldReceipt') {
     return verifyPackageRetentionLegalHoldReceipt(receipt).valid;
   }
+  if (receipt?.kind === 'PackageRetentionRecoveryReceipt') {
+    const lifecycles = receipts.filter((candidate) =>
+      candidate?.kind === 'PackageLifecycleReceipt'
+        && candidate.packageLifecycleReceiptHash === receipt.packageLifecycleReceiptHash
+        && verifyPackageLifecycleReceipt(candidate).valid);
+    return Boolean(lifecycles.length === 1
+      && verifyTrustedPackageRecoveryReceipt({
+        packageRecoveryAuthority,
+        recoveryReceipt: receipt,
+        lifecycleReceipt: lifecycles[0],
+      }));
+  }
   return false;
 }
 
-function trustedRow(row) {
+function trustedRow(row, receipts, packageRecoveryAuthority) {
   const receipt = receiptJson(row);
   const field = HASH_FIELD[receipt?.kind];
   const receiptHash = field ? receipt?.[field] : null;
   const paperId = receipt?.paperId || receipt?.releaseIdentity?.paperId || null;
   return Boolean(receipt
     && KINDS.has(receipt.kind)
-    && receiptValid(receipt)
+    && receiptValid(receipt, receipts, packageRecoveryAuthority)
     && row.receipt_id === `${STREAM}:${receiptHash}`
     && row.receipt_sha256 === receiptHash
     && row.stream === STREAM
@@ -80,7 +116,7 @@ function trustedRow(row) {
     && row.writer_id === POLICY.writerId
     && row.writer_kind === POLICY.writerKind
     && row.issuer_policy_id === POLICY_ID
-    && row.issuer_policy_hash === POLICY.issuerPolicyHash
+    && acceptedPolicyHash(row)
     && row.issuer_assurance === POLICY.assurance);
 }
 
@@ -113,7 +149,7 @@ function scanLedger(receiptLedger) {
   return rows;
 }
 
-function loadLedgerAuthority(receiptLedger) {
+function loadLedgerAuthority(receiptLedger, packageRecoveryAuthority) {
   if (typeof receiptLedger?.list !== 'function') {
     return Object.freeze({ complete: false, blockers: ['package_lifecycle_ledger_unavailable'] });
   }
@@ -128,7 +164,8 @@ function loadLedgerAuthority(receiptLedger) {
   } catch {
     return Object.freeze({ complete: false, blockers: ['package_lifecycle_ledger_scan_failed'] });
   }
-  if (rows.some((row) => !trustedRow(row))) {
+  const receipts = rows.map(receiptJson);
+  if (rows.some((row) => !trustedRow(row, receipts, packageRecoveryAuthority))) {
     return Object.freeze({ complete: false, blockers: ['package_lifecycle_ledger_incomplete_or_invalid'] });
   }
   const records = rows.map((row) => Object.freeze({
@@ -184,9 +221,19 @@ function lineageMatches(predecessor, successor, kind) {
 }
 
 function sameEntry(entry, lifecycle, runtimeRoot) {
-  return Boolean(!entry.symbolicLink
+  let inventoryHash = entry.packageRecoveryTreeInventoryHash || null;
+  if (!inventoryHash) {
+    try {
+      inventoryHash = inspectPackageRecoveryTreeInventorySync({
+        packagePath: entry.path,
+      }).inventory.packageRecoveryTreeInventoryHash;
+    } catch { inventoryHash = null; }
+  }
+  return Boolean(lifecycle?.version === 2
+    && !entry.symbolicLink
     && packagePathInRoot(runtimeRoot, lifecycle.packagePath) === path.resolve(entry.path)
     && lifecycle.packageContentHash === entry.contentHash
+    && lifecycle.packageRecoveryTreeInventoryHash === inventoryHash
     && path.resolve(lifecycle.runtimeRoot) === path.resolve(runtimeRoot));
 }
 
@@ -208,6 +255,36 @@ function campaignReferences({ campaigns, nodesByCampaign, predecessor, successor
   return Object.freeze({ active, recovery });
 }
 
+function recoveryDeletionLeaseBindingHash({ lifecycle, recovery, liveRecovery }) {
+  const proof = recovery?.recoverySourceAuthority?.storageAuthorityProof;
+  const policy = proof?.retentionPolicy;
+  return hashRecord('PackageRecoveryDeletionLeaseBinding', {
+    version: 1,
+    kind: 'PackageRecoveryDeletionLeaseBinding',
+    packageLifecycleReceiptHash: lifecycle.packageLifecycleReceiptHash,
+    packageRecoveryTreeInventoryHash:
+      lifecycle.packageRecoveryTreeInventoryHash,
+    packageRetentionRecoveryReceiptHash:
+      recovery.packageRetentionRecoveryReceiptHash,
+    packageRecoveryStorageAuthorityProofHash:
+      proof.packageRecoveryStorageAuthorityProofHash,
+    authoritySnapshotHash: liveRecovery.authoritySnapshotHash,
+    storageAuthorityId: proof.storageAuthorityId,
+    storageObjectId: proof.storageObjectId,
+    storageObjectVersion: proof.storageObjectVersion,
+    storageObjectBytesHash: proof.storageObjectBytesHash,
+    retentionLockAuthorityId: policy.retentionLockAuthorityId,
+    retentionLockId: policy.retentionLockId,
+    retentionLockVersion: policy.retentionLockVersion,
+    retentionLockIdentityHash: policy.retentionLockIdentityHash,
+    retainUntil: policy.retainUntil,
+    storageLedgerReceiptId: proof.ledgerIdentity.receiptId,
+    storageLedgerReceiptHash: proof.ledgerIdentity.receiptHash,
+    trustStoreHash: proof.trustStoreHash,
+    verificationEpoch: proof.verificationEpoch,
+  });
+}
+
 function uniqueRecord(records, predicate) {
   const matches = records.filter(predicate);
   return matches.length === 1 ? matches[0] : null;
@@ -215,6 +292,69 @@ function uniqueRecord(records, predicate) {
 
 function protect(declaration, field, entry) {
   declaration[field].push(entry.path);
+}
+
+const FENCED_STAGING_IDENTITY_KEYS = Object.freeze([
+  'dev', 'ino', 'mode', 'size', 'mtimeNs', 'nlink', 'realPath', 'entryKind',
+]);
+
+function exactFencedStagingIdentity(stagingEntry) {
+  const identity = stagingEntry?.identity;
+  return Boolean(hasExactPlainObjectKeys(identity, FENCED_STAGING_IDENTITY_KEYS)
+    && FENCED_STAGING_IDENTITY_KEYS.every((field) =>
+      typeof identity[field] === 'string' && identity[field].length > 0)
+    && identity.entryKind === 'directory'
+    && path.resolve(identity.realPath) === path.resolve(stagingEntry.path)
+    && /^sha256:[a-f0-9]{64}$/.test(String(
+      stagingEntry.campaignReleasePackageFencedStagingTreeIdentityHash || '',
+    ))
+    && stagingEntry.campaignReleasePackageFencedStagingIdentityHash
+      === hashRecord('CampaignReleasePackageFencedStagingIdentity', {
+        path: path.resolve(stagingEntry.path),
+        contentHash: stagingEntry.contentHash,
+        identity,
+        treeIdentityHash:
+          stagingEntry.campaignReleasePackageFencedStagingTreeIdentityHash,
+      }));
+}
+
+function fencedTransactionForEntry({
+  entry,
+  fencedTransactions,
+  campaigns,
+  releases,
+  runtimeRoot,
+}) {
+  const matches = (fencedTransactions?.rows || []).map((row) => ({
+    transaction: row,
+    stagingEntry: (row.stagingEntries || []).find((candidate) =>
+      path.resolve(String(candidate?.path || '')) === path.resolve(entry.path)),
+  })).filter(({ stagingEntry }) => stagingEntry);
+  if (matches.length !== 1 || entry.symbolicLink) return null;
+  const { transaction, stagingEntry } = matches[0];
+  if (stagingEntry.contentHash !== entry.contentHash
+    || !exactFencedStagingIdentity(stagingEntry)
+    || !/^sha256:[a-f0-9]{64}$/.test(
+      String(stagingEntry.campaignReleasePackageBuildingMarkerHash || ''),
+    )) return null;
+  if (packagePathInRoot(runtimeRoot, entry.path) !== path.resolve(entry.path)) {
+    return null;
+  }
+  const currentNode = campaigns.nodes.find((node) => (
+    node.campaignId === transaction.campaignId
+      && node.nodeId === transaction.packageNodeId
+  ));
+  if (!currentNode
+    || Number(currentNode.leaseGeneration) <= transaction.leaseGeneration
+    || Number(currentNode.leaseGeneration)
+      < transaction.supersedingLeaseGeneration
+    || currentNode.attemptId === transaction.packageAttemptId
+    || releases.rows.some((release) => (
+      path.resolve(String(release.packagePath || '')) === path.resolve(entry.path)
+    ))) {
+    return null;
+  }
+  return Object.freeze({ transaction, stagingEntry });
 }
 
 export function packageLifecycleDeclaration({
@@ -225,13 +365,23 @@ export function packageLifecycleDeclaration({
   receiptLedger,
   casInventory,
   activeNodeIds = [],
+  fencedTransactions = null,
+  packageRecoveryAuthority = null,
+  now = new Date().toISOString(),
 } = {}) {
   const declaration = emptyDeclaration();
-  const ledger = loadLedgerAuthority(receiptLedger);
+  const ledger = loadLedgerAuthority(receiptLedger, packageRecoveryAuthority);
+  const fencedInventory = fencedTransactions || Object.freeze({
+    rows: Object.freeze([]),
+    hash: hashRecord('FencedCampaignReleasePackageTransactionInventory', []),
+  });
   const authority = {
-    complete: Boolean(ledger.complete && campaigns?.hash && releases?.hash && casInventory?.hash),
+    complete: Boolean(ledger.complete && campaigns?.hash && releases?.hash
+      && casInventory?.hash && fencedInventory.hash),
     blockers: [...(ledger.blockers || [])],
     ledgerInventoryHash: ledger.inventoryHash || null,
+    recoveryAuthoritySnapshotHashes: [],
+    recoverySourceInventoryHashes: [],
   };
   if (!authority.complete) {
     for (const entry of entries) protect(declaration, 'recoveryProtectedPaths', entry);
@@ -242,6 +392,8 @@ export function packageLifecycleDeclaration({
     path.resolve(String(record.receipt.runtimeRoot || '')) === path.resolve(runtimeRoot));
   const lifecycleRecords = records.filter((record) => record.receipt.kind === 'PackageLifecycleReceipt');
   const supersessionRecords = records.filter((record) => record.receipt.kind === 'PackageSupersessionReceipt');
+  const recoveryRecords = records.filter((record) =>
+    record.receipt.kind === 'PackageRetentionRecoveryReceipt');
   const holdRecords = records.filter((record) => record.receipt.kind === 'PackageRetentionLegalHoldReceipt');
   const campaignById = new Map(campaigns.rows.map((campaign) => [campaign.campaignId, campaign]));
   const releaseByCampaign = new Map(releases.rows.map((release) => [release.campaignId, release]));
@@ -257,6 +409,51 @@ export function packageLifecycleDeclaration({
   const externallyActiveNodes = new Set(activeNodeIds.map(String));
 
   for (const entry of entries) {
+    const lifecyclePathRepresented = lifecycleRecords.some((record) =>
+      path.resolve(String(record.receipt.packagePath || '')) === path.resolve(entry.path));
+    const fenced = lifecyclePathRepresented ? null : fencedTransactionForEntry({
+      entry,
+      fencedTransactions: fencedInventory,
+      campaigns,
+      releases,
+      runtimeRoot,
+    });
+    if (fenced) {
+      const { transaction: fencedTransaction, stagingEntry } = fenced;
+      if (externallyActiveNodes.has(fencedTransaction.packageNodeId)) {
+        protect(declaration, 'activePaths', entry);
+        continue;
+      }
+      const fencedCasReferences = casReferences(entry, casInventory, runtimeRoot);
+      if (fencedCasReferences === null) {
+        protect(declaration, 'recoveryProtectedPaths', entry);
+        continue;
+      }
+      if (fencedCasReferences.length) {
+        protect(declaration, 'referencedPaths', entry);
+        continue;
+      }
+      declaration.deletionEvidence.push({
+        path: entry.path,
+        contentHash: entry.contentHash,
+        evidenceKind: 'package_fenced_staging_generation_verified',
+        sourceEvidenceHashes: [
+          campaigns.hash,
+          releases.hash,
+          casInventory.hash,
+          fencedInventory.hash,
+          fencedTransaction.campaignReleasePackageBuildingTransactionHash,
+          fencedTransaction.campaignReleasePackageBuildingFenceHash,
+          stagingEntry.campaignReleasePackageBuildingMarkerHash,
+          stagingEntry.campaignReleasePackageFencedStagingIdentityHash,
+          stagingEntry.campaignReleasePackageFencedStagingTreeIdentityHash,
+          stagingEntry.contentHash,
+          ...[fencedTransaction
+            .campaignReleasePackagePreparedTransactionHash].filter(Boolean),
+        ],
+      });
+      continue;
+    }
     const lifecycleRecord = uniqueRecord(lifecycleRecords, (record) =>
       sameEntry(entry, record.receipt, runtimeRoot));
     if (!lifecycleRecord) {
@@ -308,6 +505,9 @@ export function packageLifecycleDeclaration({
       && Date.parse(supersessionRecord.ledgerCreatedAt)
         >= Date.parse(successorLifecycleRecord.ledgerCreatedAt);
     if (!supersessionVerification.valid
+      || supersessionVerification.version !== 2
+      || supersessionVerification.legacy !== false
+      || supersessionVerification.deletionAuthorized !== false
       || !successorEntry
       || !sameEntry(successorEntry, successorLifecycle, runtimeRoot)
       || predecessor.effectiveStatus !== 'superseded'
@@ -348,10 +548,60 @@ export function packageLifecycleDeclaration({
       protect(declaration, 'referencedPaths', entry);
       continue;
     }
+    const recoveryRecord = uniqueRecord(recoveryRecords, (record) =>
+      record.receipt.version === 2
+        && record.receipt.packageLifecycleReceiptHash
+          === lifecycle.packageLifecycleReceiptHash);
+    const recovery = recoveryRecord?.receipt || null;
+    const recoveryVerified = recovery
+      ? verifyTrustedPackageRecoveryReceipt({
+        packageRecoveryAuthority,
+        recoveryReceipt: recovery,
+        lifecycleReceipt: lifecycle,
+      }) : false;
+    const liveRecovery = recoveryVerified
+      ? inspectTrustedLivePackageRecoverySource({
+        packageRecoveryAuthority,
+        recoveryReceipt: recovery,
+        lifecycleReceipt: lifecycle,
+        now,
+      }) : null;
+    const recoveryLedgerOrderValid = Number.isFinite(
+      Date.parse(recoveryRecord?.ledgerCreatedAt || ''),
+    ) && Date.parse(recoveryRecord.ledgerCreatedAt)
+      >= Date.parse(lifecycleRecord.ledgerCreatedAt);
+    if (!recoveryVerified || !liveRecovery || !recoveryLedgerOrderValid) {
+      protect(declaration, 'recoveryProtectedPaths', entry);
+      continue;
+    }
+    authority.recoveryAuthoritySnapshotHashes.push(liveRecovery.authoritySnapshotHash);
+    authority.recoverySourceInventoryHashes.push(recovery.sourceInventoryHash);
+    const deletionLeaseBindingHash = recoveryDeletionLeaseBindingHash({
+      lifecycle,
+      recovery,
+      liveRecovery,
+    });
     declaration.deletionEvidence.push({
       path: entry.path,
       contentHash: entry.contentHash,
       evidenceKind: 'package_superseded_recovery_verified',
+      packageLifecycleReceiptHash: lifecycle.packageLifecycleReceiptHash,
+      packageRetentionRecoveryReceiptHash:
+        recovery.packageRetentionRecoveryReceiptHash,
+      packageRecoveryDeletionLeaseBindingHash: deletionLeaseBindingHash,
+      packageRecoveryTreeInventoryHash:
+        lifecycle.packageRecoveryTreeInventoryHash,
+      packageRecoveryAuthoritySnapshotHash: liveRecovery.authoritySnapshotHash,
+      storageAuthorityId: recovery.storageAuthorityId,
+      storageObjectId: recovery.storageObjectId,
+      storageObjectVersion: recovery.storageObjectVersion,
+      storageObjectBytesHash: recovery.storageObjectBytesHash,
+      retentionLockVersion: recovery.retentionLockVersion,
+      retentionLockIdentityHash: recovery.retentionLockIdentityHash,
+      retainUntil: recovery.retainUntil,
+      storageLedgerReceiptId: recovery.storageLedgerReceiptId,
+      storageLedgerReceiptHash: recovery.storageLedgerReceiptHash,
+      trustStoreHash: recovery.trustStoreHash,
       sourceEvidenceHashes: [
         campaigns.hash,
         releases.hash,
@@ -360,8 +610,16 @@ export function packageLifecycleDeclaration({
         lifecycle.packageLifecycleReceiptHash,
         supersession.packageSupersessionReceiptHash,
         successorLifecycle.packageLifecycleReceiptHash,
-        supersession.packageRecoveryVerificationHash,
-        supersession.packageRetentionReferenceSnapshotHash,
+        recovery.packageRetentionRecoveryReceiptHash,
+        recovery.packageImmutableRecoverySourceAuthorityHash,
+        recovery.packageExactRestoreDrillReceiptHash,
+        recovery.storageObjectBytesHash,
+        recovery.packageRecoveryStorageAuthorityProofHash,
+        recovery.packageRecoveryRetentionPolicyHash,
+        recovery.sourceInventoryHash,
+        liveRecovery.authoritySnapshotHash,
+        deletionLeaseBindingHash,
+        liveRecovery.retentionLockIdentityHash,
         hashRecord('RuntimeRetentionPackageCampaignAuthority', { predecessor, successor }),
         hashRecord('RuntimeRetentionPackageReleaseAuthority', {
           predecessor: predecessorRelease,
@@ -370,5 +628,11 @@ export function packageLifecycleDeclaration({
       ],
     });
   }
+  authority.recoveryAuthoritySnapshotHashes = Object.freeze([
+    ...new Set(authority.recoveryAuthoritySnapshotHashes),
+  ].sort());
+  authority.recoverySourceInventoryHashes = Object.freeze([
+    ...new Set(authority.recoverySourceInventoryHashes),
+  ].sort());
   return Object.freeze({ declaration, authority: Object.freeze(authority) });
 }

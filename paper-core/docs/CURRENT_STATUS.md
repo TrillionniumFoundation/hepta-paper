@@ -66,6 +66,18 @@ signer, and a fresh pending challenge before any network action. No real portal
 configuration, descriptor pin, or signed live canary has been supplied. See
 [`universal-submission-system.md`](universal-submission-system.md).
 
+`operator submission-handoff-export` is a separate local-filesystem handoff
+surface. It snapshots the current reviewed submission authority from a
+read-only handoff-store transaction, revalidates the effective trusted provider
+capability receipt and its current signature through the configured verifier,
+and consumes only the independently verified current campaign release. The
+operator-supplied request must bind those persisted identities exactly. A
+successful export writes a sealed, detached-verifiable bundle through a durable
+publication journal, but grants no execution permission and performs no
+provider, portal, upload, email or other network action. Any later live action
+must revalidate authority at provider-action time through the separately
+provisioned dispatcher.
+
 Contract implementations live only in `paper-domain/contracts`. One hash-bound
 `paper-core/src/contracts/workflow-contracts.mjs` retirement facade remains for
 the frozen migration manifest; the other obsolete contract re-exports are gone.
@@ -114,10 +126,18 @@ classification debt.
 
 The 16-capability catalog now includes the bounded single-GPU CuPy PDE and
 deep-learning paths. Their raw receipts remain deliberately non-promotable.
-Per-campaign promotion additionally requires a cross-process UUID lease,
-hash-bound artifact-body archive, independent same-device replay, external
-production qualification, and release-manifest authority. Cooperative local
-serialization is not a claim of physical multi-tenant GPU isolation.
+Both tasks in one campaign attempt must bind the same attempt-owned,
+cross-process UUID lease, including its selector, deadline, owner authority,
+lease id, fencing token and lock identities. The release package archives the
+eleven exact scientific bodies needed for replay and verifies the archive after
+the producer workspace is gone. Offline semantic replay independently
+recomputes the PDE metrics from the archived `f64le` solutions and performs
+CPU inference from the archived deep-learning dataset, model IR and tensor
+bundle; producer diagnostics remain non-authoritative. This local verifier is
+still non-promotable: same-device GPU retraining, independently qualified PDE
+CPU replay, external production qualification, and release-manifest authority
+remain separately required. Cooperative local serialization is not a claim of
+physical multi-tenant GPU isolation or independent hardware replication.
 
 The lease, archive rollback, and authorized package-retention implementations
 provide concurrency integrity and fail-closed recovery only among
@@ -133,6 +153,88 @@ per-package lane requires operator reconciliation: automatic package retention
 intentionally treats a quarantine without a lifecycle receipt as
 recovery-protected and does not reclaim it. The quarantine is not evidence of
 offline scientific replay.
+
+Campaign release package publication now has a durable build transaction and a
+separate prepared-publication transaction under a per-generation lock. Partial
+builds, marker-write interruption, prepared packages and a package renamed
+before its final bundle can be recovered after process death; a higher lease
+generation durably fences the stale attempt. Publication uses an exact,
+no-clobber move, rechecks pinned inode/tree identities, seals the final tree and
+fsyncs the affected directories. One opaque lease remains held across the
+asynchronous build-through-publication window. Contention uses bounded lock
+probes, exponential backoff, AbortSignal cancellation and hard pre/post-acquire
+deadlines. A pre-action timeout or abort, including pause/immediate-resume,
+refunds only the exact persisted attempt and CPU reservation when no external
+action or prepared result exists. A raced or noncanonical target fails closed.
+Retention may reclaim only staging owned by an inventoried, durably fenced
+stale transaction after active-node, release and CAS references are rechecked.
+A published predecessor is different: supersession records lineage but never
+acts as recovery evidence for a different package body. Deletion requires one
+unique version-2 recovery receipt that binds the exact predecessor lifecycle,
+release identity, path and exact package-tree inventory to a signed and
+ledger-bound immutable storage object, its exact bytes, object version, active
+retention-lock version, ledger receipt and trust epoch. The canonical inventory
+binds every path, kind, byte count, byte hash, POSIX mode, uid and gid. A
+separate restore execution extracts into an exclusively created, descriptor-
+pinned temporary directory on a disjoint real path, verifies the same complete
+inventory, and persists an independently verifiable restore attestation before
+cleaning the temporary tree. Expected lifecycle, production-before, archive,
+restored and production-after inventory hashes must all be identical. The
+storage signature also covers its verification time, so changing `verifiedAt`
+or replaying otherwise identical bytes across lifecycle, release, path or
+campaign identities fails closed. The live object version, ledger receipt,
+trust epoch and lock are queried from their authorities rather than accepted as
+self-reported proof fields. Missing, changed, expired, duplicated, legacy or
+ambiguous evidence keeps the predecessor recovery-protected.
+
+Provisioning is serialized across cooperating processes by a secure
+per-lifecycle flock whose runtime root, lock directory, lock file, ownership and
+inode are rechecked throughout the operation. The absence scan, external
+recovery action, receipt append and persisted reread occur inside that one
+critical section. If authority changes after a package is isolated but before
+the first irreversible removal, rollback moves the exact tree back first,
+restores its sealed modes, removes the empty deletion lane and emits no trusted
+tombstone. Live inspection independently pins the storage object's physical
+realpath, inode, link count, mode and bytes and binds the trust-store, issuer
+policy and external ledger receipt identities.
+
+Published deletion is a two-authority transaction. A crash-stable local fence
+records generation, opaque token and prepare/deleting/deleted/aborted state,
+while an external deletion lease freezes the exact storage object, lock,
+ledger and trust snapshot. Acquire, assert, renew, commit and abort are hash-
+bound and idempotent; recovery replays the same terminal command after an
+ambiguous response. After process restart or lease expiry, a separately sealed
+terminal-resume request performs an authority lookup by the original acquire
+request and exact commit/abort command; it may return only the already-issued
+terminal receipt. A mismatched terminal, expired nonterminal commit, or
+replacement lease fails closed. The package tree is restored with its exact
+inventory when the filesystem changed before the durable deleted state,
+whereas a durable deleted fence resumes only the external commit and never
+resurrects the package. Every unlink and rmdir rechecks both live authority and
+the lease.
+Repository-owned StorePort, receipt, CAS and release-package writers enter one
+reentrant writer-only boundary, so cooperative writes cannot race a prepared
+deletion or attach a stale reference to a terminally deleted package.
+
+`operator campaign --action retention-recovery-readiness` uses a fresh
+challenge and accepts only a short-lived signed inspection verified by an
+independent readiness trust store. It verifies storage and persisted-restore
+canaries, executes a real external deletion-lease acquire/assert/abort canary,
+and probes the pre-provisioned lifecycle lock through the same inode, ownership,
+mode and flock path used by provisioning. The final clock check occurs after
+those probes. Provisioning requires
+`--action provision-retention-recovery --apply` plus an exact lifecycle receipt
+hash. The stock command composition intentionally contains no synthetic WORM,
+KMS, storage-ledger, restore-attestor, deletion-lease or storage-issuer
+implementation, so it reports unavailable and package GC fails closed unless a
+separately qualified import-safe launcher injects the complete external
+authority set through the version-1 `PackageRecoveryAuthorityFactory`, raw
+deletion-lease authority, readiness verifier, and a pre-provisioned disjoint
+restore root. The repository supplies the validating lease client and local
+descriptor-pinned exact-restore factory; it does not supply the external
+authorities or their evidence. This is a safe operational boundary, not
+evidence that the external recovery service has been deployed or independently
+qualified.
 
 Local conformance is intentionally not labeled production operational history.
 The code-release gate has three explicit layers: implementation verification
@@ -198,6 +300,12 @@ cannot commit. A formal package node emits a typed campaign release bundle;
 submission consumes it only after independently verifying campaign, source,
 package and immutable-output lineage. Automation and submission use separate
 capability-scoped bootstrap roots.
+Package generation extends the same rule through filesystem publication: the
+campaign/package node attempt and lease generation are persisted before the
+tree is built, and only the current generation may prepare or publish the
+immutable release directory and bundle. Recovery reconciles one exact prepared
+or already-published generation instead of reconstructing authority from a
+directory name.
 The obsolete direct workflow executor, typed stage pipeline, stage handlers and
 local diagnostic loop have been removed. The explicit compatibility projection
 projects campaign authority into legacy `workflow_states`; it does not revive or
@@ -301,6 +409,12 @@ provisioned, the research campaign itself has no human checkpoint:
   `automation-results/` tree. Each signed production profile is also compiled
   into a hash-bound Experiment IR covering design, estimator, metrics, stopping
   rule, dataset contract, execution binding and typed numeric-oracle ABI.
+  Readiness selects the exact replay node from the current production plan and
+  its single canonical original dependency; it does not scan backward for an
+  older valid receipt. Both persisted nodes must match the plan kind, complete
+  dependency/specification body, round, attempt, lease generation, revision,
+  completion status and result hash, and their attempt identities must match the
+  original/replay receipts.
   Convergence, condition-number, error-bound and optimality-gap claims require
   a separately signed advanced profile plus process-isolated recomputation;
   the built-in property/residual profiles cannot authorize those claims.
@@ -377,6 +491,11 @@ provisioned, the research campaign itself has no human checkpoint:
   idempotent, completed external actions are not replayed, and qualification is
   requested from an injected external signer/verifier and cached by release
   hash. The application never self-signs qualification.
+  Readiness takes the current non-superseded production campaign as the agenda
+  authority head and binds its campaign status, revision, plan, preparation,
+  capability scope and producer-receipt hashes. An invalid current head blocks;
+  an older valid campaign is never used as fallback, and a bootstrap snapshot
+  cannot switch campaigns between capability inspections.
 - The canonical foreground `autonomous-supervisor` adds durable cold-start
   autonomy around that campaign path. A version-2 machine-intake configuration
   binds a repository-owned topic-producer implementation, exact provider
@@ -448,12 +567,26 @@ with the live author/reviewer canary flag. This is a bounded unattended
 execution claim for registered profiles, not a claim of universal scientific
 validity, exhaustive prior-art search, or self-created independent trust.
 
+The outer research-assurance inspection is likewise plan-canonical. It binds
+the current agenda and Experiment-IR snapshots to the exact persisted formal,
+empirical original/replay, GPU-scientific and research-verification nodes,
+including campaign revision, node attempt/generation/revision/status,
+dependencies, specifications and result hashes. A second read must reproduce
+the same snapshots, so a concurrent generation change cannot splice evidence
+from two authorities. Hash-valid but noncanonical later rows, legacy fallback
+rows and self-shaped result payloads remain blocked. These checks establish
+local integrity only; the dynamic-formal authority, reviewer independence,
+external replay, GPU qualification and other independent assurances must still
+be supplied and verified by their actual authorities.
+
 The autonomous layer also requires the fail-closed state-safety gate documented
 in [`autonomous-research-state-safety-readiness.md`](autonomous-research-state-safety-readiness.md):
 closed database inventory and latest valid restore coverage must both be 10/10,
 and online writer coverage must be 10/10 with matching static AST and broker-
 signed scope evidence bound to a current signed authority head and recent
-active challenge. Ordinary status is passive. The production operation
+active challenge. Ordinary status is read-only and non-authorizing, but it
+does perform local runtime and daemon observation probes; those observations
+are reported as effects and never grant execution authority. The production operation
 manifest now covers all ten roles through sixteen writer entries and classifies
 204 statically discovered mutation operations: 132 coordinator-integrated
 online DML operations are bound to factory-pinned typed plans, while 72
@@ -491,6 +624,14 @@ remains a separated semantic-review attestation, not a kernel theorem. Runtime
 image identities and transitive source/artifact closures are digest pinned, but
 bitwise image rebuild reproducibility remains false until an out-of-band-pinned
 dual-verifier configuration produces a fresh matching signed OCI receipt.
+
+Accordingly, this unreleased source remains a hardened candidate, not an
+assertion that an external production deployment is ready. No repository-local
+test, offline replay, handoff export or sealed package substitutes for a real
+KMS/HSM, independent author/reviewer/qualifier and replay authorities, runtime
+qualification, generic-domain evidence convergence, an isolated live dispatcher
+or its portal bindings and canaries. No live upload, portal mutation or email
+delivery is performed by the new handoff/export path.
 
 ## Verification surface
 

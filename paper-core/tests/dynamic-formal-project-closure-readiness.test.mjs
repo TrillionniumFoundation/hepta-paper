@@ -15,6 +15,12 @@ import {
   verifyDynamicFormalExecutionAuthority,
 } from '../../paper-adapters/research-verify/dynamic-formal-execution-authority.mjs';
 import {
+  executeDynamicFormalSandboxProbe,
+} from '../../paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier.mjs';
+import {
+  inspectPersistedAutonomousResearchAssuranceAuthority,
+} from '../../paper-composition/automation/automation-readiness-research-assurance-authority-inspection.mjs';
+import {
   readFormalProjectClosureSync,
 } from '../../paper-adapters/research-verify/formal-project-closure-reader.mjs';
 import {
@@ -70,6 +76,43 @@ test('production dynamic formal readiness rejects sandbox dependency injection',
     );
   }
   assert.equal(poisonCalls, 0);
+});
+
+test('production sandbox probe wrapper rejects every injection seam before delegation', () => {
+  let poisonCalls = 0;
+  const poison = () => { poisonCalls += 1; };
+  assert.throws(
+    () => executeDynamicFormalSandboxProbe({
+      projectSnapshotRepository: { materialize: poison },
+      sandboxProbeRunnerFactory: poison,
+      spawnSyncImpl: poison,
+      verifySandboxProbeReceipt: poison,
+    }),
+    {
+      message: [
+        'dynamic_formal_sandbox_dependency_injection_forbidden:',
+        'projectSnapshotRepository,sandboxProbeRunnerFactory,spawnSyncImpl,',
+        'verifySandboxProbeReceipt',
+      ].join(''),
+    },
+  );
+  assert.equal(poisonCalls, 0);
+});
+
+test('production sandbox probe wrapper delegates to the sealed engine and fails closed', (t) => {
+  const { projectRoot, closure } = fixture(t);
+  const inspection = executeDynamicFormalSandboxProbe({
+    closure,
+    projectRoot,
+    projectScopeRoot: projectRoot,
+    readClosure: () => ({ status: 'formal_project_closure_blocked' }),
+  });
+
+  assert.equal(inspection.sandboxProbeReceipt, null);
+  assert.ok(inspection.snapshotSealReceipt);
+  assert.ok(inspection.blockers.includes(
+    'dynamic_formal_sandbox_probe_snapshot_invalid',
+  ));
 });
 
 function fixture(t) {
@@ -607,6 +650,41 @@ test('independently signed and environment-pinned Mathlib build authority unlock
   );
   const executionAuthority = buildDynamicFormalExecutionAuthority(inspection);
   assert.equal(verifyDynamicFormalExecutionAuthority(executionAuthority), true);
+  let assuranceQueries = 0;
+  const currentAuthorityQueryFailure =
+    inspectPersistedAutonomousResearchAssuranceAuthority({
+      store: {
+        query: () => {
+          assuranceQueries += 1;
+          return { ok: false };
+        },
+      },
+      expectedAgendaAuthorityInspection: {
+        ready: true,
+        campaignId: 'campaign-a',
+        paperId: 'paper-a',
+        campaignPlanHash: `sha256:${'a'.repeat(64)}`,
+      },
+      expectedExperimentIrExecutionAuthorityInspection: {
+        ready: true,
+        campaignId: 'campaign-a',
+        paperId: 'paper-a',
+        campaignPlanHash: `sha256:${'a'.repeat(64)}`,
+      },
+      currentDynamicFormalExecutionAuthority: executionAuthority,
+      externalResearchReplayReceiptVerifier: {
+        kind: 'ExternalResearchReplayReceiptVerifier',
+      },
+      reviewerReceiptVerificationAuthority: {
+        version: 2,
+        cryptographicAuthorityReady: true,
+        identityIndependenceReady: true,
+      },
+    });
+  assert.equal(assuranceQueries, 1);
+  assert.deepEqual(currentAuthorityQueryFailure.blockers, [
+    'autonomous_research_assurance_authority_query_failed',
+  ]);
   assert.equal(verifyDynamicFormalExecutionAuthority({
     ...executionAuthority,
     unexpected: true,

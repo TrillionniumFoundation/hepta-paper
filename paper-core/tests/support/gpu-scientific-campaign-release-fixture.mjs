@@ -77,6 +77,7 @@ import {
 } from './canonical-cupy-pde-poisson-2d-sandbox-test-seam.mjs';
 import {
   createOsSandboxedWorkerRunnerForTest,
+  withGpuSelectorExecutionLeaseForTest,
 } from './os-sandboxed-worker-runner-test-driver.mjs';
 import {
   createTrustedIndependentPdfRebuildVerifierFixture,
@@ -278,7 +279,6 @@ function pdeFixtureRunner(outputRoot, runtimeRoot) {
 }
 
 function tensorsFor(model) {
-  let value = 0.03125;
   const chunks = [];
   const tensors = model.layers.flatMap((layer) => [
     {
@@ -291,10 +291,6 @@ function tensorsFor(model) {
   )).map((tensor) => {
     const count = tensor.shape.reduce((product, item) => product * item, 1);
     const bytes = Buffer.alloc(count * 4);
-    for (let index = 0; index < count; index += 1) {
-      bytes.writeFloatLE(value, index * 4);
-      value += 0.03125;
-    }
     chunks.push(bytes);
     return {
       name: tensor.name,
@@ -315,6 +311,11 @@ function writeDeepLearningFixtureOutputs({ outputDirectory, request }) {
     trainingRunId,
   } = request;
   const { tensors, bundle } = tensorsFor(model);
+  const predictedClass = dataset.labels.map(() => 0);
+  const accuracy = predictedClass.reduce((matches, predicted, index) => (
+    matches + Number(predicted === dataset.labels[index])
+  ), 0) / dataset.sampleCount;
+  const crossEntropy = Math.log(model.classCount);
   const modelSpecification = {
     version: 1,
     kind: 'DeepLearningModelSpecification',
@@ -327,10 +328,12 @@ function writeDeepLearningFixtureOutputs({ outputDirectory, request }) {
     trainingRunId,
     modelIrHash: model.deepLearningModelIrHash,
     trainingDatasetManifestHash: dataset.deepLearningTrainingDatasetManifestHash,
-    records: [
-      { epoch: 1, accuracy: 0.75, crossEntropy: 0.4, gradientNorm: 0.2 },
-      { epoch: 2, accuracy: 1, crossEntropy: 0.2, gradientNorm: 0.05 },
-    ],
+    records: Array.from({ length: model.training.epochs }, (_, index) => ({
+      epoch: index + 1,
+      accuracy,
+      crossEntropy,
+      gradientNorm: 0,
+    })),
   };
   const summary = {
     version: 1,
@@ -341,14 +344,16 @@ function writeDeepLearningFixtureOutputs({ outputDirectory, request }) {
     trainingDatasetManifestHash: dataset.deepLearningTrainingDatasetManifestHash,
     seed: model.seed,
     completedEpoch: model.training.epochs,
-    trainingStepCount: 4,
+    trainingStepCount:
+      Math.ceil(dataset.sampleCount / model.training.batchSize)
+        * model.training.epochs,
     tensorBundleArtifactBytes: bundle.length,
     tensors,
     finalMetrics: {
-      accuracy: 1,
-      crossEntropy: 0.2,
-      initialCrossEntropy: 0.7,
-      gradientNorm: 0.05,
+      accuracy,
+      crossEntropy,
+      initialCrossEntropy: crossEntropy,
+      gradientNorm: 0,
     },
     trainingPredictionCount: dataset.sampleCount,
     runtime: {
@@ -374,7 +379,7 @@ function writeDeepLearningFixtureOutputs({ outputDirectory, request }) {
     modelIrHash: model.deepLearningModelIrHash,
     trainingDatasetManifestHash: dataset.deepLearningTrainingDatasetManifestHash,
     scope: 'training-dataset-only-not-hidden-evaluation-v1',
-    predictedClass: [0, 1, 1, 0],
+    predictedClass,
   };
   for (const [name, value] of Object.entries({
     'model-spec.json': modelSpecification,
@@ -446,7 +451,11 @@ function promoteDeepLearningReceipt(receipt) {
   return promoted;
 }
 
-async function buildGpuExecution({ runtimeRoot, campaign }) {
+async function buildGpuExecution({
+  runtimeRoot,
+  campaign,
+  sealPersistedProductionPlan = false,
+}) {
   const executionPlan = buildCanonicalGpuScientificCampaignExecutionPlan({
     campaignId: campaign.campaignId,
     paperId: campaign.paperId,
@@ -454,6 +463,54 @@ async function buildGpuExecution({ runtimeRoot, campaign }) {
     absoluteExecutionDeadlineEpochMs: 2_000_000_000_000,
   });
   campaign.spec.gpuScientificExecutionPlan = executionPlan;
+  if (sealPersistedProductionPlan) {
+    const formalNodeId = `${campaign.campaignId}:1:formal-verify`;
+    const finalCompileNodeId = `${campaign.campaignId}:1:final-compile`;
+    const researchNodeId = `${campaign.campaignId}:2:research-verify`;
+    campaign.spec.nodes = [
+      {
+        nodeId: formalNodeId,
+        kind: 'formal-verify',
+        roundIndex: 0,
+        dependencies: [],
+        sourceClosureTerminal: true,
+      },
+      {
+        nodeId: finalCompileNodeId,
+        kind: 'final-compile',
+        roundIndex: 1,
+        dependencies: [formalNodeId],
+        sourceClosureTerminal: true,
+        sourceMutationPolicy: 'forbid',
+      },
+      {
+        nodeId: executionPlan.nodeId,
+        kind: 'gpu-scientific-execution',
+        roundIndex: 0,
+        dependencies: [formalNodeId],
+        sourceClosureTerminal: true,
+        gpuScientificExecutionPlanHash:
+          executionPlan.gpuScientificCampaignExecutionPlanHash,
+        gpuScientificResourceBudgetHash:
+          GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET
+            .gpuScientificCampaignResourceBudgetHash,
+      },
+      {
+        nodeId: researchNodeId,
+        kind: 'research-verify',
+        roundIndex: 2,
+        dependencies: [finalCompileNodeId, executionPlan.nodeId, formalNodeId],
+      },
+      {
+        nodeId: `${campaign.campaignId}:3:package`,
+        kind: 'package',
+        roundIndex: 3,
+        dependencies: [finalCompileNodeId, researchNodeId],
+      },
+    ];
+    const { campaignPlanHash: _oldPlanHash, ...planPayload } = campaign.spec;
+    campaign.spec.campaignPlanHash = hashRecord('PaperCampaignPlan', planPayload);
+  }
   const node = {
     nodeId: executionPlan.nodeId,
     kind: 'gpu-scientific-execution',
@@ -494,44 +551,6 @@ async function buildGpuExecution({ runtimeRoot, campaign }) {
       maximumOutputBytes: 8 * 1024 ** 2,
     }),
   );
-  const pdeGpuReceipt = await pdeExecutor.execute({
-    runId: executionPlan.tasks[0].runId,
-    gpuDeviceSelector: executionPlan.gpuDeviceSelector,
-    absoluteDeadlineEpochMs: executionPlan.absoluteExecutionDeadlineEpochMs,
-    executionAuthorityHash:
-      attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
-  });
-  if (pdeGpuReceipt.status
-      !== 'canonical_cupy_pde_poisson_2d_executed_pending_cpu_oracle') {
-    throw new Error(
-      `gpu_release_fixture_pde_execution_invalid:${JSON.stringify(pdeGpuReceipt.blockers)}`,
-    );
-  }
-  const cpuOracleAssurance =
-    runProcessIsolatedPdePoisson2dIndependentCpuOracle({
-      artifactRoot: pdeGpuReceipt.outputDirectory,
-      artifactManifest: pdeGpuReceipt.artifactManifest,
-      producerSpecification: pdeGpuReceipt.producerSpecification,
-      absoluteDeadlineEpochMs: executionPlan.absoluteExecutionDeadlineEpochMs,
-    });
-  const pdeScientificPayload = {
-    version: 1,
-    kind: 'CanonicalPdePoisson2dGpuScientificReceipt',
-    status: 'canonical_pde_poisson_2d_gpu_scientifically_verified_non_promotable',
-    gpuReceipt: pdeGpuReceipt,
-    cpuOracleAssurance,
-    productionPromotionEligible: false,
-    blockers: [
-      'pde_poisson_2d_external_operational_and_conformance_authority_required',
-    ],
-  };
-  const pdeScientificReceipt = Object.freeze({
-    ...pdeScientificPayload,
-    canonicalPdePoisson2dGpuScientificReceiptHash: hashRecord(
-      'CanonicalPdePoisson2dGpuScientificReceipt',
-      pdeScientificPayload,
-    ),
-  });
   const deepLearningExecutor =
     await withCanonicalCupyDeepLearningSandboxRunnerForTest(
       deepLearningFixtureRunner(deepLearningOutputRoot, runtimeRoot),
@@ -546,27 +565,86 @@ async function buildGpuExecution({ runtimeRoot, campaign }) {
           maximumOutputBytes: 2 * 1024 ** 3,
         }),
     );
-  const deepLearningReceipt = promoteDeepLearningReceipt(
-    await deepLearningExecutor.execute({
-      trainingRunId: executionPlan.tasks[1].trainingRunId,
-      profile: executionPlan.tasks[1].profile,
-      modelIr: executionPlan.tasks[1].modelIr,
-      trainingDataset: executionPlan.tasks[1].trainingDataset,
-      trainingDatasetAuthority:
-        executionPlan.tasks[1].trainingDatasetAuthority,
+  const { pdeScientificReceipt, deepLearningReceipt } =
+    await withGpuSelectorExecutionLeaseForTest({
+      runtimeRoot,
       gpuDeviceSelector: executionPlan.gpuDeviceSelector,
+      ownerAuthorityHash:
+        attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
       absoluteDeadlineEpochMs:
         executionPlan.absoluteExecutionDeadlineEpochMs,
-      executionAuthorityHash:
-        attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
-    }),
-  );
-  if (deepLearningReceipt.status
-      !== 'canonical_cupy_deep_learning_training_recorded_non_promotable') {
-    throw new Error(
-      `gpu_release_fixture_deep_learning_execution_invalid:${JSON.stringify(deepLearningReceipt.blockers)}`,
-    );
-  }
+    }, async (campaignLease) => {
+      const gpuSelectorExecutionLeaseDelegation =
+        campaignLease.workerDelegation();
+      const pdeGpuReceipt = await pdeExecutor.execute({
+        runId: executionPlan.tasks[0].runId,
+        gpuDeviceSelector: executionPlan.gpuDeviceSelector,
+        absoluteDeadlineEpochMs:
+          executionPlan.absoluteExecutionDeadlineEpochMs,
+        executionAuthorityHash:
+          attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
+        gpuSelectorExecutionLeaseDelegation,
+      });
+      if (pdeGpuReceipt.status
+          !== 'canonical_cupy_pde_poisson_2d_executed_pending_cpu_oracle') {
+        throw new Error(
+          `gpu_release_fixture_pde_execution_invalid:${JSON.stringify(pdeGpuReceipt.blockers)}`,
+        );
+      }
+      const cpuOracleAssurance =
+        runProcessIsolatedPdePoisson2dIndependentCpuOracle({
+          artifactRoot: pdeGpuReceipt.outputDirectory,
+          artifactManifest: pdeGpuReceipt.artifactManifest,
+          producerSpecification: pdeGpuReceipt.producerSpecification,
+          absoluteDeadlineEpochMs:
+            executionPlan.absoluteExecutionDeadlineEpochMs,
+        });
+      const pdeScientificPayload = {
+        version: 1,
+        kind: 'CanonicalPdePoisson2dGpuScientificReceipt',
+        status:
+          'canonical_pde_poisson_2d_gpu_scientifically_verified_non_promotable',
+        gpuReceipt: pdeGpuReceipt,
+        cpuOracleAssurance,
+        productionPromotionEligible: false,
+        blockers: [
+          'pde_poisson_2d_external_operational_and_conformance_authority_required',
+        ],
+      };
+      const selectedPdeScientificReceipt = Object.freeze({
+        ...pdeScientificPayload,
+        canonicalPdePoisson2dGpuScientificReceiptHash: hashRecord(
+          'CanonicalPdePoisson2dGpuScientificReceipt',
+          pdeScientificPayload,
+        ),
+      });
+      const selectedDeepLearningReceipt = promoteDeepLearningReceipt(
+        await deepLearningExecutor.execute({
+          trainingRunId: executionPlan.tasks[1].trainingRunId,
+          profile: executionPlan.tasks[1].profile,
+          modelIr: executionPlan.tasks[1].modelIr,
+          trainingDataset: executionPlan.tasks[1].trainingDataset,
+          trainingDatasetAuthority:
+            executionPlan.tasks[1].trainingDatasetAuthority,
+          gpuDeviceSelector: executionPlan.gpuDeviceSelector,
+          absoluteDeadlineEpochMs:
+            executionPlan.absoluteExecutionDeadlineEpochMs,
+          executionAuthorityHash:
+            attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
+          gpuSelectorExecutionLeaseDelegation,
+        }),
+      );
+      if (selectedDeepLearningReceipt.status
+          !== 'canonical_cupy_deep_learning_training_recorded_non_promotable') {
+        throw new Error(
+          `gpu_release_fixture_deep_learning_execution_invalid:${JSON.stringify(selectedDeepLearningReceipt.blockers)}`,
+        );
+      }
+      return {
+        pdeScientificReceipt: selectedPdeScientificReceipt,
+        deepLearningReceipt: selectedDeepLearningReceipt,
+      };
+    });
   const executionResult = buildGpuScientificCampaignExecutionResult({
     campaign,
     node,
@@ -837,6 +915,7 @@ export function revokedGpuAuthorityTrustStore(trustStore, revokedAt) {
 
 export async function createGpuScientificCampaignReleaseFixture(t, {
   campaignId = `gpu-release-${crypto.randomBytes(4).toString('hex')}`,
+  persistedProductionPlan = false,
 } = {}) {
   const root = fs.mkdtempSync(path.join(
     os.tmpdir(), 'hepta-gpu-release-toctou-',
@@ -872,9 +951,20 @@ export async function createGpuScientificCampaignReleaseFixture(t, {
       venueTarget: 'Fixture Journal',
       researchVerificationRequired: true,
       paperQualityRequirements: { researchVerificationRequired: true },
+      ...(persistedProductionPlan ? {
+        version: 4,
+        kind: 'PaperCampaignPlan',
+        campaignId,
+        paperId: 'gpu-release-paper',
+        autonomousResearchPreparation: { launchMode: 'production-run' },
+      } : {}),
     },
   };
-  const gpu = await buildGpuExecution({ runtimeRoot, campaign });
+  const gpu = await buildGpuExecution({
+    runtimeRoot,
+    campaign,
+    sealPersistedProductionPlan: persistedProductionPlan,
+  });
   const archive = inspectGpuScientificArtifactBodyArchiveSourceSync({
     runtimeRoot,
     campaign,
@@ -987,7 +1077,11 @@ export async function createGpuScientificCampaignReleaseFixture(t, {
     status: 'completed',
     attemptId: `${campaignId}:research-attempt-1`,
     leaseGeneration: 1,
-    dependencies: [finalCompileNode.nodeId, gpu.node.nodeId],
+    dependencies: [
+      finalCompileNode.nodeId,
+      gpu.node.nodeId,
+      `${campaignId}:1:formal-verify`,
+    ],
   };
   const campaignResearchSourceSnapshot = buildCampaignResearchSourceSnapshot({
     campaignId: campaign.campaignId,

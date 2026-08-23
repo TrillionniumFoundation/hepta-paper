@@ -160,6 +160,11 @@ export function createCampaignPreparedIntegrationOperations({
           gpuScientificPromotionAuthorityVerifier,
         })
         : null;
+      const packageDeletionWriterSelector = releasePromotionReceipt
+        ? Object.freeze({
+          packagePath: prepared.releaseBundle.packageOutput.packageDir,
+        })
+        : null;
       const eventRow = eventStatement(node.campaignId, nodeId, 'campaign_node_completed', {
         resultHash: node.preparedResultHash,
         preparedAttemptId: node.preparedAttemptId,
@@ -203,6 +208,7 @@ export function createCampaignPreparedIntegrationOperations({
             releaseAuthorityStatement,
           ],
           fallback: 'campaign_node_complete_failed',
+          packageDeletionWriterSelector,
           input: {
             node, prepared, now, role, reviewerId, childSessionId, reviewHash,
             promptHash, resolvedModel, nodeId, workerId, attemptId,

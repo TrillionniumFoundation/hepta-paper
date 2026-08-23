@@ -37,12 +37,14 @@ export function freshReachabilityManifestForIntent({
   provider,
   activeNodeIds = [],
   entries: selectedEntries = null,
+  detachedRetentionEntries = [],
 } = {}) {
   assertIntentReachabilityManifest(intent, originalManifest);
   const entries = governedEntries(intent || { entries: [] }, selectedEntries);
   if (!entries.length) return originalManifest || null;
   if (typeof provider?.createManifest !== 'function'
-    || !Number.isFinite(Date.parse(originalManifest?.createdAt || ''))) {
+    || !Number.isFinite(Date.parse(originalManifest?.createdAt || ''))
+    || !Array.isArray(detachedRetentionEntries)) {
     throw new Error('runtime_retention_live_reachability_authority_required');
   }
   let freshManifest;
@@ -51,6 +53,7 @@ export function freshReachabilityManifestForIntent({
       activeNodeIds,
       persist: false,
       createdAt: originalManifest.createdAt,
+      detachedRetentionEntries,
     });
   } catch (error) {
     throw new Error(`runtime_retention_live_reachability_authority_unavailable:${String(

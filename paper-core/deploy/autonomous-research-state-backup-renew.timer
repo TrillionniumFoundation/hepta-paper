@@ -1,5 +1,7 @@
 [Unit]
 Description=Renew autonomous research state recovery evidence every 12 hours
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
 
 [Timer]
 OnBootSec=15min

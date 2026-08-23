@@ -94,7 +94,7 @@ test('submission delivery runtime remains fail-closed and has no executor implem
   const paperTask = { paperId: 'paper-1', taskKey: 'paper:paper-1' };
   const artifactPackage = createPaperArtifactPackage({ paperTask, artifacts: [{ path: 'paper.pdf', hash: `sha256:${'a'.repeat(64)}` }], submitReady: true });
   const reviewedVenueEvidence = { status: 'reviewed_venue_evidence_verified', reviewedVenueEvidenceHash: `sha256:${'1'.repeat(64)}`, sourceVerificationReceiptHash: `sha256:${'2'.repeat(64)}`, observationSubjectHash: `sha256:${'4'.repeat(64)}`, reviewedBy: 'venue-observer', purpose: 'submission_preflight', portalRoute: '/submit' };
-  const providerCapabilityVerificationReceipt = { status: 'provider_capability_verified', portalRoute: '/submit', providerCapabilityVerificationReceiptHash: `sha256:${'3'.repeat(64)}` };
+  const providerCapabilityVerificationReceipt = { status: 'provider_capability_verified', provider: 'contract-test-provider', accountId: 'contract-test-account', portalRoute: '/submit', providerCapabilityVerificationReceiptHash: `sha256:${'3'.repeat(64)}` };
   const inputs = {
     paperTask,
     artifactPackage,

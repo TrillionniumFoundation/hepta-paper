@@ -59,10 +59,10 @@ export function assertAutonomousResearchOnlineRuntimeActivationReceipt(receipt) 
     || !SHA256.test(String(receipt.schemaTransitionReceiptHash || ''))
     || !Number.isFinite(Date.parse(String(receipt.activatedAt || '')))
     || receipt.coordinatorRuntimeReady !== true
-    || !Array.isArray(receipt.remainingBlockers)
-    || receipt.remainingBlockers.length !== 0
-    || !Array.isArray(receipt.databaseActivations)
-    || receipt.databaseActivations.length < AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.length) {
+  || !Array.isArray(receipt.remainingBlockers)
+  || receipt.remainingBlockers.length !== 0
+  || !Array.isArray(receipt.databaseActivations)
+    || receipt.databaseActivations.length !== AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.length) {
     fail();
   }
   const instanceIds = [];
@@ -86,6 +86,7 @@ export function assertAutonomousResearchOnlineRuntimeActivationReceipt(receipt) 
   }
   if (new Set(instanceIds).size !== instanceIds.length
     || instanceIds.join('\0') !== [...instanceIds].sort().join('\0')
+    || new Set(roles).size !== roles.length
     || [...new Set(roles)].sort().join('\0')
       !== [...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort().join('\0')
     || receipt.activationReceiptHash

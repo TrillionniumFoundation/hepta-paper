@@ -10,6 +10,31 @@ import {
 export const receiptHash = selectReceiptHash;
 
 const RECEIPT_LEDGER_MUTATION = Symbol('sqlite-receipt-ledger-mutation');
+const DIRECT_PACKAGE_RECEIPT_KINDS = new Set([
+  'PackageLifecycleRecordingIntent',
+  'PackageLifecycleReceipt',
+  'PackageExactRestoreDrillReceipt',
+  'PackageRetentionRecoveryReceipt',
+  'PackageRetentionLegalHoldReceipt',
+]);
+
+function packageDeletionWriterSelector(receipt) {
+  if (DIRECT_PACKAGE_RECEIPT_KINDS.has(receipt?.kind)) {
+    return Object.freeze({
+      packagePath: receipt.packagePath,
+      ...(receipt.packageLifecycleReceiptHash ? {
+        packageLifecycleReceiptHash: receipt.packageLifecycleReceiptHash,
+      } : {}),
+    });
+  }
+  if (receipt?.kind === 'PackageSupersessionReceipt') {
+    return Object.freeze({
+      packageLifecycleReceiptHash: receipt.predecessorLifecycleReceiptHash,
+      packagePath: receipt.successorPackagePath,
+    });
+  }
+  return null;
+}
 
 export function preparedSqliteReceiptLedgerMutation(prepared) {
   const mutation = prepared?.[RECEIPT_LEDGER_MUTATION];
@@ -116,6 +141,7 @@ export function createSqliteReceiptLedger({ store: suppliedStore, clock, writerI
     prepare,
     record(receipt, options = {}) {
       const prepared = prepare(receipt, options);
+      const targetedSelector = packageDeletionWriterSelector(receipt);
       if (typeof store.mutate === 'function') {
         const mutation = preparedSqliteReceiptLedgerMutation(prepared);
         const coordinated = store.mutate({
@@ -123,6 +149,9 @@ export function createSqliteReceiptLedger({ store: suppliedStore, clock, writerI
           operationId: 'native-store.receipt-ledger.record.v1',
           authorizationReceiptHashes: [],
           sideEffectReservationHashes: [],
+          ...(targetedSelector ? {
+            packageDeletionWriterSelector: targetedSelector,
+          } : {}),
           mutate(transaction) {
             return transaction.run(
               mutation.strictInsert
@@ -144,7 +173,9 @@ export function createSqliteReceiptLedger({ store: suppliedStore, clock, writerI
         const { sql: _sql, ...recorded } = prepared;
         return Object.freeze(recorded);
       }
-      const result = store.execute(prepared.sql);
+      const result = store.execute(prepared.sql, targetedSelector ? {
+        packageDeletionWriterSelector: targetedSelector,
+      } : undefined);
       if (!result.ok) throw new Error(result.error || result.stderr || 'receipt_ledger_write_failed');
       const { sql: _sql, ...recorded } = prepared;
       return Object.freeze(recorded);

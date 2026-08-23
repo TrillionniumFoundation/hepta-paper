@@ -9,6 +9,9 @@ import {
 } from '../paper-ports/autonomous-submission-outbox-port.mjs';
 import { assertCampaignReleaseAuthorityPort } from '../paper-ports/campaign-release-authority-port.mjs';
 import { createCampaignReleaseQueryCapability } from '../paper-ports/campaign-release-query-port.mjs';
+import {
+  createSubmissionHandoffExportAuthorityQueryCapability,
+} from '../paper-ports/submission-handoff-export-authority-query-port.mjs';
 import { assertCampaignReleasePackagerPort } from '../paper-ports/campaign-release-packager-port.mjs';
 import { assertCampaignResearchVerifierPort } from '../paper-ports/campaign-research-verifier-port.mjs';
 import { assertClockPort } from '../paper-ports/clock-port.mjs';
@@ -17,6 +20,8 @@ import { assertInventoryRepositoryPort } from '../paper-ports/inventory-reposito
 import { assertIdGeneratorPort } from '../paper-ports/id-generator-port.mjs';
 import { assertJournalPolicyPort } from '../paper-ports/journal-policy-port.mjs';
 import { assertPaperStageExecutionPort } from '../paper-ports/paper-stage-execution-port.mjs';
+import { assertPackageRecoveryDeletionLeasePort }
+  from '../paper-ports/package-recovery-deletion-lease-port.mjs';
 import { assertReceiptLedgerPort } from '../paper-ports/receipt-ledger-port.mjs';
 import { assertSchedulerPort } from '../paper-ports/scheduler-port.mjs';
 import { assertRefereeIssueQueryPort } from '../paper-ports/referee-issue-query-port.mjs';
@@ -28,6 +33,12 @@ const SERVICE_PROFILE_REQUIREMENTS = Object.freeze({
     'campaignReleaseQuery',
     'persistenceSession',
     'schemaVersion',
+  ]),
+  'handoff-export': Object.freeze([
+    'campaignReleaseQuery',
+    'persistenceSession',
+    'schemaVersion',
+    'submissionHandoffExportAuthorityQuery',
   ]),
   inventory: Object.freeze([
     'artifactRepositoryFactory',
@@ -109,6 +120,10 @@ const SERVICE_PROFILE_REQUIREMENTS = Object.freeze({
 
 const CAPABILITIES_BY_PROFILE = Object.freeze({
   handoff: Object.freeze(['submission-release-read']),
+  'handoff-export': Object.freeze([
+    'submission-handoff-export-authority-read',
+    'submission-release-read',
+  ]),
   inventory: Object.freeze(['artifact-repository', 'inventory-read', 'receipt-ledger', 'typed-persistence']),
   automation: Object.freeze([
     'artifact-repository', 'automation-coordination',
@@ -142,6 +157,8 @@ function normalizeService(name, value, profile, allServices) {
     case 'jobReceiptStore':
     case 'nativeResearchWorkerJobReceiptStore': return assertJobReceiptStorePort(value);
     case 'packageLifecycleAuthority': return assertPackageLifecycleAuthorityPort(value);
+    case 'packageRecoveryDeletionLeasePort':
+      return assertPackageRecoveryDeletionLeasePort(value);
     case 'journalPolicy': return assertJournalPolicyPort(value);
     case 'persistenceSession': return assertPersistenceSessionPort(value);
     case 'receiptLedger':
@@ -155,6 +172,8 @@ function normalizeService(name, value, profile, allServices) {
     case 'scheduler': return assertSchedulerPort(value);
     case 'store': return assertLegacyStorePort(value);
     case 'submissionDeliveryStore': return assertSubmissionDeliveryStorePort(value);
+    case 'submissionHandoffExportAuthorityQuery':
+      return createSubmissionHandoffExportAuthorityQueryCapability(value);
     case 'submissionExecutorDescriptor': return assertSubmissionExecutorDescriptorValue(value);
     case 'stageExecution': return assertPaperStageExecutionPort(value, {
       requireSubmission: profile === 'submission' || Boolean(allServices.campaignReleaseAuthorityRepository),

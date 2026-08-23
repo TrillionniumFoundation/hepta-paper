@@ -4,9 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { copySqliteDatabase } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { prepareImmutableLegacyMatrixReference } from '../../migration/legacy-matrix-reference.mjs';
 import {
   declaredTestSuite,
 } from '../src/test-suite-manifest.mjs';
+import {
+  defaultPaperAssetRoot,
+  defaultPaperRuntimeRoot,
+} from '../src/workspace-layout.mjs';
 import { inspectTrackedProductionGraph } from '../verification/tracked-production-graph.mjs';
 import {
   createBoundedVerificationCommandExecutor,
@@ -21,7 +27,19 @@ import {
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const coverageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-critical-coverage-'));
+const isolatedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-critical-runtime-'));
+const productionRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-critical-production-'));
 const criticalCoverageChildTimeoutMs = 30 * 60 * 1_000;
+const copiedRuntimePaths = Object.freeze([
+  'owner-acceptance',
+  'operational-proof',
+  'trust',
+  'authority-inbox',
+  'legacy-retirement',
+  path.join('release-evidence', 'current'),
+  path.join('audits', 'capability-verification'),
+]);
+let legacyReference = null;
 const explicitlyTargetedTests = [
   'paper-core/tests/paper-contracts-facade.test.mjs',
   'paper-core/tests/domain-purity-identity.test.mjs',
@@ -161,7 +179,21 @@ const explicitlyTargetedTests = [
   'paper-core/tests/typed-research-gap-plan.test.mjs',
   'paper-core/tests/research-vacuity-boundaries.test.mjs',
   'paper-core/tests/critical-module-coverage-policy.test.mjs',
+  'paper-core/tests/autonomous-research-online-runtime-adoption-v2.test.mjs',
+  'paper-core/tests/autonomous-research-online-schema-transition-state-repository.test.mjs',
+  'paper-core/tests/autonomous-research-online-schema-transition.test.mjs',
+  'paper-core/tests/immutable-release-candidate-repository.test.mjs',
+  'paper-core/tests/immutable-release-deployment-cli.test.mjs',
+  'paper-core/tests/immutable-release-deployment-closure-builder.test.mjs',
+  'paper-core/tests/immutable-release-deployment-intent-repository.test.mjs',
+  'paper-core/tests/immutable-release-deployment-lock.test.mjs',
+  'paper-core/tests/immutable-release-deployment-recovery.test.mjs',
+  'paper-core/tests/immutable-release-deployment-transaction.test.mjs',
+  'paper-core/tests/immutable-release-linux-host-adapter.test.mjs',
   'paper-core/tests/immutable-release-workspace.test.mjs',
+  'paper-core/tests/release-state-consistency.test.mjs',
+  'paper-core/tests/strict-full-auto-online-runtime-adoption.test.mjs',
+  'paper-core/tests/strict-npm-audit-launcher.test.mjs',
   'migration/tests/operational-proof-intake.test.mjs',
   'migration/tests/capabilities/research.claim-registry.test.mjs',
   'migration/tests/capabilities/research.evidence-quality-gate.test.mjs',
@@ -210,6 +242,44 @@ const {
   trustTargets: TRUST_TARGETS,
   targetThresholds: TARGET_THRESHOLDS,
 } = coveragePolicy;
+
+function coverageChildEnvironment() {
+  const environment = {
+    ...process.env,
+    NODE_V8_COVERAGE: coverageRoot,
+    HEPTA_PAPER_ASSET_ROOT: process.env.HEPTA_PAPER_ASSET_ROOT || defaultPaperAssetRoot(),
+    HEPTA_PAPER_RUNTIME_ROOT: isolatedRuntimeRoot,
+    HEPTA_PAPER_RUNTIME_ISOLATED: '1',
+    HEPTA_PRODUCTION_RUNTIME_ROOT: productionRuntimeRoot,
+    HEPTA_EVIDENCE_ENVIRONMENT: 'verification',
+    HEPTA_EVIDENCE_CLASS: 'technical_conformance',
+    HEPTA_LEGACY_REFERENCE_PREPARED: '1',
+    HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference?.archivePath || '',
+    PAPER_FACTORY_LEGACY_ROOT: legacyReference?.root || '',
+  };
+  delete environment.GIT_INDEX_FILE;
+  return environment;
+}
+
+async function prepareCoverageRuntime() {
+  const productionSourceRoot = defaultPaperRuntimeRoot();
+  const productionDb = path.join(productionSourceRoot, 'hepta-paper.sqlite');
+  if (!fs.existsSync(productionDb)) {
+    throw new Error(`critical_coverage_production_store_required:${productionDb}`);
+  }
+  const isolatedDb = path.join(isolatedRuntimeRoot, 'hepta-paper.sqlite');
+  await copySqliteDatabase({
+    sourcePath: productionDb,
+    destinationPath: isolatedDb,
+    sourceImmutable: true,
+  });
+  for (const relative of copiedRuntimePaths) {
+    const source = path.join(productionSourceRoot, relative);
+    const target = path.join(isolatedRuntimeRoot, relative);
+    if (fs.existsSync(source)) fs.cpSync(source, target, { recursive: true, dereference: false });
+  }
+  legacyReference = prepareImmutableLegacyMatrixReference();
+}
 
 function coverageEntries() {
   return fs.readdirSync(coverageRoot)
@@ -290,7 +360,9 @@ function moduleCoverage(relative, entries) {
   };
 }
 
+async function runCriticalCoverage() {
 try {
+  await prepareCoverageRuntime();
   const testBatchSize = 24;
   const testBatches = Array.from(
     { length: Math.ceil(tests.length / testBatchSize) },
@@ -312,7 +384,7 @@ try {
       spawnSyncImpl: spawnSync,
       executable: process.execPath,
       cwd: workspaceRoot,
-      env: { ...process.env, NODE_V8_COVERAGE: coverageRoot },
+      env: coverageChildEnvironment(),
       maxBuffer: 32 * 1024 * 1024,
       timeoutMs: criticalCoverageChildTimeoutMs,
     }),
@@ -347,5 +419,11 @@ try {
     if (failures.length) process.exitCode = 1;
   }
 } finally {
+  legacyReference?.cleanup();
   fs.rmSync(coverageRoot, { recursive: true, force: true });
+  fs.rmSync(isolatedRuntimeRoot, { recursive: true, force: true });
+  fs.rmSync(productionRuntimeRoot, { recursive: true, force: true });
 }
+}
+
+await runCriticalCoverage();

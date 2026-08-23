@@ -7,9 +7,14 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export function buildAutonomousResearchOnlineSchemaTransitionReserveRequest(plan, requestedAt) {
   return Object.freeze({
-    version: 1,
+    version: plan.version,
     kind: 'AutonomousResearchOnlineSchemaTransitionReserveRequest',
     protocol: plan.protocol,
+    ...(plan.version === 2 ? {
+      transitionMode: plan.transitionMode,
+      sourceWriterManifestHash: plan.sourceWriterManifestHash,
+      prePristineRuntimeStateHash: plan.prePristineRuntimeStateHash,
+    } : {}),
     scopeId: plan.scopeId,
     databaseScopeHash: plan.databaseScopeHash,
     writerManifestHash: plan.writerManifestHash,
@@ -32,10 +37,11 @@ export function buildAutonomousResearchOnlineSchemaTransitionFinalizeRequest({
   reservation,
   inventory,
   installations,
+  postPristineRuntimeStateHash,
   completedAt,
 }) {
   return Object.freeze({
-    version: 1,
+    version: plan.version,
     kind: 'AutonomousResearchOnlineSchemaTransitionFinalizeRequest',
     protocol: plan.protocol,
     scopeId: plan.scopeId,
@@ -47,6 +53,7 @@ export function buildAutonomousResearchOnlineSchemaTransitionFinalizeRequest({
     reservationId: reservation.reservationId,
     reservationReceiptHash: autonomousResearchOnlineSchemaTransitionReceiptHash(reservation),
     postInventoryHash: inventory.inventoryHash,
+    postPristineRuntimeStateHash,
     installations,
     completedAt,
   });
@@ -56,12 +63,18 @@ export function buildAutonomousResearchOnlineSchemaTransitionObserveRequest({
   plan,
   finalization,
   postInventoryHash,
+  postPristineRuntimeStateHash,
   requestedAt,
+  nonce = `schema-transition:${crypto.randomUUID()}`,
 }) {
   return Object.freeze({
-    version: 1,
+    version: plan.version,
     kind: 'AutonomousResearchOnlineSchemaTransitionObserveRequest',
     protocol: plan.protocol,
+    ...(plan.version === 2 ? {
+      transitionMode: plan.transitionMode,
+      sourceWriterManifestHash: plan.sourceWriterManifestHash,
+    } : {}),
     scopeId: plan.scopeId,
     databaseScopeHash: plan.databaseScopeHash,
     writerManifestHash: plan.writerManifestHash,
@@ -71,7 +84,8 @@ export function buildAutonomousResearchOnlineSchemaTransitionObserveRequest({
     finalizationReceiptHash:
       autonomousResearchOnlineSchemaTransitionReceiptHash(finalization),
     postInventoryHash,
-    nonce: `schema-transition:${crypto.randomUUID()}`,
+    postPristineRuntimeStateHash,
+    nonce,
     requestedAt,
   });
 }
@@ -88,7 +102,7 @@ export function buildAutonomousResearchOnlineSchemaTransitionAuditReceipt({
   installations,
 }) {
   const base = Object.freeze({
-    version: 1,
+    version: plan.version,
     kind: 'AutonomousResearchOnlineSchemaTransitionAuditReceipt',
     status: 'autonomous_research_online_schema_transition_ready',
     protocol: plan.protocol,
@@ -96,9 +110,15 @@ export function buildAutonomousResearchOnlineSchemaTransitionAuditReceipt({
     planHash: plan.planHash,
     databaseScopeHash: plan.databaseScopeHash,
     writerManifestHash: plan.writerManifestHash,
+    ...(plan.version === 2 ? {
+      transitionMode: plan.transitionMode,
+      sourceWriterManifestHash: plan.sourceWriterManifestHash,
+      authorityConfigurationActivated: true,
+    } : {}),
     transitionInventoryHash: plan.transitionInventoryHash,
     schemaBundleHash: plan.schemaBundleHash,
     postInventoryHash: inventory.inventoryHash,
+    postPristineRuntimeStateHash: observeRequest.postPristineRuntimeStateHash,
     reserveRequest,
     reservation,
     finalizeRequest,

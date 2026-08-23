@@ -39,6 +39,9 @@ export {
 } from './gpu-selector-execution-lease-file-identity.mjs';
 
 const ACTIVE_GPU_SELECTOR_EXECUTION_LEASE = new AsyncLocalStorage();
+const MAXIMUM_DEADLINE_WATCHDOG_DELAY_MS = 2_147_483_647;
+const HOLDER_DEADLINE_ENFORCEMENT =
+  'cooperative_same_event_loop_watchdog_v1';
 
 export function createGpuSelectorExecutionLeaseRepository({
   root,
@@ -71,7 +74,10 @@ export function createGpuSelectorExecutionLeaseRepository({
     kind: 'GpuSelectorExecutionLeaseCapabilities',
     crossProcess: true,
     perGpuUuid: true,
-    deadlineBound: true,
+    deadlineBound: false,
+    acquisitionWaitDeadlineBound: true,
+    holderHardDeadlineBound: false,
+    holderDeadlineEnforcement: HOLDER_DEADLINE_ENFORCEMENT,
     abortableWait: true,
     asyncContextReentrant: false,
     mechanism: GPU_SELECTOR_EXECUTION_LEASE_MECHANISM,
@@ -174,7 +180,7 @@ export function createGpuSelectorExecutionLeaseRepository({
           }
         }
         const acquiredAtEpochMs = Date.now();
-        if (acquiredAtEpochMs > selected.absoluteDeadlineEpochMs) {
+        if (acquiredAtEpochMs >= selected.absoluteDeadlineEpochMs) {
           throw leaseError('gpu_selector_execution_lease_deadline_exhausted');
         }
         const entropy = crypto.randomUUID();
@@ -221,14 +227,54 @@ export function createGpuSelectorExecutionLeaseRepository({
           );
         }
         let released = false;
+        let deadlineExpired = false;
         let quarantined = false;
         let delegatedWorkerOperationActive = false;
         let releaseReceipt = null;
         let releaseError = null;
-        const assertHeld = () => {
-          if (released || !descriptorOpen) {
-            throw leaseError('gpu_selector_execution_lease_released');
+        let deadlineWatchdog = null;
+        let deadlineCloseError = null;
+        const disarmDeadlineWatchdog = () => {
+          if (deadlineWatchdog !== null) clearTimeout(deadlineWatchdog);
+          deadlineWatchdog = null;
+        };
+        const closeExpiredLease = () => {
+          deadlineExpired = true;
+          disarmDeadlineWatchdog();
+          try {
+            fs.closeSync(opened.descriptor);
+          } catch (error) {
+            deadlineCloseError = error;
+          } finally {
+            descriptorOpen = false;
           }
+        };
+        const assertDeadlineActive = () => {
+          if (!deadlineExpired
+            && Date.now() >= selected.absoluteDeadlineEpochMs) closeExpiredLease();
+          if (deadlineExpired) throw leaseError(
+            'gpu_selector_execution_lease_deadline_exhausted',
+            false,
+            deadlineCloseError,
+          );
+        };
+        const enforceDeadline = () => {
+          deadlineWatchdog = null;
+          if (released || deadlineExpired) return;
+          const remainingMs = selected.absoluteDeadlineEpochMs - Date.now();
+          if (remainingMs <= 0) return closeExpiredLease();
+          deadlineWatchdog = setTimeout(
+            enforceDeadline,
+            Math.min(remainingMs, MAXIMUM_DEADLINE_WATCHDOG_DELAY_MS),
+          );
+          deadlineWatchdog.unref?.();
+        };
+        const assertHeld = () => {
+          if (released) throw leaseError('gpu_selector_execution_lease_released');
+          assertDeadlineActive();
+          if (!descriptorOpen) throw leaseError(
+            'gpu_selector_execution_lease_released',
+          );
           let rootIdentity = null;
           try {
             rootIdentity = validateRoot(selectedRoot);
@@ -265,16 +311,19 @@ export function createGpuSelectorExecutionLeaseRepository({
               try { fs.closeSync(rootIdentity.descriptor); } catch { /* identity already failed */ }
             }
           }
+          assertDeadlineActive();
           return true;
         };
         const release = ({ recoveryRelinquish = false } = {}) => {
           if (releaseReceipt) return releaseReceipt;
           if (releaseError) throw releaseError;
           try {
+            assertDeadlineActive();
             if (quarantined) {
               if (descriptorOpen) fs.closeSync(opened.descriptor);
               descriptorOpen = false;
               released = true;
+              disarmDeadlineWatchdog();
               if (recoveryRelinquish) return durableState;
               throw leaseError('gpu_selector_execution_lease_recovery_required');
             }
@@ -286,6 +335,7 @@ export function createGpuSelectorExecutionLeaseRepository({
             fs.closeSync(opened.descriptor);
             descriptorOpen = false;
             released = true;
+            disarmDeadlineWatchdog();
             releaseReceipt = buildGpuSelectorExecutionLeaseReleaseReceipt({
               acquisitionReceipt: receipt,
               releasedAtEpochMs: Date.now(),
@@ -404,6 +454,8 @@ export function createGpuSelectorExecutionLeaseRepository({
           quarantine,
           release,
         });
+        enforceDeadline();
+        assertDeadlineActive();
         return lease;
       } catch (error) {
         if (descriptorOpen) {

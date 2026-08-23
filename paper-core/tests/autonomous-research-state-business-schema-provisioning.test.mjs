@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import {
+  assertAutonomousResearchStateBusinessSchemaProvisioningCapability,
   buildAutonomousResearchStateBusinessSchemaProvisioningPlan,
   provisionAutonomousResearchStateBusinessSchemas,
 } from '../../paper-adapters/automation/autonomous-research-state-business-schema-provisioning-repository.mjs';
@@ -162,6 +163,65 @@ test('failed or mismatched provisioning leaves no target or staging residue', (c
       throw new Error('injected_provisioning_failure');
     },
   }), /injected_provisioning_failure/);
+  assert.equal(fs.existsSync(fixture.runtimeRoot), false);
+  assert.deepEqual(fs.readdirSync(fixture.parent), []);
+});
+
+test('staging capability binds plan, target absence, and the exact staging inode', (context) => {
+  const fixture = setup(context, 'state-provisioning-capability');
+  const plan = buildAutonomousResearchStateBusinessSchemaProvisioningPlan({
+    runtimeRoot: fixture.runtimeRoot,
+    stateDatabaseManifest,
+    provisioningIdentity,
+  });
+  assert.throws(() => provisionAutonomousResearchStateBusinessSchemas({
+    runtimeRoot: fixture.runtimeRoot,
+    stateDatabaseManifest,
+    provisioningIdentity,
+    expectedProvisioningPlanId: plan.provisioningPlanId,
+    provisionBusinessSchemas({
+      runtimeRoot,
+      provisioningCapability,
+      provisioningPlanId,
+    }) {
+      assert.throws(() => (
+        assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+          capability: provisioningCapability,
+          runtimeRoot: fixture.runtimeRoot,
+          provisioningPlanId,
+        })
+      ), /provisioning_capability_invalid/);
+      assert.throws(() => (
+        assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+          capability: provisioningCapability,
+          runtimeRoot,
+          provisioningPlanId: H('wrong-plan'),
+        })
+      ), /provisioning_capability_invalid/);
+      fs.chmodSync(runtimeRoot, 0o750);
+      assert.throws(() => (
+        assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+          capability: provisioningCapability,
+          runtimeRoot,
+          provisioningPlanId,
+        })
+      ), /provisioning_capability_invalid/);
+      fs.chmodSync(runtimeRoot, 0o700);
+      const displaced = `${runtimeRoot}.displaced`;
+      fs.renameSync(runtimeRoot, displaced);
+      fs.mkdirSync(runtimeRoot, { mode: 0o700 });
+      assert.throws(() => (
+        assertAutonomousResearchStateBusinessSchemaProvisioningCapability({
+          capability: provisioningCapability,
+          runtimeRoot,
+          provisioningPlanId,
+        })
+      ), /provisioning_capability_invalid/);
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+      fs.renameSync(displaced, runtimeRoot);
+      throw new Error('staging_capability_negative_complete');
+    },
+  }), /staging_capability_negative_complete/);
   assert.equal(fs.existsSync(fixture.runtimeRoot), false);
   assert.deepEqual(fs.readdirSync(fixture.parent), []);
 });

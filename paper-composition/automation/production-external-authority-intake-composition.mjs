@@ -15,6 +15,14 @@ import {
 } from '../../paper-domain/evidence/external-principal-identity-attestation-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
+// Keep the external-authority reference contract reachable from the active
+// production composition without inflating the broad contracts facade.  This
+// export is structural/read-only; live verification remains delegated to the
+// independent authority adapters below.
+export {
+  inspectExternalAuthorityConfigurationSet,
+} from '../../paper-domain/automation/external-authority-configuration-contract.mjs';
+
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const AUTHOR_CONFIG_ENV = 'HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG';
 const AUTHOR_CONFIG_HASH_ENV = 'HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH';

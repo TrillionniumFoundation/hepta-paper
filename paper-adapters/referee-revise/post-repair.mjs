@@ -4,7 +4,6 @@ import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import {
   runLatexBuildAdapter,
-  runPackageAdapter,
 } from '../build-package/index.mjs';
 import { runResearchVerifyAdapter } from '../research-verify/index.mjs';
 function withRecordHash(kind, record, fieldName) {
@@ -33,6 +32,7 @@ async function runPostRepairRechecks({
   agentRepairPatchBundle = null,
   appliedPatchReceipt = null,
   execute = false,
+  packageAdapter = null,
 } = {}) {
   const blockers = [];
   const warnings = [];
@@ -85,8 +85,9 @@ async function runPostRepairRechecks({
 
   let packageResult = null;
   let packageRecheck = null;
-  if (buildRecheck.status === 'build_recheck_passed') {
-    packageResult = await runPackageAdapter({
+  if (buildRecheck.status === 'build_recheck_passed'
+    && typeof packageAdapter === 'function') {
+    packageResult = await packageAdapter({
       root,
       row: recheckRow,
       buildResult,
@@ -118,12 +119,15 @@ async function runPostRepairRechecks({
       },
     }, 'packageRecheckHash');
   } else {
+    const packageBlockers = buildRecheck.status === 'build_recheck_passed'
+      ? ['post_repair_package_writer_required']
+      : ['build_recheck_not_passed'];
     packageRecheck = withRecordHash('PostRepairPackageRecheck', {
       kind: 'PostRepairPackageRecheck',
       paperId: row.task.paperId,
       status: 'package_rewrite_blocked',
       packageDir: null,
-      blockers: ['build_recheck_not_passed'],
+      blockers: packageBlockers,
       warnings: [],
       safety: {
         sourceMutation: false,

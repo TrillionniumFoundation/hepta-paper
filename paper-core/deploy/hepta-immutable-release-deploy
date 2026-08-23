@@ -1,0 +1,98 @@
+#!/bin/sh
+set -efu
+
+# Pre-Node deployment executor boundary. The candidate workspace is passed only
+# as data; JavaScript is loaded exclusively from the already sealed live
+# release. The first deployment of this boundary is therefore an explicit host
+# bootstrap/HOLD, never an implicit execution from a writable checkout.
+umask 077
+export LC_ALL=C
+
+fail() {
+  echo "$1" >&2
+  exit 126
+}
+
+test "$(/usr/bin/id -u)" = 0
+test "$(/usr/bin/readlink -f -- "$0")" = \
+  /usr/libexec/hepta-paper/hepta-immutable-release-deploy
+test ! -L /usr/libexec/hepta-paper/hepta-immutable-release-deploy
+test "$(/usr/bin/stat -c '%F:%u:%g:%a:%h' \
+  /usr/libexec/hepta-paper/hepta-immutable-release-deploy)" = \
+  'regular file:0:0:755:1'
+
+deployment_lock_root=/run/hepta-paper-deployment
+deployment_lock=$deployment_lock_root/deployment.lock
+test ! -L "$deployment_lock_root"
+test "$(/usr/bin/stat -c '%F:%u:%g:%a' "$deployment_lock_root")" = \
+  'directory:0:0:711'
+test ! -L "$deployment_lock"
+test "$(/usr/bin/stat -c '%F:%u:%g:%a:%h' "$deployment_lock")" = \
+  'regular empty file:0:0:600:1'
+exec 9<"$deployment_lock"
+case "${1-}" in
+  execute|recover) lock_mode=--exclusive ;;
+  *) lock_mode=--shared ;;
+esac
+if ! /usr/bin/flock "$lock_mode" --nonblock 9; then
+  echo immutable_release_deployment_lock_unavailable >&2
+  exit 75
+fi
+
+executor_root=/opt/hepta-paper
+intent_root=/var/lib/hepta-paper-deployment
+intent_file=$intent_root/IMMUTABLE-RELEASE-DEPLOYMENT-INTENT.json
+if [ "${1-}" = recover ] || [ "${1-}" = execute ]; then
+  test ! -L "$intent_root"
+  test "$(/usr/bin/stat -c '%F:%u:%g:%a' "$intent_root")" = \
+    'directory:0:0:700'
+  test ! -L "$intent_file"
+fi
+if [ "${1-}" = recover ] && [ ! -e "$intent_file" ]; then
+  echo '{"status":"immutable_release_deployment_recovery_not_required"}'
+  exit 0
+fi
+if [ -e "$intent_file" ]; then
+  test "$(/usr/bin/stat -c '%F:%u:%g:%a:%h' "$intent_file")" = \
+    'regular file:0:0:600:1'
+  if ! executor_root="$(/usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
+    /usr/bin/node -e '
+      const fs = require("node:fs");
+      const file = process.argv[1];
+      const stat = fs.statSync(file);
+      if (stat.size < 2 || stat.size > 64 * 1024 * 1024) process.exit(1);
+      const intent = JSON.parse(fs.readFileSync(file, "utf8"));
+      const selected = intent?.plan?.predecessor?.releasePath;
+      if (!/^\\/opt\\/hepta-paper-releases\\/[0-9a-f]{40}$/.test(selected)) process.exit(1);
+      process.stdout.write(selected);
+    ' "$intent_file")"; then
+    fail immutable_release_deployment_intent_executor_invalid
+  fi
+fi
+case "$executor_root" in
+  /opt/hepta-paper|/opt/hepta-paper-releases/[0-9a-f][0-9a-f]*) ;;
+  *) fail immutable_release_deployment_executor_root_invalid ;;
+esac
+executor=$executor_root/paper-core/bin/immutable-release-deploy.mjs
+test ! -L "$executor_root" \
+  || fail immutable_release_deployment_executor_missing_or_unsafe
+test "$(/usr/bin/stat -c '%F:%u:%g:%a' "$executor_root" 2>/dev/null)" = \
+  'directory:0:0:555' \
+  || fail immutable_release_deployment_executor_missing_or_unsafe
+test ! -L "$executor" \
+  || fail immutable_release_deployment_executor_missing_or_unsafe
+case "$(/usr/bin/stat -c '%F:%u:%g:%a:%h' "$executor" 2>/dev/null)" in
+  'regular file:0:0:444:1'|'regular file:0:0:555:1') ;;
+  *) fail immutable_release_deployment_executor_missing_or_unsafe ;;
+esac
+
+exec /usr/bin/env -i \
+  HOME=/nonexistent \
+  LANG=C \
+  LC_ALL=C \
+  PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+  HEPTA_IMMUTABLE_DEPLOY_LAUNCHER=sealed-v1 \
+  HEPTA_IMMUTABLE_DEPLOY_EXECUTOR_ROOT="$executor_root" \
+  HEPTA_IMMUTABLE_DEPLOY_LOCK_FD=9 \
+  /usr/bin/node \
+  "$executor" "$@"

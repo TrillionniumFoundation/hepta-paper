@@ -14,7 +14,6 @@ export function composeAutonomousResearchOnlineSchemaTransitionService({
   runtimeRoot,
   authorityProcessConfigurationPath,
   clock = { now: () => new Date() },
-  createAuthorityClient,
 } = {}) {
   if (!workspaceRoot || !runtimeRoot || !authorityProcessConfigurationPath) {
     throw new Error('autonomous_research_online_schema_transition_composition_prerequisites_missing');
@@ -36,15 +35,20 @@ export function composeAutonomousResearchOnlineSchemaTransitionService({
     writerManifest: AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST,
     authorityProcessConfigurationPath: resolvedAuthorityProcessConfigurationPath,
     clock,
-    ...(createAuthorityClient ? { createAuthorityClient } : {}),
   });
   return Object.freeze({
-    plan({ requestedLeaseMs, requiredExecutionWindowMs } = {}) {
+    plan({
+      requestedLeaseMs,
+      requiredExecutionWindowMs,
+      expectedPreRebindPristineRuntimeStateHash,
+    } = {}) {
       return planAutonomousResearchOnlineSchemaTransition({
         ...shared,
         ...(requestedLeaseMs === undefined ? {} : { requestedLeaseMs }),
         ...(requiredExecutionWindowMs === undefined
           ? {} : { requiredExecutionWindowMs }),
+        ...(expectedPreRebindPristineRuntimeStateHash === undefined
+          ? {} : { expectedPreRebindPristineRuntimeStateHash }),
       });
     },
     execute({
@@ -52,6 +56,7 @@ export function composeAutonomousResearchOnlineSchemaTransitionService({
       requestedLeaseMs,
       requiredExecutionWindowMs,
       commitSafetyMarginMs,
+      expectedPreRebindPristineRuntimeStateHash,
     } = {}) {
       return executeAutonomousResearchOnlineSchemaTransition({
         ...shared,
@@ -60,6 +65,8 @@ export function composeAutonomousResearchOnlineSchemaTransitionService({
         ...(requiredExecutionWindowMs === undefined
           ? {} : { requiredExecutionWindowMs }),
         ...(commitSafetyMarginMs === undefined ? {} : { commitSafetyMarginMs }),
+        ...(expectedPreRebindPristineRuntimeStateHash === undefined
+          ? {} : { expectedPreRebindPristineRuntimeStateHash }),
       });
     },
     manifestPath,

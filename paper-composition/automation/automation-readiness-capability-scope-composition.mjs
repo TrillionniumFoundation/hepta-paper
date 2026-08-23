@@ -8,6 +8,7 @@ import {
   inspectPersistedAutonomousResearchVenueRequirementAuthority,
 } from './automation-readiness-venue-requirement-authority-inspection.mjs';
 import {
+  inspectPersistedCampaignResearchGpuScientificReleaseChain,
   inspectPersistedAutonomousResearchAssuranceAuthority,
 } from './automation-readiness-research-assurance-authority-inspection.mjs';
 import {
@@ -26,6 +27,7 @@ export function composeAutomationReadinessCapabilityScope({
   providerInspections,
   providerSpawnSync,
   currentDynamicFormalExecutionAuthority = null,
+  gpuScientificPromotionAuthorityVerifier = null,
 } = {}) {
   const inspectionClock = Object.freeze({ now: () => new Date(now) });
   const initialAutonomousResearchAgendaAuthorityInspection =
@@ -50,6 +52,8 @@ export function composeAutomationReadinessCapabilityScope({
   const autonomousResearchAgendaAuthorityInspection =
     inspectPersistedAutonomousResearchAgendaAuthority({
       store,
+      expectedAgendaAuthorityInspection:
+        initialAutonomousResearchAgendaAuthorityInspection,
       currentPriorArtAuthorityTrustConfiguration:
         capabilityScopeInspection.priorArtAuthorityTrustConfiguration,
       currentExternalCapabilityTrustInspection:
@@ -73,6 +77,17 @@ export function composeAutomationReadinessCapabilityScope({
       expectedAgendaAuthorityInspection:
         autonomousResearchAgendaAuthorityInspection,
     });
+  const gpuScientificReleaseChainInspection =
+    inspectPersistedCampaignResearchGpuScientificReleaseChain({
+      store,
+      campaignId: autonomousResearchAgendaAuthorityInspection.campaignId,
+      paperId: autonomousResearchAgendaAuthorityInspection.paperId,
+      expectedAgendaAuthorityInspection:
+        autonomousResearchAgendaAuthorityInspection,
+      gpuScientificPromotionAuthorityVerifier,
+      runtimeRoot,
+      now,
+    });
   const autonomousResearchAssuranceAuthorityInspection =
     inspectPersistedAutonomousResearchAssuranceAuthority({
       store,
@@ -85,6 +100,10 @@ export function composeAutomationReadinessCapabilityScope({
         capabilityScopeInspection.externalResearchReplayReceiptVerifier,
       reviewerReceiptVerificationAuthority:
         capabilityScopeInspection.reviewerReceiptVerificationAuthority,
+      gpuScientificPromotionAuthorityVerifier,
+      gpuScientificReleaseChainInspection,
+      runtimeRoot,
+      now,
     });
   return Object.freeze({
     autonomousResearchAgendaAuthorityInspection,

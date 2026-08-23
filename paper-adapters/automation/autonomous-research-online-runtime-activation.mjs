@@ -9,6 +9,7 @@ import {
 import {
   AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES,
   autonomousResearchStateDatabaseInventoryHash,
+  autonomousResearchStateDatabaseScopeHash,
 } from '../../paper-domain/automation/autonomous-research-state-backup-contract.mjs';
 import {
   assertAutonomousResearchOnlineWriterOperationManifest,
@@ -87,11 +88,37 @@ function validateInventory(inventory, manifest) {
   let inventoryHash;
   try { inventoryHash = autonomousResearchStateDatabaseInventoryHash(inventory); }
   catch { fail('autonomous_research_online_runtime_activation_inventory_invalid'); }
-  const roles = [...new Set(inventory.instances.map((entry) => entry.role))].sort();
+  const roles = inventory.instances.map((entry) => entry.role);
+  const instanceIds = inventory.instances.map((entry) => entry.instanceId);
+  let scopeHash;
+  try { scopeHash = autonomousResearchStateDatabaseScopeHash(inventory.instances); }
+  catch { fail('autonomous_research_online_runtime_activation_inventory_invalid'); }
   if (inventory.status !== 'autonomous_research_state_database_inventory_ready'
+    || inventory.manifestId !== 'hepta-paper-autonomous-research-state-databases-v1'
     || inventory.inventoryHash !== inventoryHash
-    || inventory.blockers?.length !== 0
-    || roles.join('\0') !== [...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort().join('\0')
+    || inventory.databaseScopeHash !== scopeHash
+    || !Array.isArray(inventory.blockers)
+    || inventory.blockers.length !== 0
+    || inventory.instances.length !== AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.length
+    || new Set(instanceIds).size !== instanceIds.length
+    || new Set(roles).size !== roles.length
+    || [...roles].sort().join('\0')
+      !== [...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort().join('\0')
+    || [...instanceIds].sort().join('\0') !== instanceIds.join('\0')
+    || inventory.instances.some((entry) => (
+      typeof entry?.instanceId !== 'string' || entry.instanceId.length === 0
+      || typeof entry?.role !== 'string'
+      || !AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.includes(entry.role)
+      || typeof entry?.sourceRelativePath !== 'string'
+      || entry.sourceRelativePath.length === 0
+      || typeof entry?.schemaContractId !== 'string'
+      || entry.schemaContractId.length === 0
+      || !/^sha256:[0-9a-f]{64}$/.test(String(entry.schemaHash || ''))
+      || entry.quickCheck !== 'ok'
+      || entry.foreignKeyViolationCount !== 0
+      || !Array.isArray(entry.missingSchemaObjects)
+      || entry.missingSchemaObjects.length !== 0
+    ))
     || manifest.coverage.coveredRoleCount !== manifest.coverage.requiredRoleCount
     || manifest.coverage.percent !== 100
     || manifest.coverage.coveredDatabaseRoles.join('\0')
@@ -108,6 +135,13 @@ function stableInventoryScope(left, right) {
     sourceRelativePath: entry.sourceRelativePath,
     schemaContractId: entry.schemaContractId,
     schemaHash: entry.schemaHash,
+    sourceSha256: entry.sourceSha256,
+    sourceFileIdentity: entry.sourceFileIdentity,
+    walSha256: entry.walSha256,
+    walFileIdentity: entry.walFileIdentity,
+    missingSchemaObjects: entry.missingSchemaObjects,
+    quickCheck: entry.quickCheck,
+    foreignKeyViolationCount: entry.foreignKeyViolationCount,
   })).sort((a, b) => a.instanceId.localeCompare(b.instanceId));
   return left.databaseScopeHash === right.databaseScopeHash
     && JSON.stringify(project(left)) === JSON.stringify(project(right));

@@ -8,7 +8,7 @@ export const AUTONOMOUS_SUBMISSION_HANDOFF_DATABASE_ROLE = 'submission-handoff';
 export const AUTONOMOUS_SUBMISSION_HANDOFF_DATABASE_INSTANCE_ID =
   AUTONOMOUS_SUBMISSION_HANDOFF_DATABASE_ROLE;
 export const AUTONOMOUS_SUBMISSION_HANDOFF_SCHEMA_CONTRACT_ID =
-  'autonomous-submission-handoff-schema-v1';
+  'autonomous-submission-handoff-schema-v2';
 export const AUTONOMOUS_SUBMISSION_HANDOFF_WRITER_ID =
   'writer:submission-handoff:delivery:v1';
 

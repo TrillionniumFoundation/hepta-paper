@@ -160,17 +160,30 @@ function fixture({ ready = false } = {}) {
     autonomousSubmissionDispatcherReady: ready,
     autonomousSubmissionHandoffReady: true,
     autonomousSubmissionDispatcherReadiness: {
+      version: 1,
+      kind: 'AutonomousSubmissionDispatcherReadinessInspection',
       status: ready ? 'autonomous_submission_dispatcher_ready'
         : 'autonomous_submission_dispatcher_blocked',
+      ready,
+      handoffReady: ready,
       planHash: ready ? H('9') : null,
       challengeHash: ready ? H('a') : null,
       cycleReceiptHash: ready ? H('b') : null,
+      dispatcherPrincipalId: ready ? 'dispatcher-principal' : null,
+      signatureVerified: ready,
+      portalId: ready ? 'portal-one' : null,
+      portalConfigurationHash: ready ? H('e') : null,
       portalDescriptorHash: ready ? H('c') : null,
+      portalBindingVerified: ready,
+      livePortalCanaryVerified: ready,
       portalConfigurationIdentityPinned: ready,
       portalDescriptorPinned: ready,
       portalFullProductionReady: ready,
       livePortalCanaryAuthorityIndependentFromDispatcher: ready,
+      livePortalCanaryCycleVerificationReceiptHash: ready ? H('f') : null,
       livePortalCanaryIndependentVerificationReceiptHash: ready ? H('d') : null,
+      signedAt: ready ? '2026-07-15T12:29:30.000Z' : null,
+      expiresAt: ready ? '2026-07-15T12:40:30.000Z' : null,
       blockers: ready ? [] : ['autonomous_submission_dispatcher_challenge_missing'],
     },
   };
@@ -225,24 +238,77 @@ function fixture({ ready = false } = {}) {
     integrityBlockers: [],
     externalizationBlockers: [],
   };
+  const qualificationRoles = [
+    'advanced_numerical_oracle_authority',
+    'advanced_numerical_replay_authority',
+    'advanced_numerical_scientific_reviewer',
+    'advanced_numerical_uncertainty_reviewer',
+  ];
   const candidates = [
     'linear-algebra',
     'monte-carlo',
     'optimization',
-  ].map((analysisFamily) => ({
-    pluginId: `hepta.reference.${analysisFamily}`,
-    analysisFamily,
-    productionQualified: ready,
-    fullProductionReady: ready,
-    registryPinned: ready,
-    runtimeConfigurationPinned: ready,
-    dependentDocumentsPinned: ready,
-    sourceMerkleHash: H('1'),
-    sourceWorkspaceManifestHash: H('2'),
-    qualificationBlockers: ready ? [] : [
-      'advanced_numerical_reference_qualification_registry_path_required',
-    ],
-  }));
+  ].map((analysisFamily) => {
+    const identity = `-${analysisFamily}`;
+    return {
+      pluginId: `hepta.reference.${analysisFamily}`,
+      pluginVersion: '1.0.0',
+      analysisFamily,
+      status: ready ? 'reference_candidate_full_production_qualified'
+        : 'reference_candidate_unqualified',
+      productionQualified: ready,
+      fullProductionReady: ready,
+      registryConfigured: ready,
+      registryPinned: ready,
+      registryHash: ready ? H('1') : null,
+      runtimeConfigurationPinned: ready,
+      runtimeConfigurationHash: ready ? H('2') : null,
+      dependentDocumentsPinned: ready,
+      entrypoint: 'worker.py',
+      entrypointHash: ready ? H('3') : null,
+      sourceMerkleHash: ready ? H('4') : null,
+      sourceWorkspaceManifestHash: ready ? H('5') : null,
+      candidateManifestHash: ready ? H('6') : null,
+      runtimeExecutableHash: ready ? H('7') : null,
+      runtimePackageClosureHash: ready ? H('8') : null,
+      signedBundleHash: ready ? H('9') : null,
+      qualificationStatementHash: ready ? H('a') : null,
+      qualificationEvidenceBundleHash: ready ? H('b') : null,
+      qualificationInspectionHash: ready ? H('c') : null,
+      qualificationExpiresAt: ready ? '2026-07-15T12:40:30.000Z' : null,
+      pluginAuthoritySubjectIds: ready ? [`plugin${identity}`] : [],
+      pluginAuthorityOrganizations: ready ? [`plugin-org${identity}`] : [],
+      pluginAuthorityPublicKeySpkiHashes: ready ? [H('d')] : [],
+      qualificationAuthoritySubjectIds: ready ? [
+        `oracle${identity}`,
+        `replay${identity}`,
+        `scientific${identity}`,
+        `uncertainty${identity}`,
+      ] : [],
+      qualificationAuthorityOrganizations: ready ? [
+        `oracle-org${identity}`,
+        `replay-org${identity}`,
+        `scientific-org${identity}`,
+        `uncertainty-org${identity}`,
+      ] : [],
+      qualificationAuthorityPublicKeySpkiHashes: ready
+        ? [H('e'), H('f'), H('0'), H('1')] : [],
+      qualificationAuthorityRoles: ready ? qualificationRoles : [],
+      evidenceReceiptHashes: ready ? {
+        independentNumericOracleReceiptHash: H('5'),
+        referenceExecutionReceiptHash: H('6'),
+        replayExecutionReceiptHash: H('7'),
+        scientificReviewReceiptHash: H('8'),
+        typedUncertaintyReviewReceiptHash: H('9'),
+      } : null,
+      referenceExecutionProcessIdentityHash: ready ? H('2') : null,
+      replayExecutionProcessIdentityHash: ready ? H('3') : null,
+      qualificationResultHash: ready ? H('4') : null,
+      qualificationBlockers: ready ? [] : [
+        'advanced_numerical_reference_qualification_registry_path_required',
+      ],
+    };
+  });
   return { readiness, assetManifest, assetInspection, candidates };
 }
 
@@ -499,5 +565,84 @@ test('handoff rejects stale numerical qualification booleans without pin chain',
   assert.equal(handoff.advancedNumericalQualification.ready, false);
   assert.ok(handoff.advancedNumericalQualification.blockers.includes(
     'three_advanced_numerical_reference_families_full_production_qualification_required',
+  ));
+});
+
+test('handoff rejects numerical readiness when evidence hashes and authority roles are absent', () => {
+  const value = fixture({ ready: true });
+  value.candidates[1].qualificationEvidenceBundleHash = null;
+  value.candidates[1].qualificationAuthorityRoles = [];
+  const handoff = buildProductionDependencyHandoff({
+    readiness: value.readiness,
+    repositoryAssetInspection: value.assetInspection,
+    repositoryAssetManifest: value.assetManifest,
+    numericalCandidates: value.candidates,
+    observedAt: new Date(NOW),
+  });
+  assert.equal(handoff.fullyProductionReady, false);
+  assert.equal(handoff.advancedNumericalQualification.ready, false);
+  assert.ok(handoff.advancedNumericalQualification.blockers.includes(
+    'advanced_numerical_reference_qualification_detail_invalid:monte-carlo',
+  ));
+});
+
+test('handoff requires all five distinct signed numerical evidence receipt hashes', () => {
+  const cases = [
+    ['missing receipt hash', (candidate) => {
+      candidate.evidenceReceiptHashes.referenceExecutionReceiptHash = null;
+    }],
+    ['duplicate receipt hash', (candidate) => {
+      candidate.evidenceReceiptHashes.replayExecutionReceiptHash =
+        candidate.evidenceReceiptHashes.referenceExecutionReceiptHash;
+    }],
+    ['multiple plugin subjects', (candidate) => {
+      candidate.pluginAuthoritySubjectIds.push('second-plugin-authority');
+    }],
+    ['multiple plugin organizations', (candidate) => {
+      candidate.pluginAuthorityOrganizations.push('second-plugin-organization');
+    }],
+    ['multiple plugin keys', (candidate) => {
+      candidate.pluginAuthorityPublicKeySpkiHashes.push(H('a'));
+    }],
+    ['organization aliases', (candidate) => {
+      candidate.pluginAuthorityOrganizations[0] = '  Shared-Authority  ';
+      candidate.qualificationAuthorityOrganizations[0] = 'shared-authority';
+    }],
+  ];
+  for (const [label, mutate] of cases) {
+    const value = fixture({ ready: true });
+    mutate(value.candidates[0]);
+    const handoff = buildProductionDependencyHandoff({
+      readiness: value.readiness,
+      repositoryAssetInspection: value.assetInspection,
+      repositoryAssetManifest: value.assetManifest,
+      numericalCandidates: value.candidates,
+      observedAt: new Date(NOW),
+    });
+    assert.equal(handoff.fullyProductionReady, false, label);
+    assert.equal(handoff.advancedNumericalQualification.ready, false, label);
+    assert.ok(handoff.advancedNumericalQualification.blockers.includes(
+      'advanced_numerical_reference_qualification_detail_invalid:linear-algebra',
+    ), label);
+  }
+});
+
+test('handoff rejects a stale portal-ready boolean without the detailed canary projection', () => {
+  const value = fixture({ ready: true });
+  value.readiness.autonomousSubmissionDispatcherReadiness = {
+    ...value.readiness.autonomousSubmissionDispatcherReadiness,
+    livePortalCanaryVerified: false,
+  };
+  const handoff = buildProductionDependencyHandoff({
+    readiness: value.readiness,
+    repositoryAssetInspection: value.assetInspection,
+    repositoryAssetManifest: value.assetManifest,
+    numericalCandidates: value.candidates,
+    observedAt: new Date(NOW),
+  });
+  assert.equal(handoff.fullyProductionReady, false);
+  assert.equal(handoff.submission.ready, false);
+  assert.ok(handoff.submission.blockers.includes(
+    'autonomous_submission_dispatcher_readiness_detail_invalid',
   ));
 });

@@ -10,13 +10,35 @@ import {
   createPackageLifecycleRecordingIntent,
   verifyPackageLifecycleRecordingIntent,
 } from '../../paper-domain/automation/package-lifecycle-recording-intent.mjs';
+import { PACKAGE_LIFECYCLE_LEGACY_ISSUER_POLICY_HASHES }
+  from '../../paper-domain/evidence/receipt-issuer-policy-registry.mjs';
+import { inspectPackageRecoveryAuthorityReadiness }
+  from '../../paper-ports/package-recovery-authority-readiness-port.mjs';
+import { assertPackageRecoveryDeletionLeasePort }
+  from '../../paper-ports/package-recovery-deletion-lease-port.mjs';
+import { verifyAuditOnlyPackageRecoveryReceipt, verifyTrustedPackageRecoveryReceipt }
+  from '../../paper-ports/package-recovery-authority-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { createPackageRetentionRecoveryProvisioner }
+  from './package-retention-recovery-provisioner.mjs';
 
 const INTENT_STREAM = 'package-lifecycle-intents';
 const LIFECYCLE_STREAM = 'package-lifecycle';
 const TERMINAL_CAMPAIGNS = new Set(['completed', 'failed', 'cancelled']);
 const LEDGER_PAGE_SIZE = 1000;
 const LEDGER_MAX_OFFSET = 9_999_000;
+const LEGACY_POLICY_KINDS = new Set([
+  'PackageLifecycleRecordingIntent',
+  'PackageLifecycleReceipt',
+  'PackageSupersessionReceipt',
+  'PackageRetentionLegalHoldReceipt',
+]);
+
+function acceptedPolicyHash(row, authority) {
+  return row.issuer_policy_hash === authority.issuerPolicyHash
+    || (LEGACY_POLICY_KINDS.has(row.kind)
+      && PACKAGE_LIFECYCLE_LEGACY_ISSUER_POLICY_HASHES.includes(row.issuer_policy_hash));
+}
 
 function parseReceipt(row) {
   try { return JSON.parse(row?.receipt_json || ''); } catch { return null; }
@@ -65,7 +87,7 @@ function listLedger(receiptLedger, stream, authority) {
     || row.writer_id !== authority.writerId
     || row.writer_kind !== authority.writerKind
     || row.issuer_policy_id !== authority.policyId
-    || row.issuer_policy_hash !== authority.issuerPolicyHash
+    || !acceptedPolicyHash(row, authority)
     || row.issuer_assurance !== authority.assurance)) {
     throw new Error('package_lifecycle_ledger_writer_authority_invalid');
   }
@@ -161,22 +183,44 @@ function matchingLifecycle(rows, predicate) {
   return matches[0] || null;
 }
 
-function validatedLifecycleRows(rows) {
+function validatedLifecycleRows(rows, packageRecoveryAuthority) {
   const metadata = {
     PackageLifecycleReceipt: ['package_lifecycle', 'packageLifecycleReceiptHash'],
     PackageSupersessionReceipt: ['package_supersession', 'packageSupersessionReceiptHash'],
+    PackageRetentionRecoveryReceipt: [
+      'package_recovery',
+      'packageRetentionRecoveryReceiptHash',
+    ],
     PackageRetentionLegalHoldReceipt: [
       'package_legal_hold',
       'packageRetentionLegalHoldReceiptHash',
     ],
   };
-  for (const row of rows) {
-    const receipt = parseReceipt(row);
+  const parsed = rows.map((row) => Object.freeze({ row, receipt: parseReceipt(row) }));
+  const lifecycles = parsed.map(({ receipt }) => receipt)
+    .filter((receipt) => receipt?.kind === 'PackageLifecycleReceipt'
+      && verifyPackageLifecycleReceipt(receipt).valid);
+  for (const { row, receipt } of parsed) {
     const [evidenceClass, hashField] = metadata[receipt?.kind] || [];
+    const recoveryLifecycleMatches = receipt?.kind === 'PackageRetentionRecoveryReceipt'
+      ? lifecycles.filter((lifecycle) => lifecycle.packageLifecycleReceiptHash
+        === receipt.packageLifecycleReceiptHash) : [];
     const valid = receipt?.kind === 'PackageLifecycleReceipt'
       ? verifyPackageLifecycleReceipt(receipt).valid
       : receipt?.kind === 'PackageSupersessionReceipt'
         ? verifyPackageSupersessionReceipt(receipt).valid
+        : receipt?.kind === 'PackageRetentionRecoveryReceipt'
+          ? recoveryLifecycleMatches.length === 1
+            && (packageRecoveryAuthority
+              ? verifyTrustedPackageRecoveryReceipt({
+                packageRecoveryAuthority,
+                recoveryReceipt: receipt,
+                lifecycleReceipt: recoveryLifecycleMatches[0],
+              })
+              : verifyAuditOnlyPackageRecoveryReceipt({
+                recoveryReceipt: receipt,
+                lifecycleReceipt: recoveryLifecycleMatches[0],
+              }))
         : receipt?.kind === 'PackageRetentionLegalHoldReceipt'
           ? verifyPackageRetentionLegalHoldReceipt(receipt).valid : false;
     const paperId = receipt?.paperId || receipt?.releaseIdentity?.paperId || null;
@@ -238,10 +282,17 @@ export function createPackageLifecycleAuthorityService({
   campaignStore,
   campaignReleaseQuery,
   materializationInspector,
+  packageRecoveryAuthority = null,
+  packageRecoveryAuthorityReadinessVerifier = null,
+  packageRecoveryDeletionLeasePort = null,
+  packageRetentionRecoveryLockRepository = null,
   receiptLedger,
   receiptWriterAuthority,
   clock,
 } = {}) {
+  if (packageRecoveryDeletionLeasePort !== null) {
+    assertPackageRecoveryDeletionLeasePort(packageRecoveryDeletionLeasePort);
+  }
   if (!runtimeRoot || typeof campaignStore?.getCampaign !== 'function'
     || typeof campaignStore?.listCampaigns !== 'function'
     || typeof campaignStore?.listNodes !== 'function'
@@ -373,7 +424,7 @@ export function createPackageLifecycleAuthorityService({
       receiptLedger,
       LIFECYCLE_STREAM,
       receiptWriterAuthority,
-    ));
+    ), packageRecoveryAuthority);
     const results = [];
     for (const { intent } of intents) {
       const release = campaignReleaseQuery.getCurrentRelease({
@@ -408,6 +459,8 @@ export function createPackageLifecycleAuthorityService({
           runtimeRoot,
           packagePath: inspected.packagePath,
           packageContentHash: inspected.packageContentHash,
+          packageRecoveryTreeInventoryHash:
+            inspected.packageRecoveryTreeInventoryHash,
           release,
           recordedAt: clock.nowIso(),
         });
@@ -420,9 +473,12 @@ export function createPackageLifecycleAuthorityService({
           receiptLedger,
           LIFECYCLE_STREAM,
           receiptWriterAuthority,
-        ));
+        ), packageRecoveryAuthority);
       } else if (lifecycle.packagePath !== inspected.packagePath
-        || lifecycle.packageContentHash !== inspected.packageContentHash) {
+        || lifecycle.packageContentHash !== inspected.packageContentHash
+        || lifecycle.version !== 2
+        || lifecycle.packageRecoveryTreeInventoryHash
+          !== inspected.packageRecoveryTreeInventoryHash) {
         throw new Error('package_lifecycle_existing_receipt_postimage_mismatch');
       }
 
@@ -472,7 +528,7 @@ export function createPackageLifecycleAuthorityService({
               receiptLedger,
               LIFECYCLE_STREAM,
               receiptWriterAuthority,
-            ));
+            ), packageRecoveryAuthority);
           }
         } else supersession = existing || null;
       }
@@ -493,10 +549,119 @@ export function createPackageLifecycleAuthorityService({
     });
   }
 
+  const provisionRetentionRecovery = createPackageRetentionRecoveryProvisioner({
+    campaignReleaseQuery,
+    materializationInspector,
+    packageRecoveryAuthority,
+    packageRetentionRecoveryLockRepository,
+    loadLifecycleRows: () => validatedLifecycleRows(listLedger(
+      receiptLedger,
+      LIFECYCLE_STREAM,
+      receiptWriterAuthority,
+    ), packageRecoveryAuthority),
+    parseReceipt,
+    recordRecoveryReceipt: (recoveryReceipt, paperId) => record(
+      receiptLedger,
+      recoveryReceipt,
+      {
+        stream: LIFECYCLE_STREAM,
+        evidenceClass: 'package_recovery',
+        paperId,
+      },
+    ),
+    clock,
+  });
+  const retentionRecoveryReadiness = () => {
+    const inspectedAt = clock.nowIso();
+    const deletionLeasePortConfigured = Boolean(packageRecoveryDeletionLeasePort);
+    const deletionLeasePortOperational = [
+      'acquire', 'resumeTerminal', 'assert', 'renew', 'commit', 'abortRelease',
+    ]
+      .every((method) => typeof packageRecoveryDeletionLeasePort?.[method] === 'function');
+    const authorityInspection = inspectPackageRecoveryAuthorityReadiness({
+      packageRecoveryAuthority,
+      packageRecoveryDeletionLeasePort,
+      readinessVerifier: packageRecoveryAuthorityReadinessVerifier,
+      requestedAt: inspectedAt,
+      observeNow: () => clock.nowIso(),
+    });
+    let lifecycleLockOperational = false;
+    try {
+      lifecycleLockOperational =
+        packageRetentionRecoveryLockRepository?.inspectReadiness() === true;
+    } catch { lifecycleLockOperational = false; }
+    const finalizedAt = clock.nowIso();
+    const authorityInspectionFresh = Boolean(authorityInspection
+      && Date.parse(finalizedAt) <= Date.parse(authorityInspection.expiresAt));
+    const readinessVerifierConfigured =
+      Boolean(packageRecoveryAuthorityReadinessVerifier);
+    const readinessVerifierOperational = typeof packageRecoveryAuthorityReadinessVerifier
+      ?.verifyAuthenticatedInspection === 'function';
+    const ready = Boolean(authorityInspectionFresh && lifecycleLockOperational);
+    const blockers = [];
+    if (!packageRecoveryAuthority) {
+      blockers.push('package_retention_recovery_authority_unavailable');
+    } else if (!readinessVerifierConfigured) {
+      blockers.push('package_retention_recovery_readiness_verifier_unavailable');
+    } else if (!readinessVerifierOperational) {
+      blockers.push('package_retention_recovery_readiness_verifier_invalid');
+    } else if (deletionLeasePortConfigured && deletionLeasePortOperational
+      && !authorityInspection) {
+      blockers.push('package_retention_recovery_authority_self_check_failed');
+    } else if (!authorityInspectionFresh) {
+      blockers.push('package_retention_recovery_authority_self_check_expired');
+    }
+    if (!deletionLeasePortConfigured) {
+      blockers.push('package_retention_recovery_deletion_lease_unavailable');
+    } else if (!deletionLeasePortOperational) {
+      blockers.push('package_retention_recovery_deletion_lease_invalid');
+    }
+    if (!packageRetentionRecoveryLockRepository) {
+      blockers.push('package_retention_recovery_lifecycle_lock_unavailable');
+    } else if (!lifecycleLockOperational) {
+      blockers.push('package_retention_recovery_lifecycle_lock_self_check_failed');
+    }
+    const payload = {
+      version: 2,
+      kind: 'PackageRetentionRecoveryReadiness',
+      status: ready
+        ? 'package_retention_recovery_authority_ready'
+        : 'package_retention_recovery_authority_unavailable',
+      recoveryAuthorityConfigured: Boolean(packageRecoveryAuthority),
+      recoveryAuthorityReadinessVerifierConfigured:
+        readinessVerifierConfigured,
+      recoveryAuthorityReadinessVerifierOperational:
+        readinessVerifierOperational,
+      recoveryAuthorityAuthenticated: authorityInspectionFresh,
+      recoveryAuthoritySnapshotHash:
+        authorityInspection?.authoritySnapshotHash || null,
+      recoveryAuthorityInspectionHash:
+        authorityInspection?.packageRecoveryAuthorityReadinessInspectionHash || null,
+      recoveryAuthorityValidUntil: authorityInspection?.expiresAt || null,
+      deletionLeasePortConfigured,
+      deletionLeasePortOperational,
+      lifecycleLockConfigured: Boolean(packageRetentionRecoveryLockRepository),
+      lifecycleLockOperational,
+      inspectedAt,
+      finalizedAt,
+      deletionFailClosedWhenUnavailable: true,
+      blockers: Object.freeze(blockers),
+    };
+    return Object.freeze({
+      ...payload,
+      packageRetentionRecoveryReadinessHash: hashRecord(
+        'PackageRetentionRecoveryReadiness',
+        payload,
+      ),
+    });
+  };
+
   return Object.freeze({
-    version: 1,
+    version: 2,
     kind: 'PackageLifecycleAuthorityService',
     prepareCurrentReleaseRecording,
+    provisionRetentionRecovery,
+    retentionRecoveryReadiness,
     reconcileCampaign,
     reconcile: () => reconcileCampaign({}),
   });

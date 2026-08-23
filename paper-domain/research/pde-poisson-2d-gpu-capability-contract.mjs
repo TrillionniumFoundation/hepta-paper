@@ -44,6 +44,17 @@ export const PDE_POISSON_2D_GPU_PROFILE_ID =
 export const PDE_POISSON_2D_GPU_ARTIFACT_ENCODING =
   'float64-le-row-major-interior-v1';
 
+// Scientific acceptance is a versioned error budget, not an informal comment
+// in the worker.  Both the GPU producer and the independent CPU oracle bind
+// this exact object into the producer specification hash.
+export const PDE_POISSON_2D_ERROR_BUDGET = Object.freeze({
+  maximumRelativeDiscreteResidual: 1e-9,
+  maximumRelativeContinuousL2ErrorAtFinestGrid: 0.002,
+  minimumGridConvergenceOrder: 1.9,
+  maximumCpuGpuRelativeL2: 1e-10,
+  maximumCpuGpuAbsoluteError: 1e-10,
+});
+
 function sha(value) {
   const selected = String(value || '').toLowerCase();
   return SHA256.test(selected) ? selected : null;
@@ -99,13 +110,7 @@ function canonicalSpecificationPayload() {
       relativePaths: ARTIFACT_PATHS,
       producerDiagnosticAuthority: 'non-authoritative-self-report-v1',
     }),
-    acceptance: Object.freeze({
-      maximumRelativeDiscreteResidual: 1e-9,
-      maximumRelativeContinuousL2ErrorAtFinestGrid: 0.002,
-      minimumGridConvergenceOrder: 1.9,
-      maximumCpuGpuRelativeL2: 1e-10,
-      maximumCpuGpuAbsoluteError: 1e-10,
-    }),
+    acceptance: PDE_POISSON_2D_ERROR_BUDGET,
   };
 }
 

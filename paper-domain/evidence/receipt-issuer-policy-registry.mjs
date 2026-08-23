@@ -12,8 +12,14 @@ const DEFINITIONS = Object.freeze({
     writerId: 'production-capability-verifier',
     writerKind: 'capability-verifier',
     assurance: 'in_process_registered_issuer',
-    allowedKinds: ['CapabilityVerificationReceipt'],
-    allowedStreams: ['capability-verification'],
+    allowedKinds: [
+      'CapabilityVerificationReceipt',
+      'ProviderCapabilityVerificationReceipt',
+    ],
+    allowedStreams: [
+      'capability-verification',
+      'submission-provider-capability',
+    ],
   }),
   'production-capability-artifact-repository': Object.freeze({
     writerId: 'production-capability-artifact-repository',
@@ -115,6 +121,7 @@ const DEFINITIONS = Object.freeze({
       'PackageLifecycleRecordingIntent',
       'PackageLifecycleReceipt',
       'PackageSupersessionReceipt',
+      'PackageRetentionRecoveryReceipt',
       'PackageRetentionLegalHoldReceipt',
     ],
     allowedStreams: ['package-lifecycle-intents', 'package-lifecycle'],
@@ -141,6 +148,27 @@ const DEFINITIONS = Object.freeze({
     allowedStreams: ['autonomous-submission-delivery'],
   }),
 });
+
+const PACKAGE_LIFECYCLE_LEGACY_V1_POLICY = Object.freeze({
+  writerId: 'package-lifecycle-authority',
+  writerKind: 'append-only-package-lifecycle-authority',
+  assurance: 'in_process_registered_administrator',
+  allowedKinds: Object.freeze([
+    'PackageLifecycleRecordingIntent',
+    'PackageLifecycleReceipt',
+    'PackageSupersessionReceipt',
+    'PackageRetentionLegalHoldReceipt',
+  ]),
+  allowedStreams: Object.freeze(['package-lifecycle-intents', 'package-lifecycle']),
+});
+
+export const PACKAGE_LIFECYCLE_LEGACY_ISSUER_POLICY_HASHES = Object.freeze([
+  hashRecord('ReceiptIssuerPolicy', {
+    version: 1,
+    policyId: 'package-lifecycle-authority',
+    ...PACKAGE_LIFECYCLE_LEGACY_V1_POLICY,
+  }),
+]);
 
 function materializePolicy(policyId, definition) {
   const normalized = Object.freeze({

@@ -21,6 +21,11 @@ import {
   verifyGpuScientificDeepLearningTaskReceipt,
   verifyGpuScientificPdeTaskReceipt,
 } from './gpu-scientific-campaign-evidence-verifier.mjs';
+import {
+  GPU_SELECTOR_EXECUTION_LEASE_SCOPE,
+  verifyGpuSelectorExecutionLeaseReceipt,
+  verifyGpuSelectorExecutionLeaseWorkerBinding,
+} from './gpu-selector-execution-lease-contract.mjs';
 
 const GPU_UUID = /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,511}$/;
@@ -452,6 +457,96 @@ function buildTaskResult(task, receipt, binding) {
   });
 }
 
+function gpuScientificTaskWorkerReceipt(taskType, receipt) {
+  return taskType === GPU_SCIENTIFIC_CAMPAIGN_TASK_TYPES[0]
+    ? receipt?.gpuReceipt?.artifactManifest?.osSandboxWorkerReceipt || null
+    : receipt?.workerReceipt || null;
+}
+
+function campaignAttemptLeaseReceipt(workerReceipt, {
+  gpuDeviceSelector,
+  absoluteDeadlineEpochMs,
+  ownerAuthorityHash,
+} = {}) {
+  if (!workerReceipt) {
+    throw new Error(
+      'gpu_scientific_campaign_execution_lease_binding_invalid',
+    );
+  }
+  const binding = workerReceipt.gpuSelectorExecutionLeaseBinding;
+  const acquisitionReceipt = binding?.gpuSelectorExecutionLeaseReceipt;
+  if (!verifyGpuSelectorExecutionLeaseWorkerBinding(binding, { workerReceipt })
+    || workerReceipt.gpuSelectorExecutionLeaseBindingHash
+      !== binding?.gpuSelectorExecutionLeaseBindingHash
+    || !verifyGpuSelectorExecutionLeaseReceipt(acquisitionReceipt)
+    || binding.gpuSelectorExecutionLeaseReceiptHash
+      !== acquisitionReceipt.gpuSelectorExecutionLeaseReceiptHash
+    || binding.gpuDeviceSelector !== gpuDeviceSelector
+    || acquisitionReceipt.gpuDeviceSelector !== gpuDeviceSelector
+    || binding.absoluteDeadlineEpochMs !== absoluteDeadlineEpochMs
+    || acquisitionReceipt.absoluteDeadlineEpochMs
+      !== absoluteDeadlineEpochMs
+    || acquisitionReceipt.scope !== GPU_SELECTOR_EXECUTION_LEASE_SCOPE
+    || acquisitionReceipt.ownerAuthorityHash !== ownerAuthorityHash) {
+    throw new Error(
+      'gpu_scientific_campaign_execution_lease_binding_invalid',
+    );
+  }
+  return acquisitionReceipt;
+}
+
+function requireSharedCampaignAttemptLease({
+  pdeScientificReceipt,
+  deepLearningTrainingReceipt,
+  gpuDeviceSelector,
+  absoluteDeadlineEpochMs,
+  ownerAuthorityHash,
+} = {}) {
+  const expected = {
+    gpuDeviceSelector,
+    absoluteDeadlineEpochMs,
+    ownerAuthorityHash,
+  };
+  const pdeAcquisitionReceipt = campaignAttemptLeaseReceipt(
+    gpuScientificTaskWorkerReceipt(
+      GPU_SCIENTIFIC_CAMPAIGN_TASK_TYPES[0],
+      pdeScientificReceipt,
+    ),
+    expected,
+  );
+  const deepLearningAcquisitionReceipt = campaignAttemptLeaseReceipt(
+    gpuScientificTaskWorkerReceipt(
+      GPU_SCIENTIFIC_CAMPAIGN_TASK_TYPES[1],
+      deepLearningTrainingReceipt,
+    ),
+    expected,
+  );
+  const sharedFields = [
+    'gpuDeviceSelector',
+    'selectorKeyHash',
+    'ownerAuthorityHash',
+    'leaseId',
+    'fencingToken',
+    'lockScopeIdentityHash',
+    'lockIdentityHash',
+    'mechanism',
+    'scope',
+    'requestedAtEpochMs',
+    'acquiredAtEpochMs',
+    'absoluteDeadlineEpochMs',
+    'productionExclusivityClaimed',
+    'gpuSelectorExecutionLeaseReceiptHash',
+  ];
+  if (sharedFields.some((field) => (
+    pdeAcquisitionReceipt[field] !== deepLearningAcquisitionReceipt[field]
+  )) || JSON.stringify(pdeAcquisitionReceipt)
+    !== JSON.stringify(deepLearningAcquisitionReceipt)) {
+    throw new Error(
+      'gpu_scientific_campaign_execution_lease_binding_invalid',
+    );
+  }
+}
+
 export function buildGpuScientificCampaignExecutionResult({
   campaign,
   node,
@@ -505,11 +600,36 @@ export function buildGpuScientificCampaignExecutionResult({
         attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
     }),
   ]);
+  const taskWorkerReceipts = [
+    gpuScientificTaskWorkerReceipt(
+      GPU_SCIENTIFIC_CAMPAIGN_TASK_TYPES[0],
+      pdeScientificReceipt,
+    ),
+    gpuScientificTaskWorkerReceipt(
+      GPU_SCIENTIFIC_CAMPAIGN_TASK_TYPES[1],
+      deepLearningTrainingReceipt,
+    ),
+  ];
+  const completedTaskSet = taskResults.every((result) => (
+    result.status === 'gpu_scientific_campaign_task_completed_non_promotable'
+  ));
+  const selectorLeaseEvidencePresent = taskWorkerReceipts.some((workerReceipt) => (
+    workerReceipt?.gpuSelectorExecutionLeaseBinding !== undefined
+      || workerReceipt?.gpuSelectorExecutionLeaseBindingHash !== undefined
+  ));
+  if (completedTaskSet || selectorLeaseEvidencePresent) {
+    requireSharedCampaignAttemptLease({
+      pdeScientificReceipt,
+      deepLearningTrainingReceipt,
+      gpuDeviceSelector: plan.gpuDeviceSelector,
+      absoluteDeadlineEpochMs: effectiveDeadline,
+      ownerAuthorityHash:
+        attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
+    });
+  }
   const taskBlockers = taskResults.flatMap((result) => result.blockers);
   const deadlineExceeded = completedAt >= effectiveDeadline;
-  const completed = taskResults.every((result) => (
-    result.status === 'gpu_scientific_campaign_task_completed_non_promotable'
-  )) && !deadlineExceeded;
+  const completed = completedTaskSet && !deadlineExceeded;
   const blockers = Object.freeze([...new Set([
     ...GPU_SCIENTIFIC_CAMPAIGN_NON_PROMOTION_BLOCKERS,
     ...taskBlockers,

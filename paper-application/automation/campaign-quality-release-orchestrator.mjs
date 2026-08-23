@@ -254,6 +254,7 @@ export async function executeCampaignPackageNode({
   context,
   workspace,
   manuscript,
+  executionBudget = null,
   executionSignal,
   executionResources = null,
   experimentRegistryAuthorityVerifier = null,
@@ -481,6 +482,7 @@ export async function executeCampaignPackageNode({
     gpuScientificExecutionEvidence: context.gpuScientificNode?.result || null,
     gpuScientificResearchEvidence,
     createdAt,
+    executionBudget,
     executionSignal,
     assertExternalSideEffectReady:
       executionResources?.assertExternalSideEffectReady || null,

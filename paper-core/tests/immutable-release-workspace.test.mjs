@@ -51,6 +51,17 @@ function removeWritable(root) {
   fs.rmSync(root, { recursive: true, force: true });
 }
 
+function createSubmoduleSource(root, name) {
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, 'IDENTITY.txt'), `${name}\n`);
+  git(root, 'init', '-q');
+  git(root, 'config', 'user.email', 'immutable-release@example.invalid');
+  git(root, 'config', 'user.name', 'Immutable Release Test');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', `${name} fixture`);
+  return root;
+}
+
 function createFixture(t, { escapingDependencySymlink = false } = {}) {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'immutable-release-fixture-'));
   const candidateRoot = path.join(fixtureRoot, 'candidate');
@@ -110,7 +121,20 @@ function createFixture(t, { escapingDependencySymlink = false } = {}) {
   git(candidateRoot, 'config', 'user.email', 'immutable-release@example.invalid');
   git(candidateRoot, 'config', 'user.name', 'Immutable Release Test');
   git(candidateRoot, 'add', '.');
-  git(candidateRoot, 'commit', '-qm', 'immutable release fixture');
+  git(candidateRoot, 'commit', '-qm', 'immutable release fixture base');
+  const submoduleSources = path.join(fixtureRoot, 'submodule-sources');
+  const coreSource = createSubmoduleSource(path.join(submoduleSources, 'core'), 'core');
+  const sourceCasSource = createSubmoduleSource(
+    path.join(submoduleSources, 'source-cas'),
+    'r-scientific-source-cas',
+  );
+  git(candidateRoot, '-c', 'protocol.file.allow=always',
+    'submodule', 'add', '-q', '--', coreSource, 'core');
+  git(candidateRoot, '-c', 'protocol.file.allow=always',
+    'submodule', 'add', '-q', '--', sourceCasSource,
+    'runtime-images/r-scientific/source-cas');
+  git(candidateRoot, 'add', '.');
+  git(candidateRoot, 'commit', '-qm', 'pin immutable release submodules');
   git(candidateRoot, 'tag', 'fixture-anchor');
   const expectedCodeProvenance = verificationProvenance(candidateRoot);
   const expectedReleaseStateSnapshot = assertWorkspaceReleaseReady({
@@ -156,6 +180,13 @@ test('release workspace is an exact detached no-hardlink clone with read-only de
   assert.equal(git(prepared.workspaceRoot, 'check-ignore', '--no-index', 'node_modules'),
     'node_modules');
   assert.equal(fs.lstatSync(path.join(prepared.workspaceRoot, 'node_modules')).isSymbolicLink(), true);
+  assert.equal(prepared.submoduleMaterialization.status,
+    'immutable_release_submodules_materialized');
+  assert.equal(git(path.join(prepared.workspaceRoot, 'core'), 'status', '--porcelain=v1'), '');
+  assert.equal(git(
+    path.join(prepared.workspaceRoot, 'runtime-images', 'r-scientific', 'source-cas'),
+    'status', '--porcelain=v1',
+  ), '');
   assert.ok(fs.realpathSync(path.join(prepared.workspaceRoot, 'node_modules'))
     .startsWith(`${path.dirname(prepared.workspaceRoot)}${path.sep}dependencies${path.sep}`));
   assert.deepEqual(writablePaths(prepared.workspaceRoot), []);

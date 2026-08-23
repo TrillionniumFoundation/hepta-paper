@@ -1,7 +1,9 @@
 [Unit]
 Description=Hepta Paper local autonomous state authority
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
 After=local-fs.target
-Before=autonomous-research-supervisor.service autonomous-research-state-backup-renew.service
+Before=strict-full-auto-runtime-adoption.service autonomous-research-supervisor.service autonomous-research-state-backup-renew.service
 StartLimitIntervalSec=0
 
 [Service]

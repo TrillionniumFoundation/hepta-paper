@@ -475,6 +475,8 @@ test('persisted agenda authority promotes only a hash-bound, machine-generated c
         rows: [{
           campaign_id: candidate.campaignId,
           paper_id: candidate.paperId,
+          status: 'running',
+          revision: 1,
           spec_json: JSON.stringify(candidate),
           updated_at: '2026-07-19T00:01:00.000Z',
         }],
@@ -644,6 +646,8 @@ test('persisted agenda authority accepts only a strong production-run agenda', (
           rows: [{
             campaign_id: candidate.campaignId,
             paper_id: candidate.paperId,
+            status: 'running',
+            revision: 1,
             spec_json: JSON.stringify(candidate),
             updated_at: fixture.preparation.observedAt,
           }],

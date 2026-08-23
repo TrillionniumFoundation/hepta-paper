@@ -63,6 +63,34 @@ test('consistent SQLite copies are owner-only from creation under a permissive u
   assert.deepEqual(fs.readdirSync(fixture.root).filter((name) => name.startsWith('.sqlite-copy-')), []);
 });
 
+test('immutable-source copies do not materialize sidecars beside WAL-mode snapshots', async (t) => {
+  const fixture = createFixture(t);
+  const live = new DatabaseSync(fixture.sourcePath);
+  live.exec('PRAGMA journal_mode=WAL;');
+  live.close();
+  const bundlePath = path.join(fixture.root, 'bundle.sqlite');
+  const drillPath = path.join(fixture.root, 'drill.sqlite');
+
+  await copySqliteDatabase({
+    sourcePath: fixture.sourcePath,
+    destinationPath: bundlePath,
+  });
+  assert.equal(fs.existsSync(`${bundlePath}-wal`), false);
+  assert.equal(fs.existsSync(`${bundlePath}-shm`), false);
+
+  await copySqliteDatabase({
+    sourcePath: bundlePath,
+    destinationPath: drillPath,
+    sourceImmutable: true,
+  });
+  assert.deepEqual(fs.readdirSync(fixture.root).filter((name) => (
+    name.startsWith('bundle.sqlite') || name.startsWith('drill.sqlite')
+  )).sort(), [
+    'bundle.sqlite',
+    'drill.sqlite',
+  ]);
+});
+
 test('consistent SQLite copies never replace existing regular, symbolic, or hard-linked targets', async (t) => {
   const fixture = createFixture(t);
   const regularPath = path.join(fixture.root, 'regular.sqlite');

@@ -3,19 +3,11 @@ import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { pathWithin, sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { retentionMemberHash } from './runtime-retention-scope-repository.mjs';
+import { inspectPackageRecoveryTreeInventorySync }
+  from './package-recovery-tree-inventory-repository.mjs';
 import {
   assertSealedImmutableCampaignPackageFilesSync,
 } from './campaign-release-materialization.mjs';
-
-function walkRegularTree(candidate) {
-  const stat = fs.lstatSync(candidate, { bigint: true });
-  if (stat.isSymbolicLink()) throw new Error('package_lifecycle_package_symlink_forbidden');
-  if (stat.isFile()) return;
-  if (!stat.isDirectory()) throw new Error('package_lifecycle_package_entry_invalid');
-  for (const name of fs.readdirSync(candidate).sort()) {
-    walkRegularTree(path.join(candidate, name));
-  }
-}
 
 function pinnedDirectoryIdentity(candidate) {
   const stat = fs.lstatSync(candidate, { bigint: true });
@@ -84,18 +76,22 @@ export function createPackageLifecycleMaterializationInspector({ runtimeRoot } =
     }
     const before = pinnedDirectoryIdentity(packagePath);
     assertSealedImmutableCampaignPackageFilesSync(packageOutput, root);
-    walkRegularTree(packagePath);
+    const firstInventory = inspectPackageRecoveryTreeInventorySync({ packagePath });
     const firstHash = retentionMemberHash(packagePath);
-    walkRegularTree(packagePath);
+    const secondInventory = inspectPackageRecoveryTreeInventorySync({ packagePath });
     const secondHash = retentionMemberHash(packagePath);
     assertSealedImmutableCampaignPackageFilesSync(packageOutput, root);
     const after = pinnedDirectoryIdentity(packagePath);
-    if (!sameIdentity(before, after) || firstHash !== secondHash) {
+    if (!sameIdentity(before, after) || firstHash !== secondHash
+      || firstInventory.inventory.packageRecoveryTreeInventoryHash
+        !== secondInventory.inventory.packageRecoveryTreeInventoryHash) {
       throw new Error('package_lifecycle_package_changed_during_inspection');
     }
     return Object.freeze({
       packagePath,
       packageContentHash: firstHash,
+      packageRecoveryTreeInventoryHash:
+        firstInventory.inventory.packageRecoveryTreeInventoryHash,
       immutableCampaignPackageOutputHash:
         packageOutput.immutableCampaignPackageOutputHash,
       packageDirectoryIdentity: before,

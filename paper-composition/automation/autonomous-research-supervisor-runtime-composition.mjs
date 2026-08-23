@@ -5,11 +5,11 @@ import {
   executeAutomationRuntimeReconciliation,
 } from '../../paper-adapters/automation/automation-runtime-reconciler.mjs';
 import {
-  openExistingWritablePaperStore,
-} from '../../paper-adapters/persistence/store-provider.mjs';
-import {
   openAutonomousResearchExternallyFencedPaperStore,
 } from '../bootstrap/campaign-execution-context-bootstrap.mjs';
+import {
+  runWithScopedFoundationWriterAsync,
+} from '../bootstrap/context-foundation-composition.mjs';
 import {
   composeAutomationReconcilerReceiptLedger,
 } from '../bootstrap/receipt-ledger-composition.mjs';
@@ -95,25 +95,18 @@ export function composeAutonomousResearchSupervisorRuntime({
     random,
   });
 
-  const reconcileAutomationRuntime = reconcileRuntimeOverride || (() => {
-    const reconciliationStore = requireFullyAutonomous
-      ? openAutonomousResearchExternallyFencedPaperStore({
-        root,
-        runtimeRoot,
-        mutationCoordinator,
-      })
-      : openExistingWritablePaperStore({ root, runtimeRoot });
-    try {
-      return executeAutomationRuntimeReconciliation({
+  const reconcileAutomationRuntime = (reconciliationStore, { now } = {}) => (
+    reconcileRuntimeOverride
+      ? reconcileRuntimeOverride({ now })
+      : executeAutomationRuntimeReconciliation({
         store: reconciliationStore,
         clock,
         receiptLedger: composeAutomationReconcilerReceiptLedger({
           store: reconciliationStore,
           clock,
         }),
-      });
-    } finally { reconciliationStore.close(); }
-  });
+      })
+  );
   const reconcileRuntimeMirror = runtimeReproducibilityOverrides.reconcileMirror
     || (() => createRuntimeImageReproducibilityReceiptRepository({
       runtimeRoot,
@@ -122,7 +115,7 @@ export function composeAutonomousResearchSupervisorRuntime({
       offlineProvision: !requireFullyAutonomous,
       requireExternallyFencedMutations: requireFullyAutonomous,
     }).reconcileMirror());
-  const reconcileRuntime = async ({ now } = {}) => {
+  const reconcileOperation = async ({ now, reconciliationStore = null } = {}) => {
     const fullResearchQualificationMirror = requireFullyAutonomous
       ? receiptPointerRepository.recoverPendingPublication()
       : receiptPointerRepository.reconcileMirror();
@@ -132,10 +125,34 @@ export function composeAutonomousResearchSupervisorRuntime({
     return Object.freeze({
       fullResearchQualificationMirror,
       runtimeReproducibilityMirror,
-      automationRuntime: await reconcileAutomationRuntime({ now }),
+      automationRuntime: await reconcileAutomationRuntime(
+        reconciliationStore,
+        { now },
+      ),
       runtimeReproducibility: runtimeRefreshStateRepository
         .reconcileStaleRefreshLease({ now: now || clock.now() }),
     });
+  };
+  const reconcileRuntime = async ({ now } = {}) => {
+    if (reconcileRuntimeOverride) return reconcileOperation({ now });
+    return runWithScopedFoundationWriterAsync({
+      root,
+      runtimeRoot,
+      writerId: 'autonomous-research-supervisor-runtime-reconcile',
+      rootKind: 'autonomous-research-supervisor-runtime-reconcile',
+      serviceOverrides: { clock },
+      ...(requireFullyAutonomous ? {
+        writableStoreFactory: () =>
+          openAutonomousResearchExternallyFencedPaperStore({
+            root,
+            runtimeRoot,
+            mutationCoordinator,
+          }),
+      } : {}),
+    }, async ({ store }) => reconcileOperation({
+      now,
+      reconciliationStore: store,
+    }));
   };
 
   return Object.freeze({ runtimeRefresh, reconcileRuntime });

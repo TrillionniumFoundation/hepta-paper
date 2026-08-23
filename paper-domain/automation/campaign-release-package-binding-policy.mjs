@@ -40,7 +40,8 @@ function gpuScientificV3PackageFilesBound({ packageOutput, manifest } = {}) {
     && Number(archiveManifest?.bytes)
       === Number(gpu.artifactArchiveManifestFileBytes)
     && Array.isArray(gpu.archiveEntries)
-    && gpu.archiveEntries.length === 9
+    && gpu.archiveEntries.length > 0
+    && gpu.archiveEntries.length === Number(gpu.archiveBodyCount)
     && gpu.archiveEntries.every((entry) => {
       const file = byCapsuleRole.get(entry.role);
       return file?.packageRelativePath === entry.path

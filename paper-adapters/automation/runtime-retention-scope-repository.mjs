@@ -27,13 +27,51 @@ const CATEGORY_RELATIVE_ROOTS = Object.freeze({
   'artifact-cas': path.join('artifact-cas', 'objects', 'sha256'),
 });
 const ALLOWED_DELETION_EVIDENCE = Object.freeze({
-  'workspace-snapshots': 'workspace_snapshot_superseded_recovery_verified',
-  'automation-artifacts': 'artifact_unreachable_complete_inventory',
-  packages: 'package_superseded_recovery_verified',
-  'artifact-cas': 'cas_prefix_unreachable_complete_inventory',
+  'workspace-snapshots': new Set(['workspace_snapshot_superseded_recovery_verified']),
+  'automation-artifacts': new Set(['artifact_unreachable_complete_inventory']),
+  packages: new Set([
+    'package_superseded_recovery_verified',
+    'package_fenced_staging_generation_verified',
+  ]),
+  'artifact-cas': new Set(['cas_prefix_unreachable_complete_inventory']),
 });
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const RETENTION_CATEGORY_LOCK_NAME = /^\.hepta-runtime-retention-[a-z0-9-]+\.lock$/;
+const PUBLISHED_PACKAGE_LEASE_ID_FIELDS = Object.freeze([
+  'storageAuthorityId',
+  'storageObjectId',
+  'storageObjectVersion',
+  'retentionLockVersion',
+  'storageLedgerReceiptId',
+]);
+const PUBLISHED_PACKAGE_LEASE_HASH_FIELDS = Object.freeze([
+  'packageLifecycleReceiptHash',
+  'packageRetentionRecoveryReceiptHash',
+  'packageRecoveryDeletionLeaseBindingHash',
+  'packageRecoveryTreeInventoryHash',
+  'packageRecoveryAuthoritySnapshotHash',
+  'storageObjectBytesHash',
+  'retentionLockIdentityHash',
+  'storageLedgerReceiptHash',
+  'trustStoreHash',
+]);
+
+function boundedIdentifier(value) {
+  return typeof value === 'string'
+    && value.trim() === value
+    && value.length >= 1
+    && value.length <= 512
+    && ![...value].some((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint <= 31 || codePoint === 127;
+    });
+}
+
+function canonicalTime(value) {
+  return typeof value === 'string'
+    && Number.isFinite(Date.parse(value))
+    && new Date(Date.parse(value)).toISOString() === value;
+}
 
 export function runtimeRetentionCategoryRoot(runtimeRoot, category) {
   return path.resolve(runtimeRoot, CATEGORY_RELATIVE_ROOTS[category] || category);
@@ -61,16 +99,24 @@ function normalizedPathList(runtimeRoot, category, values = []) {
 function deletionEvidence(runtimeRoot, category, value = {}) {
   const pathValue = governedEntryPath(runtimeRoot, category, value.path);
   const sourceEvidenceHashes = [...new Set(value.sourceEvidenceHashes || [])].sort();
-  if (value.evidenceKind !== ALLOWED_DELETION_EVIDENCE[category]) {
+  const publishedPackage = category === 'packages'
+    && value.evidenceKind === 'package_superseded_recovery_verified';
+  if (!ALLOWED_DELETION_EVIDENCE[category]?.has(value.evidenceKind)) {
     throw new Error('runtime_retention_deletion_evidence_kind_invalid');
   }
   if (!SHA256_PATTERN.test(String(value.contentHash || ''))
     || !sourceEvidenceHashes.length
-    || sourceEvidenceHashes.some((hash) => !SHA256_PATTERN.test(String(hash)))) {
+    || sourceEvidenceHashes.some((hash) => !SHA256_PATTERN.test(String(hash)))
+    || (publishedPackage && (
+      PUBLISHED_PACKAGE_LEASE_HASH_FIELDS
+        .some((field) => !SHA256_PATTERN.test(String(value[field])))
+      || PUBLISHED_PACKAGE_LEASE_ID_FIELDS
+        .some((field) => !boundedIdentifier(value[field]))
+      || !canonicalTime(value.retainUntil)))) {
     throw new Error('runtime_retention_deletion_evidence_binding_invalid');
   }
   const payload = {
-    version: 1,
+    version: publishedPackage ? 2 : 1,
     kind: 'RuntimeRetentionDeletionEvidence',
     status: 'retention_deletion_authorized',
     category,
@@ -82,6 +128,26 @@ function deletionEvidence(runtimeRoot, category, value = {}) {
     releaseDependent: false,
     recoveryProtected: false,
     sourceEvidenceHashes,
+    ...(publishedPackage ? {
+      packageLifecycleReceiptHash: value.packageLifecycleReceiptHash,
+      packageRetentionRecoveryReceiptHash:
+        value.packageRetentionRecoveryReceiptHash,
+      packageRecoveryDeletionLeaseBindingHash:
+        value.packageRecoveryDeletionLeaseBindingHash,
+      packageRecoveryTreeInventoryHash: value.packageRecoveryTreeInventoryHash,
+      packageRecoveryAuthoritySnapshotHash:
+        value.packageRecoveryAuthoritySnapshotHash,
+      storageAuthorityId: value.storageAuthorityId,
+      storageObjectId: value.storageObjectId,
+      storageObjectVersion: value.storageObjectVersion,
+      storageObjectBytesHash: value.storageObjectBytesHash,
+      retentionLockVersion: value.retentionLockVersion,
+      retentionLockIdentityHash: value.retentionLockIdentityHash,
+      retainUntil: value.retainUntil,
+      storageLedgerReceiptId: value.storageLedgerReceiptId,
+      storageLedgerReceiptHash: value.storageLedgerReceiptHash,
+      trustStoreHash: value.trustStoreHash,
+    } : {}),
   };
   return Object.freeze({
     ...payload,
@@ -189,12 +255,14 @@ export function verifyRuntimeRetentionDeletionEvidence({
   if (!evidence) blockers.push('retention_deletion_evidence_missing');
   else {
     const { runtimeRetentionDeletionEvidenceHash = null, ...payload } = evidence;
-    if (evidence.version !== 1
+    const publishedPackage = category === 'packages'
+      && evidence.evidenceKind === 'package_superseded_recovery_verified';
+    if (evidence.version !== (publishedPackage ? 2 : 1)
       || evidence.kind !== 'RuntimeRetentionDeletionEvidence'
       || evidence.status !== 'retention_deletion_authorized'
       || evidence.category !== category
       || evidence.contentHash !== contentHash
-      || evidence.evidenceKind !== ALLOWED_DELETION_EVIDENCE[category]
+      || !ALLOWED_DELETION_EVIDENCE[category]?.has(evidence.evidenceKind)
       || evidence.active !== false
       || evidence.referenced !== false
       || evidence.releaseDependent !== false
@@ -202,6 +270,12 @@ export function verifyRuntimeRetentionDeletionEvidence({
       || !Array.isArray(evidence.sourceEvidenceHashes)
       || !evidence.sourceEvidenceHashes.length
       || evidence.sourceEvidenceHashes.some((hash) => !SHA256_PATTERN.test(String(hash)))
+      || (publishedPackage && (
+        PUBLISHED_PACKAGE_LEASE_HASH_FIELDS
+          .some((field) => !SHA256_PATTERN.test(String(evidence[field])))
+        || PUBLISHED_PACKAGE_LEASE_ID_FIELDS
+          .some((field) => !boundedIdentifier(evidence[field]))
+        || !canonicalTime(evidence.retainUntil)))
       || hashRecord('RuntimeRetentionDeletionEvidence', payload) !== runtimeRetentionDeletionEvidenceHash) {
       blockers.push('retention_deletion_evidence_invalid');
     }

@@ -4,7 +4,19 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { createPackageDeletionWriterScopedFilesystemArtifactRepositoryFactory }
+  from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
+import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { createCampaignReleasePackager } from '../../paper-adapters/automation/campaign-release-packager.mjs';
+import {
+  campaignReleasePackageRootFor,
+  campaignReleaseRebuildRootFor,
+  campaignReleaseRootFor,
+} from '../../paper-adapters/automation/campaign-release-materialization.mjs';
+import { createRuntimeRetentionPackageDeletionFenceRepository }
+  from '../../paper-adapters/automation/runtime-retention-package-deletion-fence-repository.mjs';
+import { createRuntimeRetentionPackageDeletionWriterBoundary }
+  from '../../paper-adapters/automation/runtime-retention-package-deletion-writer-boundary.mjs';
 import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import {
   buildIndependentPdfRebuildCommand,
@@ -58,7 +70,9 @@ function finalCompileNode(snapshot) {
 
 function packageNode(finalNode, researchNode = null) {
   return {
-    nodeId: 'campaign:package', kind: 'package', status: 'running', attemptId: `package-${researchNode ? 'profiled' : 'plain'}`,
+    nodeId: 'campaign:package', kind: 'package', status: 'running',
+    attemptId: `package-${researchNode ? 'profiled' : 'plain'}`,
+    leaseGeneration: 1,
     dependencies: [finalNode.nodeId, ...(researchNode ? [researchNode.nodeId] : [])],
   };
 }
@@ -214,6 +228,373 @@ function academicAuthorityProbeExperiment() {
   };
 }
 
+test('release packager rejects missing mandatory adapter dependencies', () => {
+  assert.throws(
+    () => createCampaignReleasePackager(),
+    /Campaign release packager requires ArtifactRepositoryFactory/,
+  );
+  assert.throws(
+    () => createCampaignReleasePackager({
+      artifactRepositoryFactory: () => Object.freeze({}),
+      packageAdapter: null,
+    }),
+    /Campaign release packager requires runPackageAdapter/,
+  );
+});
+
+test('release packager validates lineage, topology, time, and runtime before side effects', async (t) => {
+  const campaign = {
+    campaignId: 'campaign',
+    paperId: 'paper',
+    spec: { campaignPlanHash: hashRecord('Plan', { boundary: true }) },
+  };
+  const finalNode = {
+    nodeId: 'campaign:final-compile',
+    kind: 'final-compile',
+    status: 'completed',
+  };
+  const researchNode = {
+    nodeId: 'campaign:research-verify',
+    kind: 'research-verify',
+    status: 'completed',
+    attemptId: 'research-attempt-1',
+    leaseGeneration: 1,
+    dependencies: [finalNode.nodeId],
+  };
+  const releaseNode = {
+    nodeId: 'campaign:package',
+    kind: 'package',
+    attemptId: 'package-attempt-1',
+    leaseGeneration: 1,
+    dependencies: [researchNode.nodeId],
+  };
+  const researchReport = {
+    kind: 'PaperResearchVerifyReport',
+    researchReportHash: hashRecord('BoundaryResearchReport', {}),
+    promotionEligibility: { status: 'research_promotion_ready' },
+  };
+  const validInput = {
+    campaign,
+    packageNode: releaseNode,
+    finalCompileNode: finalNode,
+    researchVerifyNode: researchNode,
+    researchReport,
+    sourceWorkspace: process.cwd(),
+    runtimeRoot: path.join(process.cwd(), '.runtime-not-created'),
+    createdAt: '2026-07-15T00:00:00.000Z',
+  };
+  const cases = [
+    {
+      name: 'pre-aborted execution',
+      input: { executionSignal: { aborted: true } },
+      error: /campaign_release_packaging_cancelled/,
+    },
+    {
+      name: 'missing campaign plan lineage',
+      input: { campaign: { campaignId: 'campaign', spec: {} } },
+      error: /campaign_release_campaign_lineage_required/,
+    },
+    {
+      name: 'wrong package node kind',
+      input: { packageNode: { ...releaseNode, kind: 'formal' } },
+      error: /campaign_release_package_node_required/,
+    },
+    {
+      name: 'unfinished final compile',
+      input: { finalCompileNode: { ...finalNode, status: 'running' } },
+      error: /campaign_release_final_compile_not_completed/,
+    },
+    {
+      name: 'package dependency omitted',
+      input: { packageNode: { ...releaseNode, dependencies: undefined } },
+      error: /campaign_release_research_verification_dependency_required/,
+    },
+    {
+      name: 'research dependency omitted',
+      input: { researchVerifyNode: { ...researchNode, dependencies: undefined } },
+      error: /campaign_release_research_verification_dependency_required/,
+    },
+    {
+      name: 'research attempt identity omitted',
+      input: { researchVerifyNode: { ...researchNode, attemptId: null } },
+      error: /campaign_release_research_attempt_identity_required/,
+    },
+    {
+      name: 'research report is not promotion ready',
+      input: {
+        researchReport: {
+          ...researchReport,
+          promotionEligibility: { status: 'research_promotion_blocked' },
+        },
+      },
+      error: /campaign_release_research_report_not_promotion_ready/,
+    },
+    {
+      name: 'created-at is absent',
+      input: { createdAt: null },
+      error: /campaign_release_created_at_required/,
+    },
+    {
+      name: 'runtime root is absent',
+      input: { runtimeRoot: null },
+      error: /campaign_release_runtime_root_required/,
+    },
+    {
+      name: 'runtime root conflicts with configured root',
+      configuredRuntimeRoot: path.join(process.cwd(), '.configured-runtime-not-created'),
+      input: { runtimeRoot: path.join(process.cwd(), '.other-runtime-not-created') },
+      error: /campaign_release_runtime_root_mismatch/,
+    },
+  ];
+  for (const candidate of cases) {
+    await t.test(candidate.name, async () => {
+      let packageCalls = 0;
+      const releasePackager = createCampaignReleasePackager({
+        artifactRepositoryFactory: () => Object.freeze({}),
+        runtimeRoot: candidate.configuredRuntimeRoot,
+        async packageAdapter() {
+          packageCalls += 1;
+          return {};
+        },
+      });
+      await assert.rejects(
+        releasePackager.packageRelease({ ...validInput, ...candidate.input }),
+        candidate.error,
+      );
+      assert.equal(packageCalls, 0);
+    });
+  }
+});
+
+test('release packager rejects every research receipt and node binding drift before packaging', async (t) => {
+  const { workspace, runtimeRoot } = fixture(t);
+  const snapshot = workspaceSnapshot(workspace);
+  const finalNode = finalCompileNode(snapshot);
+  const baseline = profiledResearch({
+    profile: null,
+    snapshot,
+    finalCompileNodeId: finalNode.nodeId,
+  });
+  const wrongHash = hashRecord('WrongResearchBinding', {});
+
+  function reboundResearch({
+    reportChanges = {},
+    resultChanges = {},
+    nestedReportChanges = null,
+    corruptResultHash = false,
+  } = {}) {
+    const { researchReportHash: _ignored, ...baselinePayload } = baseline.report;
+    const reportPayload = { ...baselinePayload, ...reportChanges };
+    const report = {
+      ...reportPayload,
+      researchReportHash: hashPaperRecord('PaperResearchVerifyReport', reportPayload),
+    };
+    const result = {
+      ...baseline.node.result,
+      researchReportHash: report.researchReportHash,
+      report: nestedReportChanges ? { ...report, ...nestedReportChanges } : report,
+      ...resultChanges,
+    };
+    return {
+      report,
+      node: {
+        ...baseline.node,
+        result,
+        resultSha256: corruptResultHash
+          ? wrongHash
+          : hashRecord('PaperCampaignNodeResult', result),
+      },
+    };
+  }
+
+  const cases = [
+    {
+      name: 'node result report hash',
+      change: { resultChanges: { researchReportHash: wrongHash } },
+    },
+    {
+      name: 'nested report hash',
+      change: { nestedReportChanges: { researchReportHash: wrongHash } },
+    },
+    {
+      name: 'snapshot verification',
+      change: {
+        reportChanges: {
+          campaignResearchSourceSnapshot: {
+            ...baseline.report.campaignResearchSourceSnapshot,
+            campaignId: 'other-campaign',
+          },
+        },
+      },
+    },
+    {
+      name: 'report research node',
+      change: { reportChanges: { researchNodeId: 'other:research-verify' } },
+    },
+    {
+      name: 'report research attempt',
+      change: { reportChanges: { researchAttemptId: 'other-attempt' } },
+    },
+    {
+      name: 'report research generation',
+      change: { reportChanges: { researchLeaseGeneration: 2 } },
+    },
+    {
+      name: 'result research node',
+      change: { resultChanges: { researchNodeId: 'other:research-verify' } },
+    },
+    {
+      name: 'result research attempt',
+      change: { resultChanges: { researchAttemptId: 'other-attempt' } },
+    },
+    {
+      name: 'result research generation',
+      change: { resultChanges: { researchLeaseGeneration: 2 } },
+    },
+    {
+      name: 'report snapshot hash',
+      change: { reportChanges: { campaignResearchSourceSnapshotHash: wrongHash } },
+    },
+    {
+      name: 'result snapshot hash',
+      change: { resultChanges: { campaignResearchSourceSnapshotHash: wrongHash } },
+    },
+    {
+      name: 'result source merkle hash',
+      change: { resultChanges: { verifiedSourceMerkleHash: wrongHash } },
+    },
+    {
+      name: 'result workspace manifest hash',
+      change: { resultChanges: { verifiedSourceWorkspaceManifestHash: wrongHash } },
+    },
+    {
+      name: 'result record hash',
+      change: { corruptResultHash: true },
+    },
+  ];
+
+  for (const candidate of cases) {
+    await t.test(candidate.name, async () => {
+      const research = reboundResearch(candidate.change);
+      let packageCalls = 0;
+      const releasePackager = packager(async () => {
+        packageCalls += 1;
+        return {};
+      });
+      await assert.rejects(releasePackager.packageRelease({
+        campaign: {
+          campaignId: 'campaign',
+          paperId: 'paper',
+          spec: {
+            campaignPlanHash: hashRecord('Plan', { binding: candidate.name }),
+            sourceWorkspace: workspace,
+          },
+        },
+        packageNode: packageNode(finalNode, research.node),
+        finalCompileNode: finalNode,
+        researchVerifyNode: research.node,
+        researchReport: research.report,
+        sourceWorkspace: workspace,
+        runtimeRoot,
+        createdAt: '2026-07-15T00:00:00.000Z',
+      }), /campaign_release_research_source_snapshot_invalid/);
+      assert.equal(packageCalls, 0);
+    });
+  }
+});
+
+test('release packager fails closed across post-build package boundaries', async (t) => {
+  const cases = [
+    {
+      name: 'compiled PDF is missing',
+      beforeCall({ workspace }) {
+        fs.unlinkSync(path.join(workspace, 'automation-results', 'final', 'main.pdf'));
+      },
+      expected: /campaign_release_compiled_pdf_required/,
+    },
+    {
+      name: 'execution is cancelled by the package adapter',
+      executionSignal: { aborted: false },
+      packageResult(input, executionSignal) {
+        executionSignal.aborted = true;
+        return {
+          status: 'package_ready',
+          sourceTreeManifest: input.sourceArchiveDefinition.sourceTreeManifest,
+        };
+      },
+      expected: /campaign_release_packaging_cancelled/,
+    },
+    {
+      name: 'adapter returns a different source archive identity',
+      packageResult() {
+        return {
+          status: 'package_ready',
+          sourceTreeManifest: {
+            sourceTreeManifestHash: hashRecord('WrongSourceTreeManifest', {}),
+            sourcePackageContractHash: hashRecord('WrongSourcePackageContract', {}),
+          },
+        };
+      },
+      expected: /campaign_release_source_archive_definition_mismatch/,
+    },
+    {
+      name: 'adapter returns a blocked package',
+      packageResult(input) {
+        return {
+          status: 'package_blocked',
+          sourceTreeManifest: input.sourceArchiveDefinition.sourceTreeManifest,
+          artifactPackage: { submitReady: false },
+          blockers: ['fixture_package_blocker'],
+        };
+      },
+      expected: /campaign_release_package_blocked:fixture_package_blocker/,
+    },
+  ];
+  for (const candidate of cases) {
+    await t.test(candidate.name, async (nested) => {
+      const { workspace, runtimeRoot } = fixture(nested);
+      const snapshot = workspaceSnapshot(workspace);
+      const finalNode = finalCompileNode(snapshot);
+      const research = profiledResearch({
+        profile: null,
+        snapshot,
+        finalCompileNodeId: finalNode.nodeId,
+      });
+      candidate.beforeCall?.({ workspace });
+      let packageCalls = 0;
+      const executionSignal = candidate.executionSignal
+        ? { ...candidate.executionSignal }
+        : null;
+      const releasePackager = createCampaignReleasePackager({
+        artifactRepositoryFactory: () => Object.freeze({}),
+        independentPdfRebuildVerifier: independentPdfRebuildVerifier(),
+        runtimeRoot,
+        async packageAdapter(input) {
+          packageCalls += 1;
+          return candidate.packageResult(input, executionSignal);
+        },
+      });
+      await assert.rejects(releasePackager.packageRelease({
+        campaign: {
+          campaignId: 'campaign',
+          paperId: 'paper',
+          spec: {
+            campaignPlanHash: hashRecord('Plan', { boundary: candidate.name }),
+            sourceWorkspace: workspace,
+          },
+        },
+        packageNode: packageNode(finalNode, research.node),
+        finalCompileNode: finalNode,
+        researchVerifyNode: research.node,
+        researchReport: research.report,
+        createdAt: '2026-07-15T00:00:00.000Z',
+        executionSignal,
+      }), candidate.expected);
+      assert.equal(packageCalls, candidate.packageResult ? 1 : 0);
+    });
+  }
+});
+
 test('formal and empirical profile releases reject non-output source mutation after research', async (t) => {
   for (const profile of ['formal_theorem_or_proof', 'empirical_or_experiment']) {
     const { workspace, runtimeRoot } = fixture(t);
@@ -263,6 +644,170 @@ test('release recomputes the full workspace after package adapter execution', as
     researchVerifyNode: research.node, researchReport: research.report,
     sourceWorkspace: workspace, runtimeRoot, createdAt: '2026-07-15T00:00:00.000Z',
   }), /campaign_release_source_changed_during_packaging/);
+});
+
+test('manually composed release packager adopts the artifact factory writer scope for CAS and receipts', async (t) => {
+  const { workspace, runtimeRoot } = fixture(t);
+  const snapshot = workspaceSnapshot(workspace);
+  const finalNode = finalCompileNode(snapshot);
+  const research = profiledResearch({
+    profile: null,
+    snapshot,
+    finalCompileNodeId: finalNode.nodeId,
+  });
+  const campaign = {
+    campaignId: 'campaign',
+    paperId: 'paper',
+    spec: {
+      campaignPlanHash: hashRecord('Plan', { writer: 'reentrant' }),
+      sourceWorkspace: workspace,
+    },
+  };
+  const node = packageNode(finalNode, research.node);
+  const boundary = createRuntimeRetentionPackageDeletionWriterBoundary({ runtimeRoot });
+  const receipts = [];
+  const receiptLedger = Object.freeze({
+    record(receipt, context) {
+      receipts.push({ receipt, context });
+      return Object.freeze({ receiptId: `writer-receipt-${receipts.length}` });
+    },
+  });
+  const clock = Object.freeze({
+    now: () => new Date('2026-08-20T08:30:00.000Z'),
+    nowIso: () => '2026-08-20T08:30:00.000Z',
+  });
+  const operationId = 'manual-release-packager:test-process';
+  const artifactRepositoryFactory =
+    createPackageDeletionWriterScopedFilesystemArtifactRepositoryFactory({
+      casRoot: path.join(runtimeRoot, 'artifact-cas'),
+      receiptLedger,
+      clock,
+      runtimeRoot,
+      packageDeletionWriterBoundary: boundary,
+      packageDeletionWriterOperationId: operationId,
+    });
+  let nestedTarget = null;
+  const releasePackager = createCampaignReleasePackager({
+    artifactRepositoryFactory,
+    receiptLedger,
+    independentPdfRebuildVerifier: independentPdfRebuildVerifier(),
+    clock,
+    async packageAdapter(input) {
+      fs.mkdirSync(input.packageOutputDir, { recursive: true });
+      nestedTarget = path.join(input.packageOutputDir, 'WRITER_BOUNDARY_PROBE.json');
+      await writeJsonFile(nestedTarget, { nested: true }, {
+        scopeRoot: input.packageOutputDir,
+        role: 'writer-boundary-probe',
+      });
+      throw new Error('campaign_release_writer_boundary_probe_complete');
+    },
+  });
+  await assert.rejects(releasePackager.packageRelease({
+    campaign,
+    packageNode: node,
+    finalCompileNode: finalNode,
+    researchVerifyNode: research.node,
+    researchReport: research.report,
+    sourceWorkspace: workspace,
+    runtimeRoot,
+    createdAt: '2026-08-20T08:30:00.000Z',
+  }), /campaign_release_writer_boundary_probe_complete/);
+  assert.equal(fs.existsSync(nestedTarget), true);
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].context.stream, 'artifact-writes');
+});
+
+test('release packaging leaves no materialization residue under active or deleted package fences', async (t) => {
+  for (const terminal of [false, true]) {
+    await t.test(terminal ? 'deleted fence' : 'active fence', async (nested) => {
+      const { workspace, runtimeRoot } = fixture(nested);
+      const snapshot = workspaceSnapshot(workspace);
+      const finalNode = finalCompileNode(snapshot);
+      const research = profiledResearch({
+        profile: null,
+        snapshot,
+        finalCompileNodeId: finalNode.nodeId,
+      });
+      const campaign = {
+        campaignId: 'campaign',
+        paperId: 'paper',
+        spec: {
+          campaignPlanHash: hashRecord('Plan', { terminal }),
+          sourceWorkspace: workspace,
+        },
+      };
+      const node = packageNode(finalNode, research.node);
+      const packagePath = campaignReleasePackageRootFor(runtimeRoot, campaign, node);
+      const rebuildRoot = campaignReleaseRebuildRootFor(runtimeRoot, campaign, node);
+      const releaseRoot = campaignReleaseRootFor(runtimeRoot, campaign, node);
+      const lifecycleHash = hashRecord('PackageLifecycleReceipt', { terminal });
+      const fence = createRuntimeRetentionPackageDeletionFenceRepository({
+        runtimeRoot,
+        randomToken: () => 'opaque-packager-writer-fence-token-0000000000000001',
+      });
+      const prepared = fence.prepare({
+        packageLifecycleReceiptHash: lifecycleHash,
+        packagePath,
+        packageContentHash: hashRecord('PackageContent', { terminal }),
+        deletionIntentHash: hashRecord('DeletionIntent', { terminal }),
+        recoveryBindingHash: hashRecord('RecoveryBinding', { terminal }),
+        authoritySnapshotHash: hashRecord('AuthoritySnapshot', { terminal }),
+        operationId: `packager-writer:${terminal}`,
+        transitionId: hashRecord('FenceTransition', { terminal, status: 'prepared' }),
+        preparedAt: '2026-08-20T09:00:00.000Z',
+        expectedPreviousFenceHash: null,
+        fenceToken: 'opaque-packager-writer-fence-token-0000000000000001',
+      });
+      if (terminal) {
+        const deleting = fence.transition(prepared.handle, {
+          expectedRecordHash: prepared.record.runtimeRetentionPackageDeletionFenceHash,
+          status: 'deleting',
+          transitionedAt: '2026-08-20T09:01:00.000Z',
+          transitionId: hashRecord('FenceTransition', { terminal, status: 'deleting' }),
+        });
+        fence.transition(deleting.handle, {
+          expectedRecordHash: deleting.record.runtimeRetentionPackageDeletionFenceHash,
+          status: 'deleted',
+          transitionedAt: '2026-08-20T09:02:00.000Z',
+          transitionId: hashRecord('FenceTransition', { terminal, status: 'deleted' }),
+        });
+      }
+      let packageCalls = 0;
+      const writerBoundary =
+        createRuntimeRetentionPackageDeletionWriterBoundary({ runtimeRoot });
+      const artifactRepositoryFactory =
+        createPackageDeletionWriterScopedFilesystemArtifactRepositoryFactory({
+          casRoot: path.join(runtimeRoot, 'artifact-cas'),
+          receiptLedger: Object.freeze({ record() { return {}; } }),
+          clock: Object.freeze({ now: () => new Date(), nowIso: () => new Date().toISOString() }),
+          runtimeRoot,
+          packageDeletionWriterBoundary: writerBoundary,
+          packageDeletionWriterOperationId: `manual-release-packager:${terminal}`,
+        });
+      const releasePackager = createCampaignReleasePackager({
+        artifactRepositoryFactory,
+        independentPdfRebuildVerifier: independentPdfRebuildVerifier(),
+        async packageAdapter() {
+          packageCalls += 1;
+          return {};
+        },
+      });
+      await assert.rejects(releasePackager.packageRelease({
+        campaign,
+        packageNode: node,
+        finalCompileNode: finalNode,
+        researchVerifyNode: research.node,
+        researchReport: research.report,
+        sourceWorkspace: workspace,
+        runtimeRoot,
+        createdAt: '2026-08-20T09:00:00.000Z',
+      }), terminal ? /package_deleted/ : /reachability_mutation_blocked/);
+      assert.equal(packageCalls, 0);
+      assert.equal(fs.existsSync(packagePath), false);
+      assert.equal(fs.existsSync(rebuildRoot), false);
+      assert.equal(fs.existsSync(releaseRoot), false);
+    });
+  }
 });
 
 test('release fails closed before packaging when no independent PDF rebuild verifier is composed', async (t) => {

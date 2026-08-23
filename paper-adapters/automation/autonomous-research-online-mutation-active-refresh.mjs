@@ -25,6 +25,8 @@ import {
 
 function fail(code) { throw new Error(code); }
 
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+
 const observedNow = (clock) => observedExternallyFencedSqliteMutationNow(
   clock,
   'autonomous_research_online_mutation_active_refresh_clock_invalid',
@@ -32,11 +34,22 @@ const observedNow = (clock) => observedExternallyFencedSqliteMutationNow(
 
 function expectedDatabaseInstances(inventory) {
   if (inventory?.status !== 'autonomous_research_state_database_inventory_ready'
-    || !Array.isArray(inventory.instances)) {
+    || !Array.isArray(inventory.instances)
+    || inventory.instances.length !== AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.length) {
     fail('autonomous_research_online_mutation_active_refresh_inventory_required');
   }
-  const roles = [...new Set(inventory.instances.map((entry) => entry.role))].sort();
-  if (roles.join('\0') !== [...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort().join('\0')) {
+  const roles = inventory.instances.map((entry) => entry.role);
+  const instanceIds = inventory.instances.map((entry) => entry.instanceId);
+  if (new Set(roles).size !== roles.length
+    || new Set(instanceIds).size !== instanceIds.length
+    || [...roles].sort().join('\0')
+      !== [...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort().join('\0')
+    || inventory.instances.some((entry) => (
+      typeof entry?.instanceId !== 'string' || entry.instanceId.length === 0
+      || typeof entry?.role !== 'string'
+      || !AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.includes(entry.role)
+      || !SHA256.test(String(entry?.schemaHash || ''))
+    ))) {
     fail('autonomous_research_online_mutation_active_refresh_inventory_incomplete');
   }
   return Object.freeze(inventory.instances.map((instance) => Object.freeze({

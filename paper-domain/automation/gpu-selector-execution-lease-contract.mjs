@@ -38,6 +38,7 @@ export const GPU_SELECTOR_EXECUTION_LEASE_RESIDUAL_RISK_DISCLOSURES =
     'gpu_selector_lease_scope_is_shared_runtime_root_not_host_global',
     'gpu_corrupt_or_unverifiable_lease_state_requires_operator_reconciliation',
     'gpu_same_uid_noncooperating_lock_path_replacement_not_fenced',
+    'gpu_selector_lease_holder_deadline_requires_responsive_event_loop',
   ]);
 
 function safeEpoch(value, blocker) {

@@ -16,6 +16,7 @@ import {
 
 const COMMANDS = Object.freeze({
   'automation-status': 'paper-core/bin/automation-status.mjs',
+  'full-production-readiness': 'paper-core/bin/full-production-readiness.mjs',
   'autonomous-empirical-plugin-release': 'paper-core/bin/autonomous-empirical-plugin-release.mjs',
   'autonomous-research': 'paper-core/bin/autonomous-research-readiness.mjs',
   'autonomous-state-backup': 'paper-core/bin/autonomous-research-state-backup.mjs',
@@ -61,7 +62,8 @@ const STEP_COMMANDS = Object.freeze({
   'generic-domain-capability-convergence': new Set(['generic-domain-capability-evidence']),
   'restore-drill': new Set(['autonomous-state-backup', 'automation-status']),
   'submission-dispatcher': new Set(['autonomous-submission-dispatcher-challenge']),
-  [STRICT_FULL_AUTO_ACCEPTANCE_FINAL_VERIFICATION_STEP_ID]: new Set(['automation-status']),
+  [STRICT_FULL_AUTO_ACCEPTANCE_FINAL_VERIFICATION_STEP_ID]:
+    new Set(['full-production-readiness']),
 });
 
 function parseChildJson(stdout, label) {

@@ -6,7 +6,10 @@ function repository(scopeRoot) {
   if (!context?.artifactRepositoryFactory) {
     throw new Error('Artifact write requires an ExecutionContext-backed persistent ledger');
   }
-  return context.artifactRepositoryFactory(scopeRoot);
+  return context.artifactRepositoryFactory(scopeRoot, {
+    packageDeletionWriterSelector:
+      context.packageDeletionWriterSelector || null,
+  });
 }
 
 export function writeJsonFile(candidate, value, {

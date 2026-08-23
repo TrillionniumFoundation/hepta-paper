@@ -98,19 +98,19 @@ test('complete GPU release freezes one provider snapshot across adapter drift an
   assert.equal(result.status, 'campaign_release_prepared');
   assert.equal(fixture.trustStoreReads(), 1);
   assert.deepEqual(adapterTrustStore, frozenTrustStore);
-  assert.equal(fixture.archive.bodyCount, 9);
+  assert.equal(fixture.archive.bodyCount, 11);
 
   const bundle = result.releaseBundle;
   const candidate = bundle.promotionCandidate;
   const receipt = bundle.gpuScientificReleaseAuthorityFreshnessReceipt;
   assert.equal(
     bundle.researchEvidenceCapsuleManifest.gpuScientificEvidence.archiveBodyCount,
-    9,
+    11,
   );
   assert.equal(
     bundle.researchEvidenceCapsuleManifest.gpuScientificEvidence
       .archiveEntries.length,
-    9,
+    11,
   );
   assert.equal(
     bundle.gpuScientificReleaseAuthorityFreshnessReceiptHash,
@@ -236,7 +236,7 @@ test('existing GPU materialization rejects writable package file mode drift', as
 
   await assert.rejects(
     packager.packageRelease(fixture.packageInput),
-    /campaign_release_package_output_entry_unsafe/,
+    /campaign_release_materialization_immutable_collision/,
   );
   assert.deepEqual(fs.readFileSync(sourceZip.path), originalBytes);
   assert.notEqual(fs.statSync(sourceZip.path).mode & 0o222, 0);

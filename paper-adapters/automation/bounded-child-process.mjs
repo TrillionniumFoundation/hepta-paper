@@ -50,9 +50,15 @@ export function runBoundedChildProcess({
   signal = null,
   maximumCapturedBytes = 1024 * 1024,
   killGraceMs = 5000,
+  inheritedDescriptors = [],
 } = {}) {
   if (!executable || !cwd || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error('bounded child process requires executable, cwd and positive timeoutMs');
+  }
+  if (!Array.isArray(inheritedDescriptors)
+    || inheritedDescriptors.some((descriptor) => !Number.isSafeInteger(descriptor)
+      || descriptor < 0)) {
+    throw new Error('bounded child process inherited descriptors invalid');
   }
   if (signal?.aborted) {
     const emptyHash = `sha256:${crypto.createHash('sha256').digest('hex')}`;
@@ -77,7 +83,12 @@ export function runBoundedChildProcess({
     const child = spawnImpl(executable, args, {
       cwd,
       env: { ...env },
-      stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      stdio: [
+        stdin === null ? 'ignore' : 'pipe',
+        'pipe',
+        'pipe',
+        ...inheritedDescriptors,
+      ],
       detached: useProcessGroup,
     });
     const stdoutDigest = crypto.createHash('sha256');

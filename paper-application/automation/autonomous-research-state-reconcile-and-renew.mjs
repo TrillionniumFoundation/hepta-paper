@@ -39,13 +39,17 @@ function validateExactInventory(inventory) {
     fail('autonomous_research_state_reconcile_and_renew_inventory_invalid');
   }
   const roles = inventory.instances.map((instance) => instance.role).sort();
+  const instanceIds = inventory.instances.map((instance) => instance.instanceId);
   const requiredRoles = [...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort();
   if (inventory.status !== 'autonomous_research_state_database_inventory_ready'
     || inventory.inventoryHash !== inventoryHash
     || inventory.databaseScopeHash !== databaseScopeHash
     || inventory.instances.length !== requiredRoles.length
+    || new Set(instanceIds).size !== instanceIds.length
+    || new Set(roles).size !== roles.length
     || roles.join('\0') !== requiredRoles.join('\0')
-    || inventory.blockers?.length !== 0) {
+    || !Array.isArray(inventory.blockers)
+    || inventory.blockers.length !== 0) {
     fail('autonomous_research_state_reconcile_and_renew_inventory_invalid');
   }
   return inventory;

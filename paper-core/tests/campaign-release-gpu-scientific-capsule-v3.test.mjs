@@ -29,6 +29,16 @@ import {
   buildGpuScientificArtifactBodyArchiveManifest,
 } from '../../paper-domain/automation/gpu-scientific-artifact-body-archive-contract.mjs';
 import {
+  buildCanonicalGpuScientificCampaignExecutionPlan,
+} from '../../paper-domain/automation/gpu-scientific-campaign-execution-contract.mjs';
+import {
+  PDE_POISSON_2D_GPU_ARTIFACT_ENCODING,
+  buildPdePoisson2dGpuProducerSpecification,
+} from '../../paper-domain/research/pde-poisson-2d-gpu-capability-contract.mjs';
+import {
+  buildPdePoisson2dOfflineReplayInput,
+} from '../../paper-adapters/build-package/gpu-scientific-artifact-body-offline-replay.mjs';
+import {
   GPU_SCIENTIFIC_PRODUCTION_QUALIFICATION_AUTHORITY_ROLE,
   GPU_SCIENTIFIC_SAME_DEVICE_REPLAY_AUTHORITY_ROLE,
   buildGpuScientificCampaignProductionQualificationAuthority,
@@ -71,14 +81,174 @@ const GPU_SELECTOR = 'GPU-12345678-1234-1234-1234-123456789abc';
 const H = (label) => hashRecord('CampaignReleaseGpuCapsuleV3Test', { label });
 const jsonBytes = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
 
-function bodyBytes(specification) {
-  if (specification.exactBytes !== null) {
-    return Buffer.alloc(specification.exactBytes, specification.role.length);
+function discreteReferenceBytes(gridSize, modes) {
+  const spacing = 1 / (gridSize + 1);
+  const bytes = Buffer.alloc(gridSize * gridSize * 8);
+  for (let row = 0; row < gridSize; row += 1) {
+    const y = (row + 1) * spacing;
+    for (let column = 0; column < gridSize; column += 1) {
+      const x = (column + 1) * spacing;
+      let value = 0;
+      for (const { amplitude, kx, ky } of modes) {
+        const basis = Math.sin(kx * Math.PI * x) * Math.sin(ky * Math.PI * y);
+        const continuousEigenvalue = Math.PI ** 2 * (kx ** 2 + ky ** 2);
+        const discreteEigenvalue = 4 / spacing ** 2 * (
+          Math.sin(kx * Math.PI * spacing / 2) ** 2
+          + Math.sin(ky * Math.PI * spacing / 2) ** 2
+        );
+        value += amplitude * continuousEigenvalue / discreteEigenvalue * basis;
+      }
+      bytes.writeDoubleLE(value, (row * gridSize + column) * 8);
+    }
   }
-  if (specification.producerRelativePath.endsWith('.json')) {
-    return jsonBytes({ version: 1, kind: 'GpuCapsuleV3Body', role: specification.role });
-  }
-  return Buffer.from(`gpu-capsule-v3:${specification.role}`);
+  return bytes;
+}
+
+function semanticArchiveBodies() {
+  const executionPlan = buildCanonicalGpuScientificCampaignExecutionPlan({
+    campaignId: 'gpu-v3-campaign',
+    paperId: 'gpu-v3-paper',
+    gpuDeviceSelector: GPU_SELECTOR,
+    absoluteExecutionDeadlineEpochMs: 2_000_000_000_000,
+  });
+  const task = executionPlan.tasks[1];
+  const producerSpecification = buildPdePoisson2dGpuProducerSpecification();
+  const requestHash = H('pde-request');
+  const pdeSolutions = new Map([31, 63, 127].map((gridSize) => [
+    gridSize,
+    discreteReferenceBytes(
+      gridSize,
+      producerSpecification.equation.manufacturedModes,
+    ),
+  ]));
+  const pdeArtifacts = [31, 63, 127].map((gridSize) => ({
+    gridSize,
+    relativePath: `solutions/n${gridSize}.f64le`,
+    encoding: PDE_POISSON_2D_GPU_ARTIFACT_ENCODING,
+    elements: gridSize * gridSize,
+    bytes: pdeSolutions.get(gridSize).length,
+    sha256: hashBytes(pdeSolutions.get(gridSize)),
+  }));
+  const pdeReplayInput = buildPdePoisson2dOfflineReplayInput({
+    producerSpecification,
+    artifactManifest: {
+      requestHash,
+      producerSpecificationHash:
+        producerSpecification.pdePoisson2dGpuProducerSpecificationHash,
+      pdePoisson2dGpuArtifactManifestHash: H('pde-artifacts'),
+      artifacts: pdeArtifacts,
+    },
+  });
+  const expectedTensors = task.modelIr.layers.flatMap((layer) => [
+    { name: `${layer.layerId}.weight`, shape: [layer.outputUnits, layer.inputUnits] },
+    { name: `${layer.layerId}.bias`, shape: [layer.outputUnits] },
+  ]).sort((left, right) => left.name.localeCompare(right.name));
+  const chunks = [];
+  const tensors = expectedTensors.map(({ name, shape }) => {
+    const bytes = Buffer.alloc(
+      shape.reduce((product, dimension) => product * dimension, 4),
+    );
+    chunks.push(bytes);
+    return {
+      name,
+      dtype: 'float32',
+      shape,
+      byteLength: bytes.length,
+      sha256: hashBytes(bytes),
+    };
+  });
+  const bundle = Buffer.concat(chunks);
+  const predictedClass = task.trainingDataset.labels.map(() => 0);
+  const accuracy = predictedClass.reduce((total, predicted, index) => (
+    total + Number(predicted === task.trainingDataset.labels[index])
+  ), 0) / task.trainingDataset.sampleCount;
+  const crossEntropy = Math.log(task.modelIr.classCount);
+  const finalMetrics = {
+    accuracy,
+    crossEntropy,
+    gradientNorm: 0,
+    initialCrossEntropy: crossEntropy,
+  };
+  const common = {
+    trainingRunId: task.trainingRunId,
+    modelIrHash: task.modelIr.deepLearningModelIrHash,
+    trainingDatasetManifestHash:
+      task.trainingDataset.deepLearningTrainingDatasetManifestHash,
+  };
+  return new Map([
+    ['pde_solution_n31', pdeSolutions.get(31)],
+    ['pde_solution_n63', pdeSolutions.get(63)],
+    ['pde_solution_n127', pdeSolutions.get(127)],
+    ['pde_producer_diagnostics', jsonBytes({
+      version: 1,
+      kind: 'CanonicalCupyPoisson2dProducerDiagnostics',
+      requestHash,
+      visibleGpuUuid: GPU_SELECTOR,
+      observations: [31, 63, 127].map((gridSize) => ({
+        gridSize,
+        iterations: 1,
+        relativeContinuousL2Error: 0,
+        relativeDiscreteResidual: 0,
+      })),
+      scientificAuthority: 'non-authoritative-self-report-v1',
+    })],
+    ['pde_offline_replay_input', jsonBytes(pdeReplayInput)],
+    ['deep_learning_model_specification', jsonBytes({
+      version: 1,
+      kind: 'DeepLearningModelSpecification',
+      profile: task.profile,
+      modelIr: task.modelIr,
+    })],
+    ['deep_learning_training_dataset', jsonBytes(task.trainingDataset)],
+    ['deep_learning_tensor_bundle', bundle],
+    ['deep_learning_training_predictions', jsonBytes({
+      version: 1,
+      kind: 'DeepLearningTrainingPredictions',
+      ...common,
+      scope: 'training-dataset-only-not-hidden-evaluation-v1',
+      predictedClass,
+    })],
+    ['deep_learning_training_summary', jsonBytes({
+      version: 1,
+      kind: 'CanonicalCupyMlpTrainingSummary',
+      ...common,
+      profileHash: task.profile.deepLearningGpuProfileHash,
+      gpuMemoryCapacityPlanHash: H('gpu-memory-capacity-plan'),
+      seed: task.modelIr.seed,
+      completedEpoch: task.modelIr.training.epochs,
+      trainingStepCount:
+        Math.ceil(task.trainingDataset.sampleCount / task.modelIr.training.batchSize)
+          * task.modelIr.training.epochs,
+      tensorBundleArtifactBytes: bundle.length,
+      tensors,
+      finalMetrics,
+      trainingPredictionCount: task.trainingDataset.sampleCount,
+      runtime: {
+        framework: 'cupy',
+        frameworkVersion: '13.3.0',
+        cudaDriverVersion: '12.4',
+        cudaRuntimeVersion: '12.4',
+        gpuComputeCapability: '8.9',
+        gpuDeviceSelector: GPU_SELECTOR,
+        gpuModel: 'Fixture GPU',
+        trainingComputeDevice: 'cuda:0-single-visible-device-v1',
+      },
+      networkActionPerformed: false,
+      externalActionPerformed: false,
+      hiddenEvaluationPerformed: false,
+    })],
+    ['deep_learning_training_trace', jsonBytes({
+      version: 1,
+      kind: 'DeepLearningTrainingMetricTrace',
+      ...common,
+      records: Array.from({ length: task.modelIr.training.epochs }, (_, index) => ({
+        epoch: index + 1,
+        accuracy,
+        crossEntropy,
+        gradientNorm: 0,
+      })),
+    })],
+  ]);
 }
 
 function baseEntry(role, selectedPath, content) {
@@ -93,9 +263,10 @@ function baseEntry(role, selectedPath, content) {
 }
 
 function archiveFixture(packageDir) {
+  const bodies = semanticArchiveBodies();
   const entries = GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS
     .map((specification) => {
-      const content = bodyBytes(specification);
+      const content = bodies.get(specification.role);
       const candidate = path.join(packageDir, specification.packageRelativePath);
       fs.mkdirSync(path.dirname(candidate), { recursive: true });
       fs.writeFileSync(candidate, content);
@@ -408,10 +579,10 @@ function freshnessPackageInput(qualificationEvidence, runtimeRoot, createdAt) {
   };
 }
 
-test('GPU capsule v3 binds exact nine bodies, qualification, and the externally signed manifest', (t) => {
+test('GPU capsule v3 binds the exact semantic-replay body set, qualification, and signed manifest', (t) => {
   const value = capsuleFixture(t);
   assert.equal(value.manifest.version, 3);
-  assert.equal(value.manifest.gpuScientificEvidence.archiveBodyCount, 9);
+  assert.equal(value.manifest.gpuScientificEvidence.archiveBodyCount, 11);
   assert.equal(verifyCampaignReleaseEvidenceCapsuleManifest(value.manifest, {
     gpuScientificEvidenceRequired: true,
   }).valid, true);

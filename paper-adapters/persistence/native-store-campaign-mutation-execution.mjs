@@ -300,8 +300,9 @@ function applyCancelNodeInfrastructureDeferred(transaction, input) {
     throw new Error('campaign_node_infrastructure_refund_audit_conflict');
   }
   required(transaction, S.cancelInfrastructureNode, [
-    now, nodeId, workerId, attemptId, Number(leaseGeneration),
-    Number(node.attemptCount), now,
+    now, nodeId, Number(leaseGeneration), Number(node.attemptCount),
+    attemptId, Number(leaseGeneration), workerId, attemptId, now,
+    workerId, attemptId, Number(leaseGeneration),
   ], 'campaign_node_infrastructure_cancel_failed');
   required(transaction, S.cancelInfrastructureUsage, [
     refund.agentCalls,

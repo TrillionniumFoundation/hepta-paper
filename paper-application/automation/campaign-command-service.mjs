@@ -84,6 +84,8 @@ export class CampaignCommandService {
     receiptLedger = null,
     runtimeRetentionReceiptLedger = null,
     runtimeRetentionReachabilityProvider = null,
+    packageRecoveryDeletionLeasePort = null,
+    packageLifecycleAuthority = null,
     runtimeRoot,
     buildRuntimeRetentionPlan,
     executeRuntimeRetentionPlan,
@@ -95,6 +97,8 @@ export class CampaignCommandService {
     this.receiptLedger = receiptLedger;
     this.runtimeRetentionReceiptLedger = runtimeRetentionReceiptLedger;
     this.runtimeRetentionReachabilityProvider = runtimeRetentionReachabilityProvider;
+    this.packageRecoveryDeletionLeasePort = packageRecoveryDeletionLeasePort;
+    this.packageLifecycleAuthority = packageLifecycleAuthority;
     this.runtimeRoot = runtimeRoot;
     this.buildRuntimeRetentionPlan = buildRuntimeRetentionPlan;
     this.executeRuntimeRetentionPlan = executeRuntimeRetentionPlan;
@@ -237,6 +241,7 @@ export class CampaignCommandService {
       retentionReceiptLedger: this.runtimeRetentionReceiptLedger,
       reachabilityManifestProvider: this.runtimeRetentionReachabilityProvider,
       activeNodeIds,
+      packageRecoveryDeletionLeasePort: this.packageRecoveryDeletionLeasePort,
     }) : null;
     if (recovery?.status === 'runtime_retention_recovery_blocked') {
       throw new Error(`runtime_retention_recovery_blocked:${JSON.stringify(recovery.blockers)}`);
@@ -253,14 +258,45 @@ export class CampaignCommandService {
         reachabilityManifestProvider: this.runtimeRetentionReachabilityProvider,
         activeNodeIds,
         retentionReceiptLedger: apply ? this.runtimeRetentionReceiptLedger : null,
+        packageRecoveryDeletionLeasePort:
+          apply ? this.packageRecoveryDeletionLeasePort : null,
       }),
     };
+  }
+
+  provisionRetentionRecovery(options = {}) {
+    if (options.apply !== true) {
+      throw new Error('package_retention_recovery_explicit_apply_required');
+    }
+    const packageLifecycleReceiptHash = options['package-lifecycle-receipt-hash'];
+    if (!/^sha256:[a-f0-9]{64}$/.test(String(packageLifecycleReceiptHash || ''))) {
+      throw new Error('package_retention_recovery_lifecycle_hash_required');
+    }
+    if (typeof this.packageLifecycleAuthority?.provisionRetentionRecovery !== 'function') {
+      throw new Error('package_retention_recovery_authority_unavailable');
+    }
+    return this.packageLifecycleAuthority.provisionRetentionRecovery({
+      packageLifecycleReceiptHash,
+    });
+  }
+
+  retentionRecoveryReadiness() {
+    if (typeof this.packageLifecycleAuthority?.retentionRecoveryReadiness !== 'function') {
+      throw new Error('package_retention_recovery_authority_unavailable');
+    }
+    return this.packageLifecycleAuthority.retentionRecoveryReadiness();
   }
 
   execute({ action, campaignId = null, options = {} } = {}) {
     let result;
     if (action === 'slo') result = this.slo(options);
     else if (action === 'gc') result = this.gc(options);
+    else if (action === 'provision-retention-recovery') {
+      result = this.provisionRetentionRecovery(options);
+    }
+    else if (action === 'retention-recovery-readiness') {
+      result = this.retentionRecoveryReadiness();
+    }
     else if (action === 'list') {
       const campaigns = this.campaignStore.listCampaigns({
         status: options.status || null,

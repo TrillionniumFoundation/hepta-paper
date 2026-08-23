@@ -750,12 +750,26 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
     /--online-authority-process-config \$\{HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG\}/);
   assert.match(systemd, /--root \$\{HEPTA_PAPER_ASSET_ROOT\}/);
   assert.match(systemd, /--runtime-root \$\{HEPTA_PAPER_RUNTIME_ROOT\}/);
+  assert.match(systemd,
+    /^ExecCondition=\/usr\/bin\/test -r \$\{HEPTA_FORMAL_SANDBOX_RUNTIME_CONFIG\}$/m);
+  assert.match(systemd,
+    /^ExecCondition=\/usr\/bin\/test -r \$\{HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIG\}$/m);
   assert.match(systemd, /--machine-intake-config/);
   assert.match(systemd, /--topic-producer-profile/);
   assert.match(systemd, /--resident-instance-lease-ms/);
   assert.match(systemd, /--resident-instance-heartbeat-ms/);
   assert.match(systemd,
     /EnvironmentFile=\/etc\/hepta-paper\/autonomous-research-provider\.secrets\.env/);
+  assert.match(environment,
+    /^PAPER_FACTORY_LEGACY_ROOT=\/var\/lib\/hepta-paper\/legacy-reference$/m);
+  assert.match(environment,
+    /^HEPTA_FORMAL_SANDBOX_RUNTIME_CONFIG=\/etc\/hepta-paper\/formal\/formal-sandbox-runtime\.json$/m);
+  assert.match(environment,
+    /^HEPTA_FORMAL_SANDBOX_RUNTIME_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
+  assert.match(environment,
+    /^HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIG=\/run\/hepta-authority\/production-mathlib-build-authority\.json$/m);
+  assert.match(environment,
+    /^HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIGURATION_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
   assert.doesNotMatch(systemd, /autonomous-submission-dispatcher\.secrets\.env/);
   assert.match(systemd, /\/etc\/hepta-paper\/capabilities-public/);
   assert.match(systemd, /\/etc\/hepta-paper\/online-mutation-authority/);

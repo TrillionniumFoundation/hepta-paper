@@ -24,6 +24,10 @@ import {
   createLocalAutonomousResearchStateAuthorityMutationHandlers,
 } from './local-autonomous-research-state-authority-mutation.mjs';
 import {
+  activateFinalizedLocalAutonomousResearchStateAuthoritySchemaRebind,
+  createLocalAutonomousResearchStateAuthoritySchemaRebindHandlers,
+} from './local-autonomous-research-state-authority-schema-rebind.mjs';
+import {
   failLocalStateAuthority as fail,
   LOCAL_STATE_AUTHORITY_SAFE_ID as SAFE_ID,
   LOCAL_STATE_AUTHORITY_SHA256 as SHA256,
@@ -82,7 +86,7 @@ function loadPrivateKey(privateKeyPath) {
   return privateKey;
 }
 
-function initializeDatabase(database, configuration) {
+function initializeDatabase(database, configuration, privateKey) {
   database.exec(`
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=FULL;
@@ -115,6 +119,14 @@ CREATE TABLE IF NOT EXISTS authority_schema_transition(
   finalize_request_json TEXT,
   finalization_receipt_json TEXT
 ) STRICT;
+CREATE TABLE IF NOT EXISTS authority_schema_rebind(
+  transition_id TEXT PRIMARY KEY,
+  reserve_request_json TEXT NOT NULL,
+  reservation_receipt_json TEXT NOT NULL,
+  finalize_request_json TEXT,
+  finalization_receipt_json TEXT,
+  target_configuration_hash TEXT NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS authority_mutation(
   mutation_attempt_id TEXT PRIMARY KEY,
   reservation_id TEXT NOT NULL UNIQUE,
@@ -140,7 +152,7 @@ CREATE TABLE IF NOT EXISTS authority_backup_reservation(
     'HeptaLocalAutonomousResearchStateAuthorityConfiguration',
     configuration,
   );
-  const current = metadata(database);
+  let current = metadata(database);
   if (!current) {
     const globalHash = hashRecord('HeptaLocalStateAuthorityGenesisGlobalHead', {
       authorityId: configuration.authorityId,
@@ -167,6 +179,13 @@ INSERT INTO authority_metadata(
     );
     return;
   }
+  activateFinalizedLocalAutonomousResearchStateAuthoritySchemaRebind({
+    database,
+    configuration,
+    configurationHash,
+    privateKey,
+  });
+  current = metadata(database);
   if (current.configuration_hash !== configurationHash
     || current.authority_id !== configuration.authorityId
     || current.key_id !== configuration.keyId
@@ -205,7 +224,7 @@ export function createLocalAutonomousResearchStateAuthority({
     mode: 0o700,
   });
   const database = new DatabaseSync(configuration.stateDatabasePath);
-  initializeDatabase(database, configuration);
+  initializeDatabase(database, configuration, privateKey);
   try { fs.chmodSync(configuration.stateDatabasePath, 0o600); } catch {}
   const trust = onlineTrust(configuration);
   const signOnline = (receipt) => Object.freeze({
@@ -224,9 +243,18 @@ export function createLocalAutonomousResearchStateAuthority({
       privateKey,
     ).toString('base64'),
   });
+  const schemaRebindHandlers =
+    createLocalAutonomousResearchStateAuthoritySchemaRebindHandlers({
+      database,
+      configuration,
+      clock,
+      signOnline,
+      trust,
+    });
 
   function reserveSchemaTransition(request) {
     assertAutonomousResearchOnlineSchemaTransitionReserveRequest(request, { trust });
+    if (request.version === 2) return schemaRebindHandlers.reserve(request);
     return transaction(database, () => {
       const existing = database.prepare(
         'SELECT * FROM authority_schema_transition WHERE singleton=1',
@@ -239,10 +267,37 @@ export function createLocalAutonomousResearchStateAuthority({
         if (JSON.stringify(storedRequest) !== JSON.stringify(request)) {
           fail('local_state_authority_schema_transition_conflict');
         }
-        return Object.freeze(parseRecord(
+        const storedReceipt = parseRecord(
           existing.reservation_receipt_json,
           'local_state_authority_schema_transition_state_invalid',
-        ));
+        );
+        const renewalAt = isoNow(clock);
+        if (existing.finalization_receipt_json
+          || Date.parse(storedReceipt.expiresAt) > Date.parse(renewalAt)) {
+          return Object.freeze(storedReceipt);
+        }
+        const current = metadata(database);
+        if (current.schema_transition_state !== 'reserved'
+          || Number(current.global_sequence) !== 0
+          || database.prepare('SELECT count(*) AS count FROM authority_database_head')
+            .get().count !== 0
+          || database.prepare('SELECT count(*) AS count FROM authority_mutation;')
+            .get().count !== 0
+          || database.prepare(`SELECT count(*) AS count FROM authority_backup_reservation
+            WHERE finalization_receipt_json IS NULL;`).get().count !== 0) {
+          fail('local_state_authority_schema_transition_recovery_preimage_changed');
+        }
+        const { signature: _discarded, ...renewedPayload } = storedReceipt;
+        const renewed = signOnline({
+          ...renewedPayload,
+          reservationId: `schema-recovery:${crypto.randomUUID()}`,
+          issuedAt: renewalAt,
+          expiresAt: expiry(renewalAt, request.requestedLeaseMs),
+        });
+        database.prepare(`
+UPDATE authority_schema_transition SET reservation_receipt_json=? WHERE singleton=1;
+`).run(JSON.stringify(renewed));
+        return renewed;
       }
       const current = metadata(database);
       if (current.schema_transition_state !== 'uninitialized'
@@ -313,6 +368,7 @@ UPDATE authority_metadata SET schema_transition_state='reserved' WHERE singleton
   }
 
   function finalizeSchemaTransition(request) {
+    if (request?.version === 2) return schemaRebindHandlers.finalize(request);
     return transaction(database, () => {
       const row = database.prepare(
         'SELECT * FROM authority_schema_transition WHERE singleton=1',
@@ -338,6 +394,9 @@ UPDATE authority_metadata SET schema_transition_state='reserved' WHERE singleton
       }
       const current = metadata(database);
       const finalizedAt = isoNow(clock);
+      if (Date.parse(finalizedAt) >= Date.parse(reservation.expiresAt)) {
+        fail('local_state_authority_schema_transition_reservation_expired');
+      }
       const receipt = signOnline({
         version: 1,
         kind: 'AutonomousResearchOnlineSchemaTransitionFinalizationReceipt',
@@ -358,6 +417,7 @@ UPDATE authority_metadata SET schema_transition_state='reserved' WHERE singleton
         reservationId: request.reservationId,
         reservationReceiptHash: request.reservationReceiptHash,
         postInventoryHash: request.postInventoryHash,
+        postPristineRuntimeStateHash: request.postPristineRuntimeStateHash,
         installations: request.installations,
         globalSequence: Number(current.global_sequence),
         globalHash: current.global_hash,
@@ -391,6 +451,7 @@ UPDATE authority_metadata SET schema_transition_state='finalized' WHERE singleto
   }
 
   function observeSchemaTransition(request) {
+    if (request?.version === 2) return schemaRebindHandlers.observe(request);
     assertAutonomousResearchOnlineSchemaTransitionObserveRequest(request, { trust });
     const row = database.prepare(
       'SELECT * FROM authority_schema_transition WHERE singleton=1',
@@ -407,7 +468,9 @@ UPDATE authority_metadata SET schema_transition_state='finalized' WHERE singleto
       || request.schemaBundleHash !== finalization.schemaBundleHash
       || request.finalizationReceiptHash
         !== autonomousResearchOnlineSchemaTransitionReceiptHash(finalization)
-      || request.postInventoryHash !== finalization.postInventoryHash) {
+      || request.postInventoryHash !== finalization.postInventoryHash
+      || request.postPristineRuntimeStateHash
+        !== finalization.postPristineRuntimeStateHash) {
       fail('local_state_authority_schema_transition_observation_mismatch');
     }
     const current = metadata(database);
@@ -431,6 +494,7 @@ UPDATE authority_metadata SET schema_transition_state='finalized' WHERE singleto
       schemaBundleHash: request.schemaBundleHash,
       finalizationReceiptHash: request.finalizationReceiptHash,
       postInventoryHash: request.postInventoryHash,
+      postPristineRuntimeStateHash: request.postPristineRuntimeStateHash,
       transitionState: 'finalized',
       globalSequence: Number(current.global_sequence),
       globalHash: current.global_hash,
@@ -501,12 +565,15 @@ UPDATE authority_metadata SET schema_transition_state='finalized' WHERE singleto
     handle,
     inspect() {
       const current = metadata(database);
+      const schemaRebind = schemaRebindHandlers.inspect();
       return Object.freeze({
         version: 1,
         kind: 'HeptaLocalAutonomousResearchStateAuthorityInspection',
-        status: current.schema_transition_state === 'finalized'
-          ? 'local_state_authority_ready'
-          : 'local_state_authority_waiting_for_schema_transition',
+        status: schemaRebind.schemaRebindRestartRequired
+          ? 'local_state_authority_schema_rebind_target_configuration_restart_required'
+          : current.schema_transition_state === 'finalized'
+            ? 'local_state_authority_ready'
+            : 'local_state_authority_waiting_for_schema_transition',
         authorityId: configuration.authorityId,
         keyId: configuration.keyId,
         scopeId: configuration.scopeId,
@@ -519,6 +586,7 @@ UPDATE authority_metadata SET schema_transition_state='finalized' WHERE singleto
 SELECT count(*) AS count FROM authority_mutation WHERE status='reserved';
 `).get().count),
         schemaTransitionState: current.schema_transition_state,
+        ...schemaRebind,
       });
     },
     close() {

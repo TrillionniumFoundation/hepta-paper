@@ -26,7 +26,7 @@ const RECEIPT_CONTRACT = new URL(
   import.meta.url,
 );
 const RECEIPT_CONTRACT_DOUBLE = new URL(
-  '../test-doubles/canonical-cupy-deep-learning-os-sandbox-worker-receipt-contract.mjs',
+  '../test-doubles/canonical-cupy-os-sandbox-worker-receipt-contract.mjs',
   import.meta.url,
 );
 

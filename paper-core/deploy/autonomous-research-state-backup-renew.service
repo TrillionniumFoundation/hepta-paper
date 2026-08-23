@@ -1,5 +1,7 @@
 [Unit]
 Description=Hepta Paper autonomous research state backup and restore-drill renewal
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
 Requires=hepta-paper-state-authority.service
 After=hepta-paper-state-authority.service network-online.target
 Wants=network-online.target

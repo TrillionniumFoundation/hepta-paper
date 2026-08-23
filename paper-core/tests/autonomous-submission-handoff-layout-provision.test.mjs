@@ -10,6 +10,10 @@ import {
   verifyAutonomousSubmissionHandoffLayoutReceipt,
 } from '../../paper-adapters/automation/autonomous-submission-handoff-layout-receipt-repository.mjs';
 import {
+  IMMUTABLE_RELEASE_ACTIVATOR_UNITS,
+  IMMUTABLE_RELEASE_CONSUMER_SERVICE_UNITS,
+} from '../../paper-domain/contracts/immutable-release-deployment-contract.mjs';
+import {
   provisionLocalReleaseAttestorDeploymentFixture,
 } from './support/local-release-attestor-deployment-fixture.mjs';
 
@@ -464,6 +468,124 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     );
     assert.doesNotMatch(tmpfiles, /^d \/var\/lib\/hepta-paper\/runtime\b/m);
 
+    const packageRecoveryLauncherPath = path.join(
+      DEPLOY_ROOT,
+      'hepta-package-recovery-readiness',
+    );
+    const packageRecoveryLauncher = fs.readFileSync(
+      packageRecoveryLauncherPath,
+      'utf8',
+    );
+    const strictConfiguration = JSON.parse(fs.readFileSync(path.join(
+      DEPLOY_ROOT,
+      'strict-full-auto-acceptance.config.example.json',
+    ), 'utf8'));
+    const packageRecoveryReference =
+      strictConfiguration.references['package-recovery-readiness-command'];
+    const finalArguments = strictConfiguration.finalVerification.arguments;
+    assert.equal(fs.statSync(packageRecoveryLauncherPath).mode & 0o111, 0);
+    assert.equal(spawnSync('sh', ['-n', packageRecoveryLauncherPath]).status, 0);
+    assert.equal(packageRecoveryLauncher, [
+      '#!/bin/sh',
+      'set -eu',
+      '',
+      'exec /usr/bin/node \\',
+      '  /opt/hepta-paper/paper-core/bin/paper-campaign.mjs "$@"',
+      '',
+    ].join('\n'));
+    assert.equal(
+      packageRecoveryReference.path,
+      '/usr/libexec/hepta-paper/hepta-package-recovery-readiness',
+    );
+    assert.equal(packageRecoveryReference.expectedSha256,
+      sha256(packageRecoveryLauncherPath));
+    assert.equal(
+      finalArguments[finalArguments.indexOf('--package-recovery-readiness-command') + 1],
+      packageRecoveryReference.path,
+    );
+    assert.equal(
+      finalArguments[
+        finalArguments.indexOf('--package-recovery-readiness-command-sha256') + 1
+      ],
+      packageRecoveryReference.expectedSha256,
+    );
+    const immutableDeploymentLauncherPath = path.join(
+      DEPLOY_ROOT,
+      'hepta-immutable-release-deploy',
+    );
+    assert.equal(fs.statSync(immutableDeploymentLauncherPath).mode & 0o111, 0);
+    assert.equal(spawnSync('sh', ['-n', immutableDeploymentLauncherPath]).status, 0);
+    const immutableDeploymentLauncher = fs.readFileSync(
+      immutableDeploymentLauncherPath,
+      'utf8',
+    );
+    assert.match(immutableDeploymentLauncher, /exec \/usr\/bin\/env -i/u);
+    assert.match(immutableDeploymentLauncher,
+      /HEPTA_IMMUTABLE_DEPLOY_LAUNCHER=sealed-v1/u);
+    assert.match(immutableDeploymentLauncher,
+      /deployment_lock=\$deployment_lock_root\/deployment\.lock/u);
+    assert.match(immutableDeploymentLauncher,
+      /exec 9<"\$deployment_lock"/u);
+    assert.match(immutableDeploymentLauncher,
+      /executor_root=\/opt\/hepta-paper/u);
+    assert.match(immutableDeploymentLauncher,
+      /intent\?\.plan\?\.predecessor\?\.releasePath/u);
+    assert.ok(immutableDeploymentLauncher.includes('/opt/hepta-paper-releases/'));
+    assert.match(immutableDeploymentLauncher,
+      /executor=\$executor_root\/paper-core\/bin\/immutable-release-deploy\.mjs/u);
+    assert.match(immutableDeploymentLauncher,
+      /HEPTA_IMMUTABLE_DEPLOY_LOCK_FD=9/u);
+    assert.match(immutableDeploymentLauncher,
+      /"\$executor" "\$@"/u);
+
+    const recoveryUnitPath = path.join(
+      DEPLOY_ROOT,
+      'hepta-immutable-release-recovery.service',
+    );
+    const recoveryUnit = fs.readFileSync(recoveryUnitPath, 'utf8');
+    assert.equal(fs.statSync(recoveryUnitPath).mode & 0o111, 0);
+    assert.match(recoveryUnit, /^Type=oneshot$/m);
+    assert.match(recoveryUnit, /^User=root$/m);
+    assert.match(recoveryUnit, /^Group=root$/m);
+    assert.match(recoveryUnit, /^RemainAfterExit=yes$/m);
+    assert.match(recoveryUnit,
+      /^Wants=local-fs\.target systemd-tmpfiles-setup\.service$/m);
+    assert.match(recoveryUnit,
+      /^After=local-fs\.target systemd-tmpfiles-setup\.service$/m);
+    assert.match(recoveryUnit,
+      /^RequiresMountsFor=\/opt\/hepta-paper \/opt\/hepta-paper-releases \/var\/lib\/hepta-paper-deployment$/m);
+    assert.match(recoveryUnit,
+      /^ExecStart=\/usr\/libexec\/hepta-paper\/hepta-immutable-release-deploy recover$/m);
+    assert.doesNotMatch(recoveryUnit, /^Condition/m);
+    assert.doesNotMatch(recoveryUnit, /--workspace|candidate/);
+    assert.match(recoveryUnit, /^WantedBy=multi-user\.target$/m);
+    const gatedDeploymentUnits = [
+      'autonomous-submission-handoff-layout-provision.path',
+      'autonomous-research-state-backup-renew.timer',
+      'strict-full-auto-acceptance.timer',
+      'autonomous-research-state-backup-renew.service',
+      'autonomous-research-supervisor.service',
+      'autonomous-submission-dispatcher.service',
+      'autonomous-submission-handoff-layout-provision.service',
+      'hepta-paper-host-bootstrap.service',
+      'hepta-paper-release-attestor-probe.service',
+      'hepta-paper-release-attestor.service',
+      'hepta-paper-state-authority.service',
+      'strict-full-auto-runtime-adoption.service',
+      'strict-full-auto-acceptance.service',
+    ];
+    assert.deepEqual(gatedDeploymentUnits, [
+      ...IMMUTABLE_RELEASE_ACTIVATOR_UNITS,
+      ...IMMUTABLE_RELEASE_CONSUMER_SERVICE_UNITS,
+    ]);
+    const recoveryBefore = recoveryUnit.match(/^Before=(.*)$/m)?.[1].split(' ') || [];
+    for (const name of gatedDeploymentUnits) {
+      const unit = fs.readFileSync(path.join(DEPLOY_ROOT, name), 'utf8');
+      assert.match(unit, /^Requires=hepta-immutable-release-recovery\.service$/m, name);
+      assert.match(unit, /^After=hepta-immutable-release-recovery\.service$/m, name);
+      assert.ok(recoveryBefore.includes(name), name);
+    }
+
     const bootstrap = fs.readFileSync(
       path.join(DEPLOY_ROOT, 'hepta-paper-host-bootstrap.service'),
       'utf8',
@@ -556,8 +678,8 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     ]) {
       const unit = fs.readFileSync(path.join(DEPLOY_ROOT, name), 'utf8');
       const expectedRequires = name === 'autonomous-research-supervisor.service'
-        ? 'Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service'
-        : 'Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service';
+        ? 'Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service strict-full-auto-runtime-adoption.service'
+        : 'Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service strict-full-auto-runtime-adoption.service';
       assert.match(unit, new RegExp(`^${expectedRequires.replaceAll('.', '\\.')}$`, 'm'));
       assert.match(unit, /^Wants=.*autonomous-submission-handoff-layout-provision\.path/m);
       assert.doesNotMatch(unit, /^ExecStartPre=\+/m);
@@ -589,7 +711,8 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
       path.join(DEPLOY_ROOT, 'strict-full-auto-acceptance.timer'),
       'utf8',
     );
-    assert.match(strict, /^Requires=hepta-paper-host-bootstrap\.service$/m);
+    assert.match(strict,
+      /^Requires=hepta-paper-host-bootstrap\.service strict-full-auto-runtime-adoption\.service$/m);
     assert.match(strict,
       /^After=.*autonomous-submission-handoff-layout-provision\.path/m);
     assert.match(strictTimer, /^OnUnitInactiveSec=5min$/m);
@@ -612,15 +735,46 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     assert.match(installer, /hepta-paper-systemd-host\.manifest\.sha256/);
     assert.match(installer, /systemctl daemon-reload/);
     assert.match(installer,
-      /systemctl disable --now \\\n    strict-full-auto-acceptance\.timer \\\n    strict-full-auto-acceptance\.service \\\n    autonomous-submission-dispatcher\.service \\\n    autonomous-research-supervisor\.service/);
+      /systemctl disable --now \\\n    strict-full-auto-acceptance\.timer \\\n    strict-full-auto-acceptance\.service \\\n    strict-full-auto-runtime-adoption\.service \\\n    autonomous-submission-dispatcher\.service \\\n    autonomous-research-supervisor\.service/);
     const enabledUnits = installer.match(
       /systemctl enable \\\n([\s\S]*?)\n  \/usr\/bin\/systemctl stop/,
     )?.[1] || '';
     assert.match(enabledUnits, /hepta-paper-state-authority\.service/);
+    assert.match(enabledUnits, /hepta-immutable-release-recovery\.service/);
     assert.match(enabledUnits, /autonomous-research-state-backup-renew\.timer/);
     assert.doesNotMatch(enabledUnits,
       /autonomous-research-supervisor|autonomous-submission-dispatcher|strict-full-auto/);
     assert.match(installer, /--enable-full-auto/);
+    assert.match(installer, /--preserve-deployment-bootstrap/);
+    assert.match(installer,
+      /--preserve-deployment-bootstrap requires --root \/ --no-systemctl/);
+    assert.match(installer,
+      /\[ "\$launcher" = hepta-immutable-release-deploy \][\s\S]*?preserve_deployment_bootstrap/);
+    assert.match(installer,
+      /\[ "\$unit" = hepta-immutable-release-recovery\.service \][\s\S]*?preserve_deployment_bootstrap/);
+    assert.match(installer,
+      /regular file:0:0:\$preserved_mode:1/);
+    assert.match(installer,
+      /deployment bootstrap preservation hash mismatch/);
+    assert.ok(
+      installer.indexOf('preserved_deployment_launcher_sha256=$(verify_preserved_deployment_bootstrap')
+        < installer.indexOf('/usr/bin/install -d $owner_arguments'),
+      'bootstrap equality preflight must precede destination installation',
+    );
+    assert.match(installer,
+      /artifact_sha256=\$preserved_deployment_launcher_sha256/);
+    assert.match(installer,
+      /artifact_sha256=\$preserved_deployment_recovery_unit_sha256/);
+    assert.ok(
+      installer.indexOf('/usr/bin/systemd-tmpfiles --create /usr/lib/tmpfiles.d/hepta-paper.conf')
+        < installer.indexOf('/usr/bin/systemctl restart hepta-immutable-release-recovery.service'),
+      'deployment lock and intent root must exist before immediate recovery',
+    );
+    assert.ok(
+      installer.indexOf('/usr/bin/systemctl restart hepta-immutable-release-recovery.service')
+        < installer.indexOf('/usr/bin/systemctl restart hepta-paper-host-bootstrap.service'),
+      'recovery must complete before the first consumer restart',
+    );
     assert.match(installer,
       /hepta_full_auto_enable_blocked:non_mutating_accepted_readiness_preflight_unavailable/);
     assert.doesNotMatch(installer,
@@ -630,6 +784,22 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     assert.match(installer,
       /hepta-paper systemd host installation completed \(production hold active\)/);
     assert.equal(spawnSync('sh', ['-n', installerPath]).status, 0);
+    for (const args of [
+      ['--root', '/tmp', '--no-systemctl', '--preserve-deployment-bootstrap'],
+      ['--root', '/', '--preserve-deployment-bootstrap'],
+    ]) {
+      const invalidPreservation = spawnSync(installerPath, args, { encoding: 'utf8' });
+      assert.equal(invalidPreservation.status, 64, args.join(' '));
+      assert.match(invalidPreservation.stderr,
+        /--preserve-deployment-bootstrap requires --root \/ --no-systemctl/);
+    }
+    const duplicatePreservation = spawnSync(installerPath, [
+      '--root', '/', '--no-systemctl',
+      '--preserve-deployment-bootstrap', '--preserve-deployment-bootstrap',
+    ], { encoding: 'utf8' });
+    assert.equal(duplicatePreservation.status, 64);
+    assert.match(duplicatePreservation.stderr,
+      /duplicate option: --preserve-deployment-bootstrap/);
 
     if (commandAvailable('cc') && commandAvailable('systemd-analyze')) {
       const installRoot = fs.mkdtempSync(
@@ -672,6 +842,11 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
         0,
         manifestVerification.stderr,
       );
+      const installedManifest = fs.readFileSync(manifestPath, 'utf8');
+      assert.match(installedManifest,
+        /^[0-9a-f]{64}  usr\/libexec\/hepta-paper\/hepta-immutable-release-deploy$/m);
+      assert.match(installedManifest,
+        /^[0-9a-f]{64}  etc\/systemd\/system\/hepta-immutable-release-recovery\.service$/m);
       assert.equal(
         mode(path.join(
           installRoot,
@@ -687,6 +862,8 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
         'hepta-paper-state-authority-client',
         'hepta-paper-release-attestor-client',
         'hepta-paper-release-env',
+        'hepta-package-recovery-readiness',
+        'hepta-immutable-release-deploy',
       ]) {
         const expectedInstallerUid = process.getuid() === 0 ? 0 : process.getuid();
         const expectedInstallerGid = process.getuid() === 0 ? 0 : process.getgid();
@@ -712,6 +889,29 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
         )),
         0o644,
       );
+      assert.equal(
+        mode(path.join(
+          installRoot,
+          'etc',
+          'systemd',
+          'system',
+          'hepta-immutable-release-recovery.service',
+        )),
+        0o644,
+      );
+      for (const name of gatedDeploymentUnits) {
+        const installedUnit = fs.readFileSync(path.join(
+          installRoot,
+          'etc',
+          'systemd',
+          'system',
+          name,
+        ), 'utf8');
+        assert.match(installedUnit,
+          /^Requires=hepta-immutable-release-recovery\.service$/m, name);
+        assert.match(installedUnit,
+          /^After=hepta-immutable-release-recovery\.service$/m, name);
+      }
     }
 
     const source = fs.readFileSync(SOURCE_PATH, 'utf8');
@@ -734,8 +934,31 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     ]) assert.ok(source.includes(primitive), primitive);
 
     if (commandAvailable('systemd-analyze')) {
+      const systemdVerifyRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'hepta-recovery-systemd-verify-'),
+      );
+      t.after(() => fs.rmSync(systemdVerifyRoot, { recursive: true, force: true }));
+      const verificationLauncher = path.join(
+        systemdVerifyRoot,
+        'hepta-immutable-release-deploy',
+      );
+      fs.copyFileSync(immutableDeploymentLauncherPath, verificationLauncher);
+      fs.chmodSync(verificationLauncher, 0o700);
+      const verificationRecoveryUnit = path.join(
+        systemdVerifyRoot,
+        'hepta-immutable-release-recovery.service',
+      );
+      fs.writeFileSync(
+        verificationRecoveryUnit,
+        recoveryUnit.replace(
+          /^ExecStart=.*$/m,
+          `ExecStart=${verificationLauncher} recover`,
+        ),
+        { mode: 0o600 },
+      );
       const verification = spawnSync('systemd-analyze', [
         'verify',
+        verificationRecoveryUnit,
         path.join(DEPLOY_ROOT, 'hepta-paper-host-bootstrap.service'),
         path.join(
           DEPLOY_ROOT,
@@ -747,6 +970,7 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
         ),
         path.join(DEPLOY_ROOT, 'autonomous-research-supervisor.service'),
         path.join(DEPLOY_ROOT, 'autonomous-submission-dispatcher.service'),
+        path.join(DEPLOY_ROOT, 'strict-full-auto-runtime-adoption.service'),
         path.join(DEPLOY_ROOT, 'strict-full-auto-acceptance.service'),
         path.join(DEPLOY_ROOT, 'strict-full-auto-acceptance.timer'),
       ], { encoding: 'utf8' });

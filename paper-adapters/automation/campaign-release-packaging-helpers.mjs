@@ -11,6 +11,49 @@ import {
   inspectWorkspaceExecutionSnapshot,
   sourceTreeExcludedNames,
 } from '../runtime/execution-snapshot.mjs';
+import {
+  packageDeletionWriterScopeForArtifactRepositoryFactory,
+} from '../../paper-ports/execution-service-ports.mjs';
+import { createRuntimeRetentionPackageDeletionWriterBoundary }
+  from './runtime-retention-package-deletion-writer-boundary.mjs';
+
+function packageWriterBoundaryError(code) {
+  const error = new Error(code);
+  error.code = code;
+  throw error;
+}
+
+export function withCampaignReleasePackageWriterBoundary({
+  runtimeRoot,
+  packagePath,
+  artifactRepositoryFactory = null,
+  packageDeletionWriterBoundary = null,
+  packageDeletionWriterOperationId = null,
+}, operation) {
+  if (typeof runtimeRoot !== 'string' || !runtimeRoot.trim()
+    || typeof packagePath !== 'string' || !packagePath.trim()) {
+    packageWriterBoundaryError('campaign_release_package_writer_boundary_input_invalid');
+  }
+  const root = path.resolve(runtimeRoot);
+  const selectedPackagePath = path.resolve(packagePath);
+  if (path.dirname(selectedPackagePath) !== path.join(root, 'packages')
+    || typeof operation !== 'function') {
+    packageWriterBoundaryError('campaign_release_package_writer_boundary_input_invalid');
+  }
+  const boundary = packageDeletionWriterScopeForArtifactRepositoryFactory(
+    artifactRepositoryFactory,
+  ) || packageDeletionWriterBoundary
+    || createRuntimeRetentionPackageDeletionWriterBoundary({ runtimeRoot: root });
+  if (!boundary || typeof boundary.runAsync !== 'function') {
+    packageWriterBoundaryError('campaign_release_package_writer_boundary_required');
+  }
+  const selector = Object.freeze({
+    packagePath: selectedPackagePath,
+    ...(packageDeletionWriterOperationId
+      ? { operationId: packageDeletionWriterOperationId } : {}),
+  });
+  return boundary.runAsync(selector, async () => operation(selector));
+}
 
 export function campaignManuscriptPath(workspace) {
   for (const name of ['main.tex', 'paper.tex', 'manuscript.tex']) {
@@ -20,12 +63,33 @@ export function campaignManuscriptPath(workspace) {
 }
 
 export function fsyncCampaignReleaseFileSync(candidate) {
+  const before = fs.lstatSync(candidate, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) {
+    throw new Error('campaign_release_package_file_identity_invalid');
+  }
   const descriptor = fs.openSync(
     candidate,
     fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
   );
   try {
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    if (!opened.isFile() || opened.nlink !== 1n
+      || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new Error('campaign_release_package_file_identity_invalid');
+    }
+    fs.fchmodSync(descriptor, 0o444);
     fs.fsyncSync(descriptor);
+    const completed = fs.fstatSync(descriptor, { bigint: true });
+    const selected = fs.lstatSync(candidate, { bigint: true });
+    if (!completed.isFile() || completed.nlink !== 1n
+      || !selected.isFile() || selected.isSymbolicLink()
+      || selected.nlink !== 1n
+      || completed.dev !== opened.dev || completed.ino !== opened.ino
+      || selected.dev !== completed.dev || selected.ino !== completed.ino
+      || (Number(completed.mode) & 0o777) !== 0o444
+      || (Number(selected.mode) & 0o777) !== 0o444) {
+      throw new Error('campaign_release_package_file_identity_changed');
+    }
   } finally {
     fs.closeSync(descriptor);
   }

@@ -10,6 +10,106 @@ function sha256Hash(value) {
   return /^sha256:[a-f0-9]{64}$/i.test(String(value || ''));
 }
 
+function normalizedIdentityList(values) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value || ''))
+      .filter(Boolean),
+  )].sort();
+}
+
+export function inspectProviderCapabilityVerificationReceipt({
+  receipt,
+  expected = {},
+  now = null,
+} = {}) {
+  const blockers = [];
+  const {
+    providerCapabilityVerificationReceiptHash: claimedHash,
+    ...payload
+  } = receipt || {};
+  const validFromMs = Date.parse(String(receipt?.validFrom || ''));
+  const expiresAtMs = Date.parse(String(receipt?.expiresAt || ''));
+  const observedAtMs = now instanceof Date ? now.getTime() : Number.NaN;
+  const verifiedSubjectIds = normalizedIdentityList(
+    receipt?.verifiedSubjectIds,
+  );
+  if (receipt?.version !== 1
+      || receipt?.kind !== 'ProviderCapabilityVerificationReceipt'
+      || receipt?.status !== 'provider_capability_verified'
+      || !Array.isArray(receipt?.blockers)
+      || receipt.blockers.length !== 0) {
+    blockers.push('provider_capability_receipt_contract_invalid');
+  }
+  if (!sha256Hash(claimedHash)
+      || claimedHash !== hashPaperRecord(
+        'ProviderCapabilityVerificationReceipt',
+        payload,
+      )) {
+    blockers.push('provider_capability_receipt_self_hash_invalid');
+  }
+  if (receipt?.cryptographicSignaturesVerified !== true) {
+    blockers.push('provider_capability_receipt_signatures_unverified');
+  }
+  if (!receipt?.provider || !receipt?.accountId || !receipt?.portalRoute
+      || !sha256Hash(receipt?.executorDescriptorHash)
+      || !sha256Hash(receipt?.capabilitiesHash)
+      || !sha256Hash(receipt?.attestationHash)
+      || verifiedSubjectIds.length === 0
+      || verifiedSubjectIds.length !== receipt?.verifiedSubjectIds?.length) {
+    blockers.push('provider_capability_receipt_identity_invalid');
+  }
+  if (!Number.isFinite(validFromMs)
+      || !Number.isFinite(expiresAtMs)
+      || validFromMs >= expiresAtMs) {
+    blockers.push('provider_capability_receipt_validity_invalid');
+  }
+  if (now !== null && (!Number.isFinite(observedAtMs)
+      || validFromMs > observedAtMs
+      || expiresAtMs <= observedAtMs)) {
+    blockers.push('provider_capability_receipt_not_current');
+  }
+  const exactBindings = [
+    ['provider', receipt?.provider],
+    ['accountId', receipt?.accountId],
+    ['portalRoute', receipt?.portalRoute],
+    ['executorDescriptorHash', receipt?.executorDescriptorHash],
+    ['capabilitiesHash', receipt?.capabilitiesHash],
+    ['attestationHash', receipt?.attestationHash],
+    ['providerCapabilityVerificationReceiptHash', claimedHash],
+  ];
+  for (const [field, observed] of exactBindings) {
+    if (expected[field] !== undefined && expected[field] !== observed) {
+      blockers.push(`provider_capability_receipt_binding_invalid:${field}`);
+    }
+  }
+  if (expected.verifiedSubjectIds !== undefined
+      && JSON.stringify(normalizedIdentityList(expected.verifiedSubjectIds))
+        !== JSON.stringify(verifiedSubjectIds)) {
+    blockers.push(
+      'provider_capability_receipt_binding_invalid:verifiedSubjectIds',
+    );
+  }
+  const uniqueBlockers = Object.freeze([...new Set(blockers)]);
+  return Object.freeze({
+    version: 1,
+    kind: 'ProviderCapabilityVerificationReceiptInspection',
+    status: uniqueBlockers.length
+      ? 'provider_capability_verification_receipt_blocked'
+      : 'provider_capability_verification_receipt_verified',
+    ready: uniqueBlockers.length === 0,
+    providerCapabilityVerificationReceiptHash: claimedHash || null,
+    cryptographicSignaturesVerified:
+      receipt?.cryptographicSignaturesVerified === true,
+    currentSignatureRevalidated: false,
+    originalSignedAttestationAvailable: false,
+    validFrom: Number.isFinite(validFromMs) ? receipt.validFrom : null,
+    expiresAt: Number.isFinite(expiresAtMs) ? receipt.expiresAt : null,
+    verifiedSubjectIds: Object.freeze(verifiedSubjectIds),
+    blockers: uniqueBlockers,
+  });
+}
+
 export function buildSubmissionDispatchAuthorization({
   paperTask,
   outbox,
@@ -76,6 +176,14 @@ export function buildSubmissionDispatchAuthorization({
     blockers.push('live_authorization_venue_source_receipt_mismatch');
   }
   if (providerCapabilityVerificationReceipt?.status !== 'provider_capability_verified') blockers.push('provider_capability_not_verified');
+  if (!providerCapabilityVerificationReceipt?.provider
+    || !providerCapabilityVerificationReceipt?.accountId
+    || providerCapabilityVerificationReceipt.provider
+      !== liveAuthorizationReceipt?.provider
+    || providerCapabilityVerificationReceipt.accountId
+      !== liveAuthorizationReceipt?.accountId) {
+    blockers.push('provider_capability_principal_mismatch');
+  }
   if (liveAuthorizationReceipt?.authorizationSubject?.providerCapabilityVerificationReceiptHash !== providerCapabilityVerificationReceipt?.providerCapabilityVerificationReceiptHash) blockers.push('live_authorization_provider_capability_mismatch');
   if (liveAuthorizationReceipt?.authorizationSubject?.portalRoute !== providerCapabilityVerificationReceipt?.portalRoute
     || reviewedVenueEvidence?.portalRoute !== providerCapabilityVerificationReceipt?.portalRoute) blockers.push('provider_capability_portal_route_mismatch');
@@ -140,8 +248,14 @@ export function buildSubmissionDispatchAuthorization({
     liveAuthorizationHash: liveAuthorizationReceipt?.liveSubmissionAuthorizationReceiptHash || null,
     artifactPackageHash,
     expectedArtifactHashes,
+    reviewedSubmissionDecisionPacketHash:
+      submissionDecisionPacket?.reviewedSubmissionDecisionPacketHash || null,
     provider: liveAuthorizationReceipt?.provider || null,
     accountId: liveAuthorizationReceipt?.accountId || null,
+    providerCapabilityVerificationReceiptHash:
+      providerCapabilityVerificationReceipt
+        ?.providerCapabilityVerificationReceiptHash || null,
+    portalRoute: providerCapabilityVerificationReceipt?.portalRoute || null,
     nonce: liveAuthorizationReceipt?.nonce || null,
     redrivePlanHash: redrivePlan?.submissionRedrivePlanHash || null,
     attempt: redrivePlan?.nextAttempt || 1,

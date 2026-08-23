@@ -12,6 +12,7 @@ fi
 install_root=/
 manage_systemd=yes
 enable_full_auto=no
+preserve_deployment_bootstrap=no
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --root)
@@ -31,8 +32,16 @@ while [ "$#" -gt 0 ]; do
       enable_full_auto=yes
       shift
       ;;
+    --preserve-deployment-bootstrap)
+      if [ "$preserve_deployment_bootstrap" = yes ]; then
+        echo "duplicate option: --preserve-deployment-bootstrap" >&2
+        exit 64
+      fi
+      preserve_deployment_bootstrap=yes
+      shift
+      ;;
     *)
-      echo "usage: install-hepta-paper-systemd-host.sh [--root PATH --no-systemctl] [--enable-full-auto]" >&2
+      echo "usage: install-hepta-paper-systemd-host.sh [--root PATH --no-systemctl] [--enable-full-auto] [--preserve-deployment-bootstrap]" >&2
       exit 64
       ;;
   esac
@@ -43,6 +52,11 @@ case "$install_root" in
 esac
 if [ "$install_root" != / ] && [ "$manage_systemd" != no ]; then
   echo "--root requires --no-systemctl" >&2
+  exit 64
+fi
+if [ "$preserve_deployment_bootstrap" = yes ] \
+  && { [ "$install_root" != / ] || [ "$manage_systemd" != no ]; }; then
+  echo "--preserve-deployment-bootstrap requires --root / --no-systemctl" >&2
   exit 64
 fi
 if [ "$enable_full_auto" = yes ]; then
@@ -135,6 +149,8 @@ codex-openclaw-managed
 hepta-paper-state-authority-client
 hepta-paper-release-attestor-client
 hepta-paper-release-env
+hepta-package-recovery-readiness
+hepta-immutable-release-deploy
 local-release-attestor-daemon.schema.json
 local-release-attestor-signer.config.example.json
 local-release-attestor-probe.config.example.json
@@ -148,6 +164,8 @@ autonomous-submission-handoff-layout-provision.service
 autonomous-submission-handoff-layout-provision.path
 autonomous-research-supervisor.service
 autonomous-submission-dispatcher.service
+strict-full-auto-runtime-adoption.service
+hepta-immutable-release-recovery.service
 strict-full-auto-acceptance.service
 strict-full-auto-acceptance.timer
 autonomous-research-state-backup-renew.service
@@ -179,6 +197,45 @@ for artifact in $artifact_allowlist; do
     exit 75
   fi
 done
+
+preserved_deployment_launcher_sha256=
+preserved_deployment_recovery_unit_sha256=
+verify_preserved_deployment_bootstrap() {
+  preserved_name=$1
+  preserved_candidate=$2
+  preserved_installed=$3
+  preserved_mode=$4
+  if [ ! -f "$preserved_installed" ] || [ -L "$preserved_installed" ] \
+    || [ "$(/usr/bin/readlink -f -- "$preserved_installed")" != "$preserved_installed" ] \
+    || [ "$(/usr/bin/stat -c '%F:%u:%g:%a:%h' "$preserved_installed")" \
+      != "regular file:0:0:$preserved_mode:1" ]; then
+    echo "deployment bootstrap preservation preflight failed: $preserved_name" >&2
+    return 1
+  fi
+  set -- $(/usr/bin/sha256sum "$preserved_candidate")
+  preserved_candidate_sha256=$1
+  set -- $(/usr/bin/sha256sum "$preserved_installed")
+  preserved_installed_sha256=$1
+  if [ "$preserved_candidate_sha256" != "$preserved_installed_sha256" ]; then
+    echo "deployment bootstrap preservation hash mismatch: $preserved_name" >&2
+    return 1
+  fi
+  echo "$preserved_installed_sha256"
+}
+if [ "$preserve_deployment_bootstrap" = yes ]; then
+  if ! preserved_deployment_launcher_sha256=$(verify_preserved_deployment_bootstrap \
+    hepta-immutable-release-deploy \
+    "$snapshot_root/hepta-immutable-release-deploy" \
+    /usr/libexec/hepta-paper/hepta-immutable-release-deploy 755); then
+    exit 78
+  fi
+  if ! preserved_deployment_recovery_unit_sha256=$(verify_preserved_deployment_bootstrap \
+    hepta-immutable-release-recovery.service \
+    "$snapshot_root/hepta-immutable-release-recovery.service" \
+    /etc/systemd/system/hepta-immutable-release-recovery.service 644); then
+    exit 78
+  fi
+fi
 
 source_path="$snapshot_root/autonomous-submission-handoff-layout-provision.c"
 set -- $(/usr/bin/sha256sum "$source_path")
@@ -228,8 +285,14 @@ for launcher in \
   codex-openclaw-managed \
   hepta-paper-state-authority-client \
   hepta-paper-release-attestor-client \
-  hepta-paper-release-env
+  hepta-paper-release-env \
+  hepta-package-recovery-readiness \
+  hepta-immutable-release-deploy
 do
+  if [ "$launcher" = hepta-immutable-release-deploy ] \
+    && [ "$preserve_deployment_bootstrap" = yes ]; then
+    continue
+  fi
   /usr/bin/install $owner_arguments -m 0755 \
     "$snapshot_root/$launcher" "$(target /usr/libexec/hepta-paper/$launcher)"
 done
@@ -266,11 +329,17 @@ for unit in \
   autonomous-submission-handoff-layout-provision.path \
   autonomous-research-supervisor.service \
   autonomous-submission-dispatcher.service \
+  strict-full-auto-runtime-adoption.service \
+  hepta-immutable-release-recovery.service \
   strict-full-auto-acceptance.service \
   strict-full-auto-acceptance.timer \
   autonomous-research-state-backup-renew.service \
   autonomous-research-state-backup-renew.timer
 do
+  if [ "$unit" = hepta-immutable-release-recovery.service ] \
+    && [ "$preserve_deployment_bootstrap" = yes ]; then
+    continue
+  fi
   /usr/bin/install $owner_arguments -m 0644 \
     "$snapshot_root/$unit" "$(target /etc/systemd/system/$unit)"
 done
@@ -290,6 +359,9 @@ for artifact in $artifact_allowlist; do
     codex-openclaw-managed|hepta-paper-state-authority-client|hepta-paper-release-attestor-client|hepta-paper-release-env)
       manifest_path=usr/libexec/hepta-paper/$artifact
       ;;
+    hepta-package-recovery-readiness|hepta-immutable-release-deploy)
+      manifest_path=usr/libexec/hepta-paper/$artifact
+      ;;
     hepta-paper.sysusers.conf)
       manifest_path=usr/lib/sysusers.d/hepta-paper.conf
       ;;
@@ -300,8 +372,17 @@ for artifact in $artifact_allowlist; do
       manifest_path=etc/systemd/system/$artifact
       ;;
   esac
-  set -- $(/usr/bin/sha256sum "$snapshot_root/$artifact")
-  echo "$1  $manifest_path" \
+  if [ "$preserve_deployment_bootstrap" = yes ] \
+    && [ "$artifact" = hepta-immutable-release-deploy ]; then
+    artifact_sha256=$preserved_deployment_launcher_sha256
+  elif [ "$preserve_deployment_bootstrap" = yes ] \
+    && [ "$artifact" = hepta-immutable-release-recovery.service ]; then
+    artifact_sha256=$preserved_deployment_recovery_unit_sha256
+  else
+    set -- $(/usr/bin/sha256sum "$snapshot_root/$artifact")
+    artifact_sha256=$1
+  fi
+  echo "$artifact_sha256  $manifest_path" \
     >> "$build_root/hepta-paper-systemd-host.manifest.sha256"
 done
 echo "$binary_sha256  usr/libexec/hepta-paper/autonomous-submission-handoff-layout-provision" \
@@ -330,6 +411,9 @@ for artifact in $artifact_allowlist; do
     codex-openclaw-managed|hepta-paper-state-authority-client|hepta-paper-release-attestor-client|hepta-paper-release-env)
       installed_artifact=$(target "/usr/libexec/hepta-paper/$artifact")
       ;;
+    hepta-package-recovery-readiness|hepta-immutable-release-deploy)
+      installed_artifact=$(target "/usr/libexec/hepta-paper/$artifact")
+      ;;
     hepta-paper.sysusers.conf)
       installed_artifact=$(target /usr/lib/sysusers.d/hepta-paper.conf)
       ;;
@@ -340,8 +424,16 @@ for artifact in $artifact_allowlist; do
       installed_artifact=$(target "/etc/systemd/system/$artifact")
       ;;
   esac
-  set -- $(/usr/bin/sha256sum "$snapshot_root/$artifact")
-  expected_hash=$1
+  if [ "$preserve_deployment_bootstrap" = yes ] \
+    && [ "$artifact" = hepta-immutable-release-deploy ]; then
+    expected_hash=$preserved_deployment_launcher_sha256
+  elif [ "$preserve_deployment_bootstrap" = yes ] \
+    && [ "$artifact" = hepta-immutable-release-recovery.service ]; then
+    expected_hash=$preserved_deployment_recovery_unit_sha256
+  else
+    set -- $(/usr/bin/sha256sum "$snapshot_root/$artifact")
+    expected_hash=$1
+  fi
   set -- $(/usr/bin/sha256sum "$installed_artifact")
   if [ "$1" != "$expected_hash" ]; then
     echo "installed deployment artifact hash mismatch: $artifact" >&2
@@ -358,7 +450,9 @@ for launcher in \
   codex-openclaw-managed \
   hepta-paper-state-authority-client \
   hepta-paper-release-attestor-client \
-  hepta-paper-release-env
+  hepta-paper-release-env \
+  hepta-package-recovery-readiness \
+  hepta-immutable-release-deploy
 do
   set -- $(/usr/bin/stat -c '%u %g %a' \
     "$(target /usr/libexec/hepta-paper/$launcher)")
@@ -379,7 +473,25 @@ fi
   && /usr/bin/sha256sum -c \
     usr/share/hepta-paper/deploy/hepta-paper-systemd-host.manifest.sha256)
 
+recovery_unit_verification_path=$(target \
+  /etc/systemd/system/hepta-immutable-release-recovery.service)
+if [ "$install_root" != / ]; then
+  systemd_verify_root="$build_root/systemd-verify"
+  /usr/bin/mkdir -m 0700 "$systemd_verify_root"
+  /usr/bin/install -m 0700 \
+    "$snapshot_root/hepta-immutable-release-deploy" \
+    "$systemd_verify_root/hepta-immutable-release-deploy"
+  /usr/bin/sed \
+    "s|^ExecStart=.*|ExecStart=$systemd_verify_root/hepta-immutable-release-deploy recover|" \
+    "$snapshot_root/hepta-immutable-release-recovery.service" \
+    > "$systemd_verify_root/hepta-immutable-release-recovery.service"
+  /usr/bin/chmod 0600 \
+    "$systemd_verify_root/hepta-immutable-release-recovery.service"
+  recovery_unit_verification_path="$systemd_verify_root/hepta-immutable-release-recovery.service"
+fi
+
 /usr/bin/systemd-analyze verify \
+  "$recovery_unit_verification_path" \
   "$(target /etc/systemd/system/hepta-paper-host-bootstrap.service)" \
   "$(target /etc/systemd/system/hepta-paper-state-authority.service)" \
   "$(target /etc/systemd/system/hepta-paper-release-attestor.service)" \
@@ -388,19 +500,26 @@ fi
   "$(target /etc/systemd/system/autonomous-submission-handoff-layout-provision.path)" \
   "$(target /etc/systemd/system/autonomous-research-supervisor.service)" \
   "$(target /etc/systemd/system/autonomous-submission-dispatcher.service)" \
+  "$(target /etc/systemd/system/strict-full-auto-runtime-adoption.service)" \
   "$(target /etc/systemd/system/strict-full-auto-acceptance.service)" \
   "$(target /etc/systemd/system/strict-full-auto-acceptance.timer)" \
   "$(target /etc/systemd/system/autonomous-research-state-backup-renew.service)" \
   "$(target /etc/systemd/system/autonomous-research-state-backup-renew.timer)"
 
 if [ "$manage_systemd" = yes ]; then
+  /usr/bin/env -i PATH=/usr/sbin:/usr/bin LC_ALL=C \
+    /usr/bin/systemd-sysusers /usr/lib/sysusers.d/hepta-paper.conf
+  /usr/bin/env -i PATH=/usr/sbin:/usr/bin LC_ALL=C \
+    /usr/bin/systemd-tmpfiles --create /usr/lib/tmpfiles.d/hepta-paper.conf
   /usr/bin/systemctl daemon-reload
   /usr/bin/systemctl disable --now \
     strict-full-auto-acceptance.timer \
     strict-full-auto-acceptance.service \
+    strict-full-auto-runtime-adoption.service \
     autonomous-submission-dispatcher.service \
     autonomous-research-supervisor.service
   /usr/bin/systemctl enable \
+    hepta-immutable-release-recovery.service \
     hepta-paper-host-bootstrap.service \
     hepta-paper-state-authority.service \
     hepta-paper-release-attestor.service \
@@ -408,17 +527,23 @@ if [ "$manage_systemd" = yes ]; then
     autonomous-submission-handoff-layout-provision.path \
     autonomous-research-state-backup-renew.timer
   /usr/bin/systemctl stop \
+    autonomous-research-state-backup-renew.timer \
+    autonomous-research-state-backup-renew.service \
     strict-full-auto-acceptance.timer \
     strict-full-auto-acceptance.service \
+    strict-full-auto-runtime-adoption.service \
     autonomous-submission-dispatcher.service \
     autonomous-research-supervisor.service \
     hepta-paper-release-attestor-probe.service \
     hepta-paper-release-attestor.service \
     hepta-paper-state-authority.service \
     autonomous-submission-handoff-layout-provision.path \
-    autonomous-submission-handoff-layout-provision.service
+    autonomous-submission-handoff-layout-provision.service \
+    hepta-paper-host-bootstrap.service \
+    hepta-immutable-release-recovery.service
   /usr/bin/systemctl clean --what=runtime \
     autonomous-submission-handoff-layout-provision.service
+  /usr/bin/systemctl restart hepta-immutable-release-recovery.service
   /usr/bin/systemctl restart hepta-paper-host-bootstrap.service
   /usr/bin/systemctl restart hepta-paper-state-authority.service
   /usr/bin/systemctl restart hepta-paper-release-attestor.service

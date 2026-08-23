@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
@@ -32,6 +34,24 @@ function sameFileIdentity(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function exactFileState(candidate) {
+  if (!fs.existsSync(candidate)) return null;
+  const identity = fileIdentity(candidate);
+  const sha256 = fileSha256HashSync(candidate);
+  if (!sameFileIdentity(identity, fileIdentity(candidate))) {
+    throw new Error('autonomous_research_state_database_changed_during_snapshot');
+  }
+  return Object.freeze({ identity, sha256 });
+}
+
+function exactDatabaseTriplet(sourcePath) {
+  return Object.freeze([
+    exactFileState(sourcePath),
+    exactFileState(`${sourcePath}-wal`),
+    exactFileState(`${sourcePath}-shm`),
+  ]);
+}
+
 function assertNoSymlinkComponents(runtimeRoot, candidate) {
   const relative = path.relative(runtimeRoot, candidate);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
@@ -55,8 +75,14 @@ function queryAll(database, sql) {
   return database.prepare(sql).all();
 }
 
-function inspectSqliteDatabase(sourcePath) {
-  const database = new DatabaseSync(sourcePath, { readOnly: true });
+function inspectSqliteDatabase(sourcePath, { immutable = false } = {}) {
+  let location = sourcePath;
+  if (immutable) {
+    location = pathToFileURL(sourcePath);
+    location.searchParams.set('mode', 'ro');
+    location.searchParams.set('immutable', '1');
+  }
+  const database = new DatabaseSync(location, { readOnly: true });
   try {
     const quickRows = queryAll(database, 'PRAGMA quick_check;');
     const foreignKeyRows = queryAll(database, 'PRAGMA foreign_key_check;');
@@ -77,6 +103,74 @@ ORDER BY type,name,tbl_name,sql;
       applicationId,
     });
   } finally { database.close(); }
+}
+
+function createPrivateDatabaseSnapshot(sourcePath) {
+  const before = exactDatabaseTriplet(sourcePath);
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-state-inventory-'));
+  const temporaryDatabasePath = path.join(temporaryRoot, 'candidate.sqlite');
+  try {
+    fs.copyFileSync(sourcePath, temporaryDatabasePath, fs.constants.COPYFILE_EXCL);
+    if (before[1]) {
+      fs.copyFileSync(
+        `${sourcePath}-wal`,
+        `${temporaryDatabasePath}-wal`,
+        fs.constants.COPYFILE_EXCL,
+      );
+    }
+    if (JSON.stringify(exactDatabaseTriplet(sourcePath)) !== JSON.stringify(before)) {
+      throw new Error('autonomous_research_state_database_changed_during_snapshot');
+    }
+    return Object.freeze({ before, temporaryDatabasePath, temporaryRoot });
+  } catch (error) {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function disposePrivateDatabaseSnapshot(sourcePath, snapshot) {
+    let unchanged = false;
+    try {
+    unchanged = JSON.stringify(exactDatabaseTriplet(sourcePath))
+      === JSON.stringify(snapshot.before);
+  } finally { fs.rmSync(snapshot.temporaryRoot, { recursive: true, force: true }); }
+    if (!unchanged) {
+      throw new Error('autonomous_research_state_database_changed_during_snapshot');
+    }
+}
+
+export function withAutonomousResearchStateDatabasePrivateSnapshot({ sourcePath, inspect }) {
+  if (typeof inspect !== 'function') {
+    throw new Error('autonomous_research_state_database_snapshot_inspector_required');
+  }
+  const snapshot = createPrivateDatabaseSnapshot(sourcePath);
+  try {
+    return inspect(snapshot.temporaryDatabasePath);
+  } finally {
+    disposePrivateDatabaseSnapshot(sourcePath, snapshot);
+  }
+}
+
+export async function withAutonomousResearchStateDatabasePrivateSnapshotAsync({
+  sourcePath,
+  inspect,
+}) {
+  if (typeof inspect !== 'function') {
+    throw new Error('autonomous_research_state_database_snapshot_inspector_required');
+  }
+  const snapshot = createPrivateDatabaseSnapshot(sourcePath);
+  try {
+    return await inspect(snapshot.temporaryDatabasePath);
+  } finally {
+    disposePrivateDatabaseSnapshot(sourcePath, snapshot);
+  }
+}
+
+function inspectSqliteDatabaseSnapshot(sourcePath) {
+  return withAutonomousResearchStateDatabasePrivateSnapshot({
+    sourcePath,
+    inspect: inspectSqliteDatabase,
+  });
 }
 
 function walkSqliteFiles(root, blockers, { maximumEntries = 10000 } = {}) {
@@ -205,10 +299,17 @@ function inspectCandidate(runtimeRoot, row) {
   assertNoSymlinkComponents(runtimeRoot, row.sourcePath);
   const sourceRelativePath = toPosixPath(path.relative(runtimeRoot, row.sourcePath));
   const walPath = `${row.sourcePath}-wal`;
+  const shmPath = `${row.sourcePath}-shm`;
   const sourceFileIdentity = fileIdentity(row.sourcePath);
   const walPresent = fs.existsSync(walPath);
+  const shmPresent = fs.existsSync(shmPath);
   const initialWalFileIdentity = walPresent ? fileIdentity(walPath) : null;
-  const inspection = inspectSqliteDatabase(row.sourcePath);
+  const initialWalSha256 = walPresent ? fileSha256HashSync(walPath) : null;
+  const initialShmFileIdentity = shmPresent ? fileIdentity(shmPath) : null;
+  const initialShmSha256 = shmPresent ? fileSha256HashSync(shmPath) : null;
+  const inspection = walPresent || shmPresent
+    ? inspectSqliteDatabaseSnapshot(row.sourcePath)
+    : inspectSqliteDatabase(row.sourcePath, { immutable: true });
   const observedSchemaObjects = new Set(inspection.schemaObjects);
   const missingSchemaObjects = row.definition.requiredSchemaObjects
     .filter((schemaObject) => !observedSchemaObjects.has(schemaObject));
@@ -217,19 +318,22 @@ function inspectCandidate(runtimeRoot, row) {
     throw new Error('autonomous_research_state_database_changed_during_inspection:source');
   }
   const walPresentAfterInspection = fs.existsSync(walPath);
-  let walFileIdentity = walPresentAfterInspection ? fileIdentity(walPath) : null;
+  const shmPresentAfterInspection = fs.existsSync(shmPath);
   if (walPresent !== walPresentAfterInspection) {
-    const cleanReaderSideEffect = !walPresent && walPresentAfterInspection
-      && walFileIdentity.bytes === '0';
-    const cleanWalRemoved = walPresent && !walPresentAfterInspection
-      && initialWalFileIdentity.bytes === '0';
-    if (!cleanReaderSideEffect && !cleanWalRemoved) {
-      throw new Error('autonomous_research_state_database_changed_during_inspection:wal_presence');
-    }
+    throw new Error('autonomous_research_state_database_changed_during_inspection:wal_presence');
   }
-  if (walPresent && walPresentAfterInspection
-    && !sameFileIdentity(initialWalFileIdentity, walFileIdentity)) {
+  if (shmPresent !== shmPresentAfterInspection) {
+    throw new Error('autonomous_research_state_database_changed_during_inspection:shm_presence');
+  }
+  const walFileIdentity = walPresentAfterInspection ? fileIdentity(walPath) : null;
+  const shmFileIdentity = shmPresentAfterInspection ? fileIdentity(shmPath) : null;
+  if (walPresent && (!sameFileIdentity(initialWalFileIdentity, walFileIdentity)
+    || initialWalSha256 !== fileSha256HashSync(walPath))) {
     throw new Error('autonomous_research_state_database_changed_during_inspection:wal');
+  }
+  if (shmPresent && (!sameFileIdentity(initialShmFileIdentity, shmFileIdentity)
+    || initialShmSha256 !== fileSha256HashSync(shmPath))) {
+    throw new Error('autonomous_research_state_database_changed_during_inspection:shm');
   }
   const walSha256 = walFileIdentity ? fileSha256HashSync(walPath) : null;
   if (walFileIdentity && !sameFileIdentity(walFileIdentity, fileIdentity(walPath))) {

@@ -1,5 +1,7 @@
 [Unit]
 Description=Watch for the atomically installed Hepta Paper handoff database
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
 Requires=hepta-paper-host-bootstrap.service
 After=hepta-paper-host-bootstrap.service
 

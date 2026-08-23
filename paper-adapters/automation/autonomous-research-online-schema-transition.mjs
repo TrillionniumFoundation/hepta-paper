@@ -1,17 +1,14 @@
-import {
-  autonomousResearchStateDatabaseInventoryHash,
-  autonomousResearchStateDatabaseManifestHash,
-} from '../../paper-domain/automation/autonomous-research-state-backup-contract.mjs';
+import { autonomousResearchStateDatabaseInventoryHash,
+  autonomousResearchStateDatabaseManifestHash }
+  from '../../paper-domain/automation/autonomous-research-state-backup-contract.mjs';
 import {
   autonomousResearchOnlineSchemaTransitionReadyReceiptHash,
   autonomousResearchOnlineSchemaTransitionReceiptHash,
-  AUTONOMOUS_RESEARCH_ONLINE_SCHEMA_TRANSITION_PROTOCOL,
 } from '../../paper-domain/automation/autonomous-research-online-schema-transition-contract.mjs';
 import {
   assertAutonomousResearchOnlineWriterOperationManifest,
   autonomousResearchOnlineWriterOperationManifestHash,
 } from '../../paper-domain/automation/autonomous-research-online-writer-manifest.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   createAutonomousResearchOnlineSchemaTransitionAuthorityProcessClient,
 } from './autonomous-research-online-schema-transition-authority.mjs';
@@ -20,6 +17,9 @@ import {
   assertAutonomousResearchOnlineSchemaTransitionLease,
   installAutonomousResearchOnlineSchemaTransitionLocks,
 } from './autonomous-research-online-schema-transition-installation.mjs';
+import {
+  executeAutonomousResearchOnlineSchemaTransitionJournalNormalization,
+} from './autonomous-research-online-schema-transition-journal-normalization.mjs';
 import {
   buildAutonomousResearchOnlineSchemaTransitionPlan,
   resolveAutonomousResearchOnlineSchemaTransitionPostInventory,
@@ -33,21 +33,21 @@ import {
 } from './autonomous-research-online-schema-transition-state-repository.mjs';
 import {
   autonomousResearchOnlineSchemaTransitionPlanHashValid,
-  buildAutonomousResearchOnlineSchemaTransitionAuditReceipt,
   buildAutonomousResearchOnlineSchemaTransitionFinalizeRequest,
   buildAutonomousResearchOnlineSchemaTransitionObserveRequest,
   buildAutonomousResearchOnlineSchemaTransitionReserveRequest,
 } from './autonomous-research-online-schema-transition-state.mjs';
 import {
+  autonomousResearchPristineSchemaRebindRestartRequiredReport,
+  completeAutonomousResearchOnlineSchemaTransitionExecution,
+  resolveAutonomousResearchOnlineSchemaTransitionPristineState,
+  validateAutonomousResearchOnlineSchemaTransitionAuditReceipt,
+} from './autonomous-research-online-schema-transition-completion.mjs';
+import {
   resolveAutonomousResearchStateDatabaseInventory,
 } from './autonomous-research-state-database-inventory.mjs';
-
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
-
-function fail(code) {
-  throw new Error(code);
-}
-
+function fail(code) { throw new Error(code); }
 function currentPlanOrState({
   runtimeRoot,
   stateDatabaseManifest,
@@ -56,6 +56,7 @@ function currentPlanOrState({
   clock,
   requestedLeaseMs,
   requiredExecutionWindowMs,
+  expectedPreRebindPristineRuntimeStateHash,
   activeStatePath,
 }) {
   const stored = readAutonomousResearchOnlineSchemaTransitionJson(activeStatePath);
@@ -68,18 +69,50 @@ function currentPlanOrState({
       clock,
       requestedLeaseMs,
       requiredExecutionWindowMs,
+      expectedPreRebindPristineRuntimeStateHash,
     }),
     installations: Object.freeze([]),
   });
+  const candidateWriterManifestHash = autonomousResearchOnlineWriterOperationManifestHash(
+    writerManifest,
+  );
   if (stored.version !== 1
     || stored.kind !== 'AutonomousResearchOnlineSchemaTransitionState'
     || !autonomousResearchOnlineSchemaTransitionPlanHashValid(stored.plan)
     || stored.plan.databaseScopeHash !== authorityClient.trust.databaseScopeHash
-    || stored.plan.writerManifestHash
-      !== autonomousResearchOnlineWriterOperationManifestHash(writerManifest)
+    || (stored.plan.writerManifestHash !== candidateWriterManifestHash
+      && !(stored.phase === 'finalized'
+        && SHA256.test(String(stored.finalReceiptHash || ''))
+        && stored.plan.writerManifestHash === authorityClient.trust.writerManifestHash))
+    || (stored.plan.version === 2
+      && ![stored.plan.sourceWriterManifestHash, stored.plan.writerManifestHash]
+        .includes(authorityClient.trust.writerManifestHash))
     || stored.plan.stateDatabaseManifestHash
       !== autonomousResearchStateDatabaseManifestHash(stateDatabaseManifest)) {
     fail('autonomous_research_online_schema_transition_state_invalid');
+  }
+  if (stored.phase === 'finalized'
+    && stored.plan.writerManifestHash !== candidateWriterManifestHash) {
+    return Object.freeze({
+      plan: buildAutonomousResearchOnlineSchemaTransitionPlan({
+        runtimeRoot,
+        stateDatabaseManifest,
+        writerManifest,
+        trust: authorityClient.trust,
+        clock,
+        requestedLeaseMs,
+        requiredExecutionWindowMs,
+        expectedPreRebindPristineRuntimeStateHash,
+      }),
+      installations: Object.freeze([]),
+    });
+  }
+  if ((stored.reservation && !stored.reserveRequest)
+    || (stored.finalizeRequest && !stored.reservation)
+    || (stored.finalization && !stored.finalizeRequest)
+    || (stored.observeRequest && !stored.finalization)
+    || (stored.observation && !stored.observeRequest)) {
+    fail('autonomous_research_online_schema_transition_state_phase_incomplete');
   }
   const current = validateAutonomousResearchOnlineSchemaTransitionInventory({
     runtimeRoot,
@@ -104,6 +137,11 @@ function currentPlanOrState({
     installations: Object.freeze(stored.installations || []),
     reserveRequest: stored.reserveRequest ? Object.freeze(stored.reserveRequest) : null,
     reservation: stored.reservation ? Object.freeze(stored.reservation) : null,
+    finalizeRequest: stored.finalizeRequest ? Object.freeze(stored.finalizeRequest) : null,
+    finalization: stored.finalization ? Object.freeze(stored.finalization) : null,
+    observeRequest: stored.observeRequest ? Object.freeze(stored.observeRequest) : null,
+    observation: stored.observation ? Object.freeze(stored.observation) : null,
+    postPristineRuntimeStateHash: stored.postPristineRuntimeStateHash || null,
   });
 }
 
@@ -114,6 +152,7 @@ function createContext({
   authorityProcessConfigurationPath,
   requestedLeaseMs,
   requiredExecutionWindowMs,
+  expectedPreRebindPristineRuntimeStateHash,
   clock,
   createAuthorityClient,
 }) {
@@ -131,6 +170,7 @@ function createContext({
     clock,
     requestedLeaseMs,
     requiredExecutionWindowMs,
+    expectedPreRebindPristineRuntimeStateHash,
     activeStatePath: paths.activeStatePath,
   });
   return Object.freeze({ authorityClient, paths, active });
@@ -143,6 +183,7 @@ export function planAutonomousResearchOnlineSchemaTransition({
   authorityProcessConfigurationPath,
   requestedLeaseMs = 120000,
   requiredExecutionWindowMs = 30000,
+  expectedPreRebindPristineRuntimeStateHash = null,
   clock = { now: () => new Date() },
   createAuthorityClient =
     createAutonomousResearchOnlineSchemaTransitionAuthorityProcessClient,
@@ -154,6 +195,7 @@ export function planAutonomousResearchOnlineSchemaTransition({
     authorityProcessConfigurationPath,
     requestedLeaseMs,
     requiredExecutionWindowMs,
+    expectedPreRebindPristineRuntimeStateHash,
     clock,
     createAuthorityClient,
   });
@@ -183,6 +225,7 @@ export function executeAutonomousResearchOnlineSchemaTransition({
   requestedLeaseMs = 120000,
   requiredExecutionWindowMs = 30000,
   commitSafetyMarginMs = 1000,
+  expectedPreRebindPristineRuntimeStateHash = null,
   expectedTransitionId,
   clock = { now: () => new Date() },
   createAuthorityClient =
@@ -204,6 +247,7 @@ export function executeAutonomousResearchOnlineSchemaTransition({
     authorityProcessConfigurationPath,
     requestedLeaseMs,
     requiredExecutionWindowMs,
+    expectedPreRebindPristineRuntimeStateHash,
     clock,
     createAuthorityClient,
   });
@@ -211,33 +255,223 @@ export function executeAutonomousResearchOnlineSchemaTransition({
   if (plan.transitionId !== expectedTransitionId) {
     fail('autonomous_research_online_schema_transition_expected_transition_id_mismatch');
   }
-  const storedReservationComplete = Boolean(active.reserveRequest && active.reservation);
-  if (Boolean(active.reserveRequest) !== Boolean(active.reservation)) {
-    fail('autonomous_research_online_schema_transition_stored_reservation_incomplete');
-  }
   const paths = autonomousResearchOnlineSchemaTransitionControlPaths(runtimeRoot, {
     create: true,
   });
-  const reserveRequest = storedReservationComplete
-    ? active.reserveRequest
-    : buildAutonomousResearchOnlineSchemaTransitionReserveRequest(
+  if (active.finalization) {
+    if (!active.finalizeRequest
+      || !active.reserveRequest
+      || !active.reservation
+      || !authorityClient.verifyHistoricalReservation({
+        receipt: active.reservation,
+        request: active.reserveRequest,
+      })
+      || !authorityClient.verifyHistoricalFinalization({
+        receipt: active.finalization,
+        request: active.finalizeRequest,
+        reservation: active.reservation,
+      })) {
+      fail('autonomous_research_pristine_schema_rebind_stored_finalization_invalid');
+    }
+    const inventory = resolveAutonomousResearchOnlineSchemaTransitionPostInventory({
+      runtimeRoot,
+      stateDatabaseManifest,
+      plan,
+    });
+    const pristineReadBeforeObserve =
+      resolveAutonomousResearchOnlineSchemaTransitionPristineState({
+        runtimeRoot,
+        inventory,
+        plan,
+        installations: active.installations,
+      });
+    const pristineReadForObserve =
+      resolveAutonomousResearchOnlineSchemaTransitionPristineState({
+        runtimeRoot,
+        inventory,
+        plan,
+        installations: active.installations,
+      });
+    if (pristineReadBeforeObserve.pristineRuntimeStateHash
+        !== pristineReadForObserve.pristineRuntimeStateHash
+      || (active.postPristineRuntimeStateHash
+        && active.postPristineRuntimeStateHash
+          !== pristineReadForObserve.pristineRuntimeStateHash)) {
+      fail('autonomous_research_pristine_schema_rebind_observation_state_changed');
+    }
+    return completeAutonomousResearchOnlineSchemaTransitionExecution({
+      authorityClient,
+      clock,
+      plan,
+      paths,
+      state: Object.freeze({
+        version: 1,
+        kind: 'AutonomousResearchOnlineSchemaTransitionState',
+        plan,
+        reserveRequest: active.reserveRequest,
+        reservation: active.reservation,
+        finalizeRequest: active.finalizeRequest,
+        finalization: active.finalization,
+        postPristineRuntimeStateHash:
+          pristineReadForObserve.pristineRuntimeStateHash,
+        ...(active.observeRequest ? { observeRequest: active.observeRequest } : {}),
+        ...(active.observation ? { observation: active.observation } : {}),
+      }),
+      reserveRequest: active.reserveRequest,
+      reservation: active.reservation,
+      finalizeRequest: active.finalizeRequest,
+      finalization: active.finalization,
+      inventory,
+      installations: active.installations,
+      postPristineRuntimeStateHash: pristineReadForObserve.pristineRuntimeStateHash,
+      faultInjector,
+    });
+  }
+  if (active.finalizeRequest) {
+    if (!active.reserveRequest || !active.reservation
+      || active.installations.length !== plan.instances.length
+      || !authorityClient.verifyHistoricalReservation({
+        receipt: active.reservation,
+        request: active.reserveRequest,
+      })) {
+      fail('autonomous_research_online_schema_transition_finalize_recovery_state_invalid');
+    }
+    const inventory = resolveAutonomousResearchOnlineSchemaTransitionPostInventory({
+      runtimeRoot,
+      stateDatabaseManifest,
+      plan,
+    });
+    const pristineBeforeFinalize =
+      resolveAutonomousResearchOnlineSchemaTransitionPristineState({
+        runtimeRoot,
+        inventory,
+        plan,
+        installations: active.installations,
+      });
+    const expectedFinalizeRequest =
+      buildAutonomousResearchOnlineSchemaTransitionFinalizeRequest({
+        plan,
+        reservation: active.reservation,
+        inventory,
+        installations: active.installations,
+        postPristineRuntimeStateHash: pristineBeforeFinalize.pristineRuntimeStateHash,
+        completedAt: active.finalizeRequest.completedAt,
+      });
+    if (JSON.stringify(expectedFinalizeRequest) !== JSON.stringify(active.finalizeRequest)
+      || (active.postPristineRuntimeStateHash
+        && active.postPristineRuntimeStateHash
+          !== pristineBeforeFinalize.pristineRuntimeStateHash)) {
+      fail('autonomous_research_online_schema_transition_stored_finalize_request_invalid');
+    }
+    const finalization = authorityClient.finalizeSchemaTransition({
+      request: active.finalizeRequest,
+      reservation: active.reservation,
+      now: schemaTransitionNow(clock),
+    });
+    faultInjector?.({
+      point: 'after_finalization',
+      completedCount: active.installations.length,
+    });
+    const pristineAfterFinalize =
+      resolveAutonomousResearchOnlineSchemaTransitionPristineState({
+        runtimeRoot,
+        inventory,
+        plan,
+        installations: active.installations,
+      });
+    if (pristineBeforeFinalize.pristineRuntimeStateHash
+      !== pristineAfterFinalize.pristineRuntimeStateHash) {
+      fail('autonomous_research_pristine_schema_rebind_state_changed_during_finalize');
+    }
+    const finalizationRecordedState = Object.freeze({
+      version: 1,
+      kind: 'AutonomousResearchOnlineSchemaTransitionState',
+      phase: plan.version === 2
+        ? 'authority-target-configuration-restart-required'
+        : 'finalization-recorded',
+      plan,
+      reserveRequest: active.reserveRequest,
+      reservation: active.reservation,
+      installations: active.installations,
+      finalizeRequest: active.finalizeRequest,
+      finalization,
+      postPristineRuntimeStateHash: pristineAfterFinalize.pristineRuntimeStateHash,
+    });
+    writeAutonomousResearchOnlineSchemaTransitionJson(
+      paths.activeStatePath,
+      finalizationRecordedState,
+    );
+    if (plan.version === 2) {
+      return autonomousResearchPristineSchemaRebindRestartRequiredReport(
+        plan,
+        finalization,
+        active.installations,
+      );
+    }
+    return completeAutonomousResearchOnlineSchemaTransitionExecution({
+      authorityClient,
+      clock,
+      plan,
+      paths,
+      state: finalizationRecordedState,
+      reserveRequest: active.reserveRequest,
+      reservation: active.reservation,
+      finalizeRequest: active.finalizeRequest,
+      finalization,
+      inventory,
+      installations: active.installations,
+      postPristineRuntimeStateHash: pristineAfterFinalize.pristineRuntimeStateHash,
+      faultInjector,
+    });
+  }
+  const reserveRequest = active.reserveRequest
+    || buildAutonomousResearchOnlineSchemaTransitionReserveRequest(
       plan,
       schemaTransitionNow(clock).toISOString(),
     );
-  const reservation = storedReservationComplete
+  if (active.reserveRequest && JSON.stringify(active.reserveRequest)
+    !== JSON.stringify(buildAutonomousResearchOnlineSchemaTransitionReserveRequest(
+      plan,
+      active.reserveRequest.requestedAt,
+    ))) {
+    fail('autonomous_research_online_schema_transition_stored_reserve_request_invalid');
+  }
+  if (!active.reserveRequest) {
+    writeAutonomousResearchOnlineSchemaTransitionJson(paths.activeStatePath, Object.freeze({
+      version: 1,
+      kind: 'AutonomousResearchOnlineSchemaTransitionState',
+      phase: 'reserve-requested',
+      plan,
+      reserveRequest,
+      installations: Object.freeze([]),
+    }));
+  }
+  if (active.reservation && !authorityClient.verifyHistoricalReservation({
+    receipt: active.reservation,
+    request: reserveRequest,
+  })) {
+    fail('autonomous_research_online_schema_transition_stored_reservation_invalid');
+  }
+  const storedReservationCurrent = active.reservation
+    ? authorityClient.verifyStoredReservation({
+      receipt: active.reservation,
+      request: reserveRequest,
+      now: schemaTransitionNow(clock),
+    }) === true
+    : false;
+  const reservation = storedReservationCurrent
     ? active.reservation
     : authorityClient.reserveSchemaTransition({
       request: reserveRequest,
       now: schemaTransitionNow(clock),
     });
-  if (storedReservationComplete
-    && (reserveRequest.transitionId !== plan.transitionId
-      || typeof authorityClient.verifyStoredReservation !== 'function'
-      || authorityClient.verifyStoredReservation({
-        receipt: reservation,
-        request: reserveRequest,
-        now: schemaTransitionNow(clock),
-      }) !== true)) {
+  if (reserveRequest.transitionId !== plan.transitionId
+    || typeof authorityClient.verifyStoredReservation !== 'function'
+    || authorityClient.verifyStoredReservation({
+      receipt: reservation,
+      request: reserveRequest,
+      now: schemaTransitionNow(clock),
+    }) !== true) {
     fail('autonomous_research_online_schema_transition_stored_reservation_invalid');
   }
   assertAutonomousResearchOnlineSchemaTransitionLease(
@@ -254,9 +488,40 @@ export function executeAutonomousResearchOnlineSchemaTransition({
     reserveRequest,
     reservation,
     installations: active.installations,
+    ...(active.finalizeRequest ? { finalizeRequest: active.finalizeRequest } : {}),
+    ...(active.postPristineRuntimeStateHash ? {
+      postPristineRuntimeStateHash: active.postPristineRuntimeStateHash,
+    } : {}),
   });
   writeAutonomousResearchOnlineSchemaTransitionJson(paths.activeStatePath, state);
   faultInjector?.({ point: 'after_reservation', completedCount: active.installations.length });
+  const preNormalizationInventory = validateAutonomousResearchOnlineSchemaTransitionInventory({
+    runtimeRoot,
+    stateDatabaseManifest,
+    inventory: resolveAutonomousResearchStateDatabaseInventory({
+      runtimeRoot,
+      manifest: stateDatabaseManifest,
+    }),
+  });
+  const journalNormalizations = executeAutonomousResearchOnlineSchemaTransitionJournalNormalization({
+    runtimeRoot,
+    currentInventory: preNormalizationInventory,
+    plan,
+    reserveRequest,
+    reservation,
+    authorityClient,
+    clock, faultInjector,
+  });
+  const normalizedState = Object.freeze({
+    ...state,
+    phase: 'journals-normalized',
+    journalNormalizations,
+  });
+  writeAutonomousResearchOnlineSchemaTransitionJson(paths.activeStatePath, normalizedState);
+  faultInjector?.({
+    point: 'after_journal_normalization',
+    completedCount: active.installations.length,
+  });
   const currentInventory = validateAutonomousResearchOnlineSchemaTransitionInventory({
     runtimeRoot,
     stateDatabaseManifest,
@@ -269,6 +534,7 @@ export function executeAutonomousResearchOnlineSchemaTransition({
     runtimeRoot,
     currentInventory,
     plan,
+    completedInstallations: active.installations,
   });
   faultInjector?.({ point: 'after_all_locks', completedCount: active.installations.length });
   assertAutonomousResearchOnlineSchemaTransitionLease(
@@ -283,7 +549,7 @@ export function executeAutonomousResearchOnlineSchemaTransition({
     reservation,
     clock,
     commitSafetyMarginMs,
-    state,
+    state: normalizedState,
     statePath: paths.activeStatePath,
     faultInjector,
   });
@@ -292,6 +558,13 @@ export function executeAutonomousResearchOnlineSchemaTransition({
     stateDatabaseManifest,
     plan,
   });
+  const pristineBeforeFinalize =
+    resolveAutonomousResearchOnlineSchemaTransitionPristineState({
+      runtimeRoot,
+      inventory,
+      plan,
+      installations,
+    });
   assertAutonomousResearchOnlineSchemaTransitionLease(
     reservation,
     clock,
@@ -303,89 +576,78 @@ export function executeAutonomousResearchOnlineSchemaTransition({
     reservation,
     inventory,
     installations,
-    completedAt: schemaTransitionNow(clock).toISOString(),
+    postPristineRuntimeStateHash: pristineBeforeFinalize.pristineRuntimeStateHash,
+    completedAt: active.finalizeRequest?.completedAt
+      || schemaTransitionNow(clock).toISOString(),
   });
+  if (active.finalizeRequest
+    && JSON.stringify(active.finalizeRequest) !== JSON.stringify(finalizeRequest)) {
+    fail('autonomous_research_online_schema_transition_stored_finalize_request_invalid');
+  }
+  const finalizeIntentState = Object.freeze({
+    ...normalizedState,
+    phase: 'finalization-requested',
+    installations,
+    finalizeRequest,
+    postPristineRuntimeStateHash: pristineBeforeFinalize.pristineRuntimeStateHash,
+  });
+  if (!active.finalizeRequest) {
+    writeAutonomousResearchOnlineSchemaTransitionJson(
+      paths.activeStatePath,
+      finalizeIntentState,
+    );
+  }
   const finalization = authorityClient.finalizeSchemaTransition({
     request: finalizeRequest,
     reservation,
     now: schemaTransitionNow(clock),
   });
+  const pristineAfterFinalize =
+    resolveAutonomousResearchOnlineSchemaTransitionPristineState({
+      runtimeRoot,
+      inventory,
+      plan,
+      installations,
+    });
+  if (pristineBeforeFinalize.pristineRuntimeStateHash
+    !== pristineAfterFinalize.pristineRuntimeStateHash) {
+    fail('autonomous_research_pristine_schema_rebind_state_changed_during_finalize');
+  }
   faultInjector?.({ point: 'after_finalization', completedCount: installations.length });
-  const observeRequest = buildAutonomousResearchOnlineSchemaTransitionObserveRequest({
-    plan,
+  const finalizationRecordedState = Object.freeze({
+    ...finalizeIntentState,
+    phase: plan.version === 2
+      ? 'authority-target-configuration-restart-required'
+      : 'finalization-recorded',
     finalization,
-    postInventoryHash: inventory.inventoryHash,
-    requestedAt: schemaTransitionNow(clock).toISOString(),
+    postPristineRuntimeStateHash: pristineAfterFinalize.pristineRuntimeStateHash,
   });
-  const observation = authorityClient.observeSchemaTransition({
-    request: observeRequest,
-    now: schemaTransitionNow(clock),
-  });
-  const receipt = buildAutonomousResearchOnlineSchemaTransitionAuditReceipt({
+  writeAutonomousResearchOnlineSchemaTransitionJson(
+    paths.activeStatePath,
+    finalizationRecordedState,
+  );
+  if (plan.version === 2) {
+    return autonomousResearchPristineSchemaRebindRestartRequiredReport(
+      plan,
+      finalization,
+      installations,
+    );
+  }
+  return completeAutonomousResearchOnlineSchemaTransitionExecution({
+    authorityClient,
+    clock,
     plan,
+    paths,
+    state: finalizationRecordedState,
     reserveRequest,
     reservation,
     finalizeRequest,
     finalization,
-    observeRequest,
-    observation,
     inventory,
     installations,
+    postPristineRuntimeStateHash: pristineAfterFinalize.pristineRuntimeStateHash,
+    faultInjector,
   });
-  writeAutonomousResearchOnlineSchemaTransitionJson(paths.finalReceiptPath, receipt);
-  writeAutonomousResearchOnlineSchemaTransitionJson(paths.activeStatePath, Object.freeze({
-    ...state,
-    phase: 'finalized',
-    installations,
-    finalReceiptHash: receipt.schemaTransitionReceiptHash,
-  }));
-  return Object.freeze({
-    version: 1,
-    kind: 'AutonomousResearchOnlineSchemaTransitionExecutionReport',
-    status: 'autonomous_research_online_schema_transition_ready',
-    ready: true,
-    receipt,
-    receiptPath: paths.finalReceiptPath,
-    installedDatabaseCount: installations.length,
-    crossDatabaseAtomicityClaimed: false,
-    externalAuthorityVerified: true,
-    publicationPerformed: false,
-    networkUse: false,
-    blockers: Object.freeze([]),
-  });
-}
-
-function validateAuditReceipt({ receipt, inventory, writerManifest, authorityClient }) {
-  const payload = Object.fromEntries(Object.entries(receipt || {}).filter(([key]) => (
-    key !== 'schemaTransitionReceiptHash'
-  )));
-  if (receipt?.version !== 1
-    || receipt.kind !== 'AutonomousResearchOnlineSchemaTransitionAuditReceipt'
-    || receipt.status !== 'autonomous_research_online_schema_transition_ready'
-    || receipt.protocol !== AUTONOMOUS_RESEARCH_ONLINE_SCHEMA_TRANSITION_PROTOCOL
-    || receipt.databaseScopeHash !== inventory.databaseScopeHash
-    || receipt.writerManifestHash
-      !== autonomousResearchOnlineWriterOperationManifestHash(writerManifest)
-    || receipt.postInventoryHash !== inventory.inventoryHash
-    || receipt.schemaTransitionReceiptHash !== hashRecord(
-      'AutonomousResearchOnlineSchemaTransitionAuditReceipt', payload,
-    )
-    || receipt.externalAuthorityVerified !== true
-    || receipt.crossDatabaseAtomicityClaimed !== false
-    || !authorityClient.verifyHistoricalReservation({
-      receipt: receipt.reservation,
-      request: receipt.reserveRequest,
-    })
-    || !authorityClient.verifyHistoricalFinalization({
-      receipt: receipt.finalization,
-      request: receipt.finalizeRequest,
-      reservation: receipt.reservation,
-    })
-    || !authorityClient.verifyHistoricalObservation({
-      receipt: receipt.observation,
-      request: receipt.observeRequest,
-    })) fail('autonomous_research_online_schema_transition_audit_receipt_invalid');
-  return receipt;
 }
 
 export function inspectAutonomousResearchOnlineSchemaTransitionReadiness({
@@ -415,7 +677,7 @@ export function inspectAutonomousResearchOnlineSchemaTransitionReadiness({
   const paths = autonomousResearchOnlineSchemaTransitionControlPaths(runtimeRoot, {
     create: false,
   });
-  const receipt = validateAuditReceipt({
+  const receipt = validateAutonomousResearchOnlineSchemaTransitionAuditReceipt({
     receipt: readAutonomousResearchOnlineSchemaTransitionJson(paths.finalReceiptPath),
     inventory,
     writerManifest: checkedWriterManifest,
@@ -425,6 +687,7 @@ export function inspectAutonomousResearchOnlineSchemaTransitionReadiness({
     plan: receipt.reserveRequest,
     finalization: receipt.finalization,
     postInventoryHash: inventory.inventoryHash,
+    postPristineRuntimeStateHash: receipt.postPristineRuntimeStateHash,
     requestedAt: schemaTransitionNow(clock).toISOString(),
   });
   const observation = authorityClient.observeSchemaTransition({
@@ -432,7 +695,7 @@ export function inspectAutonomousResearchOnlineSchemaTransitionReadiness({
     now: schemaTransitionNow(clock),
   });
   const base = Object.freeze({
-    version: 1,
+    version: receipt.version,
     kind: 'AutonomousResearchOnlineSchemaTransitionReadyReceipt',
     status: 'autonomous_research_online_schema_transition_ready',
     protocol: receipt.protocol,

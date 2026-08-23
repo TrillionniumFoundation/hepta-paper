@@ -225,8 +225,7 @@ export function createAutonomousResearchStateBackupSourceOperations({
         );
         const databaseRoot = path.join(bundlePath, 'databases');
         const presentDatabasePaths = fs.existsSync(databaseRoot)
-          ? fs.readdirSync(databaseRoot).filter((name) => name.endsWith('.sqlite'))
-            .map((name) => `databases/${name}`)
+          ? fs.readdirSync(databaseRoot).map((name) => `databases/${name}`)
           : [];
         if (presentDatabasePaths.length !== expectedDatabasePaths.size
           || presentDatabasePaths.some((entry) => !expectedDatabasePaths.has(entry))) {

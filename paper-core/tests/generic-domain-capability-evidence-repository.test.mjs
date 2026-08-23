@@ -22,6 +22,8 @@ import {
   resolveFormalDomainQualificationEvidence,
 } from '../../paper-composition/automation/generic-domain-capability-evidence-convergence.mjs';
 import {
+  inspectCampaignResearchGpuScientificReleaseChain,
+  inspectPersistedCampaignResearchGpuScientificReleaseChain,
   inspectPersistedAutonomousResearchAssuranceAuthority,
 } from '../../paper-composition/automation/automation-readiness-research-assurance-authority-inspection.mjs';
 import {
@@ -538,6 +540,126 @@ test('research assurance inspection requires the current experiment IR authority
   assert.equal(queried, false);
   assert.ok(inspection.blockers.includes(
     'autonomous_research_assurance_current_authorities_required',
+  ));
+});
+
+test('persisted GPU scientific assurance fails closed across lineage, query, and plan boundaries', () => {
+  const missingLineage = inspectPersistedCampaignResearchGpuScientificReleaseChain();
+  assert.equal(missingLineage.ready, false);
+  assert.deepEqual(missingLineage.blockers, [
+    'gpu_scientific_persisted_lineage_required',
+  ]);
+
+  const queryCalls = [];
+  const queryFailed = inspectPersistedCampaignResearchGpuScientificReleaseChain({
+    store: {
+      query: (sql, parameters) => {
+        queryCalls.push({ sql, parameters });
+        return { ok: false };
+      },
+    },
+    campaignId: 'campaign-a',
+    paperId: 'paper-a',
+  });
+  assert.equal(queryFailed.ready, false);
+  assert.deepEqual(queryFailed.blockers, [
+    'gpu_scientific_persisted_authority_query_failed',
+  ]);
+  assert.equal(queryCalls.length, 1);
+  assert.deepEqual(queryCalls[0].parameters, ['campaign-a']);
+
+  const invalidPlan = inspectPersistedCampaignResearchGpuScientificReleaseChain({
+    store: { query: () => ({ ok: true, rows: [{ spec_json: '{}' }] }) },
+    campaignId: 'campaign-a',
+    paperId: 'paper-a',
+  });
+  assert.equal(invalidPlan.ready, false);
+  assert.deepEqual(invalidPlan.blockers, [
+    'gpu_scientific_production_campaign_plan_invalid',
+  ]);
+});
+
+test('GPU scientific assurance rejects generation, evidence, archive, and verifier drift', (t) => {
+  const evidence = {
+    executionResultHash: `sha256:${'1'.repeat(64)}`,
+    artifactArchiveManifestHash: `sha256:${'2'.repeat(64)}`,
+    qualificationEvidenceHash: `sha256:${'3'.repeat(64)}`,
+    qualificationEvidence: {},
+    artifactArchiveManifest: {},
+  };
+  const researchResult = {
+    researchNodeId: 'research-other',
+    researchAttemptId: 'attempt-other',
+    researchLeaseGeneration: 2,
+    gpuScientificCampaignExecutionResultHash: `sha256:${'4'.repeat(64)}`,
+    gpuScientificArtifactBodyArchiveManifestHash: `sha256:${'5'.repeat(64)}`,
+    gpuScientificCampaignQualificationEvidenceHash: `sha256:${'6'.repeat(64)}`,
+    gpuScientificQualificationEvidence: evidence,
+  };
+  const input = {
+    campaign: {
+      campaignId: 'campaign-a',
+      paperId: 'paper-a',
+      status: 'running',
+      revision: 1,
+      spec: { campaignPlanHash: `sha256:${'7'.repeat(64)}` },
+    },
+    executionPlan: {},
+    gpuNode: {
+      nodeId: 'gpu-a',
+      attemptId: 'gpu-attempt-a',
+      leaseGeneration: 1,
+      result: {},
+      resultSha256: `sha256:${'8'.repeat(64)}`,
+    },
+    researchNode: {
+      nodeId: 'research-a',
+      attemptId: 'attempt-a',
+      leaseGeneration: 1,
+      result: { persisted: true },
+      resultSha256: `sha256:${'9'.repeat(64)}`,
+    },
+    researchResult,
+    runtimeRoot: temporaryRoot(t),
+  };
+  const verifierFailure = inspectCampaignResearchGpuScientificReleaseChain({
+    ...input,
+    gpuScientificPromotionAuthorityVerifier: {
+      verify: () => { throw new Error('independent_verifier_unavailable'); },
+    },
+  });
+  for (const blocker of [
+    'gpu_scientific_research_generation_binding_invalid',
+    'gpu_scientific_research_result_identity_invalid',
+    'gpu_scientific_node_result_hash_invalid',
+    'gpu_scientific_research_execution_result_binding_invalid',
+    'gpu_scientific_research_archive_binding_invalid',
+    'gpu_scientific_research_qualification_binding_invalid',
+    'gpu_scientific_research_evidence_invalid',
+    'gpu_scientific_archive_producer_bodies_invalid',
+    'gpu_scientific_current_authority_verification_failed',
+    'gpu_scientific_current_authority_invalid',
+  ]) assert.ok(verifierFailure.blockers.includes(blocker), blocker);
+
+  const invalidAuthority = inspectCampaignResearchGpuScientificReleaseChain({
+    ...input,
+    runtimeRoot: null,
+    gpuScientificPromotionAuthorityVerifier: {
+      verify: () => ({
+        valid: false,
+        cryptographicSignaturesVerified: false,
+        qualificationEvidenceHash: null,
+        blockers: ['signature_invalid'],
+      }),
+    },
+  });
+  assert.ok(invalidAuthority.blockers.includes(
+    'gpu_scientific_current_authority:signature_invalid',
+  ));
+
+  const missingVerifier = inspectCampaignResearchGpuScientificReleaseChain();
+  assert.ok(missingVerifier.blockers.includes(
+    'gpu_scientific_current_authority_verifier_required',
   ));
 });
 

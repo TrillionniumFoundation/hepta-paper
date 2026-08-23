@@ -85,8 +85,12 @@ export function verifyGpuScientificPdeTaskReceipt(value, {
     });
 }
 
-export function verifyGpuScientificDeepLearningTaskReceipt(value, {
-  task, gpuDeviceSelector, deadline, executionAuthorityHash = null,
+function deepLearningTaskRequestBinding({
+  value,
+  task,
+  gpuDeviceSelector,
+  deadline,
+  executionAuthorityHash,
 } = {}) {
   const request = {
     version: 1,
@@ -102,8 +106,70 @@ export function verifyGpuScientificDeepLearningTaskReceipt(value, {
     ...(executionAuthorityHash ? { executionAuthorityHash } : {}),
   };
   const standardInput = `${JSON.stringify(request)}\n`;
-  const standardInputByteLength = Buffer.byteLength(standardInput);
-  const standardInputHash = hashBytes(Buffer.from(standardInput, 'utf8'));
+  return Object.freeze({
+    request,
+    standardInputByteLength: Buffer.byteLength(standardInput),
+    standardInputHash: hashBytes(Buffer.from(standardInput, 'utf8')),
+  });
+}
+
+export function verifyGpuScientificDeepLearningTaskReceiptRequestBinding(
+  value,
+  {
+    task,
+    gpuDeviceSelector,
+    deadline,
+    executionAuthorityHash = null,
+  } = {},
+) {
+  try {
+    const binding = deepLearningTaskRequestBinding({
+      value,
+      task,
+      gpuDeviceSelector,
+      deadline,
+      executionAuthorityHash,
+    });
+    const execution = value?.trainingExecutionReceipt;
+    return value?.trainingRunId === task?.trainingRunId
+      && value?.executionAuthorityHash === executionAuthorityHash
+      && value?.profileHash === task?.profileHash
+      && value?.modelIrHash === task?.modelIrHash
+      && value?.trainingDatasetManifestHash === task?.trainingDatasetManifestHash
+      && value?.trainingDatasetAuthorityHash === task?.trainingDatasetAuthorityHash
+      && value?.absoluteDeadlineEpochMs === deadline
+      && value?.trainingRequestStandardInputByteLength
+        === binding.standardInputByteLength
+      && value?.trainingRequestStandardInputHash === binding.standardInputHash
+      && value?.trainingRequestHash === hashRecord(
+        'CanonicalCupyMlpTrainingRequestInvocation', {
+          standardInputHash: binding.standardInputHash,
+          standardInputByteLength: binding.standardInputByteLength,
+        },
+      )
+      && value?.workerReceipt?.executionProcessInvocation?.standardInput?.sha256
+        === binding.standardInputHash
+      && value?.workerReceipt?.executionProcessInvocation?.standardInput?.byteLength
+        === binding.standardInputByteLength
+      && value?.gpuDeviceSelectorHash === hashRecord('DeepLearningGpuDeviceUuid', {
+        gpuDeviceSelector,
+      })
+      && value?.workerReceipt?.gpuDeviceRequest?.deviceSelector
+        === gpuDeviceSelector
+      && execution?.trainingRunId === task?.trainingRunId
+      && execution?.profileHash === task?.profileHash
+      && execution?.modelIrHash === task?.modelIrHash
+      && JSON.stringify(execution?.modelIr) === JSON.stringify(task?.modelIr)
+      && execution?.trainingDatasetManifestHash
+        === task?.trainingDatasetManifestHash;
+  } catch {
+    return false;
+  }
+}
+
+export function verifyGpuScientificDeepLearningTaskReceipt(value, {
+  task, gpuDeviceSelector, deadline, executionAuthorityHash = null,
+} = {}) {
   return value?.kind === 'CanonicalCupyDeepLearningTrainingReceipt'
     && value?.status
       === 'canonical_cupy_deep_learning_training_recorded_non_promotable'
@@ -111,28 +177,12 @@ export function verifyGpuScientificDeepLearningTaskReceipt(value, {
     && Array.isArray(value?.blockers) && value.blockers.length > 0
     && recordHashValid(value, 'CanonicalCupyDeepLearningTrainingReceipt',
       'canonicalCupyDeepLearningTrainingReceiptHash')
-    && value.trainingRunId === task?.trainingRunId
-    && value.executionAuthorityHash === executionAuthorityHash
-    && value.profileHash === task?.profileHash
-    && value.modelIrHash === task?.modelIrHash
-    && value.trainingDatasetManifestHash === task?.trainingDatasetManifestHash
-    && value.trainingDatasetAuthorityHash === task?.trainingDatasetAuthorityHash
-    && value.absoluteDeadlineEpochMs === deadline
-    && value.trainingRequestStandardInputByteLength === standardInputByteLength
-    && value.trainingRequestStandardInputHash === standardInputHash
-    && value.trainingRequestHash === hashRecord(
-      'CanonicalCupyMlpTrainingRequestInvocation', {
-        standardInputHash, standardInputByteLength,
-      },
-    )
-    && value.workerReceipt?.executionProcessInvocation?.standardInput?.sha256
-      === standardInputHash
-    && value.workerReceipt?.executionProcessInvocation?.standardInput?.byteLength
-      === standardInputByteLength
-    && value.gpuDeviceSelectorHash === hashRecord('DeepLearningGpuDeviceUuid', {
+    && verifyGpuScientificDeepLearningTaskReceiptRequestBinding(value, {
+      task,
       gpuDeviceSelector,
+      deadline,
+      executionAuthorityHash,
     })
-    && value.workerReceipt?.gpuDeviceRequest?.deviceSelector === gpuDeviceSelector
     && verifyProductionOsSandboxWorkerReceipt(value.workerReceipt)
     && verifyDeepLearningTrainingExecutionReceipt(value?.trainingExecutionReceipt);
 }

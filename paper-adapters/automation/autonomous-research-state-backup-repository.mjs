@@ -27,6 +27,7 @@ import {
 import {
   inspectSqliteDatabase,
   resolveAutonomousResearchStateDatabaseInventory,
+  withAutonomousResearchStateDatabasePrivateSnapshotAsync,
 } from './autonomous-research-state-database-inventory.mjs';
 import {
   drillDatabaseCopiesWithReplay,
@@ -146,6 +147,18 @@ function backupFilename(instance, index) {
   const token = crypto.createHash('sha256').update(instance.instanceId).digest('hex').slice(0, 16);
   return `${String(index + 1).padStart(3, '0')}-${instance.role}-${token}.sqlite`;
 }
+function assertBackupCopySidecarsAbsent(databasePath, instanceId) {
+  for (const suffix of ['-journal', '-wal', '-shm']) {
+    try {
+      fs.lstatSync(`${databasePath}${suffix}`);
+      throw new Error(
+        `autonomous_research_state_backup_copy_sidecar_unexpected:${instanceId}`,
+      );
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+}
 async function copyInventoryDatabases({ inventory, stagingRoot }) {
   const databaseRoot = path.join(stagingRoot, 'databases');
   fs.mkdirSync(databaseRoot, { recursive: true, mode: 0o700 });
@@ -153,12 +166,16 @@ async function copyInventoryDatabases({ inventory, stagingRoot }) {
   for (const [index, instance] of inventory.instances.entries()) {
     const filename = backupFilename(instance, index);
     const destinationPath = path.join(databaseRoot, filename);
-    await copySqliteDatabase({
+    await withAutonomousResearchStateDatabasePrivateSnapshotAsync({
       sourcePath: path.join(inventory.runtimeRoot, instance.sourceRelativePath),
-      destinationPath,
+      inspect: (snapshotPath) => copySqliteDatabase({
+        sourcePath: snapshotPath,
+        destinationPath,
+      }),
     });
     syncFile(destinationPath);
-    const inspection = inspectSqliteDatabase(destinationPath);
+    const inspection = inspectSqliteDatabase(destinationPath, { immutable: true });
+    assertBackupCopySidecarsAbsent(destinationPath, instance.instanceId);
     if (inspection.quickCheck !== 'ok'
       || inspection.foreignKeyViolationCount !== 0
       || inspection.schemaHash !== instance.schemaHash) {
@@ -390,7 +407,7 @@ async function drillDatabaseCopiesWithoutReplay({ bundleRoot, databases }) {
   const expected = new Set(databases.map((entry) => entry.backupRelativePath));
   const databaseRoot = path.join(bundleRoot, 'databases');
   const present = fs.existsSync(databaseRoot)
-    ? fs.readdirSync(databaseRoot).filter((name) => name.endsWith('.sqlite')).map((name) => `databases/${name}`)
+    ? fs.readdirSync(databaseRoot).map((name) => `databases/${name}`)
     : [];
   if (present.some((entry) => !expected.has(entry)) || present.length !== expected.size) {
     blockers.push('autonomous_research_state_backup_database_set_mismatch');
@@ -413,8 +430,12 @@ async function drillDatabaseCopiesWithoutReplay({ bundleRoot, databases }) {
         continue;
       }
       const drillPath = path.join(drillRoot, path.basename(entry.backupRelativePath));
-      await copySqliteDatabase({ sourcePath, destinationPath: drillPath });
-      const inspection = inspectSqliteDatabase(drillPath);
+      await copySqliteDatabase({
+        sourcePath,
+        destinationPath: drillPath,
+        sourceImmutable: true,
+      });
+      const inspection = inspectSqliteDatabase(drillPath, { immutable: true });
       if (inspection.quickCheck !== 'ok') blockers.push(`autonomous_research_state_restore_quick_check_failed:${entry.instanceId}`);
       if (inspection.foreignKeyViolationCount !== 0) blockers.push(`autonomous_research_state_restore_foreign_key_check_failed:${entry.instanceId}`);
       if (inspection.schemaHash !== entry.schemaHash) blockers.push(`autonomous_research_state_restore_schema_mismatch:${entry.instanceId}`);

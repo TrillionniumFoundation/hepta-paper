@@ -17,6 +17,9 @@ import {
 } from '../../migration/capability-operational-evidence.mjs';
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
+import {
+  inspectSealedReadOnlySubmodules,
+} from '../../paper-adapters/runtime/sealed-readonly-submodule-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { createFormalCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-formal-runners.mjs';
 import { createGpuScientificCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-gpu-scientific-runners.mjs';
@@ -375,6 +378,29 @@ test('code provenance ignores a dirty submodule worktree only when explicitly re
   assert.equal(closureQualified.treeDirty, false);
   assert.equal(closureQualified.commit, strict.commit);
   assert.equal(closureQualified.commitTree, strict.commitTree);
+});
+
+test('sealed read-only provenance verifies submodule commit, tree and content CAS without git status', () => {
+  const sealedRoot = '/opt/hepta-paper';
+  const closure = path.join(sealedRoot, 'deployment-closure', 'TOOL-CLOSURE.json');
+  if (fs.existsSync(closure)) {
+    const inspection = inspectSealedReadOnlySubmodules({ workspaceRoot: sealedRoot });
+    assert.equal(inspection.status, 'sealed_readonly_submodules_verified');
+    assert.equal(inspection.submodules.length, 2);
+    assert.ok(inspection.submodules.every((item) => (
+      /^[0-9a-f]{40}$/u.test(item.commit)
+      && /^[0-9a-f]{40}$/u.test(item.tree)
+      && /^sha256:[0-9a-f]{64}$/u.test(item.contentTreeHash)
+    )));
+    const provenance = currentCodeProvenance({
+      workspaceRoot: sealedRoot,
+      allowReleaseCommitEnvironment: false,
+    });
+    assert.equal(provenance.treeDirty, false);
+  } else {
+    const inspection = inspectSealedReadOnlySubmodules({ workspaceRoot: workspaceRoot });
+    assert.equal(inspection.status, 'sealed_readonly_submodules_not_configured');
+  }
 });
 
 test('code provenance exposes only a bounded error when a required Git command fails', (t) => {

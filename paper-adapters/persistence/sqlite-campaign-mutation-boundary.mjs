@@ -9,9 +9,15 @@ export function createSqliteCampaignMutationBoundary({ store } = {}) {
     `DELETE FROM ${casGuard}; ${statement} INSERT INTO ${casGuard}(changed) VALUES(changes());`
   );
 
-  const legacyTransaction = (statements, fallback) => {
+  const legacyTransaction = (
+    statements,
+    fallback,
+    packageDeletionWriterSelector = null,
+  ) => {
     const sql = `BEGIN IMMEDIATE; CREATE TEMP TABLE IF NOT EXISTS ${casGuard}(changed INTEGER NOT NULL CHECK(changed=1)); ${statements.join(' ')} COMMIT;`;
-    const result = store.execute(sql);
+    const result = store.execute(sql, packageDeletionWriterSelector ? {
+      packageDeletionWriterSelector,
+    } : undefined);
     if (!result.ok) {
       const error = new Error(`${fallback}:${result.error || result.stderr || 'transaction_failed'}`);
       error.code = fallback;
@@ -20,16 +26,32 @@ export function createSqliteCampaignMutationBoundary({ store } = {}) {
     return result;
   };
 
-  const mutation = ({ databaseRole, operationId, statements, fallback, input } = {}) => {
+  const mutation = ({
+    databaseRole,
+    operationId,
+    statements,
+    fallback,
+    input,
+    packageDeletionWriterSelector = null,
+  } = {}) => {
     if (databaseRole !== 'native-store') {
       throw new Error('campaign_mutation_database_role_invalid');
     }
-    if (typeof store.mutate !== 'function') return legacyTransaction(statements, fallback);
+    if (typeof store.mutate !== 'function') {
+      return legacyTransaction(
+        statements,
+        fallback,
+        packageDeletionWriterSelector,
+      );
+    }
     try {
       const receipt = store.mutate({
         operationId,
         authorizationReceiptHashes: [],
         sideEffectReservationHashes: [],
+        ...(packageDeletionWriterSelector ? {
+          packageDeletionWriterSelector,
+        } : {}),
         mutate: (transaction) => applyNativeStoreCampaignMutation(
           transaction,
           operationId,

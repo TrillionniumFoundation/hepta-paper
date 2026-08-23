@@ -133,10 +133,11 @@ test('root package declares the pinned reference and a non-duplicated verificati
   );
   assert.equal(
     scripts['security:npm-audit'],
-    'npm audit --audit-level=high --package-lock-only --ignore-scripts',
+    'node paper-core/bin/strict-npm-audit.mjs',
   );
   assert.match(scripts['static:check'], /npm run security:source-gate/);
   assert.match(scripts['static:check'], /paper-core\/tests\/source-supply-chain-security\.test\.mjs/);
+  assert.match(scripts['static:check'], /paper-core\/tests\/strict-npm-audit-launcher\.test\.mjs/);
   assert.match(scripts['static:check'], /paper-core\/tests\/architecture-conformance\.test\.mjs/);
   assert.match(scripts['static:check'], /paper-core\/tests\/repository-module-imports\.test\.mjs/);
   assert.equal(
@@ -241,6 +242,25 @@ test('root package declares the pinned reference and a non-duplicated verificati
     'typed-theorem-dependency-graph.test.mjs',
   ]) assert.match(formalOperationalRunner, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const required of [
+    'paper-core/tests/runtime-retention-published-package-deletion-lease.test.mjs',
+    'paper-core/tests/runtime-retention-package-deletion-fence.test.mjs',
+    'paper-core/tests/runtime-retention-package-deletion-writer-boundary.test.mjs',
+    'paper-core/tests/runtime-retention-package-deletion-writer-artifacts.test.mjs',
+    'paper-core/tests/runtime-retention-standalone-writer-entrypoints.test.mjs',
+    'paper-core/tests/package-recovery-deletion-lease-port.test.mjs',
+    'paper-core/tests/package-recovery-exact-restore-repository.test.mjs',
+    'paper-core/tests/package-recovery-production-composition.test.mjs',
+    'paper-core/tests/package-retention-recovery-authority.test.mjs',
+    'paper-core/tests/package-retention-recovery-lock.test.mjs',
+    'paper-core/tests/full-production-readiness.test.mjs',
+    'paper-core/tests/immutable-release-candidate-repository.test.mjs',
+    'paper-core/tests/immutable-release-deployment-cli.test.mjs',
+    'paper-core/tests/immutable-release-deployment-closure-builder.test.mjs',
+    'paper-core/tests/immutable-release-deployment-intent-repository.test.mjs',
+    'paper-core/tests/immutable-release-deployment-lock.test.mjs',
+    'paper-core/tests/immutable-release-deployment-recovery.test.mjs',
+    'paper-core/tests/immutable-release-deployment-transaction.test.mjs',
+    'paper-core/tests/immutable-release-linux-host-adapter.test.mjs',
     'paper-core/tests/academic-docker-operational-prerequisites.test.mjs',
     'paper-core/tests/hepta-store-restore-drill-exit.test.mjs',
     'paper-core/tests/isolated-verification-policy.test.mjs',
@@ -348,12 +368,33 @@ test('full and deduplicated test suites are derived from one declarative manifes
     'paper-core/tests/autonomous-submission-handoff-layout-provision.test.mjs',
     'paper-core/tests/autonomous-submission-handoff-storage.test.mjs',
     'paper-core/tests/autonomous-submission-request-verifier-composition.test.mjs',
+    'paper-core/tests/submission-handoff-export-command.test.mjs',
     'paper-core/tests/autonomous-research-topic-producer.test.mjs',
     'paper-core/tests/fully-autonomous-research-system-status.test.mjs',
     'paper-core/tests/full-research-qualification-prior-art-lineage.test.mjs',
     'paper-core/tests/http-prior-art-retrieval-adapter-v2.test.mjs',
     'paper-core/tests/prior-art-evidence-v2-contract.test.mjs',
     'paper-core/tests/experiment-replay-receipt-contract.test.mjs',
+    'paper-core/tests/runtime-retention-published-package-deletion-lease.test.mjs',
+    'paper-core/tests/runtime-retention-package-deletion-fence.test.mjs',
+    'paper-core/tests/runtime-retention-package-deletion-writer-boundary.test.mjs',
+    'paper-core/tests/runtime-retention-package-deletion-writer-artifacts.test.mjs',
+    'paper-core/tests/runtime-retention-standalone-writer-entrypoints.test.mjs',
+    'paper-core/tests/package-recovery-deletion-lease-port.test.mjs',
+    'paper-core/tests/package-recovery-exact-restore-repository.test.mjs',
+    'paper-core/tests/package-recovery-production-composition.test.mjs',
+    'paper-core/tests/package-retention-recovery-authority.test.mjs',
+    'paper-core/tests/package-retention-recovery-lock.test.mjs',
+    'paper-core/tests/full-production-readiness.test.mjs',
+    'paper-core/tests/immutable-release-candidate-repository.test.mjs',
+    'paper-core/tests/immutable-release-deployment-cli.test.mjs',
+    'paper-core/tests/immutable-release-deployment-closure-builder.test.mjs',
+    'paper-core/tests/immutable-release-deployment-intent-repository.test.mjs',
+    'paper-core/tests/immutable-release-deployment-lock.test.mjs',
+    'paper-core/tests/immutable-release-deployment-recovery.test.mjs',
+    'paper-core/tests/immutable-release-deployment-transaction.test.mjs',
+    'paper-core/tests/immutable-release-linux-host-adapter.test.mjs',
+    'paper-core/tests/strict-full-auto-online-runtime-adoption.test.mjs',
   ]) assert.ok(DECLARED_TEST_SUITES.automation.full.includes(required), required);
   const discoveredOnlineMutationTests = fs.readdirSync(path.join(root, 'paper-core', 'tests'))
     .filter(isOnlineMutationAutomationTest)

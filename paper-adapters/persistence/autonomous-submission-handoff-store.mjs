@@ -16,8 +16,8 @@ import {
 } from './autonomous-submission-handoff-mutation-plan.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
-const SCHEMA_VERSION = 1;
-const SCHEMA_SQL = `
+const SCHEMA_VERSION = 2;
+const SCHEMA_V1_SQL = `
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS handoff_schema_migrations(
   version INTEGER PRIMARY KEY,
@@ -126,15 +126,6 @@ CREATE TABLE IF NOT EXISTS submission_outbox(
   provider_capability_verification_receipt_hash TEXT,
   portal_route TEXT
 );
-CREATE TABLE IF NOT EXISTS submission_authorization_consumptions(
-  nonce TEXT PRIMARY KEY,
-  authorization_receipt_hash TEXT NOT NULL UNIQUE,
-  replay_key TEXT NOT NULL UNIQUE,
-  dispatch_cycle_hash TEXT NOT NULL UNIQUE,
-  paper_id TEXT NOT NULL,
-  message_id TEXT NOT NULL UNIQUE REFERENCES submission_outbox(message_id),
-  consumed_at TEXT NOT NULL
-);
 CREATE INDEX IF NOT EXISTS idx_handoff_outbox_status_time
   ON submission_outbox(status,next_attempt_at,created_at,message_id);
 CREATE INDEX IF NOT EXISTS idx_handoff_outbox_campaign
@@ -161,7 +152,47 @@ WHEN NOT EXISTS(SELECT 1 FROM handoff_cutover WHERE singleton=1 AND status='acti
 BEGIN SELECT RAISE(ABORT,'autonomous_submission_handoff_cutover_required'); END;
 `;
 
-const MIGRATION_HASH = `sha256:${crypto.createHash('sha256').update(SCHEMA_SQL).digest('hex')}`;
+const SCHEMA_V2_SQL = `
+CREATE TABLE IF NOT EXISTS submission_authorization_consumptions(
+  nonce TEXT PRIMARY KEY,
+  authorization_receipt_hash TEXT NOT NULL UNIQUE,
+  replay_key TEXT NOT NULL UNIQUE,
+  dispatch_cycle_hash TEXT NOT NULL UNIQUE,
+  paper_id TEXT NOT NULL,
+  message_id TEXT NOT NULL UNIQUE REFERENCES submission_outbox(message_id),
+  consumed_at TEXT NOT NULL
+);
+`;
+
+function schemaMigration(version, name, sql) {
+  return Object.freeze({
+    version,
+    name,
+    sql,
+    migrationHash: `sha256:${crypto.createHash('sha256').update(sql).digest('hex')}`,
+  });
+}
+
+const SCHEMA_V1_MIGRATION = schemaMigration(
+  1,
+  '001_autonomous_submission_handoff',
+  SCHEMA_V1_SQL,
+);
+const SCHEMA_V2_MIGRATION = schemaMigration(
+  2,
+  '002_submission_authorization_consumptions',
+  SCHEMA_V2_SQL,
+);
+const EXPECTED_DEPLOYED_SCHEMA_V1_MIGRATION_HASH =
+  'sha256:3e1f32963c656e8f6ae3f0f0d2b9754a3eca03b3a7ba6959423da4277c6e6fd1';
+if (SCHEMA_V1_MIGRATION.migrationHash !== EXPECTED_DEPLOYED_SCHEMA_V1_MIGRATION_HASH) {
+  throw new Error('autonomous_submission_handoff_deployed_schema_v1_definition_changed');
+}
+
+export const AUTONOMOUS_SUBMISSION_HANDOFF_SCHEMA_MIGRATIONS = Object.freeze([
+  SCHEMA_V1_MIGRATION,
+  SCHEMA_V2_MIGRATION,
+]);
 
 export {
   AUTONOMOUS_SUBMISSION_HANDOFF_DATABASE_ROLE,
@@ -233,12 +264,34 @@ function assertSafeDatabaseFile(runtimeRoot, databasePath) {
   return Object.freeze({ tree, identity: fileIdentity(databasePath) });
 }
 
+function canonicalSchemaSql(sql) {
+  return String(sql || '')
+    .replace(/\bIF\s+NOT\s+EXISTS\b/gi, '')
+    .replaceAll(';', '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 function verifySchema(store) {
-  const row = store.query(`SELECT version,name,migration_sha256
-    FROM handoff_schema_migrations WHERE version=${SCHEMA_VERSION} LIMIT 1;`).rows[0];
-  if (Number(row?.version) !== SCHEMA_VERSION
-    || row?.name !== '001_autonomous_submission_handoff'
-    || row?.migration_sha256 !== MIGRATION_HASH) {
+  const migrationRows = store.query(`SELECT version,name,migration_sha256,applied_at
+    FROM handoff_schema_migrations ORDER BY version;`).rows;
+  if (migrationRows.length !== SCHEMA_VERSION
+    || AUTONOMOUS_SUBMISSION_HANDOFF_SCHEMA_MIGRATIONS.some((migration, index) => {
+      const row = migrationRows[index];
+      return Number(row?.version) !== migration.version
+        || row?.name !== migration.name
+        || row?.migration_sha256 !== migration.migrationHash
+        || !Number.isFinite(Date.parse(String(row?.applied_at || '')));
+    })) {
+    throw new Error('autonomous_submission_handoff_schema_mismatch');
+  }
+  const authorizationConsumptionObjects = store.query(`SELECT type,name,sql
+    FROM sqlite_schema
+    WHERE type='table' AND name='submission_authorization_consumptions';`).rows;
+  if (authorizationConsumptionObjects.length !== 1
+    || canonicalSchemaSql(authorizationConsumptionObjects[0]?.sql)
+      !== canonicalSchemaSql(SCHEMA_V2_SQL)) {
     throw new Error('autonomous_submission_handoff_schema_mismatch');
   }
   const instanceRows = store.query(`SELECT instance_nonce,provisioned_at
@@ -269,12 +322,17 @@ export function provisionAutonomousSubmissionHandoffStore({ runtimeRoot, now = n
   try {
     const appliedAt = new Date(now).toISOString();
     const instanceNonce = crypto.randomUUID();
-    const result = store.execute(`${SCHEMA_SQL}
+    const migrationRows = AUTONOMOUS_SUBMISSION_HANDOFF_SCHEMA_MIGRATIONS.map((migration) => `
       INSERT INTO handoff_schema_migrations(version,name,migration_sha256,applied_at)
-      VALUES(${SCHEMA_VERSION},'001_autonomous_submission_handoff',
-        '${MIGRATION_HASH}','${appliedAt}');
+      VALUES(${migration.version},'${migration.name}',
+        '${migration.migrationHash}','${appliedAt}');`).join('');
+    const result = store.execute(`BEGIN IMMEDIATE;
+      ${SCHEMA_V1_SQL}
+      ${SCHEMA_V2_SQL}
+      ${migrationRows}
       INSERT INTO handoff_instance(singleton,instance_nonce,provisioned_at)
-      VALUES(1,'${instanceNonce}','${appliedAt}');`);
+      VALUES(1,'${instanceNonce}','${appliedAt}');
+      COMMIT;`);
     if (!result.ok) throw new Error(result.error || 'autonomous_submission_handoff_schema_failed');
     const checkpoint = store.checkpoint({ mode: 'TRUNCATE' });
     const journal = store.execute('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
@@ -356,7 +414,7 @@ export function activateAutonomousSubmissionHandoffCutover({
   const identityHash = cutoverIdentity({
     cutoverId: String(cutoverId),
     databasePath,
-    migrationHash: MIGRATION_HASH,
+    migrationHash: SCHEMA_V1_MIGRATION.migrationHash,
     instanceNonce: handoffIdentity.instanceNonce,
   });
   const counts = nativeStore.query(`SELECT

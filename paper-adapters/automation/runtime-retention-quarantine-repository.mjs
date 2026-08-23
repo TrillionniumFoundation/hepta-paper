@@ -14,6 +14,28 @@ import {
 import {
   removeAuthorizedSealedPackageTreeSync,
 } from './runtime-retention-authorized-package-removal.mjs';
+import {
+  retentionRemovalRecoveryBindingForIntent,
+} from './runtime-retention-removal-recovery-contract.mjs';
+import {
+  finalizeRetentionRemovalRecoverySync,
+  prepareRetentionRemovalRecoverySync,
+  recoverRetentionRemovalSync,
+} from './runtime-retention-removal-recovery-repository.mjs';
+import {
+  unsealRetentionRemovalCandidateSync,
+} from './runtime-retention-removal-snapshot-repository.mjs';
+import {
+  removeRetentionRemovalCandidateSync,
+} from './runtime-retention-pinned-removal-repository.mjs';
+import {
+  withTrustedRetentionTombstoneCapability,
+} from './runtime-retention-trusted-receipt-repository.mjs';
+import {
+  withPublishedPackageDeletionLeaseSync,
+} from './runtime-retention-published-package-deletion-lease.mjs';
+import { inspectPackageRecoveryTreeInventorySync }
+  from './package-recovery-tree-inventory-repository.mjs';
 
 const QUARANTINE_NAME = /^\.hepta-retention-[a-f0-9]{40}\.quarantine$/;
 const STABLE_IDENTITY_FIELDS = Object.freeze([
@@ -94,8 +116,17 @@ function revalidateQuarantinedAuthority({
   entryIndex,
   pinned,
   revalidateAuthority,
+  detachedRetentionEntries = [],
 }) {
-  if (typeof revalidateAuthority !== 'function') return;
+  if (typeof revalidateAuthority !== 'function') return null;
+  if (detachedRetentionEntries.length) {
+    return revalidateAuthority({
+      intent,
+      entry,
+      entryIndex,
+      detachedRetentionEntries,
+    });
+  }
   const restored = [];
   for (let memberIndex = 0; memberIndex < entry.members.length; memberIndex += 1) {
     const member = entry.members[memberIndex];
@@ -112,7 +143,7 @@ function revalidateQuarantinedAuthority({
     assertExpectedMember(inspectStableMember(locations.source), member, locations.sourceRealPath);
     restored.push({ member, memberIndex, locations });
   }
-  revalidateAuthority({ intent, entry, entryIndex });
+  const liveAuthority = revalidateAuthority({ intent, entry, entryIndex });
   for (const { member, locations } of restored) {
     if (inspectStableMember(locations.quarantine).exists) {
       throw new Error('runtime_retention_quarantine_source_collision');
@@ -126,6 +157,7 @@ function revalidateQuarantinedAuthority({
       locations.quarantineRealPath,
     );
   }
+  return liveAuthority;
 }
 
 export function bindRetentionQuarantineMembers(entries, operationId) {
@@ -161,7 +193,13 @@ export function verifyRetentionQuarantineMemberBinding(
     && member.quarantineName === expectedName);
 }
 
-export function restoreRetentionQuarantines(intent, { faultInjector = null } = {}) {
+export function restoreRetentionQuarantines(intent, {
+  faultInjector = null,
+  skipRecoveryBindingHashes = [],
+  exactRestoredRecoveryBindingHashes = [],
+} = {}) {
+  const skipped = new Set(skipRecoveryBindingHashes);
+  const exactRestored = new Set(exactRestoredRecoveryBindingHashes);
   for (let entryIndex = 0; entryIndex < intent.entries.length; entryIndex += 1) {
     const entry = intent.entries[entryIndex];
     if (!entry.authorized) continue;
@@ -177,6 +215,45 @@ export function restoreRetentionQuarantines(intent, { faultInjector = null } = {
       for (let memberIndex = 0; memberIndex < entry.members.length; memberIndex += 1) {
         const member = entry.members[memberIndex];
         const locations = memberPaths(pinned, intent.runtimeRoot, entry.category, member);
+        let removalRecovery = null;
+        if (member.identity?.entryKind === 'directory') {
+          const recoveryBinding = retentionRemovalRecoveryBindingForIntent(
+            intent, entry, entryIndex, member, memberIndex,
+          );
+          const bindingHash = hashRecord(
+            'RuntimeRetentionRemovalRecoveryBinding',
+            recoveryBinding,
+          );
+          if (skipped.has(bindingHash)) {
+            if (retentionPathExists(locations.source)
+              || retentionPathExists(locations.quarantine)) {
+              throw new Error('runtime_retention_package_deletion_postimage_invalid');
+            }
+            continue;
+          }
+          if (exactRestored.has(bindingHash)) {
+            if (entry.category !== 'packages'
+              || entry.retentionDeletionEvidence?.evidenceKind
+                !== 'package_superseded_recovery_verified'
+              || !retentionPathExists(locations.source)
+              || retentionPathExists(locations.quarantine)
+              || inspectPackageRecoveryTreeInventorySync({
+                packagePath: member.path,
+              }).inventory.packageRecoveryTreeInventoryHash
+                !== entry.retentionDeletionEvidence.packageRecoveryTreeInventoryHash) {
+              throw new Error('runtime_retention_package_deletion_rollback_inventory_changed');
+            }
+            continue;
+          }
+          removalRecovery = recoverRetentionRemovalSync({
+            binding: recoveryBinding,
+            parentDescriptor: pinned.categoryDescriptor,
+            parentDescriptorPath: pinned.categoryDescriptorPath,
+          });
+        }
+        if (removalRecovery?.status === 'source_restored') {
+          continue;
+        }
         const source = inspectStableMember(locations.source);
         const quarantined = inspectStableMember(locations.quarantine);
         if (source.exists && quarantined.exists) {
@@ -213,15 +290,35 @@ export function restoreRetentionQuarantines(intent, { faultInjector = null } = {
       assertLiveCategoryScope(intent, entry);
     };
     try {
-      if (entry.category === 'backups') {
-        withRuntimeRetentionCategoryLock(pinned, entry.category, restoreEntry);
-      } else {
-        restoreEntry();
-      }
+      withRuntimeRetentionCategoryLock(pinned, entry.category, restoreEntry);
     } finally {
       pinned.close();
     }
   }
+}
+
+export function finalizeRetentionRemovalRecoveries(
+  intent,
+  { tombstone, retentionReceiptLedger } = {},
+) {
+  return withTrustedRetentionTombstoneCapability({
+    retentionReceiptLedger,
+    intent,
+    tombstone,
+    operation: (capability) => {
+      for (let entryIndex = 0; entryIndex < intent.entries.length; entryIndex += 1) {
+        const entry = intent.entries[entryIndex];
+        if (!entry.authorized) continue;
+        for (let memberIndex = 0; memberIndex < entry.members.length; memberIndex += 1) {
+          const member = entry.members[memberIndex];
+          if (member.identity?.entryKind !== 'directory') continue;
+          finalizeRetentionRemovalRecoverySync(retentionRemovalRecoveryBindingForIntent(
+            intent, entry, entryIndex, member, memberIndex,
+          ), capability);
+        }
+      }
+    },
+  });
 }
 
 export function removeRetentionEntryThroughQuarantine(
@@ -235,6 +332,7 @@ export function removeRetentionEntryThroughQuarantine(
     validateQuarantinedState = null,
     validateRemovedState = null,
     assertCategoryLock = null,
+    packageRecoveryDeletionLeasePort = null,
   } = {},
 ) {
   const assertLocked = () => {
@@ -269,6 +367,7 @@ export function removeRetentionEntryThroughQuarantine(
   };
   assertLocked();
   const quarantinedMembers = [];
+  const recoveryBindings = [];
   let alreadyAbsent = true;
   for (let memberIndex = 0; memberIndex < entry.members.length; memberIndex += 1) {
     const member = entry.members[memberIndex];
@@ -345,29 +444,164 @@ export function removeRetentionEntryThroughQuarantine(
       member,
       locations.quarantineRealPath,
     );
-    if (entry.category === 'packages' && member.identity?.entryKind === 'directory'
-      && (Number(member.identity.mode) & 0o222) === 0) {
+    if (entry.category === 'packages') {
+      const fencedStaging = entry.retentionDeletionEvidence?.evidenceKind
+        === 'package_fenced_staging_generation_verified';
+      if (member.identity?.entryKind !== 'directory'
+        || (fencedStaging
+          ? (Number(member.identity.mode) & 0o200) === 0
+          : (Number(member.identity.mode) & 0o222) !== 0)) {
+        restoreQuarantinedMembers([{ member, locations }]);
+        throw new Error('runtime_retention_package_removal_tree_not_sealed');
+      }
       try {
-        removeAuthorizedSealedPackageTreeSync({
-          candidate: locations.quarantine,
-          expectedContentHash: member.contentHash,
-          expectedIdentity: member.identity,
-          authorization: {
-            authorized: entry.authorized,
-            category: entry.category,
-            sourcePath: member.path,
-            retentionDeletionEvidence: entry.retentionDeletionEvidence,
-          },
+        // The destructive package remover must operate on the exact canonical
+        // path named by the live reachability evidence. Restore the pinned
+        // quarantine inode first so an authorization for one package cannot
+        // be confused with an identical sibling or an out-of-scope clone.
+        fs.renameSync(locations.quarantine, locations.source);
+        fs.fsyncSync(pinned.categoryDescriptor);
+        assertExpectedMember(
+          inspectStableMember(locations.source),
+          member,
+          locations.sourceRealPath,
+        );
+        const recoveryBinding = retentionRemovalRecoveryBindingForIntent(
+          intent, entry, entryIndex, member, memberIndex,
+        );
+        const deletion = withPublishedPackageDeletionLeaseSync({
+          intent,
+          entry,
+          member,
+          recoveryBinding,
+          packageRecoveryDeletionLeasePort,
+          faultInjector: ({ stage, ...details }) => faultInjector?.({
+            stage, ...details, intent, entry, entryIndex, member, memberIndex,
+          }),
+          operation: ({
+            assertDeletionLease,
+            withDeletionFenceGuard,
+          }) => removeAuthorizedSealedPackageTreeSync({
+            candidate: locations.source,
+            expectedContentHash: member.contentHash,
+            expectedIdentity: member.identity,
+            authorization: {
+              authorized: entry.authorized,
+              category: entry.category,
+              sourcePath: member.path,
+              retentionDeletionEvidence: entry.retentionDeletionEvidence,
+            },
+            revalidateAuthorization: ({ detachedRetentionEntries = [] } = {}) =>
+              revalidateQuarantinedAuthority({
+                intent,
+                entry,
+                entryIndex,
+                pinned,
+                revalidateAuthority,
+                detachedRetentionEntries,
+              }),
+            recoveryBinding,
+            assertLiveLocks: () => {
+              assertLocked();
+              assertLiveCategoryScope(intent, entry);
+            },
+            assertExternalDeletionLease: assertDeletionLease,
+            withDeletionFenceGuard,
+            faultInjector: ({ stage, ...details }) => faultInjector?.({
+              stage,
+              ...details,
+              intent,
+              entry,
+              entryIndex,
+              member,
+              memberIndex,
+            }),
+          }),
         });
+        const removal = deletion.result;
+        recoveryBindings.push(removal.recoveryBinding);
       } catch (error) {
         restoreQuarantinedMembers([{ member, locations }]);
         throw error;
       }
+    } else if (member.identity?.entryKind === 'directory') {
+      const recoveryBinding = retentionRemovalRecoveryBindingForIntent(
+        intent, entry, entryIndex, member, memberIndex,
+      );
+      const recovery = prepareRetentionRemovalRecoverySync({
+        candidate: locations.quarantine,
+        binding: recoveryBinding,
+        expectedIdentity: member.identity,
+      });
+      try {
+        recovery.beginMutation();
+        unsealRetentionRemovalCandidateSync({
+          candidate: locations.quarantine,
+          binding: recoveryBinding,
+          expectedIdentity: member.identity,
+        });
+        assertLocked();
+        assertLiveCategoryScope(intent, entry);
+        removeRetentionRemovalCandidateSync({
+          candidate: locations.quarantine,
+          binding: recoveryBinding,
+          expectedIdentity: member.identity,
+          beforeFirstIrreversible: () => {
+            recovery.assertLiveStage();
+            assertLocked();
+            assertLiveCategoryScope(intent, entry);
+            const live = revalidateQuarantinedAuthority({
+              intent,
+              entry,
+              entryIndex,
+              pinned,
+              revalidateAuthority,
+              detachedRetentionEntries: [Object.freeze({
+                category: entry.category,
+                path: entry.path,
+                name: path.basename(entry.path),
+                contentHash: entry.contentHash,
+                companionPaths: entry.companionPaths,
+                sourcePath: path.join(
+                  path.dirname(member.path),
+                  member.quarantineName,
+                ),
+                identity: member.identity,
+                recoveryBinding,
+                recoveryStageCapability: recovery.stageCapability,
+                sourceTreeIdentityHash: null,
+              })],
+            });
+            assertLocked();
+            assertLiveCategoryScope(intent, entry);
+            recovery.assertLiveStage();
+            return live;
+          },
+        });
+        recoveryBindings.push(recoveryBinding);
+      } catch (error) {
+        try {
+          recoverRetentionRemovalSync({
+            binding: recoveryBinding,
+            parentDescriptor: pinned.categoryDescriptor,
+            parentDescriptorPath: pinned.categoryDescriptorPath,
+          });
+        } catch (recoveryError) {
+          throw new AggregateError(
+            [error, recoveryError],
+            'runtime_retention_removal_failed_and_recovery_failed',
+          );
+        }
+        throw error;
+      } finally {
+        recovery.close();
+      }
     } else {
-      fs.rmSync(locations.quarantine, { recursive: true, force: false });
+      fs.rmSync(locations.quarantine, { recursive: false, force: false });
     }
     fs.fsyncSync(pinned.categoryDescriptor);
-    if (retentionPathExists(locations.quarantine)) {
+    if (retentionPathExists(locations.source)
+      || retentionPathExists(locations.quarantine)) {
       throw new Error('runtime_retention_quarantine_removal_postimage_invalid');
     }
     faultInjector?.({
@@ -380,5 +614,8 @@ export function removeRetentionEntryThroughQuarantine(
     validateRemovedState({ intent, entry, entryIndex, pinned });
     assertLocked();
   }
-  return Object.freeze({ alreadyAbsent });
+  return Object.freeze({
+    alreadyAbsent,
+    recoveryBindings: Object.freeze(recoveryBindings),
+  });
 }

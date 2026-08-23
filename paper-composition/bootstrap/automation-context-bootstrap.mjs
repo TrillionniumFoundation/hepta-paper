@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { buildExecutionContext, composeScopedFoundationServices, exposeScopedFoundationServices } from './context-foundation-composition.mjs';
-import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
+import {
+  createPackageDeletionWriterScopedFilesystemArtifactRepositoryFactory,
+} from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { composeArtifactReceiptLedger, composeRuntimeRetentionReceiptLedger, composeTrustedReceiptLedgers } from './receipt-ledger-composition.mjs';
 import { createInventoryRepository } from '../../paper-adapters/inventory/inventory-repository.mjs';
 import {
@@ -56,7 +58,17 @@ export function bootstrapAutomationContext({
   submissionHandoffMutationCoordinator = null,
   requireExternallyFencedSubmissionHandoff = null,
   submissionHandoffReadOnly = false,
+  packageRecoveryAuthority = null,
+  packageRecoveryAuthorityReadinessVerifier = null,
+  packageRecoveryDeletionLeasePort = null,
 } = {}) {
+  if (readOnly !== true) {
+    for (const mutableOverride of ['campaignStore', 'workspaceRegistry']) {
+      if (Object.hasOwn(serviceOverrides, mutableOverride)) {
+        throw new Error(`automation_mutable_${mutableOverride}_override_forbidden`);
+      }
+    }
+  }
   for (const forbiddenOverride of [
     'experimentRegistryAuthorityVerifier',
     'operatorDatasetHarnessAuthorityVerifier',
@@ -67,6 +79,9 @@ export function bootstrapAutomationContext({
     'autonomousSubmissionRequestVerifier',
     'packageLifecycleAuthority',
     'runtimeRetentionReachabilityProvider',
+    'packageRecoveryAuthority',
+    'packageRecoveryAuthorityReadinessVerifier',
+    'packageRecoveryDeletionLeasePort',
     'gpuScientificQualificationIntakeRepository',
     'gpuScientificPromotionAuthorityVerifier',
   ]) {
@@ -84,7 +99,11 @@ export function bootstrapAutomationContext({
     writerId: 'hepta-paper-automation-bootstrap',
     rootKind: 'automation',
   });
-  const { store, clock, receiptLedger } = foundation;
+  const {
+    store, clock, receiptLedger,
+    packageDeletionWriterBoundary,
+    packageDeletionWriterOperationId,
+  } = foundation;
   const configuredFormalSandboxRuntime = configuredPinnedFormalSandboxRuntime({ environment });
   const trustedFormalSandboxRuntime = serviceOverrides.trustedFormalSandboxRuntime
     ? createPinnedFormalSandboxRuntime(serviceOverrides.trustedFormalSandboxRuntime)
@@ -122,12 +141,15 @@ export function bootstrapAutomationContext({
     clock,
   });
   const trustedResearchLedgers = composeTrustedReceiptLedgers({ store, clock, overrides: serviceOverrides });
-  const artifactRepositoryFactory = serviceOverrides.artifactRepositoryFactory || ((scopeRoot) => createFilesystemArtifactRepository({
-    scopeRoot,
-    casRoot: path.join(runtimeRoot, 'artifact-cas'),
-    receiptLedger: artifactReceiptLedger,
-    clock,
-  }));
+  const artifactRepositoryFactory = serviceOverrides.artifactRepositoryFactory
+    || createPackageDeletionWriterScopedFilesystemArtifactRepositoryFactory({
+      casRoot: path.join(runtimeRoot, 'artifact-cas'),
+      receiptLedger: artifactReceiptLedger,
+      clock,
+      runtimeRoot,
+      packageDeletionWriterBoundary,
+      packageDeletionWriterOperationId,
+    });
   const nativeResearchWorkerJobReceiptStore = serviceOverrides.nativeResearchWorkerJobReceiptStore
     || createSqliteJobReceiptStore({
       store,
@@ -198,6 +220,9 @@ export function bootstrapAutomationContext({
     rawEventRecomputationVerifier,
     operatorDatasetAuthorityTrustStoreProvider,
     gpuScientificPromotionAuthorityVerifier,
+    packageRecoveryAuthority,
+    packageRecoveryAuthorityReadinessVerifier,
+    packageRecoveryDeletionLeasePort,
   });
   const nativeFoundationServices = exposeScopedFoundationServices(foundation, { schemaVersion });
   const automationServices = Object.freeze({
@@ -210,6 +235,7 @@ export function bootstrapAutomationContext({
     runtimeRetentionReceiptLedger: serviceOverrides.runtimeRetentionReceiptLedger || composeRuntimeRetentionReceiptLedger({ store, clock }),
     packageLifecycleAuthority,
     runtimeRetentionReachabilityProvider,
+    packageRecoveryDeletionLeasePort,
     experimentRegistryAuthorityVerifier,
     dynamicFormalExecutionAuthority,
     releasePackager: serviceOverrides.releasePackager || createCampaignReleasePackager({
@@ -224,6 +250,8 @@ export function bootstrapAutomationContext({
       researchExecutionReleaseAttestor,
       independentPdfRebuildVerifier,
       externalResearchReplay: serviceOverrides.externalResearchReplay || externalResearchReplay,
+      packageDeletionWriterBoundary,
+      packageDeletionWriterOperationId,
     }),
     researchVerifier: serviceOverrides.researchVerifier || createCampaignResearchVerifier({
       runtimeRoot,

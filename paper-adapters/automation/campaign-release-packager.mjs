@@ -23,7 +23,6 @@ import {
   verifyPackagedGpuScientificAuthorityFreshness,
 } from './campaign-release-gpu-scientific-authority-freshness.mjs';
 import {
-  assertImmutableCampaignPackageFilesSync,
   assertSealedImmutableCampaignPackageFilesSync, campaignReleasePackageRootFor,
   campaignReleaseRebuildRootFor, campaignReleaseRootFor,
   fsyncCampaignReleasePackageDirectorySync, initializeCampaignReleaseRootSync,
@@ -31,6 +30,10 @@ import {
   persistCampaignReleaseMaterializationSync,
   readCampaignReleaseMaterializationSync,
 } from './campaign-release-materialization.mjs';
+import {
+  assertCampaignReleasePackageBuildTransactionCurrentSync, beginCampaignReleasePackageBuildTransactionSync,
+} from './campaign-release-package-build-transaction-repository.mjs';
+import { campaignReleaseGenerationLeaseWaitBudgetMs, withCampaignReleasePackageGenerationLease } from './campaign-release-package-generation-lease.mjs';
 import { executeIndependentCampaignPdfRebuild } from './campaign-release-independent-pdf-rebuild.mjs';
 import {
   assertCampaignReleaseExternalResearchReplayAuthority,
@@ -47,11 +50,10 @@ import {
   compiledCampaignPdfRecord,
   fsyncCampaignReleaseFileSync,
   inspectCampaignReleaseSourceSnapshot,
+  withCampaignReleasePackageWriterBoundary,
 } from './campaign-release-packaging-helpers.mjs';
-
 export { createResearchExecutionReleaseAttestor };
 export { assertCampaignReleaseReviewerEvidenceForPackaging };
-
 export function createCampaignReleasePackager({
   artifactRepositoryFactory,
   store = null,
@@ -65,13 +67,11 @@ export function createCampaignReleasePackager({
   researchExecutionReleaseAttestor = null,
   independentPdfRebuildVerifier: suppliedPdfRebuildVerifier = null,
   externalResearchReplay = null,
-  packageAdapter = runPackageAdapter,
+  packageAdapter = runPackageAdapter, packageDeletionWriterBoundary = null, packageDeletionWriterOperationId = null,
 } = {}) {
   if (typeof artifactRepositoryFactory !== 'function') throw new Error('Campaign release packager requires ArtifactRepositoryFactory');
   if (typeof packageAdapter !== 'function') throw new Error('Campaign release packager requires runPackageAdapter');
-  const configuredReleaseRuntimeRoot = configuredRuntimeRoot
-    ? path.resolve(String(configuredRuntimeRoot))
-    : null;
+  const configuredReleaseRuntimeRoot = configuredRuntimeRoot ? path.resolve(String(configuredRuntimeRoot)) : null;
   const port = {
     version: 1,
     kind: 'CampaignReleasePackagerPort',
@@ -95,10 +95,10 @@ export function createCampaignReleasePackager({
       gpuScientificResearchEvidence = null,
       runtimeRoot,
       createdAt,
-      executionSignal = null,
+      executionSignal = null, executionBudget = null,
       assertExternalSideEffectReady = null,
     } = {}) {
-      if (executionSignal?.aborted) throw new Error('campaign_release_packaging_cancelled');
+      campaignReleaseGenerationLeaseWaitBudgetMs(executionBudget, clock); if (executionSignal?.aborted) throw new Error('campaign_release_packaging_cancelled');
       if (!campaign?.campaignId || !campaign?.spec?.campaignPlanHash) throw new Error('campaign_release_campaign_lineage_required');
       if (packageNode?.kind !== 'package') throw new Error('campaign_release_package_node_required');
       if (finalCompileNode?.kind !== 'final-compile' || finalCompileNode.status !== 'completed') throw new Error('campaign_release_final_compile_not_completed');
@@ -247,6 +247,7 @@ export function createCampaignReleasePackager({
         lineageHash: campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash || null,
       });
       const releaseRoot = campaignReleaseRootFor(resolvedRuntimeRoot, campaign, packageNode);
+      const publishedPackageDir = campaignReleasePackageRootFor(resolvedRuntimeRoot, campaign, packageNode);
       const mainTex = String(
         requestedManuscriptPath || campaignManuscriptPath(workspace),
       );
@@ -363,6 +364,7 @@ export function createCampaignReleasePackager({
               ?.qualificationEvidenceHash || null,
         } : {}),
       };
+      return withCampaignReleasePackageWriterBoundary({ runtimeRoot: resolvedRuntimeRoot, packagePath: publishedPackageDir, artifactRepositoryFactory, packageDeletionWriterBoundary, packageDeletionWriterOperationId }, async (packageDeletionWriterSelector) => {
       const existing = readCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot });
       if (existing) {
         const verification = verifyCampaignReleaseBundle(existing.bundle, expected, {
@@ -426,8 +428,20 @@ export function createCampaignReleasePackager({
         return campaignReleasePackageNodeResult(existing.bundle, materializationReceipt);
       }
       initializeCampaignReleaseRootSync(resolvedRuntimeRoot, releaseRoot); initializeCampaignReleasePackageScopeSync(resolvedRuntimeRoot);
+      return withCampaignReleasePackageGenerationLease({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, signal: executionSignal, executionBudget, clock }, async (generationLease) => {
+      const packageBuildTransaction = beginCampaignReleasePackageBuildTransactionSync({
+        runtimeRoot: resolvedRuntimeRoot, releaseRoot, packageDir: publishedPackageDir, generationLease,
+        binding: {
+          campaignId: campaign.campaignId, campaignPlanHash: campaign.spec.campaignPlanHash,
+          packageNodeId: packageNode.nodeId, packageAttemptId: packageNode.attemptId,
+          leaseGeneration: packageNode.leaseGeneration, createdAt,
+          sourceSnapshotHash: archiveDefinition.sourceTreeManifestHash,
+          sourceWorkspaceManifestHash: packageStartSourceSnapshot.manifestHash,
+        },
+      });
+      const packageBuildTransactionHash = packageBuildTransaction.record.campaignReleasePackageBuildingTransactionHash;
       const builtPdf = await compiledCampaignPdfRecord(workspace, finalCompileNode);
-      if (!builtPdf) throw new Error('campaign_release_compiled_pdf_required');
+      generationLease.assertHeld(); if (!builtPdf) throw new Error('campaign_release_compiled_pdf_required');
       const independentPdfRebuild = await executeIndependentCampaignPdfRebuild({
         verifier: suppliedPdfRebuildVerifier,
         sourceWorkspace: workspace,
@@ -441,7 +455,7 @@ export function createCampaignReleasePackager({
         signal: executionSignal,
         assertExternalSideEffectReady,
       });
-      const paperTask = createPaperTask({
+      generationLease.assertHeld(); const paperTask = createPaperTask({
         paperId: campaign.paperId,
         title: campaign.spec.title || campaign.paperId,
         venueTarget: campaign.spec.venueTarget || null,
@@ -469,8 +483,9 @@ export function createCampaignReleasePackager({
         state: { compileStatus: 'build_passed' },
         artifacts: { pdfs: [builtPdf] },
       };
-      const packageDir = campaignReleasePackageRootFor(resolvedRuntimeRoot, campaign, packageNode);
-      const packageResult = await withArtifactWriteContext({ artifactRepositoryFactory }, () => packageAdapter({
+      assertCampaignReleasePackageBuildTransactionCurrentSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, expectedTransactionHash: packageBuildTransactionHash });
+      const packageDir = packageBuildTransaction.preparedPackageDir;
+      const packageResult = await withArtifactWriteContext({ artifactRepositoryFactory, packageDeletionWriterSelector }, () => packageAdapter({
         root: workspace,
         row,
         buildResult: { status: 'build_passed', builtPdf, buildArtifactAcceptance },
@@ -527,6 +542,7 @@ export function createCampaignReleasePackager({
           )?.agentId
           || null,
       }));
+      generationLease.assertHeld(); assertCampaignReleasePackageBuildTransactionCurrentSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, expectedTransactionHash: packageBuildTransactionHash });
       if (executionSignal?.aborted) throw new Error('campaign_release_packaging_cancelled');
       const packageEndSourceSnapshot = inspectCampaignReleaseSourceSnapshot(
         workspace,
@@ -568,7 +584,6 @@ export function createCampaignReleasePackager({
       ]) {
         if (candidate) {
           fsyncCampaignReleaseFileSync(candidate);
-          fs.chmodSync(candidate, 0o444);
         }
       }
       fsyncCampaignReleasePackageDirectorySync(packageDir);
@@ -633,16 +648,17 @@ export function createCampaignReleasePackager({
         gpuScientificPromotionAuthorityVerifier:
           releaseScopedGpuScientificPromotionAuthorityVerifier,
       });
+      const publishedArtifactBaseRoot = path.dirname(publishedPackageDir);
       const packageOutputFiles = [
-        ['generated_source_zip', packageResult.sourceZip, packageResult.sourceZip?.path ? path.resolve(packageResult.artifactBaseRoot, packageResult.sourceZip.path) : null],
-        ['compiled_pdf', packageResult.immutableCompiledPdf, packageResult.immutableCompiledPdf?.path ? path.resolve(packageResult.artifactBaseRoot, packageResult.immutableCompiledPdf.path) : null],
-        ['package_record', packageResult.packageRecord, path.join(packageDir, 'PACKAGE_RECORD.json')],
-        ['sha256sums', packageResult.sha256Sums, path.join(packageDir, 'SHA256SUMS.txt')],
+        ['generated_source_zip', packageResult.sourceZip, packageResult.sourceZip?.path ? path.resolve(publishedArtifactBaseRoot, packageResult.sourceZip.path) : null],
+        ['compiled_pdf', packageResult.immutableCompiledPdf, packageResult.immutableCompiledPdf?.path ? path.resolve(publishedArtifactBaseRoot, packageResult.immutableCompiledPdf.path) : null],
+        ['package_record', packageResult.packageRecord, path.join(publishedPackageDir, 'PACKAGE_RECORD.json')],
+        ['sha256sums', packageResult.sha256Sums, path.join(publishedPackageDir, 'SHA256SUMS.txt')],
         ['independent_rebuilt_pdf', packageResult.independentRebuiltPdf, packageResult.independentRebuiltPdf?.path
-          ? path.resolve(packageResult.artifactBaseRoot, packageResult.independentRebuiltPdf.path) : null],
+          ? path.resolve(publishedArtifactBaseRoot, packageResult.independentRebuiltPdf.path) : null],
         ['independent_pdf_rebuild_receipt', packageResult.independentPdfRebuildReceiptRecord,
           packageResult.independentPdfRebuildReceiptRecord?.path
-            ? path.resolve(packageResult.artifactBaseRoot, packageResult.independentPdfRebuildReceiptRecord.path) : null],
+            ? path.resolve(publishedArtifactBaseRoot, packageResult.independentPdfRebuildReceiptRecord.path) : null],
       ].filter(([, record, candidate]) => record?.path && record?.hash && candidate).map(([role, record, candidate]) => Object.freeze({
         role,
         path: candidate,
@@ -658,7 +674,7 @@ export function createCampaignReleasePackager({
         capsuleRole: record.role,
         executionRole: record.executionRole,
         experimentId: record.experimentId,
-        path: path.join(packageDir, record.path),
+        path: path.join(publishedPackageDir, record.path),
         packageRelativePath: record.path,
         hash: record.hash,
         bytes: Number(record.bytes),
@@ -668,8 +684,8 @@ export function createCampaignReleasePackager({
         kind: 'ImmutableCampaignPackageOutput',
         immutable: true,
         releaseRoot,
-        packageDir: packageResult.packageDirAbsolute,
-        artifactBaseRoot: packageResult.artifactBaseRoot,
+        packageDir: publishedPackageDir,
+        artifactBaseRoot: publishedArtifactBaseRoot,
         sourceZipPath: packageResult.sourceZip?.path || null,
         sourceZipHash: packageResult.sourceZip?.hash || null,
         packageRecordPath: packageResult.packageRecord?.path || null,
@@ -718,9 +734,16 @@ export function createCampaignReleasePackager({
           releaseScopedGpuScientificPromotionAuthorityVerifier,
       });
       if (!verification.valid) throw new Error(`campaign_release_bundle_self_verification_failed:${verification.blockers.join(',')}`);
-      assertImmutableCampaignPackageFilesSync(releaseBundle.packageOutput, resolvedRuntimeRoot);
-      const materializationReceipt = persistCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, bundle: releaseBundle });
+      assertCampaignReleasePackageBuildTransactionCurrentSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, expectedTransactionHash: packageBuildTransactionHash });
+      const materializationReceipt = persistCampaignReleaseMaterializationSync({
+        runtimeRoot: resolvedRuntimeRoot,
+        releaseRoot,
+        bundle: releaseBundle,
+        preparedPackageDir: packageDir, generationLease,
+      });
       return campaignReleasePackageNodeResult(releaseBundle, materializationReceipt);
+      });
+      });
     },
   };
   return assertCampaignReleasePackagerPort(port);

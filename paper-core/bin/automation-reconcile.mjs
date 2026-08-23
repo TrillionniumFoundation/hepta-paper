@@ -6,9 +6,10 @@ import {
 import {
   composeLegacyTerminalActiveResidueMaintenanceService,
 } from '../../paper-composition/bootstrap/operator-maintenance-composition.mjs';
-import { composeAutomationReconcilerReceiptLedger, createReadOnlyPaperStore, openExistingWritablePaperStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { composeAutomationReconcilerReceiptLedger, createReadOnlyPaperStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { runWithScopedFoundationWriter } from '../../paper-composition/bootstrap/context-foundation-composition.mjs';
 import { createSystemClock } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
-import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const execute = process.argv.includes('--execute');
 const legacyTerminalActiveResidue = process.argv.includes(
@@ -25,12 +26,11 @@ if (campaignIdArguments.length > 1) {
 const campaignId = campaignIdArguments.length ? campaignIdArguments[0] : null;
 const root = defaultPaperAssetRoot();
 const runtimeRoot = defaultPaperRuntimeRoot();
-if (execute) assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: root, runtimeRoot });
 const clock = createSystemClock();
-const store = execute ? openExistingWritablePaperStore({ root, runtimeRoot }) : createReadOnlyPaperStore({ root, runtimeRoot });
 const legacyResidueMaintenance = composeLegacyTerminalActiveResidueMaintenanceService();
-try {
-  const result = legacyTerminalActiveResidue
+
+function reconcile(store) {
+  return legacyTerminalActiveResidue
     ? execute
       ? legacyResidueMaintenance.execute({
           store,
@@ -47,7 +47,20 @@ try {
           receiptLedger: composeAutomationReconcilerReceiptLedger({ store, clock }),
         })
       : planAutomationRuntimeReconciliation({ store, clock, campaignId });
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-} finally {
-  store.close?.();
 }
+
+let result;
+if (execute) {
+  result = runWithScopedFoundationWriter({
+    root,
+    runtimeRoot,
+    writerId: 'automation-reconcile-entrypoint',
+    rootKind: 'automation-reconcile',
+    serviceOverrides: { clock },
+  }, ({ store }) => reconcile(store));
+} else {
+  const store = createReadOnlyPaperStore({ root, runtimeRoot });
+  try { result = reconcile(store); }
+  finally { store.close?.(); }
+}
+process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

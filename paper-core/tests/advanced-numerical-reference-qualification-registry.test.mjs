@@ -181,6 +181,13 @@ function qualifiedRuntimeComposer(value, entrypointHash) {
             ['0', '1', '2', '3'].map((character) => H(character)),
           qualificationAuthorityRoles:
             [...ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES].sort(),
+          evidenceReceiptHashes: {
+            independentNumericOracleReceiptHash: H('a'),
+            referenceExecutionReceiptHash: H('b'),
+            replayExecutionReceiptHash: H('c'),
+            scientificReviewReceiptHash: H('d'),
+            typedUncertaintyReviewReceiptHash: H('e'),
+          },
           qualificationExpiresAt:
             new Date(NOW.getTime() + 60_000).toISOString(),
           referenceExecutionProcessIdentityHash: H('a'),

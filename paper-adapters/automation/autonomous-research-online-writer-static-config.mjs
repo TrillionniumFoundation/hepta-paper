@@ -125,7 +125,39 @@ export const NON_WRITER_EXCLUSIONS = Object.freeze({
   'paper-adapters/automation/local-autonomous-research-state-authority-runtime.mjs':
     'dedicated authority-principal state outside the research runtime; it cannot open or mutate any registered research database',
 });
+export const AUTHORITY_PRINCIPAL_WRITER_ENTRYPOINTS = Object.freeze({
+  'paper-adapters/automation/local-autonomous-research-state-authority-schema-rebind.mjs:activateFinalizedLocalAutonomousResearchStateAuthoritySchemaRebind':
+    'dedicated authority-principal activation transaction over the authority database; reachable only through the state-authority process graph and never the resident research database graph',
+  'paper-adapters/automation/local-autonomous-research-state-authority-schema-rebind.mjs:finalize':
+    'dedicated authority-principal finalization transaction over the authority database; reachable only through the state-authority process graph and never the resident research database graph',
+  'paper-adapters/automation/local-autonomous-research-state-authority-schema-rebind.mjs:reserve':
+    'dedicated authority-principal reservation transaction over the authority database; reachable only through the state-authority process graph and never the resident research database graph',
+});
+export const QUIESCED_MAINTENANCE_WRITER_ENTRYPOINTS = Object.freeze({
+  'paper-adapters/automation/autonomous-research-online-schema-transition-journal-normalization.mjs:executeAutonomousResearchOnlineSchemaTransitionJournalNormalization':
+    'writer-quiesced journal normalization facade whose sole production caller is the pinned schema-transition composition chain and whose exact signed reservation scope is rechecked around every database',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-journal-normalization.mjs:normalizeAutonomousResearchOnlineSchemaTransitionJournals':
+    'module-private journal normalization reachable only through the authority-verified quiesced-maintenance capability facade',
+});
+export const PRIVATE_COPY_SIMULATION_WRITER_ENTRYPOINTS = Object.freeze({
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:expectedNormalizedSourceSha256':
+    'module-private plan projection over an exclusive temporary database copy with the live preimage rechecked',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:inspectExpectedPostSchemaSnapshot':
+    'nested post-schema mutator reachable only with the exact live-triplet-bound private snapshot path',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:normalizeCopiedDatabaseJournal':
+    'module-private helper with exactly two callers that normalize only exclusive temporary database copies',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:schemaTransitionNormalizedProjectionMatches':
+    'read-only recovery predicate whose writes are confined to a private temporary copy and whose live preimage is rechecked before and after projection',
+});
+export const STAGED_PROVISIONING_WRITER_ENTRYPOINTS = Object.freeze({
+  'paper-composition/bootstrap/autonomous-research-state-business-schema-provisioning-composition.mjs:provisionCanonicalAutonomousResearchBusinessSchemas':
+    'module-private canonical provisioning leaf guarded by a repository-minted plan, realpath, device, and inode bound staging capability',
+});
 export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
+  'paper-adapters/automation/autonomous-research-online-schema-transition-journal-normalization.mjs:normalizationRecord':
+    'pure immutable normalization receipt projection; it performs no SQLite or filesystem mutation',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:expectedPostSchemaHash':
+    'pure private-snapshot orchestration; it exposes no production writer surface',
   'paper-adapters/automation/autonomous-research-online-authority-journal.mjs:expectedAuthorityJournalSqliteSchemaIdentity':
     'in-memory exact-schema projection only; it cannot open a persistent database',
   'paper-adapters/automation/autonomous-research-online-authority-journal.mjs:moduleSchemaProvisioning':
@@ -174,6 +206,14 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'pure repository factory; qualify remains separately discovered',
   'paper-adapters/persistence/sqlite-workflow-state-store.mjs:createSqliteWorkflowStateStore':
     'pure repository factory; put remains separately discovered',
+  'paper-adapters/persistence/runtime-retention-package-deletion-writer-store.mjs:createRuntimeRetentionPackageDeletionWriterStore':
+    'guarded StorePort composition; every writable method is enclosed by the runtime-root package deletion writer boundary',
+  'paper-adapters/persistence/runtime-retention-package-deletion-writer-store.mjs:execute':
+    'guarded StorePort delegation executed only after the runtime-root package deletion writer boundary is held',
+  'paper-adapters/persistence/runtime-retention-package-deletion-writer-store.mjs:guarded':
+    'closure-scoped writer-boundary delegation with no independent raw store authority',
+  'paper-adapters/persistence/runtime-retention-package-deletion-writer-store.mjs:guardedCall':
+    'writer-boundary invocation helper with no independent raw store authority',
   'paper-adapters/submission/sqlite-delivery-store.mjs:createSqliteSubmissionDeliveryStore':
     'pure operation composition factory; delivery mutations remain in the bounded operation modules',
   'paper-composition/automation/automation-machine-intake-readiness.mjs:inspectAutonomousResearchMachineIntakeStatus':
@@ -240,8 +280,6 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'in-memory target-schema projection used only by the externally authorized offline transition planner',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:applySchemaTransitionStatements':
     'externally authorized one-shot schema installation helper; unavailable to the resident online writer graph',
-  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:expectedPostSchemaHash':
-    'temporary-copy schema projection used only to construct a signed offline transition plan',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:projectInstance':
     'pure transition-plan projection over a temporary database copy; no production online writer surface',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:buildAutonomousResearchOnlineSchemaTransitionPlan':
@@ -424,6 +462,26 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'store lifecycle composition only; repository mutations are inspected at their literal boundaries',
   'paper-composition/bootstrap/context-foundation-composition.mjs:resolveStore':
     'store lifecycle composition only; repository mutations are inspected at their literal boundaries',
+  'paper-composition/bootstrap/context-foundation-composition.mjs:composeResolvedFoundationServices':
+    'writer-guarded foundation composition; it exposes only a guarded StorePort to the scoped operation',
+  'paper-composition/bootstrap/context-foundation-composition.mjs:composeStandaloneWriterFoundation':
+    'writer-guarded one-shot foundation composition; the caller never receives the writer boundary',
+  'paper-composition/bootstrap/context-foundation-composition.mjs:openStore':
+    'writer-guarded store factory callback nested under the runtime-root writer boundary',
+  'paper-composition/bootstrap/context-foundation-composition.mjs:runWithScopedFoundationWriter':
+    'one-shot offline writer composition holding the runtime-root deletion writer boundary through close',
+  'paper-composition/bootstrap/context-foundation-composition.mjs:runWithScopedFoundationWriterAsync':
+    'one-shot asynchronous offline writer composition holding the runtime-root deletion writer boundary through settle and close',
+  'paper-composition/automation/autonomous-research-supervisor-runtime-composition.mjs:reconcileAutomationRuntime':
+    'offline native-store reconciliation delegated through the one-shot runtime-root writer foundation',
+  'paper-composition/automation/autonomous-research-supervisor-runtime-composition.mjs:reconcileRuntime':
+    'composition wrapper holding the one-shot runtime-root writer foundation across mirror and native reconciliation',
+  'paper-core/bin/hepta-store.mjs:writableStoreFactory':
+    'command-scoped raw store factory invoked only inside the one-shot runtime-root writer foundation',
+  'paper-core/bin/runtime-hygiene.mjs:runRuntimeHygiene':
+    'offline administrative maintenance callback invoked only inside the one-shot runtime-root writer foundation',
+  'paper-core/bin/workspace-lineage-backfill.mjs:moduleSchemaProvisioning':
+    'offline workspace maintenance entrypoint guarded by the one-shot runtime-root writer foundation',
   'paper-composition/compat/legacy-context-bootstrap.mjs:bootstrapLegacyPaperExecutionContext':
     'legacy service graph composition only; it is unavailable in the fully autonomous strict profile',
   'paper-composition/automation/autonomous-research-supervisor-state-composition.mjs:composeAutonomousResearchSupervisorState':
@@ -453,19 +511,31 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'verification-only wrapper outside the production and maintenance writer surfaces',
 });
 export const DIRECT_SQL_ALLOWED_ENTRYPOINT_EXCLUSIONS = new Set([
+  'paper-adapters/persistence/runtime-retention-package-deletion-writer-store.mjs:execute',
+  'paper-core/bin/runtime-hygiene.mjs:runRuntimeHygiene',
   'paper-adapters/automation/autonomous-research-online-authority-journal.mjs:expectedAuthorityJournalSqliteSchemaIdentity',
   'paper-adapters/automation/autonomous-research-online-authority-journal.mjs:moduleSchemaProvisioning',
   'paper-adapters/automation/autonomous-research-online-schema-transition-installation.mjs:ensureMarkerMetadata',
   'paper-adapters/automation/autonomous-research-online-schema-transition-installation.mjs:ensureJournalMetadata',
   'paper-adapters/automation/autonomous-research-online-schema-transition-installation.mjs:acquireAutonomousResearchOnlineSchemaTransitionLocks',
   'paper-adapters/automation/autonomous-research-online-schema-transition-installation.mjs:installAutonomousResearchOnlineSchemaTransitionLocks',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-journal-normalization.mjs:executeAutonomousResearchOnlineSchemaTransitionJournalNormalization',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-journal-normalization.mjs:normalizeAutonomousResearchOnlineSchemaTransitionJournals',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-journal-normalization.mjs:normalizationRecord',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:moduleSchemaProvisioning',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:schemaObjectsForStatements',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:applySchemaTransitionStatements',
-  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:expectedPostSchemaHash',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:inspectExpectedPostSchemaSnapshot',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:expectedNormalizedSourceSha256',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:normalizeCopiedDatabaseJournal',
+  'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:schemaTransitionNormalizedProjectionMatches',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:projectInstance',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:buildAutonomousResearchOnlineSchemaTransitionPlan',
+  'paper-adapters/automation/local-autonomous-research-state-authority-schema-rebind.mjs:activateFinalizedLocalAutonomousResearchStateAuthoritySchemaRebind',
+  'paper-adapters/automation/local-autonomous-research-state-authority-schema-rebind.mjs:finalize',
+  'paper-adapters/automation/local-autonomous-research-state-authority-schema-rebind.mjs:reserve',
   'paper-composition/bootstrap/autonomous-research-state-business-schema-provisioning-composition.mjs:convergeNativeStoreForAtomicInstallation',
+  'paper-composition/bootstrap/autonomous-research-state-business-schema-provisioning-composition.mjs:provisionCanonicalAutonomousResearchBusinessSchemas',
   'paper-adapters/automation/automation-runtime-reconciler.mjs:offlineExactEventSql',
   'paper-adapters/automation/automation-runtime-reconciler.mjs:offlineExactlyOneGuardSql',
   'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:executeOfflineSettlement',
@@ -561,6 +631,10 @@ export const WRITABLE_FACTORY_IMPORT_SOURCES = Object.freeze({
   'paper-composition/bootstrap/operator-persistence-composition.mjs': Object.freeze([
     'createDefaultPaperStore', 'createSqliteCampaignStore',
     'openExistingWritablePaperStore',
+  ]),
+  'paper-composition/bootstrap/context-foundation-composition.mjs': Object.freeze([
+    'runWithScopedFoundationWriter',
+    'runWithScopedFoundationWriterAsync',
   ]),
   'paper-adapters/persistence/sqlite-campaign-store.mjs': Object.freeze([
     'createSqliteCampaignStore',

@@ -1,6 +1,10 @@
 import {
   createOsSandboxedWorkerRunnerEngine,
 } from '../../../paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs';
+import {
+  createGpuSelectorExecutionLeaseRepository,
+  gpuSelectorExecutionLeaseRootForRuntime,
+} from '../../../paper-adapters/runtime/gpu-selector-execution-lease-repository.mjs';
 
 const TEST_DEPENDENCY_KEYS = Object.freeze([
   'datasetSnapshotObserver',
@@ -23,4 +27,20 @@ export function createOsSandboxedWorkerRunnerForTest(options = {}) {
     }
   }
   return createOsSandboxedWorkerRunnerEngine(productionOptions, testDependencies);
+}
+
+export function withGpuSelectorExecutionLeaseForTest({
+  runtimeRoot,
+  gpuDeviceSelector,
+  ownerAuthorityHash,
+  absoluteDeadlineEpochMs,
+} = {}, operation) {
+  const repository = createGpuSelectorExecutionLeaseRepository({
+    root: gpuSelectorExecutionLeaseRootForRuntime(runtimeRoot),
+  });
+  return repository.withLease({
+    gpuDeviceSelector,
+    ownerAuthorityHash,
+    absoluteDeadlineEpochMs,
+  }, operation);
 }

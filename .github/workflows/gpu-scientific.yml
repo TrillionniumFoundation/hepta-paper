@@ -1,0 +1,134 @@
+name: hepta-paper-gpu-scientific
+
+# The self-hosted job is deliberately never run for pull requests.  A GPU
+# runner is a privileged host; only the protected main branch, a schedule, or
+# an explicit operator dispatch may execute repository code there.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'paper-adapters/research-verify/**'
+      - 'paper-domain/research/**'
+      - 'paper-core/tests/*gpu*'
+      - 'paper-core/tests/*deep-learning*'
+      - 'paper-core/tests/*pde*'
+      - 'runtime-images/python-gpu/**'
+      - '.github/workflows/gpu-scientific.yml'
+  pull_request:
+    paths:
+      - 'paper-adapters/research-verify/**'
+      - 'paper-domain/research/**'
+      - 'paper-core/tests/*gpu*'
+      - 'paper-core/tests/*deep-learning*'
+      - 'paper-core/tests/*pde*'
+      - 'runtime-images/python-gpu/**'
+      - '.github/workflows/gpu-scientific.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '41 3 * * *'
+
+permissions:
+  contents: read
+
+env:
+  GPU_IMAGE: hepta/python-gpu:0.15.0
+  GPU_IMAGE_DIGEST: sha256:21acb5fb016d9fd17131215d16e1834fcfeb081e047718d49b6d58d8afa97e2b
+
+jobs:
+  gpu-scientific-contracts:
+    name: GPU/PDE/DL contracts (portable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - name: Install contract-test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run CPU oracle and fail-closed replay contracts
+        run: >-
+          node --test --test-concurrency=1
+          paper-core/tests/deep-learning-independent-replay.test.mjs
+          paper-core/tests/deep-learning-gpu-production-contract.test.mjs
+          paper-core/tests/pde-poisson-2d-gpu-capability.test.mjs
+      - name: State explicitly that portable CI is not GPU qualification
+        run: |
+          echo 'GPU operational qualification is not inferred from portable contract tests.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'productionPromotionEligible=false (external authority and GPU replay remain required).' >> "$GITHUB_STEP_SUMMARY"
+
+  nvidia-gpu-operational:
+    name: NVIDIA operational replay (self-hosted, opt-in)
+    # HEPTA_ENABLE_GPU_CI is a protected repository variable.  If it is not
+    # enabled this job is skipped, never treated as a qualification receipt.
+    if: ${{ vars.HEPTA_ENABLE_GPU_CI == 'true' && (github.event_name != 'pull_request') }}
+    runs-on: [self-hosted, linux, x64, nvidia-gpu]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - name: Require exactly one visible NVIDIA device
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t devices < <(nvidia-smi --query-gpu=uuid,name,compute_cap,driver_version --format=csv,noheader,nounits)
+          test "${#devices[@]}" -eq 1
+          printf '%s\n' "${devices[0]}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Require the pinned GPU image digest already loaded
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Inspect the immutable name@digest reference.  The image config ID
+          # is deliberately not compared with the registry manifest digest:
+          # they are different content-addressed objects and conflating them
+          # would reject a valid pinned image (or create a false assurance).
+          GPU_IMAGE_REF="${GPU_IMAGE}@${GPU_IMAGE_DIGEST}"
+          docker image inspect "$GPU_IMAGE_REF" >/dev/null
+          docker image inspect "$GPU_IMAGE_REF" --format '{{json .RepoDigests}}' \
+            | grep -F -- "$GPU_IMAGE_DIGEST"
+      - name: Install operational-test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run canonical contract and replay tests
+        run: >-
+          node --test --test-concurrency=1
+          paper-core/tests/deep-learning-independent-replay.test.mjs
+          paper-core/tests/deep-learning-canonical-training-executor.test.mjs
+          paper-core/tests/pde-poisson-2d-gpu-producer.test.mjs
+      - name: Run the two-pass GPU runtime smoke (must fail on drift)
+        env:
+          HEPTA_RUNTIME_SMOKE_STAGE_TIMEOUT_MS: '180000'
+        run: npm run automation:runtime-smoke -- --stage-timeout-ms 180000
+      - name: Record non-promotable local evidence
+        run: |
+          {
+            echo '### GPU CI boundary'
+            echo '* GPU execution and same-run replay completed on the protected runner.'
+            echo '* This job does not mint production authority, independent second-hardware evidence, or a live release permit.'
+          } >> "$GITHUB_STEP_SUMMARY"
+  gpu-ci-gate:
+    name: GPU CI gate (explicit skip semantics)
+    if: always()
+    needs: [gpu-scientific-contracts, nvidia-gpu-operational]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed when GPU CI was explicitly required
+        if: ${{ vars.HEPTA_ENABLE_GPU_CI == 'true' && needs.nvidia-gpu-operational.result != 'success' }}
+        run: |
+          echo 'HEPTA_ENABLE_GPU_CI=true but the NVIDIA operational job did not pass.' >&2
+          exit 1
+      - name: Mark GPU CI as skipped and non-promotable when not provisioned
+        if: ${{ vars.HEPTA_ENABLE_GPU_CI != 'true' }}
+        run: |
+          {
+            echo '### GPU CI skipped (not a pass)'
+            echo 'Set the protected repository variable HEPTA_ENABLE_GPU_CI=true after provisioning a pinned self-hosted NVIDIA runner.'
+            echo 'promotionEligible=false'
+          } >> "$GITHUB_STEP_SUMMARY"

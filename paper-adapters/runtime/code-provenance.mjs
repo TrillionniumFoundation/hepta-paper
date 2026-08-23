@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { HEPTA_WORKSPACE_ROOT } from './workspace-layout.mjs';
+import {
+  inspectSealedReadOnlySubmodules,
+} from './sealed-readonly-submodule-provenance.mjs';
 
 const MAX_SNAPSHOT_ATTEMPTS = 3;
 const MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -323,6 +326,15 @@ function packageMatchesSnapshot(candidate, snapshot) {
       === JSON.stringify({ record: entry.record, identity: entry.identity });
 }
 
+function workspaceIsReadOnly(workspaceRoot) {
+  try {
+    const stat = fs.lstatSync(workspaceRoot, { bigint: true });
+    return stat.isDirectory() && !stat.isSymbolicLink() && (stat.mode & 0o222n) === 0n;
+  } catch {
+    return false;
+  }
+}
+
 function parsePackage(packageFile) {
   let pkg;
   try {
@@ -367,8 +379,18 @@ export function currentCodeProvenance({
 } = {}) {
   const canonicalRoot = fs.realpathSync(workspaceRoot);
   const canonicalWorkspace = canonicalRoot === fs.realpathSync(HEPTA_WORKSPACE_ROOT);
+  // A sealed deployment contains a hydrated Git-LFS/CAS representation whose
+  // bytes are intentionally not the pointer worktree.  `git status` attempts
+  // to clean those objects and can mutate `.git/modules` even when the parent
+  // tree is read-only.  Select the no-status policy only for an explicitly
+  // sealed launcher or a read-only root, and verify the deployment closure
+  // (submodule commit, tree and content/CAS tree hash) before accepting it.
+  const sealedReadOnly = ignoreSubmoduleWorktreeStatus
+    || process.env.HEPTA_RELEASE_ENV_LAUNCHER === 'sealed-v1'
+    || workspaceIsReadOnly(canonicalRoot);
+  if (sealedReadOnly) inspectSealedReadOnlySubmodules({ workspaceRoot: canonicalRoot });
   const { snapshot, pkg } = stableSnapshot(canonicalRoot, {
-    ignoreSubmoduleWorktreeStatus,
+    ignoreSubmoduleWorktreeStatus: sealedReadOnly,
   });
   const commit = (canonicalWorkspace && allowReleaseCommitEnvironment
     ? process.env.HEPTA_RELEASE_COMMIT

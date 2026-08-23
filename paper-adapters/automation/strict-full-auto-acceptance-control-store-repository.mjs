@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  buildStrictFullAutoAcceptancePristineRuntimeAdoptionReceipt,
   strictFullAutoAcceptanceHash,
+  verifyStrictFullAutoAcceptancePristineRuntimeAdoptionReceipt,
 } from '../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
 
 import {
@@ -12,6 +14,7 @@ import {
   legacyDispatchPath,
   legacyIntentPath,
   runtimeRootActivation,
+  runtimeRootIdentity,
 } from './strict-full-auto-acceptance-control-paths.mjs';
 import {
   assertPlanControlRoot,
@@ -62,7 +65,7 @@ function verifyLeaseDocument(value) {
   const body = leaseBody(value || {});
   if (value?.version !== 1 || value.kind !== 'StrictFullAutoAcceptanceExclusiveLease'
     || !SHA256.test(String(value.planHash || ''))
-    || !['execute', 'live-status'].includes(value.purpose)
+    || !['execute', 'live-status', 'runtime-adoption'].includes(value.purpose)
     || typeof value.ownerId !== 'string' || value.ownerId.length < 16
     || !Number.isSafeInteger(value.pid) || value.pid < 1
     || typeof value.pidStartTime !== 'string' || value.pidStartTime.length === 0
@@ -392,7 +395,15 @@ export class StrictFullAutoAcceptanceControlStore
     const selectedPath = this.runtimeRootActivationPath(plan);
     if (!fs.existsSync(selectedPath)) return null;
     const recorded = parseJsonFile(selectedPath, 'runtime_root_activation');
-    const observed = runtimeRootActivation(plan);
+    let adoptionReceiptHash = null;
+    if (recorded.version === 2) {
+      const adoption = this.readPristineRuntimeAdoption(plan);
+      if (!adoption || recorded.adoptionReceiptHash !== adoption.adoptionReceiptHash) {
+        throw new Error('strict_full_auto_acceptance_runtime_root_adoption_binding_invalid');
+      }
+      adoptionReceiptHash = adoption.adoptionReceiptHash;
+    }
+    const observed = runtimeRootActivation(plan, { adoptionReceiptHash });
     if (strictFullAutoAcceptanceHash(recorded) !== strictFullAutoAcceptanceHash(observed)) {
       throw new Error('strict_full_auto_acceptance_runtime_root_activation_drift');
     }
@@ -402,7 +413,10 @@ export class StrictFullAutoAcceptanceControlStore
   ensureRuntimeRootActivation(plan, { lease }) {
     this.assertLease(plan, lease);
     if (!this.isLegacyPlan(plan)) this.ensurePlanScope(plan, { lease });
-    const observed = runtimeRootActivation(plan);
+    const adoption = this.readPristineRuntimeAdoption(plan);
+    const observed = runtimeRootActivation(plan, {
+      adoptionReceiptHash: adoption?.adoptionReceiptHash || null,
+    });
     const selectedPath = this.runtimeRootActivationPath(plan);
     try { exclusiveJsonPublish(selectedPath, observed); }
     catch (error) {
@@ -414,5 +428,66 @@ export class StrictFullAutoAcceptanceControlStore
     }
     this.assertLease(plan, lease);
     return recorded;
+  }
+
+  readPristineRuntimeAdoption(plan) {
+    assertPlanControlRoot(plan);
+    const selectedPath = this.pristineRuntimeAdoptionPath(plan);
+    if (!fs.existsSync(selectedPath)) return null;
+    return verifyStrictFullAutoAcceptancePristineRuntimeAdoptionReceipt({
+      plan,
+      receipt: parseJsonFile(selectedPath, 'pristine_runtime_adoption'),
+    });
+  }
+
+  ensurePristineRuntimeRootAdoption(plan, {
+    lease,
+    inspectionReceipt = null,
+    adoptedAt = new Date().toISOString(),
+  } = {}) {
+    this.assertLease(plan, lease);
+    this.ensurePlanScope(plan, { lease });
+    const observedIdentity = runtimeRootIdentity(plan);
+    if (observedIdentity.runtimeRootIdentityHash
+      !== plan.runtimeRootAdoption.expectedRuntimeRootIdentityHash) {
+      throw new Error('strict_full_auto_acceptance_pristine_runtime_root_identity_invalid');
+    }
+    let adoption = this.readPristineRuntimeAdoption(plan);
+    if (!adoption) {
+      if (!inspectionReceipt
+        || inspectionReceipt.runtimeRootIdentityHash
+          !== observedIdentity.runtimeRootIdentityHash) {
+        throw new Error('strict_full_auto_acceptance_pristine_runtime_inspection_required');
+      }
+      const candidate = buildStrictFullAutoAcceptancePristineRuntimeAdoptionReceipt({
+        plan,
+        lease,
+        inspectionReceipt,
+        adoptedAt,
+      });
+      try { exclusiveJsonPublish(this.pristineRuntimeAdoptionPath(plan), candidate); }
+      catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+      }
+      adoption = this.readPristineRuntimeAdoption(plan);
+      if (adoption.adoptionReceiptHash !== candidate.adoptionReceiptHash) {
+        throw new Error('strict_full_auto_acceptance_pristine_runtime_adoption_no_clobber_conflict');
+      }
+    }
+    const activation = runtimeRootActivation(plan, {
+      adoptionReceiptHash: adoption.adoptionReceiptHash,
+    });
+    try { exclusiveJsonPublish(this.runtimeRootActivationPath(plan), activation); }
+    catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+    const recordedActivation = this.readRuntimeRootActivation(plan);
+    if (recordedActivation.runtimeRootActivationHash !== activation.runtimeRootActivationHash
+      || runtimeRootIdentity(plan).runtimeRootIdentityHash
+        !== adoption.runtimeRootIdentityHash) {
+      throw new Error('strict_full_auto_acceptance_pristine_runtime_activation_no_clobber_conflict');
+    }
+    this.assertLease(plan, lease);
+    return Object.freeze({ adoption, activation: recordedActivation });
   }
 }

@@ -1,0 +1,39 @@
+[Unit]
+Description=Hepta Paper pre-resident pristine runtime adoption
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
+Requires=hepta-paper-host-bootstrap.service hepta-paper-state-authority.service
+After=hepta-paper-host-bootstrap.service hepta-paper-state-authority.service autonomous-submission-handoff-layout-provision.service
+Before=autonomous-research-supervisor.service autonomous-submission-dispatcher.service strict-full-auto-acceptance.service
+ConditionPathExists=/opt/hepta-paper/paper-core/bin/hepta-paper.mjs
+ConditionPathExists=/etc/hepta-paper/strict-full-auto-acceptance.env
+ConditionPathExists=/var/lib/hepta-paper/runtime
+ConditionPathExists=/var/lib/hepta-paper/strict-full-auto-acceptance-control
+ConditionPathExists=/run/hepta-authority
+
+[Service]
+Type=oneshot
+User=hepta-paper
+Group=hepta-paper
+WorkingDirectory=/opt/hepta-paper
+RuntimeDirectory=hepta-paper-runtime-adoption
+RuntimeDirectoryMode=0700
+Environment=TMPDIR=/run/hepta-paper-runtime-adoption
+EnvironmentFile=/etc/hepta-paper/strict-full-auto-acceptance.env
+ExecStartPre=/usr/bin/test -r ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION}
+ExecStartPre=/usr/bin/test -r /run/hepta/online-state-authority-process.json
+ExecStartPre=/usr/bin/test -r /run/hepta-authority/pre-resident-writer-quiescence.json
+ExecStart=/usr/bin/node paper-core/bin/hepta-paper.mjs operator strict-full-auto-acceptance -- --action adopt-runtime --configuration ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION} --plan-hash ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH} --execute
+TimeoutStartSec=30min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/var/lib/hepta-paper/runtime /run/hepta /run/hepta-authority /etc/hepta-paper/authority-rotation /etc/hepta-paper/capabilities-public /etc/hepta-paper/online-mutation-authority /etc/hepta-paper/state-backup-authority /etc/hepta-paper/release-attestor
+InaccessiblePaths=/etc/hepta-paper/submission-portal /etc/hepta-paper/submission-dispatcher-signer /etc/hepta-paper/autonomous-submission-dispatcher.secrets.env
+ReadWritePaths=/var/lib/hepta-paper/strict-full-auto-acceptance-control /run/hepta-paper-runtime-adoption
+UMask=0077

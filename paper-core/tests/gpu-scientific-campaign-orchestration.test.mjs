@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import {
@@ -44,6 +45,10 @@ import {
 } from '../../paper-domain/automation/gpu-scientific-campaign-evidence-verifier.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
+import {
+  gpuSelectorExecutionLeaseRootForRuntime,
+  gpuSelectorExecutionLockFileName,
+} from '../../paper-adapters/runtime/gpu-selector-execution-lease-repository.mjs';
 
 const CAMPAIGN_ID = 'gpu-scientific-campaign';
 const PAPER_ID = 'gpu-scientific-paper';
@@ -111,6 +116,128 @@ function plan({
       trainingDataset: dataset,
       trainingDatasetAuthority: trainingDatasetAuthority(dataset),
     },
+  });
+}
+
+async function sigkillBoundGpuSelectorLeaseOwner(t, {
+  runtimeRoot,
+  gpuDeviceSelector = GPU_UUID,
+} = {}) {
+  const leaseRoot = gpuSelectorExecutionLeaseRootForRuntime(runtimeRoot);
+  const repositoryUrl = pathToFileURL(path.resolve(
+    'paper-adapters/runtime/gpu-selector-execution-lease-repository.mjs',
+  )).href;
+  const recoveryUrl = pathToFileURL(path.resolve(
+    'paper-adapters/runtime/docker-worker-container-recovery.mjs',
+  )).href;
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', `
+    import { createGpuSelectorExecutionLeaseRepository } from ${JSON.stringify(repositoryUrl)};
+    import { buildDockerWorkerContainerOwnership } from ${JSON.stringify(recoveryUrl)};
+    const repository = createGpuSelectorExecutionLeaseRepository({
+      root: ${JSON.stringify(leaseRoot)},
+    });
+    const lease = await repository.acquire({
+      gpuDeviceSelector: ${JSON.stringify(gpuDeviceSelector)},
+      ownerAuthorityHash: ${JSON.stringify(H('sigkill-stale-owner'))},
+      absoluteDeadlineEpochMs: Date.now() + 120_000,
+    });
+    lease.bindWorkerInvocationAuthority(${JSON.stringify(H('sigkill-stale-worker'))}, {
+      dockerWorkerContainerOwnership: buildDockerWorkerContainerOwnership({
+        processInvocationId: ${JSON.stringify(H('sigkill-stale-invocation'))},
+        containerIdPath: ${JSON.stringify(path.join(runtimeRoot, 'sigkill-worker.cid'))},
+        gpuSelectorExecutionLease: lease,
+      }),
+    });
+    process.stdout.write('bound\\n');
+    setInterval(() => {}, 1_000);
+  `], {
+    env: { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  });
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(
+      `campaign GPU stale lease owner readiness timed out: ${stderr}`,
+    )), 5_000);
+    const failBeforeReady = (code, signal) => {
+      clearTimeout(timeout);
+      reject(new Error(
+        `campaign GPU stale lease owner exited before ready: ${code}/${signal}: ${stderr}`,
+      ));
+    };
+    child.once('close', failBeforeReady);
+    child.once('error', reject);
+    child.stdout.on('data', (chunk) => {
+      if (!String(chunk).includes('bound')) return;
+      clearTimeout(timeout);
+      child.off('close', failBeforeReady);
+      resolve();
+    });
+  });
+  const closed = new Promise((resolve) => {
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  assert.equal(child.kill('SIGKILL'), true);
+  assert.deepEqual(await closed, { code: null, signal: 'SIGKILL' });
+  const lockPath = path.join(
+    leaseRoot,
+    gpuSelectorExecutionLockFileName(gpuDeviceSelector),
+  );
+  const persisted = fs.readFileSync(lockPath, 'utf8');
+  const state = JSON.parse(persisted.trim().split('\n').at(-1));
+  assert.equal(state.ownerProcessIdentity.pid, child.pid);
+  assert.equal(state.status, 'held');
+  assert.ok(state.workerInvocationAuthorityHash);
+  assert.ok(state.dockerWorkerContainerOwnership);
+  return { lockPath, persisted, state };
+}
+
+function dockerRecoveryFixture(state, { ownershipMismatch = false } = {}) {
+  const containerId = 'b'.repeat(64);
+  let containerPresent = true;
+  let inspectionCount = 0;
+  let removalCount = 0;
+  return Object.freeze({
+    executor(_docker, args) {
+      if (args[0] === 'container' && args[1] === 'inspect') {
+        inspectionCount += 1;
+        if (!containerPresent) {
+          return {
+            status: 1,
+            stdout: '',
+            stderr: `Error: No such object: ${args[2]}`,
+          };
+        }
+        const labels = {
+          ...state.dockerWorkerContainerOwnership.labels,
+          ...(ownershipMismatch ? {
+            'io.hepta.worker.ownership-hash': H('wrong-container-owner'),
+          } : {}),
+        };
+        return {
+          status: 0,
+          stdout: JSON.stringify([{
+            Id: containerId,
+            Name: `/${state.dockerWorkerContainerOwnership.containerName}`,
+            Config: { Labels: labels },
+          }]),
+          stderr: '',
+        };
+      }
+      if (args[0] === 'rm' && args[1] === '--force') {
+        assert.equal(args[2], containerId);
+        removalCount += 1;
+        containerPresent = false;
+        return { status: 0, stdout: `${containerId}\n`, stderr: '' };
+      }
+      throw new Error(`unexpected campaign GPU recovery command: ${args.join(' ')}`);
+    },
+    inspectionCount: () => inspectionCount,
+    removalCount: () => removalCount,
   });
 }
 
@@ -419,6 +546,87 @@ test('GPU execution validates resource authority before creating an attempt outp
   assert.deepEqual(fs.readdirSync(outputRoot), []);
 });
 
+test('campaign outer GPU lease persists SIGKILL state until exact Docker stale recovery succeeds', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gpu-campaign-stale-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const stale = await sigkillBoundGpuSelectorLeaseOwner(t, {
+    runtimeRoot: root,
+  });
+  const deadline = Date.now() + 60_000;
+  const executionPlan = plan({ deadline });
+  const campaign = Object.freeze({
+    campaignId: CAMPAIGN_ID,
+    paperId: PAPER_ID,
+    spec: Object.freeze({
+      campaignPlanHash: H('stale-recovery-campaign-plan'),
+      gpuScientificExecutionPlan: executionPlan,
+    }),
+  });
+  const node = Object.freeze({
+    nodeId: executionPlan.nodeId,
+    kind: 'gpu-scientific-execution',
+    attemptId: 'gpu-stale-recovery-attempt',
+    leaseGeneration: 2,
+    gpuScientificExecutionPlanHash:
+      executionPlan.gpuScientificCampaignExecutionPlanHash,
+    gpuScientificResourceBudgetHash:
+      GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET
+        .gpuScientificCampaignResourceBudgetHash,
+  });
+  const request = {
+    campaign,
+    node,
+    plan: executionPlan,
+    executionBudget: {
+      absoluteDeadlineEpochMs: deadline,
+      acquiredResources: { agent: 0, cpu: 1, gpu: 0, memoryMiB: 8192 },
+    },
+  };
+  const outputRoot = path.join(root, 'execution');
+  const mismatchedDocker = dockerRecoveryFixture(stale.state, {
+    ownershipMismatch: true,
+  });
+  const blocked = composeCampaignGpuScientificExecution({
+    outputRoot,
+    runtimeRoot: root,
+    plans: [executionPlan],
+    dockerContainerRecoveryExecutor: mismatchedDocker.executor,
+    environment: {},
+  });
+  await assert.rejects(blocked.execution.execute(request), (error) => {
+    assert.equal(error.code, 'gpu_selector_execution_lease_recovery_required');
+    assert.equal(
+      error.recoveryReceipt?.status,
+      'docker_worker_container_recovery_blocked',
+    );
+    assert.deepEqual(error.recoveryReceipt?.blockers, [
+      'worker_container_recovery_ownership_mismatch',
+    ]);
+    return true;
+  });
+  assert.equal(mismatchedDocker.inspectionCount(), 1);
+  assert.equal(mismatchedDocker.removalCount(), 0);
+  assert.equal(fs.readFileSync(stale.lockPath, 'utf8'), stale.persisted);
+  assert.deepEqual(fs.readdirSync(outputRoot), []);
+
+  const exactDocker = dockerRecoveryFixture(stale.state);
+  const recovered = composeCampaignGpuScientificExecution({
+    outputRoot,
+    runtimeRoot: root,
+    plans: [executionPlan],
+    dockerContainerRecoveryExecutor: exactDocker.executor,
+    environment: {},
+  });
+  await assert.rejects(
+    recovered.execution.execute(request),
+    /gpu_scientific_campaign_resource_authority_required/,
+  );
+  assert.equal(exactDocker.inspectionCount(), 2);
+  assert.equal(exactDocker.removalCount(), 1);
+  assert.equal(fs.statSync(stale.lockPath).size, 0);
+  assert.deepEqual(fs.readdirSync(outputRoot), []);
+});
+
 test('real canonical PDE and DL evidence completes non-promotably and cannot be replayed across task authorities', async (t) => {
   const observed = spawnSync('/usr/bin/nvidia-smi', [
     '--query-gpu=uuid', '--format=csv,noheader',
@@ -567,7 +775,7 @@ test('real canonical PDE and DL evidence completes non-promotably and cannot be 
   assert.equal(pdeLeaseBinding
     .dockerDeterministicContainerNameCrashRecoveryBackstopVerified, false);
 
-  const attemptReplay = buildGpuScientificCampaignExecutionResult({
+  assert.throws(() => buildGpuScientificCampaignExecutionResult({
     campaign,
     node: queuedNode,
     plan: executionPlan,
@@ -576,16 +784,7 @@ test('real canonical PDE and DL evidence completes non-promotably and cannot be 
     effectiveExecutionDeadlineEpochMs: result.effectiveExecutionDeadlineEpochMs,
     executionStartedAtEpochMs: result.executionStartedAtEpochMs,
     executionCompletedAtEpochMs: result.executionCompletedAtEpochMs,
-  });
-  assert.equal(attemptReplay.status, 'gpu_scientific_campaign_execution_blocked');
-  assert.ok(attemptReplay.taskResults.every(({ status }) => (
-    status === 'gpu_scientific_campaign_task_blocked'
-  )));
-  assert.equal(verifyGpuScientificCampaignExecutionResult(attemptReplay, {
-    campaign,
-    node: queuedNode,
-    plan: executionPlan,
-  }), true);
+  }), /gpu_scientific_campaign_execution_lease_binding_invalid/);
 
   const pdeReceipt = result.taskResults[0].receipt;
   const dlReceipt = result.taskResults[1].receipt;
@@ -613,7 +812,7 @@ test('real canonical PDE and DL evidence completes non-promotably and cannot be 
         GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET
           .gpuScientificCampaignResourceBudgetHash,
     });
-    const replay = buildGpuScientificCampaignExecutionResult({
+    assert.throws(() => buildGpuScientificCampaignExecutionResult({
       campaign: replayCampaign,
       node: replayNode,
       plan: replayPlan,
@@ -622,10 +821,6 @@ test('real canonical PDE and DL evidence completes non-promotably and cannot be 
       effectiveExecutionDeadlineEpochMs: replayPlan.absoluteExecutionDeadlineEpochMs,
       executionStartedAtEpochMs: result.executionStartedAtEpochMs,
       executionCompletedAtEpochMs: result.executionCompletedAtEpochMs,
-    });
-    assert.equal(replay.status, 'gpu_scientific_campaign_execution_blocked');
-    assert.ok(replay.taskResults.some(({ status }) => (
-      status === 'gpu_scientific_campaign_task_blocked'
-    )));
+    }), /gpu_scientific_campaign_execution_lease_binding_invalid/);
   }
 });

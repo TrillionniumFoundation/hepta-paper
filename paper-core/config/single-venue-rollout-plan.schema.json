@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hepta-paper.invalid/schemas/single-venue-rollout-plan-v1.json",
+  "title": "Hepta single-venue submission rollout plan",
+  "description": "Hash-only sandbox rollout fence. Credentials and live commit are forbidden in this document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "kind", "status", "rolloutId", "venueId", "targetInstanceId",
+    "baseTargetProfileHash", "connectorFamily", "portalOriginHash",
+    "portalConfigurationHash", "portalDescriptorHash", "portalBindingHash",
+    "sandboxCanaryEvidenceHash", "sandboxCanaryExternalActionPerformed",
+    "attestationHashes", "enabledOperations", "singleVenueConstraint",
+    "humanSingleUseAuthorizationRequired", "manualAuthorizationScope",
+    "liveCommitEnabled", "liveCommitAuthorized", "productionQualified",
+    "rollbackRequired", "generation", "predecessorPlanHash", "issuedAt",
+    "expiresAt", "rollbackWindowExpiresAt", "externalActionPerformed",
+    "singleVenueSubmissionRolloutPlanHash"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "SingleVenueSubmissionRolloutPlan" },
+    "status": { "const": "single_venue_submission_rollout_sandbox_only" },
+    "rolloutId": { "$ref": "#/$defs/id" },
+    "venueId": { "$ref": "#/$defs/id" },
+    "targetInstanceId": { "$ref": "#/$defs/id" },
+    "baseTargetProfileHash": { "$ref": "#/$defs/hash" },
+    "connectorFamily": { "$ref": "#/$defs/id" },
+    "portalOriginHash": { "$ref": "#/$defs/hash" },
+    "portalConfigurationHash": { "$ref": "#/$defs/hash" },
+    "portalDescriptorHash": { "$ref": "#/$defs/hash" },
+    "portalBindingHash": { "$ref": "#/$defs/hash" },
+    "sandboxCanaryEvidenceHash": { "$ref": "#/$defs/hash" },
+    "sandboxCanaryExternalActionPerformed": { "const": false },
+    "attestationHashes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/hash" },
+      "uniqueItems": true
+    },
+    "enabledOperations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "createDraft", "discoverProfile", "fillMetadata", "getReceipt",
+          "getStatus", "preview", "reconcile", "uploadAssets", "validate"
+        ]
+      }
+    },
+    "singleVenueConstraint": { "const": true },
+    "humanSingleUseAuthorizationRequired": { "const": true },
+    "manualAuthorizationScope": { "const": "single-venue-live-commit" },
+    "liveCommitEnabled": { "const": false },
+    "liveCommitAuthorized": { "const": false },
+    "productionQualified": { "const": false },
+    "rollbackRequired": { "const": true },
+    "generation": { "type": "integer", "minimum": 1 },
+    "predecessorPlanHash": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/hash" }]
+    },
+    "issuedAt": { "$ref": "#/$defs/time" },
+    "expiresAt": { "$ref": "#/$defs/time" },
+    "rollbackWindowExpiresAt": { "$ref": "#/$defs/time" },
+    "externalActionPerformed": { "const": false },
+    "singleVenueSubmissionRolloutPlanHash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

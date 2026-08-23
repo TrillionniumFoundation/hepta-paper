@@ -6,7 +6,9 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import {
+  buildFormalOperationalReceipt,
   parseFormalOperationalTapSummary,
+  verifyFormalOperationalReceipt,
 } from '../bin/dynamic-formal-kernel-operational.mjs';
 import {
   AUTONOMOUS_RESEARCH_CLI_ARGUMENT_SCHEMA,
@@ -38,9 +40,9 @@ function jsonLines(output) {
 
 function formalOperationalTap(overrides = {}) {
   const counts = {
-    tests: 22,
+    tests: 23,
     suites: 0,
-    pass: 22,
+    pass: 23,
     fail: 0,
     cancelled: 0,
     skipped: 0,
@@ -49,21 +51,21 @@ function formalOperationalTap(overrides = {}) {
   };
   return [
     'TAP version 13',
-    '1..22',
+    '1..23',
     ...Object.entries(counts).map(([name, value]) => `# ${name} ${value}`),
     '# duration_ms 109123.456',
     '',
   ].join('\n');
 }
 
-test('formal operational TAP parser requires one complete 22/22 terminal block at EOF', () => {
+test('formal operational TAP parser requires one complete 23/23 terminal block at EOF', () => {
   assert.equal(parseFormalOperationalTapSummary(formalOperationalTap()).valid, true);
   const valid = formalOperationalTap();
   const cases = {
     skip: formalOperationalTap({ skipped: 1, pass: 21 }),
     forgedPrefix: `# skipped 0\n${valid}`,
-    duplicateSummary: `${valid.trimEnd()}\n# tests 22\n`,
-    missingPlan: valid.replace('1..22\n', ''),
+    duplicateSummary: `${valid.trimEnd()}\n# tests 23\n`,
+    missingPlan: valid.replace('1..23\n', ''),
     missingDuration: valid.replace('# duration_ms 109123.456\n', ''),
     truncated: valid.slice(0, -20),
     trailingGarbage: `${valid.trimEnd()}\ntrailing garbage\n`,
@@ -80,6 +82,25 @@ test('formal operational TAP parser requires one complete 22/22 terminal block a
       name,
     );
   }
+});
+
+test('formal operational receipt binds the zero-skipped summary to exact provenance', () => {
+  const summary = parseFormalOperationalTapSummary(formalOperationalTap());
+  const codeProvenance = {
+    version: 2,
+    kind: 'CodeProvenance',
+    commit: 'a'.repeat(40),
+    commitTree: 'b'.repeat(40),
+    treeDirty: false,
+  };
+  const receipt = buildFormalOperationalReceipt({ summary, codeProvenance });
+  assert.equal(verifyFormalOperationalReceipt(receipt), true);
+  assert.equal(verifyFormalOperationalReceipt(receipt, {
+    expectedCodeProvenance: codeProvenance,
+  }), true);
+  assert.equal(verifyFormalOperationalReceipt(receipt, {
+    expectedCodeProvenance: { ...codeProvenance, treeDirty: true },
+  }), false);
 });
 
 test('root package declares the pinned reference and a non-duplicated verification surface', () => {

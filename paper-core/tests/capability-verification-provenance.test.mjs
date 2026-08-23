@@ -403,6 +403,20 @@ test('sealed read-only provenance verifies submodule commit, tree and content CA
   }
 });
 
+test('sealed launcher provenance fails closed when its deployment closure is absent', (t) => {
+  const root = createProvenanceRepository(t);
+  const priorLauncher = process.env.HEPTA_RELEASE_ENV_LAUNCHER;
+  process.env.HEPTA_RELEASE_ENV_LAUNCHER = 'sealed-v1';
+  t.after(() => {
+    if (priorLauncher === undefined) delete process.env.HEPTA_RELEASE_ENV_LAUNCHER;
+    else process.env.HEPTA_RELEASE_ENV_LAUNCHER = priorLauncher;
+  });
+  assert.throws(() => currentCodeProvenance({
+    workspaceRoot: root,
+    allowReleaseCommitEnvironment: false,
+  }), /code_provenance_sealed_submodule_closure_required/u);
+});
+
 test('code provenance exposes only a bounded error when a required Git command fails', (t) => {
   const root = createProvenanceRepository(t);
   const secret = 'private-git-stderr-material';

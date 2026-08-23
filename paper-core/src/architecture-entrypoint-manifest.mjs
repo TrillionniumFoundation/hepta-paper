@@ -53,6 +53,10 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     // It is an internal executable boundary and therefore has no static importer.
     'paper-adapters/research-verify/independent-system-benchmark-recomputation-worker.mjs',
     'paper-adapters/research-verify/independent-typed-numeric-oracle-recomputation-worker.mjs',
+    // Spawned by the process-isolated deep-learning CPU replay adapter.
+    'paper-adapters/research-verify/independent-deep-learning-cpu-oracle-worker.mjs',
+    // Invoked by the protected NVIDIA self-hosted CI boundary.
+    'paper-adapters/research-verify/nvidia-gpu-self-hosted-ci-preflight.mjs',
   ]),
   compatibility: Object.freeze([
     'paper-core/bin/paper-compat-workflow-projection.mjs',
@@ -76,6 +80,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/prepare-ci-mathlib-cache.mjs',
     'paper-core/bin/release-state-check.mjs',
     'paper-core/bin/release-trust-gate.mjs',
+    'paper-core/bin/release-readiness-plan.mjs',
     'paper-core/bin/critical-module-coverage.mjs',
     'paper-core/bin/strict-npm-audit.mjs',
     'paper-core/bin/repository-asset-status.mjs',

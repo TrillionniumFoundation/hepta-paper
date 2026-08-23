@@ -46,6 +46,7 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'reference:selftest',
     'reference:selftest:workspace',
     'release:state-check',
+    'release:plan',
     'safety:all',
     'safety:p0',
     'safety:p1',

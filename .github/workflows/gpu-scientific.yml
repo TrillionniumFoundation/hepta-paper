@@ -53,8 +53,10 @@ jobs:
         run: >-
           node --test --test-concurrency=1
           paper-core/tests/deep-learning-independent-replay.test.mjs
+          paper-core/tests/deep-learning-independent-cpu-oracle-worker.test.mjs
           paper-core/tests/deep-learning-gpu-production-contract.test.mjs
           paper-core/tests/pde-poisson-2d-gpu-capability.test.mjs
+          paper-core/tests/nvidia-gpu-self-hosted-ci-preflight.test.mjs
       - name: State explicitly that portable CI is not GPU qualification
         run: |
           echo 'GPU operational qualification is not inferred from portable contract tests.' >> "$GITHUB_STEP_SUMMARY"
@@ -75,6 +77,14 @@ jobs:
         with:
           node-version: '22.23.1'
           cache: npm
+      - name: Verify attested self-hosted runner and pinned GPU image
+        env:
+          HEPTA_ENABLE_GPU_CI: ${{ vars.HEPTA_ENABLE_GPU_CI }}
+          HEPTA_GPU_CI_RUNNER_LABELS: ${{ vars.HEPTA_GPU_CI_RUNNER_LABELS }}
+          HEPTA_GPU_CI_RUNNER_ATTESTED: ${{ vars.HEPTA_GPU_CI_RUNNER_ATTESTED }}
+          HEPTA_GPU_CI_IMAGE: ${{ env.GPU_IMAGE }}
+          HEPTA_GPU_CI_IMAGE_DIGEST: ${{ env.GPU_IMAGE_DIGEST }}
+        run: node paper-adapters/research-verify/nvidia-gpu-self-hosted-ci-preflight.mjs
       - name: Require exactly one visible NVIDIA device
         shell: bash
         run: |
@@ -100,6 +110,7 @@ jobs:
         run: >-
           node --test --test-concurrency=1
           paper-core/tests/deep-learning-independent-replay.test.mjs
+          paper-core/tests/deep-learning-independent-cpu-oracle-worker.test.mjs
           paper-core/tests/deep-learning-canonical-training-executor.test.mjs
           paper-core/tests/pde-poisson-2d-gpu-producer.test.mjs
       - name: Run the two-pass GPU runtime smoke (must fail on drift)

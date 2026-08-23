@@ -227,7 +227,7 @@ Docker gate that executes both pinned Python and R academic dataset harnesses
 through original and replay runs. It also runs the unified formal operational
 gate across the dynamic kernel, campaign release, both proof-search paths and
 the typed dependency graph, requiring a complete terminal TAP summary with
-22/22 passing and zero skipped tests. It also requires the cold-volume contract,
+23/23 passing and zero skipped tests. It also requires the cold-volume contract,
 both differentials, physical workspace separation, read-only native-store
 health and logical integrity, an isolated verification runtime, a backup/restore
 drill, the immutable archive and a deletion/restore drill. The

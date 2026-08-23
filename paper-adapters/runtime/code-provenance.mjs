@@ -376,6 +376,7 @@ export function currentCodeProvenance({
   workspaceRoot = HEPTA_WORKSPACE_ROOT,
   allowReleaseCommitEnvironment = true,
   ignoreSubmoduleWorktreeStatus = false,
+  requireSealedReadOnlySubmoduleClosure = false,
 } = {}) {
   const canonicalRoot = fs.realpathSync(workspaceRoot);
   const canonicalWorkspace = canonicalRoot === fs.realpathSync(HEPTA_WORKSPACE_ROOT);
@@ -385,10 +386,23 @@ export function currentCodeProvenance({
   // tree is read-only.  Select the no-status policy only for an explicitly
   // sealed launcher or a read-only root, and verify the deployment closure
   // (submodule commit, tree and content/CAS tree hash) before accepting it.
+  const sealedLauncher = process.env.HEPTA_RELEASE_ENV_LAUNCHER === 'sealed-v1';
   const sealedReadOnly = ignoreSubmoduleWorktreeStatus
-    || process.env.HEPTA_RELEASE_ENV_LAUNCHER === 'sealed-v1'
+    || sealedLauncher
     || workspaceIsReadOnly(canonicalRoot);
-  if (sealedReadOnly) inspectSealedReadOnlySubmodules({ workspaceRoot: canonicalRoot });
+  if (sealedReadOnly) {
+    const inspection = inspectSealedReadOnlySubmodules({ workspaceRoot: canonicalRoot });
+    // A sealed launcher is an explicit promise that the read-only tree is
+    // backed by an immutable deployment closure.  Do not silently downgrade
+    // to the development/no-closure policy when that closure is missing.  The
+    // explicit option is useful to other read-only release callers that have
+    // already crossed an equivalent launcher boundary; ordinary read-only
+    // verification clones intentionally remain diagnostic-only.
+    if ((sealedLauncher || requireSealedReadOnlySubmoduleClosure)
+      && inspection.status !== 'sealed_readonly_submodules_verified') {
+      throw codedError('code_provenance_sealed_submodule_closure_required');
+    }
+  }
   const { snapshot, pkg } = stableSnapshot(canonicalRoot, {
     ignoreSubmoduleWorktreeStatus: sealedReadOnly,
   });

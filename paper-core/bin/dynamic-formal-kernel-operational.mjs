@@ -3,6 +3,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { currentCodeProvenance } from '../src/code-provenance.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const testFiles = Object.freeze([
   'paper-core/tests/dynamic-formal-claim-kernel-e2e.test.mjs',
@@ -11,14 +14,64 @@ const testFiles = Object.freeze([
   'paper-core/tests/typed-theorem-dependency-graph.test.mjs',
 ]);
 const expected = Object.freeze({
-  tests: 22,
+  tests: 23,
   suites: 0,
-  pass: 22,
+  pass: 23,
   fail: 0,
   cancelled: 0,
   skipped: 0,
   todo: 0,
 });
+
+const FORMAL_OPERATIONAL_RECEIPT_KEYS = Object.freeze([
+  'cancelled', 'codeProvenance', 'fail', 'formalOperationalReceiptHash',
+  'kind', 'pass', 'suites', 'testFiles', 'tests', 'todo', 'version', 'skipped',
+]);
+
+function exactKeys(value, keys) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+    && JSON.stringify(Object.keys(value).sort())
+      === JSON.stringify([...keys].sort());
+}
+
+/**
+ * Bind the terminal TAP summary to the exact source identity observed around
+ * the run.  A passing TAP stream without this binding is not release evidence:
+ * it could have been produced by a different checkout or a changed index.
+ */
+export function buildFormalOperationalReceipt({ summary, codeProvenance } = {}) {
+  if (!summary?.valid || !codeProvenance || typeof codeProvenance !== 'object') {
+    throw new Error('formal_operational_receipt_inputs_invalid');
+  }
+  const payload = {
+    version: 2,
+    kind: 'FormalOperationalTestReceipt',
+    testFiles,
+    ...summary.summary,
+    codeProvenance,
+  };
+  return Object.freeze({
+    ...payload,
+    formalOperationalReceiptHash: hashRecord('FormalOperationalTestReceipt', payload),
+  });
+}
+
+export function verifyFormalOperationalReceipt(receipt, { expectedCodeProvenance = null } = {}) {
+  if (!exactKeys(receipt, FORMAL_OPERATIONAL_RECEIPT_KEYS)
+    || receipt.version !== 2
+    || receipt.kind !== 'FormalOperationalTestReceipt'
+    || JSON.stringify(receipt.testFiles) !== JSON.stringify(testFiles)
+    || Object.entries(expected).some(([key, value]) => receipt[key] !== value)
+    || !receipt.codeProvenance
+    || typeof receipt.codeProvenance !== 'object') return false;
+  const { formalOperationalReceiptHash: _hash, ...payload } = receipt;
+  if (hashRecord('FormalOperationalTestReceipt', payload)
+      !== receipt.formalOperationalReceiptHash) return false;
+  if (expectedCodeProvenance !== null
+    && hashRecord('ExactCodeProvenance', receipt.codeProvenance)
+      !== hashRecord('ExactCodeProvenance', expectedCodeProvenance)) return false;
+  return true;
+}
 
 export function parseFormalOperationalTapSummary(output) {
   const normalized = String(output || '').replace(/\r\n/g, '\n');
@@ -37,7 +90,7 @@ export function parseFormalOperationalTapSummary(output) {
     return Object.freeze({ valid: false });
   }
   const terminal = lines.slice(-(names.length + 2));
-  if (terminal.length !== names.length + 2 || terminal[0] !== '1..22') {
+  if (terminal.length !== names.length + 2 || terminal[0] !== '1..23') {
     return Object.freeze({ valid: false });
   }
   const summary = {};
@@ -60,6 +113,19 @@ export function parseFormalOperationalTapSummary(output) {
 }
 
 function main() {
+  let preflightCodeProvenance;
+  try {
+    preflightCodeProvenance = currentCodeProvenance({
+      workspaceRoot,
+      allowReleaseCommitEnvironment: false,
+    });
+  } catch (error) {
+    process.stderr.write(`formal_operational_provenance_preflight_failed:${String(
+      error?.code || error?.message || 'unknown',
+    ).replace(/[^A-Za-z0-9_.:-]/gu, '_')}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const result = spawnSync(process.execPath, [
     '--test',
     '--test-concurrency=1',
@@ -85,12 +151,30 @@ function main() {
     process.stderr.write('formal_operational_tap_summary_invalid\n');
     process.exitCode = result.status || 1;
   } else {
-    process.stdout.write(`formal_operational_summary=${JSON.stringify({
-      version: 1,
-      kind: 'FormalOperationalTestSummary',
-      testFiles,
-      ...parsed.summary,
-    })}\n`);
+    let postflightCodeProvenance;
+    try {
+      postflightCodeProvenance = currentCodeProvenance({
+        workspaceRoot,
+        allowReleaseCommitEnvironment: false,
+      });
+    } catch (error) {
+      process.stderr.write(`formal_operational_provenance_postflight_failed:${String(
+        error?.code || error?.message || 'unknown',
+      ).replace(/[^A-Za-z0-9_.:-]/gu, '_')}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    if (hashRecord('ExactCodeProvenance', preflightCodeProvenance)
+      !== hashRecord('ExactCodeProvenance', postflightCodeProvenance)) {
+      process.stderr.write('formal_operational_code_provenance_changed\n');
+      process.exitCode = 1;
+      return;
+    }
+    const receipt = buildFormalOperationalReceipt({
+      summary: parsed,
+      codeProvenance: postflightCodeProvenance,
+    });
+    process.stdout.write(`formal_operational_summary=${JSON.stringify(receipt)}\n`);
     process.exitCode = 0;
   }
 }

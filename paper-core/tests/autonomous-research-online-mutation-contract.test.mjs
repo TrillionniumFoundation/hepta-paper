@@ -4,10 +4,14 @@ import test from 'node:test';
 import {
   assertAutonomousResearchOnlineMutationFinalizeRequest,
   assertAutonomousResearchOnlineMutationReserveRequest,
+  assertAutonomousResearchOnlineMutationScopeRequest,
   autonomousResearchOnlineMutationLocalMarkerHash,
   autonomousResearchOnlineMutationReceiptHash,
   autonomousResearchOnlineMutationStateHash,
   AUTONOMOUS_RESEARCH_ONLINE_MUTATION_PROTOCOL,
+  verifyAutonomousResearchOnlineMutationActiveChallenge,
+  verifyAutonomousResearchOnlineMutationCurrentHead,
+  verifyAutonomousResearchOnlineMutationScopeReceipt,
 } from '../../paper-domain/automation/autonomous-research-online-mutation-contract.mjs';
 import {
   assertAutonomousResearchOnlineWriterOperationManifest,
@@ -596,6 +600,13 @@ test('reserve and finalize requests bind canonical state and local marker hashes
     }, reservation),
     /autonomous_research_online_mutation_finalize_request_invalid/,
   );
+  assert.throws(
+    () => assertAutonomousResearchOnlineMutationFinalizeRequest({
+      ...finalize,
+      globalHash: H('reservation-mismatch'),
+    }, reservation),
+    /autonomous_research_online_mutation_finalize_request_reservation_mismatch/,
+  );
   const abort = Object.freeze({
     version: 1,
     kind: 'AutonomousResearchOnlineMutationAbortRequest',
@@ -619,4 +630,213 @@ test('reserve and finalize requests bind canonical state and local marker hashes
     requestedAt: committedAt,
   });
   assert.equal(assertAutonomousResearchOnlineMutationAbortRequest(abort, reservation), abort);
+});
+
+test('online mutation observation contracts cover challenge, head, scope, and malformed inputs', () => {
+  const trust = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchOnlineMutationAuthorityTrust',
+    authorityId: 'authority:test',
+    keyId: 'key:test',
+    scopeId: 'scope:test',
+    databaseScopeHash: H('observation-database-scope'),
+    writerManifestHash: H('observation-writer-manifest'),
+    maximumReservationLeaseMs: 60_000,
+    maximumObservationAgeMs: 60_000,
+  });
+  const now = '2026-07-18T08:00:00.000Z';
+  const expiresAt = '2026-07-18T08:00:30.000Z';
+  const roles = [...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort();
+  const databaseHeads = roles.map((databaseRole) => ({
+    databaseRole,
+    databaseInstanceId: `${databaseRole}:test`,
+    sequence: 0,
+    hash: H(`head:${databaseRole}`),
+    schemaHash: H(`schema:${databaseRole}`),
+    stateHash: H(`state:${databaseRole}`),
+  })).sort((left, right) => left.databaseInstanceId.localeCompare(right.databaseInstanceId));
+  const verifySignature = (receipt) => receipt.signature === 'signature:test';
+  const base = {
+    version: 1,
+    protocol: AUTONOMOUS_RESEARCH_ONLINE_MUTATION_PROTOCOL,
+    scopeId: trust.scopeId,
+    databaseScopeHash: trust.databaseScopeHash,
+    writerManifestHash: trust.writerManifestHash,
+  };
+  const challengeRequest = {
+    ...base,
+    kind: 'AutonomousResearchOnlineMutationActiveChallengeRequest',
+    challengeNonce: 'challenge:test',
+    requestedAt: now,
+  };
+  const challengeReceipt = {
+    version: 1,
+    kind: 'AutonomousResearchOnlineMutationActiveChallengeReceipt',
+    status: 'autonomous_research_online_mutation_active_challenge_verified',
+    authorityId: trust.authorityId,
+    keyId: trust.keyId,
+    requestHash: hashRecord(
+      'AutonomousResearchOnlineMutationActiveChallengeRequest', challengeRequest,
+    ),
+    ...base,
+    globalSequence: 1,
+    globalHash: H('challenge-global'),
+    databaseHeads,
+    challengeNonce: challengeRequest.challengeNonce,
+    challengedAt: now,
+    expiresAt,
+    signature: 'signature:test',
+  };
+  assert.equal(verifyAutonomousResearchOnlineMutationActiveChallenge({
+    receipt: challengeReceipt,
+    request: challengeRequest,
+    trust,
+    now,
+    verifySignature,
+  }), true);
+  assert.equal(verifyAutonomousResearchOnlineMutationActiveChallenge({
+    receipt: { ...challengeReceipt, challengeNonce: 'challenge:other' },
+    request: challengeRequest,
+    trust,
+    now,
+    verifySignature,
+  }), false);
+  assert.throws(
+    () => verifyAutonomousResearchOnlineMutationActiveChallenge({
+      receipt: challengeReceipt,
+      request: { ...challengeRequest, unexpected: true },
+      trust,
+      now,
+      verifySignature,
+    }),
+    /autonomous_research_online_mutation_observation_request_invalid/,
+  );
+
+  const headRequest = {
+    ...base,
+    kind: 'AutonomousResearchOnlineMutationCurrentHeadRequest',
+    nonce: 'head:test',
+    requestedAt: now,
+  };
+  const headReceipt = {
+    version: 1,
+    kind: 'AutonomousResearchOnlineMutationCurrentHeadReceipt',
+    status: 'autonomous_research_online_mutation_current_head_observed',
+    authorityId: trust.authorityId,
+    keyId: trust.keyId,
+    requestHash: hashRecord(
+      'AutonomousResearchOnlineMutationCurrentHeadRequest', headRequest,
+    ),
+    ...base,
+    globalSequence: 1,
+    globalHash: H('head-global'),
+    databaseHeads,
+    unresolvedReservationCount: 0,
+    observedAt: now,
+    expiresAt,
+    signature: 'signature:test',
+  };
+  assert.equal(verifyAutonomousResearchOnlineMutationCurrentHead({
+    receipt: headReceipt,
+    request: headRequest,
+    trust,
+    now,
+    verifySignature,
+  }), true);
+  assert.equal(verifyAutonomousResearchOnlineMutationCurrentHead({
+    receipt: { ...headReceipt, unresolvedReservationCount: 1 },
+    request: headRequest,
+    trust,
+    now,
+    verifySignature,
+  }), false);
+  assert.equal(verifyAutonomousResearchOnlineMutationCurrentHead({
+    receipt: headReceipt,
+    request: headRequest,
+    trust,
+    now,
+    verifySignature,
+    expectedDatabaseInstances: [],
+  }), false);
+
+  const scopeRequest = {
+    ...base,
+    kind: 'AutonomousResearchOnlineMutationScopeRequest',
+    staticInspectionReceiptHash: H('scope-inspection'),
+    astGateReceiptHash: H('scope-inspection'),
+    codeProvenanceHash: H('scope-code'),
+    operationCount: 1,
+    operationIds: ['operation:test'],
+    requiredDatabaseRoles: roles,
+    coveredDatabaseRoles: ['native-store'],
+    nonce: 'scope:test',
+    requestedAt: now,
+  };
+  assert.equal(assertAutonomousResearchOnlineMutationScopeRequest(scopeRequest, trust), scopeRequest);
+  const scopeReceipt = {
+    version: 1,
+    kind: 'AutonomousResearchOnlineMutationScopeReceipt',
+    status: 'autonomous_research_online_mutation_scope_observed',
+    authorityId: trust.authorityId,
+    keyId: trust.keyId,
+    requestHash: hashRecord('AutonomousResearchOnlineMutationScopeRequest', scopeRequest),
+    protocol: scopeRequest.protocol,
+    scopeId: scopeRequest.scopeId,
+    databaseScopeHash: scopeRequest.databaseScopeHash,
+    writerManifestHash: scopeRequest.writerManifestHash,
+    staticInspectionReceiptHash: scopeRequest.staticInspectionReceiptHash,
+    astGateReceiptHash: scopeRequest.astGateReceiptHash,
+    codeProvenanceHash: scopeRequest.codeProvenanceHash,
+    operationCount: scopeRequest.operationCount,
+    operationIds: scopeRequest.operationIds,
+    requiredDatabaseRoles: scopeRequest.requiredDatabaseRoles,
+    coveredDatabaseRoles: scopeRequest.coveredDatabaseRoles,
+    globalSequence: 1,
+    globalHash: H('scope-global'),
+    observedAt: now,
+    expiresAt,
+    signature: 'signature:test',
+  };
+  assert.equal(verifyAutonomousResearchOnlineMutationScopeReceipt({
+    receipt: scopeReceipt,
+    request: scopeRequest,
+    trust,
+    now,
+    verifySignature,
+  }), true);
+  assert.equal(verifyAutonomousResearchOnlineMutationScopeReceipt({
+    receipt: { ...scopeReceipt, codeProvenanceHash: H('scope-tampered') },
+    request: scopeRequest,
+    trust,
+    now,
+    verifySignature,
+  }), false);
+  assert.throws(
+    () => assertAutonomousResearchOnlineMutationScopeRequest(
+      { ...scopeRequest, operationIds: ['operation:z', 'operation:a'] }, trust,
+    ),
+    /autonomous_research_online_mutation_scope_request_invalid/,
+  );
+
+  assert.throws(
+    () => verifyAutonomousResearchOnlineMutationActiveChallenge({
+      receipt: challengeReceipt,
+      request: challengeRequest,
+      trust: { ...trust, authorityId: null },
+      now,
+      verifySignature,
+    }),
+    /autonomous_research_online_mutation_authority_trust_invalid/,
+  );
+  assert.throws(
+    () => autonomousResearchOnlineMutationStateHash({ databaseRole: 'bad' }),
+    /autonomous_research_online_mutation_state_hash_input_invalid/,
+  );
+  assert.throws(
+    () => autonomousResearchOnlineMutationLocalMarkerHash({
+      reservation: null,
+      committedAt: now,
+    }),
+    /autonomous_research_online_mutation_local_marker_input_invalid/,
+  );
 });

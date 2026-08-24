@@ -397,6 +397,12 @@ function inspectAntiRollback({ runtimeRoot, environment }) {
   const configured = environment.HEPTA_PRODUCTION_INTEGRITY_PIN_PATH || null;
   const candidates = unique([
     configured,
+    // Keep the observation path aligned with the release-readiness operations
+    // gate.  Older development snapshots used `production-integrity/`; the
+    // deployment contract uses `deployment/`.  Both are read-only candidates,
+    // with the explicit environment path taking precedence.
+    path.join(runtimeRoot, 'deployment', 'production-integrity-pin.json'),
+    path.join(runtimeRoot, 'deployment', 'PRODUCTION_INTEGRITY_PIN.json'),
     path.join(runtimeRoot, 'production-integrity', 'PRODUCTION_INTEGRITY_PIN.json'),
     path.join(runtimeRoot, 'production-integrity', 'production-integrity-pin.json'),
   ].filter(Boolean));
@@ -523,15 +529,22 @@ function inspectSingleVenue({ workspaceRoot, environment }) {
 }
 
 function inspectOci({ workspaceRoot, runtimeRoot, environment }) {
-  const pinPath = environment.HEPTA_PRODUCTION_INTEGRITY_PIN_PATH
-    || path.join(runtimeRoot, 'production-integrity', 'PRODUCTION_INTEGRITY_PIN.json');
+  const pinCandidates = unique([
+    environment.HEPTA_PRODUCTION_INTEGRITY_PIN_PATH,
+    path.join(runtimeRoot, 'deployment', 'production-integrity-pin.json'),
+    path.join(runtimeRoot, 'deployment', 'PRODUCTION_INTEGRITY_PIN.json'),
+    path.join(runtimeRoot, 'production-integrity', 'PRODUCTION_INTEGRITY_PIN.json'),
+  ].filter(Boolean));
+  const pinObservations = pinCandidates.map((candidate) => jsonFile(candidate, { maximumBytes: 4 * 1024 * 1024 }));
+  const pin = pinObservations.find((item) => item.present && item.safe && item.parsed)
+    || pinObservations[0]
+    || jsonFile(null);
   const registryPath = environment.HEPTA_REGISTRY_ATTESTATION_PATH
     || path.join(runtimeRoot, 'attestations', 'registry-attestation.json');
   const cvePath = environment.HEPTA_CVE_ATTESTATION_PATH
     || path.join(runtimeRoot, 'attestations', 'cve-attestation.json');
   const verifierPath = environment.HEPTA_OCI_INDEPENDENT_VERIFIER_PATH
     || path.join(runtimeRoot, 'attestations', 'oci-independent-verifier.json');
-  const pin = jsonFile(pinPath, { maximumBytes: 4 * 1024 * 1024 });
   const registry = jsonFile(registryPath, { maximumBytes: 4 * 1024 * 1024 });
   const cve = jsonFile(cvePath, { maximumBytes: 4 * 1024 * 1024 });
   const verifier = jsonFile(verifierPath, { maximumBytes: 4 * 1024 * 1024 });

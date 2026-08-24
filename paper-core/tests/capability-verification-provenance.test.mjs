@@ -417,6 +417,59 @@ test('sealed launcher provenance fails closed when its deployment closure is abs
   }), /code_provenance_sealed_submodule_closure_required/u);
 });
 
+test('sealed read-only provenance rejects writable roots, closure files, and non-canonical JSON', (t) => {
+  const createClosureRoot = ({ rootMode = 0o555, fileMode = 0o444, suffix = '\n' } = {}) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sealed-provenance-policy-'));
+    t.after(() => {
+      const closureDirectory = path.join(root, 'deployment-closure');
+      const closureFile = path.join(closureDirectory, 'TOOL-CLOSURE.json');
+      for (const [candidate, mode] of [
+        [closureFile, 0o600],
+        [closureDirectory, 0o700],
+        [root, 0o700],
+      ]) {
+        try { fs.chmodSync(candidate, mode); } catch { /* cleanup best effort */ }
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+    const closureDirectory = path.join(root, 'deployment-closure');
+    fs.mkdirSync(closureDirectory);
+    const payload = {
+      version: 1,
+      kind: 'HeptaDeploymentToolClosure',
+      submodules: {
+        core: { path: 'core' },
+        rScientificSourceCas: { path: 'runtime-images/r-scientific/source-cas' },
+      },
+    };
+    const closure = {
+      ...payload,
+      closureHash: SHA(JSON.stringify(payload)),
+    };
+    fs.writeFileSync(
+      path.join(closureDirectory, 'TOOL-CLOSURE.json'),
+      `${JSON.stringify(closure)}${suffix}`,
+    );
+    fs.chmodSync(root, rootMode);
+    fs.chmodSync(closureDirectory, 0o555);
+    fs.chmodSync(path.join(closureDirectory, 'TOOL-CLOSURE.json'), fileMode);
+    return root;
+  };
+
+  assert.throws(
+    () => inspectSealedReadOnlySubmodules({ workspaceRoot: createClosureRoot({ rootMode: 0o755 }) }),
+    /code_provenance_sealed_workspace_root_not_read_only/u,
+  );
+  assert.throws(
+    () => inspectSealedReadOnlySubmodules({ workspaceRoot: createClosureRoot({ fileMode: 0o644 }) }),
+    /code_provenance_sealed_closure_file_not_read_only/u,
+  );
+  assert.throws(
+    () => inspectSealedReadOnlySubmodules({ workspaceRoot: createClosureRoot({ suffix: '  \n' }) }),
+    /code_provenance_sealed_closure_json_noncanonical/u,
+  );
+});
+
 test('code provenance exposes only a bounded error when a required Git command fails', (t) => {
   const root = createProvenanceRepository(t);
   const secret = 'private-git-stderr-material';

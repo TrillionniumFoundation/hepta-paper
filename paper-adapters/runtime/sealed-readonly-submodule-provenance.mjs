@@ -8,6 +8,8 @@ import { captureReleaseDependencyTree } from './release-dependency-tree.mjs';
 const GIT_OBJECT = /^[0-9a-f]{40}$/u;
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
 const CLOSURE_RELATIVE_PATH = 'deployment-closure/TOOL-CLOSURE.json';
+const SEALED_DIRECTORY_MODE = 0o555n;
+const SEALED_FILE_MODE = 0o444n;
 const SUBMODULES = Object.freeze([
   Object.freeze({ key: 'core', path: 'core' }),
   Object.freeze({
@@ -96,11 +98,46 @@ function regularClosureFile(root, relative) {
   return candidate;
 }
 
+function assertSealedClosurePath(root, closurePath) {
+  const rootStat = fs.lstatSync(root, { bigint: true });
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()
+    || fs.realpathSync(root) !== root
+    || (rootStat.mode & 0o7777n) !== SEALED_DIRECTORY_MODE) {
+    throw codedError('code_provenance_sealed_workspace_root_not_read_only');
+  }
+  const relative = path.relative(root, closurePath);
+  const segments = relative.split(path.sep).filter(Boolean);
+  let cursor = root;
+  for (const [index, segment] of segments.entries()) {
+    cursor = path.join(cursor, segment);
+    const stat = fs.lstatSync(cursor, { bigint: true });
+    const final = index === segments.length - 1;
+    if (stat.isSymbolicLink() || fs.realpathSync(cursor) !== cursor
+      || (final ? !stat.isFile() : !stat.isDirectory())) {
+      throw codedError('code_provenance_sealed_closure_path_invalid');
+    }
+    const expectedMode = final ? SEALED_FILE_MODE : SEALED_DIRECTORY_MODE;
+    if ((stat.mode & 0o7777n) !== expectedMode) {
+      throw codedError(final
+        ? 'code_provenance_sealed_closure_file_not_read_only'
+        : 'code_provenance_sealed_closure_directory_not_read_only');
+    }
+    if (final && stat.nlink !== 1n) {
+      throw codedError('code_provenance_sealed_closure_file_link_count_invalid');
+    }
+  }
+}
+
 function readClosure(root, closurePath) {
   const candidate = regularClosureFile(root, closurePath);
   if (!candidate) return null;
+  assertSealedClosurePath(root, candidate);
+  let raw;
   let parsed;
-  try { parsed = JSON.parse(fs.readFileSync(candidate, 'utf8')); }
+  try {
+    raw = fs.readFileSync(candidate, 'utf8');
+    parsed = JSON.parse(raw);
+  }
   catch (error) {
     throw codedError('code_provenance_sealed_closure_json_invalid', { cause: error });
   }
@@ -110,6 +147,16 @@ function readClosure(root, closurePath) {
     || !parsed.submodules
     || typeof parsed.closureHash !== 'string' || !SHA256.test(parsed.closureHash)) {
     throw codedError('code_provenance_sealed_closure_schema_invalid');
+  }
+  const canonical = JSON.stringify(parsed);
+  const pretty = JSON.stringify(parsed, null, 2);
+  if (raw !== `${canonical}\n` && raw !== `${pretty}\n`) {
+    throw codedError('code_provenance_sealed_closure_json_noncanonical');
+  }
+  const expectedSubmoduleKeys = SUBMODULES.map(({ key }) => key).sort();
+  const actualSubmoduleKeys = Object.keys(parsed.submodules).sort();
+  if (JSON.stringify(actualSubmoduleKeys) !== JSON.stringify(expectedSubmoduleKeys)) {
+    throw codedError('code_provenance_sealed_closure_submodule_set_invalid');
   }
   const { closureHash, ...payload } = parsed;
   if (sha256(JSON.stringify(payload)) !== closureHash) {
@@ -130,6 +177,9 @@ function inspectOne(root, definition, expected) {
   }
   if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(submoduleRoot) !== submoduleRoot) {
     throw codedError(`code_provenance_sealed_submodule_root_invalid:${definition.key}`);
+  }
+  if ((stat.mode & 0o7777n) !== SEALED_DIRECTORY_MODE) {
+    throw codedError(`code_provenance_sealed_submodule_root_not_read_only:${definition.key}`);
   }
   const gitlink = expectedGitlink(root, definition.path);
   if (!GIT_OBJECT.test(String(expected.commit || ''))

@@ -238,9 +238,16 @@ function modelFixture() {
   return Object.freeze({ trainingDataset, trainingDatasetAuthority, modelIr, hiddenDataset });
 }
 
-function readTrainingArtifacts(receipt) {
-  const outputDirectory = receipt.workerReceipt?.outputDirectory;
-  if (typeof outputDirectory !== 'string') throw new Error('personal_gpu_dl_output_missing');
+function trainingOutputDirectory(outputRoot, trainingRunId) {
+  return path.join(outputRoot, `training-${hashRecord('DeepLearningTrainingRunDirectory', {
+    trainingRunId,
+  }).slice('sha256:'.length)}`);
+}
+
+function readTrainingArtifacts(receipt, outputDirectory) {
+  if (typeof outputDirectory !== 'string' || !fs.existsSync(outputDirectory)) {
+    throw new Error('personal_gpu_dl_output_missing');
+  }
   const tensor = readBoundArtifact(outputDirectory, 'tensor-bundle.bin');
   const predictions = readBoundArtifact(outputDirectory, 'training-predictions.json');
   const summary = readBoundArtifact(outputDirectory, 'training-summary.json');
@@ -368,8 +375,14 @@ async function executeGate({ workspaceRoot, runtimeRoot, outputRoot, runId, dead
   if (replay.status !== 'canonical_cupy_deep_learning_training_recorded_non_promotable') {
     throw new Error(`personal_gpu_dl_replay_not_recorded:${safeToken(replay.status)}`);
   }
-  const originalArtifacts = readTrainingArtifacts(original);
-  const replayArtifacts = readTrainingArtifacts(replay);
+  const originalArtifacts = readTrainingArtifacts(
+    original,
+    trainingOutputDirectory(dlOriginalRoot, `${runId}-original`),
+  );
+  const replayArtifacts = readTrainingArtifacts(
+    replay,
+    trainingOutputDirectory(dlReplayRoot, `${runId}-replay`),
+  );
   const runtimeIdentityHash = hashRecord('PersonalGpuRuntimeIdentity', {
     image: image.image,
     imageDigest: image.imageDigest,

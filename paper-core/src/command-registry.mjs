@@ -92,6 +92,19 @@ const ROUTES = Object.freeze([
   }),
   route({
     group: 'operator',
+    name: 'personal-gpu-operational-gate',
+    argv: ['node', 'paper-core/bin/personal-gpu-operational-gate.mjs'],
+    npmScript: 'gpu:personal-gate',
+    mutability: 'argument-dependent',
+    forwardingPolicy: 'registry',
+    forwardedArgumentSchema: {
+      booleanFlags: ['check', 'help', 'write'],
+      valueFlags: ['root', 'runtime-root', 'output-root', 'receipt', 'run-id', 'deadline-ms'],
+      positional: false,
+    },
+  }),
+  route({
+    group: 'operator',
     name: 'journal-connector-coverage',
     argv: ['node', 'paper-core/bin/journal-connector-coverage.mjs'],
     npmScript: 'automation:journal-connector-coverage',
@@ -526,6 +539,7 @@ export const HEPTA_PAPER_COMMAND_REGISTRY = Object.freeze(Object.fromEntries(ROU
 const NPM_CLASSIFICATION = buildNpmCommandClassification(ROUTES);
 const RETAINED_NPM_ROUTE_ALIASES = new Set([
   'coverage:critical-modules',
+  'gpu:personal-gate',
   'legacy:deletion-drill',
   'legacy:reference-verify',
   'migration:capability-matrix-v3',

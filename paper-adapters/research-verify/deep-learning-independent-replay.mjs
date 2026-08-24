@@ -424,6 +424,48 @@ export function replayDeepLearningCheckpoint({
   }
 }
 
+/**
+ * Evaluate a checkpoint against a separately supplied, sealed holdout
+ * dataset.  This is deliberately a pure CPU path: it does not require the
+ * training dataset manifest to match the holdout and it never changes the
+ * promotability of the producer receipt.  The personal single-host gate uses
+ * this helper to exercise a real hidden-evaluator surface while keeping the
+ * release/independent-authority boundary intact.
+ */
+export function evaluateDeepLearningCheckpointDataset({
+  executionReceipt,
+  evaluationDataset,
+  tensorBundleBytes,
+} = {}) {
+  if (!verifyDeepLearningTrainingExecutionReceipt(executionReceipt)
+    || !verifyDeepLearningInlineTrainingDataset(evaluationDataset)
+    || evaluationDataset.featureCount !== executionReceipt.modelIr.inputFeatureCount
+    || evaluationDataset.classCount !== executionReceipt.modelIr.classCount
+    || !Buffer.isBuffer(tensorBundleBytes)) {
+    throw new Error('deep_learning_holdout_evaluation_input_invalid');
+  }
+  const tensors = decodeTensorBundle({
+    tensorBundleBytes,
+    checkpointManifest: executionReceipt.checkpointManifest,
+  });
+  const modelIr = executionReceipt.modelIr;
+  const initialMetrics = metricsFromLogits(
+    forwardWithTrace(modelIr, evaluationDataset, initialTensorMap(modelIr)).logits,
+    evaluationDataset.labels,
+  );
+  const observed = metricsFromLogits(
+    forwardWithTrace(modelIr, evaluationDataset, tensors).logits,
+    evaluationDataset.labels,
+    { initialCrossEntropy: initialMetrics.crossEntropy },
+  );
+  return Object.freeze({
+    accuracy: observed.accuracy,
+    crossEntropy: observed.crossEntropy,
+    initialCrossEntropy: observed.initialCrossEntropy,
+    predictions: observed.predictions,
+  });
+}
+
 export function buildDeepLearningReplayPlan({
   originalExecutionReceipt,
   replayScope,

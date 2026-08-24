@@ -111,6 +111,7 @@
     "test:typed-numeric-process-operational": "node --test --test-concurrency=1 paper-core/tests/typed-numeric-oracle-production.test.mjs",
     "test:dynamic-formal-kernel-operational": "node paper-core/bin/dynamic-formal-kernel-operational.mjs",
     "formal:receipt": "node paper-core/bin/formal-operational-receipt.mjs",
+    "gpu:personal-gate": "node paper-core/bin/personal-gpu-operational-gate.mjs",
     "ci:selftest": "npm run static:check && node paper-core/bin/run-isolated-verification.mjs ci",
     "ci:mathlib-cache": "node paper-core/bin/prepare-ci-mathlib-cache.mjs --prepare",
     "ci:inner": "npm run reference:integrity && npm run reference:selftest && npm run reference:runtime-dry-run && npm run safety:all && npm run paper:capability-conformance && npm run paper:governance-contracts && npm run migration:capability-matrix-v3 && npm run migration:salvage-selftest && npm run paper:salvage-hardening-selftest && npm run assets:cold-volume-status && npm run assets:cold-volume-cas-status && npm run legacy:fixture-verify && npm run legacy:matrix-reference-status",

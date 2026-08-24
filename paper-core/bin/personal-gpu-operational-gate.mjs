@@ -464,7 +464,10 @@ async function executeGate({ workspaceRoot, runtimeRoot, outputRoot, runId, dead
     tensorBundleBytes: originalArtifacts.tensorBytes,
     expectedPredictions: originalArtifacts.expectedPredictions,
     expectedMetrics: originalArtifacts.expectedMetrics,
-    replayRuntimeIdentityHash: runtimeIdentityHash,
+    // The CPU oracle runs in its own pinned python-scientific container.  Its
+    // runtime identity is resolved and bound by the oracle adapter; the GPU
+    // training identity above must not be reused for this independent worker.
+    replayRuntimeIdentityHash: null,
     absoluteDeadlineEpochMs: deadline,
   });
   if (!verifyProcessIsolatedDeepLearningCpuOracleAssurance(cpuOracle)

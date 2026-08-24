@@ -1,10 +1,14 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  resolvePinnedLakeExecutable,
+} from '../../paper-adapters/research-verify/pinned-lake-executable-resolver.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const testFiles = Object.freeze([
@@ -113,6 +117,15 @@ export function parseFormalOperationalTapSummary(output) {
 }
 
 function main() {
+  const pinned = resolvePinnedLakeExecutable({
+    environment: process.env,
+    forceContentRehash: false,
+  });
+  if (pinned.status !== 'formal_pinned_lake_resolved') {
+    process.stderr.write(`formal_operational_prerequisite_failed:${pinned.blockers.join(',')}\n`);
+    process.exitCode = 1;
+    return;
+  }
   let preflightCodeProvenance;
   try {
     preflightCodeProvenance = currentCodeProvenance({
@@ -179,7 +192,20 @@ function main() {
   }
 }
 
-if (process.argv[1]
-  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// `npm run` invokes this file with a relative argv[1], while import.meta.url
+// resolves to an absolute path.  Compare canonical absolute paths (including
+// symlink resolution where available) so the operational gate cannot silently
+// no-op and return success without running the 23-test zero-skip suite.
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+const modulePath = fileURLToPath(import.meta.url);
+const invokedAsScript = invokedPath && (() => {
+  try {
+    return path.resolve(invokedPath) === path.resolve(modulePath)
+      || fs.realpathSync(invokedPath) === fs.realpathSync(modulePath);
+  } catch {
+    return invokedPath === path.resolve(modulePath);
+  }
+})();
+if (invokedAsScript) {
   main();
 }

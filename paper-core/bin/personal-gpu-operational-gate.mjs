@@ -151,13 +151,31 @@ function ensurePrivateDirectory(candidate) {
     throw new Error('personal_gpu_output_root_unsafe');
   }
   if (!fs.existsSync(selected)) {
-    const parent = path.dirname(selected);
-    const parentStat = fs.lstatSync(parent);
+    // Provision missing private subdirectories one level at a time.  A fresh
+    // runtime normally has no `gpu-personal/` directory yet; requiring its
+    // immediate parent to pre-exist made the first production run fail before
+    // any GPU work.  Every directory we create is owner-only, while the
+    // existing ancestor is still required to be a real directory (never a
+    // symlink) so the path cannot escape the selected runtime root.
+    const missing = [];
+    let cursor = selected;
+    while (!fs.existsSync(cursor)) {
+      missing.push(cursor);
+      const parent = path.dirname(cursor);
+      if (parent === cursor) throw new Error('personal_gpu_output_parent_unsafe');
+      cursor = parent;
+    }
+    const parentStat = fs.lstatSync(cursor);
     if (!parentStat.isDirectory() || parentStat.isSymbolicLink()
-      || fs.realpathSync.native(parent) !== parent) {
+      || fs.realpathSync.native(cursor) !== cursor) {
       throw new Error('personal_gpu_output_parent_unsafe');
     }
-    fs.mkdirSync(selected, { mode: 0o700 });
+    for (const directory of missing.reverse()) {
+      try { fs.mkdirSync(directory, { mode: 0o700 }); } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+      }
+      fs.chmodSync(directory, 0o700);
+    }
   }
   const stat = fs.lstatSync(selected);
   if (!stat.isDirectory() || stat.isSymbolicLink()

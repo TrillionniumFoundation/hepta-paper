@@ -127,7 +127,12 @@ function loadedImageDigest() {
     throw new Error('personal_gpu_pinned_image_not_loaded');
   }
   let repoDigests;
-  try { repoDigests = JSON.parse(String(result.stdout || '').trim()); } catch {
+  try {
+    repoDigests = JSON.parse(String(result.stdout || '').trim());
+    // Node's spawn receives the Go-template JSON string as a JSON-encoded
+    // string on some Docker versions; normalize both representations.
+    if (typeof repoDigests === 'string') repoDigests = JSON.parse(repoDigests);
+  } catch {
     repoDigests = null;
   }
   // Docker's RepoDigests intentionally drops the tag (`repo@sha256:...`),

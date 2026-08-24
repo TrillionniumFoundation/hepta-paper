@@ -168,6 +168,9 @@ test('NVIDIA workflow routes only to protected runners and pins the event commit
   assert.match(workflow, /ref:\s*\$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /HEPTA_GPU_CI_EXPECTED_COMMIT:\s*\$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /git rev-parse --verify HEAD\^\{commit\}/u);
+  assert.match(workflow, /git status --porcelain=v1 --untracked-files=all/u);
   assert.match(workflow, /productionQualificationMinted=false/u);
+  assert.match(workflow, /SAME_DEVICE_REPLAY_SCOPE:\s*same-device-v1/u);
+  assert.match(workflow, /SECOND_HARDWARE_REPLAY_SCOPE:\s*independent-second-hardware-v1/u);
   assert.match(workflow, /independent-second-hardware-replay/u);
 });

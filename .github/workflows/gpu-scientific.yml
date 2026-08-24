@@ -106,6 +106,7 @@ jobs:
           set -euo pipefail
           test -n "$EXPECTED_COMMIT"
           test "$EXPECTED_COMMIT" = "$(git rev-parse --verify HEAD^{commit})"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
       - name: Require exactly one visible NVIDIA device
         shell: bash
         run: |
@@ -138,6 +139,19 @@ jobs:
         env:
           HEPTA_RUNTIME_SMOKE_STAGE_TIMEOUT_MS: '180000'
         run: npm run automation:runtime-smoke -- --stage-timeout-ms 180000
+      - name: Record replay scope placeholders (never qualification)
+        env:
+          SAME_DEVICE_REPLAY_SCOPE: same-device-v1
+          SECOND_HARDWARE_REPLAY_SCOPE: independent-second-hardware-v1
+        run: |
+          {
+            echo '### Replay scope boundary'
+            echo "sameDeviceReplayScope=${SAME_DEVICE_REPLAY_SCOPE}"
+            echo "sameDeviceReplayEvidence=contract_only_not_observed"
+            echo "secondHardwareReplayScope=${SECOND_HARDWARE_REPLAY_SCOPE}"
+            echo "secondHardwareReplayEvidence=external_independent_replay_required"
+            echo 'productionQualificationMinted=false'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Record non-promotable local evidence
         run: |
           {

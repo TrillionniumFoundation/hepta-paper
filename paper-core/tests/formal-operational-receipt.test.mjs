@@ -103,3 +103,27 @@ test('receipt publication is atomic, owner-readable, and rejects traversal', (t)
     receiptPath: path.join(root, '..', 'escape.json'),
   }), /outside_runtime/u);
 });
+
+test('receipt publication rejects symlinked runtime and receipt-parent paths', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-receipt-links-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-receipt-outside-'));
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+  const receipt = buildFormalOperationalReceipt({ summary, codeProvenance: cleanProvenance });
+  const runtimeLink = path.join(root, 'runtime-link');
+  fs.symlinkSync(outside, runtimeLink, 'dir');
+  assert.throws(
+    () => writeFormalReceipt({ receipt, runtimeRoot: runtimeLink }),
+    /runtime_directory_unsafe/u,
+  );
+
+  const runtime = path.join(root, 'runtime');
+  fs.mkdirSync(runtime, { mode: 0o700 });
+  fs.symlinkSync(outside, path.join(runtime, 'formal-operational'), 'dir');
+  assert.throws(
+    () => writeFormalReceipt({ receipt, runtimeRoot: runtime }),
+    /runtime_directory_unsafe/u,
+  );
+});

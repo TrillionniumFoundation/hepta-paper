@@ -110,7 +110,30 @@ export function captureFormalOperationalReceipt({
 
 function ensureDirectory(directory) {
   const selected = path.resolve(directory);
-  fs.mkdirSync(selected, { recursive: true, mode: 0o700 });
+  // Do not let recursive mkdir follow a symlink in any component of the
+  // runtime path.  A release receipt is code-bound evidence; publishing it
+  // through an attacker-controlled link would silently move custody outside
+  // the operator-selected root.  Create missing components one at a time so
+  // every component can be lstat'd before it is trusted.
+  const parsed = path.parse(selected);
+  let current = parsed.root;
+  const components = path.relative(parsed.root, selected)
+    .split(path.sep)
+    .filter(Boolean);
+  for (const component of components) {
+    current = path.join(current, component);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      fs.mkdirSync(current, { mode: 0o700 });
+      stat = fs.lstatSync(current);
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error('formal_operational_receipt_runtime_directory_unsafe');
+    }
+  }
   const stat = fs.lstatSync(selected);
   if (!stat.isDirectory() || stat.isSymbolicLink()
     || (stat.mode & 0o022) !== 0) {

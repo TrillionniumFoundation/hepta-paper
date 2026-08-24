@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "kind": "PersonalSelfHostedProductionProfile",
+  "profileId": "personal-self-hosted-v1",
+  "scope": {
+    "operatorCardinality": "single-user",
+    "distributionMode": "private-local-only",
+    "commercialDistribution": false,
+    "externalActions": false
+  },
+  "notApplicableControls": [
+    {
+      "controlId": "hardware-kms-hsm",
+      "reason": "no-distributed-release-signing-key-is-used"
+    },
+    {
+      "controlId": "independent-external-authority-roles",
+      "reason": "no-external-authority-or-multi-operator-release-claim"
+    },
+    {
+      "controlId": "kubernetes-release-digest",
+      "reason": "no-kubernetes-deployment"
+    },
+    {
+      "controlId": "oci-registry-attestation",
+      "reason": "no-oci-registry-distribution"
+    },
+    {
+      "controlId": "offhost-worm-custody",
+      "reason": "private-single-host-scope-with-local-backup-contract"
+    },
+    {
+      "controlId": "venue-portal-live-submission",
+      "reason": "no-external-submission-or-publishing-action"
+    }
+  ],
+  "requiredLocalControls": [
+    {
+      "controlId": "credential-and-runtime-boundary",
+      "evidenceKind": "LocalCredentialRuntimeBoundaryEvidence",
+      "description": "Secrets are absent from artifacts and runtime files are owner-controlled."
+    },
+    {
+      "controlId": "database-inventory-and-schema",
+      "evidenceKind": "LocalDatabaseInventoryEvidence",
+      "description": "All declared local databases exist, pass immutable inspection, and match schema contracts."
+    },
+    {
+      "controlId": "database-restore-drill",
+      "evidenceKind": "LocalDatabaseRestoreEvidence",
+      "description": "A local restore drill was executed and its receipt is current."
+    },
+    {
+      "controlId": "enabled-scientific-oracles",
+      "evidenceKind": "LocalScientificOracleEvidence",
+      "description": "Every enabled CPU/GPU scientific capability has deterministic replay and an error budget."
+    },
+    {
+      "controlId": "exact-code-provenance",
+      "evidenceKind": "LocalExactCodeProvenanceEvidence",
+      "description": "Clean worktree and exact commit/tree/content binding."
+    },
+    {
+      "controlId": "formal-operational-zero-skipped",
+      "evidenceKind": "LocalFormalOperationalEvidence",
+      "description": "Formal operational test receipt has no skipped, failed, or todo tests."
+    },
+    {
+      "controlId": "local-author-review-session-separation",
+      "evidenceKind": "LocalAuthorReviewerSeparationEvidence",
+      "description": "Author and reviewer are fresh isolated local sessions, even when one user operates both."
+    },
+    {
+      "controlId": "local-slo-alert-policy",
+      "evidenceKind": "LocalSloAlertEvidence",
+      "description": "Local runtime SLOs and missing-data alerts are configured and exercised."
+    },
+    {
+      "controlId": "online-anti-rollback",
+      "evidenceKind": "LocalOnlineAntiRollbackEvidence",
+      "description": "Online mutation markers and the local integrity pin prevent rollback/equivocation."
+    }
+  ],
+  "scientificCapabilities": {
+    "cpu": {
+      "defaultEnabled": true,
+      "requiredEvidence": [
+        "deterministic-replay",
+        "error-budget",
+        "model-data-checkpoint-ir"
+      ]
+    },
+    "gpu": {
+      "defaultEnabled": false,
+      "optInEnvironment": "HEPTA_PERSONAL_GPU_ENABLED",
+      "requiredEvidence": [
+        "same-device-replay",
+        "deterministic-replay",
+        "error-budget",
+        "model-data-checkpoint-ir"
+      ]
+    }
+  },
+  "prohibitedActions": [
+    "external-submission",
+    "publication-claim",
+    "multi-operator-release",
+    "distribution-from-personal-profile"
+  ],
+  "profileHash": "sha256:08cca2549b49c4e6408e5c909352f5db55541b6e15b05d132690f7659274e779"
+}

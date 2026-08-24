@@ -8,6 +8,10 @@ import test from 'node:test';
 import {
   runP0ExternalAuthorityPreflight,
 } from '../bin/p0-external-authority-preflight.mjs';
+import {
+  buildOperationalSloAlertPolicy,
+  buildProductionIntegrityPin,
+} from '../../paper-domain/operations/production-integrity-contract.mjs';
 
 function directorySnapshot(root) {
   return JSON.stringify(fs.readdirSync(root, { withFileTypes: true }).map((entry) => ({
@@ -131,4 +135,172 @@ test('P0 preflight rejects one local-admin key reused for all authority roles', 
   assert.ok(report.blockers.includes('authority_role_subjects_must_be_distinct'));
   assert.ok(report.blockers.includes('authority_role_external_assurance_required:research-author'));
   assert.ok(report.blockers.includes('release_attestor_configuration_pin_mismatch'));
+});
+
+test('P1/P2 integrity and SLO observations require canonical contract hashes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-p1p2-contracts-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  const runtimeRoot = path.join(root, 'runtime');
+  fs.mkdirSync(workspaceRoot);
+  fs.mkdirSync(runtimeRoot);
+  fs.mkdirSync(path.join(runtimeRoot, 'production-integrity'));
+  fs.mkdirSync(path.join(runtimeRoot, 'operations'));
+  fs.mkdirSync(path.join(workspaceRoot, 'paper-core'), { recursive: true });
+  fs.mkdirSync(path.join(workspaceRoot, 'paper-core', 'config'));
+  // Keep the schema present so the SLO result isolates the canonical-hash
+  // failure rather than the expected missing-schema observation.
+  fs.writeFileSync(
+    path.join(workspaceRoot, 'paper-core', 'config', 'production-integrity-policy.schema.json'),
+    '{}',
+  );
+  const digest = (suffix) => `sha256:${String(suffix).repeat(64).slice(0, 64)}`;
+  const validPin = buildProductionIntegrityPin({
+    deploymentGeneration: 1,
+    ociImageDigest: digest('a'),
+    ociManifestDigest: digest('b'),
+    ociConfigDigest: digest('c'),
+    ociLayerDigests: [digest('d')],
+    kubernetesWorkloadDigest: digest('e'),
+    kubernetesManifestHash: digest('f'),
+    registryAttestationHash: digest('1'),
+    cveAttestationHash: digest('2'),
+    databaseInventoryHash: digest('3'),
+    databaseHeadSequence: 1,
+    databaseHeadHash: digest('4'),
+    restoreDrillReceiptHash: digest('5'),
+    independentVerifierSubjectHash: digest('6'),
+    attestationHashes: [digest('7'), digest('8')],
+    issuedAt: '2026-08-23T00:00:00.000Z',
+    expiresAt: '2026-08-24T00:00:00.000Z',
+  });
+  const tamperedPin = { ...validPin, ociImageDigest: digest('9') };
+  fs.writeFileSync(
+    path.join(runtimeRoot, 'production-integrity', 'PRODUCTION_INTEGRITY_PIN.json'),
+    JSON.stringify(tamperedPin),
+  );
+  fs.chmodSync(
+    path.join(runtimeRoot, 'production-integrity', 'PRODUCTION_INTEGRITY_PIN.json'),
+    0o600,
+  );
+  const policy = buildOperationalSloAlertPolicy();
+  const tamperedPolicy = {
+    ...policy,
+    maximumQueueWaitP95Ms: policy.maximumQueueWaitP95Ms + 1,
+  };
+  const policyPath = path.join(runtimeRoot, 'operations', 'slo-policy.json');
+  fs.writeFileSync(policyPath, JSON.stringify(tamperedPolicy));
+  fs.chmodSync(policyPath, 0o600);
+
+  const report = runP0ExternalAuthorityPreflight({
+    workspaceRoot,
+    runtimeRoot,
+    environment: Object.freeze({ HEPTA_OPERATIONAL_SLO_POLICY_PATH: policyPath }),
+  });
+  assert.ok(report.blockers.includes('production_integrity_pin_contract_invalid'));
+  assert.equal(report.sections.antiRollback.contractValid, false);
+  assert.ok(report.blockers.includes('operational_slo_policy_contract_invalid'));
+  assert.equal(report.sections.slo.policyContractValid, false);
+});
+
+test('P1 OCI observation rejects present but non-independent attestations', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-p1-oci-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  const runtimeRoot = path.join(root, 'runtime');
+  const attestations = path.join(runtimeRoot, 'attestations');
+  fs.mkdirSync(workspaceRoot);
+  fs.mkdirSync(attestations, { recursive: true });
+  const paths = {
+    pin: path.join(attestations, 'pin.json'),
+    verifier: path.join(attestations, 'verifier.json'),
+    registry: path.join(attestations, 'registry.json'),
+    cve: path.join(attestations, 'cve.json'),
+  };
+  const write = (filePath, value) => {
+    fs.writeFileSync(filePath, JSON.stringify(value));
+    fs.chmodSync(filePath, 0o600);
+  };
+  write(paths.pin, { kind: 'ProductionIntegrityPin', status: 'production_integrity_pin_active' });
+  write(paths.verifier, {
+    kind: 'RuntimeImageReproducibilityReceipt',
+    version: 2,
+    status: 'runtime_image_reproducibility_external_attestations_recorded',
+    externalActionPerformed: true,
+    privateSigningKeyLoadedByController: false,
+    assurance: 'two-independent-ed25519-attested-oci-layouts-v0',
+    responses: [],
+  });
+  write(paths.registry, { kind: 'RegistryAttestation', status: 'verified', independentAuthority: false });
+  write(paths.cve, { kind: 'CveAttestation', status: 'verified', independentAuthority: false });
+  const report = runP0ExternalAuthorityPreflight({
+    workspaceRoot,
+    runtimeRoot,
+    environment: {
+      HEPTA_PRODUCTION_INTEGRITY_PIN_PATH: paths.pin,
+      HEPTA_OCI_INDEPENDENT_VERIFIER_PATH: paths.verifier,
+      HEPTA_REGISTRY_ATTESTATION_PATH: paths.registry,
+      HEPTA_CVE_ATTESTATION_PATH: paths.cve,
+    },
+  });
+  assert.ok(report.blockers.includes('oci_production_integrity_pin_contract_invalid'));
+  assert.ok(report.blockers.includes('oci_independent_verifier_attestation_invalid'));
+  assert.ok(report.blockers.includes('oci_registry_attestation_invalid'));
+  assert.ok(report.blockers.includes('oci_cve_attestation_invalid'));
+  assert.equal(report.sections.oci.bitwiseRebuildVerified, false);
+  assert.equal(report.sections.oci.independentVerifierCount, 0);
+});
+
+test('P1 restore observation rejects a status-only drill receipt', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-p1-restore-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  const runtimeRoot = path.join(root, 'runtime');
+  fs.mkdirSync(workspaceRoot);
+  fs.mkdirSync(runtimeRoot);
+  const receiptPath = path.join(root, 'restore.receipt.json');
+  fs.writeFileSync(receiptPath, JSON.stringify({
+    version: 2,
+    kind: 'HeptaStoreRestoreDrillReceipt',
+    status: 'hepta_store_restore_drill_passed',
+  }));
+  fs.chmodSync(receiptPath, 0o600);
+  const report = runP0ExternalAuthorityPreflight({
+    workspaceRoot,
+    runtimeRoot,
+    environment: { HEPTA_RESTORE_DRILL_RECEIPT_PATH: receiptPath },
+  });
+  assert.ok(report.blockers.includes('restore_drill_receipt_contract_invalid'));
+  assert.equal(report.sections.restore.receiptContractValid, false);
+});
+
+test('P1 Kubernetes observation requires every image and the workload annotation by digest', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-p1-kubernetes-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  const runtimeRoot = path.join(root, 'runtime');
+  fs.mkdirSync(workspaceRoot);
+  fs.mkdirSync(runtimeRoot);
+  const manifestPath = path.join(root, 'deployment.yaml');
+  fs.writeFileSync(manifestPath, `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    hepta.paper/kubernetes-workload-digest: sha256:${'a'.repeat(64)}
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: pinned
+          image: example.invalid/hepta@sha256:${'b'.repeat(64)}
+      containers:
+        - name: mutable
+          image: example.invalid/hepta:latest
+`);
+  const report = runP0ExternalAuthorityPreflight({
+    workspaceRoot,
+    runtimeRoot,
+    environment: { HEPTA_KUBERNETES_MANIFEST: manifestPath },
+  });
+  assert.ok(report.blockers.includes('kubernetes_image_digest_missing_or_unpinned'));
+  assert.equal(report.sections.kubernetes.imageReferenceCount, 2);
+  assert.equal(report.sections.kubernetes.pinnedImageReferenceCount, 1);
+  assert.equal(report.sections.kubernetes.allImagesPinned, false);
+  assert.equal(report.sections.kubernetes.workloadDigestPresent, true);
 });

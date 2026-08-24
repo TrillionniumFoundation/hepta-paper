@@ -24,6 +24,13 @@ import {
   loadCapabilityOperationalProofs,
 } from '../../paper-adapters/governance/capability-proof-verifier.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
+import {
+  verifyOperationalSloAlertPolicy,
+  verifyProductionIntegrityPin,
+} from '../../paper-domain/operations/production-integrity-contract.mjs';
+import {
+  verifyHeptaStoreRestoreDrillReceipt,
+} from '../../paper-domain/evidence/hepta-store-restore-drill-receipt-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const REQUIRED_AUTHORITY_ROLES = Object.freeze([
@@ -366,12 +373,21 @@ function inspectRestore({ runtimeRoot, environment }) {
     : walkFiles(path.join(runtimeRoot, 'backups'), '.restore-drill.receipt.json');
   const observations = candidates.map((candidate) => jsonFile(candidate, { maximumBytes: 4 * 1024 * 1024 }));
   const selected = observations.find((item) => item.present && item.safe && item.parsed) || null;
-  const passed = selected?.document?.status === 'hepta_store_restore_drill_passed';
-  const blockers = passed ? [] : ['restore_drill_passed_receipt_missing'];
+  let contract = null;
+  if (selected) {
+    try { contract = verifyHeptaStoreRestoreDrillReceipt(selected.document); } catch { contract = null; }
+  }
+  const passed = selected?.document?.status === 'hepta_store_restore_drill_passed'
+    && contract?.valid === true;
+  const blockers = [];
+  if (!selected) blockers.push('restore_drill_passed_receipt_missing');
+  else if (!passed) blockers.push('restore_drill_receipt_contract_invalid');
   return section('restore_drill', blockers, {
     receiptPath: selected?.path || (explicit ? absolute(explicit, explicit) : null),
     receiptPresent: Boolean(selected?.present && selected?.safe && selected?.parsed),
     receiptPassed: passed,
+    receiptContractValid: contract?.valid === true,
+    receiptVersion: contract?.version || selected?.document?.version || null,
     candidateCount: candidates.length,
     externalActionPerformed: false,
   });
@@ -398,16 +414,29 @@ function inspectAntiRollback({ runtimeRoot, environment }) {
     value.databaseHeadHash,
     value.restoreDrillReceiptHash,
   ].every((valueHash) => SHA256.test(String(valueHash || '')));
-  const valid = schemaValid && hashFieldsPresent && value.externalActionPerformed === false;
+  // Shape checks alone are not enough here: a local process could otherwise
+  // place a self-consistent-looking set of digests in the pin.  Re-run the
+  // canonical production-integrity verifier (including exact keys, payload
+  // hash, generation/expiry and predecessor rules) without mutating state.
+  let contractValid = false;
+  if (schemaValid && hashFieldsPresent && value.externalActionPerformed === false) {
+    try { contractValid = verifyProductionIntegrityPin(value); } catch { contractValid = false; }
+  }
+  const valid = schemaValid && hashFieldsPresent && contractValid
+    && value.externalActionPerformed === false;
   const blockers = valid ? [] : ['production_integrity_pin_missing_or_invalid'];
   if (selected && !schemaValid) blockers.push('production_integrity_pin_schema_invalid');
   if (selected && !hashFieldsPresent) blockers.push('production_integrity_pin_hash_fields_missing_or_invalid');
+  if (selected && schemaValid && hashFieldsPresent && !contractValid) {
+    blockers.push('production_integrity_pin_contract_invalid');
+  }
   if (value.externalActionPerformed === true) blockers.push('production_integrity_pin_external_action_forbidden');
   return section('anti_rollback', blockers, {
     pinPath: selected?.path || null,
     pinPresent: Boolean(selected?.present && selected?.safe && selected?.parsed),
     schemaValid,
     hashFieldsPresent,
+    contractValid,
     pinValid: valid,
     deploymentGeneration: valid ? value.deploymentGeneration : null,
     externalActionPerformed: value.externalActionPerformed === true,
@@ -518,18 +547,101 @@ function inspectOci({ workspaceRoot, runtimeRoot, environment }) {
       if (read.safe) baseDigestCount += (read.value.toString('utf8').match(/@sha256:[0-9a-f]{64}/gi) || []).length;
     }
   } catch { /* represented by missing attestations below */ }
+  const pinContractValid = Boolean(pin.present && pin.safe && pin.parsed
+    && (() => {
+      try { return verifyProductionIntegrityPin(pin.document); } catch { return false; }
+    })());
+  const simpleAttestation = (read, expectedHash, acceptedKinds) => {
+    const value = read.document || {};
+    const declaredHash = [
+      value.attestationHash,
+      value.registryAttestationHash,
+      value.cveAttestationHash,
+      value.evidenceHash,
+    ].find((candidate) => SHA256.test(String(candidate || '')));
+    const kindValid = acceptedKinds.includes(String(value.kind || ''));
+    const statusValid = typeof value.status === 'string'
+      && /(verified|attested|qualified|ready|passed)/i.test(value.status);
+    const independent = value.independentAuthority === true
+      || value.externalIndependent === true
+      || value.independent === true;
+    // A present attestation must carry its own content hash.  Merely having a
+    // status string is not evidence, even when the production pin is absent.
+    const hashBound = Boolean(declaredHash)
+      && (!expectedHash || declaredHash === expectedHash);
+    return Object.freeze({
+      present: read.present && read.safe && read.parsed,
+      kindValid,
+      statusValid,
+      independent,
+      declaredHash: declaredHash || null,
+      hashBound,
+      valid: read.present && read.safe && read.parsed && kindValid && statusValid
+        && independent && hashBound,
+    });
+  };
+  const registryContract = simpleAttestation(
+    registry,
+    pin.document?.registryAttestationHash,
+    ['RegistryAttestation', 'OCIRegistryAttestation', 'ContainerRegistryAttestation'],
+  );
+  const cveContract = simpleAttestation(
+    cve,
+    pin.document?.cveAttestationHash,
+    ['CveAttestation', 'CVEAttestation', 'ContainerCveAttestation'],
+  );
+  const verifierDocument = verifier.document || {};
+  const responses = Array.isArray(verifierDocument.responses)
+    ? verifierDocument.responses : [];
+  const verifierIds = responses.map((item) => String(item?.verifierId || ''));
+  const verifierSubjects = responses.map((item) => String(item?.signer?.subjectId || ''));
+  const verifierBackends = responses.map((item) => String(item?.backendIdentityHash || ''));
+  const verifierOrganizations = responses.map((item) => String(item?.signer?.organization || '').trim().toLowerCase());
+  const verifierResponsesStructurallyValid = responses.every((item) => (
+    item?.status === 'runtime_image_oci_bitwise_rebuild_attested'
+      && SHA256.test(String(item?.responseHash || ''))
+      && SHA256.test(String(item?.verifierServiceIdentityHash || ''))
+      && typeof item?.signature === 'string' && item.signature.length > 0
+      && item?.signer?.algorithm === 'ed25519'
+      && item?.signer?.status === 'active'
+  ));
+  const twoIndependentVerifiers = responses.length === 2
+    && verifierResponsesStructurallyValid
+    && verifierIds.every(Boolean) && new Set(verifierIds).size === 2
+    && verifierSubjects.every(Boolean) && new Set(verifierSubjects).size === 2
+    && verifierBackends.every((item) => SHA256.test(item)) && new Set(verifierBackends).size === 2
+    && verifierOrganizations.every(Boolean) && new Set(verifierOrganizations).size === 2;
+  const verifierContractValid = verifier.present && verifier.safe && verifier.parsed
+    && verifierDocument.kind === 'RuntimeImageReproducibilityReceipt'
+    && verifierDocument.version === 2
+    && verifierDocument.status === 'runtime_image_reproducibility_external_attestations_recorded'
+    && verifierDocument.externalActionPerformed === true
+    && verifierDocument.privateSigningKeyLoadedByController === false
+    && verifierDocument.assurance === 'two-independent-ed25519-attested-oci-layout-rebuilds-v1'
+    && twoIndependentVerifiers;
   const blockers = [];
   if (!pin.present || !pin.safe || !pin.parsed) blockers.push('oci_production_integrity_pin_missing');
+  else if (!pinContractValid) blockers.push('oci_production_integrity_pin_contract_invalid');
   if (!verifier.present || !verifier.safe || !verifier.parsed) blockers.push('oci_independent_verifier_attestation_missing');
+  else if (!verifierContractValid) blockers.push('oci_independent_verifier_attestation_invalid');
   if (!registry.present || !registry.safe || !registry.parsed) blockers.push('oci_registry_attestation_missing');
+  else if (!registryContract.valid) blockers.push('oci_registry_attestation_invalid');
   if (!cve.present || !cve.safe || !cve.parsed) blockers.push('oci_cve_attestation_missing');
+  else if (!cveContract.valid) blockers.push('oci_cve_attestation_invalid');
   return section('oci_reproducibility', blockers, {
     productionIntegrityPinPresent: pin.present && pin.safe && pin.parsed,
+    productionIntegrityPinContractValid: pinContractValid,
     independentVerifierAttestationPresent: verifier.present && verifier.safe && verifier.parsed,
+    independentVerifierAttestationContractValid: verifierContractValid,
     registryAttestationPresent: registry.present && registry.safe && registry.parsed,
+    registryAttestationContractValid: registryContract.valid,
     cveAttestationPresent: cve.present && cve.safe && cve.parsed,
+    cveAttestationContractValid: cveContract.valid,
+    independentVerifierCount: responses.length,
+    independentVerifierSubjectsDistinct: new Set(verifierSubjects.filter(Boolean)).size === responses.length,
+    independentVerifierBackendsDistinct: new Set(verifierBackends.filter(Boolean)).size === responses.length,
     pinnedBaseImageReferenceCount: baseDigestCount,
-    bitwiseRebuildVerified: false,
+    bitwiseRebuildVerified: verifierContractValid,
     externalActionPerformed: false,
   });
 }
@@ -543,20 +655,27 @@ function inspectKubernetes({ workspaceRoot, environment }) {
   });
   const text = read.safe ? read.value.toString('utf8') : '';
   const placeholders = (text.match(/REPLACE_WITH_[A-Z0-9_]+/g) || []).length;
+  const imageReferenceCount = (text.match(/^\s*image:\s*[^\n#]+/gim) || []).length;
   const imageDigestCount = (text.match(/image:\s*[^\s]+@sha256:[0-9a-f]{64}/gi) || []).length;
-  const workloadDigestPresent = /kubernetesWorkloadDigest|workload-digest|deployment-generation/i.test(text)
-    && !/REPLACE_WITH_[A-Z0-9_]+/.test(text);
+  const workloadDigestMatch = text.match(/hepta\.paper\/kubernetes-workload-digest:\s*([^\s#]+)/i);
+  const workloadDigest = workloadDigestMatch?.[1] || null;
+  const workloadDigestPresent = SHA256.test(String(workloadDigest || ''))
+    && !/REPLACE_WITH_[A-Z0-9_]+/.test(String(workloadDigest || ''));
+  const allImagesPinned = imageReferenceCount > 0 && imageDigestCount === imageReferenceCount;
   const blockers = [];
   if (!read.present || !read.safe) blockers.push('kubernetes_manifest_missing_or_unsafe');
   if (placeholders > 0) blockers.push('kubernetes_manifest_placeholders_present');
-  if (imageDigestCount === 0) blockers.push('kubernetes_image_digest_missing');
+  if (!allImagesPinned) blockers.push('kubernetes_image_digest_missing_or_unpinned');
   if (!workloadDigestPresent) blockers.push('kubernetes_workload_digest_attestation_missing');
   return section('kubernetes_manifest', blockers, {
     manifestPath: absolute(manifestPath, manifestPath),
     manifestFilePresent: read.present,
     manifestPresent: read.present && read.safe,
     placeholderCount: placeholders,
+    imageReferenceCount,
     pinnedImageReferenceCount: imageDigestCount,
+    allImagesPinned,
+    workloadDigest,
     workloadDigestPresent,
     externalActionPerformed: false,
   });
@@ -572,18 +691,29 @@ function inspectSlo({ workspaceRoot, runtimeRoot, environment }) {
     allowGroupWritable: true,
   });
   const value = policy.document || {};
-  const valid = value.kind === 'OperationalSloAlertPolicy'
+  const shapeValid = value.kind === 'OperationalSloAlertPolicy'
     && value.version === 1 && value.alertOnMissingData === true
     && SHA256.test(String(value.operationalSloAlertPolicyHash || ''));
+  // Verify the canonical hash and exact policy bounds.  This remains
+  // observation-only; no alert or policy is generated by the preflight.
+  let contractValid = false;
+  if (shapeValid) {
+    try { contractValid = verifyOperationalSloAlertPolicy(value); } catch { contractValid = false; }
+  }
+  const valid = shapeValid && contractValid;
   const blockers = [];
   if (!schema.present || !schema.safe) blockers.push('operational_slo_schema_missing');
   if (!policy.present || !policy.safe || !policy.parsed || !valid) blockers.push('operational_slo_policy_missing_or_invalid');
+  if (policy.present && policy.safe && policy.parsed && shapeValid && !contractValid) {
+    blockers.push('operational_slo_policy_contract_invalid');
+  }
   return section('operational_slo', blockers, {
     schemaFilePresent: schema.present,
     schemaPresent: schema.present && schema.safe,
     policyPath: absolute(policyPath, policyPath),
     policyFilePresent: policy.present,
     policyPresent: policy.present && policy.safe && policy.parsed,
+    policyContractValid: contractValid,
     alertOnMissingData: value.alertOnMissingData === true,
     alertsConfigured: valid,
     externalActionPerformed: false,

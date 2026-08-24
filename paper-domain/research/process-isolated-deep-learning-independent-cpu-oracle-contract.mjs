@@ -39,7 +39,10 @@ export const DEEP_LEARNING_CPU_ORACLE_RESOURCE_LIMITS = Object.freeze({
   timeoutMs: 300_000,
   memoryBytes: 512 * 1024 * 1024,
   cpuSeconds: 120,
-  maximumProcesses: 2,
+  // A Node worker needs its main thread plus libuv/runtime helper threads.
+  // A pids cgroup of two deadlocks before stdin is read; eight remains a
+  // tight process budget while leaving the runtime enough room to execute.
+  maximumProcesses: 8,
 });
 
 const SOURCE_RECORD_KEYS = Object.freeze(['role', 'sha256']);
@@ -142,7 +145,8 @@ export function verifyDeepLearningCpuOracleResourceBudget(value) {
   return hasExactObjectKeys(value, RESOURCE_BUDGET_KEYS)
     && Object.entries(DEEP_LEARNING_CPU_ORACLE_RESOURCE_LIMITS).every(
       ([key, maximum]) => Number.isSafeInteger(value[key])
-        && value[key] >= 1 && value[key] <= maximum,
+        && value[key] >= (key === 'maximumProcesses' ? 8 : 1)
+        && value[key] <= maximum,
     );
 }
 

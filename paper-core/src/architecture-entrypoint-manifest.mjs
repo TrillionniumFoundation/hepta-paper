@@ -89,6 +89,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/owner-acceptance-status.mjs',
     'paper-core/bin/academic-docker-operational.mjs',
     'paper-core/bin/dynamic-formal-kernel-operational.mjs',
+    'paper-core/bin/formal-operational-receipt.mjs',
     'paper-core/tests/autonomous-research-topic-producer.test.mjs',
     'paper-core/tests/autonomous-research-supervisor-external-action-journal.test.mjs',
     'paper-core/tests/gpu-selector-execution-lease.test.mjs',

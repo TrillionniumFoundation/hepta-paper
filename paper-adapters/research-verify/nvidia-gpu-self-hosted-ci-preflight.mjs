@@ -5,15 +5,24 @@ import { fileURLToPath } from 'node:url';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
+const COMMIT = /^[0-9a-f]{40}$/u;
 const GPU_UUID = /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const COMPUTE_CAPABILITY = /^\d{1,2}\.\d{1,2}$/u;
 const DRIVER_VERSION = /^\d+(?:\.\d+){1,3}$/u;
-const REQUIRED_RUNNER_LABELS = Object.freeze(['self-hosted', 'linux', 'x64', 'nvidia-gpu']);
+// `nvidia-gpu-protected` is intentionally separate from the broad capability
+// label.  The former must be attached only to the attested, isolated runner
+// group; accepting `nvidia-gpu` alone would allow an arbitrary self-hosted
+// runner to receive repository code.
+const REQUIRED_RUNNER_LABELS = Object.freeze([
+  'self-hosted', 'linux', 'x64', 'nvidia-gpu', 'nvidia-gpu-protected',
+]);
 const PREFLIGHT_KEYS = Object.freeze([
   'blockers', 'dockerImage', 'dockerImageDigest',
   'gpuDeviceObservation', 'kind', 'operationalSmokeReady',
   'productionPromotionEligible', 'runnerAttestation', 'runnerLabels',
-  'ciOptIn', 'loadedRepoDigests', 'status', 'version',
+  'ciOptIn', 'loadedRepoDigests', 'expectedCommit', 'observedCommit',
+  'exactCommitBinding', 'replayRequirements', 'productionQualificationMinted',
+  'status', 'version',
   'nvidiaGpuSelfHostedCiPreflightHash',
 ]);
 const GPU_OBSERVATION_KEYS = Object.freeze([
@@ -21,20 +30,30 @@ const GPU_OBSERVATION_KEYS = Object.freeze([
 ]);
 
 export const NVIDIA_GPU_SELF_HOSTED_CI_POLICY = Object.freeze({
-  version: 1,
+  version: 2,
   kind: 'NvidiaGpuSelfHostedCiPolicy',
   requiredRunnerLabels: REQUIRED_RUNNER_LABELS,
   deviceCount: 1,
   imageMustBePreloaded: true,
   imageDigestRequired: true,
   networkPullAllowed: false,
+  exactCommitBindingRequired: true,
+  sameDeviceReplayScope: 'same-device-v1',
+  secondHardwareReplayScope: 'independent-second-hardware-v1',
+  independentSecondHardwareRequiredForPromotion: true,
   bitwiseRebuildRequiredForPromotion: true,
   productionPromotionEligible: false,
+  productionQualificationMinted: false,
 });
 
 function digest(value) {
   const selected = String(value || '').toLowerCase();
   return SHA256.test(selected) ? selected : null;
+}
+
+function commit(value) {
+  const selected = String(value || '').trim().toLowerCase();
+  return COMMIT.test(selected) ? selected : null;
 }
 
 function uniqueSorted(values) {
@@ -93,10 +112,14 @@ export function buildNvidiaGpuSelfHostedCiPreflight({
   dockerImageDigest,
   observedGpu = null,
   loadedRepoDigests = [],
+  expectedCommit,
+  observedCommit,
   commandBlockers = [],
 } = {}) {
   const image = canonicalImage(dockerImage);
   const imageDigest = digest(dockerImageDigest);
+  const expected = commit(expectedCommit);
+  const observedSource = commit(observedCommit);
   const labels = parseRunnerLabels(runnerLabels);
   const observed = observedGpu && Object.keys(observedGpu).length === 4
     && Object.keys(observedGpu).every((key) => GPU_OBSERVATION_KEYS.includes(key))
@@ -106,6 +129,27 @@ export function buildNvidiaGpuSelfHostedCiPreflight({
     && DRIVER_VERSION.test(observedGpu.driverVersion || '')
     ? Object.freeze({ ...observedGpu }) : null;
   const repoDigests = parseRunnerLabels(loadedRepoDigests);
+  const exactCommitBinding = Boolean(expected && observedSource
+    && expected === observedSource);
+  // These are deliberately requirements, not evidence.  The preflight can
+  // establish runner readiness, but it cannot execute or independently
+  // attest either replay scope.  Keeping both scopes in every receipt makes
+  // that boundary machine-readable and prevents a local admin from turning a
+  // smoke run into production qualification.
+  const replayRequirements = Object.freeze({
+    sameDevice: Object.freeze({
+      scope: 'same-device-v1',
+      status: 'contract_only_not_observed',
+      evidenceHash: null,
+      productionPromotionEligible: false,
+    }),
+    secondHardware: Object.freeze({
+      scope: 'independent-second-hardware-v1',
+      status: 'external_independent_replay_required',
+      evidenceHash: null,
+      productionPromotionEligible: false,
+    }),
+  });
   const blockers = uniqueSorted([
     ...commandBlockers,
     ...(enabled === true ? [] : ['nvidia_gpu_ci_opt_in_required']),
@@ -118,6 +162,10 @@ export function buildNvidiaGpuSelfHostedCiPreflight({
     ...(observed ? [] : ['nvidia_gpu_ci_exactly_one_gpu_required']),
     ...(image && imageDigest && repoDigests.includes(`${image}@${imageDigest}`)
       ? [] : ['nvidia_gpu_ci_pinned_image_not_preloaded']),
+    ...(expected ? [] : ['nvidia_gpu_ci_expected_commit_required']),
+    ...(observedSource ? [] : ['nvidia_gpu_ci_observed_commit_unavailable']),
+    ...(exactCommitBinding ? [] : (expected && observedSource
+      ? ['nvidia_gpu_ci_exact_commit_mismatch'] : [])),
   ]);
   const payload = {
     version: 1,
@@ -131,9 +179,14 @@ export function buildNvidiaGpuSelfHostedCiPreflight({
     dockerImage: image,
     dockerImageDigest: imageDigest,
     loadedRepoDigests: repoDigests,
+    expectedCommit: expected,
+    observedCommit: observedSource,
+    exactCommitBinding,
     gpuDeviceObservation: observed,
+    replayRequirements,
     operationalSmokeReady: blockers.length === 0,
     productionPromotionEligible: false,
+    productionQualificationMinted: false,
     blockers,
   };
   return Object.freeze({
@@ -155,6 +208,8 @@ export function verifyNvidiaGpuSelfHostedCiPreflight(value) {
       ciOptIn: value.ciOptIn,
       dockerImage: value.dockerImage,
       dockerImageDigest: value.dockerImageDigest,
+      expectedCommit: value.expectedCommit,
+      observedCommit: value.observedCommit,
       observedGpu: value.gpuDeviceObservation,
       loadedRepoDigests: value.loadedRepoDigests,
     });
@@ -190,6 +245,7 @@ export function runNvidiaGpuSelfHostedCiPreflight({
   spawnSync = defaultSpawnSync,
   dockerImage = env.HEPTA_GPU_CI_IMAGE,
   dockerImageDigest = env.HEPTA_GPU_CI_IMAGE_DIGEST,
+  expectedCommit = env.HEPTA_GPU_CI_EXPECTED_COMMIT || env.GITHUB_SHA,
 } = {}) {
   const gpu = invoke(spawnSync, 'nvidia-smi', [
     '--query-gpu=uuid,name,compute_cap,driver_version',
@@ -201,6 +257,9 @@ export function runNvidiaGpuSelfHostedCiPreflight({
     ? invoke(spawnSync, 'docker', [
       'image', 'inspect', `${image}@${digestValue}`, '--format', '{{json .RepoDigests}}',
     ]) : { stdout: '', blocker: 'nvidia_gpu_ci_image_reference_invalid' };
+  const source = invoke(spawnSync, 'git', [
+    'rev-parse', '--verify', 'HEAD^{commit}',
+  ]);
   return buildNvidiaGpuSelfHostedCiPreflight({
     enabled: env.HEPTA_ENABLE_GPU_CI === 'true',
     runnerLabels: env.HEPTA_GPU_CI_RUNNER_LABELS,
@@ -208,9 +267,11 @@ export function runNvidiaGpuSelfHostedCiPreflight({
     ciOptIn: env.HEPTA_ENABLE_GPU_CI === 'true',
     dockerImage: image,
     dockerImageDigest: digestValue,
+    expectedCommit,
+    observedCommit: String(source.stdout || '').trim(),
     observedGpu: parseNvidiaGpuQueryCsv(gpu.stdout),
     loadedRepoDigests: parseDockerRepoDigests(docker.stdout) || [],
-    commandBlockers: [gpu.blocker, docker.blocker].filter(Boolean),
+    commandBlockers: [gpu.blocker, docker.blocker, source.blocker].filter(Boolean),
   });
 }
 

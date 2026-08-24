@@ -18,6 +18,9 @@ import {
 import {
   verifySingleVenueSubmissionRolloutConfiguration,
 } from '../../paper-domain/submission/single-venue-rollout-contract.mjs';
+import {
+  runP0ExternalAuthorityPreflight,
+} from '../bin/p0-external-authority-preflight.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
@@ -226,6 +229,38 @@ function inspectExternalMaterials(workspaceRoot) {
   });
 }
 
+function inspectExternalAuthority({
+  workspaceRoot,
+  runtimeRoot,
+  environment,
+  preflight = runP0ExternalAuthorityPreflight,
+}) {
+  let report;
+  try {
+    report = preflight({
+      workspaceRoot,
+      runtimeRoot,
+      environment,
+    });
+  } catch (error) {
+    return Object.freeze({
+      status: 'blocked',
+      report: null,
+      blockers: Object.freeze([
+        `release_plan_external_authority_preflight_failed:${safeError(error)}`,
+      ]),
+    });
+  }
+  const blockers = report.status === 'p0_external_authority_preflight_ready'
+    ? []
+    : (report.blockers || []).map((blocker) => `release_plan_external_authority:${blocker}`);
+  return Object.freeze({
+    status: blockers.length ? 'blocked' : 'ready',
+    report,
+    blockers: Object.freeze([...new Set(blockers)]),
+  });
+}
+
 function inspectAuthorities(runtimeRoot) {
   const root = path.resolve(runtimeRoot, 'owner-acceptance');
   const trust = requiredFile(root, 'OWNER_TRUST_STORE.json');
@@ -421,6 +456,7 @@ export function buildReleaseReadinessPlan({
   runtimeRoot = null,
   environment = process.env,
   graphInspector = inspectTrackedProductionGraph,
+  externalAuthorityPreflight = runP0ExternalAuthorityPreflight,
 } = {}) {
   const root = path.resolve(workspaceRoot);
   const selectedRuntimeRoot = path.resolve(
@@ -443,6 +479,12 @@ export function buildReleaseReadinessPlan({
   const sections = Object.freeze({
     freeze: inspectFreeze(root, graph, environment),
     externalMaterials: inspectExternalMaterials(root),
+    externalAuthority: inspectExternalAuthority({
+      workspaceRoot: root,
+      runtimeRoot: selectedRuntimeRoot,
+      environment,
+      preflight: externalAuthorityPreflight,
+    }),
     formal: inspectFormal(root, environment, selectedRuntimeRoot),
     authorities: inspectAuthorities(selectedRuntimeRoot),
     compute: inspectCompute(root, selectedRuntimeRoot, environment),

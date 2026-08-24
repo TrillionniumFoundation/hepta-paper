@@ -5,6 +5,7 @@
 // manufacture a hash/credential/acceptance.  It is an observation aid for an
 // operator; release-readiness and all production gates remain authoritative.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,6 +18,12 @@ import {
 } from '../src/workspace-layout.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import { inspectReadOnlySqliteDatabase } from '../src/read-only-sqlite-observation.mjs';
+import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
+import {
+  loadCapabilityConformanceProofs,
+  loadCapabilityOperationalProofs,
+} from '../../paper-adapters/governance/capability-proof-verifier.mjs';
+import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const REQUIRED_AUTHORITY_ROLES = Object.freeze([
@@ -107,6 +114,10 @@ function safeBoolean(value) {
   return value === true;
 }
 
+function sha256Buffer(value) {
+  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+}
+
 function inspectRoles({ runtimeRoot, environment }) {
   const trustStorePath = absolute(
     environment.HEPTA_AUTHORITY_TRUST_STORE,
@@ -127,6 +138,21 @@ function inspectRoles({ runtimeRoot, environment }) {
     ROLE_ALIASES[role].some((alias) => Number(roleCounts[alias] || 0) > 0)
   ));
   const missingRoles = REQUIRED_AUTHORITY_ROLES.filter((role) => !coveredRoles.includes(role));
+  const roleKeyIds = Object.fromEntries(REQUIRED_AUTHORITY_ROLES.map((role) => [
+    role,
+    [...new Set(activeKeys.filter((key) => ROLE_ALIASES[role].some((alias) => (
+      Array.isArray(key?.roles) && key.roles.includes(alias)
+    ))).map((key) => String(key.keyId || key.subjectId || ''))
+      .filter(Boolean))],
+  ]));
+  const roleSubjects = [...new Set(Object.values(roleKeyIds).flat())];
+  const allRolesHaveDistinctSubjects = roleSubjects.length >= coveredRoles.length;
+  const roleAssurance = Object.fromEntries(REQUIRED_AUTHORITY_ROLES.map((role) => [
+    role,
+    roleKeyIds[role].map((keyId) => activeKeys.find((key) => (
+      String(key.keyId || key.subjectId || '') === keyId
+    ))?.assurance || 'unspecified'),
+  ]));
   const privateKeyMaterialDetected = keys.some((key) => (
     Boolean(key?.privateKeyPem) || /PRIVATE KEY/.test(String(key?.publicKeyPem || ''))
   ));
@@ -136,6 +162,14 @@ function inspectRoles({ runtimeRoot, environment }) {
     blockers.push('authority_trust_store_invalid');
   }
   if (missingRoles.length) blockers.push(...missingRoles.map((role) => `authority_role_missing:${role}`));
+  if (coveredRoles.length && !allRolesHaveDistinctSubjects) {
+    blockers.push('authority_role_subjects_must_be_distinct');
+  }
+  for (const role of coveredRoles) {
+    if (!roleAssurance[role].length || roleAssurance[role].some((value) => value !== 'external_independent')) {
+      blockers.push(`authority_role_external_assurance_required:${role}`);
+    }
+  }
   if (privateKeyMaterialDetected) blockers.push('authority_trust_store_private_key_material_forbidden');
   return section('authority_configuration', blockers, {
     trustStorePath,
@@ -145,6 +179,9 @@ function inspectRoles({ runtimeRoot, environment }) {
     requiredRoles: REQUIRED_AUTHORITY_ROLES,
     coveredRoles: Object.freeze(coveredRoles),
     missingRoles: Object.freeze(missingRoles),
+    roleKeyIds: Object.freeze(roleKeyIds),
+    roleAssurance: Object.freeze(roleAssurance),
+    distinctRoleSubjects: allRolesHaveDistinctSubjects,
     privateKeyMaterialDetected,
   });
 }
@@ -175,8 +212,18 @@ function inspectKms({ workspaceRoot, runtimeRoot, environment }) {
   if (hardwareProtected !== true) blockers.push('release_attestor_hardware_protection_required');
   if (privateKeyExportable !== false) blockers.push('release_attestor_non_exportable_key_required');
   if (!SHA256.test(String(configurationPin || ''))) blockers.push('release_attestor_configuration_pin_missing');
+  if (read.present && SHA256.test(String(configurationPin || ''))
+    && sha256Buffer(read.value) !== configurationPin) {
+    blockers.push('release_attestor_configuration_pin_mismatch');
+  }
   if (!hardwareBundlePath || !bundle.present || !bundle.safe || !bundle.parsed) {
     blockers.push('release_attestor_kms_hardware_attestation_missing');
+  }
+  if (bundle.present && bundle.parsed
+    && (bundle.document?.status !== 'hardware_attestation_verified'
+      || bundle.document?.externalIndependent !== true
+      || bundle.document?.privateKeyExportable === true)) {
+    blockers.push('release_attestor_hardware_attestation_not_independent_or_verified');
   }
   if (value.externalActionPerformed === true || backend.externalActionPerformed === true) {
     blockers.push('release_attestor_external_action_marker_forbidden');
@@ -195,6 +242,57 @@ function inspectKms({ workspaceRoot, runtimeRoot, environment }) {
       || backend.externalActionPerformed === true,
     workspaceRoot,
     runtimeRoot,
+  });
+}
+
+function inspectCapabilityProofCoverage({ workspaceRoot, runtimeRoot }) {
+  const required = Object.keys(CAPABILITY_CATALOG).length;
+  let conformance = new Map();
+  let operational = new Map();
+  let codeProvenance = null;
+  try {
+    codeProvenance = currentCodeProvenance({
+      workspaceRoot,
+      allowReleaseCommitEnvironment: false,
+    });
+  } catch { /* represented as zero verified proofs below */ }
+  const releaseCommit = codeProvenance?.commit || null;
+  try {
+    conformance = loadCapabilityConformanceProofs({
+      runtimeRoot,
+      workspaceRoot,
+      capabilityCatalog: CAPABILITY_CATALOG,
+      releaseCommit,
+      codeProvenance,
+    });
+  } catch { conformance = new Map(); }
+  try {
+    operational = loadCapabilityOperationalProofs({
+      runtimeRoot,
+      workspaceRoot,
+      capabilityCatalog: CAPABILITY_CATALOG,
+      releaseCommit,
+      codeProvenance,
+    });
+  } catch { operational = new Map(); }
+  const conformanceCount = conformance.size;
+  const operationalCount = operational.size;
+  const blockers = [];
+  if (conformanceCount !== required) {
+    blockers.push(`release_bound_conformance_not_complete:${conformanceCount}/${required}`);
+  }
+  if (operationalCount !== required) {
+    blockers.push(`independent_production_proof_not_complete:${operationalCount}/${required}`);
+  }
+  return section('capability_proof_coverage', blockers, {
+    requiredCapabilityCount: required,
+    releaseBoundConformanceCount: conformanceCount,
+    independentProductionProofCount: operationalCount,
+    releaseBoundConformanceComplete: conformanceCount === required,
+    independentProductionProofComplete: operationalCount === required,
+    conformanceCannotQualifyAsOperational: true,
+    localAdminSignaturesCannotQualifyAsIndependent: true,
+    externalActionPerformed: false,
   });
 }
 
@@ -532,6 +630,10 @@ export function runP0ExternalAuthorityPreflight({
       workspaceRoot: resolvedWorkspaceRoot,
       runtimeRoot: resolvedRuntimeRoot,
       environment,
+    }),
+    capabilityProofCoverage: inspectCapabilityProofCoverage({
+      workspaceRoot: resolvedWorkspaceRoot,
+      runtimeRoot: resolvedRuntimeRoot,
     }),
   };
   const observedDate = new Date(now);

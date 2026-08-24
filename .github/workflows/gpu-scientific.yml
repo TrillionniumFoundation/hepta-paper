@@ -2,7 +2,9 @@ name: hepta-paper-gpu-scientific
 
 # The self-hosted job is deliberately never run for pull requests.  A GPU
 # runner is a privileged host; only the protected main branch, a schedule, or
-# an explicit operator dispatch may execute repository code there.
+# an explicit operator dispatch on main may execute repository code there.
+# `nvidia-gpu-protected` is a dedicated runner label, not a user-controlled
+# capability claim.  The preflight also binds the checkout to github.sha.
 on:
   push:
     branches: [main]
@@ -30,9 +32,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: hepta-gpu-scientific-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   GPU_IMAGE: hepta/python-gpu:0.15.0
   GPU_IMAGE_DIGEST: sha256:21acb5fb016d9fd17131215d16e1834fcfeb081e047718d49b6d58d8afa97e2b
+  GPU_CI_PROTECTED_LABEL: nvidia-gpu-protected
 
 jobs:
   gpu-scientific-contracts:
@@ -42,6 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -56,6 +64,7 @@ jobs:
           paper-core/tests/deep-learning-independent-cpu-oracle-worker.test.mjs
           paper-core/tests/deep-learning-gpu-production-contract.test.mjs
           paper-core/tests/pde-poisson-2d-gpu-capability.test.mjs
+          paper-core/tests/p0-pde-dl-assurance.test.mjs
           paper-core/tests/nvidia-gpu-self-hosted-ci-preflight.test.mjs
       - name: State explicitly that portable CI is not GPU qualification
         run: |
@@ -66,12 +75,15 @@ jobs:
     name: NVIDIA operational replay (self-hosted, opt-in)
     # HEPTA_ENABLE_GPU_CI is a protected repository variable.  If it is not
     # enabled this job is skipped, never treated as a qualification receipt.
-    if: ${{ vars.HEPTA_ENABLE_GPU_CI == 'true' && (github.event_name != 'pull_request') }}
-    runs-on: [self-hosted, linux, x64, nvidia-gpu]
+    if: ${{ vars.HEPTA_ENABLE_GPU_CI == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    # Every label is required.  In particular, nvidia-gpu-protected must only
+    # be assigned to the attested runner group by repository administrators.
+    runs-on: [self-hosted, linux, x64, nvidia-gpu, nvidia-gpu-protected]
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -82,9 +94,18 @@ jobs:
           HEPTA_ENABLE_GPU_CI: ${{ vars.HEPTA_ENABLE_GPU_CI }}
           HEPTA_GPU_CI_RUNNER_LABELS: ${{ vars.HEPTA_GPU_CI_RUNNER_LABELS }}
           HEPTA_GPU_CI_RUNNER_ATTESTED: ${{ vars.HEPTA_GPU_CI_RUNNER_ATTESTED }}
+          HEPTA_GPU_CI_EXPECTED_COMMIT: ${{ github.sha }}
           HEPTA_GPU_CI_IMAGE: ${{ env.GPU_IMAGE }}
           HEPTA_GPU_CI_IMAGE_DIGEST: ${{ env.GPU_IMAGE_DIGEST }}
         run: node paper-adapters/research-verify/nvidia-gpu-self-hosted-ci-preflight.mjs
+      - name: Assert checkout is bound to the triggering commit
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_COMMIT"
+          test "$EXPECTED_COMMIT" = "$(git rev-parse --verify HEAD^{commit})"
       - name: Require exactly one visible NVIDIA device
         shell: bash
         run: |
@@ -113,7 +134,7 @@ jobs:
           paper-core/tests/deep-learning-independent-cpu-oracle-worker.test.mjs
           paper-core/tests/deep-learning-canonical-training-executor.test.mjs
           paper-core/tests/pde-poisson-2d-gpu-producer.test.mjs
-      - name: Run the two-pass GPU runtime smoke (must fail on drift)
+      - name: Run the same-device two-pass GPU runtime smoke (must fail on drift)
         env:
           HEPTA_RUNTIME_SMOKE_STAGE_TIMEOUT_MS: '180000'
         run: npm run automation:runtime-smoke -- --stage-timeout-ms 180000
@@ -121,8 +142,12 @@ jobs:
         run: |
           {
             echo '### GPU CI boundary'
-            echo '* GPU execution and same-run replay completed on the protected runner.'
-            echo '* This job does not mint production authority, independent second-hardware evidence, or a live release permit.'
+            echo '* GPU execution and same-device smoke replay completed on the protected runner.'
+            echo "* exactCommitBinding=true (${GITHUB_SHA})"
+            echo '* Same-device and independent-second-hardware-replay receipts remain contract-only placeholders until their scoped authorities are injected.'
+            echo '* This job does not mint production qualification, independent second-hardware evidence, or a live release permit.'
+            echo 'productionQualificationMinted=false'
+            echo 'productionPromotionEligible=false'
           } >> "$GITHUB_STEP_SUMMARY"
   gpu-ci-gate:
     name: GPU CI gate (explicit skip semantics)
@@ -131,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fail closed when GPU CI was explicitly required
-        if: ${{ vars.HEPTA_ENABLE_GPU_CI == 'true' && needs.nvidia-gpu-operational.result != 'success' }}
+        if: ${{ needs.gpu-scientific-contracts.result != 'success' || (vars.HEPTA_ENABLE_GPU_CI == 'true' && needs.nvidia-gpu-operational.result != 'success') }}
         run: |
           echo 'HEPTA_ENABLE_GPU_CI=true but the NVIDIA operational job did not pass.' >&2
           exit 1
@@ -142,4 +167,5 @@ jobs:
             echo '### GPU CI skipped (not a pass)'
             echo 'Set the protected repository variable HEPTA_ENABLE_GPU_CI=true after provisioning a pinned self-hosted NVIDIA runner.'
             echo 'promotionEligible=false'
+            echo 'productionQualificationMinted=false'
           } >> "$GITHUB_STEP_SUMMARY"

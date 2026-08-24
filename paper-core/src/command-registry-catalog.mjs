@@ -30,6 +30,7 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'coverage:repository',
     'coverage:system',
     'external:intake-verify',
+    'formal:receipt',
     'lint',
     'offhost:worm-restore-drill',
     'offhost:worm-status',

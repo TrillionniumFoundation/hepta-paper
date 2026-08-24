@@ -8,7 +8,7 @@ import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   resolvePinnedLakeExecutable,
-} from '../../paper-adapters/research-verify/pinned-lake-executable-resolver.mjs';
+} from '../../paper-composition/automation/dynamic-formal-kernel-operational-composition.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const testFiles = Object.freeze([

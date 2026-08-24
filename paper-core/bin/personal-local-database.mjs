@@ -9,7 +9,7 @@ import {
   inspectPersonalLocalDatabase,
   recordPersonalDatabaseAntiRollback,
   restoreDrillPersonalDatabase,
-} from '../../paper-adapters/persistence/personal-local-database-readiness.mjs';
+} from '../../paper-composition/bootstrap/personal-local-database-composition.mjs';
 
 function usage() {
   return [

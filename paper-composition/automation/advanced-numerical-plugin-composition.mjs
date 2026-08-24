@@ -1,5 +1,6 @@
 import {
   createOutOfProcessAdvancedNumericalPluginRunner,
+  inspectAdvancedNumericalPluginRunnerStatus,
   verifyAdvancedNumericalPluginSignedBundle,
 } from '../../paper-adapters/automation/out-of-process-advanced-numerical-plugin-runner.mjs';
 import {
@@ -17,6 +18,8 @@ import {
 import {
   buildAdvancedNumericalGpuRuntimeAuthority,
 } from '../../paper-domain/research/advanced-numerical-plugin-contract.mjs';
+
+export { inspectAdvancedNumericalPluginRunnerStatus };
 
 export {
   PDE_POISSON_2D_CPU_ORACLE_DOCKER_IMAGE,

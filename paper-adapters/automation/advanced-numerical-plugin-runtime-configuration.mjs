@@ -68,8 +68,22 @@ export function readIntegrityAdvancedNumericalJsonDocument(filePath, {
     throw new Error('advanced_numerical_plugin_document_limit_invalid');
   }
   let descriptor = null;
+  let resolvedPath;
   try {
-    const resolvedPath = fs.realpathSync(selectedPath);
+    try {
+      resolvedPath = fs.realpathSync(selectedPath);
+    } catch (error) {
+      // Configuration inspection is an operator-facing status operation. Do
+      // not leak the platform ENOENT/ENOTDIR exception to callers; expose a
+      // stable, typed blocker that the CLI can render as JSON instead.
+      if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
+        const missing = new Error('advanced_numerical_plugin_document_missing');
+        missing.code = 'advanced_numerical_plugin_document_missing';
+        missing.path = selectedPath;
+        throw missing;
+      }
+      throw error;
+    }
     const pathStat = fs.lstatSync(selectedPath);
     if (selectedPath !== resolvedPath || !pathStat.isFile()
       || pathStat.isSymbolicLink() || pathStat.nlink !== 1

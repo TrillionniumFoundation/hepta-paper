@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  buildPersonalGpuOperationalReceipt,
+} from '../../paper-domain/research/personal-gpu-operational-gate-contract.mjs';
 import {
   evaluatePersonalSelfHostedProductionReadiness,
   PERSONAL_SELF_HOSTED_NOT_APPLICABLE_CONTROL_IDS,
@@ -10,6 +15,10 @@ import {
   PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS,
   verifyPersonalSelfHostedProductionProfile,
 } from '../../paper-domain/operations/personal-self-hosted-production-profile-contract.mjs';
+import {
+  inspectPersonalCpu,
+  inspectPersonalRuntimeBoundary,
+} from '../verification/personal-self-hosted-local-observation.mjs';
 
 const NOW = '2026-08-24T02:00:00.000Z';
 const HASH = (label) => hashRecord('PersonalSelfHostedFixture', { label });
@@ -187,4 +196,84 @@ test('single-operator session separation is explicitly N/A and never requires a 
       reason: 'single-operator-no-review-workflow',
     },
   );
+});
+
+test('personal runtime boundary rejects source/runtime overlap', () => {
+  const overlapping = inspectPersonalRuntimeBoundary({
+    workspaceRoot: '/tmp/hepta-personal-workspace',
+    runtimeRoot: '/tmp/hepta-personal-workspace/runtime',
+  });
+  assert.equal(overlapping.physicallyDecoupled, false);
+  assert.deepEqual(overlapping.blockers, [
+    'personal_self_hosted_runtime_overlaps_workspace',
+  ]);
+  const separated = inspectPersonalRuntimeBoundary({
+    workspaceRoot: '/tmp/hepta-personal-workspace',
+    runtimeRoot: '/var/lib/hepta-paper/runtime',
+  });
+  assert.equal(separated.physicallyDecoupled, true);
+  assert.deepEqual(separated.blockers, []);
+});
+
+test('CPU readiness consumes the process-isolated oracle even when GPU is not opted in', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-personal-cpu-receipt-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const receiptPath = path.join(root, 'personal-gpu-operational-receipt.json');
+  const imageHash = HASH('image');
+  const receipt = buildPersonalGpuOperationalReceipt({
+    createdAtEpochMs: Date.parse(NOW),
+    workspaceCommit: COMMIT,
+    gpu: {
+      gpuUuid: 'GPU-a33875b7-7eb7-679e-df08-19227d3decee',
+      gpuModel: 'NVIDIA GeForce RTX 4060',
+      computeCapability: '8.9',
+      driverVersion: '580.173.02',
+      memoryMiB: 8188,
+    },
+    runtime: {
+      image: 'hepta/python-gpu:0.15.0', imageDigest: imageHash,
+      dockerDigestBound: true, networkDisabled: true, singleDevicePinned: true,
+    },
+    pde: {
+      status: 'canonical_pde_poisson_2d_gpu_scientifically_verified_non_promotable',
+      receiptHash: HASH('pde'),
+      cpuOracleStatus: 'process_isolated_pde_poisson_2d_cpu_oracle_verified',
+      cpuOracleHash: HASH('pde-cpu'),
+      scientificChecksPassed: true,
+    },
+    deepLearning: {
+      status: 'personal_deep_learning_gpu_verified_non_promotable',
+      originalReceiptHash: HASH('dl-original'),
+      replayReceiptHash: HASH('dl-replay'),
+      sameDeviceReplayHash: HASH('dl-same-device'),
+      cpuOracleHash: HASH('dl-cpu'),
+      cpuOracleStatus: 'process_isolated_deep_learning_cpu_oracle_verified',
+      hiddenEvaluationHash: HASH('dl-hidden'),
+      hiddenEvaluationStatus: 'deep_learning_hidden_evaluation_recorded',
+      modelIrHash: HASH('model'),
+      datasetManifestHash: HASH('dataset'),
+      checkpointManifestHash: HASH('checkpoint'),
+      deterministicReplay: true,
+      errorBudgetHash: HASH('budget'),
+    },
+    ir: {
+      modelHash: HASH('model'),
+      datasetHash: HASH('dataset'),
+      checkpointHash: HASH('checkpoint'),
+      modelExecutableCodeEmbedded: false,
+      checkpointExecutablePayloadAllowed: false,
+      pickleAllowed: false,
+    },
+  });
+  fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, { mode: 0o400 });
+  fs.chmodSync(receiptPath, 0o400);
+  const cpu = inspectPersonalCpu({
+    runtimeRoot: root,
+    environment: { HEPTA_PERSONAL_CPU_RECEIPT: receiptPath },
+    provenance: { commit: COMMIT },
+    observedAt: NOW,
+  });
+  assert.equal(cpu.status, 'verified');
+  assert.equal(cpu.deterministicReplay, true);
+  assert.ok(cpu.evidenceHash.startsWith('sha256:'));
 });

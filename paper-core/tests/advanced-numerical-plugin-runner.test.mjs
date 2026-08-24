@@ -4,10 +4,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
   createOutOfProcessAdvancedNumericalPluginRunner,
+  inspectAdvancedNumericalPluginRunnerStatus,
   verifyAdvancedNumericalPluginSignedBundle,
 } from '../../paper-adapters/automation/out-of-process-advanced-numerical-plugin-runner.mjs';
 import {
@@ -49,6 +51,11 @@ import {
 const GPU_UUID = 'GPU-a33875b7-7eb7-679e-df08-19227d3decee';
 const GPU_IMAGE = 'hepta/python-gpu:0.15.0';
 const GPU_IMAGE_DIGEST = `sha256:${'d'.repeat(64)}`;
+const WORKSPACE_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+);
 
 function signedPluginFixture({ gpu = false, observedSourceIdentity = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-advanced-numeric-'));
@@ -468,6 +475,69 @@ function writePrivateJson(root, name, value) {
   fs.chmodSync(target, 0o600);
   return { path: target, hash: hashBytes(bytes) };
 }
+
+test('missing numerical plugin status configuration is a typed fail-closed report', () => {
+  const missing = path.join(
+    os.tmpdir(),
+    `hepta-advanced-numerical-missing-${process.pid}-${Date.now()}.json`,
+  );
+  fs.rmSync(missing, { force: true });
+  assert.throws(
+    () => readAdvancedNumericalPluginRuntimeConfiguration({
+      configurationPath: missing,
+    }),
+    (error) => error?.code === 'advanced_numerical_plugin_document_missing',
+  );
+  const result = spawnSync(process.execPath, [
+    path.join(WORKSPACE_ROOT, 'paper-core', 'bin', 'advanced-numerical-plugin.mjs'),
+    '--action', 'status',
+    '--config', missing,
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.doesNotMatch(result.stdout, /ENOENT/u);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'advanced_numerical_plugin_runner_blocked');
+  assert.equal(report.productionQualified, false);
+  assert.deepEqual(report.blockers, [
+    'advanced_numerical_plugin_runtime_configuration_missing',
+  ]);
+  assert.equal(report.errorCode, 'advanced_numerical_plugin_document_missing');
+});
+
+test('unqualified numerical plugin capability is never reported as ready', () => {
+  const fixture = signedPluginFixture();
+  try {
+    const runner = createOutOfProcessAdvancedNumericalPluginRunner({
+      signedBundle: fixture.bundle,
+      trustStore: fixture.trustStore,
+      workerRunner: sandboxRunner(fixture.descriptor),
+      pluginRoot: fixture.pluginRoot,
+      outputRoot: fixture.outputRoot,
+      now: fixture.now,
+    });
+    const capabilities = runner.capabilities();
+    assert.equal(capabilities.productionQualified, false);
+    assert.equal(
+      capabilities.qualifiedAnalysisFamilies.length,
+      0,
+    );
+    const status = inspectAdvancedNumericalPluginRunnerStatus({
+      available: true,
+      productionQualified: capabilities.productionQualified,
+    });
+    assert.equal(status.status, 'advanced_numerical_plugin_runner_unqualified');
+    assert.ok(status.status.includes('unqualified'));
+    assert.ok(status.blockers.includes(
+      'advanced_numerical_plugin_production_qualification_required',
+    ));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
 
 test('signed advanced numerical plugins run out of process but remain unqualified', async (context) => {
   const fixture = signedPluginFixture();

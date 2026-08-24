@@ -22,8 +22,8 @@ import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-cat
 import {
   loadCapabilityConformanceProofs,
   loadCapabilityOperationalProofs,
-} from '../../paper-adapters/governance/capability-proof-verifier.mjs';
-import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
+  currentCodeProvenance,
+} from '../../paper-composition/automation/p0-external-authority-preflight-composition.mjs';
 import {
   verifyOperationalSloAlertPolicy,
   verifyProductionIntegrityPin,

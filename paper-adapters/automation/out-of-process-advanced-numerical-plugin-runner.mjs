@@ -31,6 +31,24 @@ import {
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const AUTHORITY_ROLE = 'advanced_numerical_plugin_authority';
 
+export function inspectAdvancedNumericalPluginRunnerStatus({
+  available = false,
+  productionQualified = false,
+} = {}) {
+  const runnerAvailable = available === true;
+  const qualified = productionQualified === true;
+  return Object.freeze({
+    status: runnerAvailable
+      ? qualified
+        ? 'advanced_numerical_plugin_runner_ready_qualified'
+        : 'advanced_numerical_plugin_runner_unqualified'
+      : 'advanced_numerical_plugin_runner_blocked',
+    blockers: Object.freeze(runnerAvailable && !qualified
+      ? ['advanced_numerical_plugin_production_qualification_required']
+      : []),
+  });
+}
+
 function blocked(blockers, details = {}) {
   return Object.freeze({
     version: 1,

@@ -146,7 +146,9 @@ function validReleaseBoundary(value) {
  * means that a release has independent authority or second-hardware proof.
  */
 export function buildPersonalGpuOperationalReceipt({
-  createdAtEpochMs = Date.now(),
+  // The domain contract is deterministic: callers must inject observation
+  // time at the process boundary instead of letting the domain read a clock.
+  createdAtEpochMs,
   workspaceCommit,
   gpu,
   runtime,

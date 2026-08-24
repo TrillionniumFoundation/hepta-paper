@@ -7,10 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   currentCodeProvenance,
-} from '../../paper-adapters/runtime/code-provenance.mjs';
-import {
   resolvePinnedLakeExecutable,
-} from '../../paper-adapters/research-verify/pinned-lake-executable-resolver.mjs';
+} from '../../paper-composition/automation/formal-operational-receipt-composition.mjs';
 import {
   verifyFormalOperationalReceipt,
 } from './dynamic-formal-kernel-operational.mjs';

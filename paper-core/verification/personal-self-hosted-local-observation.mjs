@@ -63,6 +63,37 @@ function safeDirectory(candidate) {
   }
 }
 
+// Personal mode still keeps source and mutable runtime state physically
+// separate.  The general workspace-layout checker is intentionally not used
+// here because this observer accepts an explicit code workspace for tests and
+// local operators.  Resolve existing symlinks where possible, then reject an
+// overlap even when the selected runtime directory has not been created yet.
+function canonicalPath(candidate) {
+  const selected = path.resolve(String(candidate || ''));
+  try { return fs.realpathSync.native(selected); }
+  catch { return selected; }
+}
+
+function pathContains(parent, candidate) {
+  const relative = path.relative(parent, candidate);
+  return relative === '' || (relative !== '..'
+    && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+export function inspectPersonalRuntimeBoundary({ workspaceRoot, runtimeRoot } = {}) {
+  const workspace = canonicalPath(workspaceRoot);
+  const runtime = canonicalPath(runtimeRoot);
+  const overlaps = pathContains(workspace, runtime) || pathContains(runtime, workspace);
+  return Object.freeze({
+    workspaceRoot: workspace,
+    runtimeRoot: runtime,
+    physicallyDecoupled: !overlaps,
+    overlap: overlaps,
+    blockers: Object.freeze(overlaps
+      ? ['personal_self_hosted_runtime_overlaps_workspace'] : []),
+  });
+}
+
 function readJson(candidate, options = {}) {
   const file = safeRegularFile(candidate, options);
   if (!file.value) return { ...file, parsed: false, document: null };
@@ -172,7 +203,7 @@ function inspectGpu({ runtimeRoot, environment, provenance, observedAt }) {
       evidenceHash: null,
       observedAt: observedAt,
       disabledReason: environment.HEPTA_PERSONAL_GPU_DISABLED_REASON
-        || 'GPU capability is not enabled; run the personal GPU operational gate to collect CPU/GPU scientific evidence.',
+        || 'GPU capability is not enabled; CPU readiness is evaluated separately from the process-isolated CPU oracle receipt.',
       receiptPath,
     };
   }
@@ -213,6 +244,77 @@ function inspectGpu({ runtimeRoot, environment, provenance, observedAt }) {
   };
 }
 
+function receiptObservedAt(receipt) {
+  try {
+    return receipt?.createdAtEpochMs
+      ? new Date(receipt.createdAtEpochMs).toISOString() : null;
+  } catch { return null; }
+}
+
+// CPU is the default scientific capability in the personal profile.  Its
+// evidence is the process-isolated CPU oracle embedded in the local scientific
+// receipt.  GPU remains an opt-in capability below; disabling GPU must not
+// erase an already verified CPU oracle.  HEPTA_PERSONAL_CPU_RECEIPT allows a
+// future CPU-only producer to publish the same hash-bound receipt shape while
+// retaining the existing GPU receipt as a backwards-compatible fallback.
+export function inspectPersonalCpu({ runtimeRoot, environment, provenance, observedAt }) {
+  const receiptPath = environment.HEPTA_PERSONAL_CPU_RECEIPT
+    || environment.HEPTA_PERSONAL_GPU_RECEIPT
+    || path.join(runtimeRoot, 'gpu-personal', 'personal-gpu-operational-receipt.json');
+  const read = readJson(receiptPath);
+  const receipt = read.safe && read.parsed ? read.document : null;
+  const receiptTime = receiptObservedAt(receipt);
+  const valid = verifyPersonalGpuOperationalReceipt(receipt)
+    && receipt.personalProductionReady === true
+    && receipt.workspaceCommit === provenance?.commit
+    && receipt.externalActionPerformed === false
+    && receipt.networkActionPerformed === false
+    && receipt.pde?.cpuOracleStatus === 'process_isolated_pde_poisson_2d_cpu_oracle_verified'
+    && SHA256.test(String(receipt.pde?.cpuOracleHash || ''))
+    && receipt.deepLearning?.cpuOracleStatus
+      === 'process_isolated_deep_learning_cpu_oracle_verified'
+    && SHA256.test(String(receipt.deepLearning?.cpuOracleHash || ''))
+    && receipt.deepLearning?.deterministicReplay === true
+    && receipt.ir?.modelExecutableCodeEmbedded === false
+    && receipt.ir?.checkpointExecutablePayloadAllowed === false
+    && receipt.ir?.pickleAllowed === false
+    && instant(receiptTime)
+    && receiptTime <= observedAt
+    && Date.parse(observedAt) - Date.parse(receiptTime) <= 24 * 60 * 60 * 1000;
+  const details = {
+    cpuOracleReady: valid,
+    deterministicReplay: valid,
+    errorBudgetVerified: valid,
+    modelDataCheckpointIrBound: valid,
+    pdeCpuOracleStatus: receipt?.pde?.cpuOracleStatus || null,
+    pdeCpuOracleHash: receipt?.pde?.cpuOracleHash || null,
+    deepLearningCpuOracleStatus: receipt?.deepLearning?.cpuOracleStatus || null,
+    deepLearningCpuOracleHash: receipt?.deepLearning?.cpuOracleHash || null,
+    receiptPath,
+    receiptObservedAt: receiptTime,
+    workspaceCommit: receipt?.workspaceCommit || null,
+  };
+  const cpuEvidence = evidence(
+    valid ? 'verified' : 'blocked',
+    details,
+    valid && receiptTime ? receiptTime : observedAt,
+    'local-observation',
+  );
+  return {
+    enabled: true,
+    status: valid ? 'verified' : 'blocked',
+    deterministicReplay: valid,
+    errorBudgetVerified: valid,
+    modelDataCheckpointIrBound: valid,
+    evidenceHash: valid ? cpuEvidence.evidenceHash : null,
+    observedAt: valid && receiptTime ? receiptTime : observedAt,
+    receiptPath,
+    receiptKind: receipt?.kind || null,
+    blockers: valid ? [] : ['personal_self_hosted_cpu_oracle_receipt_missing_or_invalid'],
+    details,
+  };
+}
+
 export async function inspectPersonalSelfHostedLocalEvidence({
   workspaceRoot,
   runtimeRoot,
@@ -242,6 +344,7 @@ export async function inspectPersonalSelfHostedLocalEvidence({
     } catch { return null; }
   })();
   const runtimeStat = safeDirectory(runtimeRoot);
+  const runtimeBoundary = inspectPersonalRuntimeBoundary({ workspaceRoot, runtimeRoot });
   const sourceScanReady = sourceSecurity?.secrets?.status === 'tracked_secret_scan_ready';
   const credentialDetails = {
     privateKeyMaterialAbsent: sourceScanReady,
@@ -250,9 +353,12 @@ export async function inspectPersonalSelfHostedLocalEvidence({
     sourceScanStatus: sourceSecurity?.secrets?.status || 'unavailable',
     runtimeMode: runtimeStat.mode,
     runtimeUid: runtimeStat.uid,
+    runtimePhysicallyDecoupled: runtimeBoundary.physicallyDecoupled,
+    runtimeBoundaryBlockers: runtimeBoundary.blockers,
   };
   controls['credential-and-runtime-boundary'] = evidence(
-    sourceScanReady && runtimeStat.safe ? 'verified' : 'blocked',
+    sourceScanReady && runtimeStat.safe && runtimeBoundary.physicallyDecoupled
+      ? 'verified' : 'blocked',
     credentialDetails,
     observedAt,
   );
@@ -316,17 +422,26 @@ export async function inspectPersonalSelfHostedLocalEvidence({
     },
     observedAt,
   );
+  const cpu = inspectPersonalCpu({ runtimeRoot, environment, provenance, observedAt });
   const gpu = inspectGpu({ runtimeRoot, environment, provenance, observedAt });
   const scientificDetails = {
-    // The personal GPU gate is the actual producer for both the process-
-    // isolated CPU oracle and the GPU/PDE/DL replay.  A disabled GPU must not
-    // silently turn the CPU scientific claim green without an independent
-    // local scientific receipt.
-    enabledCapabilitiesReady: gpu.enabled && gpu.status === 'verified',
+    // CPU is always enabled by the personal profile and is independently
+    // checked from the process-isolated oracle fields in the receipt.  GPU is
+    // an explicit opt-in and only adds its own same-device replay requirement.
+    enabledCapabilitiesReady: cpu.status === 'verified'
+      && (!gpu.enabled || gpu.status === 'verified'),
     enabledCapabilities: gpu.enabled ? ['cpu', 'gpu'] : ['cpu'],
-    scientificReceiptPath: gpu.receiptPath,
-    scientificReceiptHash: gpu.evidenceHash,
-    scientificReceiptObservedAt: gpu.observedAt,
+    cpuReceiptPath: cpu.receiptPath,
+    cpuReceiptHash: cpu.evidenceHash,
+    cpuReceiptObservedAt: cpu.observedAt,
+    gpuReceiptPath: gpu.receiptPath,
+    gpuReceiptHash: gpu.evidenceHash,
+    gpuReceiptObservedAt: gpu.observedAt,
+    // Retain the historical aggregate fields for local consumers while
+    // exposing the split CPU/GPU evidence above.
+    scientificReceiptPath: gpu.enabled ? gpu.receiptPath : cpu.receiptPath,
+    scientificReceiptHash: gpu.enabled ? gpu.evidenceHash : cpu.evidenceHash,
+    scientificReceiptObservedAt: gpu.enabled ? gpu.observedAt : cpu.observedAt,
     secondHardwareStatus: 'not_applicable_for_personal_use',
   };
   controls['enabled-scientific-oracles'] = evidence(
@@ -337,12 +452,12 @@ export async function inspectPersonalSelfHostedLocalEvidence({
   const scientific = {
     enabledCapabilities: gpu.enabled ? ['cpu', 'gpu'] : ['cpu'],
     cpu: {
-      status: controls['enabled-scientific-oracles'].status === 'verified' ? 'verified' : 'blocked',
-      deterministicReplay: controls['enabled-scientific-oracles'].status === 'verified',
-      errorBudgetVerified: controls['enabled-scientific-oracles'].status === 'verified',
-      modelDataCheckpointIrBound: controls['enabled-scientific-oracles'].status === 'verified',
-      evidenceHash: controls['enabled-scientific-oracles'].evidenceHash,
-      observedAt: gpu.enabled && gpu.observedAt ? gpu.observedAt : observedAt,
+      status: cpu.status,
+      deterministicReplay: cpu.deterministicReplay,
+      errorBudgetVerified: cpu.errorBudgetVerified,
+      modelDataCheckpointIrBound: cpu.modelDataCheckpointIrBound,
+      evidenceHash: cpu.evidenceHash,
+      observedAt: cpu.observedAt,
     },
     gpu,
   };

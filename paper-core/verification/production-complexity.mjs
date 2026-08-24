@@ -54,6 +54,20 @@ export const PRODUCTION_COMPLEXITY_LAYER_POLICIES = Object.freeze([
       controlFlowPoints: 100,
     }),
   }),
+  // A small set of read-only evidence inspectors is intentionally reachable
+  // from the private local readiness operator. Keep this surface explicit
+  // and bounded rather than treating the verification path as unclassified.
+  Object.freeze({
+    id: 'verification',
+    pathPrefix: 'paper-core/verification/',
+    ceilings: Object.freeze({
+      sourceLines: 900,
+      dependencyFanout: 30,
+      publicExports: 40,
+      responsibilitySurface: 48,
+      controlFlowPoints: 420,
+    }),
+  }),
   Object.freeze({
     id: 'core',
     pathPrefix: 'paper-core/src/',

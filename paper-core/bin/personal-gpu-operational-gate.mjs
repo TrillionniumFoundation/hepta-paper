@@ -469,7 +469,18 @@ async function executeGate({ workspaceRoot, runtimeRoot, outputRoot, runId, dead
   });
   if (!verifyProcessIsolatedDeepLearningCpuOracleAssurance(cpuOracle)
     || cpuOracle.status !== 'process_isolated_deep_learning_cpu_oracle_verified') {
-    throw new Error(`personal_gpu_dl_cpu_oracle_not_verified:${safeToken(cpuOracle.status)}`);
+    const blockers = [
+      ...(Array.isArray(cpuOracle.blockers) ? cpuOracle.blockers : []),
+      ...(Array.isArray(cpuOracle.workerReceipt?.blockers)
+        ? cpuOracle.workerReceipt.blockers : []),
+      ...(Array.isArray(cpuOracle.osSandboxWorkerReceipt?.blockers)
+        ? cpuOracle.osSandboxWorkerReceipt.blockers : []),
+    ].map(safeToken);
+    throw new Error([
+      'personal_gpu_dl_cpu_oracle_not_verified',
+      safeToken(cpuOracle.status),
+      ...[...new Set(blockers)].slice(0, 12),
+    ].join(':'));
   }
   const hidden = buildHiddenEvaluation({
     receipt: original,

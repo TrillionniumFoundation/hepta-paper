@@ -439,10 +439,9 @@ test('one declarative registry owns supported routes and npm command classificat
     retiredAliases: [],
     blocked: [],
   });
-  // `release:plan` is the single observation-only readiness gate exposed to
-  // operators; keep the count explicit so an accidental script-surface
-  // expansion still fails this contract.
-  assert.equal(Object.keys(scripts).length, 117);
+  // Keep the personal operational aliases explicit so an accidental
+  // script-surface expansion still fails this contract.
+  assert.equal(Object.keys(scripts).length, 120);
   assert.deepEqual(heptaPaperCiCommandMatrix().nightly.map((entry) => entry.id), [
     'full-portable',
     'formal-cache',
@@ -474,10 +473,17 @@ test('one declarative registry owns supported routes and npm command classificat
     Object.values(surface.groups).flat().sort(),
     Object.keys(scripts).sort(),
   );
-  assert.deepEqual(surface.groups.operator, ['hepta-paper']);
+  assert.deepEqual(surface.groups.operator, [
+    'gpu:personal-gate', 'hepta-paper', 'personal:readiness',
+  ]);
   for (const entry of Object.values(HEPTA_PAPER_COMMAND_REGISTRY.operator)) {
     if (!entry.npmScript) continue;
-    assert.equal(scripts[entry.npmScript], undefined, entry.npmScript);
+    const retainedOperatorAliases = new Set(['gpu:personal-gate', 'personal:readiness']);
+    if (retainedOperatorAliases.has(entry.npmScript)) {
+      assert.equal(scripts[entry.npmScript], entry.argv.join(' '), entry.npmScript);
+    } else {
+      assert.equal(scripts[entry.npmScript], undefined, entry.npmScript);
+    }
   }
   for (const name of [
     'check:syntax',

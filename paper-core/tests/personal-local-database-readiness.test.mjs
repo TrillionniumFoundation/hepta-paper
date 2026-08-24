@@ -153,3 +153,25 @@ test('sidecar cleanup requires a verified backup and explicit stale-shm confirma
   assert.equal(cleared.status, 'personal_database_sidecars_cleared');
   assert.deepEqual([...cleared.removed].sort(), ['-shm', '-wal']);
 });
+
+test('quiescent WAL metadata left by a read does not block personal readiness', async (t) => {
+  const fixtureState = fixture(t);
+  await recordPersonalDatabaseAntiRollback({ runtimeRoot: fixtureState.runtimeRoot });
+  const backup = await createPersonalDatabaseBackup({ runtimeRoot: fixtureState.runtimeRoot });
+  await restoreDrillPersonalDatabase({
+    runtimeRoot: fixtureState.runtimeRoot,
+    backupPath: backup.backupPath,
+  });
+  fs.writeFileSync(`${fixtureState.dbPath}-wal`, '');
+  fs.writeFileSync(`${fixtureState.dbPath}-shm`, Buffer.alloc(32 * 1024));
+  fs.chmodSync(`${fixtureState.dbPath}-wal`, 0o600);
+  fs.chmodSync(`${fixtureState.dbPath}-shm`, 0o600);
+
+  const report = await inspectPersonalLocalDatabase({
+    runtimeRoot: fixtureState.runtimeRoot,
+  });
+  assert.equal(report.ready, true, report.blockers.join(','));
+  assert.equal(report.sidecars.clear, true);
+  assert.equal(report.sidecars.sidecars.length, 2);
+  assert.deepEqual(report.sidecars.blockers, []);
+});

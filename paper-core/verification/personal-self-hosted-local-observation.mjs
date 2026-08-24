@@ -13,8 +13,8 @@ import {
   evaluatePersonalSelfHostedProductionReadiness,
 } from '../../paper-domain/operations/personal-self-hosted-production-profile-contract.mjs';
 import {
-  verifyPersonalSelfHostedGpuScientificReceiptBundle,
-} from '../../paper-domain/operations/personal-self-hosted-scientific-receipt-contract.mjs';
+  verifyPersonalGpuOperationalReceipt,
+} from '../../paper-domain/research/personal-gpu-operational-gate-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
@@ -49,7 +49,8 @@ function safeDirectory(candidate) {
   try {
     const stat = fs.lstatSync(selected);
     const safe = stat.isDirectory() && !stat.isSymbolicLink()
-      && fs.realpathSync(selected) === selected && (stat.mode & 0o022) === 0;
+      && fs.realpathSync(selected) === selected && (stat.mode & 0o077) === 0
+      && (typeof process.geteuid !== 'function' || stat.uid === process.geteuid());
     return {
       path: selected,
       present: stat.isDirectory() && !stat.isSymbolicLink(),
@@ -80,26 +81,6 @@ function hash(value, kind = 'PersonalSelfHostedLocalEvidence') {
 function instant(value) {
   const milliseconds = Date.parse(String(value || ''));
   return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function genericReceipt(value, {
-  kind,
-  requiredDetails = [],
-  observedAt,
-} = {}) {
-  const details = value?.details;
-  const valid = value?.version === 1
-    && value?.kind === kind
-    && value?.status === 'verified'
-    && value?.externalActionPerformed === false
-    && instant(value?.observedAt)
-    && (!observedAt || value.observedAt <= observedAt)
-    && details && typeof details === 'object' && !Array.isArray(details)
-    && requiredDetails.every((key) => details[key] === true)
-    && SHA256.test(String(value?.receiptHash || ''));
-  if (!valid) return null;
-  const { receiptHash, ...payload } = value;
-  return receiptHash === hashRecord(kind, payload) ? value : null;
 }
 
 function evidence(status, details, observedAt, source = 'local-observation') {
@@ -179,19 +160,43 @@ function inspectFormal({ runtimeRoot, environment, provenance, observedAt }) {
 function inspectGpu({ runtimeRoot, environment, provenance, observedAt }) {
   const enabled = environment.HEPTA_PERSONAL_GPU_ENABLED === 'true';
   const receiptPath = environment.HEPTA_PERSONAL_GPU_RECEIPT
-    || path.join(runtimeRoot, 'personal-self-hosted', 'gpu-scientific-receipt.json');
+    || path.join(runtimeRoot, 'gpu-personal', 'personal-gpu-operational-receipt.json');
   if (!enabled) {
     return {
       enabled: false,
+      status: 'not_enabled',
+      deterministicReplay: false,
+      sameDeviceReplay: false,
+      errorBudgetVerified: false,
+      modelDataCheckpointIrBound: false,
+      evidenceHash: null,
+      observedAt: observedAt,
       disabledReason: environment.HEPTA_PERSONAL_GPU_DISABLED_REASON
-        || 'GPU capability is intentionally disabled for this local profile.',
+        || 'GPU capability is not enabled; run the personal GPU operational gate to collect CPU/GPU scientific evidence.',
+      receiptPath,
     };
   }
   const read = readJson(receiptPath);
   const receipt = read.safe && read.parsed ? read.document : null;
-  const valid = verifyPersonalSelfHostedGpuScientificReceiptBundle(receipt)
-    && receipt.releaseCommit === provenance?.commit
-    && Date.parse(receipt.observedAt) <= Date.parse(observedAt);
+  let receiptTime = null;
+  try {
+    receiptTime = receipt?.createdAtEpochMs
+      ? new Date(receipt.createdAtEpochMs).toISOString() : null;
+  } catch { receiptTime = null; }
+  const valid = verifyPersonalGpuOperationalReceipt(receipt)
+    && receipt.personalProductionReady === true
+    && receipt.workspaceCommit === provenance?.commit
+    && receipt.externalActionPerformed === false
+    && receipt.networkActionPerformed === false
+    && receipt.pde?.scientificChecksPassed === true
+    && receipt.deepLearning?.deterministicReplay === true
+    && receipt.deepLearning?.sameDeviceReplayHash
+    && receipt.ir?.modelExecutableCodeEmbedded === false
+    && receipt.ir?.checkpointExecutablePayloadAllowed === false
+    && receipt.ir?.pickleAllowed === false
+    && instant(receiptTime)
+    && receiptTime <= observedAt
+    && Date.parse(observedAt) - Date.parse(receiptTime) <= 24 * 60 * 60 * 1000;
   return {
     enabled: true,
     status: valid ? 'verified' : 'blocked',
@@ -199,16 +204,13 @@ function inspectGpu({ runtimeRoot, environment, provenance, observedAt }) {
     sameDeviceReplay: valid,
     errorBudgetVerified: valid,
     modelDataCheckpointIrBound: valid,
-    evidenceHash: valid ? receipt.personalSelfHostedGpuScientificReceiptBundleHash : null,
-    observedAt: valid ? receipt.observedAt : observedAt,
+    evidenceHash: valid ? receipt.personalGpuOperationalReceiptHash : null,
+    observedAt: valid ? receiptTime : observedAt,
     receiptPath,
+    workspaceCommit: receipt?.workspaceCommit || null,
+    receiptKind: receipt?.kind || null,
+    blockers: valid ? [] : ['personal_gpu_operational_receipt_missing_or_invalid'],
   };
-}
-
-function inspectReceiptControl({ path: receiptPath, kind, requiredDetails, observedAt }) {
-  const read = readJson(receiptPath);
-  const receipt = genericReceipt(read.document, { kind, requiredDetails, observedAt });
-  return receipt ? receipt.details : null;
 }
 
 export async function inspectPersonalSelfHostedLocalEvidence({
@@ -234,42 +236,25 @@ export async function inspectPersonalSelfHostedLocalEvidence({
       runtimeRoot, environment, provenance, observedAt,
     }),
   };
-  const sessionDetails = inspectReceiptControl({
-    path: environment.HEPTA_PERSONAL_AUTHOR_REVIEW_RECEIPT
-      || path.join(runtimeRoot, 'personal-self-hosted', 'author-review-session-receipt.json'),
-    kind: 'PersonalSelfHostedAuthorReviewSessionReceipt',
-    requiredDetails: ['freshSessionSeparationVerified'],
-    observedAt,
-  });
-  controls['local-author-review-session-separation'] = evidence(
-    sessionDetails ? 'verified' : 'blocked',
-    sessionDetails || {
-      freshSessionSeparationVerified: false,
-      authorSessionHash: null,
-      reviewerSessionHash: null,
-    }, observedAt,
-  );
   const sourceSecurity = (() => {
     try {
       return sourceSecurityInspector({ workspaceRoot, deploymentProfile: 'source-inspection' });
     } catch { return null; }
   })();
   const runtimeStat = safeDirectory(runtimeRoot);
-  const credentialDetails = inspectReceiptControl({
-    path: environment.HEPTA_PERSONAL_CREDENTIAL_BOUNDARY_RECEIPT
-      || path.join(runtimeRoot, 'personal-self-hosted', 'credential-runtime-boundary-receipt.json'),
-    kind: 'PersonalSelfHostedCredentialRuntimeBoundaryReceipt',
-    requiredDetails: ['privateKeyMaterialAbsent', 'secretLeakScanPassed', 'runtimeOwnerOnly'],
-    observedAt,
-  });
+  const sourceScanReady = sourceSecurity?.secrets?.status === 'tracked_secret_scan_ready';
+  const credentialDetails = {
+    privateKeyMaterialAbsent: sourceScanReady,
+    secretLeakScanPassed: sourceScanReady,
+    runtimeOwnerOnly: runtimeStat.safe,
+    sourceScanStatus: sourceSecurity?.secrets?.status || 'unavailable',
+    runtimeMode: runtimeStat.mode,
+    runtimeUid: runtimeStat.uid,
+  };
   controls['credential-and-runtime-boundary'] = evidence(
-    credentialDetails && sourceSecurity?.secrets?.status === 'tracked_secret_scan_ready'
-      && runtimeStat.safe ? 'verified' : 'blocked',
-    credentialDetails || {
-      privateKeyMaterialAbsent: false,
-      secretLeakScanPassed: sourceSecurity?.secrets?.status === 'tracked_secret_scan_ready',
-      runtimeOwnerOnly: runtimeStat.safe,
-    }, observedAt,
+    sourceScanReady && runtimeStat.safe ? 'verified' : 'blocked',
+    credentialDetails,
+    observedAt,
   );
   let database = null;
   try {
@@ -333,24 +318,20 @@ export async function inspectPersonalSelfHostedLocalEvidence({
   );
   const gpu = inspectGpu({ runtimeRoot, environment, provenance, observedAt });
   const scientificDetails = {
-    enabledCapabilitiesReady: gpu.enabled ? gpu.status === 'verified' : true,
+    // The personal GPU gate is the actual producer for both the process-
+    // isolated CPU oracle and the GPU/PDE/DL replay.  A disabled GPU must not
+    // silently turn the CPU scientific claim green without an independent
+    // local scientific receipt.
+    enabledCapabilitiesReady: gpu.enabled && gpu.status === 'verified',
     enabledCapabilities: gpu.enabled ? ['cpu', 'gpu'] : ['cpu'],
+    scientificReceiptPath: gpu.receiptPath,
+    scientificReceiptHash: gpu.evidenceHash,
+    scientificReceiptObservedAt: gpu.observedAt,
+    secondHardwareStatus: 'not_applicable_for_personal_use',
   };
   controls['enabled-scientific-oracles'] = evidence(
     scientificDetails.enabledCapabilitiesReady ? 'verified' : 'blocked',
     scientificDetails,
-    observedAt,
-  );
-  const sloDetails = inspectReceiptControl({
-    path: environment.HEPTA_PERSONAL_SLO_RECEIPT
-      || path.join(runtimeRoot, 'personal-self-hosted', 'slo-alert-receipt.json'),
-    kind: 'PersonalSelfHostedSloAlertReceipt',
-    requiredDetails: ['alertPolicyConfigured', 'missingDataAlertsExercised'],
-    observedAt,
-  });
-  controls['local-slo-alert-policy'] = evidence(
-    sloDetails ? 'verified' : 'blocked',
-    sloDetails || { alertPolicyConfigured: false, missingDataAlertsExercised: false },
     observedAt,
   );
   const scientific = {
@@ -361,21 +342,34 @@ export async function inspectPersonalSelfHostedLocalEvidence({
       errorBudgetVerified: controls['enabled-scientific-oracles'].status === 'verified',
       modelDataCheckpointIrBound: controls['enabled-scientific-oracles'].status === 'verified',
       evidenceHash: controls['enabled-scientific-oracles'].evidenceHash,
-      observedAt,
+      observedAt: gpu.enabled && gpu.observedAt ? gpu.observedAt : observedAt,
     },
     gpu,
   };
   const externalControls = Object.fromEntries([
     ['independent-external-authority-roles', 'no-external-authority-or-multi-operator-release-claim'],
     ['hardware-kms-hsm', 'no-distributed-release-signing-key-is-used'],
+    ['local-author-review-session-separation', 'single-operator-no-review-workflow'],
     ['offhost-worm-custody', 'private-single-host-scope-with-local-backup-contract'],
     ['venue-portal-live-submission', 'no-external-submission-or-publishing-action'],
     ['oci-registry-attestation', 'no-oci-registry-distribution'],
     ['kubernetes-release-digest', 'no-kubernetes-deployment'],
   ].map(([controlId, reason]) => [controlId, { status: 'not_applicable', reason }]));
+  const diagnostics = {
+    'local-slo-alert-policy': {
+      status: runtimeStat.safe && databaseReady ? 'locally_observed' : 'attention',
+      blocking: false,
+      automatic: true,
+      runtimeOwnerOnly: runtimeStat.safe,
+      databaseReady,
+      missingDataAlertsExercised: false,
+      note: 'Optional local health diagnostic; no hand-authored receipt is required.',
+    },
+  };
   return evaluatePersonalSelfHostedProductionReadiness({
     controls,
     scientific,
+    diagnostics,
     externalControls,
     externalActionsPerformed: false,
     observedAt,

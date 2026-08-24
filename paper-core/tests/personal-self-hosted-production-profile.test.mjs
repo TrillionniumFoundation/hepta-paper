@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -36,10 +37,6 @@ function controls() {
     ['formal-operational-zero-skipped', {
       zeroSkipped: true, pass: 23, fail: 0, skipped: 0, todo: 0, commit: COMMIT,
     }],
-    ['local-author-review-session-separation', {
-      freshSessionSeparationVerified: true,
-      authorSessionHash: HASH('author'), reviewerSessionHash: HASH('reviewer'),
-    }],
     ['credential-and-runtime-boundary', {
       privateKeyMaterialAbsent: true, secretLeakScanPassed: true, runtimeOwnerOnly: true,
     }],
@@ -55,9 +52,6 @@ function controls() {
     ['enabled-scientific-oracles', {
       enabledCapabilitiesReady: true, enabledCapabilities: ['cpu'],
     }],
-    ['local-slo-alert-policy', {
-      alertPolicyConfigured: true, missingDataAlertsExercised: true,
-    }],
   ].map(([id, details]) => [id, control('verified', details)]));
 }
 
@@ -67,6 +61,7 @@ function externalControls() {
       'independent-external-authority-roles':
         'no-external-authority-or-multi-operator-release-claim',
       'hardware-kms-hsm': 'no-distributed-release-signing-key-is-used',
+      'local-author-review-session-separation': 'single-operator-no-review-workflow',
       'offhost-worm-custody': 'private-single-host-scope-with-local-backup-contract',
       'venue-portal-live-submission': 'no-external-submission-or-publishing-action',
       'oci-registry-attestation': 'no-oci-registry-distribution',
@@ -95,17 +90,26 @@ function readyInput(overrides = {}) {
 
 test('personal profile is explicit, hash-bound, and distinct from distribution readiness', () => {
   assert.equal(verifyPersonalSelfHostedProductionProfile(PERSONAL_SELF_HOSTED_PRODUCTION_PROFILE), true);
+  const config = JSON.parse(fs.readFileSync(
+    new URL('../config/personal-self-hosted-production-profile.v1.json', import.meta.url),
+  ));
+  assert.deepEqual(config, PERSONAL_SELF_HOSTED_PRODUCTION_PROFILE);
   assert.equal(PERSONAL_SELF_HOSTED_PRODUCTION_PROFILE.scope.distributionMode, 'private-local-only');
   assert.equal(PERSONAL_SELF_HOSTED_PRODUCTION_PROFILE.scope.externalActions, false);
-  assert.equal(PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS.length, 9);
+  assert.equal(PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS.length, 7);
+  assert.equal(PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS.includes(
+    'local-author-review-session-separation',
+  ), false);
 });
 
 test('personal profile reaches ready only with real local evidence and explicit N/A controls', () => {
   const report = evaluatePersonalSelfHostedProductionReadiness(readyInput());
   assert.equal(report.status, 'personal_self_hosted_production_ready');
+  assert.equal(report.personalSelfHostedProductionReady, true);
   assert.equal(report.fullProductionReady, undefined);
   assert.equal(report.distributionReady, false);
   assert.equal(report.externalQualificationRequired, false);
+  assert.equal(report.optionalDiagnostics['local-slo-alert-policy'].blocking, false);
   assert.deepEqual(report.blockers, []);
 });
 
@@ -113,6 +117,7 @@ test('missing or forged local receipts block personal readiness', () => {
   const missing = readyInput({ controls: { ...controls(), 'database-restore-drill': undefined } });
   const result = evaluatePersonalSelfHostedProductionReadiness(missing);
   assert.equal(result.status, 'personal_self_hosted_production_blocked');
+  assert.equal(result.personalSelfHostedProductionReady, false);
   assert.ok(result.blockers.includes(
     'personal_self_hosted_control_not_verified:database-restore-drill',
   ));
@@ -168,3 +173,18 @@ test('external action or unacknowledged N/A cannot be hidden by local evidence',
   ));
 });
 
+test('single-operator session separation is explicitly N/A and never requires a receipt', () => {
+  const input = readyInput();
+  delete input.controls['local-author-review-session-separation'];
+  const report = evaluatePersonalSelfHostedProductionReadiness(input);
+  assert.equal(report.status, 'personal_self_hosted_production_ready');
+  assert.deepEqual(
+    report.notApplicableControls.find(
+      (item) => item.controlId === 'local-author-review-session-separation',
+    ),
+    {
+      controlId: 'local-author-review-session-separation',
+      reason: 'single-operator-no-review-workflow',
+    },
+  );
+});

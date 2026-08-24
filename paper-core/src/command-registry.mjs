@@ -105,6 +105,18 @@ const ROUTES = Object.freeze([
   }),
   route({
     group: 'operator',
+    name: 'personal-self-hosted-readiness',
+    argv: ['node', 'paper-core/bin/personal-self-hosted-readiness.mjs'],
+    npmScript: 'personal:readiness',
+    forwardingPolicy: 'registry',
+    forwardedArgumentSchema: {
+      booleanFlags: ['gpu-enabled', 'help', 'json', 'require-ready'],
+      valueFlags: ['gpu-receipt', 'now', 'root', 'runtime-root'],
+      positional: false,
+    },
+  }),
+  route({
+    group: 'operator',
     name: 'journal-connector-coverage',
     argv: ['node', 'paper-core/bin/journal-connector-coverage.mjs'],
     npmScript: 'automation:journal-connector-coverage',
@@ -540,6 +552,7 @@ const NPM_CLASSIFICATION = buildNpmCommandClassification(ROUTES);
 const RETAINED_NPM_ROUTE_ALIASES = new Set([
   'coverage:critical-modules',
   'gpu:personal-gate',
+  'personal:readiness',
   'legacy:deletion-drill',
   'legacy:reference-verify',
   'migration:capability-matrix-v3',

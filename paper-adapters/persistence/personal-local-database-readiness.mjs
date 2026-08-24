@@ -144,6 +144,14 @@ function sameIdentity(left, right) {
 function inspectSidecars(dbPath) {
   const sidecars = [];
   const blockers = [];
+  // A SQLite WAL database may retain an empty WAL and a shared-memory file
+  // after an immutable read.  Those files are not evidence of a live writer.
+  // A live descriptor, or a non-empty WAL/journal, is the boundary that would
+  // make an offline personal backup/migration unsafe.
+  const openDescriptors = openFileDescriptorTargets([
+    dbPath, `${dbPath}-wal`, `${dbPath}-shm`, `${dbPath}-journal`,
+  ]);
+  if (openDescriptors.length) blockers.push('personal_database_open_file_descriptor_present');
   for (const suffix of ['-wal', '-shm', '-journal']) {
     const candidate = `${dbPath}${suffix}`;
     let stat;
@@ -172,10 +180,9 @@ function inspectSidecars(dbPath) {
     if (!safe) blockers.push(`personal_database_sidecar_unsafe:${suffix}`);
     else if (suffix === '-wal' && bytes > 0) blockers.push('personal_database_active_wal_present');
     else if (suffix === '-journal' && bytes > 0) blockers.push('personal_database_active_journal_present');
-    else blockers.push(`personal_database_sidecar_present:${suffix}`);
   }
   return Object.freeze({
-    clear: sidecars.length === 0,
+    clear: blockers.length === 0,
     sidecars: Object.freeze(sidecars),
     blockers: Object.freeze(blockers),
   });

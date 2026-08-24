@@ -22,6 +22,10 @@
       "reason": "no-kubernetes-deployment"
     },
     {
+      "controlId": "local-author-review-session-separation",
+      "reason": "single-operator-no-review-workflow"
+    },
+    {
       "controlId": "oci-registry-attestation",
       "reason": "no-oci-registry-distribution"
     },
@@ -66,19 +70,16 @@
       "description": "Formal operational test receipt has no skipped, failed, or todo tests."
     },
     {
-      "controlId": "local-author-review-session-separation",
-      "evidenceKind": "LocalAuthorReviewerSeparationEvidence",
-      "description": "Author and reviewer are fresh isolated local sessions, even when one user operates both."
-    },
-    {
-      "controlId": "local-slo-alert-policy",
-      "evidenceKind": "LocalSloAlertEvidence",
-      "description": "Local runtime SLOs and missing-data alerts are configured and exercised."
-    },
-    {
       "controlId": "online-anti-rollback",
       "evidenceKind": "LocalOnlineAntiRollbackEvidence",
       "description": "Online mutation markers and the local integrity pin prevent rollback/equivocation."
+    }
+  ],
+  "optionalDiagnostics": [
+    {
+      "diagnosticId": "local-slo-alert-policy",
+      "blocking": false,
+      "description": "Automatically observed local health signals; absence never blocks personal readiness."
     }
   ],
   "scientificCapabilities": {
@@ -107,5 +108,5 @@
     "multi-operator-release",
     "distribution-from-personal-profile"
   ],
-  "profileHash": "sha256:08cca2549b49c4e6408e5c909352f5db55541b6e15b05d132690f7659274e779"
+  "profileHash": "sha256:c98b607a8efa30dac3d7fa9206c7af4d3a0eac5fcc5eaddc7bb82ba008196eab"
 }

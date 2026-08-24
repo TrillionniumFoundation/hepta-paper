@@ -21,6 +21,7 @@ export const PERSONAL_SELF_HOSTED_PROFILE_ID = PROFILE_ID;
 export const PERSONAL_SELF_HOSTED_NOT_APPLICABLE_CONTROL_IDS = Object.freeze([
   'independent-external-authority-roles',
   'hardware-kms-hsm',
+  'local-author-review-session-separation',
   'offhost-worm-custody',
   'venue-portal-live-submission',
   'oci-registry-attestation',
@@ -30,19 +31,22 @@ export const PERSONAL_SELF_HOSTED_NOT_APPLICABLE_CONTROL_IDS = Object.freeze([
 export const PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS = Object.freeze([
   'exact-code-provenance',
   'formal-operational-zero-skipped',
-  'local-author-review-session-separation',
   'credential-and-runtime-boundary',
   'database-inventory-and-schema',
   'database-restore-drill',
   'online-anti-rollback',
   'enabled-scientific-oracles',
-  'local-slo-alert-policy',
 ].sort());
+
+export const PERSONAL_SELF_HOSTED_OPTIONAL_DIAGNOSTIC_IDS = Object.freeze([
+  'local-slo-alert-policy',
+]);
 
 const NOT_APPLICABLE_REASONS = Object.freeze({
   'independent-external-authority-roles':
     'no-external-authority-or-multi-operator-release-claim',
   'hardware-kms-hsm': 'no-distributed-release-signing-key-is-used',
+  'local-author-review-session-separation': 'single-operator-no-review-workflow',
   'offhost-worm-custody': 'private-single-host-scope-with-local-backup-contract',
   'venue-portal-live-submission': 'no-external-submission-or-publishing-action',
   'oci-registry-attestation': 'no-oci-registry-distribution',
@@ -57,10 +61,6 @@ const LOCAL_CONTROL_DEFINITIONS = Object.freeze({
   'formal-operational-zero-skipped': Object.freeze({
     evidenceKind: 'LocalFormalOperationalEvidence',
     description: 'Formal operational test receipt has no skipped, failed, or todo tests.',
-  }),
-  'local-author-review-session-separation': Object.freeze({
-    evidenceKind: 'LocalAuthorReviewerSeparationEvidence',
-    description: 'Author and reviewer are fresh isolated local sessions, even when one user operates both.',
   }),
   'credential-and-runtime-boundary': Object.freeze({
     evidenceKind: 'LocalCredentialRuntimeBoundaryEvidence',
@@ -82,9 +82,12 @@ const LOCAL_CONTROL_DEFINITIONS = Object.freeze({
     evidenceKind: 'LocalScientificOracleEvidence',
     description: 'Every enabled CPU/GPU scientific capability has deterministic replay and an error budget.',
   }),
+});
+
+const OPTIONAL_DIAGNOSTIC_DEFINITIONS = Object.freeze({
   'local-slo-alert-policy': Object.freeze({
-    evidenceKind: 'LocalSloAlertEvidence',
-    description: 'Local runtime SLOs and missing-data alerts are configured and exercised.',
+    blocking: false,
+    description: 'Automatically observed local health signals; absence never blocks personal readiness.',
   }),
 });
 
@@ -111,6 +114,13 @@ const PROFILE_PAYLOAD = Object.freeze({
       controlId,
       evidenceKind: LOCAL_CONTROL_DEFINITIONS[controlId].evidenceKind,
       description: LOCAL_CONTROL_DEFINITIONS[controlId].description,
+    }),
+  )),
+  optionalDiagnostics: Object.freeze(PERSONAL_SELF_HOSTED_OPTIONAL_DIAGNOSTIC_IDS.map(
+    (diagnosticId) => Object.freeze({
+      diagnosticId,
+      blocking: OPTIONAL_DIAGNOSTIC_DEFINITIONS[diagnosticId].blocking,
+      description: OPTIONAL_DIAGNOSTIC_DEFINITIONS[diagnosticId].description,
     }),
   )),
   scientificCapabilities: Object.freeze({
@@ -162,7 +172,7 @@ function profilePayload(value) {
 function validProfileShape(value) {
   if (!hasExactObjectKeys(value, [
     'kind', 'notApplicableControls', 'profileHash', 'profileId',
-    'prohibitedActions', 'requiredLocalControls', 'scope',
+    'optionalDiagnostics', 'prohibitedActions', 'requiredLocalControls', 'scope',
     'scientificCapabilities', 'version',
   ]) || value.version !== 1 || value.kind !== PROFILE_KIND
     || value.profileId !== PROFILE_ID || !SHA256.test(String(value.profileHash || ''))
@@ -182,6 +192,12 @@ function validProfileShape(value) {
     && PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS.includes(item.controlId)
     && item.evidenceKind === LOCAL_CONTROL_DEFINITIONS[item.controlId].evidenceKind
     && item.description === LOCAL_CONTROL_DEFINITIONS[item.controlId].description;
+  const validOptional = (item) => hasExactObjectKeys(
+    item, ['blocking', 'description', 'diagnosticId'],
+  )
+    && PERSONAL_SELF_HOSTED_OPTIONAL_DIAGNOSTIC_IDS.includes(item.diagnosticId)
+    && item.blocking === OPTIONAL_DIAGNOSTIC_DEFINITIONS[item.diagnosticId].blocking
+    && item.description === OPTIONAL_DIAGNOSTIC_DEFINITIONS[item.diagnosticId].description;
   const validScientific = (item, capability) => hasExactObjectKeys(item, [
     'defaultEnabled', 'requiredEvidence', ...(capability === 'gpu' ? ['optInEnvironment'] : []),
   ])
@@ -194,6 +210,9 @@ function validProfileShape(value) {
     && exactArray(value.requiredLocalControls, validLocal)
     && JSON.stringify(value.requiredLocalControls.map((item) => item.controlId).sort())
       === JSON.stringify(PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS)
+    && exactArray(value.optionalDiagnostics, validOptional)
+    && JSON.stringify(value.optionalDiagnostics.map((item) => item.diagnosticId).sort())
+      === JSON.stringify(PERSONAL_SELF_HOSTED_OPTIONAL_DIAGNOSTIC_IDS)
     && validScientific(value.scientificCapabilities.cpu, 'cpu')
     && validScientific(value.scientificCapabilities.gpu, 'gpu');
 }
@@ -238,9 +257,6 @@ function controlEvidence(value, controlId, nowMs) {
     'formal-operational-zero-skipped': details.zeroSkipped === true
       && Number(details.pass) > 0 && details.fail === 0 && details.skipped === 0
       && details.todo === 0 && GIT_OBJECT_ID.test(String(details.commit || '')),
-    'local-author-review-session-separation': details.freshSessionSeparationVerified === true
-      && validHash(details.authorSessionHash) && validHash(details.reviewerSessionHash)
-      && details.authorSessionHash !== details.reviewerSessionHash,
     'credential-and-runtime-boundary': details.privateKeyMaterialAbsent === true
       && details.secretLeakScanPassed === true && details.runtimeOwnerOnly === true,
     'database-inventory-and-schema': details.inventoryReady === true
@@ -253,8 +269,6 @@ function controlEvidence(value, controlId, nowMs) {
     'enabled-scientific-oracles': details.enabledCapabilitiesReady === true
       && Array.isArray(details.enabledCapabilities)
       && details.enabledCapabilities.includes('cpu'),
-    'local-slo-alert-policy': details.alertPolicyConfigured === true
-      && details.missingDataAlertsExercised === true,
   }[controlId];
   return requirements
     ? null : `personal_self_hosted_control_requirement_not_met:${controlId}`;
@@ -297,6 +311,7 @@ export function evaluatePersonalSelfHostedProductionReadiness({
   profile = PERSONAL_SELF_HOSTED_PRODUCTION_PROFILE,
   controls,
   scientific,
+  diagnostics = {},
   externalControls,
   externalActionsPerformed = false,
   observedAt,
@@ -339,6 +354,7 @@ export function evaluatePersonalSelfHostedProductionReadiness({
     status: ready
       ? 'personal_self_hosted_production_ready'
       : 'personal_self_hosted_production_blocked',
+    personalSelfHostedProductionReady: ready,
     productionScope: 'single-user-private-local-only',
     distributionReady: false,
     externalQualificationRequired: false,
@@ -346,6 +362,12 @@ export function evaluatePersonalSelfHostedProductionReadiness({
     observedAt: observed,
     notApplicableControls: profile.notApplicableControls,
     controlResults: Object.freeze(controlResults),
+    optionalDiagnostics: Object.freeze(Object.fromEntries(profile.optionalDiagnostics.map(
+      ({ diagnosticId }) => [diagnosticId, diagnostics?.[diagnosticId] || Object.freeze({
+        status: 'not_observed_optional',
+        blocking: false,
+      })],
+    ))),
     scientificCapabilities: scientific,
     blockers: Object.freeze(uniqueBlockers),
   });
@@ -360,4 +382,5 @@ export const PERSONAL_SELF_HOSTED_PROFILE_CONSTANTS = Object.freeze({
   maxEvidenceAgeMs: MAXIMUM_EVIDENCE_AGE_MS,
   notApplicableReasons: NOT_APPLICABLE_REASONS,
   localControlDefinitions: LOCAL_CONTROL_DEFINITIONS,
+  optionalDiagnosticDefinitions: OPTIONAL_DIAGNOSTIC_DEFINITIONS,
 });

@@ -44,7 +44,7 @@
       },
       {
         "name": "hepta:sbom:package-json-sha256",
-        "value": "sha256:152c8e97b40fe1b23638f94a21d19627dce4dfa1a8668b92c3ab5103f8571873"
+        "value": "sha256:b61252396bc8f9dd5e55f32cbee82d7d3cb4e140e4fb135a9c6c56f94b409d73"
       },
       {
         "name": "hepta:sbom:package-lock-sha256",

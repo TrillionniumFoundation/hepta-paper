@@ -130,8 +130,13 @@ function loadedImageDigest() {
   try { repoDigests = JSON.parse(String(result.stdout || '').trim()); } catch {
     repoDigests = null;
   }
+  // Docker's RepoDigests intentionally drops the tag (`repo@sha256:...`),
+  // while the immutable inspect reference above includes it.  Bind the
+  // repository and digest, never the mutable tag, when checking the cache.
+  const repository = image.replace(/:[^/:]+$/u, '');
+  const expectedRepoDigest = `${repository}@${digest}`;
   if (!Array.isArray(repoDigests)
-    || !repoDigests.includes(`${image}@${digest}`)) {
+    || !repoDigests.includes(expectedRepoDigest)) {
     throw new Error('personal_gpu_pinned_image_digest_not_bound');
   }
   return Object.freeze({ image, imageDigest: digest });

@@ -73,8 +73,17 @@ export async function runPersonalLocalDatabase({ argv = process.argv.slice(2) } 
             backupReceiptPath: options.backupPath,
             allowStaleSharedMemory: options.allowStaleSharedMemory,
           });
-  return Object.freeze({ report, exitCode: report.ready === true || report.status?.endsWith('_ready')
-    || report.status === 'personal_database_sidecars_cleared' ? 0 : 2 });
+  const successfulStatuses = new Set([
+    'personal_local_database_ready',
+    'personal_database_anti_rollback_ready',
+    'personal_database_backup_recorded',
+    'personal_database_restore_drill_passed',
+    'personal_database_sidecars_cleared',
+  ]);
+  return Object.freeze({
+    report,
+    exitCode: report.ready === true || successfulStatuses.has(report.status) ? 0 : 2,
+  });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {

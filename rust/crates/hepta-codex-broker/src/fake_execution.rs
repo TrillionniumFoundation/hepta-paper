@@ -230,6 +230,18 @@ pub fn run_reserved_fake_operation(
             return Err(FakeBrokerExecutionError::EventStream(error.to_string()));
         }
     };
+    if event_stream.raw_stream_hash != process.stdout_hash {
+        store.append_transition(
+            &plan.operation_id,
+            OperationState::EventStreamStarted,
+            OperationState::EventStreamInvalid,
+            timeline.terminal_event_observed_unix_ms,
+            None,
+            Some("fake_event_stream_hash_mismatch".to_owned()),
+            fault_for(&plan, OperationState::EventStreamInvalid),
+        )?;
+        return Err(FakeBrokerExecutionError::EventStreamHashMismatch);
+    }
     store.append_transition(
         &plan.operation_id,
         OperationState::EventStreamStarted,
@@ -349,6 +361,8 @@ pub enum FakeBrokerExecutionError {
     IncompleteStdoutCapture,
     #[error("fake JSONL event stream is invalid: {0}")]
     EventStream(String),
+    #[error("fake JSONL event stream hash differs from supervised stdout evidence")]
+    EventStreamHashMismatch,
     #[error("fake JSONL terminal event reported failure")]
     TerminalEventFailure,
     #[error(transparent)]

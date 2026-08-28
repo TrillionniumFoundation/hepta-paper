@@ -23,8 +23,8 @@ use hepta_codex_broker::{
     PeerPrincipalV1, PreparedResultAcknowledgementPolicyV1,
     PreparedResultAcknowledgementTrustStoreV1, PreparedResultAcknowledgementV1,
     ReservationOutcomeV1, admit_and_reserve_unix_stream, apply_prepared_result_acknowledgement,
-    capability_signing_bytes, create_broker_backup, inspect_peer_identity, list_recovery_candidates,
-    prepared_result_acknowledgement_signing_bytes, restore_broker_backup,
+    capability_signing_bytes, create_broker_backup, inspect_peer_identity,
+    list_recovery_candidates, prepared_result_acknowledgement_signing_bytes, restore_broker_backup,
     run_reserved_fake_operation, verify_prepared_result_acknowledgement, write_request_frame,
 };
 use hepta_codex_journal::{OperationState, RecoveryDisposition};
@@ -32,9 +32,7 @@ use hepta_codex_protocol::{
     AgentRole, ApprovalPolicy, CodexExecutionRequestV1, NetworkPolicy, RequestCapabilityV1,
     SandboxPolicy, SessionPolicy, Sha256Digest, TaskKind, Transport,
 };
-use hepta_codex_runtime::{
-    BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1,
-};
+use hepta_codex_runtime::{BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1};
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -83,8 +81,7 @@ impl Drop for TempTree {
 }
 
 fn digest(byte: char) -> Sha256Digest {
-    Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64)))
-        .expect("test digest")
+    Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64))).expect("test digest")
 }
 
 fn signed_request(
@@ -152,11 +149,9 @@ fn reserve_operation(
         &format!("nonce-{operation_id}"),
         &signing_key,
     );
-    let trust_store = CapabilityTrustStoreV1::new([(
-        "request-key-1".to_owned(),
-        signing_key.verifying_key(),
-    )])
-    .expect("request trust store");
+    let trust_store =
+        CapabilityTrustStoreV1::new([("request-key-1".to_owned(), signing_key.verifying_key())])
+            .expect("request trust store");
     let peer_policy = PeerPolicyV1::new([PeerPrincipalV1 {
         uid: peer.uid,
         gid: peer.gid,
@@ -328,9 +323,8 @@ fn signed_acknowledgement_closes_only_the_exact_prepared_subject() {
     };
     let signing_bytes = prepared_result_acknowledgement_signing_bytes(&acknowledgement)
         .expect("acknowledgement signing bytes");
-    acknowledgement.signature_base64 = Base64UrlUnpadded::encode_string(
-        &acknowledgement_key.sign(&signing_bytes).to_bytes(),
-    );
+    acknowledgement.signature_base64 =
+        Base64UrlUnpadded::encode_string(&acknowledgement_key.sign(&signing_bytes).to_bytes());
     let trust_store = PreparedResultAcknowledgementTrustStoreV1::new([(
         "campaign-writer-key-1".to_owned(),
         acknowledgement_key.verifying_key(),
@@ -345,25 +339,24 @@ fn signed_acknowledgement_closes_only_the_exact_prepared_subject() {
         &trust_store,
     )
     .expect("verify acknowledgement");
-    let acknowledged = apply_prepared_result_acknowledgement(
-        &mut store,
-        &verified,
-        FaultInjectionPointV1::None,
-    )
-    .expect("apply acknowledgement");
+    let acknowledged =
+        apply_prepared_result_acknowledgement(&mut store, &verified, FaultInjectionPointV1::None)
+            .expect("apply acknowledgement");
     assert_eq!(acknowledged.current_state, OperationState::Acknowledged);
 
     let mut wrong_subject = acknowledgement;
     wrong_subject.lease_generation = 2;
-    assert!(verify_prepared_result_acknowledgement(
-        &wrong_subject,
-        &request,
-        &journal,
-        13_001,
-        PreparedResultAcknowledgementPolicyV1::default(),
-        &trust_store,
-    )
-    .is_err());
+    assert!(
+        verify_prepared_result_acknowledgement(
+            &wrong_subject,
+            &request,
+            &journal,
+            13_001,
+            PreparedResultAcknowledgementPolicyV1::default(),
+            &trust_store,
+        )
+        .is_err()
+    );
 }
 
 fn write_executable(path: &Path, body: &str) {
@@ -461,7 +454,10 @@ EOF
         },
     )
     .expect("run fake operation");
-    assert_eq!(prepared.journal.current_state, OperationState::ResultPrepared);
+    assert_eq!(
+        prepared.journal.current_state,
+        OperationState::ResultPrepared
+    );
     assert_eq!(
         prepared.event_stream.terminal_event_kind,
         hepta_codex_protocol::TerminalEventKind::TurnCompleted,

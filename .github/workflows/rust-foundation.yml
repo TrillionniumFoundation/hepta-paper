@@ -50,26 +50,47 @@ jobs:
           rustc --version --verbose
           cargo --version --verbose
 
-      - name: Generate initial dependency lockfile
+      - name: Reject Rust OpenClaw dependencies
         shell: bash
         run: |
           set -euo pipefail
-          cargo generate-lockfile --manifest-path rust/Cargo.toml
-          sha256sum rust/Cargo.lock
-          printf 'HEPTA_CARGO_LOCK_BASE64_BEGIN\n'
-          base64 -w0 rust/Cargo.lock
-          printf '\nHEPTA_CARGO_LOCK_BASE64_END\n'
+          if grep -RniE 'openclaw' \
+            --include='*.rs' \
+            --include='Cargo.toml' \
+            --include='*.toml' \
+            rust/crates rust/Cargo.toml rust/rust-toolchain.toml; then
+            echo 'OpenClaw is forbidden in the Rust source and manifest graph.' >&2
+            exit 1
+          fi
+
+      - name: Require and validate dependency lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f rust/Cargo.lock ]]; then
+            cargo generate-lockfile --manifest-path rust/Cargo.toml
+            echo '::error::rust/Cargo.lock is missing; commit the generated lockfile.'
+            cat rust/Cargo.lock
+            exit 1
+          fi
+          cargo metadata \
+            --manifest-path rust/Cargo.toml \
+            --format-version 1 \
+            --locked \
+            --no-deps \
+            > /tmp/hepta-rust-metadata.json
+          sha256sum rust/Cargo.lock /tmp/hepta-rust-metadata.json
 
       - name: Check formatting
         run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test --manifest-path rust/Cargo.toml --workspace --all-features
+        run: cargo test --manifest-path rust/Cargo.toml --workspace --all-features --locked
 
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --no-deps
+        run: cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps

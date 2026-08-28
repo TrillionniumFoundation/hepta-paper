@@ -12,13 +12,14 @@ The first foundation slice contains:
 
 OpenClaw is deliberately outside the Rust target architecture. Existing Node
 code remains the production compatibility oracle until capability-by-capability
-cutover gates are met.
+cutover gates are met. `rust/Cargo.lock` is a required merge artifact; CI fails
+closed when it is missing or stale.
 
 ## Local validation
 
 ```bash
 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
-cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features -- -D warnings
-cargo test --manifest-path rust/Cargo.toml --workspace --all-features
-cargo doc --manifest-path rust/Cargo.toml --workspace --no-deps
+cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --manifest-path rust/Cargo.toml --workspace --all-features --locked
+cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps
 ```

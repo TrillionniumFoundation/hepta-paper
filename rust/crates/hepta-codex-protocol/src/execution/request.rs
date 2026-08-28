@@ -17,8 +17,11 @@ const MAX_EVENT_COUNT: u64 = 1_000_000;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequestCapabilityV1 {
     pub nonce: String,
+    pub issued_at_unix_ms: u64,
     pub expires_at_unix_ms: u64,
     pub signer_key_id: String,
+    pub peer_uid: u32,
+    pub peer_gid: u32,
     pub signature_base64: String,
 }
 
@@ -83,10 +86,20 @@ impl CodexExecutionRequestV1 {
         if self.absolute_deadline_unix_ms == 0 {
             return Err(ProtocolValidationError::NonPositive("absoluteDeadlineUnixMs"));
         }
+        if self.request_capability.issued_at_unix_ms == 0 {
+            return Err(ProtocolValidationError::NonPositive(
+                "requestCapability.issuedAtUnixMs",
+            ));
+        }
         if self.request_capability.expires_at_unix_ms == 0 {
             return Err(ProtocolValidationError::NonPositive(
                 "requestCapability.expiresAtUnixMs",
             ));
+        }
+        if self.request_capability.expires_at_unix_ms
+            <= self.request_capability.issued_at_unix_ms
+        {
+            return Err(ProtocolValidationError::InvalidCapabilityTimeOrder);
         }
         if self.request_capability.expires_at_unix_ms > self.absolute_deadline_unix_ms {
             return Err(ProtocolValidationError::CapabilityOutlivesRequest);
@@ -169,11 +182,14 @@ fn validate_nonempty_bounded(
 }
 
 fn validate_signature_text(value: &str) -> Result<(), ProtocolValidationError> {
-    if value.is_empty()
-        || value.len() > 4096
-        || !value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_')
-        })
+    // Ed25519 signatures are exactly 64 bytes, encoded as 86 URL-safe,
+    // unpadded Base64 characters. Shape validation is intentionally performed
+    // before the broker allocates decoder state; cryptographic validation is
+    // still mandatory at admission.
+    if value.len() != 86
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
         return Err(ProtocolValidationError::InvalidText(
             "requestCapability.signatureBase64",
@@ -230,29 +246,64 @@ mod tests {
             remaining_token_hint: Some(10_000),
             request_capability: RequestCapabilityV1 {
                 nonce: "nonce-1".into(),
+                issued_at_unix_ms: 8_000,
                 expires_at_unix_ms: 9_000,
                 signer_key_id: "broker-key-1".into(),
-                signature_base64: "AA==".into(),
+                peer_uid: 1000,
+                peer_gid: 1000,
+                signature_base64: "A".repeat(86),
             },
         }
     }
 
     #[test]
-    fn role_profiles_are_fail_closed() {
-        assert!(request(
+    fn capability_signature_and_time_shape_are_fail_closed() {
+        let mut invalid_signature = request(
             AgentRole::Author,
             TaskKind::Draft,
             SandboxPolicy::WorkspaceWrite,
-        )
-        .validate()
-        .is_ok());
-        assert!(request(
-            AgentRole::Repairer,
-            TaskKind::LatexRepair,
+        );
+        invalid_signature.request_capability.signature_base64 = "AA==".into();
+        assert_eq!(
+            invalid_signature.validate(),
+            Err(ProtocolValidationError::InvalidText(
+                "requestCapability.signatureBase64",
+            )),
+        );
+
+        let mut invalid_time = request(
+            AgentRole::Author,
+            TaskKind::Draft,
             SandboxPolicy::WorkspaceWrite,
-        )
-        .validate()
-        .is_ok());
+        );
+        invalid_time.request_capability.expires_at_unix_ms =
+            invalid_time.request_capability.issued_at_unix_ms;
+        assert_eq!(
+            invalid_time.validate(),
+            Err(ProtocolValidationError::InvalidCapabilityTimeOrder),
+        );
+    }
+
+    #[test]
+    fn role_profiles_are_fail_closed() {
+        assert!(
+            request(
+                AgentRole::Author,
+                TaskKind::Draft,
+                SandboxPolicy::WorkspaceWrite,
+            )
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            request(
+                AgentRole::Repairer,
+                TaskKind::LatexRepair,
+                SandboxPolicy::WorkspaceWrite,
+            )
+            .validate()
+            .is_ok()
+        );
         assert_eq!(
             request(
                 AgentRole::Reviewer,
@@ -261,6 +312,20 @@ mod tests {
             )
             .validate(),
             Err(ProtocolValidationError::RoleSandboxMismatch),
+        );
+    }
+
+    #[test]
+    fn capability_times_must_be_strictly_ordered() {
+        let mut value = request(
+            AgentRole::Reviewer,
+            TaskKind::Review,
+            SandboxPolicy::ReadOnly,
+        );
+        value.request_capability.issued_at_unix_ms = 9_000;
+        assert_eq!(
+            value.validate(),
+            Err(ProtocolValidationError::InvalidCapabilityTimeOrder),
         );
     }
 }

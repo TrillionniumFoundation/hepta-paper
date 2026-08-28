@@ -59,16 +59,3 @@ fn sha256_digest(bytes: &[u8]) -> Result<Sha256Digest, BrokerJournalError> {
     let value = format!("sha256:{}", hex::encode(hasher.finalize()));
     Sha256Digest::from_str(&value).map_err(|_| BrokerJournalError::DigestConstruction)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn invalid_operation_is_not_synthesized() {
-        // The full happy-path and corruption cases are covered by the service
-        // lifecycle integration suite against a real broker journal. This test
-        // keeps the helper free of any fallback or synthetic request behavior.
-        assert!("".parse::<u64>().is_err());
-    }
-}

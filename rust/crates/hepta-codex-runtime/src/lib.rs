@@ -33,7 +33,7 @@ pub use invocation::{
 };
 pub use process::{
     BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1, ProcessLimitsV1,
-    ProcessTerminationReason, run_bounded_process,
+    ProcessTerminationReason, run_bounded_process, run_bounded_process_with_spawn_hook,
 };
 pub use qualification::{
     QualifiedRuntimeExecutionRequestV1, QualifiedRuntimeExecutionResultV1, RuntimeExecutionError,

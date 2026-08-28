@@ -1,7 +1,7 @@
 # hepta-paper Rust control-plane rewrite master plan
 
 Status: **working plan v2.0 — Codex-first, OpenClaw excluded**  
-Baseline reviewed: `main@d2868944ecc5a6c081bcb42d67fc0643ecbecd0f` (2026-08-28)  
+Baseline reviewed: `main@7bf9d18498f6091ffad91ee400e2bbd4830e0a00` (2026-08-28)  
 Target: first-party production control plane in Rust with compatibility-preserving cutover
 
 ## 1. Executive decision

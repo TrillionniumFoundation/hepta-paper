@@ -33,52 +33,6 @@ env:
   RUST_BACKTRACE: '1'
 
 jobs:
-  bootstrap-lock:
-    name: bootstrap missing Cargo.lock
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.head_ref, 'codex/')
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out exact pull-request head
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Install qualified Rust toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal
-          rustup default 1.98.0
-          rustc --version --verbose
-          cargo --version --verbose
-
-      - name: Generate and commit missing dependency lock
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_BRANCH: ${{ github.head_ref }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f rust/Cargo.lock ]]; then
-            echo 'rust/Cargo.lock is already committed; bootstrap is a no-op.'
-            exit 0
-          fi
-          cargo generate-lockfile --manifest-path rust/Cargo.toml
-          sha256sum rust/Cargo.lock
-          content="$(base64 -w0 rust/Cargo.lock)"
-          gh api \
-            --method PUT \
-            "repos/${GITHUB_REPOSITORY}/contents/rust/Cargo.lock" \
-            -f message='build(rust): lock broker state dependencies' \
-            -f content="$content" \
-            -f branch="$HEAD_BRANCH"
-
   validate:
     name: format, lint, test, docs
     runs-on: ubuntu-latest
@@ -109,35 +63,12 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare dependency lock
-        id: dependency_lock
+      - name: Require committed dependency lock
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! -f rust/Cargo.lock ]]; then
-            cargo generate-lockfile --manifest-path rust/Cargo.toml
-            echo 'generated=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'generated=false' >> "$GITHUB_OUTPUT"
-          fi
+          test -f rust/Cargo.lock
           sha256sum rust/Cargo.lock
-
-      - name: Upload generated dependency lock
-        if: steps.dependency_lock.outputs.generated == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: rust-cargo-lock
-          path: rust/Cargo.lock
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
-      - name: Require committed dependency lock
-        if: steps.dependency_lock.outputs.generated == 'true'
-        shell: bash
-        run: |
-          echo '::error::rust/Cargo.lock is missing; commit the generated rust-cargo-lock artifact.'
-          exit 1
 
       - name: Validate locked dependency metadata
         shell: bash

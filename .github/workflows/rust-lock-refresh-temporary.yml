@@ -1,0 +1,54 @@
+name: rust-lock-refresh-temporary
+
+on:
+  push:
+    branches:
+      - codex/rust-broker-service-20260828
+    paths:
+      - '.github/workflows/rust-lock-refresh-temporary.yml'
+      - 'rust/Cargo.toml'
+      - 'rust/crates/**/Cargo.toml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rust-lock-refresh-temporary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    if: ${{ !contains(github.event.head_commit.message, '[lock-refresh]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Generate and commit exact lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+          cargo metadata --manifest-path rust/Cargo.toml --format-version 1 --locked --no-deps >/tmp/metadata.json
+          if git diff --quiet -- rust/Cargo.lock; then
+            echo 'Cargo.lock already current.'
+            exit 0
+          fi
+          git config user.name 'hepta-rust-lock-bot'
+          git config user.email 'hepta-rust-lock-bot@users.noreply.github.com'
+          git add rust/Cargo.lock
+          git commit -m 'build(rust): refresh service dependency lock [lock-refresh]'
+          git push origin HEAD:codex/rust-broker-service-20260828

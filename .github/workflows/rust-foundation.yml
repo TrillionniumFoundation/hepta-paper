@@ -82,16 +82,85 @@ jobs:
             > /tmp/hepta-rust-metadata.json
           sha256sum rust/Cargo.lock /tmp/hepta-rust-metadata.json
 
+      - name: Prepare validation log directory
+        shell: bash
+        run: mkdir -p /tmp/hepta-rust-validation
+
       - name: Check formatting
-        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+        id: rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo fmt --manifest-path rust/Cargo.toml --all -- --check; then
+            echo 'failed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'failed=true' >> "$GITHUB_OUTPUT"
+            cargo fmt --manifest-path rust/Cargo.toml --all
+            git diff --binary -- rust > /tmp/hepta-rust-validation/rustfmt.patch
+            test -s /tmp/hepta-rust-validation/rustfmt.patch
+          fi
+
+      - name: Upload rustfmt patch
+        if: steps.rustfmt.outputs.failed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rustfmt-patch
+          path: /tmp/hepta-rust-validation/rustfmt.patch
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Fail on formatting drift
+        if: steps.rustfmt.outputs.failed == 'true'
+        shell: bash
+        run: |
+          echo '::error::rustfmt drift detected; apply the rustfmt-patch artifact.'
+          exit 1
 
       - name: Run Clippy
-        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-targets \
+            --all-features \
+            --locked \
+            -- -D warnings \
+            2>&1 | tee /tmp/hepta-rust-validation/clippy.log
 
       - name: Run tests
-        run: cargo test --manifest-path rust/Cargo.toml --workspace --all-features --locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            2>&1 | tee /tmp/hepta-rust-validation/test.log
 
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo doc \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            --no-deps \
+            2>&1 | tee /tmp/hepta-rust-validation/rustdoc.log
+
+      - name: Upload Rust validation logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-validation-logs
+          path: /tmp/hepta-rust-validation
+          if-no-files-found: warn
+          retention-days: 1
+          compression-level: 0

@@ -29,5 +29,7 @@ pub use process::{
     ProcessLimitsV1, ProcessTerminationReason, run_bounded_process,
 };
 pub use qualification::{
-    RuntimeIdentityDrift, RuntimeQualificationError, verify_runtime_identity_unchanged,
+    QualifiedRuntimeExecutionRequestV1, QualifiedRuntimeExecutionResultV1,
+    RuntimeExecutionError, RuntimeIdentityDrift, RuntimeQualificationError,
+    run_qualified_runtime_execution, verify_runtime_identity_unchanged,
 };

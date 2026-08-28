@@ -2,7 +2,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-    path::{Path, PathBuf},
+    path::Path,
     str::FromStr,
     time::Duration,
 };
@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 
 use super::{
     codec::{from_i64, state_from_db},
-    path::{inspect_database_envelope, verify_database_contract},
+    path::verify_database_contract,
     store::{BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1},
 };
 
@@ -161,10 +161,14 @@ pub fn create_broker_backup(
             "WAL checkpoint did not fully complete".to_owned(),
         ));
     }
-    let quoted: String = source.query_row("SELECT quote(?1)", [destination], |row| row.get(0))?;
+    let destination_text = destination
+        .to_str()
+        .ok_or(BrokerJournalError::DatabasePathInvalid)?;
+    let quoted: String = source.query_row("SELECT quote(?1)", [destination_text], |row| row.get(0))?;
     source.execute_batch(&format!("VACUUM INTO {quoted};"))?;
     drop(source);
 
+    configure_backup_database(destination, journal_policy)?;
     fs::set_permissions(destination, fs::Permissions::from_mode(0o600))
         .map_err(|error| BrokerJournalError::Filesystem("backup_permissions", error.kind()))?;
     File::open(destination)
@@ -245,6 +249,41 @@ pub fn restore_broker_backup(
         backup_bytes,
         operation_count: restored.operation_count()?,
     })
+}
+
+fn configure_backup_database(
+    path: &Path,
+    policy: BrokerJournalPolicyV1,
+) -> Result<(), BrokerJournalError> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )?;
+    connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;
+    connection.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA trusted_schema = OFF;
+         PRAGMA synchronous = FULL;
+         PRAGMA wal_autocheckpoint = 1000;
+         PRAGMA temp_store = MEMORY;",
+    )?;
+    let journal_mode: String =
+        connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
+    if journal_mode.to_ascii_lowercase() != "wal" {
+        return Err(BrokerJournalError::JournalModeMismatch(journal_mode));
+    }
+    let checkpoint: (i64, i64, i64) =
+        connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+    if checkpoint.0 != 0 || checkpoint.1 != checkpoint.2 {
+        return Err(BrokerJournalError::IntegrityCheckFailed(
+            "backup WAL checkpoint did not fully complete".to_owned(),
+        ));
+    }
+    verify_database_contract(&connection)
 }
 
 fn open_read_only(path: &Path) -> Result<Connection, BrokerJournalError> {

@@ -2,16 +2,17 @@
 //!
 //! This crate authenticates a peer and short-lived request capability before
 //! reserving a crash-stable operation. The service slice adds role-specific
-//! listeners, bounded backpressure, response framing, public-key rotation, and
-//! journal recovery/backup APIs. It still does not hold provider credentials,
-//! launch real Codex, write the campaign database, or grant release and
-//! submission authority.
+//! listeners, bounded backpressure, response framing, public-key rotation,
+//! signed prepared-result acknowledgement, and journal recovery/backup APIs.
+//! It still does not hold provider credentials, launch real Codex, write the
+//! campaign database, or grant release and submission authority.
 
 #![forbid(unsafe_code)]
 
 #[cfg(not(target_os = "linux"))]
 compile_error!("hepta-codex-broker V1 requires Linux SO_PEERCRED semantics");
 
+mod acknowledgement;
 mod admission;
 mod capability;
 mod frame;
@@ -23,6 +24,12 @@ mod server;
 mod service;
 mod trust_bundle;
 
+pub use acknowledgement::{
+    PreparedResultAcknowledgementError, PreparedResultAcknowledgementPolicyV1,
+    PreparedResultAcknowledgementTrustStoreV1, PreparedResultAcknowledgementV1,
+    VerifiedPreparedResultAcknowledgementV1, apply_prepared_result_acknowledgement,
+    prepared_result_acknowledgement_signing_bytes, verify_prepared_result_acknowledgement,
+};
 pub use admission::{
     AdmissionError, AdmissionPolicyV1, AuthenticatedBrokerRequestV1, BrokerRolePolicyV1,
     admit_unix_stream,

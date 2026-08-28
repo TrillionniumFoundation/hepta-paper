@@ -348,8 +348,8 @@ pub fn verify_capability_trust_bundle(
     if active.is_empty() {
         return Err(TrustBundleError::NoActiveRoleKey(role));
     }
-    let trust_store = CapabilityTrustStoreV1::new(active)
-        .map_err(TrustBundleError::CapabilityTrustStore)?;
+    let trust_store =
+        CapabilityTrustStoreV1::new(active).map_err(TrustBundleError::CapabilityTrustStore)?;
     let bundle_hash = sha256_digest(&signing_bytes)?;
     Ok(VerifiedCapabilityTrustBundleV1 {
         role,
@@ -389,7 +389,10 @@ pub fn trust_bundle_signing_bytes(
     }
     for revocation in &bundle.revocations {
         writer.text("revokedKeyId", &revocation.key_id)?;
-        writer.u64("revocationEffectiveAtUnixMs", revocation.effective_at_unix_ms)?;
+        writer.u64(
+            "revocationEffectiveAtUnixMs",
+            revocation.effective_at_unix_ms,
+        )?;
         writer.text("revocationReasonCode", &revocation.reason_code)?;
         writer.raw(b"revocationEnd")?;
     }
@@ -687,8 +690,8 @@ mod tests {
             previous_bundle_hash: previous,
             keys: request_keys
                 .into_iter()
-                .map(|(key_id, key, allowed_roles, valid_from, valid_until)| {
-                    CapabilityTrustKeyV1 {
+                .map(
+                    |(key_id, key, allowed_roles, valid_from, valid_until)| CapabilityTrustKeyV1 {
                         key_id,
                         public_key_base64: Base64UrlUnpadded::encode_string(
                             key.verifying_key().as_bytes(),
@@ -696,8 +699,8 @@ mod tests {
                         valid_from_unix_ms: valid_from,
                         valid_until_unix_ms: valid_until,
                         allowed_roles,
-                    }
-                })
+                    },
+                )
                 .collect(),
             revocations,
         };

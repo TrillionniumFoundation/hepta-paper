@@ -189,17 +189,11 @@ impl BrokerServerV1 {
                         }
                         Err(TrySendError::Full(mut stream)) => {
                             busy_connections = busy_connections.saturating_add(1);
-                            configure_write_timeout(
-                                &stream,
-                                self.server_policy.write_timeout_ms,
-                            )?;
+                            configure_write_timeout(&stream, self.server_policy.write_timeout_ms)?;
                             let response =
                                 BrokerResponseV1::busy(self.server_policy.busy_retry_after_ms);
-                            let _ = write_response_frame(
-                                &mut stream,
-                                &response,
-                                self.response_policy,
-                            );
+                            let _ =
+                                write_response_frame(&mut stream, &response, self.response_policy);
                         }
                         Err(TrySendError::Disconnected(mut stream)) => {
                             self.shutdown.store(true, Ordering::Release);
@@ -207,11 +201,8 @@ impl BrokerServerV1 {
                                 BrokerMachineCodeV1::ServiceStopping,
                                 None,
                             );
-                            let _ = write_response_frame(
-                                &mut stream,
-                                &response,
-                                self.response_policy,
-                            );
+                            let _ =
+                                write_response_frame(&mut stream, &response, self.response_policy);
                             break;
                         }
                     }
@@ -223,7 +214,9 @@ impl BrokerServerV1 {
         self.shutdown.store(true, Ordering::Release);
         drop(sender);
         for handle in worker_handles {
-            handle.join().map_err(|_| BrokerServerError::WorkerPanicked)??;
+            handle
+                .join()
+                .map_err(|_| BrokerServerError::WorkerPanicked)??;
         }
         self.listener.shutdown()?;
         Ok(BrokerServerRunSummaryV1 {
@@ -297,12 +290,8 @@ fn spawn_worker(
             ) {
                 Ok(reservation) => {
                     let (kind, journal_state) = match reservation.outcome {
-                        ReservationOutcomeV1::Reserved(journal) => {
-                            (true, journal.current_state)
-                        }
-                        ReservationOutcomeV1::Existing(journal) => {
-                            (false, journal.current_state)
-                        }
+                        ReservationOutcomeV1::Reserved(journal) => (true, journal.current_state),
+                        ReservationOutcomeV1::Existing(journal) => (false, journal.current_state),
                     };
                     let response = if kind {
                         BrokerResponseV1::reserved(
@@ -411,10 +400,16 @@ mod tests {
     fn policy_rejects_unbounded_worker_or_queue_configuration() {
         let mut policy = BrokerServerPolicyV1::default();
         policy.worker_threads = HARD_MAXIMUM_WORKERS + 1;
-        assert!(matches!(policy.validate(), Err(BrokerServerError::InvalidPolicy)));
+        assert!(matches!(
+            policy.validate(),
+            Err(BrokerServerError::InvalidPolicy)
+        ));
         let mut policy = BrokerServerPolicyV1::default();
         policy.queue_capacity = HARD_MAXIMUM_QUEUE_CAPACITY + 1;
-        assert!(matches!(policy.validate(), Err(BrokerServerError::InvalidPolicy)));
+        assert!(matches!(
+            policy.validate(),
+            Err(BrokerServerError::InvalidPolicy)
+        ));
     }
 
     #[test]
@@ -434,11 +429,9 @@ mod tests {
             BrokerResponseFramePolicyV1::default(),
         )
         .expect("busy response");
-        let (decoded, _) = read_response_frame(
-            &mut client_two,
-            BrokerResponseFramePolicyV1::default(),
-        )
-        .expect("read busy response");
+        let (decoded, _) =
+            read_response_frame(&mut client_two, BrokerResponseFramePolicyV1::default())
+                .expect("read busy response");
         assert_eq!(decoded, response);
     }
 

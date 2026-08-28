@@ -152,11 +152,10 @@ pub fn create_broker_backup(
             | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )?;
     source.busy_timeout(Duration::from_millis(journal_policy.busy_timeout_ms))?;
-    let checkpoint: (i64, i64, i64) = source.query_row(
-        "PRAGMA wal_checkpoint(FULL)",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    )?;
+    let checkpoint: (i64, i64, i64) =
+        source.query_row("PRAGMA wal_checkpoint(FULL)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
     if checkpoint.0 != 0 || checkpoint.1 != checkpoint.2 {
         return Err(BrokerJournalError::IntegrityCheckFailed(
             "WAL checkpoint did not fully complete".to_owned(),
@@ -175,7 +174,8 @@ pub fn create_broker_backup(
     inspect_backup_file(destination, backup_policy)?;
     verify_backup_database(destination, journal_policy, backup_policy)?;
 
-    let (backup_content_hash, backup_bytes) = hash_file(destination, backup_policy.maximum_backup_bytes)?;
+    let (backup_content_hash, backup_bytes) =
+        hash_file(destination, backup_policy.maximum_backup_bytes)?;
     Ok(BrokerBackupReceiptV1 {
         version: 1,
         created_at_unix_ms: now_unix_ms,
@@ -234,7 +234,8 @@ pub fn restore_broker_backup(
 
     let restored = BrokerJournalStoreV1::open(destination, journal_policy)?;
     restored.validate_integrity()?;
-    let (backup_content_hash, backup_bytes) = hash_file(backup, backup_policy.maximum_backup_bytes)?;
+    let (backup_content_hash, backup_bytes) =
+        hash_file(backup, backup_policy.maximum_backup_bytes)?;
     Ok(BrokerBackupReceiptV1 {
         version: 1,
         created_at_unix_ms: now_unix_ms,
@@ -332,10 +333,7 @@ fn inspect_backup_file(
     Ok(())
 }
 
-fn hash_file(
-    path: &Path,
-    maximum_bytes: u64,
-) -> Result<(Sha256Digest, u64), BrokerJournalError> {
+fn hash_file(path: &Path, maximum_bytes: u64) -> Result<(Sha256Digest, u64), BrokerJournalError> {
     let mut file = File::open(path)
         .map_err(|error| BrokerJournalError::Filesystem("backup_hash", error.kind()))?;
     let mut hasher = Sha256::new();

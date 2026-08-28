@@ -281,20 +281,12 @@ impl MessageWriter {
         Ok(())
     }
 
-    fn text(
-        &mut self,
-        key: &str,
-        value: &str,
-    ) -> Result<(), PreparedResultAcknowledgementError> {
+    fn text(&mut self, key: &str, value: &str) -> Result<(), PreparedResultAcknowledgementError> {
         self.raw(key.as_bytes())?;
         self.raw(value.as_bytes())
     }
 
-    fn u64(
-        &mut self,
-        key: &str,
-        value: u64,
-    ) -> Result<(), PreparedResultAcknowledgementError> {
+    fn u64(&mut self, key: &str, value: u64) -> Result<(), PreparedResultAcknowledgementError> {
         self.raw(key.as_bytes())?;
         self.raw(&value.to_be_bytes())
     }

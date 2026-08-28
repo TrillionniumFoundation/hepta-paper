@@ -149,8 +149,8 @@ impl BrokerListenerV1 {
             fs::Permissions::from_mode(policy.socket_mode),
         )
         .map_err(|error| BrokerListenerError::Filesystem("socket_permissions", error.kind()))?;
-        let backlog = Backlog::new(policy.backlog)
-            .map_err(|_| BrokerListenerError::InvalidPolicy)?;
+        let backlog =
+            Backlog::new(policy.backlog).map_err(|_| BrokerListenerError::InvalidPolicy)?;
         listen(&listener, backlog).map_err(|_| BrokerListenerError::BacklogConfiguration)?;
         listener
             .set_nonblocking(true)
@@ -479,8 +479,7 @@ fn load_optional_marker(
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|error| BrokerListenerError::Filesystem("listener_marker", error.kind()))?;
-    let marker = serde_json::from_slice(&bytes)
-        .map_err(|_| BrokerListenerError::MarkerInvalid)?;
+    let marker = serde_json::from_slice(&bytes).map_err(|_| BrokerListenerError::MarkerInvalid)?;
     Ok(Some(marker))
 }
 
@@ -530,17 +529,13 @@ fn write_marker_atomic(
         .write(true)
         .mode(0o600)
         .open(&temporary)
-        .map_err(|error| {
-            BrokerListenerError::Filesystem("listener_marker_temp", error.kind())
-        })?;
+        .map_err(|error| BrokerListenerError::Filesystem("listener_marker_temp", error.kind()))?;
     file.write_all(&bytes)
         .and_then(|()| file.sync_all())
-        .map_err(|error| {
-            BrokerListenerError::Filesystem("listener_marker_temp", error.kind())
-        })?;
-    let metadata = file.metadata().map_err(|error| {
-        BrokerListenerError::Filesystem("listener_marker_temp", error.kind())
-    })?;
+        .map_err(|error| BrokerListenerError::Filesystem("listener_marker_temp", error.kind()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| BrokerListenerError::Filesystem("listener_marker_temp", error.kind()))?;
     if metadata.uid() != policy.service_uid
         || metadata.gid() != policy.service_gid
         || metadata.mode() & 0o7777 != 0o600
@@ -548,8 +543,9 @@ fn write_marker_atomic(
     {
         return Err(BrokerListenerError::MarkerInvalid);
     }
-    fs::rename(&temporary, path)
-        .map_err(|error| BrokerListenerError::Filesystem("listener_marker_publish", error.kind()))?;
+    fs::rename(&temporary, path).map_err(|error| {
+        BrokerListenerError::Filesystem("listener_marker_publish", error.kind())
+    })?;
     sync_parent(path)
 }
 
@@ -574,7 +570,10 @@ fn hash_qualification(
     update_length_prefixed(&mut hasher, &socket.mode.to_be_bytes());
     update_length_prefixed(&mut hasher, &socket.uid.to_be_bytes());
     update_length_prefixed(&mut hasher, &socket.gid.to_be_bytes());
-    update_length_prefixed(&mut hasher, policy.runtime_identity_hash.as_str().as_bytes());
+    update_length_prefixed(
+        &mut hasher,
+        policy.runtime_identity_hash.as_str().as_bytes(),
+    );
     update_length_prefixed(&mut hasher, policy.trust_bundle_hash.as_str().as_bytes());
     update_length_prefixed(&mut hasher, policy.journal_path_hash.as_str().as_bytes());
     digest(hasher)
@@ -691,8 +690,7 @@ mod tests {
                 std::process::id(),
             ));
             fs::create_dir(&path).expect("create temp parent");
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
-                .expect("private parent");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("private parent");
             Self(path)
         }
     }

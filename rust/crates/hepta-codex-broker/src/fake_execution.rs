@@ -110,10 +110,8 @@ pub fn run_reserved_fake_operation(
 
     let mut spawn_linked = false;
     let mut spawn_journal_error = None;
-    let process = run_bounded_process_with_spawn_hook(
-        &plan.process,
-        plan.process_limits,
-        |_| match store.append_transition(
+    let process = run_bounded_process_with_spawn_hook(&plan.process, plan.process_limits, |_| {
+        match store.append_transition(
             &plan.operation_id,
             OperationState::RequestBound,
             OperationState::ProcessSpawned,
@@ -130,8 +128,8 @@ pub fn run_reserved_fake_operation(
                 spawn_journal_error = Some(error);
                 Err(BoundedProcessError::SpawnHookRejected)
             }
-        },
-    );
+        }
+    });
     let process = match process {
         Ok(process) => process,
         Err(error) if spawn_journal_error.is_some() => {

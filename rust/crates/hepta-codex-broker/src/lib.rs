@@ -2,9 +2,10 @@
 //!
 //! This crate authenticates a peer and short-lived request capability before
 //! reserving a crash-stable operation. The service slice adds role-specific
-//! listeners, bounded backpressure, response framing, and public-key rotation.
-//! It still does not hold provider credentials, launch real Codex, write the
-//! campaign database, or grant release and submission authority.
+//! listeners, bounded backpressure, response framing, public-key rotation, and
+//! journal recovery/backup APIs. It still does not hold provider credentials,
+//! launch real Codex, write the campaign database, or grant release and
+//! submission authority.
 
 #![forbid(unsafe_code)]
 
@@ -35,8 +36,9 @@ pub use frame::{
     write_request_frame,
 };
 pub use journal::{
-    BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1, FaultInjectionPointV1,
-    ReservationOutcomeV1,
+    BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerJournalError, BrokerJournalPolicyV1,
+    BrokerJournalStoreV1, BrokerRecoveryCandidateV1, FaultInjectionPointV1, ReservationOutcomeV1,
+    create_broker_backup, list_recovery_candidates, restore_broker_backup,
 };
 pub use listener::{
     BrokerListenerError, BrokerListenerPolicyV1, BrokerListenerQualificationV1, BrokerListenerV1,

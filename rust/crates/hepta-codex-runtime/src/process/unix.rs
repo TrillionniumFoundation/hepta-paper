@@ -20,11 +20,24 @@ use super::{
     },
 };
 
-/// Spawns and supervises a new Unix process group with hard resource limits.
 pub fn run_bounded_process(
     request: &BoundedProcessRequestV1,
     limits: ProcessLimitsV1,
 ) -> Result<BoundedProcessResultV1, BoundedProcessError> {
+    run_bounded_process_with_spawn_hook(request, limits, |_| Ok(()))
+}
+
+/// Spawns a new Unix process group, then runs a fail-closed synchronous hook
+/// before normal supervision continues. A rejected hook kills and reaps the
+/// entire group before returning.
+pub fn run_bounded_process_with_spawn_hook<F>(
+    request: &BoundedProcessRequestV1,
+    limits: ProcessLimitsV1,
+    on_spawn: F,
+) -> Result<BoundedProcessResultV1, BoundedProcessError>
+where
+    F: FnOnce(u32) -> Result<(), BoundedProcessError>,
+{
     let limits = limits.validate()?;
     validate_request(request, limits)?;
     let kill_utility = resolve_kill_utility()?;
@@ -54,6 +67,10 @@ pub fn run_bounded_process(
     if process_id == 0 || process_id > i32::MAX as u32 {
         cleanup_after_error(&mut child, &kill_utility, process_id, limits);
         return Err(BoundedProcessError::InvalidProcessId(process_id));
+    }
+    if let Err(error) = on_spawn(process_id) {
+        cleanup_after_error(&mut child, &kill_utility, process_id, limits);
+        return Err(error);
     }
 
     let result = supervise_spawned_group(

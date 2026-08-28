@@ -12,6 +12,7 @@ compile_error!("hepta-codex-runtime Foundation V1 supports Unix targets only");
 
 mod environment;
 mod identity;
+mod invocation;
 mod process;
 mod qualification;
 
@@ -23,6 +24,11 @@ pub use identity::{
     CodexHomeIdentityV1, CodexRuntimeIdentityV1, CredentialMaterialIdentityV1,
     CredentialMaterialStatus, ExecutableIdentityV1, FileSystemIdentityV1,
     RuntimeIdentityError, RuntimeIdentityPolicyV1, inspect_codex_runtime_identity,
+};
+pub use invocation::{
+    CodexControlFileContractV1, CodexInvocationError, CodexInvocationPolicyV1,
+    CodexInvocationPostflightV1, CodexInvocationRequestV1, CodexInvocationV1,
+    build_codex_invocation, inspect_codex_invocation_postflight,
 };
 pub use process::{
     BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1,

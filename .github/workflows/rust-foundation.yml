@@ -63,16 +63,40 @@ jobs:
             exit 1
           fi
 
-      - name: Require and validate dependency lock
+      - name: Prepare dependency lock
+        id: dependency_lock
         shell: bash
         run: |
           set -euo pipefail
           if [[ ! -f rust/Cargo.lock ]]; then
             cargo generate-lockfile --manifest-path rust/Cargo.toml
-            echo '::error::rust/Cargo.lock is missing; commit the generated lockfile.'
-            cat rust/Cargo.lock
-            exit 1
+            echo 'generated=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'generated=false' >> "$GITHUB_OUTPUT"
           fi
+          sha256sum rust/Cargo.lock
+
+      - name: Upload generated dependency lock
+        if: steps.dependency_lock.outputs.generated == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-cargo-lock
+          path: rust/Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Require committed dependency lock
+        if: steps.dependency_lock.outputs.generated == 'true'
+        shell: bash
+        run: |
+          echo '::error::rust/Cargo.lock is missing; commit the generated rust-cargo-lock artifact.'
+          exit 1
+
+      - name: Validate locked dependency metadata
+        shell: bash
+        run: |
+          set -euo pipefail
           cargo metadata \
             --manifest-path rust/Cargo.toml \
             --format-version 1 \

@@ -1,0 +1,22 @@
+[package]
+name = "hepta-codex-broker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base64ct.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+hepta-codex-journal = { path = "../hepta-codex-journal" }
+hepta-codex-protocol = { path = "../hepta-codex-protocol" }
+nix.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

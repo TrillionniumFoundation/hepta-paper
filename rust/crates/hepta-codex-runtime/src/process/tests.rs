@@ -206,8 +206,10 @@ fn timeout_terminates_descendants_in_the_same_process_group() {
 fn hard_limit_caps_and_stdin_limit_fail_before_spawn() {
     let tree = TempTree::new();
     let script = tree.script("no-spawn.sh", "#!/bin/sh\nexit 99\n");
-    let mut limits = ProcessLimitsV1::default();
-    limits.timeout_ms = 6 * 60 * 60 * 1000 + 1;
+    let limits = ProcessLimitsV1 {
+        timeout_ms: 6 * 60 * 60 * 1000 + 1,
+        ..ProcessLimitsV1::default()
+    };
     assert_eq!(
         run_bounded_process(&request(&tree, script.clone()), limits),
         Err(BoundedProcessError::InvalidLimits),

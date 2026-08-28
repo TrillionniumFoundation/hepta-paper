@@ -1,0 +1,129 @@
+# Rust rewrite executable backlog
+
+This backlog converts the master plan into merge-sized work. IDs are stable;
+status changes must not rename them. “Done” requires code, tests, documentation
+and acceptance evidence.
+
+## Foundation — contracts and protocol
+
+| ID | Priority | Work item | Dependencies | Acceptance |
+|---|---:|---|---|---|
+| RUST-FND-001 | P0 | Create pinned Rust workspace and isolated CI | none | fmt, clippy, test and docs run on Rust 1.98.0 |
+| RUST-FND-002 | P0 | Version `CodexExecutionRequestV1` | FND-001 | deny unknown fields; role/task/sandbox invariants tested |
+| RUST-FND-003 | P0 | Version `CodexExecutionReceiptV1` | FND-002 | spawn, terminal, usage, cost and ambiguity invariants tested |
+| RUST-FND-004 | P0 | Implement canonical SHA-256 digest type | FND-001 | uppercase, wrong algorithm and wrong length fail |
+| RUST-FND-005 | P0 | Implement bounded JSONL decoder | FND-001 | byte, line and event limits enforced before trust |
+| RUST-FND-006 | P0 | Implement terminal/event ordering | FND-005 | missing, duplicate, late and unknown terminal events fail closed |
+| RUST-FND-007 | P0 | Implement fake Codex fault process | FND-005 | malformed JSON, invalid UTF-8, hangs/limits and terminal faults reproducible |
+| RUST-FND-008 | P0 | Implement operation state machine | FND-001 | illegal transitions and terminal mutation fail |
+| RUST-FND-009 | P0 | Implement recovery classification | FND-008 | pre-spawn retry, post-spawn new attempt and prepared integration tested |
+| RUST-FND-010 | P0 | Publish TCB, parity and protocol docs | none | reviewed with explicit authority/non-authority statements |
+
+Foundation slice 1 implements FND-001 through FND-010 except persistence,
+runtime inspection and real process supervision. It creates no production
+writer authority.
+
+## Broker — identity, process and persistence
+
+| ID | Priority | Work item | Dependencies | Acceptance |
+|---|---:|---|---|---|
+| RUST-BRK-001 | P0 | Inspect executable realpath, inode, mode, owner, links and SHA-256 | FND-004 | symlink, replacement and hardlink cases tested |
+| RUST-BRK-002 | P0 | Inspect private `CODEX_HOME` and config identity | BRK-001 | group/world access and path aliasing rejected |
+| RUST-BRK-003 | P0 | Model non-secret credential-root identity | BRK-002 | auth bytes never read or serialized |
+| RUST-BRK-004 | P0 | Pin and qualify Codex version/flags/events | BRK-001, FND-005 | signed qualification record and golden transcript suite |
+| RUST-BRK-005 | P0 | Build environment allowlist/scrubber | BRK-002 | `*_KEY`, `*_TOKEN`, `*_SECRET`, provider and authority vars absent |
+| RUST-BRK-006 | P0 | Implement bounded child supervisor | FND-005 | deadline, stdout/stderr cap, signal and process-group kill tested |
+| RUST-BRK-007 | P0 | Implement output-schema materialization | FND-002, BRK-006 | immutable schema hash matches request |
+| RUST-BRK-008 | P0 | Persist journal in broker-owned SQLite | FND-008 | crash at each transition recovers deterministically |
+| RUST-BRK-009 | P0 | Implement operation idempotency index | BRK-008 | duplicate operation request never double-spawns |
+| RUST-BRK-010 | P0 | Implement Unix-socket framing and size bounds | FND-002 | truncated, oversized and unknown-version frames rejected |
+| RUST-BRK-011 | P0 | Verify peer UID/GID and expiring request capability | BRK-010 | unauthorized peer cannot reserve or spawn |
+| RUST-BRK-012 | P0 | Preflight/postflight runtime identity | BRK-001, BRK-006 | executable/config identity drift blocks integration |
+| RUST-BRK-013 | P0 | Generate execution receipt | FND-003, BRK-006, BRK-008 | receipt validates and binds exact raw event stream |
+| RUST-BRK-014 | P0 | Implement conservative cost settlement | BRK-013 | missing usage is never interpreted as zero |
+| RUST-BRK-015 | P1 | Record scrubbed real-Codex fixtures | BRK-004 | no prompts, credentials or private content retained |
+
+## Workspace and mutation authority
+
+| ID | Priority | Work item | Dependencies | Acceptance |
+|---|---:|---|---|---|
+| RUST-WS-001 | P0 | Descriptor-relative root opener | BRK-006 | symlink and path-race corpus fails closed |
+| RUST-WS-002 | P0 | COW attempt materialization | WS-001 | canonical source remains unchanged before integration |
+| RUST-WS-003 | P0 | Deterministic tree inventory | FND-004, WS-001 | files, links and forbidden special nodes classified |
+| RUST-WS-004 | P0 | Before/after mutation manifest | WS-002, WS-003 | byte, type, mode and link changes captured |
+| RUST-WS-005 | P0 | Versioned role mutation policy | FND-002, WS-004 | exact path/extension/count/size limits enforced |
+| RUST-WS-006 | P0 | Read-only reviewer qualification | BRK-005, WS-004 | write attempts and credential reads fail qualification |
+| RUST-WS-007 | P0 | Prepared workspace result | WS-004, BRK-013 | campaign can integrate without rerunning Codex |
+| RUST-WS-008 | P0 | Failed-attempt discard and retention | WS-002 | failed workspace cannot become next attempt input |
+| RUST-WS-009 | P1 | Crash journal and orphan reconciliation | WS-002 | kill injection leaves no unclassified workspace |
+
+## Compatibility kernel
+
+| ID | Priority | Work item | Dependencies | Acceptance |
+|---|---:|---|---|---|
+| RUST-CMP-001 | P0 | Inventory every hash/canonicalization callsite | M0 | disposition ledger complete |
+| RUST-CMP-002 | P0 | Specify `LegacyStableJsonV1` | CMP-001 | immutable byte-level specification |
+| RUST-CMP-003 | P0 | Build Node oracle CLI | CMP-002 | bounded stdin/stdout and deterministic output |
+| RUST-CMP-004 | P0 | Build Rust V1 encoder/verifier | CMP-002 | corpus byte parity 100% |
+| RUST-CMP-005 | P0 | Capture historical receipt/hash corpus | CMP-001 | provenance and expected values recorded |
+| RUST-CMP-006 | P0 | Design `HeptaCanonicalJsonV2` | CMP-002 | explicit numeric, Unicode, key and null semantics |
+| RUST-CMP-007 | P0 | Version error/status/exit registry | CMP-001 | no implicit string drift |
+| RUST-CMP-008 | P1 | Property and differential fuzzing | CMP-003, CMP-004 | minimized counterexamples retained |
+
+## Read-only control plane
+
+| ID | Priority | Work item | Dependencies | Acceptance |
+|---|---:|---|---|---|
+| RUST-RO-001 | P0 | Open SQLite in immutable/read-only mode | CMP-004 | no WAL or database mutation |
+| RUST-RO-002 | P0 | Decode schema versions 1–25 | RO-001 | fixture matrix complete |
+| RUST-RO-003 | P0 | Inspect campaign DAG and state | RO-002 | logical diff zero against Node |
+| RUST-RO-004 | P0 | Verify ledger and receipts | RO-002, CMP-004 | old/new cross-verification passes |
+| RUST-RO-005 | P0 | Verify artifact/CAS inventory | WS-003 | inventory diff zero |
+| RUST-RO-006 | P1 | Parity dashboard and mismatch bundles | RO-003..005 | every mismatch reproducible offline |
+
+## Local vertical slice
+
+| ID | Priority | Work item | Dependencies | Acceptance |
+|---|---:|---|---|---|
+| RUST-MVP-001 | P0 | Local campaign plan for one paper | RO-003 | deterministic plan hash |
+| RUST-MVP-002 | P0 | Author draft node | BRK-013, WS-007 | write allowlist and schema pass |
+| RUST-MVP-003 | P0 | Deterministic LaTeX build | WS-007 | bounded build receipt and artifact hash |
+| RUST-MVP-004 | P0 | Frozen reviewer bundle | MVP-003 | reviewer sees no author session/home |
+| RUST-MVP-005 | P0 | Reviewer node | WS-006, MVP-004 | structured verdict and read-only proof |
+| RUST-MVP-006 | P0 | Revision node | MVP-005 | issue IDs bound to exact revision input |
+| RUST-MVP-007 | P0 | Rebuild and regression checks | MVP-006 | previous accepted checks cannot silently disappear |
+| RUST-MVP-008 | P0 | Local package and replay receipt | MVP-007 | complete input/output inventory |
+| RUST-MVP-009 | P0 | Cancellation/crash matrix | MVP-002..008 | no canonical pollution or duplicate provider call |
+
+## Persistent campaign writer
+
+| ID | Priority | Work item | Dependencies | Acceptance |
+|---|---:|---|---|---|
+| RUST-DB-001 | P0 | Writer ownership lease | RO-002 | Node/Rust dual writer impossible |
+| RUST-DB-002 | P0 | Campaign create/claim/heartbeat | DB-001 | transactional invariants tested |
+| RUST-DB-003 | P0 | Generation fencing | DB-002 | stale generation commit count zero |
+| RUST-DB-004 | P0 | Prepared-result integration | DB-003, WS-007 | exactly-once integration |
+| RUST-DB-005 | P0 | Retry/pause/resume/cancel | DB-004 | deterministic transition table |
+| RUST-DB-006 | P0 | Budget reservation and settlement | DB-004, BRK-014 | no unexplained refund or overrun |
+| RUST-DB-007 | P0 | Resource governor | DB-002 | starvation and oversubscription tests pass |
+| RUST-DB-008 | P0 | Writer backup/restore | DB-001 | complete restore drill passes |
+| RUST-DB-009 | P0 | 10k simulation and 72h soak | DB-002..008 | milestone M5 metrics satisfied |
+
+## Evidence, release and cutover
+
+Evidence (`RUST-EVD-*`), release (`RUST-REL-*`) and cutover
+(`RUST-CUT-*`) items are expanded when M4 architecture evidence is accepted.
+They may not begin by bypassing M0–M6 gates.
+
+## Cross-cutting mandatory work
+
+Every epic must include:
+
+- threat-model delta;
+- versioned contract and migration statement;
+- deterministic test and fault test;
+- observability fields and redaction review;
+- authority gained/non-authority retained;
+- rollback and recovery behavior;
+- documentation and operator impact;
+- acceptance evidence attached to the PR.

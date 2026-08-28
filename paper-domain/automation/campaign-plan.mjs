@@ -69,7 +69,6 @@ function approvedProposalSeedBinding(paperTask, { formalRequested = false } = {}
     approvedProposalSeedBindingHash: hashRecord('ApprovedProposalSeedBinding', payload),
   });
 }
-
 function autonomousScientificClaimAuthority(value, paperId) {
   if (value === null || value === undefined) return null;
   const { autonomousResearchSeedBindingHash: claimedHash, ...payload } = value || {};
@@ -220,7 +219,7 @@ export function buildPaperCampaignPlan({
   paperQualityProfiles = [],
   commandBinding = null,
   mode = FULL_CAMPAIGN_MODE,
-  venueTarget = null,
+  sourceVenue = null, venueTarget = null,
   datasetRoot = null,
   benchmarkId = null,
   applyManuscript = false,
@@ -473,6 +472,7 @@ export function buildPaperCampaignPlan({
     ...(directLocalRunBudgetWaiver ? { directLocalRunBudgetWaiver } : {}),
     researchVerificationRequired,
     convergenceThresholds: { minimumRoundIndex: Math.max(1, Math.min(rounds, Number(minimumRevisionRounds || 1))) },
+    sourceVenue: normalizeVenueTarget(sourceVenue || paperTask?.venueTarget),
     venueTarget: executionIntent.venueTarget,
     datasetRoot: executionIntent.datasetRoot,
     benchmarkId: executionIntent.benchmarkId,

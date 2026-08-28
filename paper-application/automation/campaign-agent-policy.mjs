@@ -26,6 +26,17 @@ const SAFE_EVIDENCE_KIND = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
 const MANUSCRIPT_EVIDENCE_CLAIM_CLASSES = new Set([
   'interpretation', 'limitation', 'method', 'related_work', 'reproducibility', 'scope',
 ]);
+
+function venueRewriteInstructions({ targetVenue = null, sourceVenue = null } = {}) {
+  const target = String(targetVenue || '').trim();
+  if (!target) return '';
+  const source = String(sourceVenue || '').trim() || 'the source venue';
+  const token = target.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (token !== 'iclr') {
+    return ` This is a local venue-rewrite campaign from ${source} to ${target}. Preserve the source venue as immutable provenance, adapt only the manuscript in the private COW workspace, and do not upload, submit, contact a portal, or use an external venue credential. Do not claim compliance with an official ${target} template unless a pinned local template and a successful local compile check are present.`;
+  }
+  return ` This is a local ${source}-to-ICLR rewrite in a private copy-on-write workspace. Treat ${source} as immutable provenance and ICLR as the target framing only; never edit SOURCE_WORKSPACE.json, paper.json, source receipts, or the canonical source tree. Reframe the abstract, introduction, related work, method positioning, and limitations for an ICLR learning-systems audience without strengthening claims or inventing results. Remove NeurIPS-specific style/checklist/deadline language from the draft and use an ICLR template only when a pinned local template is actually available; otherwise keep a compile-safe local draft and explicitly report template compliance as pending. Preserve double-blind anonymity (no author identities, acknowledgments, or metadata leaks), retain every theorem/evidence boundary and negative result, and keep all experiments reproducible. This campaign is local-only: do not upload, submit, contact an ICLR portal, or use network credentials.`;
+}
 function normalizedWorkspacePath(value, code) {
   const relative = String(value || '').replace(/\\/g, '/').replace(/^\.\//, '');
   if (!relative || relative.startsWith('/')
@@ -226,7 +237,7 @@ function typedEmpiricalAssertionInstructions(
   return ` The system-derived empirical assertion authority is immutable at automation-results/EMPIRICAL_ASSERTION_AUTHORITY.json and has hash ${authority.empiricalAssertionAuthorityHash}. Read it directly; never create, rewrite, or self-sign it. Author all noncanonical manuscript prose through AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json; never edit AUTONOMOUS_MANUSCRIPT_IR.json. Preserve the draft's exact top-level and block schemas. You may change the plain-text title, section headings, prose/citation text, and section arrangement, but must keep exactly one slot for empirical_claims, formal_support, and empirical_results and at least one limitation prose block.${bindingInstruction} THEOREM_SPEC.json, theoremSpecificationHash, and theorem-specification claim hashes are formal-pipeline identities, never manuscript evidenceRefs. Keep formal_support as the sole formal theorem/proof/verification surface; do not add prose that restates formal results outside that slot. The trusted renderer injects its canonical content from independently verified formal authority. Never invent a hash or cite a work absent from a verified prior-art receipt. The trusted renderer escapes plain text, injects canonical claims, formal support, results, tables, and figures into the three slots, binds your draft to this execution receipt, and rejects unbound scientific prose. A negative or inconclusive result is a result and must not be reframed as support. Do not alter empirical code, protocol, thresholds, claims, authority files, or canonical result bodies.`;
 }
 
-export function buildCampaignAgentInstructions({
+function buildCampaignAgentInstructionsInternal({
   kind,
   manuscript,
   roundIndex,
@@ -298,6 +309,19 @@ export function buildCampaignAgentInstructions({
   if (kind === 'revise' && empiricalOutcomeObserved) return `Revise ${manuscript} and its interpretation to address the following independent reviews and every carried-forward deterministic quality-gate blocker. The empirical outcome is already observed: never modify an empirical entrypoint, treatment/baseline/ablation adapter, imported experiment module, analysis protocol, hypothesis, threshold, metric, seed schedule, experiment configuration, or any code/configuration that can affect empirical behavior. A negative, non-significant, or inconclusive result must remain reportable and must not trigger method tuning. Preserve correct content and run manuscript checks.${empiricalAssertions} Preserve every HEPTA_EMPIRICAL_CLAIM marker pair and its exact hypothesis text byte-for-byte. Keep each proof environment immediately adjacent to its matching theorem, lemma, or proposition environment; place explanatory limitations after the proof, never between the formal statement and its proof. For theorem readiness, create proof_status.md when theorem_proof_status_missing is present, create evidence_manifest.md when theorem_evidence_manifest_missing is present, and add a real appendix/supplement or an explicit justified waiver when theorem_appendix_or_supplement_missing is present. Do not claim a proof is closed unless the current formal verification evidence supports it.${reviseStageBoundary} Prior convergence: ${JSON.stringify(priorConvergence)}. Revision materialization: ${JSON.stringify(revisionMaterialization)}. Quality-gate blockers: ${JSON.stringify(qualityGateBlockers)}. Reviews: ${JSON.stringify(reviews)}`;
   if (kind === 'revise') return `Revise ${manuscript} to address the independent reviews and deterministic quality-gate blockers. Modify only ${manuscript} plus proof_status.md, evidence_manifest.md, or manuscript appendix/supplement TeX files when an exact carried-forward theorem-readiness blocker requires them; never modify RESEARCH_PLAN.md or unrelated files. No completed empirical outcome authority is present. Keep the paper explicitly limited to a plan or protocol; remove unsupported observed results and do not invent measurements, datasets, benchmark names, citations, external systems, authority, or evidence. Preserve every HEPTA_EMPIRICAL_CLAIM marker pair and its exact hypothesis text byte-for-byte. Keep each proof environment immediately adjacent to its matching theorem, lemma, or proposition environment; place explanatory limitations after the proof, never between the formal statement and its proof. For theorem readiness, create proof_status.md when theorem_proof_status_missing is present, create evidence_manifest.md when theorem_evidence_manifest_missing is present, and add a real appendix/supplement or an explicit justified waiver when theorem_appendix_or_supplement_missing is present. Do not claim a proof is closed without current formal verification evidence.${reviseStageBoundary} Prior convergence: ${JSON.stringify(priorConvergence)}. Revision materialization: ${JSON.stringify(revisionMaterialization)}. Quality-gate blockers: ${JSON.stringify(qualityGateBlockers)}. Reviews: ${JSON.stringify(reviews)}`;
   throw new Error(`No agent instructions for ${kind}`);
+}
+
+export function buildCampaignAgentInstructions(args = {}) {
+  const instructions = buildCampaignAgentInstructionsInternal(args);
+  const kind = String(args.kind || '');
+  const venueAware = kind === 'writer'
+    || kind === 'revise'
+    || kind === 'manuscript-integrate'
+    || /^referee-\d+$/.test(kind)
+    || /^revision-referee-\d+$/.test(kind);
+  return venueAware
+    ? `${instructions}${venueRewriteInstructions(args)}`
+    : instructions;
 }
 
 export function formalWorkspaceMutationPolicy() {
@@ -406,6 +430,9 @@ export function buildCampaignAgentExecutionRequest({ campaign, node, campaignNod
     empiricalAssertionAuthority,
     autonomousManuscriptEvidenceRefBindings,
     empiricalOutcomeObserved,
+    targetVenue: campaign.spec.venueTarget || null,
+    sourceVenue: campaign.spec.sourceVenue
+      || campaign.spec.researchVerificationInput?.paperTask?.venueTarget || null,
   });
   return {
     role: node.role || kind,

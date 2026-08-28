@@ -140,6 +140,21 @@ test('campaign coder contract writes canonical metric artifacts only through HEP
   assert.deepEqual(blocked.blockers, ['empirical_output_directory_binding_invalid']);
 });
 
+test('ICLR venue migration instructions are local, provenance-preserving, and target-aware', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'revise',
+    manuscript: 'main.tex',
+    targetVenue: 'ICLR',
+    sourceVenue: 'NeurIPS 2026',
+  });
+  assert.match(instructions, /local NeurIPS 2026-to-ICLR rewrite/i);
+  assert.match(instructions, /copy-on-write workspace/i);
+  assert.match(instructions, /never edit SOURCE_WORKSPACE\.json, paper\.json/i);
+  assert.match(instructions, /Remove NeurIPS-specific style\/checklist\/deadline language/i);
+  assert.match(instructions, /double-blind anonymity/i);
+  assert.match(instructions, /do not upload, submit, contact an ICLR portal/i);
+});
+
 test('system benchmark coder contract locates cases under each cell challenge', () => {
   const instructions = buildCampaignAgentInstructions({
     kind: 'coder-r',

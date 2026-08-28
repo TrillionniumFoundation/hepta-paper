@@ -235,6 +235,20 @@ async function discoverPaper(root, paper, createdAt) {
   artifacts.zips = sortByMtimeDesc([...directArtifacts.zips, ...artifacts.zips]);
   const mainTexRecord = mainTex ? await scopedLogicalFileRecord(recordScopeRoot, root, mainTex, 'main_tex') : null;
   const sourceStat = sourceDir ? await pathStat(sourceDir) : null;
+  // Preserve the paper's declared quality contract when an inventory row is
+  // rebuilt from a YAML/asset workspace.  The older registry only carried
+  // venue/title fields, so infer the profile from the immutable paper.json
+  // beside the manuscript when present.  This is metadata only: it never
+  // upgrades evidence or marks a scientific gate as passed.
+  const paperContract = sourceDir
+    ? await readJsonIfExists(path.join(sourceDir, 'paper.json'))
+    : null;
+  const declaredProfile = normalizeText(paperContract?.paper_production?.profile);
+  const paperQualityProfile = declaredProfile === 'theorem_or_proof_paper'
+    ? 'formal_theorem_or_proof'
+    : declaredProfile === 'empirical_or_experiment_paper'
+      ? 'empirical_or_experiment'
+      : null;
   const submissionIntent = buildSubmissionIntent(paper, { sourceDir, mainTex });
   const evidenceRefs = [
     mainTexRecord,
@@ -276,6 +290,8 @@ async function discoverPaper(root, paper, createdAt) {
     },
     evidenceRefs,
     createdAt,
+    paperQualityProfile,
+    paperQualityProfiles: paperQualityProfile ? [paperQualityProfile] : [],
   });
   const draftStatus = !sourceDir ? 'missing_source' : mainTex ? 'source_tex_present' : 'source_present';
   const compileStatus = artifacts.pdfs.length ? 'compiled_pdf_present' : mainTex ? 'build_ready' : 'missing_main_tex';

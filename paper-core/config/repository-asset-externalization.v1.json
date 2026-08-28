@@ -15,9 +15,9 @@
       "externalReference": {
         "kind": "immutable-artifact-digest",
         "transport": "git-lfs-submodule",
-        "repositoryUrl": "https://github.com/ProfAlexQI/hepta-paper-r-source-cas.git",
+        "repositoryUrl": "https://github.com/TrillionniumFoundation/hepta-paper-r-source-cas.git",
         "pinnedCommit": "d13d857909525f4173063dbd6a7f1f48a089ae93",
-        "location": "https://github.com/ProfAlexQI/hepta-paper-r-source-cas.git#d13d857909525f4173063dbd6a7f1f48a089ae93",
+        "location": "https://github.com/TrillionniumFoundation/hepta-paper-r-source-cas.git#d13d857909525f4173063dbd6a7f1f48a089ae93",
         "digest": "sha256:1c739e2c6330a87aa2d2e20fefc3787f27a1c7842dfe07d991e86634f18d3634",
         "restoreDrillReceipt": {
           "version": 1,
@@ -47,9 +47,9 @@
       "externalReference": {
         "kind": "signed-release-or-pinned-submodule-commit",
         "transport": "git-submodule",
-        "repositoryUrl": "https://github.com/ProfAlexQI/hepta-paper-core-reference.git",
+        "repositoryUrl": "https://github.com/TrillionniumFoundation/hepta-paper-core-reference.git",
         "pinnedCommit": "ff1779d38561e940e5e067006386ff00d8d09a7c",
-        "location": "https://github.com/ProfAlexQI/hepta-paper-core-reference.git#ff1779d38561e940e5e067006386ff00d8d09a7c",
+        "location": "https://github.com/TrillionniumFoundation/hepta-paper-core-reference.git#ff1779d38561e940e5e067006386ff00d8d09a7c",
         "digest": "sha256:54a375a885166678e10b61d9cdc721cb90d82559bd570e6245b8ab82437605a2",
         "restoreDrillReceipt": {
           "version": 1,

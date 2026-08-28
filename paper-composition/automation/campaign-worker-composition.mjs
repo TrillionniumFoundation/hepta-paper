@@ -215,6 +215,16 @@ export function composeCampaignWorkerExecution({
   });
   const modelConfiguration = resolveCampaignWorkerModelConfiguration({ options, environment });
   const provider = researchAuthorProviderPolicy.selectedProvider;
+  // Structural local-review-loop plans intentionally clear the scientific
+  // quality profile, but they still schedule referee/revise nodes.  Those
+  // nodes need the same fresh author session identity as a quality-gated
+  // campaign so the independent reviewer pool can prove role separation.
+  // Do the lightweight author preflight whenever an independent review node
+  // is scheduled; otherwise the reviewer pool receives a null author and
+  // fails before any local rewrite work can start.
+  const independentReviewScheduled = plans.some((plan) => (plan.nodes || []).some((node) => (
+    node.kind === 'formal-verify' || isCampaignRefereeNode(node.kind)
+  )));
   const primaryOpenClawAgentId = options['openclaw-agent'] || 'hepta-paper-worker';
   const primaryCodexModel = boundProviderConfiguration
     ? boundProviderConfiguration.researchAuthor.model
@@ -240,7 +250,8 @@ export function composeCampaignWorkerExecution({
       environment.HEPTA_RESEARCH_AUTHOR_CODEX_BINARY,
       'codex',
     );
-  const researchAuthorPreflight = researchAuthorProviderPolicy.researchGradeRequired && provider === 'codex'
+  const researchAuthorPreflight = (researchAuthorProviderPolicy.researchGradeRequired
+    || independentReviewScheduled) && provider === 'codex'
     ? preflightResearchAuthor({
       codexBinary: primaryCodexBinary,
       codexHome: primaryCodexHome,
@@ -271,9 +282,7 @@ export function composeCampaignWorkerExecution({
     assertExternalSideEffectReady,
   });
   const authorAgentId = provider === 'codex' ? primaryCodexPrincipal : primaryOpenClawAgentId;
-  const independentReviewRequested = plans.some((plan) => (plan.nodes || []).some((node) => (
-    node.kind === 'formal-verify' || isCampaignRefereeNode(node.kind)
-  )));
+  const independentReviewRequested = independentReviewScheduled;
   const autonomousPreparations = plans.map((plan) => (
     plan?.autonomousResearchPreparation || null
   )).filter(Boolean);

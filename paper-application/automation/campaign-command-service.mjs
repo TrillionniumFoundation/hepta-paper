@@ -52,6 +52,7 @@ function extendedCampaignPlan(existing, campaignId, options) {
     paperQualityProfile: existing.spec.paperQualityProfile || null,
     paperQualityProfiles: existing.spec.paperQualityProfiles || [],
     commandBinding: existing.spec.commandBinding || null,
+    sourceVenue: existing.spec.sourceVenue || null,
     venueTarget: existing.spec.venueTarget || null,
     datasetRoot: existing.spec.datasetRoot || null,
     benchmarkId: existing.spec.benchmarkId || null,
@@ -160,6 +161,8 @@ export class CampaignCommandService {
       && typeof gpuScientificExecutionPlanFactory !== 'function') {
       throw new Error('campaign_gpu_scientific_execution_plan_factory_invalid');
     }
+    const targetVenue = options.target || options.venue || null;
+    const qualityGatesSuppressed = options['skip-quality-gates'] === true;
     return Object.freeze(inventoryRows.map(({ task, state, sourceWorkspace }) => {
       const selectedCampaignId = options.paper?.length === 1 && options['campaign-id']
         ? options['campaign-id']
@@ -194,10 +197,22 @@ export class CampaignCommandService {
       mode: options.mode || 'full-campaign',
       localOnly: Boolean(options['local-only']),
       applyManuscript: Boolean(options['apply-manuscript']),
-      paperQualityProfile: options['quality-profile'] || task.paperQualityProfile || null,
-      paperQualityProfiles: task.paperQualityProfiles || [],
-      venueTarget: task.venueTarget || null,
-      paperTask: task,
+      paperQualityProfile: qualityGatesSuppressed
+        ? null : options['quality-profile'] || task.paperQualityProfile || null,
+      paperQualityProfiles: qualityGatesSuppressed ? [] : task.paperQualityProfiles || [],
+      // A migration/rewrite campaign may intentionally retarget a manuscript
+      // while preserving the inventory row's original venue as provenance.
+      // Keep the override in the immutable plan; never mutate the inventory
+      // task itself (which would erase the source-venue audit trail).
+      sourceVenue: task.venueTarget || null,
+      venueTarget: targetVenue || task.venueTarget || null,
+      // Structural venue rewrites intentionally run before scientific gates.
+      // Strip inferred profiles from the immutable task copy for this plan;
+      // the canonical inventory row and its paper.json remain untouched and
+      // the later formal/empirical campaigns re-bind the profiles explicitly.
+      paperTask: qualityGatesSuppressed
+        ? { ...task, paperQualityProfile: null, paperQualityProfiles: [] }
+        : task,
       paperState: state,
       campaignId: selectedCampaignId,
       parentCampaignId: options['parent-campaign-id'] || null,

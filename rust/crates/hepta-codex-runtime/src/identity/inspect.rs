@@ -10,12 +10,17 @@ use std::{
 use hepta_codex_protocol::Sha256Digest;
 
 use super::{
-    hash::{DomainHasher, hash_file_system_identity, hash_path, hash_reader},
-    path::{canonical_requested_path, lexical_absolute, resolve_executable, validate_safe_relative_path},
+    hash::{
+        DomainHasher, hash_directory_identity, hash_file_system_identity, hash_path, hash_reader,
+    },
+    path::{
+        canonical_requested_path, lexical_absolute, resolve_executable,
+        validate_safe_relative_path,
+    },
     types::{
         CodexHomeIdentityV1, CodexRuntimeIdentityV1, CredentialMaterialIdentityV1,
-        CredentialMaterialStatus, ExecutableIdentityV1, FileSystemIdentityV1,
-        RuntimeIdentityError, RuntimeIdentityPolicyV1,
+        CredentialMaterialStatus, DirectoryIdentityV1, ExecutableIdentityV1,
+        FileSystemIdentityV1, RuntimeIdentityError, RuntimeIdentityPolicyV1,
     },
 };
 
@@ -112,10 +117,10 @@ fn inspect_codex_home(
         "codex_home",
     )?;
     let root_mode = root_metadata.mode() & 0o7777;
-    if root_mode & 0o077 != 0 || root_mode & 0o700 != 0o700 {
+    if root_mode & 0o077 != 0 || root_mode & 0o700 != 0o700 || root_mode & 0o7000 != 0 {
         return Err(RuntimeIdentityError::HomePermissionsInvalid(root_mode));
     }
-    let root_identity = file_system_identity(&canonical_path, &root_metadata)?;
+    let root_identity = directory_identity(&canonical_path, &root_metadata)?;
 
     let config_path = canonical_path.join("config.toml");
     let config = inspect_content_file(
@@ -150,7 +155,7 @@ fn inspect_codex_home(
     let mut hasher = DomainHasher::new("CodexHomeIdentityV1");
     hasher.digest(
         "rootIdentityHash",
-        &hash_file_system_identity(&root_identity)?,
+        &hash_directory_identity(&root_identity)?,
     );
     hasher.digest(
         "configIdentityHash",
@@ -225,7 +230,7 @@ fn inspect_credential_material(
     }
     validate_owner(&first, expected_uid, expected_gid, "credential_material")?;
     let mode = first.mode() & 0o7777;
-    if mode & 0o077 != 0 || mode & 0o400 == 0 {
+    if mode & 0o077 != 0 || mode & 0o400 == 0 || mode & 0o7000 != 0 {
         return Err(RuntimeIdentityError::CredentialPermissionsInvalid {
             path: relative.to_owned(),
             mode,
@@ -338,6 +343,9 @@ fn validate_file_mode(
     if policy.forbid_group_or_other_write && mode & 0o022 != 0 {
         return Err(RuntimeIdentityError::FilePermissionsInvalid(mode));
     }
+    if mode & 0o7000 != 0 {
+        return Err(RuntimeIdentityError::FilePermissionsInvalid(mode));
+    }
     if policy.require_owner_read && mode & 0o400 == 0 {
         return Err(RuntimeIdentityError::FilePermissionsInvalid(mode));
     }
@@ -376,6 +384,20 @@ fn validate_model_selector(model_selector: &str) -> Result<(), RuntimeIdentityEr
         return Err(RuntimeIdentityError::InvalidModelSelector);
     }
     Ok(())
+}
+
+fn directory_identity(
+    canonical_path: &Path,
+    metadata: &Metadata,
+) -> Result<DirectoryIdentityV1, RuntimeIdentityError> {
+    Ok(DirectoryIdentityV1 {
+        canonical_path_hash: hash_path(canonical_path)?,
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode: metadata.mode(),
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+    })
 }
 
 fn file_system_identity(

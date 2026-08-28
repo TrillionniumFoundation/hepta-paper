@@ -82,6 +82,22 @@ fn digest(byte: char) -> Sha256Digest {
         .expect("test digest")
 }
 
+fn inspect(
+    executable: &Path,
+    home: &Path,
+    policy: &RuntimeIdentityPolicyV1,
+) -> Result<super::CodexRuntimeIdentityV1, RuntimeIdentityError> {
+    inspect_codex_runtime_identity(
+        executable.as_os_str(),
+        home,
+        "qualified-model",
+        digest('1'),
+        digest('2'),
+        &BTreeMap::new(),
+        policy,
+    )
+}
+
 #[test]
 fn inspects_private_runtime_and_metadata_only_credentials() {
     let (_tree, executable, home, policy) = fixture();
@@ -111,21 +127,47 @@ fn inspects_private_runtime_and_metadata_only_credentials() {
 }
 
 #[test]
+fn unrelated_cache_activity_does_not_change_home_authority_identity() {
+    let (_tree, executable, home, policy) = fixture();
+    let before = inspect(&executable, &home, &policy).expect("preflight identity");
+    fs::create_dir(home.join("sessions")).expect("create cache directory");
+    create_file(&home.join("sessions/cache-entry"), 0o600, b"ephemeral\n");
+    let during = inspect(&executable, &home, &policy).expect("identity with cache entry");
+    fs::remove_dir_all(home.join("sessions")).expect("remove cache directory");
+    let after = inspect(&executable, &home, &policy).expect("post-cache identity");
+    assert_eq!(before.home.root, during.home.root);
+    assert_eq!(before.home.identity_hash, during.home.identity_hash);
+    assert_eq!(before.identity_hash, during.identity_hash);
+    assert_eq!(before.home.identity_hash, after.home.identity_hash);
+}
+
+#[test]
+fn config_changes_still_change_runtime_identity() {
+    let (_tree, executable, home, policy) = fixture();
+    let before = inspect(&executable, &home, &policy).expect("preflight identity");
+    create_file(&home.join("config.toml"), 0o600, b"model = 'changed'\n");
+    let after = inspect(&executable, &home, &policy).expect("changed identity");
+    assert_ne!(before.home.config_content_hash, after.home.config_content_hash);
+    assert_ne!(before.home.identity_hash, after.home.identity_hash);
+}
+
+#[test]
+fn root_permission_changes_still_fail() {
+    let (_tree, executable, home, policy) = fixture();
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o750)).expect("weaken home");
+    assert_eq!(
+        inspect(&executable, &home, &policy),
+        Err(RuntimeIdentityError::HomePermissionsInvalid(0o750)),
+    );
+}
+
+#[test]
 fn rejects_symlinked_executable() {
     let (tree, executable, home, policy) = fixture();
     let link = tree.0.join("codex-link");
     symlink(&executable, &link).expect("create symlink");
-    let result = inspect_codex_runtime_identity(
-        link.as_os_str(),
-        &home,
-        "qualified-model",
-        digest('1'),
-        digest('2'),
-        &BTreeMap::new(),
-        &policy,
-    );
     assert_eq!(
-        result,
+        inspect(&link, &home, &policy),
         Err(RuntimeIdentityError::NonCanonicalOrSymlinkPath),
     );
 }
@@ -134,16 +176,10 @@ fn rejects_symlinked_executable() {
 fn rejects_hardlinked_executable() {
     let (tree, executable, home, policy) = fixture();
     fs::hard_link(&executable, tree.0.join("second-link")).expect("create hard link");
-    let result = inspect_codex_runtime_identity(
-        executable.as_os_str(),
-        &home,
-        "qualified-model",
-        digest('1'),
-        digest('2'),
-        &BTreeMap::new(),
-        &policy,
+    assert_eq!(
+        inspect(&executable, &home, &policy),
+        Err(RuntimeIdentityError::FileLinkCountInvalid(2)),
     );
-    assert_eq!(result, Err(RuntimeIdentityError::FileLinkCountInvalid(2)));
 }
 
 #[test]
@@ -151,17 +187,8 @@ fn rejects_group_writable_executable() {
     let (_tree, executable, home, policy) = fixture();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o720))
         .expect("weaken executable");
-    let result = inspect_codex_runtime_identity(
-        executable.as_os_str(),
-        &home,
-        "qualified-model",
-        digest('1'),
-        digest('2'),
-        &BTreeMap::new(),
-        &policy,
-    );
     assert_eq!(
-        result,
+        inspect(&executable, &home, &policy),
         Err(RuntimeIdentityError::FilePermissionsInvalid(0o720)),
     );
 }
@@ -174,17 +201,8 @@ fn rejects_group_readable_config() {
         fs::Permissions::from_mode(0o640),
     )
     .expect("weaken config");
-    let result = inspect_codex_runtime_identity(
-        executable.as_os_str(),
-        &home,
-        "qualified-model",
-        digest('1'),
-        digest('2'),
-        &BTreeMap::new(),
-        &policy,
-    );
     assert_eq!(
-        result,
+        inspect(&executable, &home, &policy),
         Err(RuntimeIdentityError::FilePermissionsInvalid(0o640)),
     );
 }
@@ -196,38 +214,10 @@ fn rejects_symlinked_credential_material() {
     let outside = tree.0.join("outside-auth.json");
     create_file(&outside, 0o600, b"opaque\n");
     symlink(&outside, home.join("auth.json")).expect("symlink credential");
-    let result = inspect_codex_runtime_identity(
-        executable.as_os_str(),
-        &home,
-        "qualified-model",
-        digest('1'),
-        digest('2'),
-        &BTreeMap::new(),
-        &policy,
-    );
     assert_eq!(
-        result,
+        inspect(&executable, &home, &policy),
         Err(RuntimeIdentityError::CredentialMaterialInvalid(
             "auth.json".to_owned(),
         )),
-    );
-}
-
-#[test]
-fn rejects_group_readable_codex_home() {
-    let (_tree, executable, home, policy) = fixture();
-    fs::set_permissions(&home, fs::Permissions::from_mode(0o750)).expect("weaken home");
-    let result = inspect_codex_runtime_identity(
-        executable.as_os_str(),
-        &home,
-        "qualified-model",
-        digest('1'),
-        digest('2'),
-        &BTreeMap::new(),
-        &policy,
-    );
-    assert_eq!(
-        result,
-        Err(RuntimeIdentityError::HomePermissionsInvalid(0o750)),
     );
 }

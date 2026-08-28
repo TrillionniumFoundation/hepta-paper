@@ -10,7 +10,19 @@ use thiserror::Error;
 pub(super) const DEFAULT_MAXIMUM_EXECUTABLE_BYTES: u64 = 512 * 1024 * 1024;
 pub(super) const DEFAULT_MAXIMUM_CONFIG_BYTES: u64 = 1024 * 1024;
 
-/// Stable Unix filesystem metadata bound into a runtime identity.
+/// Stable Unix directory metadata. Volatile directory size/link/timestamp fields are excluded.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DirectoryIdentityV1 {
+    pub canonical_path_hash: Sha256Digest,
+    pub device: u64,
+    pub inode: u64,
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+}
+
+/// Exact Unix regular-file metadata bound into a runtime identity.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileSystemIdentityV1 {
@@ -72,7 +84,7 @@ pub struct CredentialMaterialIdentityV1 {
 pub struct CodexHomeIdentityV1 {
     #[serde(skip)]
     pub(super) canonical_path: PathBuf,
-    pub root: FileSystemIdentityV1,
+    pub root: DirectoryIdentityV1,
     pub config: FileSystemIdentityV1,
     pub config_content_hash: Sha256Digest,
     pub credential_material: Vec<CredentialMaterialIdentityV1>,

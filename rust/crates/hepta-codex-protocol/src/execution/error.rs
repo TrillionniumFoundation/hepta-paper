@@ -13,6 +13,8 @@ pub enum ProtocolValidationError {
     NonPositive(&'static str),
     #[error("limit {field} is outside 1..={maximum}")]
     LimitOutOfRange { field: &'static str, maximum: u64 },
+    #[error("request capability expiry must be strictly after issue time")]
+    InvalidCapabilityTimeOrder,
     #[error("request capability expiry exceeds the request deadline")]
     CapabilityOutlivesRequest,
     #[error("agent role is not authorized for the selected task kind")]

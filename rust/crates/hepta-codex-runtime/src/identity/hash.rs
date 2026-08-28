@@ -9,7 +9,7 @@ use std::{
 use hepta_codex_protocol::Sha256Digest;
 use sha2::{Digest, Sha256};
 
-use super::types::{FileSystemIdentityV1, RuntimeIdentityError};
+use super::types::{DirectoryIdentityV1, FileSystemIdentityV1, RuntimeIdentityError};
 
 pub(super) fn hash_reader(
     reader: &mut File,
@@ -42,6 +42,19 @@ pub(super) fn hash_reader(
 pub(super) fn hash_path(path: &Path) -> Result<Sha256Digest, RuntimeIdentityError> {
     let mut hasher = DomainHasher::new("CanonicalUnixPathV1");
     hasher.field("path", path.as_os_str().as_bytes());
+    hasher.finish()
+}
+
+pub(super) fn hash_directory_identity(
+    identity: &DirectoryIdentityV1,
+) -> Result<Sha256Digest, RuntimeIdentityError> {
+    let mut hasher = DomainHasher::new("DirectoryIdentityV1");
+    hasher.digest("canonicalPathHash", &identity.canonical_path_hash);
+    hasher.field("device", identity.device.to_string().as_bytes());
+    hasher.field("inode", identity.inode.to_string().as_bytes());
+    hasher.field("mode", identity.mode.to_string().as_bytes());
+    hasher.field("uid", identity.uid.to_string().as_bytes());
+    hasher.field("gid", identity.gid.to_string().as_bytes());
     hasher.finish()
 }
 

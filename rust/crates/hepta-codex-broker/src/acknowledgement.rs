@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{BrokerJournalError, BrokerJournalStoreV1, FaultInjectionPointV1};
+use crate::{
+    BrokerJournalError, BrokerJournalStoreV1, FaultInjectionPointV1, load_persisted_request,
+};
 
 const MAXIMUM_ACKNOWLEDGEMENT_KEYS: usize = 32;
 const HARD_MAXIMUM_ACKNOWLEDGEMENT_AGE_MS: u64 = 24 * 60 * 60 * 1000;
@@ -147,12 +149,74 @@ pub fn verify_prepared_result_acknowledgement(
 ) -> Result<VerifiedPreparedResultAcknowledgementV1, PreparedResultAcknowledgementError> {
     let policy = policy.validate()?;
     validate_acknowledgement_shape(acknowledgement)?;
+    validate_acknowledgement_time(acknowledgement, now_unix_ms, policy)?;
+    validate_acknowledgement_subject(acknowledgement, request, journal)?;
+    verify_acknowledgement_signature(acknowledgement, trust_store)
+}
+
+/// Loads the canonical request and journal from broker-owned durable state before
+/// verifying a prepared-result acknowledgement. Callers cannot substitute a
+/// request object with different campaign, attempt, revision, or generation data.
+pub fn verify_persisted_prepared_result_acknowledgement(
+    store: &BrokerJournalStoreV1,
+    acknowledgement: &PreparedResultAcknowledgementV1,
+    now_unix_ms: u64,
+    policy: PreparedResultAcknowledgementPolicyV1,
+    trust_store: &PreparedResultAcknowledgementTrustStoreV1,
+) -> Result<VerifiedPreparedResultAcknowledgementV1, PreparedResultAcknowledgementError> {
+    let request = load_persisted_request(store, &acknowledgement.operation_id)?;
+    let journal = store.load_journal(&acknowledgement.operation_id)?;
+    verify_prepared_result_acknowledgement(
+        acknowledgement,
+        &request,
+        &journal,
+        now_unix_ms,
+        policy,
+        trust_store,
+    )
+}
+
+pub fn apply_prepared_result_acknowledgement(
+    store: &mut BrokerJournalStoreV1,
+    verified: &VerifiedPreparedResultAcknowledgementV1,
+    fault: FaultInjectionPointV1,
+) -> Result<OperationJournalV1, PreparedResultAcknowledgementError> {
+    let acknowledgement = verified.acknowledgement();
+    let request = load_persisted_request(store, &acknowledgement.operation_id)?;
+    let journal = store.load_journal(&acknowledgement.operation_id)?;
+    validate_acknowledgement_subject(acknowledgement, &request, &journal)?;
+    store
+        .append_transition(
+            &acknowledgement.operation_id,
+            OperationState::ResultPrepared,
+            OperationState::Acknowledged,
+            acknowledgement.acknowledged_at_unix_ms,
+            Some(verified.acknowledgement_hash().clone()),
+            None,
+            fault,
+        )
+        .map_err(PreparedResultAcknowledgementError::Journal)
+}
+
+fn validate_acknowledgement_time(
+    acknowledgement: &PreparedResultAcknowledgementV1,
+    now_unix_ms: u64,
+    policy: PreparedResultAcknowledgementPolicyV1,
+) -> Result<(), PreparedResultAcknowledgementError> {
     if now_unix_ms == 0
         || acknowledgement.acknowledged_at_unix_ms > now_unix_ms
         || now_unix_ms - acknowledgement.acknowledged_at_unix_ms > policy.maximum_age_ms
     {
         return Err(PreparedResultAcknowledgementError::AcknowledgementExpired);
     }
+    Ok(())
+}
+
+fn validate_acknowledgement_subject(
+    acknowledgement: &PreparedResultAcknowledgementV1,
+    request: &CodexExecutionRequestV1,
+    journal: &OperationJournalV1,
+) -> Result<(), PreparedResultAcknowledgementError> {
     if journal.current_state != OperationState::ResultPrepared {
         return Err(PreparedResultAcknowledgementError::OperationNotPrepared);
     }
@@ -174,7 +238,13 @@ pub fn verify_prepared_result_acknowledgement(
     {
         return Err(PreparedResultAcknowledgementError::SubjectMismatch);
     }
+    Ok(())
+}
 
+fn verify_acknowledgement_signature(
+    acknowledgement: &PreparedResultAcknowledgementV1,
+    trust_store: &PreparedResultAcknowledgementTrustStoreV1,
+) -> Result<VerifiedPreparedResultAcknowledgementV1, PreparedResultAcknowledgementError> {
     let signing_bytes = prepared_result_acknowledgement_signing_bytes(acknowledgement)?;
     let signature_bytes = Base64UrlUnpadded::decode_vec(&acknowledgement.signature_base64)
         .map_err(|_| PreparedResultAcknowledgementError::InvalidSignatureEncoding)?;
@@ -191,37 +261,6 @@ pub fn verify_prepared_result_acknowledgement(
         acknowledgement: acknowledgement.clone(),
         acknowledgement_hash: sha256_digest(&signing_bytes)?,
     })
-}
-
-pub fn apply_prepared_result_acknowledgement(
-    store: &mut BrokerJournalStoreV1,
-    verified: &VerifiedPreparedResultAcknowledgementV1,
-    fault: FaultInjectionPointV1,
-) -> Result<OperationJournalV1, PreparedResultAcknowledgementError> {
-    let acknowledgement = verified.acknowledgement();
-    let journal = store.load_journal(&acknowledgement.operation_id)?;
-    if journal.current_state != OperationState::ResultPrepared
-        || journal.request_hash != acknowledgement.request_hash
-        || journal
-            .transitions
-            .iter()
-            .find(|transition| transition.to == OperationState::ResultPrepared)
-            .and_then(|transition| transition.evidence_hash.as_ref())
-            != Some(&acknowledgement.prepared_receipt_hash)
-    {
-        return Err(PreparedResultAcknowledgementError::SubjectMismatch);
-    }
-    store
-        .append_transition(
-            &acknowledgement.operation_id,
-            OperationState::ResultPrepared,
-            OperationState::Acknowledged,
-            acknowledgement.acknowledged_at_unix_ms,
-            Some(verified.acknowledgement_hash().clone()),
-            None,
-            fault,
-        )
-        .map_err(PreparedResultAcknowledgementError::Journal)
 }
 
 fn validate_acknowledgement_shape(

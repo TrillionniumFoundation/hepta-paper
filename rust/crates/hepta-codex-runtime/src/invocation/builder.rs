@@ -14,12 +14,23 @@ use crate::{
 };
 
 use super::{
-    control::{canonical_directory, inspect_bound_control_file, inspect_control_file},
+    control::{
+        canonical_directory, inspect_bound_control_directory, inspect_bound_control_file,
+        inspect_control_directory, inspect_control_file,
+    },
     types::{
         CODEX_CLI_SURFACE_ID, CodexInvocationError, CodexInvocationPostflightV1,
-        CodexInvocationRequestV1, CodexInvocationV1, ControlFilePolicy,
+        CodexInvocationRequestV1, CodexInvocationV1, ControlDirectoryPolicy,
+        ControlFilePolicy, SchemaAuthorityModeV1,
     },
 };
+
+const LOCAL_SCHEMA_REQUIRED_MODE: u32 = 0o400;
+const LOCAL_SCHEMA_FORBIDDEN_MODE: u32 = 0o7377;
+const SEPARATE_SCHEMA_REQUIRED_MODE: u32 = 0o440;
+const SEPARATE_SCHEMA_FORBIDDEN_MODE: u32 = 0o7337;
+const OUTPUT_REQUIRED_MODE: u32 = 0o600;
+const OUTPUT_FORBIDDEN_MODE: u32 = 0o7177;
 
 /// Builds the only Foundation V1 Codex execution surface.
 pub fn build_codex_invocation(
@@ -28,31 +39,78 @@ pub fn build_codex_invocation(
     let policy = request.policy.validate()?;
     validate_prompt(&request.prompt, policy.maximum_prompt_bytes)?;
     let workspace = canonical_directory(request.workspace, "workspace")?;
+
+    let schema_parent_path = request
+        .output_schema_path
+        .parent()
+        .ok_or(CodexInvocationError::SchemaParentInvalid)?;
+    let (schema_required_mode, schema_forbidden_mode, schema_parent_policy) =
+        match policy.schema_authority_mode {
+            SchemaAuthorityModeV1::LocalFixtureSameOwner => (
+                LOCAL_SCHEMA_REQUIRED_MODE,
+                LOCAL_SCHEMA_FORBIDDEN_MODE,
+                ControlDirectoryPolicy {
+                    subject: "output_schema_parent",
+                    expected_uid: policy.schema_owner_uid,
+                    expected_gid: policy.schema_owner_gid,
+                    forbidden_writer_uid: None,
+                    require_group_read_execute: false,
+                },
+            ),
+            SchemaAuthorityModeV1::SeparateOwner => (
+                SEPARATE_SCHEMA_REQUIRED_MODE,
+                SEPARATE_SCHEMA_FORBIDDEN_MODE,
+                ControlDirectoryPolicy {
+                    subject: "output_schema_parent",
+                    expected_uid: policy.schema_owner_uid,
+                    expected_gid: policy.schema_owner_gid,
+                    forbidden_writer_uid: Some(policy.execution_uid),
+                    require_group_read_execute: true,
+                },
+            ),
+        };
+    let output_schema_parent =
+        inspect_control_directory(schema_parent_path, schema_parent_policy)?;
     let output_schema = inspect_control_file(
         request.output_schema_path,
         ControlFilePolicy {
             subject: "output_schema",
-            expected_uid: policy.control_owner_uid,
-            expected_gid: policy.control_owner_gid,
+            expected_uid: policy.schema_owner_uid,
+            expected_gid: policy.schema_owner_gid,
             maximum_bytes: policy.maximum_output_schema_bytes,
-            owner_write_required: false,
+            required_mode_bits: schema_required_mode,
+            forbidden_mode_bits: schema_forbidden_mode,
             must_be_empty: false,
         },
     )?;
+    if output_schema.canonical_path.starts_with(&workspace) {
+        return Err(CodexInvocationError::SchemaInsideWorkspace);
+    }
+    if output_schema.canonical_path.parent()
+        != Some(output_schema_parent.canonical_path.as_path())
+    {
+        return Err(CodexInvocationError::SchemaParentInvalid);
+    }
     if &output_schema.content_hash != request.expected_output_schema_hash {
         return Err(CodexInvocationError::OutputSchemaHashMismatch);
     }
+
     let output_last_message = inspect_control_file(
         request.output_last_message_path,
         ControlFilePolicy {
             subject: "output_last_message",
-            expected_uid: policy.control_owner_uid,
-            expected_gid: policy.control_owner_gid,
+            expected_uid: policy.output_owner_uid,
+            expected_gid: policy.output_owner_gid,
             maximum_bytes: policy.maximum_output_message_bytes,
-            owner_write_required: true,
+            required_mode_bits: OUTPUT_REQUIRED_MODE,
+            forbidden_mode_bits: OUTPUT_FORBIDDEN_MODE,
             must_be_empty: true,
         },
     )?;
+    if output_last_message.canonical_path.starts_with(&workspace) {
+        return Err(CodexInvocationError::OutputInsideWorkspace);
+    }
+
     validate_parent_environment(request.runtime, &request.parent_environment)?;
     validate_model_child_environment(request.runtime, request.model_child_environment)?;
 
@@ -80,6 +138,8 @@ pub fn build_codex_invocation(
         prompt_hash,
         output_schema_hash: output_schema.content_hash,
         model_child_environment_hash: request.model_child_environment.environment_hash.clone(),
+        schema_authority_mode: policy.schema_authority_mode,
+        output_schema_parent_contract: output_schema_parent,
         output_schema_contract: output_schema.contract,
         output_message_contract: output_last_message.contract,
     })
@@ -90,6 +150,7 @@ pub fn inspect_codex_invocation_postflight(
     invocation: &CodexInvocationV1,
     require_output_message: bool,
 ) -> Result<CodexInvocationPostflightV1, CodexInvocationError> {
+    inspect_bound_control_directory(&invocation.output_schema_parent_contract)?;
     let schema = inspect_bound_control_file(&invocation.output_schema_contract)?;
     if schema.content_hash != invocation.output_schema_hash {
         return Err(CodexInvocationError::OutputSchemaChangedDuringExecution);

@@ -10,7 +10,8 @@ use hepta_codex_protocol::Sha256Digest;
 use sha2::{Digest, Sha256};
 
 use super::types::{
-    CodexControlFileContractV1, CodexInvocationError, ControlFilePolicy,
+    CodexControlDirectoryContractV1, CodexControlFileContractV1, CodexInvocationError,
+    ControlDirectoryPolicy, ControlFilePolicy,
 };
 
 pub(super) struct InspectedControlFile {
@@ -55,6 +56,76 @@ pub(super) fn inspect_control_file(
         bytes: after.size(),
         contract: control_file_contract(&canonical, &after, policy.maximum_bytes),
     })
+}
+
+pub(super) fn inspect_control_directory(
+    path: &Path,
+    policy: ControlDirectoryPolicy,
+) -> Result<CodexControlDirectoryContractV1, CodexInvocationError> {
+    if !path.is_absolute() {
+        return Err(CodexInvocationError::ControlPathMustBeAbsolute(policy.subject));
+    }
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| CodexInvocationError::Filesystem(policy.subject, error.kind()))?;
+    if canonical != path {
+        return Err(CodexInvocationError::ControlPathNonCanonical(policy.subject));
+    }
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| CodexInvocationError::Filesystem(policy.subject, error.kind()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CodexInvocationError::SchemaParentInvalid);
+    }
+    if metadata.uid() != policy.expected_uid
+        || policy.expected_gid.is_some_and(|gid| metadata.gid() != gid)
+    {
+        return Err(CodexInvocationError::SchemaParentOwnerMismatch);
+    }
+    let mode = metadata.mode() & 0o7777;
+    if mode & 0o7000 != 0 || mode & 0o022 != 0 || mode & 0o500 != 0o500 {
+        return Err(CodexInvocationError::SchemaParentPermissionsInvalid(mode));
+    }
+    if policy.require_group_read_execute && mode & 0o050 != 0o050 {
+        return Err(CodexInvocationError::SchemaParentPermissionsInvalid(mode));
+    }
+    if policy
+        .forbidden_writer_uid
+        .is_some_and(|uid| metadata.uid() == uid && mode & 0o200 != 0)
+    {
+        return Err(CodexInvocationError::SchemaParentWritableByExecutionPrincipal);
+    }
+    Ok(CodexControlDirectoryContractV1 {
+        canonical_path: canonical,
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode: metadata.mode(),
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+    })
+}
+
+pub(super) fn inspect_bound_control_directory(
+    contract: &CodexControlDirectoryContractV1,
+) -> Result<(), CodexInvocationError> {
+    let canonical = fs::canonicalize(&contract.canonical_path).map_err(|error| {
+        CodexInvocationError::Filesystem("postflight_schema_parent", error.kind())
+    })?;
+    if canonical != contract.canonical_path {
+        return Err(CodexInvocationError::SchemaParentChangedDuringExecution);
+    }
+    let metadata = fs::symlink_metadata(&contract.canonical_path).map_err(|error| {
+        CodexInvocationError::Filesystem("postflight_schema_parent", error.kind())
+    })?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.dev() != contract.device
+        || metadata.ino() != contract.inode
+        || metadata.mode() != contract.mode
+        || metadata.uid() != contract.uid
+        || metadata.gid() != contract.gid
+    {
+        return Err(CodexInvocationError::SchemaParentChangedDuringExecution);
+    }
+    Ok(())
 }
 
 pub(super) fn inspect_bound_control_file(
@@ -203,10 +274,8 @@ fn validate_control_metadata(
         return Err(CodexInvocationError::ControlOwnerMismatch(policy.subject));
     }
     let mode = metadata.mode() & 0o7777;
-    if mode & 0o077 != 0
-        || mode & 0o400 == 0
-        || (policy.owner_write_required && mode & 0o200 == 0)
-        || mode & 0o7000 != 0
+    if mode & policy.required_mode_bits != policy.required_mode_bits
+        || mode & policy.forbidden_mode_bits != 0
     {
         return Err(CodexInvocationError::ControlPermissionsInvalid {
             subject: policy.subject,

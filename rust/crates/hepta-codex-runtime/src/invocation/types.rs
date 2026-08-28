@@ -15,30 +15,78 @@ pub(super) const MAXIMUM_OUTPUT_MESSAGE_BYTES: u64 = 16 * 1024 * 1024;
 pub(super) const CODEX_CLI_SURFACE_ID: &str =
     "codex-exec-jsonl-v1-openai-codex-6be2a6ca";
 
+/// OS authority level protecting the output-schema path from the Codex execution principal.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaAuthorityModeV1 {
+    /// Source tests only. The schema and process share an owner and are not production eligible.
+    LocalFixtureSameOwner,
+    /// Schema file and parent directory are owned by a distinct authority and group-readable.
+    SeparateOwner,
+}
+
 /// Deployment-bound control-file and prompt policy for one Codex invocation.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodexInvocationPolicyV1 {
     pub version: u16,
-    pub control_owner_uid: u32,
-    pub control_owner_gid: Option<u32>,
+    pub execution_uid: u32,
+    pub execution_gid: Option<u32>,
+    pub schema_owner_uid: u32,
+    pub schema_owner_gid: Option<u32>,
+    pub output_owner_uid: u32,
+    pub output_owner_gid: Option<u32>,
+    pub schema_authority_mode: SchemaAuthorityModeV1,
     pub maximum_prompt_bytes: usize,
     pub maximum_output_schema_bytes: u64,
     pub maximum_output_message_bytes: u64,
 }
 
 impl CodexInvocationPolicyV1 {
-    /// Strict Foundation V1 policy for files owned by the broker principal.
+    /// Explicit non-production policy used only by fake-executable source tests.
     #[must_use]
-    pub const fn strict(control_owner_uid: u32) -> Self {
+    pub const fn local_fixture(owner_uid: u32) -> Self {
         Self {
             version: 1,
-            control_owner_uid,
-            control_owner_gid: None,
+            execution_uid: owner_uid,
+            execution_gid: None,
+            schema_owner_uid: owner_uid,
+            schema_owner_gid: None,
+            output_owner_uid: owner_uid,
+            output_owner_gid: None,
+            schema_authority_mode: SchemaAuthorityModeV1::LocalFixtureSameOwner,
             maximum_prompt_bytes: MAXIMUM_PROMPT_BYTES,
             maximum_output_schema_bytes: MAXIMUM_OUTPUT_SCHEMA_BYTES,
             maximum_output_message_bytes: MAXIMUM_OUTPUT_MESSAGE_BYTES,
         }
+    }
+
+    /// Production-shaped separate-schema-authority policy.
+    #[must_use]
+    pub const fn separate_schema_authority(
+        execution_uid: u32,
+        execution_gid: u32,
+        schema_owner_uid: u32,
+    ) -> Self {
+        Self {
+            version: 1,
+            execution_uid,
+            execution_gid: Some(execution_gid),
+            schema_owner_uid,
+            schema_owner_gid: Some(execution_gid),
+            output_owner_uid: execution_uid,
+            output_owner_gid: Some(execution_gid),
+            schema_authority_mode: SchemaAuthorityModeV1::SeparateOwner,
+            maximum_prompt_bytes: MAXIMUM_PROMPT_BYTES,
+            maximum_output_schema_bytes: MAXIMUM_OUTPUT_SCHEMA_BYTES,
+            maximum_output_message_bytes: MAXIMUM_OUTPUT_MESSAGE_BYTES,
+        }
+    }
+
+    /// Whether this policy can enter installed-binary/live-provider qualification.
+    #[must_use]
+    pub const fn production_eligible(self) -> bool {
+        matches!(self.schema_authority_mode, SchemaAuthorityModeV1::SeparateOwner)
     }
 
     pub(super) fn validate(self) -> Result<Self, CodexInvocationError> {
@@ -53,6 +101,35 @@ impl CodexInvocationPolicyV1 {
             || self.maximum_output_message_bytes > MAXIMUM_OUTPUT_MESSAGE_BYTES
         {
             return Err(CodexInvocationError::InvalidPolicyLimits);
+        }
+        match self.schema_authority_mode {
+            SchemaAuthorityModeV1::LocalFixtureSameOwner => {
+                if self.schema_owner_uid != self.execution_uid
+                    || self.output_owner_uid != self.execution_uid
+                {
+                    return Err(CodexInvocationError::InvalidFixtureAuthorityPolicy);
+                }
+            }
+            SchemaAuthorityModeV1::SeparateOwner => {
+                if self.execution_uid == 0 {
+                    return Err(CodexInvocationError::RootExecutionPrincipalForbidden);
+                }
+                if self.schema_owner_uid == self.execution_uid {
+                    return Err(CodexInvocationError::SchemaOwnerMustDiffer);
+                }
+                let Some(execution_gid) = self.execution_gid else {
+                    return Err(CodexInvocationError::SchemaReadGroupRequired);
+                };
+                if self.schema_owner_gid != Some(execution_gid) {
+                    return Err(CodexInvocationError::SchemaReadGroupMismatch);
+                }
+                if self.output_owner_uid != self.execution_uid {
+                    return Err(CodexInvocationError::OutputOwnerMustMatchExecutionPrincipal);
+                }
+                if self.output_owner_gid != Some(execution_gid) {
+                    return Err(CodexInvocationError::OutputGroupMustMatchExecutionPrincipal);
+                }
+            }
         }
         Ok(self)
     }
@@ -81,6 +158,8 @@ pub struct CodexInvocationV1 {
     pub prompt_hash: Sha256Digest,
     pub output_schema_hash: Sha256Digest,
     pub model_child_environment_hash: Sha256Digest,
+    pub schema_authority_mode: SchemaAuthorityModeV1,
+    pub output_schema_parent_contract: CodexControlDirectoryContractV1,
     pub output_schema_contract: CodexControlFileContractV1,
     pub output_message_contract: CodexControlFileContractV1,
 }
@@ -98,6 +177,17 @@ pub struct CodexControlFileContractV1 {
     pub maximum_bytes: u64,
 }
 
+/// Stable parent-directory object contract for a separately owned schema.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexControlDirectoryContractV1 {
+    pub canonical_path: PathBuf,
+    pub device: u64,
+    pub inode: u64,
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+}
+
 /// Postflight hashes and sizes for the immutable schema and final output message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexInvocationPostflightV1 {
@@ -112,8 +202,18 @@ pub(super) struct ControlFilePolicy {
     pub(super) expected_uid: u32,
     pub(super) expected_gid: Option<u32>,
     pub(super) maximum_bytes: u64,
-    pub(super) owner_write_required: bool,
+    pub(super) required_mode_bits: u32,
+    pub(super) forbidden_mode_bits: u32,
     pub(super) must_be_empty: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ControlDirectoryPolicy {
+    pub(super) subject: &'static str,
+    pub(super) expected_uid: u32,
+    pub(super) expected_gid: Option<u32>,
+    pub(super) forbidden_writer_uid: Option<u32>,
+    pub(super) require_group_read_execute: bool,
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -122,6 +222,20 @@ pub enum CodexInvocationError {
     UnsupportedPolicyVersion(u16),
     #[error("Codex invocation policy limits are invalid")]
     InvalidPolicyLimits,
+    #[error("local fixture schema authority policy is inconsistent")]
+    InvalidFixtureAuthorityPolicy,
+    #[error("production Codex execution cannot run as root")]
+    RootExecutionPrincipalForbidden,
+    #[error("production schema owner must differ from the Codex execution UID")]
+    SchemaOwnerMustDiffer,
+    #[error("production schema authority requires an execution read group")]
+    SchemaReadGroupRequired,
+    #[error("schema authority group must match the Codex execution group")]
+    SchemaReadGroupMismatch,
+    #[error("output owner must match the Codex execution UID")]
+    OutputOwnerMustMatchExecutionPrincipal,
+    #[error("output group must match the Codex execution GID")]
+    OutputGroupMustMatchExecutionPrincipal,
     #[error("prompt must be nonempty bounded UTF-8")]
     PromptInvalid,
     #[error("{0} path must be absolute")]
@@ -130,6 +244,10 @@ pub enum CodexInvocationError {
     ControlPathNonCanonical(&'static str),
     #[error("workspace is not a real directory")]
     WorkspaceInvalid,
+    #[error("output schema must not be located in the mutable workspace")]
+    SchemaInsideWorkspace,
+    #[error("output-last-message must not be located in the mutable workspace")]
+    OutputInsideWorkspace,
     #[error("{0} must be a real regular file")]
     ControlFileInvalid(&'static str),
     #[error("{0} owner does not match the broker policy")]
@@ -150,6 +268,16 @@ pub enum CodexInvocationError {
         observed: u64,
         maximum: u64,
     },
+    #[error("schema parent directory is invalid")]
+    SchemaParentInvalid,
+    #[error("schema parent owner does not match schema authority")]
+    SchemaParentOwnerMismatch,
+    #[error("schema parent permissions are invalid: {0:o}")]
+    SchemaParentPermissionsInvalid(u32),
+    #[error("schema parent is writable by the Codex execution principal")]
+    SchemaParentWritableByExecutionPrincipal,
+    #[error("schema parent directory changed during execution")]
+    SchemaParentChangedDuringExecution,
     #[error("output message file must be empty before execution")]
     OutputMessageFileNotEmpty,
     #[error("output message is missing after successful execution")]

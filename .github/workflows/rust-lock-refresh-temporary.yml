@@ -1,4 +1,4 @@
-name: rust-lock-refresh-temporary
+name: rust-service-refresh-temporary
 
 on:
   push:
@@ -6,21 +6,20 @@ on:
       - codex/rust-broker-service-20260828
     paths:
       - '.github/workflows/rust-lock-refresh-temporary.yml'
-      - 'rust/Cargo.toml'
-      - 'rust/crates/**/Cargo.toml'
+      - 'rust/**'
 
 permissions:
   contents: write
 
 concurrency:
-  group: rust-lock-refresh-temporary-${{ github.ref }}
+  group: rust-service-refresh-temporary-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   refresh:
-    if: ${{ !contains(github.event.head_commit.message, '[lock-refresh]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[service-refresh]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out exact branch
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -32,23 +31,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
           rustup default 1.98.0
           rustc --version --verbose
           cargo --version --verbose
 
-      - name: Generate and commit exact lock
+      - name: Refresh exact lock and Rust formatting
         shell: bash
         run: |
           set -euo pipefail
           cargo generate-lockfile --manifest-path rust/Cargo.toml
+          cargo fmt --manifest-path rust/Cargo.toml --all
           cargo metadata --manifest-path rust/Cargo.toml --format-version 1 --locked --no-deps >/tmp/metadata.json
-          if git diff --quiet -- rust/Cargo.lock; then
-            echo 'Cargo.lock already current.'
+          if git diff --quiet -- rust; then
+            echo 'Rust lock and formatting are already current.'
             exit 0
           fi
-          git config user.name 'hepta-rust-lock-bot'
-          git config user.email 'hepta-rust-lock-bot@users.noreply.github.com'
-          git add rust/Cargo.lock
-          git commit -m 'build(rust): refresh service dependency lock [lock-refresh]'
+          git config user.name 'hepta-rust-refresh-bot'
+          git config user.email 'hepta-rust-refresh-bot@users.noreply.github.com'
+          git add rust
+          git commit -m 'style(rust): refresh service lock and formatting [service-refresh]'
           git push origin HEAD:codex/rust-broker-service-20260828

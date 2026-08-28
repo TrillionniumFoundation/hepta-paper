@@ -17,7 +17,6 @@ pub(super) const MAXIMUM_STDOUT_BYTES: u64 = 64 * 1024 * 1024;
 pub(super) const MAXIMUM_STDERR_BYTES: u64 = 16 * 1024 * 1024;
 pub(super) const MAXIMUM_TAIL_BYTES: usize = 1024 * 1024;
 
-/// Resource and cleanup limits for one process-group execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProcessLimitsV1 {
     pub timeout_ms: u64,
@@ -74,7 +73,6 @@ impl ProcessLimitsV1 {
     }
 }
 
-/// Fully materialized local process request. No shell interpolation is performed.
 #[derive(Clone, Debug)]
 pub struct BoundedProcessRequestV1 {
     pub executable: PathBuf,
@@ -84,7 +82,6 @@ pub struct BoundedProcessRequestV1 {
     pub stdin: Option<Vec<u8>>,
 }
 
-/// Why the supervisor ended or terminated the process group.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcessTerminationReason {
     Exited,
@@ -94,7 +91,6 @@ pub enum ProcessTerminationReason {
     DescendantSurvivedLeader,
 }
 
-/// Bounded exact-byte observations from one supervised process group.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundedProcessResultV1 {
     pub process_id: u32,
@@ -114,7 +110,6 @@ pub struct BoundedProcessResultV1 {
     pub elapsed_ms: u64,
 }
 
-/// Process validation, spawn, I/O, timeout or process-group cleanup failure.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum BoundedProcessError {
     #[error("bounded process limits are invalid")]
@@ -147,6 +142,8 @@ pub enum BoundedProcessError {
     Spawn(io::ErrorKind),
     #[error("spawned process id is invalid: {0}")]
     InvalidProcessId(u32),
+    #[error("spawn-to-journal hook rejected the spawned process")]
+    SpawnHookRejected,
     #[error("spawned process is missing its {0} pipe")]
     MissingPipe(&'static str),
     #[error("process wait failed: {0:?}")]

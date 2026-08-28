@@ -1,11 +1,11 @@
 # Rust Foundation Slice 1 status
 
-Baseline: `main@d2868944ecc5a6c081bcb42d67fc0643ecbecd0f`  
+Baseline: `main@7bf9d18498f6091ffad91ee400e2bbd4830e0a00`  
 Authority introduced: **none** — additive, test-only/read-contract foundation
 
 ## Implemented in this slice
 
-- pinned Rust 1.98.0 workspace and independent CI;
+- pinned Rust 1.98.0 workspace and independent CI definition;
 - canonical lowercase `sha256:` digest type;
 - deny-unknown-fields `CodexExecutionRequestV1`;
 - deny-unknown-fields `CodexExecutionReceiptV1`;
@@ -18,6 +18,14 @@ Authority introduced: **none** — additive, test-only/read-contract foundation
 - fault-injecting `fake-codex` binary and integration tests;
 - master plan, executable backlog, TCB, parity matrix, risk register, protocol,
   journal, role profiles, runtime identity and ADR.
+
+## Validation status
+
+Static source/manifest/workflow checks passed, but compile, formatting, Clippy,
+tests and rustdoc have **not executed** because both GitHub Actions workflows
+failed before runner assignment and the available local environment had no Rust
+toolchain or dependency network. The branch is not merge-qualified. See
+`RUST_FOUNDATION_VALIDATION.md` for the exact evidence and merge gates.
 
 ## Explicitly not implemented yet
 

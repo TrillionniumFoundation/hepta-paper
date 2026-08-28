@@ -12,8 +12,10 @@ workspace = true
 base64ct.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true
+hepta-codex-event-stream = { path = "../hepta-codex-event-stream" }
 hepta-codex-journal = { path = "../hepta-codex-journal" }
 hepta-codex-protocol = { path = "../hepta-codex-protocol" }
+hepta-codex-runtime = { path = "../hepta-codex-runtime" }
 nix.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

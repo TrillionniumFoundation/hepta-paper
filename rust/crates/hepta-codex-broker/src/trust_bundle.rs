@@ -17,7 +17,6 @@ const MAXIMUM_BUNDLE_KEYS: usize = 64;
 const MAXIMUM_BUNDLE_REVOCATIONS: usize = 256;
 const MAXIMUM_BUNDLE_LIFETIME_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 
-/// One role-scoped Ed25519 request-verification key in a signed trust bundle.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityTrustKeyV1 {
@@ -28,7 +27,6 @@ pub struct CapabilityTrustKeyV1 {
     pub allowed_roles: Vec<AgentRole>,
 }
 
-/// Explicit revocation of one request-verification key.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityKeyRevocationV1 {
@@ -37,7 +35,6 @@ pub struct CapabilityKeyRevocationV1 {
     pub reason_code: String,
 }
 
-/// Versioned public-key bundle controlled by an authority separate from the broker.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityTrustBundleV1 {
@@ -52,7 +49,6 @@ pub struct CapabilityTrustBundleV1 {
     pub revocations: Vec<CapabilityKeyRevocationV1>,
 }
 
-/// Signed transport envelope for a capability trust bundle.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SignedCapabilityTrustBundleV1 {
@@ -61,7 +57,6 @@ pub struct SignedCapabilityTrustBundleV1 {
     pub signature_base64: String,
 }
 
-/// Immutable trust roots allowed to sign trust bundles.
 #[derive(Clone, Debug)]
 pub struct CapabilityBundleAuthorityV1 {
     keys: BTreeMap<String, VerifyingKey>,
@@ -97,7 +92,30 @@ impl CapabilityBundleAuthorityV1 {
     }
 }
 
-/// Verified role-specific bundle snapshot safe to use for new admissions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedCapabilityTrustCheckpointV1 {
+    generation: u64,
+    minimum_accepted_generation: u64,
+    bundle_hash: Sha256Digest,
+}
+
+impl AcceptedCapabilityTrustCheckpointV1 {
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    #[must_use]
+    pub fn minimum_accepted_generation(&self) -> u64 {
+        self.minimum_accepted_generation
+    }
+
+    #[must_use]
+    pub fn bundle_hash(&self) -> &Sha256Digest {
+        &self.bundle_hash
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct VerifiedCapabilityTrustBundleV1 {
     role: AgentRole,
@@ -141,25 +159,17 @@ impl VerifiedCapabilityTrustBundleV1 {
         self.valid_until_unix_ms
     }
 
-    fn trust_store(&self) -> CapabilityTrustStoreV1 {
-        self.trust_store.clone()
-    }
-}
-
-#[derive(Clone, Debug)]
-struct AcceptedBundleCheckpointV1 {
-    generation: u64,
-    minimum_accepted_generation: u64,
-    bundle_hash: Sha256Digest,
-}
-
-impl From<&VerifiedCapabilityTrustBundleV1> for AcceptedBundleCheckpointV1 {
-    fn from(value: &VerifiedCapabilityTrustBundleV1) -> Self {
-        Self {
-            generation: value.generation,
-            minimum_accepted_generation: value.minimum_accepted_generation,
-            bundle_hash: value.bundle_hash.clone(),
+    #[must_use]
+    pub fn checkpoint(&self) -> AcceptedCapabilityTrustCheckpointV1 {
+        AcceptedCapabilityTrustCheckpointV1 {
+            generation: self.generation,
+            minimum_accepted_generation: self.minimum_accepted_generation,
+            bundle_hash: self.bundle_hash.clone(),
         }
+    }
+
+    pub(crate) fn trust_store(&self) -> CapabilityTrustStoreV1 {
+        self.trust_store.clone()
     }
 }
 
@@ -168,19 +178,17 @@ pub enum TrustBundleDisableReasonV1 {
     OperatorStop,
     RefreshRejected,
     Expired,
-    LockPoisoned,
 }
 
 #[derive(Clone, Debug)]
 enum TrustBundleManagerStateV1 {
     Active(VerifiedCapabilityTrustBundleV1),
     Disabled {
-        checkpoint: AcceptedBundleCheckpointV1,
+        checkpoint: AcceptedCapabilityTrustCheckpointV1,
         reason: TrustBundleDisableReasonV1,
     },
 }
 
-/// Fail-closed hot-rotation manager. A rejected refresh disables new admission.
 pub struct CapabilityTrustBundleManagerV1 {
     role: AgentRole,
     state: RwLock<TrustBundleManagerStateV1>,
@@ -199,35 +207,36 @@ impl CapabilityTrustBundleManagerV1 {
         &self,
         now_unix_ms: u64,
     ) -> Result<(CapabilityTrustStoreV1, u64, Sha256Digest), TrustBundleError> {
+        if now_unix_ms == 0 {
+            return Err(TrustBundleError::InvalidCurrentTime);
+        }
         let mut state = self
             .state
             .write()
             .map_err(|_| TrustBundleError::ManagerLockPoisoned)?;
-        match &*state {
+        let checkpoint = match &*state {
             TrustBundleManagerStateV1::Active(bundle)
                 if now_unix_ms >= bundle.valid_from_unix_ms
                     && now_unix_ms < bundle.valid_until_unix_ms =>
             {
-                Ok((
+                return Ok((
                     bundle.trust_store(),
                     bundle.generation,
                     bundle.bundle_hash.clone(),
-                ))
+                ));
             }
-            TrustBundleManagerStateV1::Active(bundle) => {
-                let checkpoint = AcceptedBundleCheckpointV1::from(bundle);
-                *state = TrustBundleManagerStateV1::Disabled {
-                    checkpoint,
-                    reason: TrustBundleDisableReasonV1::Expired,
-                };
-                Err(TrustBundleError::ManagerDisabled(
-                    TrustBundleDisableReasonV1::Expired,
-                ))
-            }
+            TrustBundleManagerStateV1::Active(bundle) => bundle.checkpoint(),
             TrustBundleManagerStateV1::Disabled { reason, .. } => {
-                Err(TrustBundleError::ManagerDisabled(*reason))
+                return Err(TrustBundleError::ManagerDisabled(*reason));
             }
-        }
+        };
+        *state = TrustBundleManagerStateV1::Disabled {
+            checkpoint,
+            reason: TrustBundleDisableReasonV1::Expired,
+        };
+        Err(TrustBundleError::ManagerDisabled(
+            TrustBundleDisableReasonV1::Expired,
+        ))
     }
 
     pub fn install(
@@ -241,9 +250,7 @@ impl CapabilityTrustBundleManagerV1 {
             .write()
             .map_err(|_| TrustBundleError::ManagerLockPoisoned)?;
         let checkpoint = match &*state {
-            TrustBundleManagerStateV1::Active(bundle) => {
-                AcceptedBundleCheckpointV1::from(bundle)
-            }
+            TrustBundleManagerStateV1::Active(bundle) => bundle.checkpoint(),
             TrustBundleManagerStateV1::Disabled { checkpoint, .. } => checkpoint.clone(),
         };
         match verify_capability_trust_bundle(
@@ -273,12 +280,10 @@ impl CapabilityTrustBundleManagerV1 {
             .write()
             .map_err(|_| TrustBundleError::ManagerLockPoisoned)?;
         let checkpoint = match &*state {
-            TrustBundleManagerStateV1::Active(bundle) => {
-                AcceptedBundleCheckpointV1::from(bundle)
-            }
+            TrustBundleManagerStateV1::Active(bundle) => bundle.checkpoint(),
             TrustBundleManagerStateV1::Disabled { checkpoint, .. } => checkpoint.clone(),
         };
-        *state = TrustBundleManagerStateV1::Disabled {
+        *state = TrustBundleManagerManagerStateV1::Disabled {
             checkpoint,
             reason: TrustBundleDisableReasonV1::OperatorStop,
         };
@@ -291,7 +296,7 @@ pub fn verify_capability_trust_bundle(
     role: AgentRole,
     now_unix_ms: u64,
     authority: &CapabilityBundleAuthorityV1,
-    previous: Option<&AcceptedBundleCheckpointV1>,
+    previous: Option<&AcceptedCapabilityTrustCheckpointV1>,
 ) -> Result<VerifiedCapabilityTrustBundleV1, TrustBundleError> {
     if now_unix_ms == 0 {
         return Err(TrustBundleError::InvalidCurrentTime);
@@ -307,7 +312,6 @@ pub fn verify_capability_trust_bundle(
     if !valid_identifier(&envelope.authority_key_id) {
         return Err(TrustBundleError::InvalidAuthorityKeyId);
     }
-
     let signing_bytes = trust_bundle_signing_bytes(&envelope.bundle)?;
     let signature_bytes = Base64UrlUnpadded::decode_vec(&envelope.signature_base64)
         .map_err(|_| TrustBundleError::InvalidBundleSignatureEncoding)?;
@@ -329,6 +333,7 @@ pub fn verify_capability_trust_bundle(
         .collect::<BTreeMap<_, _>>();
     let mut active = Vec::new();
     for item in &envelope.bundle.keys {
+        let key = decode_verifying_key(item)?;
         if !item.allowed_roles.contains(&role)
             || now_unix_ms < item.valid_from_unix_ms
             || now_unix_ms >= item.valid_until_unix_ms
@@ -337,21 +342,6 @@ pub fn verify_capability_trust_bundle(
                 .is_some_and(|effective| now_unix_ms >= *effective)
         {
             continue;
-        }
-        let bytes = Base64UrlUnpadded::decode_vec(&item.public_key_base64)
-            .map_err(|_| TrustBundleError::InvalidVerificationKeyEncoding(item.key_id.clone()))?;
-        if Base64UrlUnpadded::encode_string(&bytes) != item.public_key_base64 {
-            return Err(TrustBundleError::InvalidVerificationKeyEncoding(
-                item.key_id.clone(),
-            ));
-        }
-        let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
-            TrustBundleError::InvalidVerificationKeyEncoding(item.key_id.clone())
-        })?;
-        let key = VerifyingKey::from_bytes(&bytes)
-            .map_err(|_| TrustBundleError::InvalidVerificationKeyEncoding(item.key_id.clone()))?;
-        if key.is_weak() {
-            return Err(TrustBundleError::WeakVerificationKey(item.key_id.clone()));
         }
         active.push((item.key_id.clone(), key));
     }
@@ -426,6 +416,11 @@ fn validate_bundle_shape(bundle: &CapabilityTrustBundleV1) -> Result<(), TrustBu
     if bundle.revocations.len() > MAXIMUM_BUNDLE_REVOCATIONS {
         return Err(TrustBundleError::InvalidRevocationCount);
     }
+    if !strictly_sorted_by_key(&bundle.keys, |item| item.key_id.as_str())
+        || !strictly_sorted_by_key(&bundle.revocations, |item| item.key_id.as_str())
+    {
+        return Err(TrustBundleError::NonCanonicalBundleOrdering);
+    }
     let mut key_ids = BTreeSet::new();
     for key in &bundle.keys {
         if !valid_identifier(&key.key_id)
@@ -443,6 +438,7 @@ fn validate_bundle_shape(bundle: &CapabilityTrustBundleV1) -> Result<(), TrustBu
                 return Err(TrustBundleError::DuplicateKeyRole(key.key_id.clone()));
             }
         }
+        let _ = decode_verifying_key(key)?;
     }
     let mut revoked = BTreeSet::new();
     for revocation in &bundle.revocations {
@@ -462,7 +458,7 @@ fn validate_bundle_shape(bundle: &CapabilityTrustBundleV1) -> Result<(), TrustBu
 
 fn validate_bundle_chain(
     bundle: &CapabilityTrustBundleV1,
-    previous: Option<&AcceptedBundleCheckpointV1>,
+    previous: Option<&AcceptedCapabilityTrustCheckpointV1>,
 ) -> Result<(), TrustBundleError> {
     match previous {
         None => {
@@ -483,6 +479,32 @@ fn validate_bundle_chain(
         }
     }
     Ok(())
+}
+
+fn decode_verifying_key(item: &CapabilityTrustKeyV1) -> Result<VerifyingKey, TrustBundleError> {
+    let bytes = Base64UrlUnpadded::decode_vec(&item.public_key_base64)
+        .map_err(|_| TrustBundleError::InvalidVerificationKeyEncoding(item.key_id.clone()))?;
+    if Base64UrlUnpadded::encode_string(&bytes) != item.public_key_base64 {
+        return Err(TrustBundleError::InvalidVerificationKeyEncoding(
+            item.key_id.clone(),
+        ));
+    }
+    let bytes: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| TrustBundleError::InvalidVerificationKeyEncoding(item.key_id.clone()))?;
+    let key = VerifyingKey::from_bytes(&bytes)
+        .map_err(|_| TrustBundleError::InvalidVerificationKeyEncoding(item.key_id.clone()))?;
+    if key.is_weak() {
+        return Err(TrustBundleError::WeakVerificationKey(item.key_id.clone()));
+    }
+    Ok(key)
+}
+
+fn strictly_sorted_by_key<T, F>(items: &[T], key: F) -> bool
+where
+    F: Fn(&T) -> &str,
+{
+    items.windows(2).all(|window| key(&window[0]) < key(&window[1]))
 }
 
 fn role_name(role: AgentRole) -> &'static str {
@@ -584,6 +606,8 @@ pub enum TrustBundleError {
     InvalidRevocationCount,
     #[error("trust bundle revocation is invalid: {0}")]
     InvalidRevocation(String),
+    #[error("trust bundle ordering is not canonical")]
+    NonCanonicalBundleOrdering,
     #[error("trust bundle bootstrap chain is invalid")]
     InvalidBootstrapChain,
     #[error("trust bundle generation rolled back or hash chain mismatched")]
@@ -635,10 +659,12 @@ mod tests {
         generation: u64,
         previous: Option<Sha256Digest>,
         minimum: u64,
-        request_keys: Vec<(String, SigningKey, Vec<AgentRole>, u64, u64)>,
-        revocations: Vec<CapabilityKeyRevocationV1>,
+        mut request_keys: Vec<(String, SigningKey, Vec<AgentRole>, u64, u64)>,
+        mut revocations: Vec<CapabilityKeyRevocationV1>,
         authority_key: &SigningKey,
     ) -> SignedCapabilityTrustBundleV1 {
+        request_keys.sort_by(|left, right| left.0.cmp(&right.0));
+        revocations.sort_by(|left, right| left.key_id.cmp(&right.key_id));
         let bundle = CapabilityTrustBundleV1 {
             version: 1,
             generation,
@@ -735,7 +761,7 @@ mod tests {
             AgentRole::Author,
             10_000,
             &authority(&root),
-            Some(&AcceptedBundleCheckpointV1::from(&verified)),
+            Some(&verified.checkpoint()),
         )
         .expect("overlap rotation");
         assert_eq!(rotated.generation(), 2);
@@ -763,7 +789,7 @@ mod tests {
             }],
             &root,
         );
-        assert_eq!(
+        assert!(matches!(
             verify_capability_trust_bundle(
                 &revoked,
                 AgentRole::Reviewer,
@@ -772,7 +798,7 @@ mod tests {
                 None,
             ),
             Err(TrustBundleError::NoActiveRoleKey(AgentRole::Reviewer)),
-        );
+        ));
     }
 
     #[test]
@@ -801,7 +827,7 @@ mod tests {
             None,
         )
         .expect("bootstrap bundle");
-        let manager = CapabilityTrustBundleManagerV1::new(verified.clone());
+        let manager = CapabilityTrustBundleManagerV1::new(verified);
         let rollback = signed_bundle(
             1,
             None,
@@ -816,15 +842,15 @@ mod tests {
             Vec::new(),
             &root,
         );
-        assert_eq!(
+        assert!(matches!(
             manager.install(&rollback, 10_000, &authority(&root)),
             Err(TrustBundleError::BundleRollbackOrChainMismatch),
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             manager.snapshot(10_001),
             Err(TrustBundleError::ManagerDisabled(
                 TrustBundleDisableReasonV1::RefreshRejected,
             )),
-        );
+        ));
     }
 }

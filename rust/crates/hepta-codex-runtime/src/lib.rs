@@ -1,0 +1,33 @@
+//! Security-critical local runtime primitives for the Codex broker.
+//!
+//! The crate deliberately has no campaign database, network, release, or
+//! submission authority. It inspects a qualified local runtime, constructs
+//! default-deny child environments, supervises one bounded process group, and
+//! verifies that runtime identity did not change across execution.
+
+#![forbid(unsafe_code)]
+
+#[cfg(not(unix))]
+compile_error!("hepta-codex-runtime Foundation V1 supports Unix targets only");
+
+mod environment;
+mod identity;
+mod process;
+mod qualification;
+
+pub use environment::{
+    EnvironmentBuildError, EnvironmentPolicyV1, RestrictedEnvironmentV1,
+    codex_parent_environment_policy_v1, model_child_environment_policy_v1,
+};
+pub use identity::{
+    CodexHomeIdentityV1, CodexRuntimeIdentityV1, CredentialMaterialIdentityV1,
+    CredentialMaterialStatus, ExecutableIdentityV1, FileSystemIdentityV1,
+    RuntimeIdentityError, RuntimeIdentityPolicyV1, inspect_codex_runtime_identity,
+};
+pub use process::{
+    BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1,
+    ProcessLimitsV1, ProcessTerminationReason, run_bounded_process,
+};
+pub use qualification::{
+    RuntimeIdentityDrift, RuntimeQualificationError, verify_runtime_identity_unchanged,
+};

@@ -30,7 +30,8 @@ pub use acknowledgement::{
     PreparedResultAcknowledgementError, PreparedResultAcknowledgementPolicyV1,
     PreparedResultAcknowledgementTrustStoreV1, PreparedResultAcknowledgementV1,
     VerifiedPreparedResultAcknowledgementV1, apply_prepared_result_acknowledgement,
-    prepared_result_acknowledgement_signing_bytes, verify_prepared_result_acknowledgement,
+    prepared_result_acknowledgement_signing_bytes,
+    verify_persisted_prepared_result_acknowledgement, verify_prepared_result_acknowledgement,
 };
 pub use admission::{
     AdmissionError, AdmissionPolicyV1, AuthenticatedBrokerRequestV1, BrokerRolePolicyV1,
@@ -52,7 +53,8 @@ pub use frame::{
 pub use journal::{
     BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerJournalError, BrokerJournalPolicyV1,
     BrokerJournalStoreV1, BrokerRecoveryCandidateV1, FaultInjectionPointV1, ReservationOutcomeV1,
-    create_broker_backup, list_recovery_candidates, restore_broker_backup,
+    create_broker_backup, list_recovery_candidates, load_persisted_request,
+    restore_broker_backup,
 };
 pub use listener::{
     BrokerListenerError, BrokerListenerPolicyV1, BrokerListenerQualificationV1, BrokerListenerV1,

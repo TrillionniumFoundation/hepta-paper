@@ -1,0 +1,75 @@
+name: rust-foundation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/rust-foundation.yml'
+      - '.gitignore'
+      - 'rust/**'
+      - 'docs/rust/**'
+      - 'docs/codex/**'
+      - 'docs/adr/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/rust-foundation.yml'
+      - '.gitignore'
+      - 'rust/**'
+      - 'docs/rust/**'
+      - 'docs/codex/**'
+      - 'docs/adr/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  validate:
+    name: format, lint, test, docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Generate initial dependency lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+          sha256sum rust/Cargo.lock
+          printf 'HEPTA_CARGO_LOCK_BASE64_BEGIN\n'
+          base64 -w0 rust/Cargo.lock
+          printf '\nHEPTA_CARGO_LOCK_BASE64_END\n'
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --manifest-path rust/Cargo.toml --workspace --all-features
+
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --no-deps

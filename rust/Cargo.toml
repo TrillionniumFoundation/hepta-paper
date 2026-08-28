@@ -4,6 +4,7 @@ members = [
   "crates/hepta-codex-protocol",
   "crates/hepta-codex-event-stream",
   "crates/hepta-codex-journal",
+  "crates/hepta-codex-runtime",
   "crates/hepta-codex-testkit",
 ]
 

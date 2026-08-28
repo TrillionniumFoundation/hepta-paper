@@ -45,6 +45,21 @@ The Rust `hepta-codex-journal` crate is the normative transition table. The
 future SQLite adapter may persist it but may not invent additional transitions
 without a version change.
 
+## Operation, attempt and recovery identity
+
+Three identities must not be conflated:
+
+- an **operation** is one immutable broker journal and one idempotency identity;
+- an **attempt** is one campaign-node execution attempt and may contain a new
+  operation only when provider action and workspace side effects were ruled out;
+- a **campaign revision/generation** fences whether a prepared result may still
+  be integrated.
+
+A terminal operation is never reopened. Retrying after a terminal pre-spawn
+failure allocates a new operation ID in the same campaign attempt. Once provider
+action may have started, recovery allocates a new campaign attempt unless a
+future versioned reconciliation protocol proves a stronger result.
+
 ## Persistence schema v1
 
 Recommended tables:
@@ -86,33 +101,38 @@ prompts and raw manuscript content are excluded.
 - process spawn is preceded by a durable `request_bound` state;
 - `process_spawned` records process-start identity immediately after spawn;
 - each transition uses compare-and-swap on current state;
+- successful milestone transitions carry a bound evidence hash;
+- failure terminal transitions carry a bounded lowercase reason code;
 - prepared receipt bytes are durably stored before `result_prepared` commits;
 - campaign acknowledgement is recorded only after the campaign writer confirms
   integration;
-- no transition is deleted or rewritten during ordinary operation.
+- no transition is deleted, rewritten or appended after a terminal state.
 
 ## Recovery
 
 | Persisted state | Recovery |
 |---|---|
-| `reserved`, `request_bound` | retry same operation if capability/deadline remain valid |
-| pre-spawn terminal failure | same operation may retry after explicit remediation |
-| `process_spawned`, `event_stream_started` | reconcile process; absent trustworthy terminal means new attempt |
-| `terminal_event_observed` through `mutation_validated` | resume local validation, never call provider again |
-| `result_prepared` | ask campaign writer to integrate existing receipt/result |
+| `reserved`, `request_bound` | resume the same nonterminal operation if capability/deadline remain valid |
+| pre-spawn terminal failure | allocate a new operation ID in the same campaign attempt |
+| `process_spawned`, `event_stream_started` | reconcile process; absent trustworthy terminal means a new campaign attempt |
+| `terminal_event_observed` through `mutation_validated` | resume deterministic local validation, never call provider again |
+| `result_prepared` | integrate the existing receipt/result without provider re-execution |
 | `acknowledged` | complete; duplicate request returns the same result identity |
-| post-spawn terminal failure/ambiguous | start a new attempt under campaign policy |
+| post-spawn terminal failure or ambiguity | start a new campaign attempt under policy |
 
-Recovery never changes an ambiguous post-spawn operation into “not started.”
+Recovery never changes an ambiguous post-spawn operation into “not started,”
+and no recovery action mutates a terminal operation journal.
 
-## Cost treatment
+## Cost and usage treatment
 
-- before-spawn failures release the reservation;
+- before provider action is possible, usage is `not_applicable` and cost is
+  `not_incurred`;
+- after provider action may have started, missing usage is `unknown`, never zero;
+- a recognized terminal event without usage is `not_reported`;
 - after-spawn operations retain a conservative reservation until measured usage
   or provider reconciliation is available;
-- missing usage is `unknown`, not zero;
-- duplicate request lookup returns the original operation state and cannot
-  create a second provider process.
+- duplicate operation lookup returns the original state and cannot create a
+  second provider process.
 
 ## Integrity
 
@@ -123,6 +143,7 @@ On startup the broker validates:
 - legal transition graph;
 - operation current state equals the last transition;
 - request/idempotency uniqueness;
+- required evidence hashes and failure reason codes;
 - prepared receipt hash and file identity;
 - no terminal state has outgoing transitions.
 

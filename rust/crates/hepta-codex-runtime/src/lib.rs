@@ -22,13 +22,15 @@ pub use environment::{
 };
 pub use identity::{
     CodexHomeIdentityV1, CodexRuntimeIdentityV1, CredentialMaterialIdentityV1,
-    CredentialMaterialStatus, ExecutableIdentityV1, FileSystemIdentityV1,
-    RuntimeIdentityError, RuntimeIdentityPolicyV1, inspect_codex_runtime_identity,
+    CredentialMaterialStatus, DirectoryIdentityV1, ExecutableIdentityV1,
+    FileSystemIdentityV1, RuntimeIdentityError, RuntimeIdentityPolicyV1,
+    inspect_codex_runtime_identity,
 };
 pub use invocation::{
-    CodexControlFileContractV1, CodexInvocationError, CodexInvocationPolicyV1,
-    CodexInvocationPostflightV1, CodexInvocationRequestV1, CodexInvocationV1,
-    build_codex_invocation, inspect_codex_invocation_postflight,
+    CodexControlDirectoryContractV1, CodexControlFileContractV1, CodexInvocationError,
+    CodexInvocationPolicyV1, CodexInvocationPostflightV1, CodexInvocationRequestV1,
+    CodexInvocationV1, SchemaAuthorityModeV1, build_codex_invocation,
+    inspect_codex_invocation_postflight,
 };
 pub use process::{
     BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1,

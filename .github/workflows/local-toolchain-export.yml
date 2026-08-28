@@ -1,0 +1,63 @@
+name: local-toolchain-export
+
+on:
+  push:
+    branches:
+      - codex/source-export-recovery-actual-20260829
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install exact Rust toolchain and vendor dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+          rm -rf /tmp/hepta-local-toolchain
+          mkdir -p /tmp/hepta-local-toolchain
+          sysroot="$(rustc --print sysroot)"
+          tar -C "$(dirname "$sysroot")" -czf /tmp/hepta-local-toolchain/rust-sysroot.tar.gz "$(basename "$sysroot")"
+          cargo vendor --manifest-path rust/Cargo.toml --locked /tmp/hepta-vendor > /tmp/vendor-config.toml
+          tar -C /tmp -czf /tmp/hepta-local-toolchain/cargo-vendor.tar.gz hepta-vendor
+          cp /tmp/vendor-config.toml /tmp/hepta-local-toolchain/vendor-config.toml
+
+      - name: Download exact official Codex package
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-all-errors \
+            https://github.com/openai/codex/releases/download/rust-v0.150.1/codex-package-x86_64-unknown-linux-musl.tar.gz \
+            --output /tmp/hepta-local-toolchain/codex-package-x86_64-unknown-linux-musl.tar.gz
+          curl --fail --location --retry 5 --retry-all-errors \
+            https://github.com/openai/codex/releases/download/rust-v0.150.1/codex-x86_64-unknown-linux-musl.sigstore \
+            --output /tmp/hepta-local-toolchain/codex-x86_64-unknown-linux-musl.sigstore
+
+      - name: Seal bundle metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'repository=TrillionniumFoundation/hepta-paper' > /tmp/hepta-local-toolchain/MANIFEST.txt
+          printf '%s\n' 'source=12b04a17e3657d07d9dadddbb905d38a6ef96f06' >> /tmp/hepta-local-toolchain/MANIFEST.txt
+          printf '%s\n' 'rust=1.98.0' >> /tmp/hepta-local-toolchain/MANIFEST.txt
+          printf '%s\n' 'codex=rust-v0.150.1' >> /tmp/hepta-local-toolchain/MANIFEST.txt
+          (cd /tmp/hepta-local-toolchain && sha256sum rust-sysroot.tar.gz cargo-vendor.tar.gz vendor-config.toml codex-package-x86_64-unknown-linux-musl.tar.gz codex-x86_64-unknown-linux-musl.sigstore > SHA256SUMS)
+
+      - name: Upload local validation bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-local-toolchain-rust-1.98-codex-0.150.1
+          path: /tmp/hepta-local-toolchain
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

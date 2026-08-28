@@ -33,6 +33,52 @@ env:
   RUST_BACKTRACE: '1'
 
 jobs:
+  bootstrap-lock:
+    name: bootstrap missing Cargo.lock
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'codex/')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Generate and commit missing dependency lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f rust/Cargo.lock ]]; then
+            echo 'rust/Cargo.lock is already committed; bootstrap is a no-op.'
+            exit 0
+          fi
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+          sha256sum rust/Cargo.lock
+          content="$(base64 -w0 rust/Cargo.lock)"
+          gh api \
+            --method PUT \
+            "repos/${GITHUB_REPOSITORY}/contents/rust/Cargo.lock" \
+            -f message='build(rust): lock broker state dependencies' \
+            -f content="$content" \
+            -f branch="$HEAD_BRANCH"
+
   validate:
     name: format, lint, test, docs
     runs-on: ubuntu-latest

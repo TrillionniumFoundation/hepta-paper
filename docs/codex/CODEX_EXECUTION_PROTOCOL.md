@@ -194,15 +194,22 @@ readiness or submission authority.
 
 ## Retry rules
 
+An operation journal is immutable after any terminal state. “Retry” therefore
+means either continuing a nonterminal journal, allocating a new operation in the
+same attempt, or allocating a new campaign attempt.
+
 | Observation | Treatment |
 |---|---|
-| Rejected or failed before spawn | same operation may retry after remediation |
-| Process spawned, no trustworthy terminal | outcome ambiguous; new attempt required |
-| Terminal failure | new attempt under campaign policy |
-| Output schema invalid | current attempt fails; new attempt required |
-| Mutation violation | current attempt is discarded and security event recorded |
-| Prepared result exists, core crashed | integrate prepared result; do not rerun Codex |
-| Usage absent after possible spawn | cost unknown/conservative, never zero |
+| Nonterminal `reserved` or `request_bound` state | resume the same operation if capability and deadline remain valid |
+| Terminal rejection/failure before provider action | allocate a new operation ID in the same campaign attempt |
+| Process/provider action may have started without trustworthy terminal | outcome ambiguous; allocate a new campaign attempt |
+| Terminal failure after provider action | allocate a new campaign attempt under policy |
+| Output schema invalid | discard current attempt and allocate a new attempt |
+| Mutation violation | discard current attempt, record a security event, and allocate a new attempt only under policy |
+| Terminal provider evidence already observed | resume deterministic local validation; never rerun Codex |
+| Prepared result exists and core crashed | integrate the prepared result; never rerun Codex |
+| Provider action ruled out | usage is `not_applicable`; cost is `not_incurred` |
+| Usage absent after possible provider action | usage/cost remain unknown or conservatively bounded, never zero |
 
 ## Version evolution
 

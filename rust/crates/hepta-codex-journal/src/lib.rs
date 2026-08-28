@@ -55,16 +55,45 @@ impl OperationState {
                 | Self::ResultAmbiguous
         )
     }
+
+    /// Whether this state represents an unsuccessful terminal operation.
+    #[must_use]
+    pub const fn is_failure_terminal(self) -> bool {
+        self.is_terminal() && !matches!(self, Self::Acknowledged)
+    }
+
+    /// Whether entering this state requires bound evidence.
+    #[must_use]
+    pub const fn requires_evidence(self) -> bool {
+        matches!(
+            self,
+            Self::ProcessSpawned
+                | Self::TerminalEventObserved
+                | Self::FinalOutputCaptured
+                | Self::SchemaValidated
+                | Self::WorkspaceSnapshotted
+                | Self::MutationValidated
+                | Self::ResultPrepared
+                | Self::Acknowledged
+        )
+    }
 }
 
 /// Action an operator or reconciler may take after a crash or terminal state.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecoveryDisposition {
-    RetrySameOperation,
+    /// Continue the same nonterminal journal operation without re-spawning.
+    ResumeSameOperation,
+    /// Allocate a new operation ID while retaining the current campaign attempt.
+    StartNewOperationSameAttempt,
+    /// Resume deterministic local processing after provider execution completed.
     ResumeLocalProcessing,
+    /// Allocate a new campaign attempt because provider execution may have begun.
     StartNewAttempt,
+    /// Integrate an already prepared result without invoking Codex again.
     IntegratePreparedResult,
+    /// No recovery action remains.
     Complete,
 }
 
@@ -93,15 +122,20 @@ pub struct OperationJournalV1 {
 
 impl OperationJournalV1 {
     /// Creates a journal before the request is bound or a process is spawned.
-    #[must_use]
-    pub fn new(operation_id: String, request_hash: Sha256Digest) -> Self {
-        Self {
+    pub fn new(
+        operation_id: String,
+        request_hash: Sha256Digest,
+    ) -> Result<Self, JournalError> {
+        if !valid_identifier(&operation_id) {
+            return Err(JournalError::InvalidOperationId);
+        }
+        Ok(Self {
             version: 1,
             operation_id,
             request_hash,
             current_state: OperationState::Reserved,
             transitions: Vec::new(),
-        }
+        })
     }
 
     /// Applies one legal transition and appends its immutable evidence record.
@@ -121,6 +155,7 @@ impl OperationJournalV1 {
                 to,
             });
         }
+        validate_transition_metadata(to, evidence_hash.as_ref(), reason_code.as_deref())?;
         if recorded_at_unix_ms == 0 {
             return Err(JournalError::InvalidRecordedTime);
         }
@@ -128,11 +163,6 @@ impl OperationJournalV1 {
             && recorded_at_unix_ms < previous.recorded_at_unix_ms
         {
             return Err(JournalError::NonMonotonicTime);
-        }
-        if let Some(reason) = reason_code.as_deref()
-            && !valid_reason_code(reason)
-        {
-            return Err(JournalError::InvalidReasonCode);
         }
         let sequence = u64::try_from(self.transitions.len())
             .map_err(|_| JournalError::SequenceOverflow)?
@@ -178,15 +208,15 @@ impl OperationJournalV1 {
                     to: transition.to,
                 });
             }
+            validate_transition_metadata(
+                transition.to,
+                transition.evidence_hash.as_ref(),
+                transition.reason_code.as_deref(),
+            )?;
             if transition.recorded_at_unix_ms == 0
                 || transition.recorded_at_unix_ms < previous_time
             {
                 return Err(JournalError::NonMonotonicTime);
-            }
-            if let Some(reason) = transition.reason_code.as_deref()
-                && !valid_reason_code(reason)
-            {
-                return Err(JournalError::InvalidReasonCode);
             }
             previous_time = transition.recorded_at_unix_ms;
             state = transition.to;
@@ -204,16 +234,21 @@ impl OperationJournalV1 {
     #[must_use]
     pub const fn recovery_disposition(&self) -> RecoveryDisposition {
         match self.current_state {
-            OperationState::Reserved
-            | OperationState::RequestBound
-            | OperationState::RejectedPreflight
+            OperationState::Reserved | OperationState::RequestBound => {
+                RecoveryDisposition::ResumeSameOperation
+            }
+            OperationState::RejectedPreflight
             | OperationState::FailedBeforeSpawn
-            | OperationState::CancelledBeforeSpawn => RecoveryDisposition::RetrySameOperation,
+            | OperationState::CancelledBeforeSpawn => {
+                RecoveryDisposition::StartNewOperationSameAttempt
+            }
             OperationState::TerminalEventObserved
             | OperationState::FinalOutputCaptured
             | OperationState::SchemaValidated
             | OperationState::WorkspaceSnapshotted
-            | OperationState::MutationValidated => RecoveryDisposition::ResumeLocalProcessing,
+            | OperationState::MutationValidated => {
+                RecoveryDisposition::ResumeLocalProcessing
+            }
             OperationState::ResultPrepared => RecoveryDisposition::IntegratePreparedResult,
             OperationState::Acknowledged => RecoveryDisposition::Complete,
             OperationState::ProcessSpawned
@@ -269,6 +304,28 @@ const fn legal_transition(from: OperationState, to: OperationState) -> bool {
     )
 }
 
+fn validate_transition_metadata(
+    state: OperationState,
+    evidence_hash: Option<&Sha256Digest>,
+    reason_code: Option<&str>,
+) -> Result<(), JournalError> {
+    if state.requires_evidence() && evidence_hash.is_none() {
+        return Err(JournalError::EvidenceRequired(state));
+    }
+    if state.is_failure_terminal() && reason_code.is_none() {
+        return Err(JournalError::FailureReasonRequired(state));
+    }
+    if !state.is_failure_terminal() && reason_code.is_some() {
+        return Err(JournalError::UnexpectedReasonCode(state));
+    }
+    if let Some(reason) = reason_code
+        && !valid_reason_code(reason)
+    {
+        return Err(JournalError::InvalidReasonCode);
+    }
+    Ok(())
+}
+
 fn valid_identifier(value: &str) -> bool {
     if value.is_empty() || value.len() > 128 {
         return false;
@@ -305,6 +362,12 @@ pub enum JournalError {
     InvalidRecordedTime,
     #[error("transition times must be monotonic")]
     NonMonotonicTime,
+    #[error("state {0:?} requires a bound evidence hash")]
+    EvidenceRequired(OperationState),
+    #[error("failure state {0:?} requires a reason code")]
+    FailureReasonRequired(OperationState),
+    #[error("non-failure state {0:?} cannot carry a reason code")]
+    UnexpectedReasonCode(OperationState),
     #[error("reason code must be a lowercase bounded identifier")]
     InvalidReasonCode,
     #[error("journal transition sequence overflowed")]
@@ -324,18 +387,25 @@ mod tests {
 
     use hepta_codex_protocol::Sha256Digest;
 
-    use super::{
-        JournalError, OperationJournalV1, OperationState, RecoveryDisposition,
-    };
+    use super::{JournalError, OperationJournalV1, OperationState, RecoveryDisposition};
 
     fn digest(byte: char) -> Sha256Digest {
         Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64)))
             .expect("test digest")
     }
 
+    fn evidence_for(state: OperationState) -> Option<Sha256Digest> {
+        if state.requires_evidence() {
+            Some(digest('e'))
+        } else {
+            None
+        }
+    }
+
     #[test]
     fn executes_complete_success_path() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'));
+        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
+            .expect("valid journal");
         let states = [
             OperationState::RequestBound,
             OperationState::ProcessSpawned,
@@ -349,8 +419,9 @@ mod tests {
             OperationState::Acknowledged,
         ];
         for (index, state) in states.into_iter().enumerate() {
+            let offset = u64::try_from(index).expect("small state sequence");
             journal
-                .transition(state, 100 + index as u64, None, None)
+                .transition(state, 100 + offset, evidence_for(state), None)
                 .expect("legal transition");
         }
         assert!(journal.validate().is_ok());
@@ -359,7 +430,8 @@ mod tests {
 
     #[test]
     fn process_spawned_crash_requires_new_attempt() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'));
+        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
+            .expect("valid journal");
         journal
             .transition(OperationState::RequestBound, 100, None, None)
             .expect("bound");
@@ -374,7 +446,8 @@ mod tests {
 
     #[test]
     fn prepared_result_is_integrated_without_provider_reexecution() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'));
+        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
+            .expect("valid journal");
         for (index, state) in [
             OperationState::RequestBound,
             OperationState::ProcessSpawned,
@@ -389,8 +462,9 @@ mod tests {
         .into_iter()
         .enumerate()
         {
+            let offset = u64::try_from(index).expect("small state sequence");
             journal
-                .transition(state, 100 + index as u64, None, None)
+                .transition(state, 100 + offset, evidence_for(state), None)
                 .expect("legal transition");
         }
         assert_eq!(
@@ -400,14 +474,83 @@ mod tests {
     }
 
     #[test]
-    fn rejects_impossible_skip() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'));
+    fn pre_spawn_terminal_failure_requires_a_new_operation_not_a_new_attempt() {
+        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
+            .expect("valid journal");
+        journal
+            .transition(OperationState::RequestBound, 100, None, None)
+            .expect("bound");
+        journal
+            .transition(
+                OperationState::RejectedPreflight,
+                101,
+                None,
+                Some("runtime_identity_unqualified".to_owned()),
+            )
+            .expect("terminal preflight rejection");
         assert_eq!(
-            journal.transition(OperationState::ProcessSpawned, 100, None, None),
+            journal.recovery_disposition(),
+            RecoveryDisposition::StartNewOperationSameAttempt
+        );
+    }
+
+    #[test]
+    fn nonterminal_pre_spawn_state_resumes_the_same_operation() {
+        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
+            .expect("valid journal");
+        journal
+            .transition(OperationState::RequestBound, 100, None, None)
+            .expect("bound");
+        assert_eq!(
+            journal.recovery_disposition(),
+            RecoveryDisposition::ResumeSameOperation
+        );
+    }
+
+    #[test]
+    fn rejects_impossible_skip() {
+        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
+            .expect("valid journal");
+        assert_eq!(
+            journal.transition(
+                OperationState::ProcessSpawned,
+                100,
+                Some(digest('2')),
+                None,
+            ),
             Err(JournalError::IllegalTransition {
                 from: OperationState::Reserved,
                 to: OperationState::ProcessSpawned,
             })
+        );
+    }
+
+    #[test]
+    fn rejects_missing_success_evidence_and_failure_reason() {
+        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
+            .expect("valid journal");
+        journal
+            .transition(OperationState::RequestBound, 100, None, None)
+            .expect("bound");
+        assert_eq!(
+            journal.transition(OperationState::ProcessSpawned, 101, None, None),
+            Err(JournalError::EvidenceRequired(
+                OperationState::ProcessSpawned
+            ))
+        );
+        assert_eq!(
+            journal.transition(OperationState::RejectedPreflight, 101, None, None),
+            Err(JournalError::FailureReasonRequired(
+                OperationState::RejectedPreflight
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_operation_id_at_construction() {
+        assert_eq!(
+            OperationJournalV1::new("../escape".to_owned(), digest('1')),
+            Err(JournalError::InvalidOperationId)
         );
     }
 }

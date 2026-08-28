@@ -182,7 +182,9 @@ pub fn run_reserved_fake_operation(
             Some(reason.to_owned()),
             fault_for(&plan, state),
         )?;
-        return Err(FakeBrokerExecutionError::TerminalProcessFailure(process));
+        return Err(FakeBrokerExecutionError::TerminalProcessFailure(Box::new(
+            process,
+        )));
     }
     let stdout_len = usize::try_from(process.stdout_bytes)
         .map_err(|_| FakeBrokerExecutionError::IncompleteStdoutCapture)?;
@@ -342,7 +344,7 @@ pub enum FakeBrokerExecutionError {
     #[error("fake process execution failed: {0}")]
     Process(BoundedProcessError),
     #[error("fake process terminated unsuccessfully")]
-    TerminalProcessFailure(BoundedProcessResultV1),
+    TerminalProcessFailure(Box<BoundedProcessResultV1>),
     #[error("fake process stdout was not captured completely")]
     IncompleteStdoutCapture,
     #[error("fake JSONL event stream is invalid: {0}")]

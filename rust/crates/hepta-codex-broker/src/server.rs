@@ -398,14 +398,18 @@ mod tests {
 
     #[test]
     fn policy_rejects_unbounded_worker_or_queue_configuration() {
-        let mut policy = BrokerServerPolicyV1::default();
-        policy.worker_threads = HARD_MAXIMUM_WORKERS + 1;
+        let policy = BrokerServerPolicyV1 {
+            worker_threads: HARD_MAXIMUM_WORKERS + 1,
+            ..BrokerServerPolicyV1::default()
+        };
         assert!(matches!(
             policy.validate(),
             Err(BrokerServerError::InvalidPolicy)
         ));
-        let mut policy = BrokerServerPolicyV1::default();
-        policy.queue_capacity = HARD_MAXIMUM_QUEUE_CAPACITY + 1;
+        let policy = BrokerServerPolicyV1 {
+            queue_capacity: HARD_MAXIMUM_QUEUE_CAPACITY + 1,
+            ..BrokerServerPolicyV1::default()
+        };
         assert!(matches!(
             policy.validate(),
             Err(BrokerServerError::InvalidPolicy)

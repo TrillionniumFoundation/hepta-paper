@@ -272,7 +272,7 @@ fn configure_backup_database(
     )?;
     let journal_mode: String =
         connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
-    if journal_mode.to_ascii_lowercase() != "wal" {
+    if !journal_mode.eq_ignore_ascii_case("wal") {
         return Err(BrokerJournalError::IntegrityCheckFailed(format!(
             "backup journal mode is {journal_mode}, expected WAL"
         )));

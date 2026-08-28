@@ -37,16 +37,12 @@ pub struct QualifiedRuntimeExecutionResultV1 {
     pub process: BoundedProcessResultV1,
 }
 
-/// Inspects runtime identity immediately before and after one bounded process.
-///
-/// A process error still triggers postflight inspection so identity drift cannot
-/// be hidden behind a timeout, I/O error, or cleanup failure.
+/// Runs one bounded process between runtime-identity preflight and postflight.
 pub fn run_qualified_runtime_execution(
     request: QualifiedRuntimeExecutionRequestV1<'_>,
 ) -> Result<QualifiedRuntimeExecutionResultV1, RuntimeExecutionError> {
     let before = inspect_for_execution(&request).map_err(RuntimeExecutionError::Preflight)?;
     validate_execution_binding(&before, request.process)?;
-
     let process = run_bounded_process(request.process, request.process_limits);
     let after = inspect_for_execution(&request);
     match (process, after) {
@@ -89,7 +85,7 @@ fn validate_execution_binding(
     runtime: &CodexRuntimeIdentityV1,
     process: &BoundedProcessRequestV1,
 ) -> Result<(), RuntimeExecutionError> {
-    if runtime.executable.canonical_path() != process.executable {
+    if runtime.executable.canonical_path() != process.executable.as_path() {
         return Err(RuntimeExecutionError::ProcessExecutableMismatch);
     }
     let home = runtime.home.canonical_path();
@@ -112,64 +108,60 @@ fn validate_execution_binding(
     Ok(())
 }
 
-/// Fails closed when executable, home, config, credential metadata, model, or policy drifts.
+/// Fails closed when executable, home, credential metadata, model, or policy drifts.
 pub fn verify_runtime_identity_unchanged(
     before: &CodexRuntimeIdentityV1,
     after: &CodexRuntimeIdentityV1,
 ) -> Result<(), RuntimeQualificationError> {
-    let mut changed_components = Vec::new();
+    let mut changed = Vec::new();
     if before.executable.identity_hash != after.executable.identity_hash {
-        changed_components.push("executable".to_owned());
+        changed.push("executable".to_owned());
     }
     if before.home.root != after.home.root {
-        changed_components.push("codex_home_root".to_owned());
+        changed.push("codex_home_root".to_owned());
     }
     if before.home.config != after.home.config
         || before.home.config_content_hash != after.home.config_content_hash
     {
-        changed_components.push("codex_home_config".to_owned());
+        changed.push("codex_home_config".to_owned());
     }
     if before.home.credential_material != after.home.credential_material {
-        changed_components.push("credential_material_metadata".to_owned());
+        changed.push("credential_material_metadata".to_owned());
     }
     if before.home.identity_hash != after.home.identity_hash {
-        changed_components.push("codex_home_identity".to_owned());
+        changed.push("codex_home_identity".to_owned());
     }
     if before.model_selector != after.model_selector {
-        changed_components.push("model_selector".to_owned());
+        changed.push("model_selector".to_owned());
     }
     if before.environment_policy_hash != after.environment_policy_hash {
-        changed_components.push("environment_policy".to_owned());
+        changed.push("environment_policy".to_owned());
     }
     if before.transport_profile_hash != after.transport_profile_hash {
-        changed_components.push("transport_profile".to_owned());
+        changed.push("transport_profile".to_owned());
     }
     if before.identity_hash != after.identity_hash {
-        changed_components.push("aggregate_runtime_identity".to_owned());
+        changed.push("aggregate_runtime_identity".to_owned());
     }
-    changed_components.sort();
-    changed_components.dedup();
-    if changed_components.is_empty() {
+    changed.sort();
+    changed.dedup();
+    if changed.is_empty() {
         Ok(())
     } else {
-        Err(RuntimeQualificationError::IdentityChanged(
-            RuntimeIdentityDrift {
-                before_identity_hash: before.identity_hash.clone(),
-                after_identity_hash: after.identity_hash.clone(),
-                changed_components,
-            },
-        ))
+        Err(RuntimeQualificationError::IdentityChanged(RuntimeIdentityDrift {
+            before_identity_hash: before.identity_hash.clone(),
+            after_identity_hash: after.identity_hash.clone(),
+            changed_components: changed,
+        }))
     }
 }
 
-/// Runtime qualification failure.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum RuntimeQualificationError {
     #[error("Codex runtime identity changed during execution")]
     IdentityChanged(RuntimeIdentityDrift),
 }
 
-/// Preflight, binding, process, postflight, or identity-drift failure.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum RuntimeExecutionError {
     #[error("Codex runtime preflight failed: {0}")]
@@ -206,7 +198,7 @@ pub enum RuntimeExecutionError {
 mod tests {
     use std::{
         collections::BTreeMap,
-        ffi::{OsStr, OsString},
+        ffi::OsString,
         fs::{self, File},
         io::Write,
         os::unix::fs::{MetadataExt, PermissionsExt},
@@ -227,29 +219,72 @@ mod tests {
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
-    struct TempTree(PathBuf);
+    struct Fixture {
+        root: PathBuf,
+        executable: PathBuf,
+        home: PathBuf,
+        policy: RuntimeIdentityPolicyV1,
+    }
 
-    impl TempTree {
-        fn new() -> Self {
+    impl Fixture {
+        fn new(script: &str) -> Self {
             let nonce = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("clock after epoch")
                 .as_nanos();
             let sequence = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
+            let root = std::env::temp_dir().join(format!(
                 "hepta-codex-qualification-{}-{nonce}-{sequence}",
                 std::process::id(),
             ));
-            fs::create_dir(&path).expect("create temp tree");
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
-                .expect("private temp tree");
-            Self(path)
+            fs::create_dir(&root).expect("create fixture root");
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+                .expect("private fixture root");
+            let executable = root.join("codex-test");
+            create_file(&executable, 0o700, script.as_bytes());
+            let home = root.join("home");
+            fs::create_dir(&home).expect("create home");
+            fs::set_permissions(&home, fs::Permissions::from_mode(0o700))
+                .expect("private home");
+            create_file(&home.join("config.toml"), 0o600, b"model = 'one'\n");
+            create_file(&home.join("auth.json"), 0o600, b"opaque\n");
+            let policy = RuntimeIdentityPolicyV1::strict(
+                fs::metadata(&executable).expect("binary metadata").uid(),
+                fs::metadata(&home).expect("home metadata").uid(),
+            );
+            Self {
+                root,
+                executable,
+                home,
+                policy,
+            }
+        }
+
+        fn process(&self) -> BoundedProcessRequestV1 {
+            let source = [
+                (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+                (OsString::from("HOME"), self.home.clone().into_os_string()),
+                (OsString::from("TMPDIR"), self.root.clone().into_os_string()),
+                (
+                    OsString::from("CODEX_HOME"),
+                    self.home.clone().into_os_string(),
+                ),
+            ];
+            BoundedProcessRequestV1 {
+                executable: self.executable.clone(),
+                arguments: Vec::new(),
+                working_directory: self.root.clone(),
+                environment: codex_parent_environment_policy_v1()
+                    .build(source, &BTreeMap::new())
+                    .expect("qualified parent environment"),
+                stdin: None,
+            }
         }
     }
 
-    impl Drop for TempTree {
+    impl Drop for Fixture {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            let _ = fs::remove_dir_all(&self.root);
         }
     }
 
@@ -265,67 +300,12 @@ mod tests {
             .expect("test digest")
     }
 
-    struct Fixture {
-        _tree: TempTree,
-        executable: PathBuf,
-        home: PathBuf,
-        policy: RuntimeIdentityPolicyV1,
-    }
-
-    fn fixture(script: &str) -> Fixture {
-        let tree = TempTree::new();
-        let executable = tree.0.join("codex-test");
-        create_file(&executable, 0o700, script.as_bytes());
-        let home = tree.0.join("home");
-        fs::create_dir(&home).expect("create home");
-        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).expect("private home");
-        create_file(&home.join("config.toml"), 0o600, b"model = 'one'\n");
-        create_file(&home.join("auth.json"), 0o600, b"opaque\n");
-        let policy = RuntimeIdentityPolicyV1::strict(
-            fs::metadata(&executable).expect("binary metadata").uid(),
-            fs::metadata(&home).expect("home metadata").uid(),
-        );
-        Fixture {
-            _tree: tree,
-            executable,
-            home,
-            policy,
-        }
-    }
-
-    fn process(fixture: &Fixture) -> BoundedProcessRequestV1 {
-        let source = [
-            (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
-            (
-                OsString::from("HOME"),
-                fixture.home.clone().into_os_string(),
-            ),
-            (
-                OsString::from("TMPDIR"),
-                fixture._tree.0.clone().into_os_string(),
-            ),
-            (
-                OsString::from("CODEX_HOME"),
-                fixture.home.clone().into_os_string(),
-            ),
-        ];
-        BoundedProcessRequestV1 {
-            executable: fixture.executable.clone(),
-            arguments: Vec::new(),
-            working_directory: fixture._tree.0.clone(),
-            environment: codex_parent_environment_policy_v1()
-                .build(source, &BTreeMap::new())
-                .expect("qualified parent environment"),
-            stdin: None,
-        }
-    }
-
     #[test]
     fn stable_runtime_executes_and_passes_postflight() {
-        let fixture = fixture("#!/bin/sh\nexit 0\n");
-        let process = process(&fixture);
+        let fixture = Fixture::new("#!/bin/sh\nexit 0\n");
+        let process = fixture.process();
         let result = run_qualified_runtime_execution(QualifiedRuntimeExecutionRequestV1 {
-            executable: OsStr::new("codex-test"),
+            executable: fixture.executable.as_os_str(),
             codex_home: &fixture.home,
             model_selector: "qualified-model",
             transport_profile_hash: digest('2'),
@@ -339,12 +319,12 @@ mod tests {
 
     #[test]
     fn config_drift_during_execution_is_rejected() {
-        let fixture = fixture(
+        let fixture = Fixture::new(
             "#!/bin/sh\nset -eu\nprintf \"model = 'two'\\n\" > \"$CODEX_HOME/config.toml\"\nchmod 600 \"$CODEX_HOME/config.toml\"\n",
         );
-        let process = process(&fixture);
+        let process = fixture.process();
         let error = run_qualified_runtime_execution(QualifiedRuntimeExecutionRequestV1 {
-            executable: OsStr::new("codex-test"),
+            executable: fixture.executable.as_os_str(),
             codex_home: &fixture.home,
             model_selector: "qualified-model",
             transport_profile_hash: digest('2'),

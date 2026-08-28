@@ -283,7 +283,7 @@ impl CapabilityTrustBundleManagerV1 {
             TrustBundleManagerStateV1::Active(bundle) => bundle.checkpoint(),
             TrustBundleManagerStateV1::Disabled { checkpoint, .. } => checkpoint.clone(),
         };
-        *state = TrustBundleManagerManagerStateV1::Disabled {
+        *state = TrustBundleManagerStateV1::Disabled {
             checkpoint,
             reason: TrustBundleDisableReasonV1::OperatorStop,
         };
@@ -416,8 +416,14 @@ fn validate_bundle_shape(bundle: &CapabilityTrustBundleV1) -> Result<(), TrustBu
     if bundle.revocations.len() > MAXIMUM_BUNDLE_REVOCATIONS {
         return Err(TrustBundleError::InvalidRevocationCount);
     }
-    if !strictly_sorted_by_key(&bundle.keys, |item| item.key_id.as_str())
-        || !strictly_sorted_by_key(&bundle.revocations, |item| item.key_id.as_str())
+    if !bundle
+        .keys
+        .windows(2)
+        .all(|window| window[0].key_id < window[1].key_id)
+        || !bundle
+            .revocations
+            .windows(2)
+            .all(|window| window[0].key_id < window[1].key_id)
     {
         return Err(TrustBundleError::NonCanonicalBundleOrdering);
     }
@@ -432,11 +438,15 @@ fn validate_bundle_shape(bundle: &CapabilityTrustBundleV1) -> Result<(), TrustBu
         {
             return Err(TrustBundleError::InvalidBundleKey(key.key_id.clone()));
         }
-        let mut roles = BTreeSet::new();
+        let mut previous_rank = None;
         for role in &key.allowed_roles {
-            if !roles.insert(role_name(*role)) {
-                return Err(TrustBundleError::DuplicateKeyRole(key.key_id.clone()));
+            let rank = role_rank(*role);
+            if previous_rank.is_some_and(|previous| rank <= previous) {
+                return Err(TrustBundleError::DuplicateOrUnorderedKeyRole(
+                    key.key_id.clone(),
+                ));
             }
+            previous_rank = Some(rank);
         }
         let _ = decode_verifying_key(key)?;
     }
@@ -500,11 +510,13 @@ fn decode_verifying_key(item: &CapabilityTrustKeyV1) -> Result<VerifyingKey, Tru
     Ok(key)
 }
 
-fn strictly_sorted_by_key<T, F>(items: &[T], key: F) -> bool
-where
-    F: Fn(&T) -> &str,
-{
-    items.windows(2).all(|window| key(&window[0]) < key(&window[1]))
+fn role_rank(role: AgentRole) -> u8 {
+    match role {
+        AgentRole::Author => 0,
+        AgentRole::Reviewer => 1,
+        AgentRole::FormalReviewer => 2,
+        AgentRole::Repairer => 3,
+    }
 }
 
 fn role_name(role: AgentRole) -> &'static str {
@@ -600,8 +612,8 @@ pub enum TrustBundleError {
     InvalidBundleKeyCount,
     #[error("trust bundle key is invalid: {0}")]
     InvalidBundleKey(String),
-    #[error("trust bundle key repeats a role: {0}")]
-    DuplicateKeyRole(String),
+    #[error("trust bundle key has duplicate or unordered roles: {0}")]
+    DuplicateOrUnorderedKeyRole(String),
     #[error("trust bundle revocation count is invalid")]
     InvalidRevocationCount,
     #[error("trust bundle revocation is invalid: {0}")]
@@ -707,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn verifies_role_scoped_bootstrap_and_overlap_rotation() {
+    fn verifies_bootstrap_and_overlap_rotation() {
         let root = SigningKey::from_bytes(&[1_u8; 32]);
         let request_1 = SigningKey::from_bytes(&[2_u8; 32]);
         let request_2 = SigningKey::from_bytes(&[3_u8; 32]);
@@ -768,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn revoked_or_wrong_role_keys_do_not_authorize_admission() {
+    fn revoked_key_is_not_active() {
         let root = SigningKey::from_bytes(&[4_u8; 32]);
         let request = SigningKey::from_bytes(&[5_u8; 32]);
         let revoked = signed_bundle(
@@ -802,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_rotation_disables_new_admission_until_recovery() {
+    fn rejected_rotation_disables_admission() {
         let root = SigningKey::from_bytes(&[6_u8; 32]);
         let request = SigningKey::from_bytes(&[7_u8; 32]);
         let first = signed_bundle(

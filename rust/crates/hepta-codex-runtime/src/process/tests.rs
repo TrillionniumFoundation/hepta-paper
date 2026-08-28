@@ -3,7 +3,10 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io::Write,
-    os::unix::fs::PermissionsExt,
+    os::unix::{
+        ffi::OsStringExt,
+        fs::{PermissionsExt, symlink},
+    },
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -12,8 +15,8 @@ use std::{
 use crate::{RestrictedEnvironmentV1, model_child_environment_policy_v1};
 
 use super::{
-    BoundedProcessRequestV1, ProcessLimitsV1, ProcessTerminationReason,
-    run_bounded_process,
+    BoundedProcessError, BoundedProcessRequestV1, ProcessLimitsV1,
+    ProcessTerminationReason, run_bounded_process,
 };
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -192,4 +195,80 @@ fn timeout_terminates_descendants_in_the_same_process_group() {
         .parse::<u32>()
         .expect("descendant pid");
     assert!(!Path::new(&format!("/proc/{descendant}")).exists());
+}
+
+#[test]
+fn hard_limit_caps_and_stdin_limit_fail_before_spawn() {
+    let tree = TempTree::new();
+    let script = tree.script("no-spawn.sh", "#!/bin/sh\nexit 99\n");
+    let mut limits = ProcessLimitsV1::default();
+    limits.timeout_ms = 6 * 60 * 60 * 1000 + 1;
+    assert_eq!(
+        run_bounded_process(&request(&tree, script.clone()), limits),
+        Err(BoundedProcessError::InvalidLimits),
+    );
+
+    let mut oversized_stdin = request(&tree, script);
+    oversized_stdin.stdin = Some(vec![0; 2]);
+    let limits = ProcessLimitsV1 {
+        maximum_stdin_bytes: 1,
+        ..pressure_limits()
+    };
+    assert_eq!(
+        run_bounded_process(&oversized_stdin, limits),
+        Err(BoundedProcessError::StdinBytesExceeded),
+    );
+}
+
+#[test]
+fn nul_argument_is_rejected_before_spawn() {
+    let tree = TempTree::new();
+    let script = tree.script("no-spawn-nul.sh", "#!/bin/sh\nexit 99\n");
+    let mut value = request(&tree, script);
+    value
+        .arguments
+        .push(OsString::from_vec(b"bad\0argument".to_vec()));
+    assert_eq!(
+        run_bounded_process(&value, ProcessLimitsV1::default()),
+        Err(BoundedProcessError::ArgumentContainsNul),
+    );
+}
+
+#[test]
+fn symlinked_executable_and_working_directory_are_rejected() {
+    let tree = TempTree::new();
+    let script = tree.script("canonical.sh", "#!/bin/sh\nexit 0\n");
+    let executable_link = tree.0.join("executable-link");
+    symlink(&script, &executable_link).expect("executable symlink");
+    assert_eq!(
+        run_bounded_process(
+            &request(&tree, executable_link),
+            ProcessLimitsV1::default(),
+        ),
+        Err(BoundedProcessError::NonCanonicalPath("executable")),
+    );
+
+    let real_working_directory = tree.0.join("real-working-directory");
+    fs::create_dir(&real_working_directory).expect("real working directory");
+    let working_directory_link = tree.0.join("working-directory-link");
+    symlink(&real_working_directory, &working_directory_link)
+        .expect("working directory symlink");
+    let mut value = request(&tree, script);
+    value.working_directory = working_directory_link;
+    assert_eq!(
+        run_bounded_process(&value, ProcessLimitsV1::default()),
+        Err(BoundedProcessError::NonCanonicalPath("working_directory")),
+    );
+}
+
+#[test]
+fn setid_executable_is_rejected_before_spawn() {
+    let tree = TempTree::new();
+    let script = tree.script("setid.sh", "#!/bin/sh\nexit 99\n");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o4700))
+        .expect("set setuid bit");
+    assert_eq!(
+        run_bounded_process(&request(&tree, script), ProcessLimitsV1::default()),
+        Err(BoundedProcessError::ExecutablePermissionsInvalid(0o4700)),
+    );
 }

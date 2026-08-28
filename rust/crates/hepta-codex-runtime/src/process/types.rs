@@ -9,6 +9,13 @@ pub(super) const MAXIMUM_ARGUMENT_COUNT: usize = 4096;
 pub(super) const MAXIMUM_ARGUMENT_BYTES: usize = 1024 * 1024;
 pub(super) const MINIMUM_POLL_INTERVAL_MS: u64 = 2;
 pub(super) const MAXIMUM_POLL_INTERVAL_MS: u64 = 250;
+pub(super) const MAXIMUM_TIMEOUT_MS: u64 = 6 * 60 * 60 * 1000;
+pub(super) const MAXIMUM_TERMINATION_GRACE_MS: u64 = 5 * 60 * 1000;
+pub(super) const MAXIMUM_CLEANUP_TIMEOUT_MS: u64 = 10 * 60 * 1000;
+pub(super) const MAXIMUM_STDIN_BYTES: usize = 64 * 1024 * 1024;
+pub(super) const MAXIMUM_STDOUT_BYTES: u64 = 64 * 1024 * 1024;
+pub(super) const MAXIMUM_STDERR_BYTES: u64 = 16 * 1024 * 1024;
+pub(super) const MAXIMUM_TAIL_BYTES: usize = 1024 * 1024;
 
 /// Resource and cleanup limits for one process-group execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,15 +47,26 @@ impl Default for ProcessLimitsV1 {
 
 impl ProcessLimitsV1 {
     pub(super) fn validate(self) -> Result<Self, BoundedProcessError> {
+        let maximum_tail_bytes = u64::try_from(self.maximum_tail_bytes)
+            .map_err(|_| BoundedProcessError::InvalidLimits)?;
         if self.timeout_ms == 0
+            || self.timeout_ms > MAXIMUM_TIMEOUT_MS
             || self.termination_grace_ms == 0
+            || self.termination_grace_ms > MAXIMUM_TERMINATION_GRACE_MS
             || self.cleanup_timeout_ms < self.termination_grace_ms
+            || self.cleanup_timeout_ms > MAXIMUM_CLEANUP_TIMEOUT_MS
             || !(MINIMUM_POLL_INTERVAL_MS..=MAXIMUM_POLL_INTERVAL_MS)
                 .contains(&self.poll_interval_ms)
             || self.maximum_stdin_bytes == 0
+            || self.maximum_stdin_bytes > MAXIMUM_STDIN_BYTES
             || self.maximum_stdout_bytes == 0
+            || self.maximum_stdout_bytes > MAXIMUM_STDOUT_BYTES
             || self.maximum_stderr_bytes == 0
+            || self.maximum_stderr_bytes > MAXIMUM_STDERR_BYTES
             || self.maximum_tail_bytes == 0
+            || self.maximum_tail_bytes > MAXIMUM_TAIL_BYTES
+            || maximum_tail_bytes > self.maximum_stdout_bytes
+            || maximum_tail_bytes > self.maximum_stderr_bytes
         {
             return Err(BoundedProcessError::InvalidLimits);
         }
@@ -105,12 +123,24 @@ pub enum BoundedProcessError {
     AbsolutePathRequired,
     #[error("executable must be a real regular file")]
     ExecutableNotRegularFile,
+    #[error("executable permissions are invalid: {0:o}")]
+    ExecutablePermissionsInvalid(u32),
+    #[error("{0} path is noncanonical or contains a symlink component")]
+    NonCanonicalPath(&'static str),
     #[error("working directory must be a real directory")]
     WorkingDirectoryInvalid,
+    #[error("process-group control utility permissions are invalid: {0:o}")]
+    ProcessGroupControlPermissionsInvalid(u32),
+    #[error("process-group control utility owner is invalid: {0}")]
+    ProcessGroupControlOwnerInvalid(u32),
+    #[error("process-group control utility link count is invalid: {0}")]
+    ProcessGroupControlLinkCountInvalid(u64),
     #[error("process request contains too many arguments")]
     TooManyArguments,
     #[error("process request argument bytes exceed the limit")]
     ArgumentBytesExceeded,
+    #[error("process request argument contains NUL")]
+    ArgumentContainsNul,
     #[error("process request stdin bytes exceed the limit")]
     StdinBytesExceeded,
     #[error("process spawn failed: {0:?}")]

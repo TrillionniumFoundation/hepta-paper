@@ -1,0 +1,16 @@
+[package]
+name = "hepta-codex-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hepta-codex-event-stream = { path = "../hepta-codex-event-stream" }
+
+[[bin]]
+name = "fake-codex"
+path = "src/bin/fake-codex.rs"

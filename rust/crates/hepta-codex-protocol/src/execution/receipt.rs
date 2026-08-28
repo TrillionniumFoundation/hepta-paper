@@ -3,9 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::Sha256Digest;
 
 use super::{
-    CostClassification, MutationValidationStatus, OutcomeCertainty,
-    OutputSchemaValidationStatus, ProtocolValidationError, RetryDisposition,
-    TerminalEventKind, TokenUsage, UsageClassification,
+    CostClassification, MutationValidationStatus, OutcomeCertainty, OutputSchemaValidationStatus,
+    ProtocolValidationError, RetryDisposition, TerminalEventKind, TokenUsage, UsageClassification,
 };
 
 const MAX_SIGNAL_BYTES: usize = 64;
@@ -253,9 +252,8 @@ fn validate_identifier(field: &'static str, value: &str) -> Result<(), ProtocolV
         return Err(ProtocolValidationError::InvalidIdentifier(field));
     };
     if !first.is_ascii_alphanumeric()
-        || !bytes.all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-')
-        })
+        || !bytes
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-'))
     {
         return Err(ProtocolValidationError::InvalidIdentifier(field));
     }
@@ -268,9 +266,7 @@ fn validate_optional_text(
     maximum: usize,
 ) -> Result<(), ProtocolValidationError> {
     if let Some(value) = value
-        && (value.trim().is_empty()
-            || value.len() > maximum
-            || value.chars().any(char::is_control))
+        && (value.trim().is_empty() || value.len() > maximum || value.chars().any(char::is_control))
     {
         return Err(ProtocolValidationError::InvalidText(field));
     }

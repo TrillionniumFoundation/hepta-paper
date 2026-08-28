@@ -78,7 +78,9 @@ impl EnvironmentPolicyV1 {
     /// Validates policy shape and rejects secret-bearing allowlist entries.
     pub fn validate(&self) -> Result<(), EnvironmentBuildError> {
         if self.version != 1 {
-            return Err(EnvironmentBuildError::UnsupportedPolicyVersion(self.version));
+            return Err(EnvironmentBuildError::UnsupportedPolicyVersion(
+                self.version,
+            ));
         }
         if !valid_policy_id(&self.policy_id) {
             return Err(EnvironmentBuildError::InvalidPolicyId);
@@ -258,8 +260,12 @@ fn validate_key(key: &str) -> Result<(), EnvironmentBuildError> {
 
 fn secret_like_key(key: &str) -> bool {
     FORBIDDEN_EXACT_KEYS.contains(&key)
-        || FORBIDDEN_PREFIXES.iter().any(|prefix| key.starts_with(prefix))
-        || FORBIDDEN_SUFFIXES.iter().any(|suffix| key.ends_with(suffix))
+        || FORBIDDEN_PREFIXES
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+        || FORBIDDEN_SUFFIXES
+            .iter()
+            .any(|suffix| key.ends_with(suffix))
 }
 
 fn environment_value(key: &str, value: &OsStr) -> Result<String, EnvironmentBuildError> {
@@ -272,7 +278,9 @@ fn environment_value(key: &str, value: &OsStr) -> Result<String, EnvironmentBuil
 
 fn validate_value(key: &str, value: &str) -> Result<(), EnvironmentBuildError> {
     if value.len() > MAX_ENVIRONMENT_VALUE_BYTES || value.contains('\0') {
-        return Err(EnvironmentBuildError::InvalidEnvironmentValue(key.to_owned()));
+        return Err(EnvironmentBuildError::InvalidEnvironmentValue(
+            key.to_owned(),
+        ));
     }
     Ok(())
 }
@@ -399,11 +407,7 @@ mod tests {
 
     #[test]
     fn secret_like_allowlist_extensions_fail_closed() {
-        let result = EnvironmentPolicyV1::new(
-            "invalid-v1",
-            ["PATH", "MY_SERVICE_TOKEN"],
-            ["PATH"],
-        );
+        let result = EnvironmentPolicyV1::new("invalid-v1", ["PATH", "MY_SERVICE_TOKEN"], ["PATH"]);
         assert_eq!(
             result,
             Err(EnvironmentBuildError::SecretLikeAllowedKey(

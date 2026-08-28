@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeSet,
-    os::unix::net::UnixStream,
-};
+use std::{collections::BTreeSet, os::unix::net::UnixStream};
 
 use nix::sys::socket::{GetSockOpt, sockopt::PeerCredentials};
 use serde::{Deserialize, Serialize};
@@ -66,7 +63,9 @@ impl PeerPolicyV1 {
 
     fn validate(&self) -> Result<(), PeerAuthorizationError> {
         if self.version != 1 {
-            return Err(PeerAuthorizationError::UnsupportedPolicyVersion(self.version));
+            return Err(PeerAuthorizationError::UnsupportedPolicyVersion(
+                self.version,
+            ));
         }
         if self.allowed_principals.is_empty()
             || self.allowed_principals.len() > MAXIMUM_ALLOWED_PRINCIPALS

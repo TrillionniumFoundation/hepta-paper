@@ -122,10 +122,7 @@ pub struct OperationJournalV1 {
 
 impl OperationJournalV1 {
     /// Creates a journal before the request is bound or a process is spawned.
-    pub fn new(
-        operation_id: String,
-        request_hash: Sha256Digest,
-    ) -> Result<Self, JournalError> {
+    pub fn new(operation_id: String, request_hash: Sha256Digest) -> Result<Self, JournalError> {
         if !valid_identifier(&operation_id) {
             return Err(JournalError::InvalidOperationId);
         }
@@ -178,7 +175,9 @@ impl OperationJournalV1 {
         };
         self.current_state = to;
         self.transitions.push(transition);
-        self.transitions.last().ok_or(JournalError::SequenceOverflow)
+        self.transitions
+            .last()
+            .ok_or(JournalError::SequenceOverflow)
     }
 
     /// Re-validates a journal loaded from persistent storage.
@@ -213,8 +212,7 @@ impl OperationJournalV1 {
                 transition.evidence_hash.as_ref(),
                 transition.reason_code.as_deref(),
             )?;
-            if transition.recorded_at_unix_ms == 0
-                || transition.recorded_at_unix_ms < previous_time
+            if transition.recorded_at_unix_ms == 0 || transition.recorded_at_unix_ms < previous_time
             {
                 return Err(JournalError::NonMonotonicTime);
             }
@@ -246,9 +244,7 @@ impl OperationJournalV1 {
             | OperationState::FinalOutputCaptured
             | OperationState::SchemaValidated
             | OperationState::WorkspaceSnapshotted
-            | OperationState::MutationValidated => {
-                RecoveryDisposition::ResumeLocalProcessing
-            }
+            | OperationState::MutationValidated => RecoveryDisposition::ResumeLocalProcessing,
             OperationState::ResultPrepared => RecoveryDisposition::IntegratePreparedResult,
             OperationState::Acknowledged => RecoveryDisposition::Complete,
             OperationState::ProcessSpawned
@@ -275,30 +271,31 @@ const fn legal_transition(from: OperationState, to: OperationState) -> bool {
 
     matches!(
         (from, to),
-        (Reserved, RequestBound | RejectedPreflight | FailedBeforeSpawn | CancelledBeforeSpawn)
-            | (
-                RequestBound,
-                ProcessSpawned | RejectedPreflight | FailedBeforeSpawn | CancelledBeforeSpawn
-            )
-            | (
-                ProcessSpawned,
-                EventStreamStarted | FailedAfterSpawn | TimedOutAfterSpawn | ResultAmbiguous
-            )
-            | (
-                EventStreamStarted,
-                TerminalEventObserved
-                    | EventStreamInvalid
-                    | FailedAfterSpawn
-                    | TimedOutAfterSpawn
-                    | ResultAmbiguous
-            )
-            | (
-                TerminalEventObserved,
-                FinalOutputCaptured | TerminalFailure | EventStreamInvalid
-            )
-            | (FinalOutputCaptured, SchemaValidated | OutputSchemaInvalid)
+        (
+            Reserved,
+            RequestBound | RejectedPreflight | FailedBeforeSpawn | CancelledBeforeSpawn
+        ) | (
+            RequestBound,
+            ProcessSpawned | RejectedPreflight | FailedBeforeSpawn | CancelledBeforeSpawn
+        ) | (
+            ProcessSpawned,
+            EventStreamStarted | FailedAfterSpawn | TimedOutAfterSpawn | ResultAmbiguous
+        ) | (
+            EventStreamStarted,
+            TerminalEventObserved
+                | EventStreamInvalid
+                | FailedAfterSpawn
+                | TimedOutAfterSpawn
+                | ResultAmbiguous
+        ) | (
+            TerminalEventObserved,
+            FinalOutputCaptured | TerminalFailure | EventStreamInvalid
+        ) | (FinalOutputCaptured, SchemaValidated | OutputSchemaInvalid)
             | (SchemaValidated, WorkspaceSnapshotted)
-            | (WorkspaceSnapshotted, MutationValidated | MutationPolicyViolated)
+            | (
+                WorkspaceSnapshotted,
+                MutationValidated | MutationPolicyViolated
+            )
             | (MutationValidated, ResultPrepared)
             | (ResultPrepared, Acknowledged)
     )
@@ -335,9 +332,8 @@ fn valid_identifier(value: &str) -> bool {
         return false;
     };
     first.is_ascii_alphanumeric()
-        && bytes.all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-')
-        })
+        && bytes
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-'))
 }
 
 fn valid_reason_code(value: &str) -> bool {
@@ -404,8 +400,8 @@ mod tests {
 
     #[test]
     fn executes_complete_success_path() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
-            .expect("valid journal");
+        let mut journal =
+            OperationJournalV1::new("operation-1".to_owned(), digest('1')).expect("valid journal");
         let states = [
             OperationState::RequestBound,
             OperationState::ProcessSpawned,
@@ -425,13 +421,16 @@ mod tests {
                 .expect("legal transition");
         }
         assert!(journal.validate().is_ok());
-        assert_eq!(journal.recovery_disposition(), RecoveryDisposition::Complete);
+        assert_eq!(
+            journal.recovery_disposition(),
+            RecoveryDisposition::Complete
+        );
     }
 
     #[test]
     fn process_spawned_crash_requires_new_attempt() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
-            .expect("valid journal");
+        let mut journal =
+            OperationJournalV1::new("operation-1".to_owned(), digest('1')).expect("valid journal");
         journal
             .transition(OperationState::RequestBound, 100, None, None)
             .expect("bound");
@@ -446,8 +445,8 @@ mod tests {
 
     #[test]
     fn prepared_result_is_integrated_without_provider_reexecution() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
-            .expect("valid journal");
+        let mut journal =
+            OperationJournalV1::new("operation-1".to_owned(), digest('1')).expect("valid journal");
         for (index, state) in [
             OperationState::RequestBound,
             OperationState::ProcessSpawned,
@@ -475,8 +474,8 @@ mod tests {
 
     #[test]
     fn pre_spawn_terminal_failure_requires_a_new_operation_not_a_new_attempt() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
-            .expect("valid journal");
+        let mut journal =
+            OperationJournalV1::new("operation-1".to_owned(), digest('1')).expect("valid journal");
         journal
             .transition(OperationState::RequestBound, 100, None, None)
             .expect("bound");
@@ -496,8 +495,8 @@ mod tests {
 
     #[test]
     fn nonterminal_pre_spawn_state_resumes_the_same_operation() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
-            .expect("valid journal");
+        let mut journal =
+            OperationJournalV1::new("operation-1".to_owned(), digest('1')).expect("valid journal");
         journal
             .transition(OperationState::RequestBound, 100, None, None)
             .expect("bound");
@@ -509,15 +508,10 @@ mod tests {
 
     #[test]
     fn rejects_impossible_skip() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
-            .expect("valid journal");
+        let mut journal =
+            OperationJournalV1::new("operation-1".to_owned(), digest('1')).expect("valid journal");
         assert_eq!(
-            journal.transition(
-                OperationState::ProcessSpawned,
-                100,
-                Some(digest('2')),
-                None,
-            ),
+            journal.transition(OperationState::ProcessSpawned, 100, Some(digest('2')), None,),
             Err(JournalError::IllegalTransition {
                 from: OperationState::Reserved,
                 to: OperationState::ProcessSpawned,
@@ -527,8 +521,8 @@ mod tests {
 
     #[test]
     fn rejects_missing_success_evidence_and_failure_reason() {
-        let mut journal = OperationJournalV1::new("operation-1".to_owned(), digest('1'))
-            .expect("valid journal");
+        let mut journal =
+            OperationJournalV1::new("operation-1".to_owned(), digest('1')).expect("valid journal");
         journal
             .transition(OperationState::RequestBound, 100, None, None)
             .expect("bound");

@@ -62,8 +62,8 @@ pub fn read_request_frame<R: Read>(
             .try_into()
             .map_err(|_| BrokerFrameError::InvalidLengthEncoding)?,
     );
-    let payload_length = usize::try_from(payload_length)
-        .map_err(|_| BrokerFrameError::PayloadTooLarge {
+    let payload_length =
+        usize::try_from(payload_length).map_err(|_| BrokerFrameError::PayloadTooLarge {
             observed: usize::MAX,
             maximum: policy.maximum_payload_bytes,
         })?;
@@ -119,7 +119,8 @@ pub fn write_request_frame<W: Write>(
             maximum: policy.maximum_payload_bytes,
         });
     }
-    let length = u64::try_from(payload.len()).map_err(|_| BrokerFrameError::InvalidLengthEncoding)?;
+    let length =
+        u64::try_from(payload.len()).map_err(|_| BrokerFrameError::InvalidLengthEncoding)?;
     writer
         .write_all(&FRAME_MAGIC)
         .and_then(|()| writer.write_all(&length.to_be_bytes()))
@@ -223,17 +224,11 @@ mod tests {
     #[test]
     fn frame_round_trip_retains_exact_payload_hash() {
         let mut encoded = Vec::new();
-        let written_hash = write_request_frame(
-            &mut encoded,
-            &request(),
-            BrokerFramePolicyV1::default(),
-        )
-        .expect("write frame");
-        let decoded = read_request_frame(
-            &mut Cursor::new(encoded),
-            BrokerFramePolicyV1::default(),
-        )
-        .expect("read frame");
+        let written_hash =
+            write_request_frame(&mut encoded, &request(), BrokerFramePolicyV1::default())
+                .expect("write frame");
+        let decoded = read_request_frame(&mut Cursor::new(encoded), BrokerFramePolicyV1::default())
+            .expect("read frame");
         assert_eq!(decoded.request, request());
         assert_eq!(decoded.payload_hash, written_hash);
     }
@@ -252,10 +247,7 @@ mod tests {
         );
         frame.extend_from_slice(&noncanonical);
         assert_eq!(
-            read_request_frame(
-                &mut Cursor::new(frame),
-                BrokerFramePolicyV1::default(),
-            ),
+            read_request_frame(&mut Cursor::new(frame), BrokerFramePolicyV1::default(),),
             Err(BrokerFrameError::NonCanonicalJson),
         );
     }
@@ -265,10 +257,7 @@ mod tests {
         let mut bytes = Vec::from(FRAME_MAGIC);
         bytes.extend_from_slice(&(2_u64 * 1024 * 1024).to_be_bytes());
         assert!(matches!(
-            read_request_frame(
-                &mut Cursor::new(bytes),
-                BrokerFramePolicyV1::default(),
-            ),
+            read_request_frame(&mut Cursor::new(bytes), BrokerFramePolicyV1::default(),),
             Err(BrokerFrameError::PayloadTooLarge { .. }),
         ));
     }
@@ -279,10 +268,7 @@ mod tests {
         bytes.extend_from_slice(&10_u64.to_be_bytes());
         bytes.extend_from_slice(b"short");
         assert!(matches!(
-            read_request_frame(
-                &mut Cursor::new(bytes),
-                BrokerFramePolicyV1::default(),
-            ),
+            read_request_frame(&mut Cursor::new(bytes), BrokerFramePolicyV1::default(),),
             Err(BrokerFrameError::Read(_)),
         ));
     }

@@ -47,18 +47,36 @@ impl StreamLimits {
 /// Raw event classification retained for audit and forward compatibility.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodexEvent {
-    ThreadStarted { thread_id: String, payload: Value },
-    TurnStarted { payload: Value },
-    ItemStarted { payload: Value },
-    ItemUpdated { payload: Value },
-    ItemCompleted { payload: Value },
-    Error { payload: Value },
-    Unknown { event_type: String, payload: Value },
+    ThreadStarted {
+        thread_id: String,
+        payload: Value,
+    },
+    TurnStarted {
+        payload: Value,
+    },
+    ItemStarted {
+        payload: Value,
+    },
+    ItemUpdated {
+        payload: Value,
+    },
+    ItemCompleted {
+        payload: Value,
+    },
+    Error {
+        payload: Value,
+    },
+    Unknown {
+        event_type: String,
+        payload: Value,
+    },
     TurnCompleted {
         usage: Option<TokenUsage>,
         payload: Value,
     },
-    TurnFailed { payload: Value },
+    TurnFailed {
+        payload: Value,
+    },
 }
 
 /// Validated summary of a complete, terminal JSONL stream.
@@ -75,7 +93,10 @@ pub struct DecodedStream {
 }
 
 /// Decode a complete JSONL stream while enforcing byte, line and event limits.
-pub fn decode_stream<R: Read>(reader: R, limits: StreamLimits) -> Result<DecodedStream, DecodeError> {
+pub fn decode_stream<R: Read>(
+    reader: R,
+    limits: StreamLimits,
+) -> Result<DecodedStream, DecodeError> {
     let limits = limits.validate()?;
     let mut reader = BufReader::new(reader);
     let mut state = DecoderState::default();
@@ -102,10 +123,11 @@ pub fn decode_stream<R: Read>(reader: R, limits: StreamLimits) -> Result<Decoded
         }
         let text = std::str::from_utf8(content)
             .map_err(|_| DecodeError::InvalidUtf8 { line: line_number })?;
-        let payload: Value = serde_json::from_str(text).map_err(|error| DecodeError::InvalidJson {
-            line: line_number,
-            message: error.to_string(),
-        })?;
+        let payload: Value =
+            serde_json::from_str(text).map_err(|error| DecodeError::InvalidJson {
+                line: line_number,
+                message: error.to_string(),
+            })?;
         let object = payload
             .as_object()
             .ok_or(DecodeError::EventNotObject { line: line_number })?;
@@ -179,12 +201,7 @@ struct DecoderState {
 }
 
 impl DecoderState {
-    fn accept(
-        &mut self,
-        line: usize,
-        event_type: &str,
-        payload: Value,
-    ) -> Result<(), DecodeError> {
+    fn accept(&mut self, line: usize, event_type: &str, payload: Value) -> Result<(), DecodeError> {
         if self.terminal_event_kind.is_some() {
             return Err(DecodeError::EventAfterTerminal {
                 line,
@@ -352,8 +369,8 @@ impl DecoderState {
             .terminal_event_kind
             .ok_or(DecodeError::MissingTerminalEvent)?;
         let digest = format!("sha256:{}", hex::encode(stream_hasher.finalize()));
-        let raw_stream_hash = Sha256Digest::from_str(&digest)
-            .map_err(|_| DecodeError::InternalDigestConstruction)?;
+        let raw_stream_hash =
+            Sha256Digest::from_str(&digest).map_err(|_| DecodeError::InternalDigestConstruction)?;
         let event_count = self.events.len();
         Ok(DecodedStream {
             events: self.events,
@@ -383,11 +400,7 @@ fn parse_usage(line: usize, value: Option<&Value>) -> Result<Option<TokenUsage>,
     }))
 }
 
-fn usage_field(
-    line: usize,
-    object: &Map<String, Value>,
-    key: &str,
-) -> Result<u64, DecodeError> {
+fn usage_field(line: usize, object: &Map<String, Value>, key: &str) -> Result<u64, DecodeError> {
     match object.get(key) {
         None => Ok(0),
         Some(value) => value.as_u64().ok_or(DecodeError::InvalidUsage { line }),
@@ -483,10 +496,13 @@ mod tests {
 
     #[test]
     fn decodes_complete_stream_and_hashes_exact_bytes() {
-        let decoded = decode_stream(Cursor::new(success()), StreamLimits::default())
-            .expect("valid stream");
+        let decoded =
+            decode_stream(Cursor::new(success()), StreamLimits::default()).expect("valid stream");
         assert_eq!(decoded.thread_id, "thread-1");
-        assert_eq!(decoded.terminal_event_kind, TerminalEventKind::TurnCompleted);
+        assert_eq!(
+            decoded.terminal_event_kind,
+            TerminalEventKind::TurnCompleted
+        );
         assert_eq!(decoded.event_count, 4);
         assert_eq!(decoded.usage.expect("usage").input_tokens, 10);
         assert!(decoded.raw_stream_hash.as_str().starts_with("sha256:"));

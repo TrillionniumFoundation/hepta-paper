@@ -26,12 +26,16 @@ pub(super) fn inspect_control_file(
     policy: ControlFilePolicy,
 ) -> Result<InspectedControlFile, CodexInvocationError> {
     if !path.is_absolute() {
-        return Err(CodexInvocationError::ControlPathMustBeAbsolute(policy.subject));
+        return Err(CodexInvocationError::ControlPathMustBeAbsolute(
+            policy.subject,
+        ));
     }
     let canonical = fs::canonicalize(path)
         .map_err(|error| CodexInvocationError::Filesystem(policy.subject, error.kind()))?;
     if canonical != path {
-        return Err(CodexInvocationError::ControlPathNonCanonical(policy.subject));
+        return Err(CodexInvocationError::ControlPathNonCanonical(
+            policy.subject,
+        ));
     }
     let before = fs::symlink_metadata(path)
         .map_err(|error| CodexInvocationError::Filesystem(policy.subject, error.kind()))?;
@@ -63,12 +67,16 @@ pub(super) fn inspect_control_directory(
     policy: ControlDirectoryPolicy,
 ) -> Result<CodexControlDirectoryContractV1, CodexInvocationError> {
     if !path.is_absolute() {
-        return Err(CodexInvocationError::ControlPathMustBeAbsolute(policy.subject));
+        return Err(CodexInvocationError::ControlPathMustBeAbsolute(
+            policy.subject,
+        ));
     }
     let canonical = fs::canonicalize(path)
         .map_err(|error| CodexInvocationError::Filesystem(policy.subject, error.kind()))?;
     if canonical != path {
-        return Err(CodexInvocationError::ControlPathNonCanonical(policy.subject));
+        return Err(CodexInvocationError::ControlPathNonCanonical(
+            policy.subject,
+        ));
     }
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| CodexInvocationError::Filesystem(policy.subject, error.kind()))?;
@@ -173,11 +181,7 @@ pub(super) fn inspect_bound_control_file(
             "postflight_control_file",
         ));
     }
-    let content_hash = hash_reader(
-        &mut file,
-        contract.maximum_bytes,
-        "postflight_control_file",
-    )?;
+    let content_hash = hash_reader(&mut file, contract.maximum_bytes, "postflight_control_file")?;
     let after = fs::symlink_metadata(&contract.canonical_path).map_err(|error| {
         CodexInvocationError::Filesystem("postflight_control_file", error.kind())
     })?;

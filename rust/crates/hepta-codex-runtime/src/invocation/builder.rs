@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    ffi::OsString,
-    path::Path,
-    str::FromStr,
-};
+use std::{collections::BTreeMap, ffi::OsString, path::Path, str::FromStr};
 
 use hepta_codex_protocol::{SandboxPolicy, Sha256Digest};
 use sha2::{Digest, Sha256};
@@ -20,8 +15,8 @@ use super::{
     },
     types::{
         CODEX_CLI_SURFACE_ID, CodexInvocationError, CodexInvocationPostflightV1,
-        CodexInvocationRequestV1, CodexInvocationV1, ControlDirectoryPolicy,
-        ControlFilePolicy, SchemaAuthorityModeV1,
+        CodexInvocationRequestV1, CodexInvocationV1, ControlDirectoryPolicy, ControlFilePolicy,
+        SchemaAuthorityModeV1,
     },
 };
 
@@ -69,8 +64,7 @@ pub fn build_codex_invocation(
                 },
             ),
         };
-    let output_schema_parent =
-        inspect_control_directory(schema_parent_path, schema_parent_policy)?;
+    let output_schema_parent = inspect_control_directory(schema_parent_path, schema_parent_policy)?;
     let output_schema = inspect_control_file(
         request.output_schema_path,
         ControlFilePolicy {
@@ -86,8 +80,7 @@ pub fn build_codex_invocation(
     if output_schema.canonical_path.starts_with(&workspace) {
         return Err(CodexInvocationError::SchemaInsideWorkspace);
     }
-    if output_schema.canonical_path.parent()
-        != Some(output_schema_parent.canonical_path.as_path())
+    if output_schema.canonical_path.parent() != Some(output_schema_parent.canonical_path.as_path())
     {
         return Err(CodexInvocationError::SchemaParentInvalid);
     }
@@ -209,8 +202,8 @@ fn build_arguments(
         push_config_override(&mut arguments, override_value);
     }
     for (key, value) in model_child_environment.iter() {
-        let encoded = serde_json::to_string(value)
-            .map_err(|_| CodexInvocationError::TomlStringEncoding)?;
+        let encoded =
+            serde_json::to_string(value).map_err(|_| CodexInvocationError::TomlStringEncoding)?;
         push_config_override(
             &mut arguments,
             format!("shell_environment_policy.set.{key}={encoded}"),
@@ -272,7 +265,9 @@ fn validate_model_child_environment(
             .ok_or(CodexInvocationError::ModelChildDirectoryMissing(key))?;
         let path = canonical_directory(Path::new(value), key)?;
         if path == runtime.home.canonical_path() {
-            return Err(CodexInvocationError::ModelChildDirectoryAliasesCodexHome(key));
+            return Err(CodexInvocationError::ModelChildDirectoryAliasesCodexHome(
+                key,
+            ));
         }
     }
     Ok(())

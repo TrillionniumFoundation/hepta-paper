@@ -71,6 +71,5 @@ pub(super) fn to_i64(value: u64) -> Result<i64, BrokerJournalError> {
 }
 
 pub(super) fn from_i64(value: i64) -> Result<u64, BrokerJournalError> {
-    u64::try_from(value)
-        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("negative_integer"))
+    u64::try_from(value).map_err(|_| BrokerJournalError::CorruptDatabaseValue("negative_integer"))
 }

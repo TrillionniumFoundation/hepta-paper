@@ -9,21 +9,20 @@ use std::{
 
 use hepta_codex_journal::OperationState;
 use hepta_codex_protocol::{
-    AgentRole, ApprovalPolicy, CodexExecutionRequestV1, NetworkPolicy,
-    RequestCapabilityV1, SandboxPolicy, SessionPolicy, Sha256Digest, TaskKind, Transport,
+    AgentRole, ApprovalPolicy, CodexExecutionRequestV1, NetworkPolicy, RequestCapabilityV1,
+    SandboxPolicy, SessionPolicy, Sha256Digest, TaskKind, Transport,
 };
 
 use crate::{
-    AuthenticatedBrokerRequestV1, PeerIdentityV1, VerifiedCapabilityV1,
-    capability_signing_bytes,
+    AuthenticatedBrokerRequestV1, PeerIdentityV1, VerifiedCapabilityV1, capability_signing_bytes,
 };
 
 use super::{
     codec::sha256_digest,
     path::{INITIALIZATION_MARKER_BYTES, INITIALIZATION_MARKER_SUFFIX},
     store::{
-        BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1,
-        FaultInjectionPointV1, ReservationOutcomeV1,
+        BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1, FaultInjectionPointV1,
+        ReservationOutcomeV1,
     },
 };
 
@@ -59,11 +58,8 @@ impl TempJournal {
     }
 
     fn open(&self) -> BrokerJournalStoreV1 {
-        BrokerJournalStoreV1::open(
-            &self.path,
-            BrokerJournalPolicyV1::strict(self.owner_uid),
-        )
-        .expect("open broker journal")
+        BrokerJournalStoreV1::open(&self.path, BrokerJournalPolicyV1::strict(self.owner_uid))
+            .expect("open broker journal")
     }
 }
 
@@ -74,8 +70,7 @@ impl Drop for TempJournal {
 }
 
 fn digest(byte: char) -> Sha256Digest {
-    Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64)))
-        .expect("test digest")
+    Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64))).expect("test digest")
 }
 
 fn admitted(operation_id: &str, nonce: &str, idempotency: char) -> AuthenticatedBrokerRequestV1 {
@@ -243,7 +238,9 @@ fn transition_faults_roll_back_projection_and_append() {
             ),
             Err(BrokerJournalError::InjectedFault(observed)) if observed == fault,
         ));
-        let journal = store.load_journal("operation-1").expect("journal after rollback");
+        let journal = store
+            .load_journal("operation-1")
+            .expect("journal after rollback");
         assert_eq!(journal.current_state, OperationState::Reserved);
         assert!(journal.transitions.is_empty());
         drop(store);
@@ -290,7 +287,9 @@ fn append_only_state_survives_reopen_and_validates_projection() {
         store.validate_integrity().expect("integrity");
     }
     let reopened = fixture.open();
-    let journal = reopened.load_journal("operation-1").expect("reopened journal");
+    let journal = reopened
+        .load_journal("operation-1")
+        .expect("reopened journal");
     assert_eq!(journal.current_state, OperationState::ProcessSpawned);
     reopened.validate_integrity().expect("reopened integrity");
 }
@@ -332,7 +331,9 @@ fn empty_private_database_file_is_recovered_after_creation_crash() {
     drop(file);
     let store = fixture.open();
     assert_eq!(store.operation_count().expect("operation count"), 0);
-    store.validate_integrity().expect("recovered database integrity");
+    store
+        .validate_integrity()
+        .expect("recovered database integrity");
     assert!(!marker.exists());
 }
 
@@ -345,8 +346,7 @@ fn malformed_initialization_marker_is_rejected_without_stamping_database() {
         INITIALIZATION_MARKER_SUFFIX,
     ));
     fs::write(&marker, b"not-a-qualified-marker\n").expect("write bad marker");
-    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600))
-        .expect("private bad marker");
+    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).expect("private bad marker");
     assert!(matches!(
         BrokerJournalStoreV1::open(
             &fixture.path,
@@ -366,8 +366,7 @@ fn initialization_marker_cannot_authorize_an_unstamped_foreign_schema() {
         INITIALIZATION_MARKER_SUFFIX,
     ));
     fs::write(&marker, INITIALIZATION_MARKER_BYTES).expect("write marker");
-    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600))
-        .expect("private marker");
+    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).expect("private marker");
     let foreign = rusqlite::Connection::open(&fixture.path).expect("foreign SQLite");
     foreign
         .execute_batch("CREATE TABLE foreign_state(value TEXT) STRICT;")
@@ -408,9 +407,14 @@ fn metadata_manifest_is_closed_after_initialization() {
     let fixture = TempJournal::new();
     let store = fixture.open();
     let connection = rusqlite::Connection::open(&fixture.path).expect("second connection");
-    assert!(connection
-        .execute("INSERT INTO broker_metadata(key, value) VALUES ('extra', 'value')", [])
-        .is_err());
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO broker_metadata(key, value) VALUES ('extra', 'value')",
+                []
+            )
+            .is_err()
+    );
     drop(connection);
     store.validate_integrity().expect("metadata remains exact");
 }
@@ -445,8 +449,7 @@ fn stale_valid_initialization_marker_on_complete_database_is_reconciled() {
         INITIALIZATION_MARKER_SUFFIX,
     ));
     fs::write(&marker, INITIALIZATION_MARKER_BYTES).expect("write stale marker");
-    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600))
-        .expect("private stale marker");
+    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).expect("private stale marker");
 
     let reopened = fixture.open();
     assert_eq!(reopened.operation_count().expect("preserved operation"), 1);

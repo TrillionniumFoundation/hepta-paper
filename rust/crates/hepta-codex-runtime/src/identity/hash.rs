@@ -1,10 +1,4 @@
-use std::{
-    fs::File,
-    io::Read,
-    os::unix::ffi::OsStrExt,
-    path::Path,
-    str::FromStr,
-};
+use std::{fs::File, io::Read, os::unix::ffi::OsStrExt, path::Path, str::FromStr};
 
 use hepta_codex_protocol::Sha256Digest;
 use sha2::{Digest, Sha256};

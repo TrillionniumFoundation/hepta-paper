@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    str::FromStr,
-};
+use std::{collections::BTreeMap, str::FromStr};
 
 use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -198,8 +195,14 @@ pub fn capability_signing_bytes(
         "capabilitySignerKeyId",
         &request.request_capability.signer_key_id,
     )?;
-    writer.u64("capabilityPeerUid", u64::from(request.request_capability.peer_uid))?;
-    writer.u64("capabilityPeerGid", u64::from(request.request_capability.peer_gid))?;
+    writer.u64(
+        "capabilityPeerUid",
+        u64::from(request.request_capability.peer_uid),
+    )?;
+    writer.u64(
+        "capabilityPeerGid",
+        u64::from(request.request_capability.peer_gid),
+    )?;
     Ok(writer.finish())
 }
 
@@ -320,9 +323,8 @@ fn valid_identifier(value: &str) -> bool {
         return false;
     };
     first.is_ascii_alphanumeric()
-        && bytes.all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-')
-        })
+        && bytes
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-'))
 }
 
 fn sha256_digest(bytes: &[u8]) -> Result<Sha256Digest, CapabilityVerificationError> {
@@ -442,11 +444,9 @@ mod tests {
         let message = capability_signing_bytes(&request).expect("signing message");
         request.request_capability.signature_base64 =
             Base64UrlUnpadded::encode_string(&signing_key.sign(&message).to_bytes());
-        let trust = CapabilityTrustStoreV1::new([(
-            "key-1".to_owned(),
-            signing_key.verifying_key(),
-        )])
-        .expect("trust store");
+        let trust =
+            CapabilityTrustStoreV1::new([("key-1".to_owned(), signing_key.verifying_key())])
+                .expect("trust store");
         (request, trust)
     }
 

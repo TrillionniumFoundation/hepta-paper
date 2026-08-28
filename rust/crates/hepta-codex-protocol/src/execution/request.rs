@@ -84,7 +84,9 @@ impl CodexExecutionRequestV1 {
             return Err(ProtocolValidationError::NonPositive("leaseGeneration"));
         }
         if self.absolute_deadline_unix_ms == 0 {
-            return Err(ProtocolValidationError::NonPositive("absoluteDeadlineUnixMs"));
+            return Err(ProtocolValidationError::NonPositive(
+                "absoluteDeadlineUnixMs",
+            ));
         }
         if self.request_capability.issued_at_unix_ms == 0 {
             return Err(ProtocolValidationError::NonPositive(
@@ -96,9 +98,7 @@ impl CodexExecutionRequestV1 {
                 "requestCapability.expiresAtUnixMs",
             ));
         }
-        if self.request_capability.expires_at_unix_ms
-            <= self.request_capability.issued_at_unix_ms
-        {
+        if self.request_capability.expires_at_unix_ms <= self.request_capability.issued_at_unix_ms {
             return Err(ProtocolValidationError::InvalidCapabilityTimeOrder);
         }
         if self.request_capability.expires_at_unix_ms > self.absolute_deadline_unix_ms {
@@ -136,15 +136,23 @@ fn validate_role_task_and_sandbox(
         (AgentRole::Author, TaskKind::Draft | TaskKind::Revise)
             | (AgentRole::Reviewer, TaskKind::Review)
             | (AgentRole::FormalReviewer, TaskKind::FormalReview)
-            | (AgentRole::Repairer, TaskKind::CodeRepair | TaskKind::LatexRepair)
+            | (
+                AgentRole::Repairer,
+                TaskKind::CodeRepair | TaskKind::LatexRepair
+            )
     );
     if !task_allowed {
         return Err(ProtocolValidationError::RoleTaskMismatch);
     }
     let sandbox_allowed = matches!(
         (role, sandbox_policy),
-        (AgentRole::Author | AgentRole::Repairer, SandboxPolicy::WorkspaceWrite)
-            | (AgentRole::Reviewer | AgentRole::FormalReviewer, SandboxPolicy::ReadOnly)
+        (
+            AgentRole::Author | AgentRole::Repairer,
+            SandboxPolicy::WorkspaceWrite
+        ) | (
+            AgentRole::Reviewer | AgentRole::FormalReviewer,
+            SandboxPolicy::ReadOnly
+        )
     );
     if !sandbox_allowed {
         return Err(ProtocolValidationError::RoleSandboxMismatch);
@@ -161,9 +169,8 @@ fn validate_identifier(field: &'static str, value: &str) -> Result<(), ProtocolV
         return Err(ProtocolValidationError::InvalidIdentifier(field));
     };
     if !first.is_ascii_alphanumeric()
-        || !bytes.all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-')
-        })
+        || !bytes
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-'))
     {
         return Err(ProtocolValidationError::InvalidIdentifier(field));
     }

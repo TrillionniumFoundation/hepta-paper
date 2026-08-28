@@ -1,8 +1,7 @@
 use std::{
     collections::BTreeMap,
     ffi::OsStr,
-    fs,
-    io,
+    fs, io,
     os::unix::ffi::OsStrExt,
     path::{Component, Path, PathBuf},
 };
@@ -38,9 +37,7 @@ pub(super) fn resolve_executable(
     Err(RuntimeIdentityError::ExecutableUnavailable)
 }
 
-pub(super) fn canonical_requested_path(
-    requested: &Path,
-) -> Result<PathBuf, RuntimeIdentityError> {
+pub(super) fn canonical_requested_path(requested: &Path) -> Result<PathBuf, RuntimeIdentityError> {
     let normalized = lexical_absolute(requested)?;
     let canonical = fs::canonicalize(&normalized)
         .map_err(|error| RuntimeIdentityError::Filesystem("canonical_path", error.kind()))?;
@@ -78,11 +75,11 @@ pub(super) fn lexical_absolute(path: &Path) -> Result<PathBuf, RuntimeIdentityEr
     Ok(normalized)
 }
 
-pub(super) fn validate_safe_relative_path(
-    relative: &str,
-) -> Result<(), RuntimeIdentityError> {
+pub(super) fn validate_safe_relative_path(relative: &str) -> Result<(), RuntimeIdentityError> {
     if relative.is_empty() || relative.len() > 512 || relative.contains('\0') {
-        return Err(RuntimeIdentityError::InvalidCredentialPath(relative.to_owned()));
+        return Err(RuntimeIdentityError::InvalidCredentialPath(
+            relative.to_owned(),
+        ));
     }
     let path = Path::new(relative);
     if path.is_absolute()
@@ -96,7 +93,9 @@ pub(super) fn validate_safe_relative_path(
             )
         })
     {
-        return Err(RuntimeIdentityError::InvalidCredentialPath(relative.to_owned()));
+        return Err(RuntimeIdentityError::InvalidCredentialPath(
+            relative.to_owned(),
+        ));
     }
     Ok(())
 }

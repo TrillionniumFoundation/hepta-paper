@@ -12,13 +12,11 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use super::{
     io::{
-        StreamKind, receive_output, receive_stdin_result, spawn_output_reader,
-        spawn_stdin_writer,
+        StreamKind, receive_output, receive_stdin_result, spawn_output_reader, spawn_stdin_writer,
     },
     types::{
         BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1,
-        MAXIMUM_ARGUMENT_BYTES, MAXIMUM_ARGUMENT_COUNT, ProcessLimitsV1,
-        ProcessTerminationReason,
+        MAXIMUM_ARGUMENT_BYTES, MAXIMUM_ARGUMENT_COUNT, ProcessLimitsV1, ProcessTerminationReason,
     },
 };
 
@@ -189,7 +187,9 @@ fn supervise_spawned_group(
     }
     let process_group_cleanup_verified = !process_group_alive(kill_utility, process_id)?;
     if !process_group_cleanup_verified {
-        return Err(BoundedProcessError::ProcessGroupCleanupUnverified(process_id));
+        return Err(BoundedProcessError::ProcessGroupCleanupUnverified(
+            process_id,
+        ));
     }
 
     Ok(BoundedProcessResultV1 {
@@ -227,9 +227,7 @@ fn validate_request(
         return Err(BoundedProcessError::ExecutableNotRegularFile);
     }
     let executable_mode = executable_metadata.mode() & 0o7777;
-    if executable_mode & 0o7000 != 0
-        || executable_mode & 0o022 != 0
-        || executable_mode & 0o100 == 0
+    if executable_mode & 0o7000 != 0 || executable_mode & 0o022 != 0 || executable_mode & 0o100 == 0
     {
         return Err(BoundedProcessError::ExecutablePermissionsInvalid(
             executable_mode,
@@ -244,14 +242,17 @@ fn validate_request(
     if request.arguments.len() > MAXIMUM_ARGUMENT_COUNT {
         return Err(BoundedProcessError::TooManyArguments);
     }
-    let argument_bytes = request.arguments.iter().try_fold(0usize, |total, argument| {
-        if argument.as_encoded_bytes().contains(&0) {
-            return Err(BoundedProcessError::ArgumentContainsNul);
-        }
-        total
-            .checked_add(argument.as_encoded_bytes().len())
-            .ok_or(BoundedProcessError::ArgumentBytesExceeded)
-    })?;
+    let argument_bytes = request
+        .arguments
+        .iter()
+        .try_fold(0usize, |total, argument| {
+            if argument.as_encoded_bytes().contains(&0) {
+                return Err(BoundedProcessError::ArgumentContainsNul);
+            }
+            total
+                .checked_add(argument.as_encoded_bytes().len())
+                .ok_or(BoundedProcessError::ArgumentBytesExceeded)
+        })?;
     if argument_bytes > MAXIMUM_ARGUMENT_BYTES {
         return Err(BoundedProcessError::ArgumentBytesExceeded);
     }
@@ -265,10 +266,7 @@ fn validate_request(
     Ok(())
 }
 
-fn validate_canonical_path(
-    path: &Path,
-    subject: &'static str,
-) -> Result<(), BoundedProcessError> {
+fn validate_canonical_path(path: &Path, subject: &'static str) -> Result<(), BoundedProcessError> {
     let canonical = fs::canonicalize(path)
         .map_err(|error| BoundedProcessError::Filesystem(subject, error.kind()))?;
     if canonical != path {
@@ -290,7 +288,9 @@ fn resolve_kill_utility() -> Result<PathBuf, BoundedProcessError> {
         }
         let mode = metadata.mode() & 0o7777;
         if mode & 0o7022 != 0 || mode & 0o100 == 0 {
-            return Err(BoundedProcessError::ProcessGroupControlPermissionsInvalid(mode));
+            return Err(BoundedProcessError::ProcessGroupControlPermissionsInvalid(
+                mode,
+            ));
         }
         if metadata.uid() != 0 {
             return Err(BoundedProcessError::ProcessGroupControlOwnerInvalid(
@@ -325,10 +325,7 @@ fn send_group_signal(
     }
 }
 
-fn process_group_alive(
-    kill_utility: &Path,
-    process_id: u32,
-) -> Result<bool, BoundedProcessError> {
+fn process_group_alive(kill_utility: &Path, process_id: u32) -> Result<bool, BoundedProcessError> {
     Ok(group_signal_status(kill_utility, process_id, "0")?.success())
 }
 

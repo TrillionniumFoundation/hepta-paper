@@ -1,21 +1,18 @@
-use std::{path::{Path, PathBuf}, str::FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
-use hepta_codex_journal::{
-    JournalError, JournalTransitionV1, OperationJournalV1, OperationState,
-};
+use hepta_codex_journal::{JournalError, JournalTransitionV1, OperationJournalV1, OperationState};
 use hepta_codex_protocol::{CodexExecutionRequestV1, Sha256Digest};
-use rusqlite::{
-    Connection, OptionalExtension, Transaction, TransactionBehavior, params,
-};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
 
 use crate::AuthenticatedBrokerRequestV1;
 
 use super::{
     codec::{from_i64, sha256_digest, state_from_db, state_to_db, to_i64},
-    path::{
-        inspect_database_envelope, open_secure_database, verify_database_contract,
-    },
+    path::{inspect_database_envelope, open_secure_database, verify_database_contract},
 };
 
 const HARD_MAXIMUM_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -125,17 +122,14 @@ impl BrokerJournalStoreV1 {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        if let Some(existing) = existing_by_idempotency(
-            &transaction,
-            admitted.request.idempotency_key.as_str(),
-        )? {
+        if let Some(existing) =
+            existing_by_idempotency(&transaction, admitted.request.idempotency_key.as_str())?
+        {
             if !existing.matches(admitted) {
                 return Err(BrokerJournalError::IdempotencyConflict);
             }
-            let journal = load_journal_from_connection(
-                &transaction,
-                &admitted.request.operation_id,
-            )?;
+            let journal =
+                load_journal_from_connection(&transaction, &admitted.request.operation_id)?;
             transaction.commit()?;
             return Ok(ReservationOutcomeV1::Existing(journal));
         }
@@ -221,12 +215,7 @@ impl BrokerJournalStoreV1 {
             });
         }
         let transition = journal
-            .transition(
-                next_state,
-                recorded_at_unix_ms,
-                evidence_hash,
-                reason_code,
-            )?
+            .transition(next_state, recorded_at_unix_ms, evidence_hash, reason_code)?
             .clone();
         transaction.execute(
             "INSERT INTO operation_transitions (
@@ -268,7 +257,11 @@ impl BrokerJournalStoreV1 {
             params![
                 state_to_db(next_state),
                 to_i64(recorded_at_unix_ms)?,
-                if provider_action_may_have_started { 1_i64 } else { 0_i64 },
+                if provider_action_may_have_started {
+                    1_i64
+                } else {
+                    0_i64
+                },
                 prepared_receipt_hash,
                 operation_id,
                 state_to_db(expected_state),
@@ -353,9 +346,9 @@ impl BrokerJournalStoreV1 {
 
     /// Number of durable operation reservations.
     pub fn operation_count(&self) -> Result<u64, BrokerJournalError> {
-        let value: i64 = self
-            .connection
-            .query_row("SELECT count(*) FROM operations", [], |row| row.get(0))?;
+        let value: i64 =
+            self.connection
+                .query_row("SELECT count(*) FROM operations", [], |row| row.get(0))?;
         from_i64(value)
     }
 }
@@ -446,10 +439,7 @@ fn operation_exists(
         .is_some())
 }
 
-fn nonce_exists(
-    transaction: &Transaction<'_>,
-    nonce: &str,
-) -> Result<bool, BrokerJournalError> {
+fn nonce_exists(transaction: &Transaction<'_>, nonce: &str) -> Result<bool, BrokerJournalError> {
     Ok(transaction
         .query_row(
             "SELECT 1 FROM capability_nonces WHERE nonce = ?1",
@@ -561,10 +551,10 @@ fn validate_operation_record(
     let capability_message = crate::capability_signing_bytes(&request)
         .map_err(|_| BrokerJournalError::CorruptDatabaseValue("capability_message"))?;
     let expected_capability_hash = sha256_digest(&capability_message)?;
-    let peer_uid = u32::try_from(row.4)
-        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("peer_uid"))?;
-    let peer_gid = u32::try_from(row.5)
-        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("peer_gid"))?;
+    let peer_uid =
+        u32::try_from(row.4).map_err(|_| BrokerJournalError::CorruptDatabaseValue("peer_uid"))?;
+    let peer_gid =
+        u32::try_from(row.5).map_err(|_| BrokerJournalError::CorruptDatabaseValue("peer_gid"))?;
     if row.3 <= 0
         || request.operation_id != operation_id
         || request.idempotency_key.as_str() != row.1
@@ -591,18 +581,14 @@ fn validate_operation_projection(
     connection: &Connection,
     journal: &OperationJournalV1,
 ) -> Result<(), BrokerJournalError> {
-    let (provider_started, prepared_hash, created_at, updated_at): (
-        i64,
-        Option<String>,
-        i64,
-        i64,
-    ) = connection.query_row(
-        "SELECT provider_action_may_have_started, prepared_receipt_hash,
+    let (provider_started, prepared_hash, created_at, updated_at): (i64, Option<String>, i64, i64) =
+        connection.query_row(
+            "SELECT provider_action_may_have_started, prepared_receipt_hash,
                 created_at_unix_ms, updated_at_unix_ms
          FROM operations WHERE operation_id = ?1",
-        [&journal.operation_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-    )?;
+            [&journal.operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
     let expected_provider_started = journal
         .transitions
         .iter()
@@ -654,8 +640,7 @@ fn validate_authenticated_request(
     if sha256_digest(&admitted.request_payload)? != admitted.request_hash
         || sha256_digest(&signing_message)? != admitted.capability.signing_message_hash
         || admitted.request.request_capability.nonce != admitted.capability.nonce
-        || admitted.request.request_capability.signer_key_id
-            != admitted.capability.signer_key_id
+        || admitted.request.request_capability.signer_key_id != admitted.capability.signer_key_id
         || admitted.request.request_capability.peer_uid != admitted.peer.uid
         || admitted.request.request_capability.peer_gid != admitted.peer.gid
         || admitted.capability.peer_uid != admitted.peer.uid
@@ -718,7 +703,10 @@ pub enum BrokerJournalError {
     #[error(
         "broker journal database identity is invalid: application_id={application_id}, user_version={user_version}"
     )]
-    DatabaseIdentityMismatch { application_id: i64, user_version: i64 },
+    DatabaseIdentityMismatch {
+        application_id: i64,
+        user_version: i64,
+    },
     #[error("broker journal connection pragmas are not fail-closed")]
     ConnectionPragmaMismatch,
     #[error("unsupported broker journal schema version: {0}")]

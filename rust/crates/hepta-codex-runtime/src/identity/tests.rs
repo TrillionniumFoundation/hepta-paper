@@ -33,8 +33,7 @@ impl TempTree {
             std::process::id(),
         ));
         fs::create_dir(&path).expect("create temp tree");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
-            .expect("private temp tree");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("private temp tree");
         Self(path)
     }
 }
@@ -65,9 +64,7 @@ fn fixture() -> (TempTree, PathBuf, PathBuf, RuntimeIdentityPolicyV1) {
         0o600,
         b"do-not-read-in-identity-code\n",
     );
-    let binary_uid = fs::metadata(&executable)
-        .expect("binary metadata")
-        .uid();
+    let binary_uid = fs::metadata(&executable).expect("binary metadata").uid();
     let home_uid = fs::metadata(&home).expect("home metadata").uid();
     (
         tree,
@@ -78,8 +75,7 @@ fn fixture() -> (TempTree, PathBuf, PathBuf, RuntimeIdentityPolicyV1) {
 }
 
 fn digest(byte: char) -> Sha256Digest {
-    Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64)))
-        .expect("test digest")
+    Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64))).expect("test digest")
 }
 
 fn inspect(
@@ -147,7 +143,10 @@ fn config_changes_still_change_runtime_identity() {
     let before = inspect(&executable, &home, &policy).expect("preflight identity");
     create_file(&home.join("config.toml"), 0o600, b"model = 'changed'\n");
     let after = inspect(&executable, &home, &policy).expect("changed identity");
-    assert_ne!(before.home.config_content_hash, after.home.config_content_hash);
+    assert_ne!(
+        before.home.config_content_hash,
+        after.home.config_content_hash
+    );
     assert_ne!(before.home.identity_hash, after.home.identity_hash);
 }
 
@@ -185,8 +184,7 @@ fn rejects_hardlinked_executable() {
 #[test]
 fn rejects_group_writable_executable() {
     let (_tree, executable, home, policy) = fixture();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o720))
-        .expect("weaken executable");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o720)).expect("weaken executable");
     assert_eq!(
         inspect(&executable, &home, &policy),
         Err(RuntimeIdentityError::FilePermissionsInvalid(0o720)),
@@ -196,11 +194,8 @@ fn rejects_group_writable_executable() {
 #[test]
 fn rejects_group_readable_config() {
     let (_tree, executable, home, policy) = fixture();
-    fs::set_permissions(
-        home.join("config.toml"),
-        fs::Permissions::from_mode(0o640),
-    )
-    .expect("weaken config");
+    fs::set_permissions(home.join("config.toml"), fs::Permissions::from_mode(0o640))
+        .expect("weaken config");
     assert_eq!(
         inspect(&executable, &home, &policy),
         Err(RuntimeIdentityError::FilePermissionsInvalid(0o640)),

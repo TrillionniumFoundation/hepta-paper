@@ -3,8 +3,8 @@ mod types;
 mod unix;
 
 pub use types::{
-    BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1,
-    ProcessLimitsV1, ProcessTerminationReason,
+    BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1, ProcessLimitsV1,
+    ProcessTerminationReason,
 };
 pub use unix::run_bounded_process;
 

@@ -105,7 +105,9 @@ pub(super) fn receive_output(
     match receiver.recv_timeout(nonzero_timeout(timeout)) {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(kind)) => Err(BoundedProcessError::OutputRead(stream, kind)),
-        Err(RecvTimeoutError::Timeout) => Err(BoundedProcessError::OutputReaderDidNotFinish(stream)),
+        Err(RecvTimeoutError::Timeout) => {
+            Err(BoundedProcessError::OutputReaderDidNotFinish(stream))
+        }
         Err(RecvTimeoutError::Disconnected) => {
             Err(BoundedProcessError::OutputReaderDisconnected(stream))
         }

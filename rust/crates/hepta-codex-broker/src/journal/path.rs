@@ -13,10 +13,7 @@ pub(super) const INITIALIZATION_MARKER_SUFFIX: &str = ".initializing";
 pub(super) const INITIALIZATION_MARKER_BYTES: &[u8] = b"HEPTA_BROKER_JOURNAL_INIT_V1\n";
 
 use super::{
-    schema::{
-        APPLICATION_ID, EXPECTED_SCHEMA_OBJECTS, SCHEMA_SQL, SCHEMA_VERSION,
-        USER_VERSION,
-    },
+    schema::{APPLICATION_ID, EXPECTED_SCHEMA_OBJECTS, SCHEMA_SQL, SCHEMA_VERSION, USER_VERSION},
     store::{BrokerJournalError, BrokerJournalPolicyV1},
 };
 
@@ -155,8 +152,9 @@ fn inspect_initialization_marker(
     let mode = metadata.mode() & 0o7777;
     if mode != 0o600
         || metadata.nlink() != 1
-        || metadata.size() != u64::try_from(INITIALIZATION_MARKER_BYTES.len())
-            .map_err(|_| BrokerJournalError::NumericOverflow)?
+        || metadata.size()
+            != u64::try_from(INITIALIZATION_MARKER_BYTES.len())
+                .map_err(|_| BrokerJournalError::NumericOverflow)?
     {
         return Err(BrokerJournalError::InitializationMarkerInvalid);
     }
@@ -261,7 +259,12 @@ fn inspect_database_parent(
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(BrokerJournalError::DatabaseParentInvalid);
     }
-    validate_owner(&metadata, policy.owner_uid, policy.owner_gid, "journal_parent")?;
+    validate_owner(
+        &metadata,
+        policy.owner_uid,
+        policy.owner_gid,
+        "journal_parent",
+    )?;
     let mode = metadata.mode() & 0o7777;
     if mode != 0o700 {
         return Err(BrokerJournalError::DatabaseParentPermissionsInvalid(mode));
@@ -278,13 +281,20 @@ pub(super) fn inspect_database_file(
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(BrokerJournalError::DatabaseFileInvalid);
     }
-    validate_owner(&metadata, policy.owner_uid, policy.owner_gid, "journal_database")?;
+    validate_owner(
+        &metadata,
+        policy.owner_uid,
+        policy.owner_gid,
+        "journal_database",
+    )?;
     let mode = metadata.mode() & 0o7777;
     if mode != 0o600 {
         return Err(BrokerJournalError::DatabaseFilePermissionsInvalid(mode));
     }
     if metadata.nlink() != 1 {
-        return Err(BrokerJournalError::DatabaseFileLinkCountInvalid(metadata.nlink()));
+        return Err(BrokerJournalError::DatabaseFileLinkCountInvalid(
+            metadata.nlink(),
+        ));
     }
     if metadata.size() > policy.maximum_database_bytes {
         return Err(BrokerJournalError::DatabaseFileTooLarge {
@@ -314,9 +324,16 @@ fn inspect_optional_sidecar(
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(BrokerJournalError::DatabaseSidecarInvalid(suffix.to_owned()));
+        return Err(BrokerJournalError::DatabaseSidecarInvalid(
+            suffix.to_owned(),
+        ));
     }
-    validate_owner(&metadata, policy.owner_uid, policy.owner_gid, "journal_sidecar")?;
+    validate_owner(
+        &metadata,
+        policy.owner_uid,
+        policy.owner_gid,
+        "journal_sidecar",
+    )?;
     let mode = metadata.mode() & 0o7777;
     if mode & 0o022 != 0 || mode & 0o7000 != 0 {
         return Err(BrokerJournalError::DatabaseSidecarPermissionsInvalid {
@@ -346,9 +363,7 @@ fn validate_owner(
     expected_gid: Option<u32>,
     subject: &'static str,
 ) -> Result<(), BrokerJournalError> {
-    if metadata.uid() != expected_uid
-        || expected_gid.is_some_and(|gid| metadata.gid() != gid)
-    {
+    if metadata.uid() != expected_uid || expected_gid.is_some_and(|gid| metadata.gid() != gid) {
         return Err(BrokerJournalError::OwnerMismatch {
             subject,
             expected_uid,
@@ -387,21 +402,16 @@ fn configure_size_limit(
     Ok(())
 }
 
-pub(super) fn verify_database_contract(
-    connection: &Connection,
-) -> Result<(), BrokerJournalError> {
+pub(super) fn verify_database_contract(connection: &Connection) -> Result<(), BrokerJournalError> {
     verify_connection_pragmas(connection)?;
     verify_schema_version(connection)?;
     verify_schema_shape(connection)
 }
 
-fn verify_initialization_candidate(
-    connection: &Connection,
-) -> Result<(), BrokerJournalError> {
+fn verify_initialization_candidate(connection: &Connection) -> Result<(), BrokerJournalError> {
     let application_id: i64 =
         connection.query_row("PRAGMA application_id", [], |row| row.get(0))?;
-    let user_version: i64 =
-        connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     match (application_id, user_version) {
         (0, 0) => {
             let object_count: i64 = connection.query_row(
@@ -427,8 +437,7 @@ fn verify_initialization_candidate(
 fn verify_database_identity(connection: &Connection) -> Result<(), BrokerJournalError> {
     let application_id: i64 =
         connection.query_row("PRAGMA application_id", [], |row| row.get(0))?;
-    let user_version: i64 =
-        connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if application_id != APPLICATION_ID || user_version != USER_VERSION {
         return Err(BrokerJournalError::DatabaseIdentityMismatch {
             application_id,
@@ -440,14 +449,11 @@ fn verify_database_identity(connection: &Connection) -> Result<(), BrokerJournal
 
 fn verify_connection_pragmas(connection: &Connection) -> Result<(), BrokerJournalError> {
     verify_database_identity(connection)?;
-    let foreign_keys: i64 =
-        connection.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    let foreign_keys: i64 = connection.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
     let trusted_schema: i64 =
         connection.query_row("PRAGMA trusted_schema", [], |row| row.get(0))?;
-    let synchronous: i64 =
-        connection.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
-    let journal_mode: String =
-        connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+    let synchronous: i64 = connection.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+    let journal_mode: String = connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
     if foreign_keys != 1
         || trusted_schema != 0
         || synchronous != 2
@@ -478,7 +484,9 @@ fn verify_schema_shape(connection: &Connection) -> Result<(), BrokerJournalError
          WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
     )?;
     let observed = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     let expected = EXPECTED_SCHEMA_OBJECTS
         .iter()

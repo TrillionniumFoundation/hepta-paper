@@ -22,21 +22,18 @@ pub use admission::{
     admit_unix_stream,
 };
 pub use capability::{
-    CapabilityPolicyV1, CapabilityTrustStoreV1, CapabilityVerificationError,
-    VerifiedCapabilityV1, capability_signing_bytes, verify_request_capability,
+    CapabilityPolicyV1, CapabilityTrustStoreV1, CapabilityVerificationError, VerifiedCapabilityV1,
+    capability_signing_bytes, verify_request_capability,
 };
 pub use frame::{
-    BrokerFrameError, BrokerFramePolicyV1, DecodedRequestFrameV1,
-    read_request_frame, write_request_frame,
+    BrokerFrameError, BrokerFramePolicyV1, DecodedRequestFrameV1, read_request_frame,
+    write_request_frame,
 };
 pub use journal::{
-    BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1,
-    FaultInjectionPointV1, ReservationOutcomeV1,
+    BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1, FaultInjectionPointV1,
+    ReservationOutcomeV1,
 };
 pub use peer::{
-    PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1, PeerPrincipalV1,
-    inspect_peer_identity,
+    PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1, PeerPrincipalV1, inspect_peer_identity,
 };
-pub use service::{
-    BrokerReservationV1, BrokerStateError, admit_and_reserve_unix_stream,
-};
+pub use service::{BrokerReservationV1, BrokerStateError, admit_and_reserve_unix_stream};

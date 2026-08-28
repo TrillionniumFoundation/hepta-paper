@@ -1,7 +1,4 @@
-use std::{
-    os::unix::net::UnixStream,
-    time::Duration,
-};
+use std::{os::unix::net::UnixStream, time::Duration};
 
 use hepta_codex_protocol::{
     AgentRole, CodexExecutionRequestV1, SandboxPolicy, Sha256Digest, TaskKind,
@@ -9,10 +6,9 @@ use hepta_codex_protocol::{
 use thiserror::Error;
 
 use crate::{
-    BrokerFrameError, BrokerFramePolicyV1, CapabilityPolicyV1,
-    CapabilityTrustStoreV1, CapabilityVerificationError, PeerAuthorizationError,
-    PeerIdentityV1, PeerPolicyV1, VerifiedCapabilityV1, inspect_peer_identity,
-    read_request_frame, verify_request_capability,
+    BrokerFrameError, BrokerFramePolicyV1, CapabilityPolicyV1, CapabilityTrustStoreV1,
+    CapabilityVerificationError, PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1,
+    VerifiedCapabilityV1, inspect_peer_identity, read_request_frame, verify_request_capability,
 };
 
 const HARD_MAXIMUM_READ_TIMEOUT_MS: u64 = 30_000;
@@ -78,7 +74,10 @@ impl BrokerRolePolicyV1 {
             (AgentRole::Author, TaskKind::Draft | TaskKind::Revise)
                 | (AgentRole::Reviewer, TaskKind::Review)
                 | (AgentRole::FormalReviewer, TaskKind::FormalReview)
-                | (AgentRole::Repairer, TaskKind::CodeRepair | TaskKind::LatexRepair)
+                | (
+                    AgentRole::Repairer,
+                    TaskKind::CodeRepair | TaskKind::LatexRepair
+                )
         );
         if !task_allowed {
             return Err(AdmissionError::RoleSurfaceMismatch);

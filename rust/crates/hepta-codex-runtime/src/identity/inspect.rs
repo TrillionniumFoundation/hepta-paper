@@ -14,13 +14,12 @@ use super::{
         DomainHasher, hash_directory_identity, hash_file_system_identity, hash_path, hash_reader,
     },
     path::{
-        canonical_requested_path, lexical_absolute, resolve_executable,
-        validate_safe_relative_path,
+        canonical_requested_path, lexical_absolute, resolve_executable, validate_safe_relative_path,
     },
     types::{
         CodexHomeIdentityV1, CodexRuntimeIdentityV1, CredentialMaterialIdentityV1,
-        CredentialMaterialStatus, DirectoryIdentityV1, ExecutableIdentityV1,
-        FileSystemIdentityV1, RuntimeIdentityError, RuntimeIdentityPolicyV1,
+        CredentialMaterialStatus, DirectoryIdentityV1, ExecutableIdentityV1, FileSystemIdentityV1,
+        RuntimeIdentityError, RuntimeIdentityPolicyV1,
     },
 };
 
@@ -332,10 +331,7 @@ fn inspect_content_file(
     })
 }
 
-fn validate_file_mode(
-    metadata: &Metadata,
-    policy: FilePolicy,
-) -> Result<(), RuntimeIdentityError> {
+fn validate_file_mode(metadata: &Metadata, policy: FilePolicy) -> Result<(), RuntimeIdentityError> {
     let mode = metadata.mode() & 0o7777;
     if policy.require_private && mode & 0o077 != 0 {
         return Err(RuntimeIdentityError::FilePermissionsInvalid(mode));

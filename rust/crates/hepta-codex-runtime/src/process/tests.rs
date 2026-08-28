@@ -15,8 +15,8 @@ use std::{
 use crate::{RestrictedEnvironmentV1, model_child_environment_policy_v1};
 
 use super::{
-    BoundedProcessError, BoundedProcessRequestV1, ProcessLimitsV1,
-    ProcessTerminationReason, run_bounded_process,
+    BoundedProcessError, BoundedProcessRequestV1, ProcessLimitsV1, ProcessTerminationReason,
+    run_bounded_process,
 };
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -35,8 +35,7 @@ impl TempTree {
             std::process::id(),
         ));
         fs::create_dir(&path).expect("create temp tree");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
-            .expect("private temp tree");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("private temp tree");
         Self(path)
     }
 
@@ -162,7 +161,10 @@ fn term_resistant_process_group_is_escalated_to_kill() {
     };
     let result = run_bounded_process(&request(&tree, script), limits)
         .expect("TERM-resistant group must be killed and reaped");
-    assert_eq!(result.termination_reason, ProcessTerminationReason::TimedOut);
+    assert_eq!(
+        result.termination_reason,
+        ProcessTerminationReason::TimedOut
+    );
     assert!(result.termination_escalated);
     assert!(result.process_group_cleanup_verified);
 }
@@ -187,7 +189,10 @@ fn timeout_terminates_descendants_in_the_same_process_group() {
     };
     let result = run_bounded_process(&request(&tree, script), limits)
         .expect("timeout must clean the process group");
-    assert_eq!(result.termination_reason, ProcessTerminationReason::TimedOut);
+    assert_eq!(
+        result.termination_reason,
+        ProcessTerminationReason::TimedOut
+    );
     assert!(result.process_group_cleanup_verified);
     let descendant = String::from_utf8(result.stdout_tail)
         .expect("pid output")
@@ -241,18 +246,14 @@ fn symlinked_executable_and_working_directory_are_rejected() {
     let executable_link = tree.0.join("executable-link");
     symlink(&script, &executable_link).expect("executable symlink");
     assert_eq!(
-        run_bounded_process(
-            &request(&tree, executable_link),
-            ProcessLimitsV1::default(),
-        ),
+        run_bounded_process(&request(&tree, executable_link), ProcessLimitsV1::default(),),
         Err(BoundedProcessError::NonCanonicalPath("executable")),
     );
 
     let real_working_directory = tree.0.join("real-working-directory");
     fs::create_dir(&real_working_directory).expect("real working directory");
     let working_directory_link = tree.0.join("working-directory-link");
-    symlink(&real_working_directory, &working_directory_link)
-        .expect("working directory symlink");
+    symlink(&real_working_directory, &working_directory_link).expect("working directory symlink");
     let mut value = request(&tree, script);
     value.working_directory = working_directory_link;
     assert_eq!(
@@ -265,8 +266,7 @@ fn symlinked_executable_and_working_directory_are_rejected() {
 fn setid_executable_is_rejected_before_spawn() {
     let tree = TempTree::new();
     let script = tree.script("setid.sh", "#!/bin/sh\nexit 99\n");
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o4700))
-        .expect("set setuid bit");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o4700)).expect("set setuid bit");
     assert_eq!(
         run_bounded_process(&request(&tree, script), ProcessLimitsV1::default()),
         Err(BoundedProcessError::ExecutablePermissionsInvalid(0o4700)),

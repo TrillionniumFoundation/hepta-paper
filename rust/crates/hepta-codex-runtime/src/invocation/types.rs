@@ -12,8 +12,7 @@ use crate::{BoundedProcessRequestV1, CodexRuntimeIdentityV1, RestrictedEnvironme
 pub(super) const MAXIMUM_PROMPT_BYTES: usize = 8 * 1024 * 1024;
 pub(super) const MAXIMUM_OUTPUT_SCHEMA_BYTES: u64 = 1024 * 1024;
 pub(super) const MAXIMUM_OUTPUT_MESSAGE_BYTES: u64 = 16 * 1024 * 1024;
-pub(super) const CODEX_CLI_SURFACE_ID: &str =
-    "codex-exec-jsonl-v1-openai-codex-6be2a6ca";
+pub(super) const CODEX_CLI_SURFACE_ID: &str = "codex-exec-jsonl-v1-openai-codex-6be2a6ca";
 
 /// OS authority level protecting the output-schema path from the Codex execution principal.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -86,7 +85,10 @@ impl CodexInvocationPolicyV1 {
     /// Whether this policy can enter installed-binary/live-provider qualification.
     #[must_use]
     pub const fn production_eligible(self) -> bool {
-        matches!(self.schema_authority_mode, SchemaAuthorityModeV1::SeparateOwner)
+        matches!(
+            self.schema_authority_mode,
+            SchemaAuthorityModeV1::SeparateOwner
+        )
     }
 
     pub(super) fn validate(self) -> Result<Self, CodexInvocationError> {
@@ -253,10 +255,7 @@ pub enum CodexInvocationError {
     #[error("{0} owner does not match the broker policy")]
     ControlOwnerMismatch(&'static str),
     #[error("{subject} permissions are invalid: {mode:o}")]
-    ControlPermissionsInvalid {
-        subject: &'static str,
-        mode: u32,
-    },
+    ControlPermissionsInvalid { subject: &'static str, mode: u32 },
     #[error("{subject} link count is invalid: {link_count}")]
     ControlLinkCountInvalid {
         subject: &'static str,

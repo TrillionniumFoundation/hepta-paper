@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1,
-    CodexRuntimeIdentityV1, ProcessLimitsV1, RuntimeIdentityError,
-    RuntimeIdentityPolicyV1, inspect_codex_runtime_identity, run_bounded_process,
+    BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1, CodexRuntimeIdentityV1,
+    ProcessLimitsV1, RuntimeIdentityError, RuntimeIdentityPolicyV1, inspect_codex_runtime_identity,
+    run_bounded_process,
 };
 
 /// Exact identity components that changed between preflight and postflight.
@@ -61,9 +61,10 @@ pub fn run_qualified_runtime_execution(
                 Err(RuntimeExecutionError::ProcessAndIdentityDrift { process, drift })
             }
         },
-        (Err(process), Err(postflight)) => {
-            Err(RuntimeExecutionError::ProcessAndPostflight { process, postflight })
-        }
+        (Err(process), Err(postflight)) => Err(RuntimeExecutionError::ProcessAndPostflight {
+            process,
+            postflight,
+        }),
     }
 }
 
@@ -148,11 +149,13 @@ pub fn verify_runtime_identity_unchanged(
     if changed.is_empty() {
         Ok(())
     } else {
-        Err(RuntimeQualificationError::IdentityChanged(RuntimeIdentityDrift {
-            before_identity_hash: before.identity_hash.clone(),
-            after_identity_hash: after.identity_hash.clone(),
-            changed_components: changed,
-        }))
+        Err(RuntimeQualificationError::IdentityChanged(
+            RuntimeIdentityDrift {
+                before_identity_hash: before.identity_hash.clone(),
+                after_identity_hash: after.identity_hash.clone(),
+                changed_components: changed,
+            },
+        ))
     }
 }
 
@@ -244,8 +247,7 @@ mod tests {
             create_file(&executable, 0o700, script.as_bytes());
             let home = root.join("home");
             fs::create_dir(&home).expect("create home");
-            fs::set_permissions(&home, fs::Permissions::from_mode(0o700))
-                .expect("private home");
+            fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).expect("private home");
             create_file(&home.join("config.toml"), 0o600, b"model = 'one'\n");
             create_file(&home.join("auth.json"), 0o600, b"opaque\n");
             let policy = RuntimeIdentityPolicyV1::strict(
@@ -333,9 +335,8 @@ mod tests {
             process_limits: ProcessLimitsV1::default(),
         })
         .expect_err("runtime drift must fail qualification");
-        let RuntimeExecutionError::Qualification(
-            RuntimeQualificationError::IdentityChanged(drift),
-        ) = error
+        let RuntimeExecutionError::Qualification(RuntimeQualificationError::IdentityChanged(drift)) =
+            error
         else {
             panic!("unexpected runtime execution error: {error:?}");
         };

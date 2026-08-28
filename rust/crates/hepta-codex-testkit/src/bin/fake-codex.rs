@@ -1,4 +1,9 @@
-use std::{env, io::{self, Write}, process::ExitCode, str::FromStr};
+use std::{
+    env,
+    io::{self, Write},
+    process::ExitCode,
+    str::FromStr,
+};
 
 use hepta_codex_testkit::Scenario;
 

@@ -48,14 +48,12 @@ impl Fixture {
             std::process::id(),
         ));
         fs::create_dir(&root).expect("create root");
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
-            .expect("private root");
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("private root");
         let executable = root.join("codex-test");
         create_file(&executable, 0o700, b"#!/bin/sh\nexit 0\n");
         let home = root.join("home");
         fs::create_dir(&home).expect("create home");
-        fs::set_permissions(&home, fs::Permissions::from_mode(0o700))
-            .expect("private home");
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).expect("private home");
         create_file(&home.join("config.toml"), 0o600, b"model = 'test'\n");
         create_file(&home.join("auth.json"), 0o600, b"opaque\n");
         let workspace = root.join("workspace");
@@ -207,8 +205,8 @@ fn postflight_binds_schema_parent_schema_and_output_objects() {
     let invocation = build_codex_invocation(fixture.request(SandboxPolicy::ReadOnly))
         .expect("qualified fixture invocation");
     create_file(&fixture.output, 0o600, b"{\"status\":\"ok\"}\n");
-    let postflight = inspect_codex_invocation_postflight(&invocation, true)
-        .expect("bound postflight output");
+    let postflight =
+        inspect_codex_invocation_postflight(&invocation, true).expect("bound postflight output");
     assert!(postflight.output_message_bytes > 0);
     assert_eq!(postflight.output_schema_hash, fixture.schema_hash);
 }
@@ -253,7 +251,9 @@ fn rejects_symlinked_control_file() {
     request.output_schema_path = &link;
     assert!(matches!(
         build_codex_invocation(request),
-        Err(CodexInvocationError::ControlPathNonCanonical("output_schema")),
+        Err(CodexInvocationError::ControlPathNonCanonical(
+            "output_schema"
+        )),
     ));
 }
 

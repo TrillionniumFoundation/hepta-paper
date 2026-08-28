@@ -1,0 +1,39 @@
+name: source-export-recovery
+
+on:
+  push:
+    branches:
+      - codex/source-export-recovery-actual-20260829
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Package source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > "$RUNNER_TEMP/HEAD.txt"
+          tar --exclude=.git -czf "$RUNNER_TEMP/hepta-paper-source.tar.gz" .
+          sha256sum "$RUNNER_TEMP/hepta-paper-source.tar.gz" > "$RUNNER_TEMP/SHA256SUMS"
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-paper-source-12b04a17
+          path: |
+            ${{ runner.temp }}/hepta-paper-source.tar.gz
+            ${{ runner.temp }}/HEAD.txt
+            ${{ runner.temp }}/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

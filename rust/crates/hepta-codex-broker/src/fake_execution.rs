@@ -206,7 +206,7 @@ pub fn run_reserved_fake_operation(
         OperationState::ProcessSpawned,
         OperationState::EventStreamStarted,
         timeline.event_stream_started_unix_ms,
-        Some(process.stdout_hash.clone()),
+        None,
         None,
         fault_for(&plan, OperationState::EventStreamStarted),
     )?;

@@ -3,9 +3,10 @@
 //! This crate authenticates a peer and short-lived request capability before
 //! reserving a crash-stable operation. The service slice adds role-specific
 //! listeners, bounded backpressure, response framing, public-key rotation,
-//! signed prepared-result acknowledgement, and journal recovery/backup APIs.
-//! It still does not hold provider credentials, launch real Codex, write the
-//! campaign database, or grant release and submission authority.
+//! fake-process journal linkage, signed prepared-result acknowledgement, and
+//! journal recovery/backup APIs. It still does not hold provider credentials,
+//! launch real Codex, write the campaign database, or grant release and
+//! submission authority.
 
 #![forbid(unsafe_code)]
 
@@ -15,6 +16,7 @@ compile_error!("hepta-codex-broker V1 requires Linux SO_PEERCRED semantics");
 mod acknowledgement;
 mod admission;
 mod capability;
+mod fake_execution;
 mod frame;
 mod journal;
 mod listener;
@@ -37,6 +39,11 @@ pub use admission::{
 pub use capability::{
     CapabilityPolicyV1, CapabilityTrustStoreV1, CapabilityVerificationError, VerifiedCapabilityV1,
     capability_signing_bytes, verify_request_capability,
+};
+pub use fake_execution::{
+    FakeBrokerExecutionError, FakeBrokerExecutionPlanV1, FakeBrokerPreparedResultV1,
+    FakeExecutionEvidenceV1, FakeExecutionFaultV1, FakeExecutionTimelineV1,
+    run_reserved_fake_operation,
 };
 pub use frame::{
     BrokerFrameError, BrokerFramePolicyV1, DecodedRequestFrameV1, read_request_frame,

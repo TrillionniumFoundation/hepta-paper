@@ -132,7 +132,7 @@ pub fn run_reserved_fake_operation(
     });
     let process = match process {
         Ok(process) => process,
-        Err(error) if spawn_journal_error.is_some() => {
+        Err(_error) if spawn_journal_error.is_some() => {
             return Err(FakeBrokerExecutionError::SpawnJournalLinkFailed(
                 spawn_journal_error.expect("checked spawn journal error"),
             ));

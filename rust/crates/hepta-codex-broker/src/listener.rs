@@ -2,7 +2,6 @@ use std::{
     ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    os::fd::AsFd,
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},

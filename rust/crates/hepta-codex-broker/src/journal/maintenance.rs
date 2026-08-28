@@ -164,7 +164,8 @@ pub fn create_broker_backup(
     let destination_text = destination
         .to_str()
         .ok_or(BrokerJournalError::DatabasePathInvalid)?;
-    let quoted: String = source.query_row("SELECT quote(?1)", [destination_text], |row| row.get(0))?;
+    let quoted: String =
+        source.query_row("SELECT quote(?1)", [destination_text], |row| row.get(0))?;
     source.execute_batch(&format!("VACUUM INTO {quoted};"))?;
     drop(source);
 

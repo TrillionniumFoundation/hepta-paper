@@ -3,7 +3,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
+        mpsc::{Receiver, RecvTimeoutError, TrySendError, sync_channel},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -144,7 +144,7 @@ impl BrokerServerV1 {
     }
 
     /// Runs until shutdown or the configured deterministic connection limit.
-    pub fn run(mut self) -> Result<BrokerServerRunSummaryV1, BrokerServerError> {
+    pub fn run(self) -> Result<BrokerServerRunSummaryV1, BrokerServerError> {
         let now = self.clock.now_unix_ms()?;
         let (_, _, startup_bundle_hash) = self.trust_manager.snapshot(now)?;
         let journal_probe = BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)?;
@@ -258,7 +258,7 @@ fn spawn_worker(
             };
             configure_write_timeout(&stream, write_timeout_ms)?;
             let now = clock.now_unix_ms()?;
-            let (trust_store, _, bundle_hash) = match trust_manager.snapshot(now) {
+            let (trust_store, _, _) = match trust_manager.snapshot(now) {
                 Ok(value) if value.2 == startup_bundle_hash => value,
                 Ok(_) => {
                     shutdown.store(true, Ordering::Release);

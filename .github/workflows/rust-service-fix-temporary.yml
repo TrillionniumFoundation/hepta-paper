@@ -26,19 +26,20 @@ jobs:
           rustup default 1.98.0
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           path = Path('rust/crates/hepta-codex-broker/src/fake_execution.rs')
           text = path.read_text()
-          old = '''        Some(process.stdout_hash.clone()),
-        None,
-        fault_for(&plan, OperationState::EventStreamStarted),
-'''
-          new = '''        None,
-        None,
-        fault_for(&plan, OperationState::EventStreamStarted),
-'''
-          if old not in text:
-              raise SystemExit('event_stream_started evidence callsite not found')
-          path.write_text(text.replace(old, new, 1))
+          pattern = re.compile(
+              r'(OperationState::EventStreamStarted,\n'
+              r'\s*timeline\.event_stream_started_unix_ms,\n)'
+              r'\s*Some\(process\.stdout_hash\.clone\(\)\),\n'
+              r'(\s*None,\n\s*fault_for\(&plan, OperationState::EventStreamStarted\),)'
+          )
+          updated, count = pattern.subn(r'\1        None,\n\2', text, count=1)
+          if count != 1:
+              raise SystemExit(f'expected exactly one event-stream evidence callsite, found {count}')
+          path.write_text(updated)
           PY
           cargo fmt --manifest-path rust/Cargo.toml --all
           git config user.name 'hepta-rust-fix-bot'

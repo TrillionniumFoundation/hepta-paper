@@ -245,8 +245,10 @@ version = "0.1.0"
 dependencies = [
  "base64ct",
  "ed25519-dalek",
+ "hepta-codex-event-stream",
  "hepta-codex-journal",
  "hepta-codex-protocol",
+ "hepta-codex-runtime",
  "hex",
  "nix",
  "rusqlite",

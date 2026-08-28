@@ -1,0 +1,234 @@
+from pathlib import Path
+
+
+def replace_once(path: Path, old: str, new: str) -> None:
+    text = path.read_text()
+    if old not in text:
+        raise SystemExit(f"missing expected source in {path}: {old[:160]!r}")
+    path.write_text(text.replace(old, new, 1))
+
+
+listener = Path("rust/crates/hepta-codex-broker/src/listener.rs")
+replace_once(
+    listener,
+    """    if marker.version != 1
+        || marker.role != policy.role
+        || marker.socket_path_hash != hash_path(&policy.socket_path)?
+        || marker.runtime_identity_hash != policy.runtime_identity_hash
+        || marker.trust_bundle_hash != policy.trust_bundle_hash
+        || marker.journal_path_hash != policy.journal_path_hash
+    {
+""",
+    """    if marker.version != 1
+        || marker.role != policy.role
+        || marker.socket_path_hash != hash_path(&policy.socket_path)?
+    {
+""",
+)
+replace_once(
+    listener,
+    """    #[test]
+    fn rejects_symlink_or_unrecorded_stale_socket() {
+""",
+    """    #[test]
+    fn higher_generation_can_supersede_recorded_dependency_bindings() {
+        let tree = TempTree::new();
+        let first_policy = policy(&tree, 1);
+        let first = BrokerListenerV1::bind(first_policy.clone()).expect("first listener");
+        first.mark_ready().expect("first ready");
+        first.abandon_for_test();
+
+        let mut second_policy = policy(&tree, 2);
+        second_policy.runtime_identity_hash = digest('4');
+        second_policy.trust_bundle_hash = digest('5');
+        second_policy.journal_path_hash = digest('6');
+        let second = BrokerListenerV1::bind(second_policy)
+            .expect("new generation may bind newly qualified dependencies");
+        second.shutdown().expect("shutdown second");
+    }
+
+    #[test]
+    fn rejects_symlink_or_unrecorded_stale_socket() {
+""",
+)
+
+fake = Path("rust/crates/hepta-codex-broker/src/fake_execution.rs")
+replace_once(
+    fake,
+    """    store.append_transition(
+        &plan.operation_id,
+        OperationState::EventStreamStarted,
+        OperationState::TerminalEventObserved,
+""",
+    """    if event_stream.raw_stream_hash != process.stdout_hash {
+        store.append_transition(
+            &plan.operation_id,
+            OperationState::EventStreamStarted,
+            OperationState::EventStreamInvalid,
+            timeline.terminal_event_observed_unix_ms,
+            None,
+            Some("fake_event_stream_hash_mismatch".to_owned()),
+            fault_for(&plan, OperationState::EventStreamInvalid),
+        )?;
+        return Err(FakeBrokerExecutionError::EventStreamHashMismatch);
+    }
+    store.append_transition(
+        &plan.operation_id,
+        OperationState::EventStreamStarted,
+        OperationState::TerminalEventObserved,
+""",
+)
+replace_once(
+    fake,
+    """    #[error("fake JSONL terminal event reported failure")]
+    TerminalEventFailure,
+""",
+    """    #[error("fake JSONL stream hash differs from exact process stdout hash")]
+    EventStreamHashMismatch,
+    #[error("fake JSONL terminal event reported failure")]
+    TerminalEventFailure,
+""",
+)
+
+maintenance = Path("rust/crates/hepta-codex-broker/src/journal/maintenance.rs")
+replace_once(
+    maintenance,
+    "use hepta_codex_protocol::Sha256Digest;\nuse rusqlite::{Connection, OpenFlags};",
+    "use hepta_codex_protocol::{CodexExecutionRequestV1, Sha256Digest};\nuse rusqlite::{Connection, OpenFlags, OptionalExtension};",
+)
+replace_once(
+    maintenance,
+    """pub fn create_broker_backup(
+""",
+    """pub fn load_persisted_request(
+    store: &BrokerJournalStoreV1,
+    operation_id: &str,
+) -> Result<CodexExecutionRequestV1, BrokerJournalError> {
+    store.validate_integrity()?;
+    let connection = open_read_only(store.path())?;
+    let row = connection
+        .query_row(
+            "SELECT request_payload, request_hash FROM operations WHERE operation_id = ?1",
+            [operation_id],
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let (payload, expected_hash) = row.ok_or(BrokerJournalError::OperationNotFound)?;
+    let request: CodexExecutionRequestV1 = serde_json::from_slice(&payload)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("request_payload"))?;
+    request
+        .validate()
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("request_payload"))?;
+    let canonical = serde_json::to_vec(&request)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("request_payload"))?;
+    if canonical != payload {
+        return Err(BrokerJournalError::CorruptDatabaseValue("request_payload"));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(&payload);
+    let observed = digest(hasher)?;
+    if observed.as_str() != expected_hash {
+        return Err(BrokerJournalError::OperationRecordMismatch);
+    }
+    Ok(request)
+}
+
+pub fn create_broker_backup(
+""",
+)
+
+journal_mod = Path("rust/crates/hepta-codex-broker/src/journal/mod.rs")
+replace_once(
+    journal_mod,
+    """    create_broker_backup, list_recovery_candidates, restore_broker_backup,
+""",
+    """    create_broker_backup, list_recovery_candidates, load_persisted_request,
+    restore_broker_backup,
+""",
+)
+
+lib = Path("rust/crates/hepta-codex-broker/src/lib.rs")
+replace_once(
+    lib,
+    """    create_broker_backup, list_recovery_candidates, restore_broker_backup,
+""",
+    """    create_broker_backup, list_recovery_candidates, load_persisted_request,
+    restore_broker_backup,
+""",
+)
+
+acknowledgement = Path("rust/crates/hepta-codex-broker/src/acknowledgement.rs")
+replace_once(
+    acknowledgement,
+    "use crate::{BrokerJournalError, BrokerJournalStoreV1, FaultInjectionPointV1};",
+    """use crate::{
+    BrokerJournalError, BrokerJournalStoreV1, FaultInjectionPointV1,
+    load_persisted_request,
+};""",
+)
+replace_once(
+    acknowledgement,
+    """    request: &CodexExecutionRequestV1,
+    journal: &OperationJournalV1,
+    now_unix_ms: u64,
+""",
+    """    store: &BrokerJournalStoreV1,
+    now_unix_ms: u64,
+""",
+)
+replace_once(
+    acknowledgement,
+    """    let policy = policy.validate()?;
+    validate_acknowledgement_shape(acknowledgement)?;
+""",
+    """    let policy = policy.validate()?;
+    validate_acknowledgement_shape(acknowledgement)?;
+    let request = load_persisted_request(store, &acknowledgement.operation_id)?;
+    let journal = store.load_journal(&acknowledgement.operation_id)?;
+""",
+)
+# The request and journal are now owned locals. Deref coercion covers field reads.
+ack_text = acknowledgement.read_text()
+ack_text = ack_text.replace(
+    "use hepta_codex_journal::{OperationJournalV1, OperationState};",
+    "use hepta_codex_journal::{OperationJournalV1, OperationState};",
+    1,
+)
+acknowledgement.write_text(ack_text)
+
+integration = Path("rust/crates/hepta-codex-broker/tests/service_lifecycle.rs")
+replace_once(
+    integration,
+    """    let journal = store
+        .load_journal(&request.operation_id)
+        .expect("prepared journal");
+""",
+    """    assert_eq!(
+        store
+            .load_journal(&request.operation_id)
+            .expect("prepared journal")
+            .current_state,
+        OperationState::ResultPrepared,
+    );
+""",
+)
+replace_once(
+    integration,
+    """        &request,
+        &journal,
+        13_001,
+""",
+    """        &store,
+        13_001,
+""",
+)
+replace_once(
+    integration,
+    """        &request,
+        &journal,
+        13_001,
+""",
+    """        &store,
+        13_001,
+""",
+)

@@ -79,6 +79,7 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
   for (const changedFile of [
     '.github/workflows/rust-foundation.yml',
     '.github/workflows/rust-broker-installed-qualification-v2.yml',
+    '.github/workflows/exact-head-source-validation.yml',
     'docs/rust/RUST_PLAN.md',
     'docs/rust/qualification/hepta-broker-host-qualification.sh',
     'docs/rust/qualification/hepta-broker-qualification-evidence-v1.schema.json',

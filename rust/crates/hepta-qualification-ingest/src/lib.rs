@@ -106,11 +106,7 @@ impl QualificationTrustStoreV1 {
         })
     }
 
-    fn key(
-        &self,
-        domain: &str,
-        key_id: &str,
-    ) -> Result<&VerifyingKey, QualificationIngestError> {
+    fn key(&self, domain: &str, key_id: &str) -> Result<&VerifyingKey, QualificationIngestError> {
         if self.forbidden_authority_domains.contains(domain) {
             return Err(QualificationIngestError::AuthorityDomainForbidden);
         }
@@ -159,7 +155,8 @@ pub fn load_external_qualification_file_v1(
     if expected_owner_uid == consumer_uid || !path.is_absolute() {
         return Err(QualificationIngestError::FileAuthorityInvalid);
     }
-    let canonical = fs::canonicalize(path).map_err(|_| QualificationIngestError::FileAuthorityInvalid)?;
+    let canonical =
+        fs::canonicalize(path).map_err(|_| QualificationIngestError::FileAuthorityInvalid)?;
     if canonical != path {
         return Err(QualificationIngestError::FileAuthorityInvalid);
     }
@@ -184,8 +181,8 @@ pub fn load_external_qualification_file_v1(
     if !same_file(&before, &opened) {
         return Err(QualificationIngestError::FileChanged);
     }
-    let capacity = usize::try_from(opened.size())
-        .map_err(|_| QualificationIngestError::EvidenceTooLarge)?;
+    let capacity =
+        usize::try_from(opened.size()).map_err(|_| QualificationIngestError::EvidenceTooLarge)?;
     let mut bytes = Vec::with_capacity(capacity);
     file.read_to_end(&mut bytes)?;
     let after_path = fs::symlink_metadata(path)?;
@@ -263,8 +260,8 @@ pub fn qualification_signing_bytes_v1(
         &envelope.issued_at_unix_ms.to_be_bytes(),
         &envelope.expires_at_unix_ms.to_be_bytes(),
     ] {
-        let length = u64::try_from(value.len())
-            .map_err(|_| QualificationIngestError::EncodingInvalid)?;
+        let length =
+            u64::try_from(value.len()).map_err(|_| QualificationIngestError::EncodingInvalid)?;
         output.extend_from_slice(&length.to_be_bytes());
         output.extend_from_slice(value);
     }
@@ -346,9 +343,9 @@ fn package_name(value: QualificationPackageIdV1) -> &'static str {
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 fn valid_git_hash(value: &str) -> bool {
@@ -359,14 +356,12 @@ fn valid_git_hash(value: &str) -> bool {
 }
 
 fn valid_sha256(value: &str) -> bool {
-    value
-        .strip_prefix("sha256:")
-        .is_some_and(|hex| {
-            hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 fn hash_bytes(value: &[u8]) -> String {
@@ -448,15 +443,17 @@ mod tests {
         let signing = SigningKey::from_bytes(&[21_u8; 32]);
         let mut value = envelope();
         let bytes = qualification_signing_bytes_v1(&value).expect("signing bytes");
-        value.signature_base64 =
-            Base64UrlUnpadded::encode_string(&signing.sign(&bytes).to_bytes());
+        value.signature_base64 = Base64UrlUnpadded::encode_string(&signing.sign(&bytes).to_bytes());
         let trust = QualificationTrustStoreV1::new(
             [(
                 value.authority_domain_id.clone(),
                 value.signer_key_id.clone(),
                 signing.verifying_key(),
             )],
-            ["repository-admin".to_owned(), "implementation-author".to_owned()],
+            [
+                "repository-admin".to_owned(),
+                "implementation-author".to_owned(),
+            ],
         )
         .expect("trust store");
         let subject = QualificationSubjectV1 {
@@ -483,8 +480,7 @@ mod tests {
         let mut value = envelope();
         value.authority_domain_id = "implementation-author".into();
         let bytes = qualification_signing_bytes_v1(&value).expect("signing bytes");
-        value.signature_base64 =
-            Base64UrlUnpadded::encode_string(&signing.sign(&bytes).to_bytes());
+        value.signature_base64 = Base64UrlUnpadded::encode_string(&signing.sign(&bytes).to_bytes());
         let trust = QualificationTrustStoreV1::new(
             [(
                 value.authority_domain_id.clone(),

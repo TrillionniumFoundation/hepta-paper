@@ -381,6 +381,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hepta-qualification-ingest"
+version = "0.1.0"
+dependencies = [
+ "base64ct",
+ "ed25519-dalek",
+ "hex",
+ "nix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
 name = "hepta-readonly-control"
 version = "0.1.0"
 dependencies = [

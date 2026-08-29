@@ -19,6 +19,7 @@ members = [
   "crates/hepta-scientific-evidence",
   "crates/hepta-external-authority",
   "crates/hepta-cutover",
+  "crates/hepta-qualification-ingest",
 ]
 
 [workspace.package]

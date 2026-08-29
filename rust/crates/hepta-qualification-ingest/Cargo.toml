@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+nix.workspace = true
 base64ct.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true

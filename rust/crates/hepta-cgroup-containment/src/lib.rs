@@ -146,15 +146,11 @@ pub struct CgroupV2OperationV1 {
 
 impl CgroupV2OperationV1 {
     /// Creates an exclusive operation cgroup and installs limits before attachment.
-    pub fn create(
-        policy: CgroupV2PolicyV1,
-        operation_id: &str,
-    ) -> Result<Self, CgroupV2Error> {
+    pub fn create(policy: CgroupV2PolicyV1, operation_id: &str) -> Result<Self, CgroupV2Error> {
         policy.validate()?;
         validate_identifier(operation_id)?;
         let path = policy.delegated_root.join(operation_id);
-        fs::create_dir(&path)
-            .map_err(|error| CgroupV2Error::Filesystem("create", error.kind()))?;
+        fs::create_dir(&path).map_err(|error| CgroupV2Error::Filesystem("create", error.kind()))?;
         if policy.authority_mode == CgroupAuthorityModeV1::LocalFixture {
             create_fixture_controls(&path)?;
         }
@@ -215,9 +211,8 @@ impl CgroupV2OperationV1 {
                 "memory.max",
                 "cpu.max",
             ] {
-                fs::remove_file(self.path.join(name)).map_err(|error| {
-                    CgroupV2Error::Filesystem("fixture_cleanup", error.kind())
-                })?;
+                fs::remove_file(self.path.join(name))
+                    .map_err(|error| CgroupV2Error::Filesystem("fixture_cleanup", error.kind()))?;
             }
         }
         fs::remove_dir(&self.path)
@@ -312,9 +307,9 @@ fn read_populated(path: &Path) -> Result<bool, CgroupV2Error> {
 fn validate_identifier(value: &str) -> Result<(), CgroupV2Error> {
     if value.is_empty()
         || value.len() > 128
-        || !value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        })
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
     {
         return Err(CgroupV2Error::InvalidOperationId);
     }
@@ -381,16 +376,19 @@ mod tests {
 
     #[test]
     fn process_group_and_fixture_never_qualify_production() {
-        assert!(!ProcessContainmentModeV1::ProcessGroupOnly
-            .production_eligible()
-            .expect("process-group decision"));
-        let (root, uid) = fixture();
-        let fixture_mode = ProcessContainmentModeV1::CgroupV2(
-            CgroupV2PolicyV1::local_fixture(root.clone(), uid),
+        assert!(
+            !ProcessContainmentModeV1::ProcessGroupOnly
+                .production_eligible()
+                .expect("process-group decision")
         );
-        assert!(!fixture_mode
-            .production_eligible()
-            .expect("fixture decision"));
+        let (root, uid) = fixture();
+        let fixture_mode =
+            ProcessContainmentModeV1::CgroupV2(CgroupV2PolicyV1::local_fixture(root.clone(), uid));
+        assert!(
+            !fixture_mode
+                .production_eligible()
+                .expect("fixture decision")
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -402,7 +400,9 @@ mod tests {
             "operation-1",
         )
         .expect("operation cgroup");
-        operation.attach_pid(std::process::id()).expect("attach pid");
+        operation
+            .attach_pid(std::process::id())
+            .expect("attach pid");
         assert_eq!(
             fs::read_to_string(operation.path().join("cgroup.procs")).expect("procs"),
             std::process::id().to_string()

@@ -11,6 +11,11 @@ members = [
   "crates/hepta-workspace",
   "crates/hepta-readonly-store",
   "crates/hepta-campaign-writer",
+  "crates/hepta-cgroup-containment",
+  "crates/hepta-legacy-compatibility",
+  "crates/hepta-readonly-control",
+  "crates/hepta-workspace-authority",
+  "crates/hepta-local-vertical",
 ]
 
 [workspace.package]

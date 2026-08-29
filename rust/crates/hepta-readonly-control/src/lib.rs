@@ -72,7 +72,8 @@ pub fn inspect_read_only_store(path: &Path) -> Result<ReadOnlyStoreSnapshotV1, R
          PRAGMA temp_store = MEMORY;",
     )?;
     let version_i64: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    let schema_version = u32::try_from(version_i64).map_err(|_| ReadOnlyStoreError::SchemaVersion)?;
+    let schema_version =
+        u32::try_from(version_i64).map_err(|_| ReadOnlyStoreError::SchemaVersion)?;
     if !(1..=25).contains(&schema_version) {
         return Err(ReadOnlyStoreError::SchemaVersion);
     }
@@ -152,7 +153,8 @@ fn logical_snapshot(
                 .ok_or(ReadOnlyStoreError::NumericOverflow)?;
         }
     }
-    let table_count = u64::try_from(tables.len()).map_err(|_| ReadOnlyStoreError::NumericOverflow)?;
+    let table_count =
+        u64::try_from(tables.len()).map_err(|_| ReadOnlyStoreError::NumericOverflow)?;
     Ok((
         table_count,
         row_count,

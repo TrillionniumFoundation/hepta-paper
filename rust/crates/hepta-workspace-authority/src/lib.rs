@@ -65,11 +65,7 @@ impl WorkspaceRootV1 {
     pub fn anchored_path(&self, relative: &Path) -> Result<PathBuf, WorkspaceError> {
         validate_relative(relative)?;
         self.verify_identity()?;
-        Ok(PathBuf::from(format!(
-            "/proc/self/fd/{}",
-            self.descriptor.as_raw_fd()
-        ))
-        .join(relative))
+        Ok(PathBuf::from(format!("/proc/self/fd/{}", self.descriptor.as_raw_fd())).join(relative))
     }
 
     /// Produces a deterministic inventory without following links.
@@ -260,7 +256,8 @@ pub fn validate_mutation_v1(
     if policy.read_only && total != 0 {
         return Err(WorkspaceError::ReadOnlyMutation);
     }
-    if total > policy.maximum_changed_paths || mutation.changed_bytes > policy.maximum_changed_bytes {
+    if total > policy.maximum_changed_paths || mutation.changed_bytes > policy.maximum_changed_bytes
+    {
         return Err(WorkspaceError::MutationLimit);
     }
     if !policy.allow_deletion && !mutation.removed.is_empty() {
@@ -281,7 +278,9 @@ pub fn validate_mutation_v1(
         }
         if let Some(extension) = Path::new(path).extension().and_then(|value| value.to_str())
             && !policy.allowed_extensions.is_empty()
-            && !policy.allowed_extensions.contains(&extension.to_ascii_lowercase())
+            && !policy
+                .allowed_extensions
+                .contains(&extension.to_ascii_lowercase())
         {
             return Err(WorkspaceError::PathForbidden(path.clone()));
         }
@@ -442,9 +441,9 @@ fn validate_relative(path: &Path) -> Result<(), WorkspaceError> {
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 /// Workspace identity, copy, inventory, or policy failure.
@@ -548,23 +547,21 @@ mod tests {
         let (root, source, attempts) = roots();
         let source_root = WorkspaceRootV1::open(&source, None).expect("source root");
         let before = source_root.inventory().expect("before");
-        let attempt = materialize_attempt_v1(&source_root, &attempts, "attempt-1")
-            .expect("attempt");
+        let attempt =
+            materialize_attempt_v1(&source_root, &attempts, "attempt-1").expect("attempt");
         fs::write(attempt.join("paper/main.tex"), b"v2\n").expect("mutate attempt");
         let attempt_root = WorkspaceRootV1::open(&attempt, None).expect("attempt root");
         let after = attempt_root.inventory().expect("after");
         let mutation = compare_inventories_v1(&before, &after).expect("mutation");
         validate_mutation_v1(&mutation, &author_policy()).expect("author policy");
-        let prepared = prepare_workspace_result_v1(
-            "attempt-1",
-            &before,
-            &after,
-            &mutation,
-            &author_policy(),
-        )
-        .expect("prepared result");
+        let prepared =
+            prepare_workspace_result_v1("attempt-1", &before, &after, &mutation, &author_policy())
+                .expect("prepared result");
         assert_ne!(prepared.before_hash, prepared.after_hash);
-        assert_eq!(fs::read(source.join("paper/main.tex")).expect("source"), b"v1\n");
+        assert_eq!(
+            fs::read(source.join("paper/main.tex")).expect("source"),
+            b"v1\n"
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 

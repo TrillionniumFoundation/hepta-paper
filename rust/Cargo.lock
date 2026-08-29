@@ -240,6 +240,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "hepta-campaign-writer"
+version = "0.1.0"
+dependencies = [
+ "hepta-codex-protocol",
+ "hex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
+name = "hepta-cgroup-containment"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "hepta-codex-broker"
 version = "0.1.0"
 dependencies = [
@@ -311,19 +331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hepta-campaign-writer"
-version = "0.1.0"
-dependencies = [
- "hepta-codex-protocol",
- "hex",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.10.8",
- "thiserror",
-]
-
-[[package]]
 name = "hepta-compatibility"
 version = "0.1.0"
 dependencies = [
@@ -331,6 +338,38 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
+name = "hepta-legacy-compatibility"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
+name = "hepta-local-vertical"
+version = "0.1.0"
+dependencies = [
+ "hepta-campaign-writer",
+ "hepta-legacy-compatibility",
+ "hepta-readonly-control",
+ "hepta-workspace-authority",
+ "serde_json",
+]
+
+[[package]]
+name = "hepta-readonly-control"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "rusqlite",
+ "serde",
  "sha2 0.10.8",
  "thiserror",
 ]
@@ -353,6 +392,17 @@ name = "hepta-workspace"
 version = "0.1.0"
 dependencies = [
  "hepta-codex-protocol",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
+name = "hepta-workspace-authority"
+version = "0.1.0"
+dependencies = [
  "hex",
  "serde",
  "serde_json",

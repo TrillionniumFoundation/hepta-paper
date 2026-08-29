@@ -127,8 +127,8 @@ mod tests {
 
     #[test]
     fn object_keys_are_sorted_and_integral_float_is_normalized() {
-        let value: Value = serde_json::from_str(r#"{"z":1.0,"a":[true,null,"x"]}"#)
-            .expect("fixture JSON");
+        let value: Value =
+            serde_json::from_str(r#"{"z":1.0,"a":[true,null,"x"]}"#).expect("fixture JSON");
         assert_eq!(
             encode_legacy_stable_json_v1(&value).expect("canonical encoding"),
             br#"{"a":[true,null,"x"],"z":1}"#,

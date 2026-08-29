@@ -10,8 +10,8 @@ use hepta_campaign_writer::{CampaignWriterStoreV1, IntegrationDispositionV1};
 use hepta_legacy_compatibility::hash_legacy_record_v1;
 use hepta_readonly_control::inspect_read_only_store;
 use hepta_workspace_authority::{
-    MutationPolicyV1, WorkspaceRootV1, compare_inventories_v1,
-    materialize_attempt_v1, prepare_workspace_result_v1,
+    MutationPolicyV1, WorkspaceRootV1, compare_inventories_v1, materialize_attempt_v1,
+    prepare_workspace_result_v1,
 };
 use serde_json::json;
 
@@ -45,8 +45,7 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
 
     let source_root = WorkspaceRootV1::open(&source, None).expect("source root");
     let before = source_root.inventory().expect("before inventory");
-    let attempt = materialize_attempt_v1(&source_root, &attempts, "attempt-1")
-        .expect("attempt");
+    let attempt = materialize_attempt_v1(&source_root, &attempts, "attempt-1").expect("attempt");
     fs::write(attempt.join("paper/main.tex"), b"draft-v2\n").expect("author mutation");
     let attempt_root = WorkspaceRootV1::open(&attempt, None).expect("attempt root");
     let after = attempt_root.inventory().expect("after inventory");
@@ -59,14 +58,9 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
         allow_deletion: false,
         read_only: false,
     };
-    let workspace_result = prepare_workspace_result_v1(
-        "attempt-1",
-        &before,
-        &after,
-        &mutation,
-        &policy,
-    )
-    .expect("workspace prepared result");
+    let workspace_result =
+        prepare_workspace_result_v1("attempt-1", &before, &after, &mutation, &policy)
+            .expect("workspace prepared result");
     let receipt = json!({
         "attemptId": workspace_result.attempt_id,
         "beforeHash": workspace_result.before_hash,

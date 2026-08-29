@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "program": "hepta-paper-rust-rewrite",
+  "truthStatus": "canonical",
+  "generatedFrom": {
+    "repository": "TrillionniumFoundation/hepta-paper",
+    "baselineBranch": "codex/rust-broker-service-20260828",
+    "baselineCommit": "80223a2531de32ceeeab7d5d4e6c9b36a605716f",
+    "baselineTree": "cee44bee7bf42f5a7287de14700b83985f5e3557",
+    "planVersion": "3.0"
+  },
+  "statusVocabulary": [
+    "not_started",
+    "design_ready",
+    "source_implemented",
+    "source_qualified",
+    "hosted_installed_qualified",
+    "target_host_qualified",
+    "external_authority_qualified",
+    "blocked_external",
+    "retired"
+  ],
+  "evidenceTiers": [
+    "none",
+    "design",
+    "source",
+    "hosted_installed",
+    "target_host",
+    "external_authority"
+  ],
+  "current": {
+    "productStage": "broker_source_candidate",
+    "productionActivation": "disabled",
+    "realCodexCredentials": "forbidden",
+    "liveProviderCalls": "forbidden",
+    "campaignWriterAuthority": "absent",
+    "releaseAuthority": "absent",
+    "submissionAuthority": "absent",
+    "canonicalStatusDocument": "docs/rust/CURRENT_STATUS.md",
+    "canonicalPlanDocument": "docs/rust/RUST_REWRITE_MASTER_PLAN.md",
+    "canonicalBacklogDocument": "docs/rust/RUST_REWRITE_BACKLOG.md"
+  },
+  "workstreams": [
+    {
+      "id": "FND",
+      "name": "Foundation contracts and protocol",
+      "status": "source_qualified",
+      "evidenceTier": "source"
+    },
+    {
+      "id": "BRK",
+      "name": "Codex broker and durable launch",
+      "status": "source_qualified",
+      "evidenceTier": "hosted_installed"
+    },
+    {
+      "id": "WS",
+      "name": "Workspace and mutation authority",
+      "status": "not_started",
+      "evidenceTier": "none"
+    },
+    {
+      "id": "CMP",
+      "name": "Compatibility and canonicalization",
+      "status": "design_ready",
+      "evidenceTier": "design"
+    },
+    {
+      "id": "RO",
+      "name": "Read-only Rust control plane",
+      "status": "not_started",
+      "evidenceTier": "none"
+    },
+    {
+      "id": "MVP",
+      "name": "Local author-reviewer vertical slice",
+      "status": "not_started",
+      "evidenceTier": "none"
+    },
+    {
+      "id": "DB",
+      "name": "Persistent Rust campaign writer",
+      "status": "not_started",
+      "evidenceTier": "none"
+    },
+    {
+      "id": "EVD",
+      "name": "Scientific evidence orchestration",
+      "status": "not_started",
+      "evidenceTier": "none"
+    },
+    {
+      "id": "REL",
+      "name": "Release and external authority",
+      "status": "blocked_external",
+      "evidenceTier": "none"
+    },
+    {
+      "id": "CUT",
+      "name": "Shadow, cutover and retirement",
+      "status": "not_started",
+      "evidenceTier": "none"
+    }
+  ],
+  "gaps": [
+    {
+      "id": "GAP-GOV-001",
+      "title": "Single machine-readable program truth and stale-document controls",
+      "status": "source_implemented",
+      "evidenceTier": "source",
+      "external": false,
+      "closesWhen": [
+        "program-truth validator runs in CI",
+        "historical status files cannot override CURRENT_STATUS"
+      ]
+    },
+    {
+      "id": "GAP-GOV-002",
+      "title": "Exact-head and exact-tree qualification evidence",
+      "status": "design_ready",
+      "evidenceTier": "design",
+      "external": false,
+      "closesWhen": [
+        "workflows explicitly checkout head SHA",
+        "artifacts record head/base/tested commit and tree",
+        "mismatch fails closed"
+      ]
+    },
+    {
+      "id": "GAP-BRK-001",
+      "title": "Authorized multi-principal Unix listener accessibility",
+      "status": "design_ready",
+      "evidenceTier": "design",
+      "external": false,
+      "closesWhen": [
+        "shared-group listener mode is explicit",
+        "authorized UID succeeds while unauthorized UID fails against a live listener",
+        "SO_PEERCRED remains exact"
+      ]
+    },
+    {
+      "id": "GAP-BRK-002",
+      "title": "Production process containment beyond process-group-only supervision",
+      "status": "design_ready",
+      "evidenceTier": "design",
+      "external": false,
+      "closesWhen": [
+        "cgroup-v2 or equivalent containment is implemented",
+        "setsid/double-fork escape tests pass",
+        "production mode rejects process-group-only containment"
+      ]
+    },
+    {
+      "id": "GAP-BRK-003",
+      "title": "Stable worker and lifecycle telemetry contract",
+      "status": "design_ready",
+      "evidenceTier": "design",
+      "external": false,
+      "closesWhen": [
+        "machine error registry is versioned",
+        "worker/queue/journal/reconciliation counters are emitted without sensitive data"
+      ]
+    },
+    {
+      "id": "GAP-HOST-001",
+      "title": "Independent target-host listener, gate, schema and systemd qualification",
+      "status": "blocked_external",
+      "evidenceTier": "none",
+      "external": true,
+      "issue": 17,
+      "closesWhen": [
+        "separately controlled host evidence exists",
+        "independent reviewer signs approval"
+      ]
+    },
+    {
+      "id": "GAP-HOST-002",
+      "title": "Production WAL, reboot, disk-full and corruption drill",
+      "status": "blocked_external",
+      "evidenceTier": "none",
+      "external": true,
+      "issue": 12,
+      "closesWhen": [
+        "destructive qualification completes on a dedicated target-host mount",
+        "evidence is independently reviewed"
+      ]
+    },
+    {
+      "id": "GAP-KEY-001",
+      "title": "External capability key-owner rotation and compromise drill",
+      "status": "blocked_external",
+      "evidenceTier": "none",
+      "external": true,
+      "issue": 14,
+      "closesWhen": [
+        "independent key owner performs rotation/revocation/rollback/compromise drills",
+        "signed evidence is accepted"
+      ]
+    },
+    {
+      "id": "GAP-CODEX-001",
+      "title": "Installed authenticated Codex author/reviewer qualification",
+      "status": "blocked_external",
+      "evidenceTier": "none",
+      "external": true,
+      "closesWhen": [
+        "qualified Codex executable and CLI surface are pinned",
+        "separate homes authenticate",
+        "live canaries pass without leaking authority"
+      ]
+    },
+    {
+      "id": "GAP-WS-001",
+      "title": "Descriptor-relative COW workspace and mutation verifier",
+      "status": "not_started",
+      "evidenceTier": "none",
+      "external": false,
+      "closesWhen": [
+        "workspace crates implement WS-001 through WS-009",
+        "fault and mutation policy suites pass"
+      ]
+    },
+    {
+      "id": "GAP-CMP-001",
+      "title": "Historical canonicalization and Node-to-Rust parity kernel",
+      "status": "not_started",
+      "evidenceTier": "none",
+      "external": false,
+      "closesWhen": [
+        "LegacyStableJsonV1 corpus is frozen",
+        "Node oracle and Rust verifier achieve zero unexplained drift"
+      ]
+    },
+    {
+      "id": "GAP-RO-001",
+      "title": "Schema-25 read-only Rust control plane",
+      "status": "not_started",
+      "evidenceTier": "none",
+      "external": false,
+      "closesWhen": [
+        "immutable SQLite reader and normalized state diff are complete",
+        "no WAL or write path is opened"
+      ]
+    },
+    {
+      "id": "GAP-MVP-001",
+      "title": "One-paper author-build-review-revise local vertical slice",
+      "status": "not_started",
+      "evidenceTier": "none",
+      "external": false,
+      "closesWhen": [
+        "fake then qualified Codex prepared results traverse workspace and read-only campaign projection",
+        "crash/cancel matrix passes"
+      ]
+    },
+    {
+      "id": "GAP-DB-001",
+      "title": "Single-writer Rust campaign persistence and cutover fencing",
+      "status": "not_started",
+      "evidenceTier": "none",
+      "external": false,
+      "closesWhen": [
+        "DB-001 through DB-009 pass",
+        "Node/Rust dual writer is mechanically impossible"
+      ]
+    },
+    {
+      "id": "GAP-REL-001",
+      "title": "Release, KMS/HSM, WORM and submission authorities",
+      "status": "blocked_external",
+      "evidenceTier": "none",
+      "external": true,
+      "closesWhen": [
+        "narrow ports are implemented",
+        "real external authorities issue independently verifiable receipts",
+        "model principals retain zero access"
+      ]
+    }
+  ]
+}

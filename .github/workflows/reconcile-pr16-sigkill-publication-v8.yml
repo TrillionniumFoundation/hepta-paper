@@ -1,0 +1,101 @@
+name: reconcile-pr16-sigkill-publication-v8
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/reconcile-pr16-sigkill-publication-v8.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reconcile-pr16-sigkill-publication-v8
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+
+      - name: Reconcile SIGKILL source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            refs/heads/codex/current-source-export-20260829-v2:refs/remotes/origin/pr16-transfer
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          import textwrap
+
+          path = Path("rust/crates/hepta-codex-broker/src/journal/tests.rs")
+          source = path.read_text()
+          if "sigkill_before_commit_preserves_qualified_journal" not in source:
+              workflow = subprocess.check_output(
+                  [
+                      "git",
+                      "show",
+                      "origin/pr16-transfer:.github/workflows/apply-pr16-sigkill-journal-qualification-v7.yml",
+                  ],
+                  text=True,
+              )
+              match = re.search(
+                  r"addition = r'''(.*?)\n          '''",
+                  workflow,
+                  flags=re.DOTALL,
+              )
+              if match is None:
+                  raise SystemExit("could not recover SIGKILL test source")
+              addition = textwrap.dedent(match.group(1)).lstrip("\n") + "\n\n"
+              marker = '''#[test]
+              fn foreign_empty_database_is_rejected_without_mutation() {
+              '''
+              if source.count(marker) != 1:
+                  raise SystemExit("expected foreign-empty database test marker")
+              source = source.replace(marker, addition + marker, 1)
+
+          source = source.replace(
+              "fn run_sigkill_writer_probe(database_path: &Path, phase: &str) {",
+              "fn run_sigkill_writer_probe(database_path: &std::path::Path, phase: &str) {",
+          )
+          path.write_text(source)
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+
+      - name: Run focused and complete Rust qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker journal::tests::sigkill_ \
+            --locked -- --test-threads=1
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked -- --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Publish verified reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --porcelain)" ]]; then exit 0; fi
+          git config user.name "hepta-paper SIGKILL reconciler"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "test(rust): reconcile real SIGKILL journal qualification"
+          git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

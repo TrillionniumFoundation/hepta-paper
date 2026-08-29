@@ -1,0 +1,85 @@
+name: record-pr16-source-closure-evidence
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/record-pr16-source-closure-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: record-pr16-source-closure-evidence
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: TrillionniumFoundation/hepta-paper
+      PR: '16'
+    steps:
+      - name: Wait for the current exact-head protected checks
+        id: evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+          test -n "$head"
+          for attempt in $(seq 1 180); do
+            runs=$(gh api "repos/$REPO/actions/runs?head_sha=$head&event=pull_request&per_page=100")
+            rust=$(jq -c '[.workflow_runs[] | select(.name == "rust-foundation")] | sort_by(.created_at) | last // empty' <<<"$runs")
+            node=$(jq -c '[.workflow_runs[] | select(.name == "hepta-paper-ci")] | sort_by(.created_at) | last // empty' <<<"$runs")
+            if [ -n "$rust" ] && [ -n "$node" ]; then
+              rust_status=$(jq -r .status <<<"$rust")
+              node_status=$(jq -r .status <<<"$node")
+              if [ "$rust_status" = completed ] && [ "$node_status" = completed ]; then
+                rust_conclusion=$(jq -r .conclusion <<<"$rust")
+                node_conclusion=$(jq -r .conclusion <<<"$node")
+                test "$rust_conclusion" = success
+                test "$node_conclusion" = success
+                rust_id=$(jq -r .id <<<"$rust")
+                node_id=$(jq -r .id <<<"$node")
+                {
+                  echo "head=$head"
+                  echo "rust_id=$rust_id"
+                  echo "node_id=$node_id"
+                } >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            sleep 5
+          done
+          echo "exact-head protected checks did not complete in time" >&2
+          exit 1
+
+      - name: Record source closure evidence on PR 16
+        shell: bash
+        run: |
+          set -euo pipefail
+          body=$(cat <<EOF
+          ## Exact-head source closure evidence
+
+          The remaining repository-development blockers have been reconciled on exact head:
+
+          \`${{ steps.evidence.outputs.head }}\`
+
+          Protected checks on that same SHA:
+
+          - Rust 1.98 locked format / Clippy / workspace tests / rustdoc: run \`${{ steps.evidence.outputs.rust_id }}\` — **success**
+          - repository static/security gates, impacted shards and legacy differential policy: run \`${{ steps.evidence.outputs.node_id }}\` — **success**
+
+          Source closures include durable pre-exec release, existing-database read-only preflight, authority-owned canonical trust-bundle sources, stable runtime identity, duplicate admission semantics, bounded listener lifecycle, recovery/backup/restore and fail-closed trust rotation.
+
+          Open \`QUALIFICATION:\` issues require installed Linux principals, root/deployment ownership, destructive storage tests, independent review, authenticated live Codex or external release/submission authorities. They are not unimplemented repository features and confer no authority on this Draft PR.
+          EOF
+          )
+          gh pr comment "$PR" --repo "$REPO" --body "$body"

@@ -1,12 +1,18 @@
 [workspace]
 resolver = "3"
 members = [
+  "crates/hepta-broker-service-v2",
+  "crates/hepta-campaign-writer",
   "crates/hepta-codex-broker",
-  "crates/hepta-codex-protocol",
   "crates/hepta-codex-event-stream",
   "crates/hepta-codex-journal",
+  "crates/hepta-codex-protocol",
   "crates/hepta-codex-runtime",
   "crates/hepta-codex-testkit",
+  "crates/hepta-control-plane",
+  "crates/hepta-legacy-compat",
+  "crates/hepta-readonly-store",
+  "crates/hepta-workspace",
 ]
 
 [workspace.package]
@@ -20,7 +26,7 @@ base64ct = { version = "=1.8.3", features = ["alloc"] }
 ed25519-dalek = "=3.0.0"
 hex = "=0.4.3"
 nix = { version = "=0.31.3", features = ["fs", "process", "signal", "socket"] }
-rusqlite = { version = "=0.40.2", features = ["bundled"] }
+rusqlite = { version = "=0.40.2", features = ["backup", "bundled"] }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_derive = "=1.0.219"
 serde_json = "=1.0.140"

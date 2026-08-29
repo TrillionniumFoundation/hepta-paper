@@ -37,7 +37,7 @@ jobs:
           git fetch --no-tags origin \
             "refs/heads/${transfer_branch}:refs/remotes/origin/development-blockers-v4"
           : > "$RUNNER_TEMP/blockers.patch.gz.b64"
-          for item in 00:9000 01:5332; do
+          for item in 00a:3000 00b0:1000 00b1:1000 00b2:1000 00c:3000 01:5332; do
             index=${item%%:*}
             size=${item##*:}
             git show "origin/development-blockers-v4:.automation/development-blockers-v4/chunk-${index}" \

@@ -1,0 +1,134 @@
+name: reconcile-pr16-installed-v2-evidence-v5
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/reconcile-pr16-installed-v2-evidence-v5.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: TrillionniumFoundation/hepta-paper
+      PR_BRANCH: codex/rust-broker-service-20260828
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+
+      - name: Bind final branch head
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          echo "qualified_head=$head" >> "$GITHUB_ENV"
+          test -f .github/workflows/rust-broker-installed-qualification-v2.yml
+          test -f rust/crates/hepta-codex-broker/src/bin/hepta-trust-bundle-preflight.rs
+          grep -Fq 'sigkill_before_commit_preserves_qualified_journal' \
+            rust/crates/hepta-codex-broker/src/journal/tests.rs
+          test "$(git ls-remote origin "refs/heads/$PR_BRANCH" | cut -f1)" = "$head"
+
+      - name: Require all exact-head workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 180); do
+            payload=$(gh api "/repos/$REPOSITORY/actions/runs?head_sha=$qualified_head&event=pull_request&per_page=100")
+            status_for() {
+              jq -r --arg name "$1" \
+                '[.workflow_runs[] | select(.name == $name)] | sort_by(.created_at) | reverse | .[0] | (.status // "missing") + ":" + (.conclusion // "")' \
+                <<<"$payload"
+            }
+            rust=$(status_for rust-foundation)
+            node=$(status_for hepta-paper-ci)
+            installed=$(status_for rust-broker-installed-qualification-v2)
+            echo "head=$qualified_head rust=$rust node=$node installed_v2=$installed"
+            if [[ "$rust" == completed:success \
+               && "$node" == completed:success \
+               && "$installed" == completed:success ]]; then
+              break
+            fi
+            for value in "$rust" "$node" "$installed"; do
+              if [[ "$value" == completed:* && "$value" != completed:success ]]; then exit 1; fi
+            done
+            if [[ $attempt -eq 180 ]]; then exit 1; fi
+            sleep 10
+          done
+          test "$(git ls-remote origin "refs/heads/$PR_BRANCH" | cut -f1)" = "$qualified_head"
+
+      - name: Close completed source and portable installed blockers
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker='<!-- hepta-pr16-installed-v2-closure-v5 -->'
+          body="$marker
+
+          Exact-head acceptance is complete at \`$qualified_head\`. The protected Rust and repository workflows and the minimal installed-v2 authority workflow all succeeded on this SHA. Installed-v2 used distinct deployment/root, broker, author and reviewer principals; exercised read/write/chmod/rename/link/path and role-access negatives; verified the root-owned gate; and verified a broker-owned private Unix socket object.
+
+          This closes repository-development and portable installed-negative-test scope only. It does not grant live-provider or external release/submission authority."
+          for issue in 4 5 7 8 9 11 14 15; do
+            if ! gh api "/repos/$REPOSITORY/issues/$issue/comments?per_page=100" --paginate --jq '.[].body' | grep -Fq "$marker"; then
+              gh issue comment "$issue" --repo "$REPOSITORY" --body "$body"
+            fi
+            if [[ $(gh issue view "$issue" --repo "$REPOSITORY" --json state --jq .state) == OPEN ]]; then
+              gh issue close "$issue" --repo "$REPOSITORY" --reason completed
+            fi
+          done
+
+      - name: Preserve only non-portable qualification issues
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker='<!-- hepta-pr16-nonportable-v5 -->'
+          body="$marker
+
+          Repository source and portable multi-principal installed checks are successful at exact head \`$qualified_head\`. This issue remains open for non-portable evidence: target-host reboot/disk-full/remount/filesystem-corruption drills or independent low-level review plus live-provider qualification. Those records cannot be generated truthfully by a GitHub-hosted runner."
+          for issue in 12 17; do
+            if ! gh api "/repos/$REPOSITORY/issues/$issue/comments?per_page=100" --paginate --jq '.[].body' | grep -Fq "$marker"; then
+              gh issue comment "$issue" --repo "$REPOSITORY" --body "$body"
+            fi
+          done
+
+      - name: Update draft PR status
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/body.md <<EOF
+          ## Merge status
+
+          > **DO NOT MERGE.** Repository-development and portable multi-principal installed blockers are complete at exact head \`$qualified_head\`. Only non-portable host/storage review and live/external authority qualification remains.
+
+          ## Completed
+
+          - bounded role-specific Unix listener and stale-socket lifecycle;
+          - signed Ed25519 trust-bundle generation, rotation, revocation, rollback and authority-owned canonical file loading;
+          - stable Codex-home and separately owned output-schema controls;
+          - read-only/no-follow foreign SQLite preflight before writer mutation;
+          - append-only journal, exact duplicate semantics, backup/restore and prepared acknowledgement;
+          - stopped durable pre-exec gate, atomic journal linkage, release and startup reconciliation;
+          - real writer-process SIGKILL recovery and committed-corruption rejection;
+          - distinct deployment/root, broker, author and reviewer UID/GID negative tests;
+          - root-owned immutable gate and broker-private Unix socket object checks;
+          - protected Rust, repository and installed-v2 workflows green on one SHA.
+
+          ## Still prohibited
+
+          No real Codex credentials, provider execution, campaign writes, release signing, KMS/HSM/WORM access, portal credentials or submission authority.
+
+          ## Remaining non-portable gates
+
+          Issue #12: target-host reboot, disk-full, remount and filesystem-corruption drills. Issue #17: independent low-level primitive review and live installed-provider qualification. These are not remaining repository-development implementations.
+          EOF
+          gh pr edit 16 --repo "$REPOSITORY" --body-file /tmp/body.md

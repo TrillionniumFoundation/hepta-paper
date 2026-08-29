@@ -1,0 +1,146 @@
+name: apply-pr16-installed-qualification-fixtures-v2
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/apply-pr16-installed-qualification-fixtures-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-pr16-installed-qualification-fixtures-v2
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out latest PR branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+          submodules: false
+
+      - name: Materialize corrected qualification fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            refs/heads/codex/current-source-export-20260829-v2:refs/remotes/origin/qualification-fixture-source
+          git show \
+            origin/qualification-fixture-source:.github/workflows/apply-pr16-installed-qualification-fixtures.yml \
+            > /tmp/fixture-source.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import textwrap
+
+          source = Path('/tmp/fixture-source.yml').read_text()
+          selected = {
+              'deploy/systemd/hepta-codex-broker@.service': 'UNIT',
+              'deploy/systemd/README.md': 'DOC',
+              'rust/qualification/installed-broker-preflight.sh': 'SH',
+              'rust/qualification/installed-broker-crash-drill.sh': 'SH',
+              'rust/qualification/README.md': 'DOC',
+          }
+          for path, tag in selected.items():
+              pattern = re.compile(
+                  rf"cat > {re.escape(path)} <<'{tag}'\n(.*?)\n\s*{tag}\n",
+                  re.DOTALL,
+              )
+              match = pattern.search(source)
+              if match is None:
+                  raise SystemExit(f'missing embedded fixture: {path}')
+              content = textwrap.dedent(match.group(1)) + '\n'
+              target = Path(path)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(content)
+
+          unit = Path('deploy/systemd/hepta-codex-broker@.service')
+          text = unit.read_text().replace(
+              'ConditionPathIsReadOnly=/etc/hepta/codex-broker-%i\n',
+              '',
+          )
+          unit.write_text(text)
+          PY
+          chmod 0755 \
+            rust/qualification/installed-broker-preflight.sh \
+            rust/qualification/installed-broker-crash-drill.sh
+
+          bash -n \
+            rust/qualification/installed-broker-preflight.sh \
+            rust/qualification/installed-broker-crash-drill.sh
+          python3 - <<'PY'
+          from pathlib import Path
+
+          unit_path = Path('deploy/systemd/hepta-codex-broker@.service')
+          unit = unit_path.read_text()
+          required = [
+              '[Unit]', '[Service]', '[Install]',
+              'Type=simple', 'UMask=0077',
+              'RuntimeDirectoryMode=0700', 'StateDirectoryMode=0700',
+              'NoNewPrivileges=yes', 'PrivateTmp=yes', 'PrivateDevices=yes',
+              'ProtectSystem=strict', 'ProtectHome=yes',
+              'MemoryDenyWriteExecute=yes', 'RestrictSUIDSGID=yes',
+              'RestrictAddressFamilies=AF_UNIX', 'IPAddressDeny=any',
+              'CapabilityBoundingSet=', 'AmbientCapabilities=',
+              'KillMode=mixed', 'LimitNOFILE=1024', 'TasksMax=128',
+          ]
+          missing = [line for line in required if line not in unit]
+          if missing:
+              raise SystemExit(f'missing unit hardening directives: {missing}')
+          forbidden = [
+              'ConditionPathIsReadOnly=', 'PrivateUsers=yes',
+              'ProtectProc=invisible', 'ProcSubset=pid',
+          ]
+          present = [line for line in forbidden if line in unit]
+          if present:
+              raise SystemExit(f'unit conflicts with gate process inspection: {present}')
+          if Path('deploy/systemd/hepta-codex-broker@.socket').exists():
+              raise SystemExit('V1 must not bypass service-owned listener identity via socket activation')
+          for script in [
+              Path('rust/qualification/installed-broker-preflight.sh'),
+              Path('rust/qualification/installed-broker-crash-drill.sh'),
+          ]:
+              if script.read_text().splitlines()[0] != '#!/usr/bin/env bash':
+                  raise SystemExit(f'invalid script header: {script}')
+          PY
+          git diff --check
+          git diff --stat
+
+      - name: Run portable source gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked -- --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Commit and update PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- deploy/systemd rust/qualification; then
+            echo 'qualification fixtures already match the verified source'
+            exit 0
+          fi
+          git config user.name "hepta-paper blocker closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add deploy/systemd rust/qualification
+          git commit -m "chore(rust): add installed broker qualification fixtures"
+          git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

@@ -1,0 +1,143 @@
+name: rust-gap-diagnostics
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/workflows/rust-gap-diagnostics.yml'
+      - 'rust/**'
+      - 'docs/rust/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: rust-gap-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Install qualified toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+
+      - name: Execute diagnostic matrix
+        id: matrix
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/gap-diagnostics"
+          required=(
+            hepta-cgroup-containment
+            hepta-legacy-compatibility
+            hepta-readonly-control
+            hepta-workspace-authority
+            hepta-campaign-writer
+            hepta-local-vertical
+          )
+          members=0
+          for crate in "${required[@]}"; do
+            grep -Fq "crates/$crate" rust/Cargo.toml || members=1
+          done
+          python3 docs/rust/tools/validate-program-truth.py >"$RUNNER_TEMP/gap-diagnostics/truth.log" 2>&1
+          truth=$?
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check >"$RUNNER_TEMP/gap-diagnostics/fmt.log" 2>&1
+          fmt=$?
+          cargo check --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked >"$RUNNER_TEMP/gap-diagnostics/check.log" 2>&1
+          check=$?
+          cargo test --manifest-path rust/Cargo.toml --workspace --all-features --locked >"$RUNNER_TEMP/gap-diagnostics/test.log" 2>&1
+          test=$?
+          cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings >"$RUNNER_TEMP/gap-diagnostics/clippy.log" 2>&1
+          clippy=$?
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps >"$RUNNER_TEMP/gap-diagnostics/doc.log" 2>&1
+          doc=$?
+          {
+            echo "members=$members"
+            echo "truth=$truth"
+            echo "fmt=$fmt"
+            echo "check=$check"
+            echo "test=$test"
+            echo "clippy=$clippy"
+            echo "doc=$doc"
+          } | tee "$RUNNER_TEMP/gap-diagnostics/status.env" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Publish concise PR diagnostic
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS_MEMBERS: ${{ steps.matrix.outputs.members }}
+          STATUS_TRUTH: ${{ steps.matrix.outputs.truth }}
+          STATUS_FMT: ${{ steps.matrix.outputs.fmt }}
+          STATUS_CHECK: ${{ steps.matrix.outputs.check }}
+          STATUS_TEST: ${{ steps.matrix.outputs.test }}
+          STATUS_CLIPPY: ${{ steps.matrix.outputs.clippy }}
+          STATUS_DOC: ${{ steps.matrix.outputs.doc }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "/repos/${GITHUB_REPOSITORY}/pulls?state=open&head=TrillionniumFoundation:${GITHUB_REF_NAME}" --jq '.[0].number // empty')
+          test -n "$pr" || exit 0
+          tree=$(git rev-parse 'HEAD^{tree}')
+          diagnostics=$(grep -hE '^(error(\[[^]]+\])?:|error:|warning:|test result: FAILED|failures:)' "$RUNNER_TEMP"/gap-diagnostics/*.log | tail -n 60 || true)
+          cat > "$RUNNER_TEMP/gap-diagnostics/comment.md" <<EOF
+          <!-- hepta-rust-gap-diagnostics -->
+          ## Exact-head repository-gap diagnostic
+
+          \`head_sha\`: \`${GITHUB_SHA}\`  
+          \`head_tree\`: \`${tree}\`
+
+          | Gate | Exit |
+          |---|---:|
+          | required workspace members | ${STATUS_MEMBERS} |
+          | program truth | ${STATUS_TRUTH} |
+          | rustfmt | ${STATUS_FMT} |
+          | cargo check | ${STATUS_CHECK} |
+          | cargo test | ${STATUS_TEST} |
+          | clippy -D warnings | ${STATUS_CLIPPY} |
+          | rustdoc -D warnings | ${STATUS_DOC} |
+
+          Non-zero means the exact head is **not** source-qualified. This diagnostic grants no production or external authority.
+
+          <details><summary>bounded diagnostics</summary>
+
+          \`\`\`text
+          ${diagnostics}
+          \`\`\`
+          </details>
+          EOF
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/issues/${pr}/comments" -f body="$(cat "$RUNNER_TEMP/gap-diagnostics/comment.md")" >/dev/null
+
+      - name: Fail exact-head diagnostic when any gate failed
+        shell: bash
+        env:
+          STATUS_MEMBERS: ${{ steps.matrix.outputs.members }}
+          STATUS_TRUTH: ${{ steps.matrix.outputs.truth }}
+          STATUS_FMT: ${{ steps.matrix.outputs.fmt }}
+          STATUS_CHECK: ${{ steps.matrix.outputs.check }}
+          STATUS_TEST: ${{ steps.matrix.outputs.test }}
+          STATUS_CLIPPY: ${{ steps.matrix.outputs.clippy }}
+          STATUS_DOC: ${{ steps.matrix.outputs.doc }}
+        run: |
+          set -euo pipefail
+          test "$STATUS_MEMBERS" = 0
+          test "$STATUS_TRUTH" = 0
+          test "$STATUS_FMT" = 0
+          test "$STATUS_CHECK" = 0
+          test "$STATUS_TEST" = 0
+          test "$STATUS_CLIPPY" = 0
+          test "$STATUS_DOC" = 0

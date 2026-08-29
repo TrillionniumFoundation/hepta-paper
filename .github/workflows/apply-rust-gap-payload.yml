@@ -36,15 +36,20 @@ jobs:
           echo '0dcef24ea02667ceea3a40407fc6ba8429423465d5951a8e4680892d3056a9f1  '"$RUNNER_TEMP/rust-gap-phase1.tar.gz" | sha256sum -c -
           tar -tzf "$RUNNER_TEMP/rust-gap-phase1.tar.gz"
 
-      - name: Apply source payload and remove bootstrap material
+      - name: Apply non-workflow source payload
         shell: bash
         run: |
           set -euo pipefail
           tar -xzf "$RUNNER_TEMP/rust-gap-phase1.tar.gz"
+          git checkout -- \
+            .github/workflows/rust-broker-installed-qualification-v2.yml \
+            .github/workflows/rust-broker-installed-qualification.yml \
+            .github/workflows/rust-foundation.yml \
+            .github/workflows/rust-qualification-artifacts.yml
+          rm -f .github/workflows/rust-program-truth.yml
           rm -rf .github/rust-gap-payload
-          rm -f .github/workflows/apply-rust-gap-payload.yml
 
-      - name: Commit exact source tree
+      - name: Commit exact non-workflow source tree
         shell: bash
         run: |
           set -euo pipefail

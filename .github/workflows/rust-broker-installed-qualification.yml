@@ -90,23 +90,23 @@ jobs:
           sudo install -d -o hepta-broker -g hepta-broker -m 0700 \
             /var/lib/hepta-broker /var/lib/hepta-broker/tmp
 
-          test "$(stat -c %u /etc/hepta/trust/bundle.json)" = 0
-          test "$(stat -c %g /etc/hepta/trust/bundle.json)" = "$trust_gid"
-          test "$(stat -c %a /etc/hepta/trust/bundle.json)" = 440
-          test "$(stat -c %u /usr/local/libexec/hepta/hepta-codex-preexec-gate)" = 0
-          test "$(stat -c %a /usr/local/libexec/hepta/hepta-codex-preexec-gate)" = 555
+          test "$(sudo stat -c %u /etc/hepta/trust/bundle.json)" = 0
+          test "$(sudo stat -c %g /etc/hepta/trust/bundle.json)" = "$trust_gid"
+          test "$(sudo stat -c %a /etc/hepta/trust/bundle.json)" = 440
+          test "$(sudo stat -c %u /usr/local/libexec/hepta/hepta-codex-preexec-gate)" = 0
+          test "$(sudo stat -c %a /usr/local/libexec/hepta/hepta-codex-preexec-gate)" = 555
 
           {
             echo "broker_uid=$broker_uid"
             echo "trust_gid=$trust_gid"
             echo "schema_gid=$schema_gid"
-            stat -c 'trust=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+            sudo stat -c 'trust=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
               /etc/hepta/trust/bundle.json
-            stat -c 'schema=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+            sudo stat -c 'schema=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
               /etc/hepta/schema-author/output.schema.json
-            stat -c 'gate=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+            sudo stat -c 'gate=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
               /usr/local/libexec/hepta/hepta-codex-preexec-gate
-            sha256sum /etc/hepta/trust/bundle.json \
+            sudo sha256sum /etc/hepta/trust/bundle.json \
               /etc/hepta/schema-author/output.schema.json \
               /usr/local/libexec/hepta/hepta-codex-preexec-gate
           } | tee /tmp/installed-identity.txt

@@ -164,7 +164,8 @@ jobs:
           )
           listener.close()
           PY
-          stat -c 'socket=%n dev=%d inode=%i uid=%u gid=%g mode=%a' \
+          sudo -u hepta-broker -- stat \
+            -c 'socket=%n dev=%d inode=%i uid=%u gid=%g mode=%a' \
             /var/lib/hepta-broker/socket-root/author.sock \
             | tee /tmp/listener-identity.txt
           if sudo -u hepta-author -- python3 - <<'PY'
@@ -182,13 +183,13 @@ jobs:
             id hepta-broker
             id hepta-author
             id hepta-reviewer
-            stat -c 'trust=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+            sudo stat -c 'trust=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
               /etc/hepta/trust/bundle.json
-            stat -c 'schema=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+            sudo stat -c 'schema=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
               /etc/hepta/schema-author/output.schema.json
-            stat -c 'gate=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+            sudo stat -c 'gate=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
               /usr/local/libexec/hepta/hepta-codex-preexec-gate
-            sha256sum /etc/hepta/trust/bundle.json \
+            sudo sha256sum /etc/hepta/trust/bundle.json \
               /etc/hepta/schema-author/output.schema.json \
               /usr/local/libexec/hepta/hepta-codex-preexec-gate
           } | tee /tmp/installed-v2-identity.txt

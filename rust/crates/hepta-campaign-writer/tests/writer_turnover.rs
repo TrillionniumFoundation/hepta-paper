@@ -34,17 +34,7 @@ fn a_new_writer_generation_integrates_an_exact_durable_prepared_result() {
         .create_campaign(&first, 10, "campaign-1", 100)
         .expect("campaign");
     let claim = first_store
-        .claim_node(
-            &first,
-            10,
-            "campaign-1",
-            "node-1",
-            "attempt-1",
-            0,
-            1,
-            50,
-            1,
-        )
+        .claim_node(&first, 10, "campaign-1", "node-1", "attempt-1", 0, 1, 50, 1)
         .expect("claim");
     first_store
         .prepare_result(

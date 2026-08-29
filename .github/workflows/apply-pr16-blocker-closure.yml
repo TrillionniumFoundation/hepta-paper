@@ -34,26 +34,17 @@ jobs:
           from pathlib import Path
           path = Path("rust/crates/hepta-codex-runtime/src/process/gate.rs")
           source = path.read_text()
-          old = '''    let stopped = wait_for_stopped_gate(
-              &mut child,
-              process_id,
-              &policy.gate_executable,
-              Duration::from_millis(policy.stop_timeout_ms),
-              Duration::from_millis(limits.poll_interval_ms),
-          );
-          '''
-          new = '''    let gate_observation_path = PathBuf::from(&gate_identity.canonical_path);
-          let stopped = wait_for_stopped_gate(
-              &mut child,
-              process_id,
-              &gate_observation_path,
-              Duration::from_millis(policy.stop_timeout_ms),
-              Duration::from_millis(limits.poll_interval_ms),
-          );
-          '''
-          if source.count(old) != 1:
+          marker = "    let stopped = wait_for_stopped_gate(\n"
+          old_argument = "        &policy.gate_executable,\n"
+          if source.count(marker) != 1 or source.count(old_argument) != 1:
               raise SystemExit("expected exactly one gate observation block")
-          path.write_text(source.replace(old, new, 1))
+          source = source.replace(
+              marker,
+              "    let gate_observation_path = PathBuf::from(&gate_identity.canonical_path);\n" + marker,
+              1,
+          )
+          source = source.replace(old_argument, "        &gate_observation_path,\n", 1)
+          path.write_text(source)
           PY
           git diff --check
           git diff -- rust/crates/hepta-codex-runtime/src/process/gate.rs

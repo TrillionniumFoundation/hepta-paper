@@ -260,7 +260,7 @@ fn inspect_operation(path: &Path, owner_uid: u32) -> Result<(), CgroupV2Error> {
 
 fn create_fixture_controls(path: &Path) -> Result<(), CgroupV2Error> {
     for (name, contents) in [
-        ("cgroup.procs", "0"),
+        ("cgroup.procs", ""),
         ("cgroup.events", "populated 0\nfrozen 0"),
         ("cgroup.kill", "0"),
         ("pids.max", "max"),

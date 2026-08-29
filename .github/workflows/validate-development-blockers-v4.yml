@@ -56,6 +56,19 @@ jobs:
             "$RUNNER_TEMP/blockers.patch" | sha256sum -c -
           git apply --check "$RUNNER_TEMP/blockers.patch"
           git apply --index "$RUNNER_TEMP/blockers.patch"
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("rust/crates/hepta-codex-broker/src/journal/path.rs")
+          source = path.read_text()
+          start_marker = "\nfn verify_initialization_candidate("
+          end_marker = "\nfn verify_database_identity("
+          if source.count(start_marker) != 1 or source.count(end_marker) != 1:
+              raise SystemExit("expected one obsolete initialization helper")
+          start = source.index(start_marker)
+          end = source.index(end_marker, start)
+          path.write_text(source[:start] + source[end:])
+          PY
+          git add rust/crates/hepta-codex-broker/src/journal/path.rs
           git diff --cached --check
 
       - name: Install qualified Rust
@@ -91,6 +104,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/development-blocker-validation"
           git diff --binary > "$RUNNER_TEMP/development-blocker-validation/formatted.patch"
+          git diff --cached --binary > "$RUNNER_TEMP/development-blocker-validation/staged.patch"
           git status --short > "$RUNNER_TEMP/development-blocker-validation/status.txt"
 
       - name: Upload validation evidence

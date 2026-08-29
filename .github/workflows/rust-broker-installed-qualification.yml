@@ -195,13 +195,15 @@ jobs:
           test_binary=$(find rust/target/debug/deps -maxdepth 1 -type f \
             -name 'service_lifecycle-*' -perm -111 | head -n 1)
           test -n "$test_binary"
+          sudo install -d -o root -g root -m 0755 \
+            /usr/local/libexec/hepta/deps
           sudo install -o root -g root -m 0555 "$test_binary" \
-            /usr/local/libexec/hepta/service-lifecycle-tests
+            /usr/local/libexec/hepta/deps/service-lifecycle-tests
           sudo -u hepta-broker -- env \
             HOME=/var/lib/hepta-broker \
             TMPDIR=/var/lib/hepta-broker/tmp \
             RUST_BACKTRACE=1 \
-            /usr/local/libexec/hepta/service-lifecycle-tests \
+            /usr/local/libexec/hepta/deps/service-lifecycle-tests \
             --test-threads=1 --nocapture \
             | tee /tmp/service-lifecycle-installed.txt
 

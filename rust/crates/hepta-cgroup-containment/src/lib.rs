@@ -184,17 +184,14 @@ impl CgroupV2OperationV1 {
             let mut members = fixture_members
                 .lock()
                 .map_err(|_| CgroupV2Error::FixtureStatePoisoned)?;
-            let maximum = usize::try_from(self.policy.pids_max)
-                .map_err(|_| CgroupV2Error::InvalidPolicy)?;
+            let maximum =
+                usize::try_from(self.policy.pids_max).map_err(|_| CgroupV2Error::InvalidPolicy)?;
             if !members.contains(&pid) && members.len() >= maximum {
                 return Err(CgroupV2Error::PidLimitExceeded);
             }
             members.insert(pid);
             write_fixture_process_set(&self.path.join("cgroup.procs"), &members)?;
-            write_control(
-                &self.path.join("cgroup.events"),
-                "populated 1\nfrozen 0",
-            )?;
+            write_control(&self.path.join("cgroup.events"), "populated 1\nfrozen 0")?;
             return Ok(());
         }
         write_control(&self.path.join("cgroup.procs"), &pid.to_string())
@@ -303,10 +300,7 @@ fn create_fixture_controls(path: &Path) -> Result<(), CgroupV2Error> {
     Ok(())
 }
 
-fn write_fixture_process_set(
-    path: &Path,
-    members: &BTreeSet<u32>,
-) -> Result<(), CgroupV2Error> {
+fn write_fixture_process_set(path: &Path, members: &BTreeSet<u32>) -> Result<(), CgroupV2Error> {
     let value = members
         .iter()
         .map(u32::to_string)

@@ -427,11 +427,10 @@ pub fn spawn_blocked_preexec_gate(
         return Err(DurableGateError::InvalidGateProcessId(process_id));
     }
 
-    let gate_observation_path = PathBuf::from(&gate_identity.canonical_path);
     let stopped = wait_for_stopped_gate(
         &mut child,
         process_id,
-        &gate_observation_path,
+        &gate_identity,
         Duration::from_millis(policy.stop_timeout_ms),
         Duration::from_millis(limits.poll_interval_ms),
     );
@@ -471,8 +470,7 @@ pub fn observe_preexec_gate_process(
     identity: &PreExecGateIdentityV1,
 ) -> Result<GateProcessObservationV1, DurableGateError> {
     identity.validate_hash()?;
-    let gate_path = PathBuf::from(&identity.gate_executable.canonical_path);
-    match inspect_process(identity.pid, &gate_path) {
+    match inspect_process(identity.pid, &identity.gate_executable) {
         Ok(observed) => {
             if !observed_matches_identity(&observed, identity) {
                 return Ok(GateProcessObservationV1::IdentityMismatch);
@@ -484,8 +482,7 @@ pub fn observe_preexec_gate_process(
             }
         }
         Err(DurableGateError::ProcessExecutableMismatch) => {
-            let target_path = PathBuf::from(&identity.target_executable.canonical_path);
-            match inspect_process(identity.pid, &target_path) {
+            match inspect_process(identity.pid, &identity.target_executable) {
                 Ok(observed) if observed_matches_identity(&observed, identity) => {
                     Ok(GateProcessObservationV1::ReleasedOrRunning)
                 }
@@ -904,7 +901,7 @@ fn inspect_executable(
 fn wait_for_stopped_gate(
     child: &mut Child,
     pid: u32,
-    gate_path: &Path,
+    gate_identity: &GateExecutableIdentityV1,
     timeout: Duration,
     poll: Duration,
 ) -> Result<ObservedProcessIdentity, DurableGateError> {
@@ -916,13 +913,23 @@ fn wait_for_stopped_gate(
         {
             return Err(DurableGateError::GateExitedBeforeStop(status.code()));
         }
-        match inspect_process(pid, gate_path) {
+        match inspect_process(pid, gate_identity) {
             Ok(observed) if observed.stopped => return Ok(observed),
-            Ok(_) | Err(DurableGateError::ProcessAbsent(_)) if Instant::now() < deadline => {
+            Ok(_)
+            | Err(DurableGateError::ProcessAbsent(_))
+            | Err(DurableGateError::ProcessExecutableMismatch)
+                if Instant::now() < deadline =>
+            {
+                // `Command::spawn` may return while the child still exposes the parent image
+                // through `/proc/<pid>/exe`. Only a stopped process can be accepted as the gate;
+                // a transient pre-exec mismatch is retried within the bounded stop deadline.
                 thread::sleep(poll);
             }
             Ok(_) | Err(DurableGateError::ProcessAbsent(_)) => {
                 return Err(DurableGateError::GateStopTimeout(pid));
+            }
+            Err(DurableGateError::ProcessExecutableMismatch) => {
+                return Err(DurableGateError::ProcessExecutableMismatch);
             }
             Err(error) => return Err(error),
         }
@@ -942,13 +949,13 @@ struct ObservedProcessIdentity {
 
 fn inspect_process(
     pid: u32,
-    expected_executable: &Path,
+    expected_executable: &GateExecutableIdentityV1,
 ) -> Result<ObservedProcessIdentity, DurableGateError> {
     let proc_root = PathBuf::from(format!("/proc/{pid}"));
     if !proc_root.exists() {
         return Err(DurableGateError::ProcessAbsent(pid));
     }
-    let executable = match fs::canonicalize(proc_root.join("exe")) {
+    let executable = match fs::metadata(proc_root.join("exe")) {
         Ok(value) => value,
         Err(error)
             if matches!(
@@ -960,7 +967,9 @@ fn inspect_process(
         }
         Err(error) => return Err(DurableGateError::Filesystem("proc_exe", error.kind())),
     };
-    if executable != expected_executable {
+    if executable.dev() != expected_executable.device
+        || executable.ino() != expected_executable.inode
+    {
         return Err(DurableGateError::ProcessExecutableMismatch);
     }
     let stat = fs::read_to_string(proc_root.join("stat"))

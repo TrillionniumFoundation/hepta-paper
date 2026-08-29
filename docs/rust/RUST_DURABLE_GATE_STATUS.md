@@ -3,6 +3,16 @@
 Status: source implementation complete; independent and installed-host
 qualification pending.
 
+Source implementation commit:
+
+```text
+7f97c1c0a6f3fecc5763cd94412d3753a4f74ebf
+```
+
+This record update intentionally creates a human-authored PR head so protected
+GitHub Actions execute normally after the source patch was published by a
+restricted `GITHUB_TOKEN` workflow.
+
 ## Implemented
 
 - stopped Rust gate in a fresh Linux session/process group;
@@ -17,14 +27,26 @@ qualification pending.
 - local-fixture and separate-owner production authority modes;
 - schema-v2 integrity checks and fault injection.
 
-## Deterministic evidence
+## Deterministic source evidence
+
+Before publication, the fixed Rust 1.98.0 locked/offline suite completed:
+
+```text
+cargo metadata --locked --offline
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings
+cargo test --workspace --all-features --locked --offline -- --test-threads=1
+RUSTDOCFLAGS=-D warnings cargo doc --workspace --all-features --locked --offline --no-deps
+```
 
 The source suite covers pre-release non-execution, commit/release transaction
 faults, replacement resistance, blocked/released/absent/orphaned recovery,
-identity mismatch, FD leakage and new-attempt recovery disposition.
+identity mismatch, FD leakage and new-attempt recovery disposition. Node impacted
+selection and all four selected-test shards also passed before publication.
 
-The exact qualification commit and workflow run IDs must be added after the
-branch is pushed and all protected checks complete.
+Remote protected-check run IDs and conclusions remain authoritative and are
+recorded on the pull request after completion; local evidence does not replace
+those checks.
 
 ## Remaining qualification gates
 

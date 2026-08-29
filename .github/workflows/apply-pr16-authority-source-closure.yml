@@ -1,0 +1,551 @@
+name: apply-pr16-authority-source-closure
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/apply-pr16-authority-source-closure.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-pr16-authority-source-closure
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out latest PR branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+          submodules: false
+
+      - name: Add authority-owned canonical JSON source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > rust/crates/hepta-codex-broker/src/trust_bundle_source.rs <<'RS'
+          use std::{
+              fs::{self, File, OpenOptions},
+              io::Read,
+              os::unix::fs::{MetadataExt, OpenOptionsExt},
+              path::{Path, PathBuf},
+          };
+
+          use serde::{de::DeserializeOwned, Serialize};
+          use sha2::{Digest, Sha256};
+          use thiserror::Error;
+
+          const HARD_MAXIMUM_AUTHORITY_JSON_BYTES: u64 = 16 * 1024 * 1024;
+
+          /// Filesystem authority policy for a canonical signed trust-bundle document.
+          #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+          pub struct CapabilityTrustBundleSourcePolicyV1 {
+              pub version: u16,
+              pub authority_uid: u32,
+              pub authority_gid: u32,
+              pub broker_uid: u32,
+              pub parent_mode: u32,
+              pub file_mode: u32,
+              pub maximum_bytes: u64,
+              pub require_separate_authority: bool,
+          }
+
+          impl CapabilityTrustBundleSourcePolicyV1 {
+              #[must_use]
+              pub const fn production(
+                  authority_uid: u32,
+                  authority_gid: u32,
+                  broker_uid: u32,
+              ) -> Self {
+                  Self {
+                      version: 1,
+                      authority_uid,
+                      authority_gid,
+                      broker_uid,
+                      parent_mode: 0o750,
+                      file_mode: 0o440,
+                      maximum_bytes: 1024 * 1024,
+                      require_separate_authority: true,
+                  }
+              }
+
+              #[must_use]
+              pub const fn local_fixture(owner_uid: u32, owner_gid: u32) -> Self {
+                  Self {
+                      version: 1,
+                      authority_uid: owner_uid,
+                      authority_gid: owner_gid,
+                      broker_uid: owner_uid,
+                      parent_mode: 0o750,
+                      file_mode: 0o440,
+                      maximum_bytes: 1024 * 1024,
+                      require_separate_authority: false,
+                  }
+              }
+
+              fn validate(self) -> Result<Self, CapabilityTrustBundleSourceError> {
+                  if self.version != 1
+                      || self.maximum_bytes == 0
+                      || self.maximum_bytes > HARD_MAXIMUM_AUTHORITY_JSON_BYTES
+                      || self.parent_mode & !0o777 != 0
+                      || self.file_mode & !0o777 != 0
+                      || self.parent_mode & 0o022 != 0
+                      || self.file_mode & 0o222 != 0
+                      || self.file_mode & 0o444 == 0
+                  {
+                      return Err(CapabilityTrustBundleSourceError::InvalidPolicy);
+                  }
+                  if self.require_separate_authority
+                      && self.authority_uid == self.broker_uid
+                  {
+                      return Err(
+                          CapabilityTrustBundleSourceError::SeparateAuthorityRequired,
+                      );
+                  }
+                  Ok(self)
+              }
+          }
+
+          #[derive(Clone, Debug, Eq, PartialEq)]
+          pub struct CapabilityTrustBundleSourceReceiptV1 {
+              pub version: u16,
+              pub canonical_path: PathBuf,
+              pub device: u64,
+              pub inode: u64,
+              pub owner_uid: u32,
+              pub owner_gid: u32,
+              pub mode: u32,
+              pub bytes: u64,
+              pub content_sha256: [u8; 32],
+          }
+
+          #[derive(Clone, Debug, Eq, PartialEq)]
+          pub struct QualifiedAuthorityJsonV1<T> {
+              pub document: T,
+              pub receipt: CapabilityTrustBundleSourceReceiptV1,
+          }
+
+          #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+          pub enum CapabilityTrustBundleSourceError {
+              #[error("capability trust-bundle source policy is invalid")]
+              InvalidPolicy,
+              #[error("production trust-bundle authority must differ from broker authority")]
+              SeparateAuthorityRequired,
+              #[error("capability trust-bundle source path is not canonical and absolute")]
+              NonCanonicalPath,
+              #[error("capability trust-bundle source parent is not qualified")]
+              ParentIdentityMismatch,
+              #[error("capability trust-bundle source file is not qualified")]
+              FileIdentityMismatch,
+              #[error("capability trust-bundle source changed while it was opened")]
+              FileChangedDuringOpen,
+              #[error("capability trust-bundle source exceeds its byte limit")]
+              FileTooLarge,
+              #[error("capability trust-bundle source is not canonical JSON")]
+              NonCanonicalJson,
+              #[error("capability trust-bundle source JSON is invalid")]
+              InvalidJson,
+              #[error("capability trust-bundle source JSON cannot be serialized")]
+              Serialization,
+              #[error("capability trust-bundle source filesystem failure at {0}: {1:?}")]
+              Filesystem(&'static str, std::io::ErrorKind),
+          }
+
+          /// Opens, re-verifies and parses an authority-owned canonical JSON document.
+          ///
+          /// The production policy requires a distinct authority UID. The parent is
+          /// non-writable by group/other, the file is non-writable, single-link and
+          /// opened with `O_NOFOLLOW|O_CLOEXEC`; pre-open and descriptor metadata must
+          /// identify the same object. Exact canonical JSON bytes are retained in the
+          /// receipt hash before any trust-bundle signature verification is attempted.
+          pub fn load_canonical_authority_json<T>(
+              requested: &Path,
+              policy: CapabilityTrustBundleSourcePolicyV1,
+          ) -> Result<QualifiedAuthorityJsonV1<T>, CapabilityTrustBundleSourceError>
+          where
+              T: DeserializeOwned + Serialize,
+          {
+              let policy = policy.validate()?;
+              if !requested.is_absolute() {
+                  return Err(CapabilityTrustBundleSourceError::NonCanonicalPath);
+              }
+              let canonical = fs::canonicalize(requested).map_err(|error| {
+                  CapabilityTrustBundleSourceError::Filesystem(
+                      "source_canonicalize",
+                      error.kind(),
+                  )
+              })?;
+              if canonical != requested {
+                  return Err(CapabilityTrustBundleSourceError::NonCanonicalPath);
+              }
+              let parent = requested
+                  .parent()
+                  .ok_or(CapabilityTrustBundleSourceError::NonCanonicalPath)?;
+              let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+                  CapabilityTrustBundleSourceError::Filesystem(
+                      "parent_canonicalize",
+                      error.kind(),
+                  )
+              })?;
+              if canonical_parent != parent {
+                  return Err(CapabilityTrustBundleSourceError::NonCanonicalPath);
+              }
+              let parent_metadata = fs::symlink_metadata(parent).map_err(|error| {
+                  CapabilityTrustBundleSourceError::Filesystem(
+                      "parent_metadata",
+                      error.kind(),
+                  )
+              })?;
+              if !parent_metadata.is_dir()
+                  || parent_metadata.uid() != policy.authority_uid
+                  || parent_metadata.gid() != policy.authority_gid
+                  || parent_metadata.mode() & 0o777 != policy.parent_mode
+              {
+                  return Err(CapabilityTrustBundleSourceError::ParentIdentityMismatch);
+              }
+
+              let before = fs::symlink_metadata(requested).map_err(|error| {
+                  CapabilityTrustBundleSourceError::Filesystem(
+                      "source_metadata",
+                      error.kind(),
+                  )
+              })?;
+              verify_file_metadata(&before, policy)?;
+              let mut file = OpenOptions::new()
+                  .read(true)
+                  .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+                  .open(requested)
+                  .map_err(|error| {
+                      CapabilityTrustBundleSourceError::Filesystem(
+                          "source_open",
+                          error.kind(),
+                      )
+                  })?;
+              let opened = file.metadata().map_err(|error| {
+                  CapabilityTrustBundleSourceError::Filesystem(
+                      "opened_metadata",
+                      error.kind(),
+                  )
+              })?;
+              verify_file_metadata(&opened, policy)?;
+              if before.dev() != opened.dev() || before.ino() != opened.ino() {
+                  return Err(CapabilityTrustBundleSourceError::FileChangedDuringOpen);
+              }
+
+              let mut bytes = Vec::new();
+              file.by_ref()
+                  .take(policy.maximum_bytes + 1)
+                  .read_to_end(&mut bytes)
+                  .map_err(|error| {
+                      CapabilityTrustBundleSourceError::Filesystem(
+                          "source_read",
+                          error.kind(),
+                      )
+                  })?;
+              if bytes.is_empty() || bytes.len() as u64 > policy.maximum_bytes {
+                  return Err(CapabilityTrustBundleSourceError::FileTooLarge);
+              }
+              let document: T = serde_json::from_slice(&bytes)
+                  .map_err(|_| CapabilityTrustBundleSourceError::InvalidJson)?;
+              let canonical_json = serde_json::to_vec(&document)
+                  .map_err(|_| CapabilityTrustBundleSourceError::Serialization)?;
+              if canonical_json != bytes {
+                  return Err(CapabilityTrustBundleSourceError::NonCanonicalJson);
+              }
+              let content_sha256: [u8; 32] = Sha256::digest(&bytes).into();
+              Ok(QualifiedAuthorityJsonV1 {
+                  document,
+                  receipt: CapabilityTrustBundleSourceReceiptV1 {
+                      version: 1,
+                      canonical_path: canonical,
+                      device: opened.dev(),
+                      inode: opened.ino(),
+                      owner_uid: opened.uid(),
+                      owner_gid: opened.gid(),
+                      mode: opened.mode() & 0o777,
+                      bytes: bytes.len() as u64,
+                      content_sha256,
+                  },
+              })
+          }
+
+          fn verify_file_metadata(
+              metadata: &fs::Metadata,
+              policy: CapabilityTrustBundleSourcePolicyV1,
+          ) -> Result<(), CapabilityTrustBundleSourceError> {
+              if !metadata.is_file()
+                  || metadata.nlink() != 1
+                  || metadata.uid() != policy.authority_uid
+                  || metadata.gid() != policy.authority_gid
+                  || metadata.mode() & 0o777 != policy.file_mode
+                  || metadata.len() == 0
+                  || metadata.len() > policy.maximum_bytes
+              {
+                  return Err(CapabilityTrustBundleSourceError::FileIdentityMismatch);
+              }
+              Ok(())
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use std::{
+                  os::unix::fs::{MetadataExt, PermissionsExt, symlink},
+                  time::{SystemTime, UNIX_EPOCH},
+              };
+
+              use serde::{Deserialize, Serialize};
+
+              use super::*;
+
+              #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+              #[serde(rename_all = "camelCase", deny_unknown_fields)]
+              struct FixtureDocument {
+                  version: u16,
+                  generation: u64,
+                  authority: String,
+              }
+
+              struct Fixture {
+                  root: PathBuf,
+                  source: PathBuf,
+                  uid: u32,
+                  gid: u32,
+              }
+
+              impl Fixture {
+                  fn new() -> Self {
+                      let nonce = SystemTime::now()
+                          .duration_since(UNIX_EPOCH)
+                          .expect("clock")
+                          .as_nanos();
+                      let root = std::env::temp_dir().join(format!(
+                          "hepta-trust-source-{}-{nonce}",
+                          std::process::id()
+                      ));
+                      fs::create_dir(&root).expect("create root");
+                      fs::set_permissions(&root, fs::Permissions::from_mode(0o750))
+                          .expect("set root mode");
+                      let root_metadata = fs::metadata(&root).expect("root metadata");
+                      let source = root.join("bundle.json");
+                      let document = FixtureDocument {
+                          version: 1,
+                          generation: 7,
+                          authority: "fixture-authority".to_owned(),
+                      };
+                      fs::write(
+                          &source,
+                          serde_json::to_vec(&document).expect("canonical fixture"),
+                      )
+                      .expect("write fixture");
+                      fs::set_permissions(&source, fs::Permissions::from_mode(0o440))
+                          .expect("set source mode");
+                      Self {
+                          root,
+                          source,
+                          uid: root_metadata.uid(),
+                          gid: root_metadata.gid(),
+                      }
+                  }
+
+                  fn policy(&self) -> CapabilityTrustBundleSourcePolicyV1 {
+                      CapabilityTrustBundleSourcePolicyV1::local_fixture(
+                          self.uid, self.gid,
+                      )
+                  }
+              }
+
+              impl Drop for Fixture {
+                  fn drop(&mut self) {
+                      let _ = fs::set_permissions(
+                          &self.source,
+                          fs::Permissions::from_mode(0o600),
+                      );
+                      let _ = fs::remove_dir_all(&self.root);
+                  }
+              }
+
+              #[test]
+              fn loads_exact_canonical_json_from_the_bound_authority_object() {
+                  let fixture = Fixture::new();
+                  let qualified = load_canonical_authority_json::<FixtureDocument>(
+                      &fixture.source,
+                      fixture.policy(),
+                  )
+                  .expect("qualified authority source");
+                  assert_eq!(qualified.document.generation, 7);
+                  assert_eq!(qualified.receipt.canonical_path, fixture.source);
+                  assert_eq!(qualified.receipt.mode, 0o440);
+                  assert_ne!(qualified.receipt.content_sha256, [0_u8; 32]);
+              }
+
+              #[test]
+              fn production_policy_rejects_same_owner_authority() {
+                  let fixture = Fixture::new();
+                  let error = load_canonical_authority_json::<FixtureDocument>(
+                      &fixture.source,
+                      CapabilityTrustBundleSourcePolicyV1::production(
+                          fixture.uid,
+                          fixture.gid,
+                          fixture.uid,
+                      ),
+                  )
+                  .expect_err("same authority must fail");
+                  assert_eq!(
+                      error,
+                      CapabilityTrustBundleSourceError::SeparateAuthorityRequired
+                  );
+              }
+
+              #[test]
+              fn rejects_noncanonical_json_and_widened_metadata() {
+                  let fixture = Fixture::new();
+                  fs::set_permissions(
+                      &fixture.source,
+                      fs::Permissions::from_mode(0o600),
+                  )
+                  .expect("make writable");
+                  let mut bytes = fs::read(&fixture.source).expect("fixture bytes");
+                  bytes.push(b'\n');
+                  fs::write(&fixture.source, bytes).expect("write noncanonical fixture");
+                  fs::set_permissions(
+                      &fixture.source,
+                      fs::Permissions::from_mode(0o440),
+                  )
+                  .expect("restore source mode");
+                  assert_eq!(
+                      load_canonical_authority_json::<FixtureDocument>(
+                          &fixture.source,
+                          fixture.policy(),
+                      )
+                      .expect_err("noncanonical JSON must fail"),
+                      CapabilityTrustBundleSourceError::NonCanonicalJson,
+                  );
+
+                  fs::set_permissions(
+                      &fixture.root,
+                      fs::Permissions::from_mode(0o770),
+                  )
+                  .expect("widen root");
+                  assert_eq!(
+                      load_canonical_authority_json::<FixtureDocument>(
+                          &fixture.source,
+                          fixture.policy(),
+                      )
+                      .expect_err("widened parent must fail"),
+                      CapabilityTrustBundleSourceError::ParentIdentityMismatch,
+                  );
+              }
+
+              #[test]
+              fn rejects_symlinked_source_path() {
+                  let fixture = Fixture::new();
+                  let alias = fixture.root.join("alias.json");
+                  symlink(&fixture.source, &alias).expect("create alias");
+                  assert_eq!(
+                      load_canonical_authority_json::<FixtureDocument>(
+                          &alias,
+                          fixture.policy(),
+                      )
+                      .expect_err("symlink must fail"),
+                      CapabilityTrustBundleSourceError::NonCanonicalPath,
+                  );
+              }
+          }
+          RS
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          lib = Path("rust/crates/hepta-codex-broker/src/lib.rs")
+          source = lib.read_text()
+          declaration = "pub mod trust_bundle_source;\n"
+          if declaration not in source:
+              marker = "mod trust_bundle;\n"
+              if marker in source:
+                  source = source.replace(marker, marker + declaration, 1)
+              else:
+                  source += "\n" + declaration
+          exports = '''pub use trust_bundle_source::{
+    CapabilityTrustBundleSourceError, CapabilityTrustBundleSourcePolicyV1,
+    CapabilityTrustBundleSourceReceiptV1, QualifiedAuthorityJsonV1,
+    load_canonical_authority_json,
+};
+'''
+          if "load_canonical_authority_json" not in source:
+              source += "\n" + exports
+          lib.write_text(source)
+
+          doc = Path("docs/codex/CODEX_BROKER_SERVICE_V1.md")
+          text = doc.read_text()
+          section = '''
+
+## Authority-owned trust-bundle source
+
+Production composition loads the externally signed capability trust bundle only
+through `load_canonical_authority_json`. The source path and parent must be
+absolute and canonical. The parent has an exact authority owner/group/mode and
+is not group/other writable. The file is non-writable, single-link, bounded,
+opened with `O_NOFOLLOW|O_CLOEXEC`, and its descriptor identity must match the
+pre-open device/inode. Exact canonical JSON bytes are content hashed before the
+existing Ed25519 generation, chaining, validity, rotation and revocation checks.
+
+`CapabilityTrustBundleSourcePolicyV1::production` rejects a bundle authority UID
+that equals the broker UID. `local_fixture` exists only for hermetic source tests
+and is not a production qualification profile. The broker never receives the
+bundle-signing private key.
+'''
+          if "## Authority-owned trust-bundle source" not in text:
+              doc.write_text(text.rstrip() + section + "\n")
+          PY
+
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+          git diff --stat
+
+      - name: Validate authority source closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-targets \
+            --all-features \
+            --locked \
+            -- -D warnings
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            -- --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            --no-deps
+
+      - name: Commit and update PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "hepta-paper blocker closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            rust/crates/hepta-codex-broker/src/trust_bundle_source.rs \
+            rust/crates/hepta-codex-broker/src/lib.rs \
+            docs/codex/CODEX_BROKER_SERVICE_V1.md
+          git commit -m "feat(rust): qualify authority-owned trust bundle sources"
+          git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

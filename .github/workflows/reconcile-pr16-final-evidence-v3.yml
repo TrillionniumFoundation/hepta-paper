@@ -1,0 +1,136 @@
+name: reconcile-pr16-final-evidence-v3
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/reconcile-pr16-final-evidence-v3.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: reconcile-pr16-final-evidence-v3
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: TrillionniumFoundation/hepta-paper
+      PR_BRANCH: codex/rust-broker-service-20260828
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+
+      - name: Bind final source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          echo "qualified_head=$head" >> "$GITHUB_ENV"
+          test -f docs/rust/PR16_FINAL_SOURCE_QUALIFICATION_TRIGGER_20260829.md
+          grep -Fq 'fn preflight_database_before_writer' rust/crates/hepta-codex-broker/src/journal/path.rs
+          grep -Fq 'foreign_empty_database_is_rejected_without_mutation' rust/crates/hepta-codex-broker/src/journal/tests.rs
+          grep -Fq 'foreign_populated_database_is_rejected_without_mutation' rust/crates/hepta-codex-broker/src/journal/tests.rs
+          grep -Fq 'sigkill_before_commit_preserves_qualified_journal' rust/crates/hepta-codex-broker/src/journal/tests.rs
+          grep -Fq 'sigkill_after_committed_header_corruption_fails_closed' rust/crates/hepta-codex-broker/src/journal/tests.rs
+          test -s rust/crates/hepta-codex-broker/src/trust_bundle_file.rs
+          grep -Fq 'load_authority_owned_trust_bundle' rust/crates/hepta-codex-broker/src/trust_bundle_file.rs
+          grep -Fq 'production_policy_requires_a_distinct_authority_uid' rust/crates/hepta-codex-broker/src/trust_bundle_file.rs
+          grep -Fq 'exact_duplicate_returns_existing_without_second_nonce' rust/crates/hepta-codex-broker/src/journal/tests.rs
+          test -f rust/crates/hepta-codex-broker/tests/service_lifecycle.rs
+          test -f rust/crates/hepta-codex-broker/tests/durable_process_journal.rs
+          remote=$(git ls-remote origin "refs/heads/$PR_BRANCH" | cut -f1)
+          test "$remote" = "$head"
+
+      - name: Require final exact-head protected success
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 150); do
+            payload=$(gh api "/repos/$REPOSITORY/actions/runs?head_sha=$qualified_head&event=pull_request&per_page=100")
+            rust=$(jq -r '[.workflow_runs[] | select(.name == "rust-foundation")] | sort_by(.created_at) | reverse | .[0] | (.status // "missing") + ":" + (.conclusion // "")' <<<"$payload")
+            node=$(jq -r '[.workflow_runs[] | select(.name == "hepta-paper-ci")] | sort_by(.created_at) | reverse | .[0] | (.status // "missing") + ":" + (.conclusion // "")' <<<"$payload")
+            echo "head=$qualified_head rust=$rust node=$node"
+            if [[ "$rust" == completed:success && "$node" == completed:success ]]; then break; fi
+            if [[ "$rust" == completed:* && "$rust" != completed:success ]]; then exit 1; fi
+            if [[ "$node" == completed:* && "$node" != completed:success ]]; then exit 1; fi
+            if [[ $attempt -eq 150 ]]; then exit 1; fi
+            sleep 10
+          done
+          test "$(git ls-remote origin "refs/heads/$PR_BRANCH" | cut -f1)" = "$qualified_head"
+
+      - name: Reconcile development and external qualification issues
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_marker='<!-- hepta-pr16-final-source-v3 -->'
+          source_body="$source_marker
+
+          Final repository-development evidence is bound to exact head \`$qualified_head\`: both protected workflows succeeded on this SHA and the branch was rechecked before issue mutation. The head includes read-only foreign-database preflight, authority-owned trust-bundle loading and real child-process \`SIGKILL\` WAL recovery tests.
+
+          This closes source-development scope only and grants no installed or external authority."
+          external_marker='<!-- hepta-pr16-final-external-v3 -->'
+          external_body="$external_marker
+
+          The final source implementation and protected checks are green at exact head \`$qualified_head\`, including real-process \`SIGKILL\` transaction recovery. This issue remains open solely for evidence that must come from its controlling environment: distinct installed principals/owners, host reboot/disk-full/remount/corruption drills, independent primitive review, live Codex credentials, or external release/submission authorities.
+
+          Repository code does not fabricate that evidence."
+
+          post_once() {
+            local issue=$1 marker=$2 body=$3
+            if ! gh api "/repos/$REPOSITORY/issues/$issue/comments?per_page=100" --paginate --jq '.[].body' | grep -Fq "$marker"; then
+              gh issue comment "$issue" --repo "$REPOSITORY" --body "$body"
+            fi
+          }
+          close_source() {
+            local issue=$1
+            post_once "$issue" "$source_marker" "$source_body"
+            if [[ $(gh issue view "$issue" --repo "$REPOSITORY" --json state --jq .state) == OPEN ]]; then
+              gh issue close "$issue" --repo "$REPOSITORY" --reason completed
+            fi
+          }
+          for issue in 4 7 8 9 11; do close_source "$issue"; done
+          for issue in 5 12 14 15 17; do post_once "$issue" "$external_marker" "$external_body"; done
+
+      - name: Publish final draft status
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/pr-body.md <<EOF
+          ## Merge status
+
+          > **DO NOT MERGE.** All repository-development blockers in this slice are source-complete and protected checks are green at exact head \`$qualified_head\`. Installed-host and external-authority qualification remains mandatory.
+
+          ## Exact-head source completion
+
+          - role-specific private Unix listener lifecycle, bounded admission and stale-socket recovery;
+          - signed Ed25519 capability bundles with generation chaining, rotation, revocation and rollback rejection;
+          - append-only SQLite journal, recovery, backup/restore and prepared-result acknowledgement;
+          - durable stopped pre-exec launch gate with process/object identity, atomic journal linkage, release and startup reconciliation;
+          - stable Codex-home identity and separate schema-authority production mode;
+          - read-only/no-follow identity and schema preflight before any existing-database writer mutation;
+          - bounded canonical authority-owned trust-bundle file loading with distinct production authority;
+          - exact duplicate admission independent of later arrival time;
+          - real child-process SIGKILL recovery for an uncommitted WAL transaction, plus fail-closed detection after a committed header mutation;
+          - protected Rust and repository workflows successful on this exact SHA.
+
+          ## Authority boundary
+
+          The branch remains credential-free and does not call providers, write campaign state, sign releases, access KMS/HSM/WORM, hold portal credentials or submit papers.
+
+          ## Open qualification evidence
+
+          Issues #5, #12, #14, #15 and #17 remain open for distinct installed principals and owners, host/storage/service-manager drills, independent low-level review, live-provider qualification and external authorities. They are not unresolved repository-development implementations.
+          EOF
+          gh pr edit 16 --repo "$REPOSITORY" --body-file /tmp/pr-body.md

@@ -20,6 +20,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Install qualified Rust toolchain
         shell: bash
@@ -211,10 +215,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: rust-broker-installed-qualification-${{ github.sha }}
+          name: rust-broker-installed-qualification-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             /tmp/installed-identity.txt
             /tmp/trust-preflight.txt
             /tmp/service-lifecycle-installed.txt
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90

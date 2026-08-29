@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 hepta-campaign-writer = { path = "../hepta-campaign-writer" }
+hepta-codex-protocol = { path = "../hepta-codex-protocol" }
 hepta-legacy-compatibility = { path = "../hepta-legacy-compatibility" }
 hepta-readonly-control = { path = "../hepta-readonly-control" }
 hepta-workspace-authority = { path = "../hepta-workspace-authority" }

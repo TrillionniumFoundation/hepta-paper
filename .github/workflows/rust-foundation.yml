@@ -42,6 +42,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Install qualified Rust toolchain
         shell: bash
@@ -109,7 +113,7 @@ jobs:
           name: rustfmt-patch
           path: /tmp/hepta-rust-validation/rustfmt.patch
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 90
           compression-level: 0
 
       - name: Fail on formatting drift
@@ -164,5 +168,5 @@ jobs:
           name: rust-validation-logs
           path: /tmp/hepta-rust-validation
           if-no-files-found: warn
-          retention-days: 1
+          retention-days: 90
           compression-level: 0

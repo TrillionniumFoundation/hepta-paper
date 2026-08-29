@@ -21,83 +21,59 @@ jobs:
       - name: Check out exact PR head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: debe436c07b06e23a2157df4567856b8ce009e29
+          ref: e16badd21c1d02334e5046bae12ed9afeb6b0def
           fetch-depth: 0
           submodules: false
 
-      - name: Bind the stopped gate by executable object identity
+      - name: Require read-only identity verification before broker DB mutation
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = debe436c07b06e23a2157df4567856b8ce009e29
+          test "$(git rev-parse HEAD)" = e16badd21c1d02334e5046bae12ed9afeb6b0def
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("rust/crates/hepta-codex-runtime/src/process/gate.rs")
+          path = Path("rust/crates/hepta-codex-broker/src/journal/path.rs")
           source = path.read_text()
+          old = '''    let (path, initialization_marker) = prepare_database_path(requested, policy)?;\n    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE\n        | OpenFlags::SQLITE_OPEN_CREATE\n        | OpenFlags::SQLITE_OPEN_NO_MUTEX\n        | OpenFlags::SQLITE_OPEN_NOFOLLOW;\n    let connection = Connection::open_with_flags(&path, flags)?;\n    connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;\n    configure_safety_pragmas(&connection)?;\n    if initialization_marker.is_some() {\n        verify_initialization_candidate(&connection)?;\n    } else {\n        verify_database_identity(&connection)?;\n    }\n    connection.execute_batch(SCHEMA_SQL)?;\n'''
+          new = '''    let (path, initialization_marker) = prepare_database_path(requested, policy)?;\n    preflight_database_before_writer(&path, initialization_marker.is_some())?;\n\n    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE\n        | OpenFlags::SQLITE_OPEN_CREATE\n        | OpenFlags::SQLITE_OPEN_NO_MUTEX\n        | OpenFlags::SQLITE_OPEN_NOFOLLOW;\n    let connection = Connection::open_with_flags(&path, flags)?;\n    connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;\n    configure_safety_pragmas(&connection)?;\n    if initialization_marker.is_some() {\n        verify_initialization_candidate(&connection)?;\n        connection.execute_batch(SCHEMA_SQL)?;\n    } else {\n        verify_database_identity(&connection)?;\n    }\n'''
+          if source.count(old) != 1:
+              raise SystemExit("expected exactly one broker open block")
+          source = source.replace(old, new, 1)
 
-          replacements = [
-              (
-                  """    let gate_observation_path = PathBuf::from(&gate_identity.canonical_path);\n    let stopped = wait_for_stopped_gate(\n        &mut child,\n        process_id,\n        &gate_observation_path,\n""",
-                  """    let stopped = wait_for_stopped_gate(\n        &mut child,\n        process_id,\n        &gate_identity,\n""",
-              ),
-              (
-                  """    let gate_path = PathBuf::from(&identity.gate_executable.canonical_path);\n    match inspect_process(identity.pid, &gate_path) {\n""",
-                  """    match inspect_process(identity.pid, &identity.gate_executable) {\n""",
-              ),
-              (
-                  """            let target_path = PathBuf::from(&identity.target_executable.canonical_path);\n            match inspect_process(identity.pid, &target_path) {\n""",
-                  """            match inspect_process(identity.pid, &identity.target_executable) {\n""",
-              ),
-              (
-                  """fn wait_for_stopped_gate(\n    child: &mut Child,\n    pid: u32,\n    gate_path: &Path,\n""",
-                  """fn wait_for_stopped_gate(\n    child: &mut Child,\n    pid: u32,\n    gate_identity: &GateExecutableIdentityV1,\n""",
-              ),
-              (
-                  """        match inspect_process(pid, gate_path) {\n            Ok(observed) if observed.stopped => return Ok(observed),\n            Ok(_) | Err(DurableGateError::ProcessAbsent(_)) if Instant::now() < deadline => {\n                thread::sleep(poll);\n            }\n            Ok(_) | Err(DurableGateError::ProcessAbsent(_)) => {\n                return Err(DurableGateError::GateStopTimeout(pid));\n            }\n            Err(error) => return Err(error),\n        }\n""",
-                  """        match inspect_process(pid, gate_identity) {\n            Ok(observed) if observed.stopped => return Ok(observed),\n            Ok(_)\n            | Err(DurableGateError::ProcessAbsent(_))\n            | Err(DurableGateError::ProcessExecutableMismatch)\n                if Instant::now() < deadline =>\n            {\n                // `Command::spawn` may return while the child still exposes the parent image\n                // through `/proc/<pid>/exe`. Only a stopped process can be accepted as the gate;\n                // a transient pre-exec mismatch is retried within the bounded stop deadline.\n                thread::sleep(poll);\n            }\n            Ok(_) | Err(DurableGateError::ProcessAbsent(_)) => {\n                return Err(DurableGateError::GateStopTimeout(pid));\n            }\n            Err(DurableGateError::ProcessExecutableMismatch) => {\n                return Err(DurableGateError::ProcessExecutableMismatch);\n            }\n            Err(error) => return Err(error),\n        }\n""",
-              ),
-              (
-                  """fn inspect_process(\n    pid: u32,\n    expected_executable: &Path,\n) -> Result<ObservedProcessIdentity, DurableGateError> {\n""",
-                  """fn inspect_process(\n    pid: u32,\n    expected_executable: &GateExecutableIdentityV1,\n) -> Result<ObservedProcessIdentity, DurableGateError> {\n""",
-              ),
-              (
-                  """    let executable = match fs::canonicalize(proc_root.join(\"exe\")) {\n        Ok(value) => value,\n        Err(error)\n            if matches!(\n                error.kind(),\n                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied\n            ) =>\n        {\n            return Err(DurableGateError::ProcessAbsent(pid));\n        }\n        Err(error) => return Err(DurableGateError::Filesystem(\"proc_exe\", error.kind())),\n    };\n    if executable != expected_executable {\n        return Err(DurableGateError::ProcessExecutableMismatch);\n    }\n""",
-                  """    let executable = match fs::metadata(proc_root.join(\"exe\")) {\n        Ok(value) => value,\n        Err(error)\n            if matches!(\n                error.kind(),\n                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied\n            ) =>\n        {\n            return Err(DurableGateError::ProcessAbsent(pid));\n        }\n        Err(error) => return Err(DurableGateError::Filesystem(\"proc_exe\", error.kind())),\n    };\n    if executable.dev() != expected_executable.device\n        || executable.ino() != expected_executable.inode\n    {\n        return Err(DurableGateError::ProcessExecutableMismatch);\n    }\n""",
-              ),
-          ]
-
-          for old, new in replacements:
-              if source.count(old) != 1:
-                  raise SystemExit(f"expected exactly one source block: {old[:80]!r}")
-              source = source.replace(old, new, 1)
-
+          addition = '''\nfn preflight_database_before_writer(\n    path: &Path,\n    initialization_marker_present: bool,\n) -> Result<(), BrokerJournalError> {\n    let metadata = fs::metadata(path)\n        .map_err(|error| BrokerJournalError::Filesystem("journal_database", error.kind()))?;\n    if metadata.len() == 0 {\n        return if initialization_marker_present {\n            Ok(())\n        } else {\n            Err(BrokerJournalError::DatabaseIdentityMismatch {\n                application_id: 0,\n                user_version: 0,\n            })\n        };\n    }\n\n    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY\n        | OpenFlags::SQLITE_OPEN_NO_MUTEX\n        | OpenFlags::SQLITE_OPEN_NOFOLLOW;\n    let connection = Connection::open_with_flags(path, flags)?;\n    connection.busy_timeout(Duration::from_millis(100))?;\n    if initialization_marker_present {\n        verify_initialization_candidate(&connection)?;\n        let application_id: i64 =\n            connection.query_row("PRAGMA application_id", [], |row| row.get(0))?;\n        if application_id == APPLICATION_ID {\n            verify_schema_version(&connection)?;\n            verify_schema_shape(&connection)?;\n        }\n    } else {\n        verify_database_identity(&connection)?;\n        verify_schema_version(&connection)?;\n        verify_schema_shape(&connection)?;\n    }\n    Ok(())\n}\n\n'''
+          marker = "fn prepare_database_path(\n"
+          if source.count(marker) != 1:
+              raise SystemExit("expected prepare_database_path marker")
+          source = source.replace(marker, addition + marker, 1)
           path.write_text(source)
+
+          tests = Path("rust/crates/hepta-codex-broker/src/journal/tests.rs")
+          source = tests.read_text()
+          marker = '''#[test]\nfn foreign_or_unstamped_sqlite_database_is_rejected() {\n'''
+          addition = '''#[test]\nfn foreign_empty_database_is_rejected_without_mutation() {\n    let fixture = TempJournal::new();\n    let file = fs::OpenOptions::new()\n        .write(true)\n        .create_new(true)\n        .open(&fixture.path)\n        .expect("create foreign empty database");\n    file.sync_all().expect("sync foreign empty database");\n    drop(file);\n    fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o600))\n        .expect("private foreign empty database");\n    let before = fs::read(&fixture.path).expect("read foreign empty database before");\n    assert!(matches!(\n        BrokerJournalStoreV1::open(\n            &fixture.path,\n            BrokerJournalPolicyV1::strict(fixture.owner_uid),\n        ),\n        Err(BrokerJournalError::DatabaseIdentityMismatch { .. }),\n    ));\n    assert_eq!(\n        fs::read(&fixture.path).expect("read foreign empty database after"),\n        before,\n    );\n    assert!(!PathBuf::from(format!("{}-wal", fixture.path.display())).exists());\n    assert!(!PathBuf::from(format!("{}-shm", fixture.path.display())).exists());\n}\n\n#[test]\nfn foreign_populated_database_is_rejected_without_mutation() {\n    let fixture = TempJournal::new();\n    let foreign = rusqlite::Connection::open(&fixture.path).expect("create foreign SQLite");\n    foreign\n        .execute_batch("CREATE TABLE foreign_state(value TEXT) STRICT; INSERT INTO foreign_state VALUES ('kept');")\n        .expect("foreign schema and content");\n    drop(foreign);\n    fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o600))\n        .expect("private foreign database");\n    let before = fs::read(&fixture.path).expect("read foreign database before");\n    assert!(matches!(\n        BrokerJournalStoreV1::open(\n            &fixture.path,\n            BrokerJournalPolicyV1::strict(fixture.owner_uid),\n        ),\n        Err(BrokerJournalError::DatabaseIdentityMismatch { .. }),\n    ));\n    assert_eq!(\n        fs::read(&fixture.path).expect("read foreign database after"),\n        before,\n    );\n    assert!(!PathBuf::from(format!("{}-wal", fixture.path.display())).exists());\n    assert!(!PathBuf::from(format!("{}-shm", fixture.path.display())).exists());\n}\n\n'''
+          if source.count(marker) != 1:
+              raise SystemExit("expected foreign DB test marker")
+          tests.write_text(source.replace(marker, addition + marker, 1))
           PY
           git diff --check
-          git diff -- rust/crates/hepta-codex-runtime/src/process/gate.rs
+          git diff --stat
 
-      - name: Validate focused durable process suite
+      - name: Validate broker database preflight
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
           rustup default 1.98.0
           cargo fmt --manifest-path rust/Cargo.toml --all -- --check
-          cargo build \
-            --manifest-path rust/Cargo.toml \
-            -p hepta-codex-runtime \
-            --bin hepta-codex-preexec-gate \
-            --locked
           cargo test \
             --manifest-path rust/Cargo.toml \
             -p hepta-codex-broker \
-            --test durable_process_journal \
+            journal::tests \
             --locked \
             -- --test-threads=1
           cargo clippy \
             --manifest-path rust/Cargo.toml \
-            -p hepta-codex-runtime \
             -p hepta-codex-broker \
             --all-targets \
             --all-features \
@@ -110,6 +86,8 @@ jobs:
           set -euo pipefail
           git config user.name "hepta-paper blocker closure"
           git config user.email "actions@users.noreply.github.com"
-          git add rust/crates/hepta-codex-runtime/src/process/gate.rs
-          git commit -m "fix(rust): bind stopped gate by executable object identity"
+          git add \
+            rust/crates/hepta-codex-broker/src/journal/path.rs \
+            rust/crates/hepta-codex-broker/src/journal/tests.rs
+          git commit -m "fix(rust): reject foreign broker databases before mutation"
           git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

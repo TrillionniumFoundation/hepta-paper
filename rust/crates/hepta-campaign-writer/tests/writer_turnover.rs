@@ -29,12 +29,13 @@ fn a_new_writer_generation_integrates_an_exact_durable_prepared_result() {
     let uid = fs::metadata(&root).expect("metadata").uid();
     let database = root.join("campaign.sqlite");
     let policy = CampaignWriterPolicyV1::strict(uid);
-    let prepared_hash = Sha256Digest::from_str(&format!("sha256:{}", "a".repeat(64)))
-        .expect("prepared hash");
-    let integrated_hash = Sha256Digest::from_str(&format!("sha256:{}", "b".repeat(64)))
-        .expect("integrated hash");
+    let prepared_hash =
+        Sha256Digest::from_str(&format!("sha256:{}", "a".repeat(64))).expect("prepared hash");
+    let integrated_hash =
+        Sha256Digest::from_str(&format!("sha256:{}", "b".repeat(64))).expect("integrated hash");
 
-    let mut first_store = CampaignWriterStoreV1::open(&database, policy).expect("store");
+    let mut first_store =
+        CampaignWriterStoreV1::open(&database, policy.clone()).expect("store");
     let first = first_store
         .acquire_writer(
             WriterLeaseV1 {
@@ -83,14 +84,7 @@ fn a_new_writer_generation_integrates_an_exact_durable_prepared_result() {
         .expect("replacement writer");
     assert!(second.generation > first.generation);
     let integrated = recovered
-        .integrate_prepared_result(
-            &second,
-            &claim,
-            &prepared_hash,
-            &integrated_hash,
-            40,
-            21,
-        )
+        .integrate_prepared_result(&second, &claim, &prepared_hash, &integrated_hash, 40, 21)
         .expect("recovered integration");
     assert_eq!(integrated.status, NodeStatusV1::Integrated);
     assert_eq!(
@@ -98,14 +92,7 @@ fn a_new_writer_generation_integrates_an_exact_durable_prepared_result() {
         Some(&integrated_hash)
     );
     let replay = recovered
-        .integrate_prepared_result(
-            &second,
-            &claim,
-            &prepared_hash,
-            &integrated_hash,
-            40,
-            22,
-        )
+        .integrate_prepared_result(&second, &claim, &prepared_hash, &integrated_hash, 40, 22)
         .expect("idempotent recovered integration");
     assert_eq!(replay, integrated);
     let campaign = recovered.load_campaign("campaign-1").expect("budget");
@@ -114,5 +101,6 @@ fn a_new_writer_generation_integrates_an_exact_durable_prepared_result() {
     assert_eq!(campaign.gpu_remaining, 0);
     recovered.validate_integrity().expect("integrity");
     recovered.checkpoint().expect("integrated checkpoint");
+    drop(recovered);
     fs::remove_dir_all(root).expect("cleanup");
 }

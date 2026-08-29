@@ -1,0 +1,104 @@
+name: reconcile-pr16-qualification-cli-v9
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/reconcile-pr16-qualification-cli-v9.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+
+      - name: Keep the installed journal preflight on public open semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > rust/crates/hepta-codex-broker/src/bin/hepta-broker-journal-preflight.rs <<'RS'
+          use std::{path::Path, process};
+
+          use hepta_codex_broker::{BrokerJournalPolicyV1, BrokerJournalStoreV1};
+
+          fn main() {
+              if let Err(error) = run() {
+                  eprintln!("hepta broker journal preflight failed: {error}");
+                  process::exit(2);
+              }
+          }
+
+          fn run() -> Result<(), String> {
+              let arguments = std::env::args().collect::<Vec<_>>();
+              if arguments.len() != 3 {
+                  return Err(
+                      "usage: hepta-broker-journal-preflight <database-path> <owner-uid>"
+                          .to_owned(),
+                  );
+              }
+              let owner_uid = arguments[2]
+                  .parse::<u32>()
+                  .map_err(|_| "owner UID is not a valid unsigned integer".to_owned())?;
+              let database_path = Path::new(&arguments[1]);
+              let _store = BrokerJournalStoreV1::open(
+                  database_path,
+                  BrokerJournalPolicyV1::strict(owner_uid),
+              )
+              .map_err(|error| error.to_string())?;
+              println!(
+                  "broker_journal_verified path={}",
+                  database_path.display(),
+              );
+              Ok(())
+          }
+          RS
+
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path(
+              "docs/rust/qualification/hepta-broker-host-qualification-v2.sh"
+          )
+          source = path.read_text()
+          source = source.replace(
+              "offset = min(4096, len(data) - 1)\ndata[offset] ^= 0x5A",
+              "data[0] ^= 0x5A",
+          )
+          path.write_text(source)
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          bash -n docs/rust/qualification/hepta-broker-host-qualification-v2.sh
+          git diff --check
+
+      - name: Run complete Rust qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked -- --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Publish verified reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --porcelain)" ]]; then exit 0; fi
+          git config user.name "hepta-paper qualification reconciler"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(qualification): narrow journal preflight CLI"
+          git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

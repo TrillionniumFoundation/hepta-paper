@@ -1,0 +1,84 @@
+name: rust-cgroup-attach-normalize
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/workflows/rust-cgroup-attach-normalize.yml'
+      - 'rust/crates/hepta-cgroup-containment/src/lib.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Replace PID attachment with the final process-set implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path('rust/crates/hepta-cgroup-containment/src/lib.rs')
+          text = path.read_text(encoding='utf-8')
+          replacement = '''    /// Attaches one process. Descendants remain members after `setsid` or double-fork.
+    pub fn attach_pid(&self, pid: u32) -> Result<(), CgroupV2Error> {
+        if pid == 0 || pid > i32::MAX as u32 {
+            return Err(CgroupV2Error::InvalidPid(pid));
+        }
+        if self.policy.authority_mode == CgroupAuthorityModeV1::LocalFixture {
+            let path = self.path.join("cgroup.procs");
+            let existing = fs::read_to_string(&path)
+                .map_err(|error| CgroupV2Error::Filesystem("fixture_attach", error.kind()))?;
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(path)
+                .map_err(|error| CgroupV2Error::Filesystem("fixture_attach", error.kind()))?;
+            let value = if existing.is_empty() {
+                pid.to_string()
+            } else {
+                format!("\\n{pid}")
+            };
+            file.write_all(value.as_bytes())
+                .map_err(|error| CgroupV2Error::Filesystem("fixture_attach", error.kind()))
+        } else {
+            write_control(&self.path.join("cgroup.procs"), &pid.to_string())
+        }
+    }
+
+'''
+          pattern = re.compile(
+              r'    /// Attaches one process\..*?\n    pub fn attach_pid\(&self, pid: u32\) -> Result<\(\), CgroupV2Error> \{.*?\n    \}\n\n',
+              re.S,
+          )
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'attach_pid replacement count: {count}')
+          text = text.replace('("cgroup.procs", "0"),', '("cgroup.procs", ""),')
+          path.write_text(text, encoding='utf-8')
+          PY
+          rm .github/workflows/rust-cgroup-attach-normalize.yml
+
+      - name: Commit final implementation and self-cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/hepta-cgroup-containment/src/lib.rs \
+            .github/workflows/rust-cgroup-attach-normalize.yml
+          git commit -m 'fix(rust): normalize cgroup process-set attachment'
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

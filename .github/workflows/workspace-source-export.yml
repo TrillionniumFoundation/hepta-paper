@@ -1,0 +1,40 @@
+name: workspace-source-export
+
+on:
+  push:
+    branches:
+      - codex/workspace-source-export-20260829
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+
+      - name: Build exact source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p /tmp/hepta-workspace-source
+          git archive \
+            --format=tar.gz \
+            --prefix=hepta-paper/ \
+            --output=/tmp/hepta-workspace-source/hepta-paper-${GITHUB_SHA}.tar.gz \
+            "$GITHUB_SHA"
+          sha256sum /tmp/hepta-workspace-source/hepta-paper-${GITHUB_SHA}.tar.gz \
+            > /tmp/hepta-workspace-source/SHA256SUMS
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-workspace-exact-source
+          path: /tmp/hepta-workspace-source
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

@@ -6,7 +6,7 @@ compile_error!("hepta-cgroup-containment requires Linux cgroup-v2 semantics");
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},

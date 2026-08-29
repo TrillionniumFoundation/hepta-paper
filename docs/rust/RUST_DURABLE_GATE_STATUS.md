@@ -3,15 +3,22 @@
 Status: source implementation complete; independent and installed-host
 qualification pending.
 
-Source implementation commit:
+Source implementation commits:
 
 ```text
-7f97c1c0a6f3fecc5763cd94412d3753a4f74ebf
+7f97c1c0a6f3fecc5763cd94412d3753a4f74ebf  durable gate and recovery implementation
+56362a1255e576b7b8450c61b12a0f2b298643c2  canonical gate observation path fix
 ```
 
-This record update intentionally creates a human-authored PR head so protected
-GitHub Actions execute normally after the source patch was published by a
-restricted `GITHUB_TOKEN` workflow.
+The second commit closes a cross-host path-alias defect exposed by GitHub-hosted
+runners: Linux `/proc/<pid>/exe` is compared with the already inspected canonical
+gate path rather than the caller's lexical policy path. Its focused 9-case
+durable process journal suite passed on the publishing runner before the commit
+was pushed.
+
+This record update creates a human-authored PR head so protected GitHub Actions
+execute normally after source commits published by a restricted `GITHUB_TOKEN`
+workflow.
 
 ## Implemented
 
@@ -25,7 +32,8 @@ restricted `GITHUB_TOKEN` workflow.
 - startup reconciliation before listener Ready;
 - ambiguity-to-new-attempt retry classification;
 - local-fixture and separate-owner production authority modes;
-- schema-v2 integrity checks and fault injection.
+- schema-v2 integrity checks and fault injection;
+- canonical observation of the launched gate object across host path aliases.
 
 ## Deterministic source evidence
 

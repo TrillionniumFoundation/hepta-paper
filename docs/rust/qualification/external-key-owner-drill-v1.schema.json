@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/external-key-owner-drill-v1.schema.json",
+  "title": "External Capability Key Owner Drill V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageId",
+    "repository",
+    "commit",
+    "tree",
+    "authorityDomainId",
+    "authorityKeyId",
+    "initialGeneration",
+    "finalGeneration",
+    "drills",
+    "privateKeyAbsentFromBroker",
+    "decision",
+    "issuedAt",
+    "signatureBase64"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "packageId": { "const": "EXT-KEY-OWNER-001" },
+    "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+    "commit": { "$ref": "#/$defs/gitHash" },
+    "tree": { "$ref": "#/$defs/gitHash" },
+    "authorityDomainId": { "$ref": "#/$defs/id" },
+    "authorityKeyId": { "$ref": "#/$defs/id" },
+    "initialGeneration": { "type": "integer", "minimum": 1 },
+    "finalGeneration": { "type": "integer", "minimum": 2 },
+    "initialBundleHash": { "$ref": "#/$defs/sha256" },
+    "finalBundleHash": { "$ref": "#/$defs/sha256" },
+    "drills": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "overlapRotation",
+        "activeKeyRevocation",
+        "signedRollbackRejection",
+        "interruptedPublication",
+        "requestSignerCompromise",
+        "bundleSignerCompromise",
+        "allActiveKeysRemoved",
+        "emergencyAdmissionStop"
+      ],
+      "properties": {
+        "overlapRotation": { "$ref": "#/$defs/drill" },
+        "activeKeyRevocation": { "$ref": "#/$defs/drill" },
+        "signedRollbackRejection": { "$ref": "#/$defs/drill" },
+        "interruptedPublication": { "$ref": "#/$defs/drill" },
+        "requestSignerCompromise": { "$ref": "#/$defs/drill" },
+        "bundleSignerCompromise": { "$ref": "#/$defs/drill" },
+        "allActiveKeysRemoved": { "$ref": "#/$defs/drill" },
+        "emergencyAdmissionStop": { "$ref": "#/$defs/drill" }
+      }
+    },
+    "privateKeyAbsentFromBroker": { "const": true },
+    "brokerAdmissionDisabledOnAmbiguity": { "const": true },
+    "decision": { "enum": ["approved", "rejected", "inconclusive"] },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "signatureBase64": { "type": "string", "minLength": 40, "maxLength": 512 }
+  },
+  "$defs": {
+    "gitHash": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$" },
+    "drill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result", "evidenceHash"],
+      "properties": {
+        "result": { "enum": ["passed", "failed", "inconclusive"] },
+        "evidenceHash": { "$ref": "#/$defs/sha256" },
+        "notesHash": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

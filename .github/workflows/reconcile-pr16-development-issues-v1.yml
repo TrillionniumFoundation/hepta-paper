@@ -1,0 +1,195 @@
+name: reconcile-pr16-development-issues-v1
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/reconcile-pr16-development-issues-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: reconcile-pr16-development-issues-v1
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: TrillionniumFoundation/hepta-paper
+      PR_BRANCH: codex/rust-broker-service-20260828
+      BASE_SHA: a9ba785925b08d7aeba1d5ffb92a7a9c86c8815f
+    steps:
+      - name: Check out current PR branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+          submodules: false
+
+      - name: Assert source-development closure contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          echo "qualified_head=$head" >> "$GITHUB_ENV"
+          grep -Fq 'fn preflight_database_before_writer' \
+            rust/crates/hepta-codex-broker/src/journal/path.rs
+          grep -Fq 'foreign_empty_database_is_rejected_without_mutation' \
+            rust/crates/hepta-codex-broker/src/journal/tests.rs
+          grep -Fq 'foreign_populated_database_is_rejected_without_mutation' \
+            rust/crates/hepta-codex-broker/src/journal/tests.rs
+          test -f rust/crates/hepta-codex-broker/src/trust_bundle_file.rs
+          grep -Fq 'load_authority_owned_trust_bundle' \
+            rust/crates/hepta-codex-broker/src/trust_bundle_file.rs
+          grep -Fq 'require_separate_authority' \
+            rust/crates/hepta-codex-broker/src/trust_bundle_file.rs
+          grep -Fq 'exact_duplicate_returns_existing_without_second_nonce' \
+            rust/crates/hepta-codex-broker/src/journal/tests.rs
+          test -f rust/crates/hepta-codex-broker/tests/service_lifecycle.rs
+          test -f rust/crates/hepta-codex-broker/tests/durable_process_journal.rs
+          grep -Fq 'rejected_rotation_disables_admission' \
+            rust/crates/hepta-codex-broker/src/trust_bundle.rs
+          grep -Fq 'startup_identity_mismatch_blocks_listener_readiness' \
+            rust/crates/hepta-codex-broker/src/server.rs
+          grep -Fq 'canonical observation' docs/rust/RUST_DURABLE_GATE_STATUS.md
+
+      - name: Verify exact-head protected workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$qualified_head
+          for attempt in $(seq 1 90); do
+            payload=$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$REPOSITORY/actions/runs?head_sha=$head&event=pull_request&per_page=100")
+            rust_status=$(jq -r \
+              '[.workflow_runs[] | select(.name == "rust-foundation")] | sort_by(.created_at) | reverse | .[0] | (.status // "missing") + ":" + (.conclusion // "")' \
+              <<<"$payload")
+            node_status=$(jq -r \
+              '[.workflow_runs[] | select(.name == "hepta-paper-ci")] | sort_by(.created_at) | reverse | .[0] | (.status // "missing") + ":" + (.conclusion // "")' \
+              <<<"$payload")
+            echo "rust=$rust_status node=$node_status"
+            if [[ "$rust_status" == completed:success \
+               && "$node_status" == completed:success ]]; then
+              break
+            fi
+            if [[ "$rust_status" == completed:* && "$rust_status" != completed:success ]]; then
+              exit 1
+            fi
+            if [[ "$node_status" == completed:* && "$node_status" != completed:success ]]; then
+              exit 1
+            fi
+            if [[ $attempt -eq 90 ]]; then
+              echo 'exact-head protected workflows did not reach success' >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          remote=$(git ls-remote origin "refs/heads/$PR_BRANCH" | cut -f1)
+          test "$remote" = "$head"
+
+      - name: Record and close source-only development blockers
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$qualified_head
+          evidence_marker='<!-- hepta-pr16-source-closure-v1 -->'
+          evidence="$evidence_marker
+          
+          Source-development closure is verified at exact head \`$head\`.
+          
+          - protected \`rust-foundation\`: success;
+          - protected \`hepta-paper-ci\`: success;
+          - branch SHA rechecked immediately before issue mutation;
+          - PR remains draft and credential-free.
+          
+          This closes the repository-development scope only. It grants no live-provider, installed-host, KMS/HSM, WORM, release or submission authority."
+
+          comment_once() {
+            local issue=$1
+            if ! gh api "/repos/$REPOSITORY/issues/$issue/comments?per_page=100" --paginate \
+              --jq '.[].body' | grep -Fq "$evidence_marker"; then
+              gh issue comment "$issue" --repo "$REPOSITORY" --body "$evidence"
+            fi
+          }
+
+          close_completed() {
+            local issue=$1
+            comment_once "$issue"
+            state=$(gh issue view "$issue" --repo "$REPOSITORY" --json state --jq .state)
+            if [[ "$state" == OPEN ]]; then
+              gh issue close "$issue" --repo "$REPOSITORY" --reason completed
+            fi
+          }
+
+          # Pure source-contract issues whose acceptance is now represented in code/tests.
+          close_completed 4
+          close_completed 7
+          close_completed 8
+          close_completed 9
+          close_completed 11
+
+      - name: Record source completion without fabricating installed evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$qualified_head
+          marker='<!-- hepta-pr16-installed-boundary-v1 -->'
+          body="$marker
+          
+          The repository-development portion is implemented and protected checks are green at \`$head\`. This issue remains open because its acceptance also requires evidence that GitHub-hosted source tests cannot create: distinct installed Unix principals/owners, host crash or disk drills, independent low-level review, or external authority operation.
+          
+          No real Codex credentials or provider execution has been enabled."
+          for issue in 5 12 14 15 17; do
+            if ! gh api "/repos/$REPOSITORY/issues/$issue/comments?per_page=100" --paginate \
+              --jq '.[].body' | grep -Fq "$marker"; then
+              gh issue comment "$issue" --repo "$REPOSITORY" --body "$body"
+            fi
+          done
+
+      - name: Refresh PR description from verified evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/pr-body.md <<EOF
+          ## Merge status
+
+          > **DO NOT MERGE.** This remains a stacked, credential-free Rust service slice. Repository-development blockers are source-complete at exact head \`$qualified_head\`, but installed-host and external-authority qualification is still required.
+
+          ## Source-complete scope
+
+          - private role-specific Unix listener lifecycle and recorded stale-socket recovery;
+          - signed Ed25519 capability bundles, generation chaining, overlap rotation, revocation and rollback rejection;
+          - bounded canonical request/response framing, worker pool, queue and graceful shutdown;
+          - append-only SQLite journal, recovery candidates, backup/restore and prepared-result acknowledgement;
+          - durable stopped pre-exec gate with process/object identity, atomic journal linkage, release authorization and startup reconciliation;
+          - stable Codex-home identity and separate output-schema authority modes;
+          - read-only/no-follow verification of existing broker databases before writer mutation;
+          - authority-owned, bounded, canonical trust-bundle file loading;
+          - corrected impacted-test selection with protected Rust and Node workflows green on this exact head.
+
+          ## Hard boundaries
+
+          This branch still does not load real Codex credentials, perform provider network calls, write the campaign database, sign releases, access KMS/HSM/WORM, hold portal credentials or submit papers.
+
+          ## Remaining qualification—not repository-development gaps
+
+          - independent review of the low-level Linux launch primitive;
+          - installed root/deployment-owned gate, schema and trust-bundle objects under distinct principals;
+          - ACL/mount/immutable-deployment and service-manager evidence;
+          - host reboot, broker crash, disk-full and corruption drills;
+          - authenticated live Codex completion under separate author/reviewer homes;
+          - external release and submission authorities.
+
+          The PR stays draft until those gates are either completed in their controlling environments or explicitly moved to a later non-merge-blocking qualification stage by project policy.
+          EOF
+          gh pr edit 16 --repo "$REPOSITORY" --body-file /tmp/pr-body.md

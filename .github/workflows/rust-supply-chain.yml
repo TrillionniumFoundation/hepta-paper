@@ -30,9 +30,6 @@ jobs:
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
-      CARGO_HOME: ${{ runner.temp }}/rust-supply-chain-cargo-home
-      EVIDENCE_ROOT: ${{ runner.temp }}/rust-supply-chain-evidence
-      TOOL_ROOT: ${{ runner.temp }}/rust-supply-chain-tools
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -43,6 +40,14 @@ jobs:
       - name: Prove exact source identity before supply-chain checks
         run: |
           set -euo pipefail
+          export CARGO_HOME="$RUNNER_TEMP/rust-supply-chain-cargo-home"
+          export EVIDENCE_ROOT="$RUNNER_TEMP/rust-supply-chain-evidence"
+          export TOOL_ROOT="$RUNNER_TEMP/rust-supply-chain-tools"
+          {
+            printf 'CARGO_HOME=%s\n' "$CARGO_HOME"
+            printf 'EVIDENCE_ROOT=%s\n' "$EVIDENCE_ROOT"
+            printf 'TOOL_ROOT=%s\n' "$TOOL_ROOT"
+          } >> "$GITHUB_ENV"
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
           mkdir -p "$EVIDENCE_ROOT" "$TOOL_ROOT/bin" "$CARGO_HOME"
           EVIDENCE_OUTPUT="$EVIDENCE_ROOT/preflight.json" \

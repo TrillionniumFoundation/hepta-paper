@@ -16,34 +16,62 @@ concurrency:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out exact PR head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: 668f250d3ec183861e81222473d103c0eed5491f
+          ref: debe436c07b06e23a2157df4567856b8ce009e29
           fetch-depth: 0
           submodules: false
 
-      - name: Apply canonical gate observation path fix
+      - name: Bind the stopped gate by executable object identity
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 668f250d3ec183861e81222473d103c0eed5491f
+          test "$(git rev-parse HEAD)" = debe436c07b06e23a2157df4567856b8ce009e29
           python3 - <<'PY'
           from pathlib import Path
+
           path = Path("rust/crates/hepta-codex-runtime/src/process/gate.rs")
           source = path.read_text()
-          marker = "    let stopped = wait_for_stopped_gate(\n"
-          old_argument = "        &policy.gate_executable,\n"
-          if source.count(marker) != 1 or source.count(old_argument) != 1:
-              raise SystemExit("expected exactly one gate observation block")
-          source = source.replace(
-              marker,
-              "    let gate_observation_path = PathBuf::from(&gate_identity.canonical_path);\n" + marker,
-              1,
-          )
-          source = source.replace(old_argument, "        &gate_observation_path,\n", 1)
+
+          replacements = [
+              (
+                  """    let gate_observation_path = PathBuf::from(&gate_identity.canonical_path);\n    let stopped = wait_for_stopped_gate(\n        &mut child,\n        process_id,\n        &gate_observation_path,\n""",
+                  """    let stopped = wait_for_stopped_gate(\n        &mut child,\n        process_id,\n        &gate_identity,\n""",
+              ),
+              (
+                  """    let gate_path = PathBuf::from(&identity.gate_executable.canonical_path);\n    match inspect_process(identity.pid, &gate_path) {\n""",
+                  """    match inspect_process(identity.pid, &identity.gate_executable) {\n""",
+              ),
+              (
+                  """            let target_path = PathBuf::from(&identity.target_executable.canonical_path);\n            match inspect_process(identity.pid, &target_path) {\n""",
+                  """            match inspect_process(identity.pid, &identity.target_executable) {\n""",
+              ),
+              (
+                  """fn wait_for_stopped_gate(\n    child: &mut Child,\n    pid: u32,\n    gate_path: &Path,\n""",
+                  """fn wait_for_stopped_gate(\n    child: &mut Child,\n    pid: u32,\n    gate_identity: &GateExecutableIdentityV1,\n""",
+              ),
+              (
+                  """        match inspect_process(pid, gate_path) {\n            Ok(observed) if observed.stopped => return Ok(observed),\n            Ok(_) | Err(DurableGateError::ProcessAbsent(_)) if Instant::now() < deadline => {\n                thread::sleep(poll);\n            }\n            Ok(_) | Err(DurableGateError::ProcessAbsent(_)) => {\n                return Err(DurableGateError::GateStopTimeout(pid));\n            }\n            Err(error) => return Err(error),\n        }\n""",
+                  """        match inspect_process(pid, gate_identity) {\n            Ok(observed) if observed.stopped => return Ok(observed),\n            Ok(_)\n            | Err(DurableGateError::ProcessAbsent(_))\n            | Err(DurableGateError::ProcessExecutableMismatch)\n                if Instant::now() < deadline =>\n            {\n                // `Command::spawn` may return while the child still exposes the parent image\n                // through `/proc/<pid>/exe`. Only a stopped process can be accepted as the gate;\n                // a transient pre-exec mismatch is retried within the bounded stop deadline.\n                thread::sleep(poll);\n            }\n            Ok(_) | Err(DurableGateError::ProcessAbsent(_)) => {\n                return Err(DurableGateError::GateStopTimeout(pid));\n            }\n            Err(DurableGateError::ProcessExecutableMismatch) => {\n                return Err(DurableGateError::ProcessExecutableMismatch);\n            }\n            Err(error) => return Err(error),\n        }\n""",
+              ),
+              (
+                  """fn inspect_process(\n    pid: u32,\n    expected_executable: &Path,\n) -> Result<ObservedProcessIdentity, DurableGateError> {\n""",
+                  """fn inspect_process(\n    pid: u32,\n    expected_executable: &GateExecutableIdentityV1,\n) -> Result<ObservedProcessIdentity, DurableGateError> {\n""",
+              ),
+              (
+                  """    let executable = match fs::canonicalize(proc_root.join(\"exe\")) {\n        Ok(value) => value,\n        Err(error)\n            if matches!(\n                error.kind(),\n                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied\n            ) =>\n        {\n            return Err(DurableGateError::ProcessAbsent(pid));\n        }\n        Err(error) => return Err(DurableGateError::Filesystem(\"proc_exe\", error.kind())),\n    };\n    if executable != expected_executable {\n        return Err(DurableGateError::ProcessExecutableMismatch);\n    }\n""",
+                  """    let executable = match fs::metadata(proc_root.join(\"exe\")) {\n        Ok(value) => value,\n        Err(error)\n            if matches!(\n                error.kind(),\n                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied\n            ) =>\n        {\n            return Err(DurableGateError::ProcessAbsent(pid));\n        }\n        Err(error) => return Err(DurableGateError::Filesystem(\"proc_exe\", error.kind())),\n    };\n    if executable.dev() != expected_executable.device\n        || executable.ino() != expected_executable.inode\n    {\n        return Err(DurableGateError::ProcessExecutableMismatch);\n    }\n""",
+              ),
+          ]
+
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f"expected exactly one source block: {old[:80]!r}")
+              source = source.replace(old, new, 1)
+
           path.write_text(source)
           PY
           git diff --check
@@ -53,7 +81,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
           rustup default 1.98.0
           cargo fmt --manifest-path rust/Cargo.toml --all -- --check
           cargo build \
@@ -67,6 +95,14 @@ jobs:
             --test durable_process_journal \
             --locked \
             -- --test-threads=1
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            -p hepta-codex-runtime \
+            -p hepta-codex-broker \
+            --all-targets \
+            --all-features \
+            --locked \
+            -- -D warnings
 
       - name: Commit and update PR branch
         shell: bash
@@ -75,5 +111,5 @@ jobs:
           git config user.name "hepta-paper blocker closure"
           git config user.email "actions@users.noreply.github.com"
           git add rust/crates/hepta-codex-runtime/src/process/gate.rs
-          git commit -m "fix(rust): observe the canonical pre-exec gate path"
+          git commit -m "fix(rust): bind stopped gate by executable object identity"
           git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

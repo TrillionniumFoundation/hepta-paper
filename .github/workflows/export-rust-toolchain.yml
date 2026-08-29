@@ -1,0 +1,46 @@
+name: export-rust-toolchain
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-gap-closure-20260830
+    paths:
+      - .github/workflows/export-rust-toolchain.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install and hydrate pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          cargo fetch --manifest-path rust/Cargo.toml --locked
+          rustc --version --verbose
+          cargo --version --verbose
+      - name: Build relocatable validation bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hepta-rust-offline"
+          cp -a "$HOME/.rustup" "$RUNNER_TEMP/hepta-rust-offline/rustup"
+          cp -a "$HOME/.cargo" "$RUNNER_TEMP/hepta-rust-offline/cargo"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/hepta-rust-offline.tar.gz" hepta-rust-offline
+          sha256sum "$RUNNER_TEMP/hepta-rust-offline.tar.gz" > "$RUNNER_TEMP/hepta-rust-offline.sha256"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-rust-offline-1.98.0
+          path: |
+            ${{ runner.temp }}/hepta-rust-offline.tar.gz
+            ${{ runner.temp }}/hepta-rust-offline.sha256
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error

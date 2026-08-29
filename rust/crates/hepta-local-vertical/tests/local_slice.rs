@@ -2,7 +2,6 @@ use std::{
     collections::BTreeSet,
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
-    str::FromStr,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -10,7 +9,6 @@ use std::{
 use hepta_campaign_writer::{
     CampaignWriterPolicyV1, CampaignWriterStoreV1, NodeStatusV1, WriterLeaseV1,
 };
-use hepta_codex_protocol::Sha256Digest;
 use hepta_legacy_compatibility::hash_legacy_record_v1;
 use hepta_readonly_control::inspect_read_only_store;
 use hepta_workspace_authority::{
@@ -72,9 +70,13 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
         "mutationHash": &workspace_result.mutation_hash,
     });
     let legacy_prepared_hash = hash_legacy_record_v1(&receipt).expect("prepared receipt hash");
-    let prepared_hash =
-        Sha256Digest::from_str(legacy_prepared_hash.as_str()).expect("typed prepared receipt hash");
-    let integrated_hash = Sha256Digest::from_str(&workspace_result.after_hash)
+    let prepared_hash = legacy_prepared_hash
+        .as_str()
+        .parse()
+        .expect("typed prepared receipt hash");
+    let integrated_hash = workspace_result
+        .after_hash
+        .parse()
         .expect("typed integrated workspace hash");
 
     let database = runtime.join("campaign.sqlite");

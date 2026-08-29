@@ -1,0 +1,18 @@
+[package]
+name = "hepta-control-plane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hepta-campaign-writer = { path = "../hepta-campaign-writer" }
+hepta-legacy-compat = { path = "../hepta-legacy-compat" }
+hepta-workspace = { path = "../hepta-workspace" }
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+hex.workspace = true

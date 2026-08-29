@@ -1,0 +1,61 @@
+name: cleanup-pr16-temporary-automation
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/cleanup-pr16-temporary-automation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/current-source-export-20260829-v2
+          fetch-depth: 0
+
+      - name: Remove temporary transport and workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf \
+            .automation/pr16-closure \
+            .automation/closure-patch
+          rm -f \
+            .automation/release-transport-probe.txt \
+            .github/workflows/export-pr16-exact-source.yml \
+            .github/workflows/export-pr16-base-source.yml \
+            .github/workflows/export-current-pr16-source-v3.yml \
+            .github/workflows/apply-pr16-blocker-closure.yml \
+            .github/workflows/apply-pr16-development-closure-v2.yml \
+            .github/workflows/apply-pr16-authority-source-closure.yml \
+            .github/workflows/apply-pr16-installed-qualification-fixtures.yml \
+            .github/workflows/apply-pr16-installed-qualification-fixtures-v2.yml \
+            .github/workflows/record-pr16-source-closure-evidence.yml \
+            .github/workflows/record-pr16-final-source-closure-evidence.yml \
+            .github/workflows/audit-pr16-zero-development-blockers.yml \
+            .github/workflows/cleanup-pr16-temporary-automation.yml
+          rmdir .automation 2>/dev/null || true
+          git diff --check
+          git status --short
+
+      - name: Commit self-cleaned transfer branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "hepta-paper automation cleanup"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'nothing to clean'
+            exit 0
+          fi
+          git commit -m "chore: remove temporary PR16 transport automation"
+          git push origin HEAD:refs/heads/codex/current-source-export-20260829-v2

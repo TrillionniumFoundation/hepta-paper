@@ -1,0 +1,73 @@
+name: rust-qualification-ingest-register
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/workflows/rust-qualification-ingest-register.yml'
+      - 'rust/crates/hepta-qualification-ingest/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  register:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Install qualified Cargo
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+
+      - name: Register the crate and locked dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path('rust/Cargo.toml')
+          lines = manifest.read_text(encoding='utf-8').splitlines()
+          member = 'crates/hepta-qualification-ingest'
+          start = next(i for i, line in enumerate(lines) if line.strip().startswith('members = ['))
+          end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == ']')
+          existing = {line.strip().strip(',').strip('"') for line in lines[start + 1:end]}
+          if member not in existing:
+              lines.insert(end, f'  "{member}",')
+          manifest.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+          crate = Path('rust/crates/hepta-qualification-ingest/Cargo.toml')
+          text = crate.read_text(encoding='utf-8')
+          if 'nix.workspace = true' not in text:
+              text = text.replace('[dependencies]\n', '[dependencies]\nnix.workspace = true\n', 1)
+              crate.write_text(text, encoding='utf-8')
+          PY
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          rm .github/workflows/rust-qualification-ingest-register.yml
+
+      - name: Commit registration and self-cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/Cargo.toml rust/Cargo.lock \
+            rust/crates/hepta-qualification-ingest/Cargo.toml \
+            rust/crates/hepta-qualification-ingest/src/lib.rs \
+            .github/workflows/rust-qualification-ingest-register.yml
+          git commit -m 'feat(rust): register signed qualification evidence ingest'
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

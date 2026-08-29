@@ -72,15 +72,16 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
         "mutationHash": &workspace_result.mutation_hash,
     });
     let legacy_prepared_hash = hash_legacy_record_v1(&receipt).expect("prepared receipt hash");
-    let prepared_hash = Sha256Digest::from_str(legacy_prepared_hash.as_str())
-        .expect("typed prepared receipt hash");
+    let prepared_hash =
+        Sha256Digest::from_str(legacy_prepared_hash.as_str()).expect("typed prepared receipt hash");
     let integrated_hash = Sha256Digest::from_str(&workspace_result.after_hash)
         .expect("typed integrated workspace hash");
 
     let database = runtime.join("campaign.sqlite");
     let uid = fs::metadata(&runtime).expect("runtime metadata").uid();
     let writer_policy = CampaignWriterPolicyV1::strict(uid);
-    let mut writer = CampaignWriterStoreV1::open(&database, writer_policy).expect("writer");
+    let mut writer =
+        CampaignWriterStoreV1::open(&database, writer_policy.clone()).expect("writer");
     let lease = writer
         .acquire_writer(
             WriterLeaseV1 {
@@ -154,7 +155,9 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
         )
         .expect("idempotent integration");
     assert_eq!(replay, integrated);
-    let campaign = writer.load_campaign("campaign-1").expect("campaign snapshot");
+    let campaign = writer
+        .load_campaign("campaign-1")
+        .expect("campaign snapshot");
     assert_eq!(campaign.budget_remaining_microusd, 925);
     assert_eq!(campaign.cpu_remaining, 4);
     assert_eq!(campaign.gpu_remaining, 0);

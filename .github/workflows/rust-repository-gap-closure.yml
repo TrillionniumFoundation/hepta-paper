@@ -1,0 +1,208 @@
+name: rust-repository-gap-closure
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/workflows/rust-repository-gap-closure.yml'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+      - 'rust/crates/hepta-cgroup-containment/**'
+      - 'rust/crates/hepta-legacy-compatibility/**'
+      - 'rust/crates/hepta-readonly-control/**'
+      - 'rust/crates/hepta-workspace-authority/**'
+      - 'rust/crates/hepta-campaign-writer/**'
+      - 'rust/crates/hepta-local-vertical/**'
+      - 'docs/rust/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rust-repository-gap-closure-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  materialize-workspace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Install qualified Rust and Node runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+          node --version
+
+      - name: Register repository-local crates and refresh lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path('rust/Cargo.toml')
+          text = manifest.read_text(encoding='utf-8')
+          members = [
+              'crates/hepta-cgroup-containment',
+              'crates/hepta-legacy-compatibility',
+              'crates/hepta-readonly-control',
+              'crates/hepta-workspace-authority',
+              'crates/hepta-campaign-writer',
+              'crates/hepta-local-vertical',
+          ]
+          lines = text.splitlines()
+          start = next(i for i, line in enumerate(lines) if line.strip().startswith('members = ['))
+          end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == ']')
+          existing = {line.strip().strip(',').strip('"') for line in lines[start + 1:end]}
+          lines[end:end] = [f'  "{member}",' for member in members if member not in existing]
+          manifest.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+
+      - name: Commit deterministic materialization when required
+        id: materialize
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- rust/Cargo.toml rust/Cargo.lock rust/crates; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/Cargo.toml rust/Cargo.lock rust/crates
+          git commit -m 'build(rust): register repository-local gap closure crates'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Stop superseded qualification run
+        if: steps.materialize.outputs.changed == 'true'
+        shell: bash
+        run: |
+          echo 'Workspace materialization committed. The exact new head will run qualification.'
+
+      - name: Prepare exact-head evidence directory
+        if: steps.materialize.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hepta-rust-gap-evidence"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git rev-parse HEAD > "$RUNNER_TEMP/hepta-rust-gap-evidence/tested-sha.txt"
+          git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/hepta-rust-gap-evidence/tested-tree.txt"
+          sha256sum rust/Cargo.lock > "$RUNNER_TEMP/hepta-rust-gap-evidence/cargo-lock.sha256"
+          rustc --version --verbose > "$RUNNER_TEMP/hepta-rust-gap-evidence/rustc.txt"
+          cargo --version --verbose > "$RUNNER_TEMP/hepta-rust-gap-evidence/cargo.txt"
+
+      - name: Validate program truth
+        if: steps.materialize.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/validate-program-truth.py \
+            2>&1 | tee "$RUNNER_TEMP/hepta-rust-gap-evidence/program-truth.log"
+
+      - name: Check formatting
+        if: steps.materialize.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check \
+            2>&1 | tee "$RUNNER_TEMP/hepta-rust-gap-evidence/rustfmt.log"
+
+      - name: Check complete Cargo graph
+        if: steps.materialize.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo check --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked \
+            2>&1 | tee "$RUNNER_TEMP/hepta-rust-gap-evidence/check.log"
+
+      - name: Run complete tests
+        if: steps.materialize.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked \
+            2>&1 | tee "$RUNNER_TEMP/hepta-rust-gap-evidence/test.log"
+
+      - name: Run Clippy with warnings denied
+        if: steps.materialize.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings \
+            2>&1 | tee "$RUNNER_TEMP/hepta-rust-gap-evidence/clippy.log"
+
+      - name: Build warning-free documentation
+        if: steps.materialize.outputs.changed != 'true'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo doc --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps \
+            2>&1 | tee "$RUNNER_TEMP/hepta-rust-gap-evidence/rustdoc.log"
+
+      - name: Emit non-authorizing exact-head evidence manifest
+        if: steps.materialize.outputs.changed != 'true'
+        shell: bash
+        env:
+          EVIDENCE_ROOT: ${{ runner.temp }}/hepta-rust-gap-evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE_ROOT'])
+          files = {}
+          for selected in sorted(root.iterdir()):
+              if selected.is_file():
+                  files[selected.name] = hashlib.sha256(selected.read_bytes()).hexdigest()
+          manifest = {
+              'schemaVersion': 1,
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'workflow': os.environ['GITHUB_WORKFLOW'],
+              'runId': os.environ['GITHUB_RUN_ID'],
+              'headSha': os.environ['GITHUB_SHA'],
+              'testedSha': (root / 'tested-sha.txt').read_text().strip(),
+              'testedTree': (root / 'tested-tree.txt').read_text().strip(),
+              'evidenceTier': 'hosted_source',
+              'productionAuthority': False,
+              'realProviderAuthority': False,
+              'files': files,
+          }
+          if manifest['headSha'] != manifest['testedSha']:
+              raise SystemExit('exact-head mismatch')
+          (root / 'manifest.json').write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          PY
+
+      - name: Upload exact-head qualification evidence
+        if: always() && steps.materialize.outputs.changed != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-repository-gap-closure-${{ github.sha }}
+          path: ${{ runner.temp }}/hepta-rust-gap-evidence
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

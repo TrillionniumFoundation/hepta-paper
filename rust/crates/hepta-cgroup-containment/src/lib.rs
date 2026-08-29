@@ -4,10 +4,12 @@
 compile_error!("hepta-cgroup-containment requires Linux cgroup-v2 semantics");
 
 use std::{
+    collections::BTreeSet,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
@@ -16,6 +18,7 @@ use thiserror::Error;
 
 const VERSION: u16 = 1;
 const MAX_CONTROL_BYTES: usize = 128;
+const MAX_FIXTURE_PROCESS_SET_BYTES: usize = 8 * 1024;
 
 /// Authority class of the selected hierarchy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,6 +144,7 @@ impl ProcessContainmentModeV1 {
 pub struct CgroupV2OperationV1 {
     path: PathBuf,
     policy: CgroupV2PolicyV1,
+    fixture_members: Option<Mutex<BTreeSet<u32>>>,
     cleaned: bool,
 }
 
@@ -161,9 +165,12 @@ impl CgroupV2OperationV1 {
             &path.join("cpu.max"),
             &format!("{} {}", policy.cpu_quota_us, policy.cpu_period_us),
         )?;
+        let fixture_members = (policy.authority_mode == CgroupAuthorityModeV1::LocalFixture)
+            .then(|| Mutex::new(BTreeSet::new()));
         Ok(Self {
             path,
             policy,
+            fixture_members,
             cleaned: false,
         })
     }
@@ -172,6 +179,23 @@ impl CgroupV2OperationV1 {
     pub fn attach_pid(&self, pid: u32) -> Result<(), CgroupV2Error> {
         if pid == 0 || pid > i32::MAX as u32 {
             return Err(CgroupV2Error::InvalidPid(pid));
+        }
+        if let Some(fixture_members) = &self.fixture_members {
+            let mut members = fixture_members
+                .lock()
+                .map_err(|_| CgroupV2Error::FixtureStatePoisoned)?;
+            let maximum = usize::try_from(self.policy.pids_max)
+                .map_err(|_| CgroupV2Error::InvalidPolicy)?;
+            if !members.contains(&pid) && members.len() >= maximum {
+                return Err(CgroupV2Error::PidLimitExceeded);
+            }
+            members.insert(pid);
+            write_fixture_process_set(&self.path.join("cgroup.procs"), &members)?;
+            write_control(
+                &self.path.join("cgroup.events"),
+                "populated 1\nfrozen 0",
+            )?;
+            return Ok(());
         }
         write_control(&self.path.join("cgroup.procs"), &pid.to_string())
     }
@@ -279,6 +303,27 @@ fn create_fixture_controls(path: &Path) -> Result<(), CgroupV2Error> {
     Ok(())
 }
 
+fn write_fixture_process_set(
+    path: &Path,
+    members: &BTreeSet<u32>,
+) -> Result<(), CgroupV2Error> {
+    let value = members
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if value.len() > MAX_FIXTURE_PROCESS_SET_BYTES {
+        return Err(CgroupV2Error::InvalidControlValue);
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|error| CgroupV2Error::Filesystem("fixture_process_set_write", error.kind()))?;
+    file.write_all(value.as_bytes())
+        .map_err(|error| CgroupV2Error::Filesystem("fixture_process_set_write", error.kind()))
+}
+
 fn write_control(path: &Path, value: &str) -> Result<(), CgroupV2Error> {
     if value.is_empty() || value.len() > MAX_CONTROL_BYTES || value.as_bytes().contains(&0) {
         return Err(CgroupV2Error::InvalidControlValue);
@@ -331,6 +376,12 @@ pub enum CgroupV2Error {
     /// PID is outside the supported range.
     #[error("cgroup-v2 pid is invalid: {0}")]
     InvalidPid(u32),
+    /// The configured fixture process limit was reached.
+    #[error("cgroup-v2 pid limit was reached")]
+    PidLimitExceeded,
+    /// Fixture membership state was poisoned by a prior panic.
+    #[error("cgroup-v2 fixture membership state is poisoned")]
+    FixtureStatePoisoned,
     /// Control value is invalid.
     #[error("cgroup-v2 control value is invalid")]
     InvalidControlValue,

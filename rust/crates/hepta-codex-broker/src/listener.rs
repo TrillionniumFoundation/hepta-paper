@@ -800,7 +800,10 @@ mod tests {
         assert!(shared.validate().is_ok());
 
         shared.socket_mode = 0o600;
-        assert_eq!(shared.validate(), Err(BrokerListenerError::AccessModeMismatch));
+        assert_eq!(
+            shared.validate(),
+            Err(BrokerListenerError::AccessModeMismatch)
+        );
 
         let mut service_only = policy(&tree, 2);
         service_only.socket_mode = 0o660;

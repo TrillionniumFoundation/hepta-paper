@@ -12,7 +12,9 @@ use std::{
 };
 
 use hepta_codex_protocol::Sha256Digest;
-use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -607,7 +609,11 @@ impl CampaignWriterStoreV1 {
              WHERE campaign_id = ?4 AND node_id = ?5 AND status = 'claimed'",
             params![
                 prepared_result_hash.as_str(),
-                if provider_action_may_have_started { 1_i64 } else { 0_i64 },
+                if provider_action_may_have_started {
+                    1_i64
+                } else {
+                    0_i64
+                },
                 to_i64(now_unix_ms)?,
                 &claim.campaign_id,
                 &claim.node_id,
@@ -722,14 +728,7 @@ impl CampaignWriterStoreV1 {
         claim: &NodeClaimV1,
         now_unix_ms: u64,
     ) -> Result<NodeSnapshotV1, CampaignWriterError> {
-        self.terminal_settlement(
-            writer,
-            claim,
-            NodeStatusV1::Ambiguous,
-            0,
-            true,
-            now_unix_ms,
-        )
+        self.terminal_settlement(writer, claim, NodeStatusV1::Ambiguous, 0, true, now_unix_ms)
     }
 
     fn terminal_settlement(
@@ -747,7 +746,10 @@ impl CampaignWriterStoreV1 {
         assert_writer(&transaction, writer, now_unix_ms)?;
         assert_claim(&transaction, claim, now_unix_ms)?;
         let current = load_node(&transaction, &claim.campaign_id, &claim.node_id)?;
-        if !matches!(current.status, NodeStatusV1::Claimed | NodeStatusV1::Prepared) {
+        if !matches!(
+            current.status,
+            NodeStatusV1::Claimed | NodeStatusV1::Prepared
+        ) {
             return Err(CampaignWriterError::InvalidNodeState);
         }
         if provider_may_have_started && !current.provider_action_may_have_started {
@@ -895,11 +897,9 @@ impl CampaignWriterStoreV1 {
         let destination_text = destination
             .to_str()
             .ok_or(CampaignWriterError::DatabasePathInvalid)?;
-        let quoted: String = self.connection.query_row(
-            "SELECT quote(?1)",
-            [destination_text],
-            |row| row.get(0),
-        )?;
+        let quoted: String =
+            self.connection
+                .query_row("SELECT quote(?1)", [destination_text], |row| row.get(0))?;
         self.connection
             .execute_batch(&format!("VACUUM INTO {quoted};"))?;
         fs::set_permissions(destination, fs::Permissions::from_mode(0o600))
@@ -1144,8 +1144,7 @@ fn load_node(
     campaign_id: &str,
     node_id: &str,
 ) -> Result<NodeSnapshotV1, CampaignWriterError> {
-    load_node_optional(connection, campaign_id, node_id)?
-        .ok_or(CampaignWriterError::NodeNotFound)
+    load_node_optional(connection, campaign_id, node_id)?.ok_or(CampaignWriterError::NodeNotFound)
 }
 
 fn decode_node(
@@ -1163,11 +1162,17 @@ fn decode_node(
         writer_generation: from_i64(row.get(1)?).map_err(to_sqlite_error)?,
         status: NodeStatusV1::from_str(&status).map_err(to_sqlite_error)?,
         prepared_result_hash: prepared
-            .map(|value| Sha256Digest::from_str(&value).map_err(|_| CampaignWriterError::CorruptValue("prepared_hash")))
+            .map(|value| {
+                Sha256Digest::from_str(&value)
+                    .map_err(|_| CampaignWriterError::CorruptValue("prepared_hash"))
+            })
             .transpose()
             .map_err(to_sqlite_error)?,
         integrated_result_hash: integrated
-            .map(|value| Sha256Digest::from_str(&value).map_err(|_| CampaignWriterError::CorruptValue("integrated_hash")))
+            .map(|value| {
+                Sha256Digest::from_str(&value)
+                    .map_err(|_| CampaignWriterError::CorruptValue("integrated_hash"))
+            })
             .transpose()
             .map_err(to_sqlite_error)?,
         provider_action_may_have_started: row.get::<_, i64>(5)? == 1,
@@ -1175,11 +1180,7 @@ fn decode_node(
 }
 
 fn to_sqlite_error(error: CampaignWriterError) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        0,
-        rusqlite::types::Type::Text,
-        Box::new(error),
-    )
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
 }
 
 fn settle_campaign_resources(
@@ -1417,9 +1418,9 @@ fn verify_schema(connection: &Connection) -> Result<(), CampaignWriterError> {
 fn validate_identifier(value: &str) -> Result<(), CampaignWriterError> {
     if value.is_empty()
         || value.len() > MAXIMUM_IDENTIFIER_BYTES
-        || !value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        })
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
     {
         return Err(CampaignWriterError::InvalidIdentifier);
     }
@@ -1429,9 +1430,9 @@ fn validate_identifier(value: &str) -> Result<(), CampaignWriterError> {
 fn valid_token(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAXIMUM_TOKEN_BYTES
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 fn to_i64(value: u64) -> Result<i64, CampaignWriterError> {
@@ -1463,10 +1464,7 @@ fn hash_path(path: &Path) -> Result<Sha256Digest, CampaignWriterError> {
     digest(hasher)
 }
 
-fn hash_file(
-    path: &Path,
-    maximum: u64,
-) -> Result<(Sha256Digest, u64), CampaignWriterError> {
+fn hash_file(path: &Path, maximum: u64) -> Result<(Sha256Digest, u64), CampaignWriterError> {
     let mut file = File::open(path)
         .map_err(|error| CampaignWriterError::Filesystem("hash_file", error.kind()))?;
     let mut hasher = Sha256::new();
@@ -1615,11 +1613,8 @@ mod tests {
         }
 
         fn store(&self) -> CampaignWriterStoreV1 {
-            CampaignWriterStoreV1::open(
-                &self.database,
-                CampaignWriterPolicyV1::strict(self.uid),
-            )
-            .expect("writer store")
+            CampaignWriterStoreV1::open(&self.database, CampaignWriterPolicyV1::strict(self.uid))
+                .expect("writer store")
         }
     }
 
@@ -1630,8 +1625,7 @@ mod tests {
     }
 
     fn digest(byte: char) -> Sha256Digest {
-        Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64)))
-            .expect("digest")
+        Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64))).expect("digest")
     }
 
     fn lease(generation: u64) -> WriterLeaseV1 {
@@ -1768,7 +1762,10 @@ mod tests {
         store
             .fail_before_provider(&writer, &first, 4)
             .expect("pre-provider failure");
-        let revision = store.load_campaign("campaign-1").expect("campaign").revision;
+        let revision = store
+            .load_campaign("campaign-1")
+            .expect("campaign")
+            .revision;
         let second = store
             .claim_node(
                 &writer,
@@ -1824,7 +1821,10 @@ mod tests {
             store
                 .fail_before_provider(&writer, &claim, 11 + index * 3)
                 .expect("refund");
-            revision = store.load_campaign("campaign-1").expect("campaign").revision;
+            revision = store
+                .load_campaign("campaign-1")
+                .expect("campaign")
+                .revision;
         }
         store.validate_integrity().expect("integrity");
         let backup = fixture.root.join("backup.sqlite");
@@ -1838,11 +1838,11 @@ mod tests {
             CampaignWriterPolicyV1::strict(fixture.uid),
         )
         .expect("restore");
-        let restored_store = CampaignWriterStoreV1::open(
-            &restored,
-            CampaignWriterPolicyV1::strict(fixture.uid),
-        )
-        .expect("restored store");
-        restored_store.validate_integrity().expect("restored integrity");
+        let restored_store =
+            CampaignWriterStoreV1::open(&restored, CampaignWriterPolicyV1::strict(fixture.uid))
+                .expect("restored store");
+        restored_store
+            .validate_integrity()
+            .expect("restored integrity");
     }
 }

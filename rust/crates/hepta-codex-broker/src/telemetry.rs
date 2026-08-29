@@ -41,19 +41,46 @@ pub struct BrokerTelemetryV1 {
 }
 
 impl BrokerTelemetryV1 {
-    pub(crate) fn accepted(&self) { self.accepted_connections.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn queued(&self) { self.queued_connections.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn busy(&self) { self.busy_connections.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn reserved(&self) { self.reserved_operations.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn existing(&self) { self.existing_operations.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn admission_rejected(&self) { self.admission_rejections.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn capability_unavailable(&self) { self.capability_unavailable.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn trust_bundle_changed(&self) { self.trust_bundle_changes.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn journal_conflict(&self) { self.journal_conflicts.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn journal_failure(&self) { self.journal_failures.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn response_write_failed(&self) { self.response_write_failures.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn worker_failed(&self) { self.worker_failures.fetch_add(1, Ordering::Relaxed); }
-    pub(crate) fn reconciled(&self, count: u64) { self.reconciled_processes.fetch_add(count, Ordering::Relaxed); }
+    pub(crate) fn accepted(&self) {
+        self.accepted_connections.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn queued(&self) {
+        self.queued_connections.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn busy(&self) {
+        self.busy_connections.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn reserved(&self) {
+        self.reserved_operations.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn existing(&self) {
+        self.existing_operations.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn admission_rejected(&self) {
+        self.admission_rejections.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn capability_unavailable(&self) {
+        self.capability_unavailable.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn trust_bundle_changed(&self) {
+        self.trust_bundle_changes.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn journal_conflict(&self) {
+        self.journal_conflicts.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn journal_failure(&self) {
+        self.journal_failures.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn response_write_failed(&self) {
+        self.response_write_failures.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn worker_failed(&self) {
+        self.worker_failures.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn reconciled(&self, count: u64) {
+        self.reconciled_processes
+            .fetch_add(count, Ordering::Relaxed);
+    }
 
     #[must_use]
     pub fn snapshot(&self) -> BrokerTelemetrySnapshotV1 {

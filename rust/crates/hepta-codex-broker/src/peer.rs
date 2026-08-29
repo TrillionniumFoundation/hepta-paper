@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, os::unix::net::UnixStream, str::FromStr};
 
-use nix::sys::socket::{GetSockOpt, sockopt::PeerCredentials};
 use hepta_codex_protocol::Sha256Digest;
+use nix::sys::socket::{GetSockOpt, sockopt::PeerCredentials};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;

@@ -17,8 +17,8 @@ use crate::{
     BrokerListenerError, BrokerListenerQualificationV1, BrokerListenerV1, BrokerMachineCodeV1,
     BrokerProcessReconciliationV1, BrokerResponseError, BrokerResponseFramePolicyV1,
     BrokerResponseV1, BrokerStateError, BrokerTelemetrySnapshotV1, BrokerTelemetryV1,
-    CapabilityTrustBundleManagerV1, FaultInjectionPointV1, PeerAuthorizationError,
-    PeerPolicyV1, ProcessReconciliationDispositionV1, ReservationOutcomeV1, TrustBundleError,
+    CapabilityTrustBundleManagerV1, FaultInjectionPointV1, PeerAuthorizationError, PeerPolicyV1,
+    ProcessReconciliationDispositionV1, ReservationOutcomeV1, TrustBundleError,
     admit_and_reserve_unix_stream, write_response_frame,
 };
 

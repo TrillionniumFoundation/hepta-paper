@@ -59,8 +59,7 @@ impl ReadOnlyStoreV1 {
         if query_only != 1 {
             return Err(ReadOnlyStoreError::QueryOnlyUnavailable);
         }
-        let raw_version: i64 =
-            connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let raw_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         let user_version = u32::try_from(raw_version)
             .map_err(|_| ReadOnlyStoreError::UnsupportedSchemaVersion(raw_version))?;
         if !(1..=25).contains(&user_version) {

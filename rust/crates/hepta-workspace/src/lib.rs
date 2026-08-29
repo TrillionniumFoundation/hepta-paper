@@ -105,8 +105,8 @@ impl WorkspaceRootV1 {
         let relative = relative.as_ref();
         validate_relative(relative)?;
         self.revalidate()?;
-        let descriptor_path = PathBuf::from(format!("/proc/self/fd/{}", self.directory.as_raw_fd()))
-            .join(relative);
+        let descriptor_path =
+            PathBuf::from(format!("/proc/self/fd/{}", self.directory.as_raw_fd())).join(relative);
         let canonical = fs::canonicalize(&descriptor_path)
             .map_err(|error| WorkspaceError::Filesystem("relative_canonical", error.kind()))?;
         if !canonical.starts_with(&self.canonical_path) {
@@ -478,7 +478,9 @@ pub fn recover_incomplete_attempts(
             }
             fs::remove_dir_all(entry.path())
                 .map_err(|error| WorkspaceError::Filesystem("attempt_recovery", error.kind()))?;
-            removed = removed.checked_add(1).ok_or(WorkspaceError::NumericOverflow)?;
+            removed = removed
+                .checked_add(1)
+                .ok_or(WorkspaceError::NumericOverflow)?;
         }
     }
     sync_directory(&parent)?;
@@ -593,7 +595,9 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), WorkspaceError> {
             sync_directory(&destination_path)?;
         } else if metadata.is_file() {
             if metadata.size() > MAXIMUM_FILE_BYTES {
-                return Err(WorkspaceError::FileByteLimitExceeded(path_text(&source_path)?));
+                return Err(WorkspaceError::FileByteLimitExceeded(path_text(
+                    &source_path,
+                )?));
             }
             let mut source_file = File::open(&source_path)
                 .map_err(|error| WorkspaceError::Filesystem("copy_source", error.kind()))?;
@@ -609,7 +613,9 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), WorkspaceError> {
                 .sync_all()
                 .map_err(|error| WorkspaceError::Filesystem("copy_sync", error.kind()))?;
         } else {
-            return Err(WorkspaceError::SpecialFileForbidden(path_text(&source_path)?));
+            return Err(WorkspaceError::SpecialFileForbidden(path_text(
+                &source_path,
+            )?));
         }
     }
     Ok(())
@@ -699,8 +705,8 @@ fn hash_path(path: &Path) -> Result<Sha256Digest, WorkspaceError> {
 }
 
 fn hash_file(path: &Path) -> Result<Sha256Digest, WorkspaceError> {
-    let mut file = File::open(path)
-        .map_err(|error| WorkspaceError::Filesystem("hash_file", error.kind()))?;
+    let mut file =
+        File::open(path).map_err(|error| WorkspaceError::Filesystem("hash_file", error.kind()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     let mut total = 0_u64;
@@ -857,8 +863,8 @@ mod tests {
         let tree = TempTree::new();
         let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source root");
         let source_before = fs::read(tree.source().join("paper.tex")).expect("source bytes");
-        let attempt = materialize_attempt(&source, &tree.attempts, "attempt-1", tree.uid)
-            .expect("attempt");
+        let attempt =
+            materialize_attempt(&source, &tree.attempts, "attempt-1", tree.uid).expect("attempt");
         fs::write(attempt.canonical_path.join("paper.tex"), b"revised").expect("edit attempt");
         assert_eq!(
             fs::read(tree.source().join("paper.tex")).expect("source after"),
@@ -876,14 +882,9 @@ mod tests {
             maximum_changed_entries: 4,
             maximum_changed_file_bytes: 1024,
         };
-        let prepared = PreparedWorkspaceResultV1::new(
-            &attempt,
-            &attempt_root,
-            &after,
-            &mutation,
-            &policy,
-        )
-        .expect("prepared result");
+        let prepared =
+            PreparedWorkspaceResultV1::new(&attempt, &attempt_root, &after, &mutation, &policy)
+                .expect("prepared result");
         assert_eq!(prepared.attempt_id, "attempt-1");
         assert_eq!(mutation.records.len(), 1);
     }

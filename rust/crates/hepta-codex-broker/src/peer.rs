@@ -1,7 +1,9 @@
-use std::{collections::BTreeSet, os::unix::net::UnixStream};
+use std::{collections::BTreeSet, os::unix::net::UnixStream, str::FromStr};
 
 use nix::sys::socket::{GetSockOpt, sockopt::PeerCredentials};
+use hepta_codex_protocol::Sha256Digest;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const MAXIMUM_ALLOWED_PRINCIPALS: usize = 64;
@@ -45,6 +47,20 @@ impl PeerPolicyV1 {
         Ok(policy)
     }
 
+    /// Canonical domain-separated hash bound into listener readiness evidence.
+    pub fn policy_hash(&self) -> Result<Sha256Digest, PeerAuthorizationError> {
+        self.validate()?;
+        let mut hasher = Sha256::new();
+        hash_field(&mut hasher, b"HeptaBrokerPeerPolicyV1");
+        hash_field(&mut hasher, &self.version.to_be_bytes());
+        for principal in &self.allowed_principals {
+            hash_field(&mut hasher, &principal.uid.to_be_bytes());
+            hash_field(&mut hasher, &principal.gid.to_be_bytes());
+        }
+        Sha256Digest::from_str(&format!("sha256:{}", hex::encode(hasher.finalize())))
+            .map_err(|_| PeerAuthorizationError::DigestConstruction)
+    }
+
     /// Authorizes a kernel-observed peer.
     pub fn authorize(&self, peer: PeerIdentityV1) -> Result<(), PeerAuthorizationError> {
         self.validate()?;
@@ -74,6 +90,11 @@ impl PeerPolicyV1 {
         }
         Ok(())
     }
+}
+
+fn hash_field(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    hasher.update(value);
 }
 
 /// Reads Linux `SO_PEERCRED` from a connected Unix stream.
@@ -107,6 +128,8 @@ pub enum PeerAuthorizationError {
     InvalidPeerPid(i32),
     #[error("peer principal is denied: uid={0:?}")]
     PrincipalDenied(PeerPrincipalV1),
+    #[error("failed to construct peer-policy digest")]
+    DigestConstruction,
 }
 
 #[cfg(test)]
@@ -125,6 +148,7 @@ mod tests {
         }])
         .expect("peer policy");
         assert!(policy.authorize(peer).is_ok());
+        assert!(policy.policy_hash().is_ok());
     }
 
     #[test]

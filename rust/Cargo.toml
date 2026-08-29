@@ -7,6 +7,10 @@ members = [
   "crates/hepta-codex-journal",
   "crates/hepta-codex-runtime",
   "crates/hepta-codex-testkit",
+  "crates/hepta-compatibility",
+  "crates/hepta-workspace",
+  "crates/hepta-readonly-store",
+  "crates/hepta-campaign-writer",
 ]
 
 [workspace.package]

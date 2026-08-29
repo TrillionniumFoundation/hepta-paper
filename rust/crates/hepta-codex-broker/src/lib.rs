@@ -24,6 +24,7 @@ mod peer;
 mod response;
 mod server;
 mod service;
+mod telemetry;
 mod trust_bundle;
 pub mod trust_bundle_file;
 mod trust_source;
@@ -60,8 +61,8 @@ pub use journal::{
     load_persisted_request, restore_broker_backup,
 };
 pub use listener::{
-    BrokerListenerError, BrokerListenerPolicyV1, BrokerListenerQualificationV1, BrokerListenerV1,
-    BrokerSocketIdentityV1,
+    BrokerListenerAccessModeV1, BrokerListenerError, BrokerListenerPolicyV1,
+    BrokerListenerQualificationV1, BrokerListenerV1, BrokerSocketIdentityV1,
 };
 pub use peer::{
     PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1, PeerPrincipalV1, inspect_peer_identity,
@@ -75,6 +76,7 @@ pub use server::{
     BrokerServerV1, SystemBrokerClockV1,
 };
 pub use service::{BrokerReservationV1, BrokerStateError, admit_and_reserve_unix_stream};
+pub use telemetry::{BrokerTelemetrySnapshotV1, BrokerTelemetryV1};
 pub use trust_bundle::{
     AcceptedCapabilityTrustCheckpointV1, CapabilityBundleAuthorityV1, CapabilityKeyRevocationV1,
     CapabilityTrustBundleManagerV1, CapabilityTrustBundleV1, CapabilityTrustKeyV1,

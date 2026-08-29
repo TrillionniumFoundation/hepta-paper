@@ -311,6 +311,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "hepta-campaign-writer"
+version = "0.1.0"
+dependencies = [
+ "hepta-codex-protocol",
+ "hex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
+name = "hepta-compatibility"
+version = "0.1.0"
+dependencies = [
+ "hepta-codex-protocol",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
+name = "hepta-readonly-store"
+version = "0.1.0"
+dependencies = [
+ "hepta-codex-protocol",
+ "hex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
+name = "hepta-workspace"
+version = "0.1.0"
+dependencies = [
+ "hepta-codex-protocol",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

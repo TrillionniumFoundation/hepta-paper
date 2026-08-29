@@ -16,7 +16,8 @@ use crate::{
     AdmissionPolicyV1, BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1,
     BrokerListenerError, BrokerListenerQualificationV1, BrokerListenerV1, BrokerMachineCodeV1,
     BrokerProcessReconciliationV1, BrokerResponseError, BrokerResponseFramePolicyV1,
-    BrokerResponseV1, BrokerStateError, CapabilityTrustBundleManagerV1, FaultInjectionPointV1,
+    BrokerResponseV1, BrokerStateError, BrokerTelemetrySnapshotV1, BrokerTelemetryV1,
+    CapabilityTrustBundleManagerV1, FaultInjectionPointV1, PeerAuthorizationError,
     PeerPolicyV1, ProcessReconciliationDispositionV1, ReservationOutcomeV1, TrustBundleError,
     admit_and_reserve_unix_stream, write_response_frame,
 };
@@ -100,6 +101,7 @@ pub struct BrokerServerRunSummaryV1 {
     pub busy_connections: u64,
     pub reconciled_processes: u64,
     pub graceful_shutdown: bool,
+    pub telemetry: BrokerTelemetrySnapshotV1,
 }
 
 /// Fake-only role service. It admits and durably reserves requests but does not launch Codex.
@@ -114,6 +116,7 @@ pub struct BrokerServerV1 {
     response_policy: BrokerResponseFramePolicyV1,
     clock: Arc<dyn BrokerClockV1>,
     shutdown: Arc<AtomicBool>,
+    telemetry: Arc<BrokerTelemetryV1>,
 }
 
 impl BrokerServerV1 {
@@ -145,13 +148,22 @@ impl BrokerServerV1 {
             response_policy,
             clock,
             shutdown,
+            telemetry: Arc::new(BrokerTelemetryV1::default()),
         })
+    }
+
+    /// Replaces the default in-memory telemetry sink with a caller-owned sink.
+    #[must_use]
+    pub fn with_telemetry(mut self, telemetry: Arc<BrokerTelemetryV1>) -> Self {
+        self.telemetry = telemetry;
+        self
     }
 
     /// Runs until shutdown or the configured deterministic connection limit.
     pub fn run(self) -> Result<BrokerServerRunSummaryV1, BrokerServerError> {
         let now = self.clock.now_unix_ms()?;
         let (_, _, startup_bundle_hash) = self.trust_manager.snapshot(now)?;
+        let startup_peer_policy_hash = self.peer_policy.policy_hash()?;
         let mut journal_probe =
             BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)?;
         journal_probe.validate_integrity()?;
@@ -160,11 +172,15 @@ impl BrokerServerV1 {
             now,
             self.server_policy.startup_process_limits,
         )?;
+        self.telemetry.reconciled(reconciled_processes);
         journal_probe.validate_integrity()?;
         drop(journal_probe);
         let qualification = self.listener.mark_ready()?;
         if startup_bundle_hash != qualification.trust_bundle_hash {
             return Err(BrokerServerError::TrustBundleBindingMismatch);
+        }
+        if startup_peer_policy_hash != qualification.peer_policy_hash {
+            return Err(BrokerServerError::PeerPolicyBindingMismatch);
         }
 
         let (sender, receiver) = sync_channel(self.server_policy.queue_capacity);
@@ -183,6 +199,7 @@ impl BrokerServerV1 {
                 self.shutdown.clone(),
                 qualification.trust_bundle_hash.clone(),
                 self.server_policy.write_timeout_ms,
+                self.telemetry.clone(),
             ));
         }
 
@@ -195,17 +212,23 @@ impl BrokerServerV1 {
             match self.listener.accept()? {
                 Some(stream) => {
                     accepted_connections = accepted_connections.saturating_add(1);
+                    self.telemetry.accepted();
                     match sender.try_send(stream) {
                         Ok(()) => {
                             queued_connections = queued_connections.saturating_add(1);
+                            self.telemetry.queued();
                         }
                         Err(TrySendError::Full(mut stream)) => {
                             busy_connections = busy_connections.saturating_add(1);
+                            self.telemetry.busy();
                             configure_write_timeout(&stream, self.server_policy.write_timeout_ms)?;
                             let response =
                                 BrokerResponseV1::busy(self.server_policy.busy_retry_after_ms);
-                            let _ =
-                                write_response_frame(&mut stream, &response, self.response_policy);
+                            if write_response_frame(&mut stream, &response, self.response_policy)
+                                .is_err()
+                            {
+                                self.telemetry.response_write_failed();
+                            }
                         }
                         Err(TrySendError::Disconnected(mut stream)) => {
                             self.shutdown.store(true, Ordering::Release);
@@ -213,8 +236,11 @@ impl BrokerServerV1 {
                                 BrokerMachineCodeV1::ServiceStopping,
                                 None,
                             );
-                            let _ =
-                                write_response_frame(&mut stream, &response, self.response_policy);
+                            if write_response_frame(&mut stream, &response, self.response_policy)
+                                .is_err()
+                            {
+                                self.telemetry.response_write_failed();
+                            }
                             break;
                         }
                     }
@@ -226,11 +252,20 @@ impl BrokerServerV1 {
         self.shutdown.store(true, Ordering::Release);
         drop(sender);
         for handle in worker_handles {
-            handle
-                .join()
-                .map_err(|_| BrokerServerError::WorkerPanicked)??;
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    self.telemetry.worker_failed();
+                    return Err(error);
+                }
+                Err(_) => {
+                    self.telemetry.worker_failed();
+                    return Err(BrokerServerError::WorkerPanicked);
+                }
+            }
         }
         self.listener.shutdown()?;
+        let telemetry = self.telemetry.snapshot();
         Ok(BrokerServerRunSummaryV1 {
             listener_qualification: qualification,
             accepted_connections,
@@ -238,6 +273,7 @@ impl BrokerServerV1 {
             busy_connections,
             reconciled_processes,
             graceful_shutdown: true,
+            telemetry,
         })
     }
 }
@@ -276,6 +312,7 @@ fn spawn_worker(
     shutdown: Arc<AtomicBool>,
     startup_bundle_hash: hepta_codex_protocol::Sha256Digest,
     write_timeout_ms: u64,
+    telemetry: Arc<BrokerTelemetryV1>,
 ) -> thread::JoinHandle<Result<(), BrokerServerError>> {
     thread::spawn(move || {
         loop {
@@ -296,8 +333,9 @@ fn spawn_worker(
             let (trust_store, _, _) = match trust_manager.snapshot(now) {
                 Ok(value) if value.2 == startup_bundle_hash => value,
                 Ok(_) => {
+                    telemetry.trust_bundle_changed();
                     shutdown.store(true, Ordering::Release);
-                    write_rejection(
+                    let _ = write_rejection(
                         &mut stream,
                         BrokerMachineCodeV1::TrustBundleChanged,
                         response_policy,
@@ -305,8 +343,9 @@ fn spawn_worker(
                     continue;
                 }
                 Err(_) => {
+                    telemetry.capability_unavailable();
                     shutdown.store(true, Ordering::Release);
-                    write_rejection(
+                    let _ = write_rejection(
                         &mut stream,
                         BrokerMachineCodeV1::CapabilityUnavailable,
                         response_policy,
@@ -329,26 +368,38 @@ fn spawn_worker(
                         ReservationOutcomeV1::Existing(journal) => (false, journal.current_state),
                     };
                     let response = if kind {
+                        telemetry.reserved();
                         BrokerResponseV1::reserved(
                             reservation.operation_id,
                             reservation.request_hash,
                             journal_state,
                         )
                     } else {
+                        telemetry.existing();
                         BrokerResponseV1::existing(
                             reservation.operation_id,
                             reservation.request_hash,
                             journal_state,
                         )
                     };
-                    let _ = write_response_frame(&mut stream, &response, response_policy);
+                    if write_response_frame(&mut stream, &response, response_policy).is_err() {
+                        telemetry.response_write_failed();
+                    }
                 }
                 Err(error) => {
                     let (code, fatal) = classify_state_error(&error);
+                    match code {
+                        BrokerMachineCodeV1::AdmissionRejected => telemetry.admission_rejected(),
+                        BrokerMachineCodeV1::JournalConflict => telemetry.journal_conflict(),
+                        BrokerMachineCodeV1::JournalUnavailable => telemetry.journal_failure(),
+                        _ => {}
+                    }
                     if fatal {
                         shutdown.store(true, Ordering::Release);
                     }
-                    write_rejection(&mut stream, code, response_policy);
+                    if !write_rejection(&mut stream, code, response_policy) {
+                        telemetry.response_write_failed();
+                    }
                 }
             }
         }
@@ -383,9 +434,9 @@ fn write_rejection(
     stream: &mut std::os::unix::net::UnixStream,
     code: BrokerMachineCodeV1,
     policy: BrokerResponseFramePolicyV1,
-) {
+) -> bool {
     let response = BrokerResponseV1::rejected(code, None);
-    let _ = write_response_frame(stream, &response, policy);
+    write_response_frame(stream, &response, policy).is_ok()
 }
 
 #[derive(Debug, Error)]
@@ -396,6 +447,8 @@ pub enum BrokerServerError {
     ClockUnavailable,
     #[error("broker listener trust-bundle binding changed")]
     TrustBundleBindingMismatch,
+    #[error("broker listener peer-policy binding changed")]
+    PeerPolicyBindingMismatch,
     #[error("startup process identity mismatch requires manual recovery: {0}")]
     StartupProcessIdentityMismatch(String),
     #[error("broker numeric conversion overflowed")]
@@ -410,6 +463,8 @@ pub enum BrokerServerError {
     Listener(#[from] BrokerListenerError),
     #[error(transparent)]
     TrustBundle(#[from] TrustBundleError),
+    #[error(transparent)]
+    Peer(#[from] PeerAuthorizationError),
     #[error(transparent)]
     Journal(#[from] BrokerJournalError),
     #[error(transparent)]

@@ -49,7 +49,7 @@ pub enum BrokerResponseKindV1 {
     Acknowledged,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BrokerMachineCodeV1 {
     AdmissionRejected,
@@ -63,6 +63,39 @@ pub enum BrokerMachineCodeV1 {
     StateConflict,
     PreparedResultMismatch,
     InternalFailure,
+}
+
+impl BrokerMachineCodeV1 {
+    pub const ALL: [Self; 11] = [
+        Self::AdmissionRejected,
+        Self::CapabilityUnavailable,
+        Self::TrustBundleChanged,
+        Self::JournalUnavailable,
+        Self::JournalConflict,
+        Self::QueueFull,
+        Self::ServiceStopping,
+        Self::OperationNotFound,
+        Self::StateConflict,
+        Self::PreparedResultMismatch,
+        Self::InternalFailure,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AdmissionRejected => "admission_rejected",
+            Self::CapabilityUnavailable => "capability_unavailable",
+            Self::TrustBundleChanged => "trust_bundle_changed",
+            Self::JournalUnavailable => "journal_unavailable",
+            Self::JournalConflict => "journal_conflict",
+            Self::QueueFull => "queue_full",
+            Self::ServiceStopping => "service_stopping",
+            Self::OperationNotFound => "operation_not_found",
+            Self::StateConflict => "state_conflict",
+            Self::PreparedResultMismatch => "prepared_result_mismatch",
+            Self::InternalFailure => "internal_failure",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -393,6 +426,19 @@ mod tests {
     fn digest(byte: char) -> Sha256Digest {
         Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64)))
             .expect("test digest")
+    }
+
+    #[test]
+    fn machine_code_registry_is_stable_and_unique() {
+        let mut values = BrokerMachineCodeV1::ALL
+            .into_iter()
+            .map(BrokerMachineCodeV1::as_str)
+            .collect::<Vec<_>>();
+        let original = values.len();
+        values.sort_unstable();
+        values.dedup();
+        assert_eq!(values.len(), original);
+        assert_eq!(BrokerMachineCodeV1::QueueFull.as_str(), "queue_full");
     }
 
     #[test]

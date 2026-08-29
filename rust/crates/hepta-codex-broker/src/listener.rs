@@ -31,6 +31,19 @@ enum ListenerPhaseV1 {
     Stopped,
 }
 
+/// Filesystem accessibility model for one role-specific Unix listener.
+///
+/// `ServiceOnly` is appropriate when the connecting client shares the service
+/// principal. `SharedRoleGroup` grants traversal/connect permission only to the
+/// configured service group; kernel `SO_PEERCRED` and the signed capability are
+/// still required and remain authoritative.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerListenerAccessModeV1 {
+    ServiceOnly,
+    SharedRoleGroup,
+}
+
 /// Stable object identity for one pathname Unix listener.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -55,12 +68,14 @@ pub struct BrokerListenerPolicyV1 {
     pub service_uid: u32,
     pub service_gid: u32,
     pub socket_mode: u32,
+    pub access_mode: BrokerListenerAccessModeV1,
     pub instance_generation: u64,
     pub backlog: i32,
     pub role: AgentRole,
     pub runtime_identity_hash: Sha256Digest,
     pub trust_bundle_hash: Sha256Digest,
     pub journal_path_hash: Sha256Digest,
+    pub peer_policy_hash: Sha256Digest,
 }
 
 impl BrokerListenerPolicyV1 {
@@ -73,13 +88,24 @@ impl BrokerListenerPolicyV1 {
             || self.socket_path.file_name().is_none()
             || self.socket_path.as_os_str().as_bytes().len() > HARD_MAXIMUM_SOCKET_PATH_BYTES
             || self.parent_mode & 0o7000 != 0
-            || self.parent_mode & 0o022 != 0
-            || self.parent_mode & 0o500 != 0o500
+            || self.parent_mode & 0o007 != 0
             || self.socket_mode & 0o7000 != 0
             || self.socket_mode & 0o007 != 0
-            || self.socket_mode & 0o600 != 0o600
         {
             return Err(BrokerListenerError::InvalidPolicy);
+        }
+        let access_is_valid = match self.access_mode {
+            BrokerListenerAccessModeV1::ServiceOnly => {
+                self.parent_mode == 0o700 && self.socket_mode == 0o600
+            }
+            BrokerListenerAccessModeV1::SharedRoleGroup => {
+                self.parent_owner_gid == Some(self.service_gid)
+                    && self.parent_mode == 0o710
+                    && self.socket_mode == 0o660
+            }
+        };
+        if !access_is_valid {
+            return Err(BrokerListenerError::AccessModeMismatch);
         }
         Ok(())
     }
@@ -98,10 +124,12 @@ struct ListenerMarkerV1 {
     generation: u64,
     phase: ListenerPhaseV1,
     role: AgentRole,
+    access_mode: BrokerListenerAccessModeV1,
     socket_path_hash: Sha256Digest,
     runtime_identity_hash: Sha256Digest,
     trust_bundle_hash: Sha256Digest,
     journal_path_hash: Sha256Digest,
+    peer_policy_hash: Sha256Digest,
     socket_identity: Option<BrokerSocketIdentityV1>,
     qualification_hash: Option<Sha256Digest>,
 }
@@ -111,10 +139,12 @@ struct ListenerMarkerV1 {
 pub struct BrokerListenerQualificationV1 {
     pub generation: u64,
     pub role: AgentRole,
+    pub access_mode: BrokerListenerAccessModeV1,
     pub socket_identity: BrokerSocketIdentityV1,
     pub runtime_identity_hash: Sha256Digest,
     pub trust_bundle_hash: Sha256Digest,
     pub journal_path_hash: Sha256Digest,
+    pub peer_policy_hash: Sha256Digest,
     pub qualification_hash: Sha256Digest,
 }
 
@@ -194,10 +224,12 @@ impl BrokerListenerV1 {
         Ok(BrokerListenerQualificationV1 {
             generation: self.policy.instance_generation,
             role: self.policy.role,
+            access_mode: self.policy.access_mode,
             socket_identity: observed,
             runtime_identity_hash: self.policy.runtime_identity_hash.clone(),
             trust_bundle_hash: self.policy.trust_bundle_hash.clone(),
             journal_path_hash: self.policy.journal_path_hash.clone(),
+            peer_policy_hash: self.policy.peer_policy_hash.clone(),
             qualification_hash,
         })
     }
@@ -282,10 +314,12 @@ fn marker_for(
         generation: policy.instance_generation,
         phase,
         role: policy.role,
+        access_mode: policy.access_mode,
         socket_path_hash: hash_path(&policy.socket_path).expect("validated socket path hash"),
         runtime_identity_hash: policy.runtime_identity_hash.clone(),
         trust_bundle_hash: policy.trust_bundle_hash.clone(),
         journal_path_hash: policy.journal_path_hash.clone(),
+        peer_policy_hash: policy.peer_policy_hash.clone(),
         socket_identity,
         qualification_hash,
     }
@@ -488,10 +522,12 @@ fn validate_marker(
 ) -> Result<(), BrokerListenerError> {
     if marker.version != 1
         || marker.role != policy.role
+        || marker.access_mode != policy.access_mode
         || marker.socket_path_hash != hash_path(&policy.socket_path)?
         || marker.runtime_identity_hash != policy.runtime_identity_hash
         || marker.trust_bundle_hash != policy.trust_bundle_hash
         || marker.journal_path_hash != policy.journal_path_hash
+        || marker.peer_policy_hash != policy.peer_policy_hash
     {
         return Err(BrokerListenerError::MarkerBindingMismatch);
     }
@@ -563,6 +599,13 @@ fn hash_qualification(
     update_length_prefixed(&mut hasher, b"HeptaBrokerListenerQualificationV1");
     update_length_prefixed(&mut hasher, &policy.instance_generation.to_be_bytes());
     update_length_prefixed(&mut hasher, role_name(policy.role).as_bytes());
+    update_length_prefixed(
+        &mut hasher,
+        match policy.access_mode {
+            BrokerListenerAccessModeV1::ServiceOnly => b"service_only",
+            BrokerListenerAccessModeV1::SharedRoleGroup => b"shared_role_group",
+        },
+    );
     update_length_prefixed(&mut hasher, socket.path_hash.as_str().as_bytes());
     update_length_prefixed(&mut hasher, &socket.device.to_be_bytes());
     update_length_prefixed(&mut hasher, &socket.inode.to_be_bytes());
@@ -575,6 +618,7 @@ fn hash_qualification(
     );
     update_length_prefixed(&mut hasher, policy.trust_bundle_hash.as_str().as_bytes());
     update_length_prefixed(&mut hasher, policy.journal_path_hash.as_str().as_bytes());
+    update_length_prefixed(&mut hasher, policy.peer_policy_hash.as_str().as_bytes());
     digest(hasher)
 }
 
@@ -608,6 +652,8 @@ fn role_name(role: AgentRole) -> &'static str {
 pub enum BrokerListenerError {
     #[error("broker listener policy is invalid")]
     InvalidPolicy,
+    #[error("listener access mode does not match parent/socket owner and mode policy")]
+    AccessModeMismatch,
     #[error("listener parent directory is noncanonical")]
     ParentNonCanonical,
     #[error("listener parent directory is invalid")]
@@ -716,12 +762,14 @@ mod tests {
             service_uid: metadata.uid(),
             service_gid: metadata.gid(),
             socket_mode: 0o600,
+            access_mode: BrokerListenerAccessModeV1::ServiceOnly,
             instance_generation: generation,
             backlog: 8,
             role: AgentRole::Author,
             runtime_identity_hash: digest('1'),
             trust_bundle_hash: digest('2'),
             journal_path_hash: digest('3'),
+            peer_policy_hash: digest('4'),
         }
     }
 
@@ -737,6 +785,29 @@ mod tests {
         listener.shutdown().expect("clean shutdown");
         assert!(!policy.socket_path.exists());
         assert!(marker.exists());
+    }
+
+    #[test]
+    fn access_modes_are_exact_and_fail_closed() {
+        let tree = TempTree::new();
+        let mut shared = policy(&tree, 1);
+        shared.access_mode = BrokerListenerAccessModeV1::SharedRoleGroup;
+        shared.parent_owner_gid = Some(shared.service_gid);
+        shared.parent_mode = 0o710;
+        shared.socket_mode = 0o660;
+        fs::set_permissions(&tree.0, fs::Permissions::from_mode(0o710))
+            .expect("shared parent mode");
+        assert!(shared.validate().is_ok());
+
+        shared.socket_mode = 0o600;
+        assert_eq!(shared.validate(), Err(BrokerListenerError::AccessModeMismatch));
+
+        let mut service_only = policy(&tree, 2);
+        service_only.socket_mode = 0o660;
+        assert_eq!(
+            service_only.validate(),
+            Err(BrokerListenerError::AccessModeMismatch)
+        );
     }
 
     #[test]

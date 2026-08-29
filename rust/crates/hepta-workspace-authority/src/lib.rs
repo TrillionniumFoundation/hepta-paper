@@ -217,7 +217,7 @@ pub fn compare_inventories_v1(
                     .checked_add(entry.size)
                     .ok_or(WorkspaceError::NumericOverflow)?;
             }
-            Some(previous) if *previous != entry => {
+            Some(previous) if *previous != *entry => {
                 changed.push(path.clone());
                 changed_bytes = changed_bytes
                     .checked_add(entry.size)

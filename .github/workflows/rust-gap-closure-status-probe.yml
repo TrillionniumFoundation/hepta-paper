@@ -1,0 +1,116 @@
+name: rust-gap-closure-status-probe
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-v2-20260830
+    paths:
+      - rust/**
+      - docs/rust/tools/normalize-gap-closure-source.py
+      - docs/rust/tools/normalize-gap-closure-source-v2.py
+      - .github/workflows/rust-gap-closure-status-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: '1'
+
+concurrency:
+  group: rust-gap-closure-status-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+
+      - name: Run matrix and publish a separate status branch
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/hepta-probe
+          status=success
+          run_step() {
+            name="$1"
+            shift
+            if "$@" > "/tmp/hepta-probe/${name}.log" 2>&1; then
+              echo "$name=success" >> /tmp/hepta-probe/status.txt
+            else
+              code=$?
+              echo "$name=failure:$code" >> /tmp/hepta-probe/status.txt
+              status=failure
+            fi
+          }
+          run_step normalize_v1 python3 docs/rust/tools/normalize-gap-closure-source.py
+          [ "$status" = success ] && run_step normalize_v2 python3 docs/rust/tools/normalize-gap-closure-source-v2.py
+          [ "$status" = success ] && run_step rustfmt cargo fmt --manifest-path rust/Cargo.toml --all
+          [ "$status" = success ] && run_step lock cargo generate-lockfile --manifest-path rust/Cargo.toml
+          [ "$status" = success ] && run_step check cargo check --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked
+          [ "$status" = success ] && run_step test cargo test --manifest-path rust/Cargo.toml --workspace --all-features --locked -- --test-threads=1
+          [ "$status" = success ] && run_step clippy cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+          [ "$status" = success ] && run_step rustdoc env RUSTDOCFLAGS=-D\ warnings cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps
+          [ "$status" = success ] && run_step legacy_build cargo build --manifest-path rust/Cargo.toml -p hepta-legacy-compat --bin hepta-legacy-json-v1 --locked
+          [ "$status" = success ] && run_step legacy_diff env HEPTA_LEGACY_ORACLE="$PWD/rust/target/debug/hepta-legacy-json-v1" node rust/compat/check-node-rust-parity.mjs
+          [ "$status" = success ] && run_step program_truth python3 docs/rust/tools/validate-program-truth.py
+
+          source_sha=$(git rev-parse HEAD)
+          tested_tree=$(git write-tree)
+          branch="codex/status-rust-gap-closure-v2-${status}"
+          mkdir -p docs/rust/evidence
+          python3 - "$status" "$source_sha" "$tested_tree" <<'PY'
+          import json
+          import pathlib
+          import sys
+          record = {
+              "schemaVersion": 1,
+              "status": sys.argv[1],
+              "sourceSha": sys.argv[2],
+              "testedTree": sys.argv[3],
+              "workflowRunId": __import__("os").environ["GITHUB_RUN_ID"],
+              "workflowRunAttempt": __import__("os").environ["GITHUB_RUN_ATTEMPT"],
+              "authority": "diagnostic_source_only",
+          }
+          pathlib.Path("docs/rust/evidence/status-probe.json").write_text(
+              json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          {
+            echo '# Status probe diagnostics'
+            echo
+            echo "status: $status"
+            echo
+            echo '```text'
+            cat /tmp/hepta-probe/status.txt
+            echo '```'
+            if [ "$status" = failure ]; then
+              for file in /tmp/hepta-probe/*.log; do
+                echo
+                echo "## $(basename "$file")"
+                echo '```text'
+                tail -n 250 "$file"
+                echo '```'
+              done
+            fi
+          } > docs/rust/evidence/status-probe.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/Cargo.toml rust/Cargo.lock rust/crates rust/compat \
+            docs/rust/evidence/status-probe.json docs/rust/evidence/status-probe.md
+          git commit -m "ci(rust): publish gap-closure ${status} status probe"
+          git push --force origin "HEAD:${branch}"
+          test "$status" = success

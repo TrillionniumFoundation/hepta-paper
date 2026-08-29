@@ -34,7 +34,7 @@ fn a_new_writer_generation_integrates_an_exact_durable_prepared_result() {
     let integrated_hash =
         Sha256Digest::from_str(&format!("sha256:{}", "b".repeat(64))).expect("integrated hash");
 
-    let mut first_store = CampaignWriterStoreV1::open(&database, policy.clone()).expect("store");
+    let mut first_store = CampaignWriterStoreV1::open(&database, policy).expect("store");
     let first = first_store
         .acquire_writer(
             WriterLeaseV1 {

@@ -82,8 +82,7 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
     let database = runtime.join("campaign.sqlite");
     let uid = fs::metadata(&runtime).expect("runtime metadata").uid();
     let writer_policy = CampaignWriterPolicyV1::strict(uid);
-    let mut writer =
-        CampaignWriterStoreV1::open(&database, writer_policy.clone()).expect("writer");
+    let mut writer = CampaignWriterStoreV1::open(&database, writer_policy.clone()).expect("writer");
     let lease = writer
         .acquire_writer(
             WriterLeaseV1 {

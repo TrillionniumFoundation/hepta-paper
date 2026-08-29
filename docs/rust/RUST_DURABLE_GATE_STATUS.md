@@ -1,81 +1,61 @@
-# Rust durable pre-exec gate status
+# Rust durable pre-exec gate and development-blocker status
 
-Status: source implementation complete; independent and installed-host
-qualification pending.
+Status: source implementation complete; protected exact-head qualification is
+required for every published head. Independent installed-host qualification
+remains a separate authority boundary.
 
-Source implementation commits:
+## Implemented source boundaries
 
-```text
-7f97c1c0a6f3fecc5763cd94412d3753a4f74ebf  durable gate and recovery implementation
-56362a1255e576b7b8450c61b12a0f2b298643c2  canonical gate observation path fix
-352ec22848b9518a14cb405ed3a5bb8348872205  executable object identity and pre-exec race fix
-```
-
-The latest commit closes the remaining GitHub-hosted-runner race. After
-`Command::spawn` returns, Linux may briefly expose the parent's executable image
-through `/proc/<pid>/exe` before the child execs the gate. The implementation now:
-
-- accepts only a stopped process whose executable device/inode match the exact
-  pre-inspected gate object;
-- treats a pre-stop executable mismatch as transient only inside the bounded
-  stop deadline;
-- keeps a persistent mismatch fail-closed;
-- uses the same executable-object identity for startup reconciliation of both
-  the blocked gate and the released target.
-
-Its focused durable process journal suite, including all transaction fault
-loops, passed 9/9 on the publishing GitHub-hosted runner before the commit was
-pushed.
-
-This record update creates a human-authored PR head so protected GitHub Actions
-execute normally after source commits published by a restricted `GITHUB_TOKEN`
-workflow.
-
-## Implemented
-
-- stopped Rust gate in a fresh Linux session/process group;
-- exact gate, target, envelope, process-start and boot identity;
-- atomic SQLite process linkage plus `process_spawned` projection;
+- stopped pre-exec gate in a fresh Linux session and process group;
+- gate, target, envelope, process-start and boot identity binding;
+- executable-object verification by device and inode rather than path spelling;
+- atomic SQLite process linkage before target release;
 - separate durable release authorization;
-- exact target-object execution through an opened file descriptor;
+- exact target-object execution through an opened descriptor;
 - inherited non-stdio descriptor closure;
-- bounded termination and process-group cleanup;
-- startup reconciliation before listener Ready;
-- ambiguity-to-new-attempt retry classification;
-- local-fixture and separate-owner production authority modes;
-- schema-v2 integrity checks and fault injection;
-- executable-object observation resilient to lexical host path aliases and the
-  bounded fork/exec transition window.
+- bounded termination, process-group cleanup and startup reconciliation;
+- ambiguous provider outcomes force a new campaign attempt;
+- stable `CODEX_HOME` directory-object identity with exact independent config and
+  credential-material contracts;
+- separate schema-authority production mode;
+- signed Ed25519 capability bundles with generation chaining, rotation,
+  revocation and rollback rejection;
+- private role-specific listener lifecycle and recorded stale-socket recovery;
+- existing broker databases undergo read-only, no-follow identity/schema
+  preflight before any writer connection, persistent pragma or DDL;
+- trust-bundle source bytes come from a bounded, canonical, single-link,
+  authority-owned read-only file, with production authority distinct from the
+  broker UID and descriptor/path object revalidation after reading.
 
-## Deterministic source evidence
+## Qualification model
 
-Before publication, the fixed Rust 1.98.0 locked/offline suite completed:
+The Rust workflow is authoritative for the exact pull-request head and must pass:
 
 ```text
-cargo metadata --locked --offline
+cargo metadata --locked
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings
-cargo test --workspace --all-features --locked --offline -- --test-threads=1
-RUSTDOCFLAGS=-D warnings cargo doc --workspace --all-features --locked --offline --no-deps
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+RUSTDOCFLAGS=-D warnings cargo doc --workspace --all-features --locked --no-deps
 ```
 
-The source suite covers pre-release non-execution, commit/release transaction
-faults, replacement resistance, blocked/released/absent/orphaned recovery,
-identity mismatch, FD leakage and new-attempt recovery disposition. Node impacted
-selection and all four selected-test shards also passed before publication.
+The repository workflow must independently pass static/security gates, all
+impacted-test shards and migration differentials on the same head. This update
+is intentionally authored outside the restricted publishing workflow so GitHub
+runs those protected checks for the source commit immediately preceding it.
 
-Remote protected-check run IDs and conclusions remain authoritative and are
-recorded on the pull request after completion; local evidence does not replace
-those checks.
+## Boundaries not represented as source-development completion
 
-## Remaining qualification gates
+The following require evidence from separately controlled infrastructure and are
+not manufactured by repository code or GitHub permissions:
 
-- independent review of the low-level Linux process primitive;
-- root/deployment-controlled gate and schema owners distinct from broker UID;
-- ACL, mount, immutable deployment and service-manager evidence;
-- host restart and broker-crash drill against the installed service;
-- authenticated Codex provider completion under separate author/reviewer homes;
-- external release/submission authorities where applicable.
+- independent review of the low-level Linux primitive;
+- root/deployment-owned installed gate and schema objects distinct from broker
+  and Codex service UIDs;
+- installed ACL, mount, immutable-deployment and service-manager evidence;
+- host reboot, broker crash, disk-full and corruption drills on the target host;
+- authenticated live Codex completion under separate author/reviewer homes;
+- KMS/HSM, WORM, release, portal and submission authorities.
 
-Until those records exist, the implementation remains unavailable to real
-provider composition even when all source checks are green.
+Until those records exist, real provider credentials and production composition
+remain disabled even when all source-development checks are green.

@@ -1,0 +1,62 @@
+name: local-node-deps-export-v3
+
+on:
+  push:
+    branches:
+      - codex/local-source-export-20260829
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-node-deps-export-v3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXACT_SOURCE_SHA: 12b04a17e3657d07d9dadddbb905d38a6ef96f06
+    steps:
+      - name: Check out PR exact head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.EXACT_SOURCE_SHA }}
+          fetch-depth: 1
+
+      - name: Verify exact source
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$EXACT_SOURCE_SHA"
+
+      - name: Install exact qualified Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+
+      - name: Materialize locked dependency tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p /tmp/hepta-node-deps
+          tar --zstd -cf /tmp/hepta-node-deps/node_modules.tar.zst node_modules
+          sha256sum /tmp/hepta-node-deps/node_modules.tar.zst > /tmp/hepta-node-deps/SHA256SUMS
+          printf 'source_sha=%s\nworkflow_trigger_sha=%s\nnode=%s\nnpm=%s\n' \
+            "$(git rev-parse HEAD)" \
+            "$GITHUB_SHA" \
+            "$(node --version)" \
+            "$(npm --version)" \
+            > /tmp/hepta-node-deps/MANIFEST.txt
+
+      - name: Upload dependency tree
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-node-deps-12b04a17-v3
+          path: /tmp/hepta-node-deps
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

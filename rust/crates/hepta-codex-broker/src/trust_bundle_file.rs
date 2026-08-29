@@ -382,18 +382,13 @@ mod tests {
 
     #[test]
     fn canonical_authority_owned_bundle_is_loaded_with_exact_identity() {
-        let fixture = TempBundle::new(
-            br#"{"generation":1,"issuer":"qualification","version":1}"#,
-        );
+        let fixture = TempBundle::new(br#"{"generation":1,"issuer":"qualification","version":1}"#);
         let loaded = load_authority_owned_trust_bundle(&fixture.path, fixture.policy())
             .expect("canonical trust bundle");
         let decoded = loaded
             .decode_canonical_json()
             .expect("decode canonical trust bundle");
-        assert_eq!(
-            decoded.get("generation").and_then(Value::as_u64),
-            Some(1)
-        );
+        assert_eq!(decoded.get("generation").and_then(Value::as_u64), Some(1));
         assert_eq!(loaded.identity.canonical_path, fixture.path);
         assert_eq!(loaded.identity.mode, 0o440);
         assert_eq!(loaded.identity.link_count, 1);
@@ -421,11 +416,7 @@ mod tests {
         assert_eq!(
             load_authority_owned_trust_bundle(
                 &fixture.path,
-                TrustBundleFilePolicyV1::production(
-                    fixture.uid,
-                    Some(fixture.gid),
-                    fixture.uid,
-                ),
+                TrustBundleFilePolicyV1::production(fixture.uid, Some(fixture.gid), fixture.uid,),
             ),
             Err(TrustBundleFileError::InvalidPolicy)
         );

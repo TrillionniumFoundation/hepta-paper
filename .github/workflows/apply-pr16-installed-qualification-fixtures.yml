@@ -1,0 +1,406 @@
+name: apply-pr16-installed-qualification-fixtures
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/apply-pr16-installed-qualification-fixtures.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-pr16-installed-qualification-fixtures
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out latest PR branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+          submodules: false
+
+      - name: Add systemd and installed-host qualification fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/systemd rust/qualification
+
+          cat > deploy/systemd/hepta-codex-broker@.service <<'UNIT'
+          [Unit]
+          Description=Hepta fake/local Codex broker role %i
+          Documentation=file:/usr/share/doc/hepta-paper/CODEX_BROKER_SERVICE_V1.md
+          After=local-fs.target
+          Before=multi-user.target
+          ConditionPathIsExecutable=/usr/libexec/hepta/hepta-codex-broker-service
+          ConditionPathIsReadOnly=/etc/hepta/codex-broker-%i
+
+          [Service]
+          Type=simple
+          User=hepta-codex-%i
+          Group=hepta-codex-%i
+          UMask=0077
+
+          RuntimeDirectory=hepta/codex-broker-%i
+          RuntimeDirectoryMode=0700
+          StateDirectory=hepta/codex-broker-%i
+          StateDirectoryMode=0700
+          ConfigurationDirectory=hepta/codex-broker-%i
+          ConfigurationDirectoryMode=0750
+
+          ExecStart=/usr/libexec/hepta/hepta-codex-broker-service --profile /etc/hepta/codex-broker-%i/profile.json
+          Restart=on-failure
+          RestartSec=2s
+          TimeoutStartSec=30s
+          TimeoutStopSec=30s
+          KillMode=mixed
+
+          NoNewPrivileges=yes
+          PrivateTmp=yes
+          PrivateDevices=yes
+          ProtectSystem=strict
+          ProtectHome=yes
+          ProtectKernelTunables=yes
+          ProtectKernelModules=yes
+          ProtectKernelLogs=yes
+          ProtectControlGroups=yes
+          LockPersonality=yes
+          MemoryDenyWriteExecute=yes
+          RestrictSUIDSGID=yes
+          RestrictRealtime=yes
+          RemoveIPC=yes
+          RestrictAddressFamilies=AF_UNIX
+          CapabilityBoundingSet=
+          AmbientCapabilities=
+          SystemCallArchitectures=native
+          SystemCallFilter=@system-service
+          IPAddressDeny=any
+
+          ReadOnlyPaths=/etc/hepta/codex-broker-%i /usr/libexec/hepta
+          ReadWritePaths=/run/hepta/codex-broker-%i /var/lib/hepta/codex-broker-%i
+          LimitNOFILE=1024
+          TasksMax=128
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          cat > deploy/systemd/README.md <<'DOC'
+          # Installed broker service fixture
+
+          `hepta-codex-broker@.service` is a qualification fixture for one
+          role-specific fake/local broker principal per instance. It deliberately does
+          not include a `.socket` unit: V1 service code owns, verifies and recovers its
+          pathname Unix listener so socket activation cannot bypass the listener
+          generation and object-identity contract.
+
+          The unit is inert until an independently built and reviewed
+          `/usr/libexec/hepta/hepta-codex-broker-service` composition binary and an
+          authority-owned `/etc/hepta/codex-broker-<role>/profile.json` are installed.
+          This Draft PR does not provide credentials or provider network access; the
+          reference unit sets `IPAddressDeny=any` and permits only `AF_UNIX`.
+
+          Required principals are distinct:
+
+          ```text
+          deployment/root authority
+          trust-bundle/schema authority
+          hepta-codex-<role> broker service UID
+          allowed campaign client UID(s)
+          ```
+
+          Run `rust/qualification/installed-broker-preflight.sh` before enabling an
+          instance. Destructive restart/SIGKILL evidence is collected only through
+          `installed-broker-crash-drill.sh` with its explicit acknowledgement token.
+          Neither script performs a provider request.
+          DOC
+
+          cat > rust/qualification/installed-broker-preflight.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          usage() {
+            cat >&2 <<'EOF'
+          usage: installed-broker-preflight.sh \
+            --role ROLE --service UNIT \
+            --broker-uid UID --authority-uid UID --authority-gid GID \
+            --gate PATH --schema PATH --trust-bundle PATH \
+            --journal PATH --socket PATH --output FILE
+          EOF
+            exit 64
+          }
+
+          role= service= broker_uid= authority_uid= authority_gid=
+          gate= schema= trust_bundle= journal= socket= output=
+          while (($#)); do
+            case "$1" in
+              --role) role=${2:?}; shift 2 ;;
+              --service) service=${2:?}; shift 2 ;;
+              --broker-uid) broker_uid=${2:?}; shift 2 ;;
+              --authority-uid) authority_uid=${2:?}; shift 2 ;;
+              --authority-gid) authority_gid=${2:?}; shift 2 ;;
+              --gate) gate=${2:?}; shift 2 ;;
+              --schema) schema=${2:?}; shift 2 ;;
+              --trust-bundle) trust_bundle=${2:?}; shift 2 ;;
+              --journal) journal=${2:?}; shift 2 ;;
+              --socket) socket=${2:?}; shift 2 ;;
+              --output) output=${2:?}; shift 2 ;;
+              *) usage ;;
+            esac
+          done
+          for value in role service broker_uid authority_uid authority_gid gate schema trust_bundle journal socket output; do
+            test -n "${!value:-}" || usage
+          done
+          test "$(uname -s)" = Linux
+          test "$(id -u)" -eq 0
+          test "$broker_uid" -ne 0
+          test "$authority_uid" -ne "$broker_uid"
+          command -v python3 >/dev/null
+          command -v stat >/dev/null
+          command -v readlink >/dev/null
+          command -v systemctl >/dev/null
+
+          canonical_file() {
+            local selected=$1 expected_mode=$2 expected_uid=$3 expected_gid=$4
+            test -f "$selected" && test ! -L "$selected"
+            test "$(readlink -f -- "$selected")" = "$selected"
+            test "$(stat -Lc %h -- "$selected")" -eq 1
+            test "$(stat -Lc %a -- "$selected")" = "$expected_mode"
+            test "$(stat -Lc %u -- "$selected")" = "$expected_uid"
+            test "$(stat -Lc %g -- "$selected")" = "$expected_gid"
+            local parent
+            parent=$(dirname -- "$selected")
+            test "$(readlink -f -- "$parent")" = "$parent"
+            local parent_mode
+            parent_mode=$(stat -Lc %a -- "$parent")
+            (( (8#$parent_mode & 8#022) == 0 ))
+          }
+
+          canonical_file "$gate" 550 "$authority_uid" "$authority_gid"
+          canonical_file "$schema" 440 "$authority_uid" "$authority_gid"
+          canonical_file "$trust_bundle" 440 "$authority_uid" "$authority_gid"
+
+          journal_parent=$(dirname -- "$journal")
+          socket_parent=$(dirname -- "$socket")
+          test "$(readlink -f -- "$journal_parent")" = "$journal_parent"
+          test "$(readlink -f -- "$socket_parent")" = "$socket_parent"
+          test "$(stat -Lc %u -- "$journal_parent")" = "$broker_uid"
+          test "$(stat -Lc %u -- "$socket_parent")" = "$broker_uid"
+          test "$(stat -Lc %a -- "$journal_parent")" = 700
+          test "$(stat -Lc %a -- "$socket_parent")" = 700
+
+          properties=$(systemctl show "$service" \
+            --property=User,Group,UMask,NoNewPrivileges,PrivateTmp,PrivateDevices,ProtectSystem,ProtectHome,MemoryDenyWriteExecute,RestrictSUIDSGID,RestrictAddressFamilies,IPAddressDeny,CapabilityBoundingSet,AmbientCapabilities,KillMode,TimeoutStartUSec,TimeoutStopUSec)
+          grep -Fx 'NoNewPrivileges=yes' <<<"$properties"
+          grep -Fx 'PrivateTmp=yes' <<<"$properties"
+          grep -Fx 'PrivateDevices=yes' <<<"$properties"
+          grep -Fx 'ProtectSystem=strict' <<<"$properties"
+          grep -Fx 'ProtectHome=yes' <<<"$properties"
+          grep -Fx 'MemoryDenyWriteExecute=yes' <<<"$properties"
+          grep -Fx 'RestrictSUIDSGID=yes' <<<"$properties"
+          grep -Fx 'RestrictAddressFamilies=AF_UNIX' <<<"$properties"
+          grep -Fx 'IPAddressDeny=any' <<<"$properties"
+          grep -Fx 'KillMode=mixed' <<<"$properties"
+
+          install -d -m 0700 "$(dirname -- "$output")"
+          HEPTA_ROLE=$role \
+          HEPTA_SERVICE=$service \
+          HEPTA_BROKER_UID=$broker_uid \
+          HEPTA_AUTHORITY_UID=$authority_uid \
+          HEPTA_AUTHORITY_GID=$authority_gid \
+          HEPTA_GATE=$gate \
+          HEPTA_SCHEMA=$schema \
+          HEPTA_TRUST_BUNDLE=$trust_bundle \
+          HEPTA_JOURNAL=$journal \
+          HEPTA_SOCKET=$socket \
+          HEPTA_PROPERTIES=$properties \
+          python3 - "$output" <<'PY'
+          import hashlib, json, os, pathlib, subprocess, sys, time
+          def identity(path):
+              selected = pathlib.Path(path)
+              stat = selected.stat()
+              content = selected.read_bytes() if selected.is_file() else b""
+              return {
+                  "path": str(selected), "device": stat.st_dev, "inode": stat.st_ino,
+                  "mode": stat.st_mode & 0o777, "uid": stat.st_uid, "gid": stat.st_gid,
+                  "links": stat.st_nlink, "bytes": stat.st_size,
+                  "sha256": hashlib.sha256(content).hexdigest() if content else None,
+              }
+          record = {
+              "kind": "hepta_installed_broker_preflight_v1", "version": 1,
+              "recordedAtUnixMs": int(time.time() * 1000),
+              "role": os.environ["HEPTA_ROLE"], "service": os.environ["HEPTA_SERVICE"],
+              "brokerUid": int(os.environ["HEPTA_BROKER_UID"]),
+              "authorityUid": int(os.environ["HEPTA_AUTHORITY_UID"]),
+              "authorityGid": int(os.environ["HEPTA_AUTHORITY_GID"]),
+              "bootId": pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+              "kernel": subprocess.check_output(["uname", "-srvmo"], text=True).strip(),
+              "gate": identity(os.environ["HEPTA_GATE"]),
+              "schema": identity(os.environ["HEPTA_SCHEMA"]),
+              "trustBundle": identity(os.environ["HEPTA_TRUST_BUNDLE"]),
+              "journalPath": os.environ["HEPTA_JOURNAL"],
+              "socketPath": os.environ["HEPTA_SOCKET"],
+              "systemdProperties": dict(
+                  line.split("=", 1) for line in os.environ["HEPTA_PROPERTIES"].splitlines()
+                  if "=" in line
+              ),
+          }
+          encoded = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+          pathlib.Path(sys.argv[1]).write_bytes(encoded)
+          PY
+          chmod 0600 "$output"
+          printf '%s  %s\n' "$(sha256sum "$output" | cut -d' ' -f1)" "$output"
+          SH
+
+          cat > rust/qualification/installed-broker-crash-drill.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          usage() {
+            cat >&2 <<'EOF'
+          usage: HEPTA_DESTRUCTIVE_ACK=I_UNDERSTAND_THIS_KILLS_THE_FAKE_BROKER \
+            installed-broker-crash-drill.sh \
+            --service UNIT --journal PATH --socket PATH --evidence-dir DIR
+          The selected service must remain fake/local and network denied.
+          EOF
+            exit 64
+          }
+
+          service= journal= socket= evidence_dir=
+          while (($#)); do
+            case "$1" in
+              --service) service=${2:?}; shift 2 ;;
+              --journal) journal=${2:?}; shift 2 ;;
+              --socket) socket=${2:?}; shift 2 ;;
+              --evidence-dir) evidence_dir=${2:?}; shift 2 ;;
+              *) usage ;;
+            esac
+          done
+          test "${HEPTA_DESTRUCTIVE_ACK:-}" = I_UNDERSTAND_THIS_KILLS_THE_FAKE_BROKER
+          test -n "$service" && test -n "$journal" && test -n "$socket" && test -n "$evidence_dir" || usage
+          test "$(id -u)" -eq 0
+          command -v systemctl >/dev/null
+          command -v sqlite3 >/dev/null
+          install -d -m 0700 "$evidence_dir"
+
+          properties=$(systemctl show "$service" --property=RestrictAddressFamilies,IPAddressDeny)
+          grep -Fx 'RestrictAddressFamilies=AF_UNIX' <<<"$properties"
+          grep -Fx 'IPAddressDeny=any' <<<"$properties"
+
+          systemctl start "$service"
+          systemctl is-active --quiet "$service"
+          test -S "$socket"
+          before=$(sha256sum "$journal" | cut -d' ' -f1)
+          boot_id=$(cat /proc/sys/kernel/random/boot_id)
+          started=$(date +%s%3N)
+
+          systemctl kill --kill-whom=all --signal=SIGKILL "$service"
+          for _ in $(seq 1 100); do
+            systemctl is-active --quiet "$service" || break
+            sleep 0.05
+          done
+          systemctl reset-failed "$service" || true
+          systemctl start "$service"
+          systemctl is-active --quiet "$service"
+          test -S "$socket"
+
+          integrity=$(sqlite3 -readonly "$journal" 'PRAGMA integrity_check;')
+          foreign_keys=$(sqlite3 -readonly "$journal" 'PRAGMA foreign_key_check;')
+          journal_mode=$(sqlite3 -readonly "$journal" 'PRAGMA journal_mode;')
+          synchronous=$(sqlite3 -readonly "$journal" 'PRAGMA synchronous;')
+          test "$integrity" = ok
+          test -z "$foreign_keys"
+          test "${journal_mode,,}" = wal
+          test "$synchronous" = 2
+          after=$(sha256sum "$journal" | cut -d' ' -f1)
+          completed=$(date +%s%3N)
+
+          SERVICE=$service JOURNAL=$journal SOCKET=$socket BEFORE=$before AFTER=$after \
+          BOOT_ID=$boot_id STARTED=$started COMPLETED=$completed \
+          python3 - "$evidence_dir/crash-drill.json" <<'PY'
+          import json, os, pathlib, sys
+          record = {
+              "kind": "hepta_installed_broker_sigkill_drill_v1", "version": 1,
+              "service": os.environ["SERVICE"], "journalPath": os.environ["JOURNAL"],
+              "socketPath": os.environ["SOCKET"], "bootId": os.environ["BOOT_ID"],
+              "startedAtUnixMs": int(os.environ["STARTED"]),
+              "completedAtUnixMs": int(os.environ["COMPLETED"]),
+              "journalSha256Before": os.environ["BEFORE"],
+              "journalSha256After": os.environ["AFTER"],
+              "integrityCheck": "ok", "foreignKeyCheck": "ok",
+              "journalMode": "wal", "synchronous": "full",
+              "providerExecution": "forbidden_by_fixture",
+          }
+          pathlib.Path(sys.argv[1]).write_text(
+              json.dumps(record, sort_keys=True, separators=(",", ":"))
+          )
+          PY
+          chmod 0600 "$evidence_dir/crash-drill.json"
+          sha256sum "$evidence_dir/crash-drill.json" > "$evidence_dir/crash-drill.sha256"
+          SH
+
+          chmod 0755 \
+            rust/qualification/installed-broker-preflight.sh \
+            rust/qualification/installed-broker-crash-drill.sh
+
+          cat > rust/qualification/README.md <<'DOC'
+          # Installed broker qualification harnesses
+
+          These scripts turn the remaining host-dependent gates into explicit,
+          machine-readable procedures. They are not run by portable CI and do not
+          authorize real Codex credentials or provider access.
+
+          - `installed-broker-preflight.sh` requires root, distinct deployment and
+            broker UIDs, canonical authority-owned gate/schema/trust-bundle objects,
+            private broker state/socket parents and hardened systemd properties. It
+            emits canonical JSON identity evidence.
+          - `installed-broker-crash-drill.sh` requires an explicit destructive token,
+            verifies that the selected fixture is AF_UNIX-only and network denied,
+            SIGKILLs the fake/local service, restarts it and records SQLite
+            integrity/foreign-key/WAL/FULL evidence.
+
+          Host reboot, quota exhaustion, remount and deliberate page/WAL corruption
+          remain operator-controlled extensions of the same evidence bundle because
+          portable CI must not perform destructive storage operations.
+          DOC
+
+          bash -n \
+            rust/qualification/installed-broker-preflight.sh \
+            rust/qualification/installed-broker-crash-drill.sh
+          systemd-analyze verify deploy/systemd/hepta-codex-broker@.service
+          git diff --check
+          git diff --stat
+
+      - name: Run portable source gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked -- --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Commit and update PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "hepta-paper blocker closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add deploy/systemd rust/qualification
+          git commit -m "chore(rust): add installed broker qualification fixtures"
+          git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

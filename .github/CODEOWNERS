@@ -1,0 +1,6 @@
+# Rust control-plane authority boundaries require explicit ownership review.
+/rust/ @TrillionniumFoundation
+/rust/crates/hepta-codex-runtime/src/process/ @TrillionniumFoundation
+/rust/crates/hepta-codex-broker/src/journal/ @TrillionniumFoundation
+/docs/rust/ @TrillionniumFoundation
+/.github/workflows/rust-*.yml @TrillionniumFoundation

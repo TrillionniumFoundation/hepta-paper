@@ -1,0 +1,35 @@
+name: apply-rust-source-fix
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/rust-fixes/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-all-gap-closure-20260830
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify and apply exact source patch
+        run: |
+          set -euo pipefail
+          sha256sum -c .github/rust-fixes/source.patch.sha256
+          git apply --check .github/rust-fixes/source.patch
+          git apply .github/rust-fixes/source.patch
+          rm -rf .github/rust-fixes
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(rust): apply exact source validation repair'
+          git push origin HEAD:codex/rust-all-gap-closure-20260830

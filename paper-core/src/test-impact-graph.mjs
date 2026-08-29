@@ -5,7 +5,7 @@ import { relativeModuleSpecifiers } from '../verification/javascript-module-spec
 
 const PORTABLE_TEST = /^(?:paper-core|migration)\/tests\/.*\.test\.mjs$/;
 const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:docs|paper-core\/docs|paper-adapters)\/.*\.md$/;
-const RUST_ONLY = /^rust\//;
+const RUST_ISOLATED = /^(?:rust\/|\.github\/workflows\/rust-[^/]+\.ya?ml$|docs\/rust\/qualification\/)/;
 const GLOBAL_IMPACT = Object.freeze([
   /^\.github\//,
   /^package(?:-lock)?\.json$/,
@@ -107,7 +107,7 @@ export function buildTestImpactGraph({ files, readSource }) {
 
 function fullFallbackRequired(changedFiles) {
   return changedFiles.filter((file) => (
-    !RUST_ONLY.test(file)
+    !RUST_ISOLATED.test(file)
       && (GLOBAL_IMPACT.some((pattern) => pattern.test(file))
         || (!file.endsWith('.mjs') && !DOCUMENTATION.test(file)))
   ));

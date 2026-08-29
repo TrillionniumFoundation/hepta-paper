@@ -12,10 +12,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let arguments = std::env::args().collect::<Vec<_>>();
     if arguments.len() != 3 {
-        return Err(
-            "usage: hepta-broker-journal-preflight <database-path> <owner-uid>"
-                .to_owned(),
-        );
+        return Err("usage: hepta-broker-journal-preflight <database-path> <owner-uid>".to_owned());
     }
     let owner_uid = arguments[2]
         .parse::<u32>()
@@ -28,9 +25,7 @@ fn run() -> Result<(), String> {
     store
         .validate_integrity()
         .map_err(|error| error.to_string())?;
-    let operation_count = store
-        .operation_count()
-        .map_err(|error| error.to_string())?;
+    let operation_count = store.operation_count().map_err(|error| error.to_string())?;
     println!(
         "broker_journal_verified path={} operation_count={operation_count}",
         store.path().display(),

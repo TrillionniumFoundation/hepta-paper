@@ -24,7 +24,7 @@ function fixtureGraph() {
       "import '../../paper-domain/other.mjs';\n",
     'paper-core/tests/spawn.test.mjs':
       "const executable = 'paper-core/bin/tool.mjs';\n",
-    'paper-core/bin/tool.mjs': 'process.stdout.write(\"ok\");\n',
+    'paper-core/bin/tool.mjs': 'process.stdout.write("ok");\n',
   };
   return buildTestImpactGraph({
     files: [
@@ -59,6 +59,7 @@ test('impact graph follows transitive imports and explicit executable references
 test('impact selection fails safe for global, nonmodule, and unmapped changes', () => {
   const graph = fixtureGraph();
   for (const changedFile of [
+    '.github/workflows/ci.yml',
     'package.json',
     'paper-core/config/policy.json',
     'paper-domain/unmapped.mjs',
@@ -76,7 +77,11 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
   assert.deepEqual(documentation.selectedTests, []);
 
   for (const changedFile of [
+    '.github/workflows/rust-foundation.yml',
+    '.github/workflows/rust-broker-installed-qualification-v2.yml',
     'docs/rust/RUST_PLAN.md',
+    'docs/rust/qualification/hepta-broker-host-qualification.sh',
+    'docs/rust/qualification/hepta-broker-qualification-evidence-v1.schema.json',
     'rust/Cargo.toml',
     'rust/crates/example/src/lib.rs',
   ]) {

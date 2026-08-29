@@ -1,7 +1,7 @@
 use std::{path::Path, process};
 
 use hepta_codex_broker::trust_bundle_file::{
-    load_authority_owned_trust_bundle, TrustBundleFilePolicyV1,
+    TrustBundleFilePolicyV1, load_authority_owned_trust_bundle,
 };
 
 fn main() {

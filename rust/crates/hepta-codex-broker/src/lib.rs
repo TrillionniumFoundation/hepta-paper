@@ -25,6 +25,7 @@ mod response;
 mod server;
 mod service;
 mod trust_bundle;
+pub mod trust_bundle_file;
 mod trust_source;
 
 pub use acknowledgement::{

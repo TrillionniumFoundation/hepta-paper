@@ -1,118 +1,88 @@
-# Node-to-Rust parity matrix
+# Node-to-Rust parity and cutover matrix
 
-Parity is not a single equality relation. Each behavior is assigned one of four
-strategies before implementation.
+Parity is assigned before implementation. It is not a generic claim that Rust
+“behaves the same”.
 
-- **exact** — bytes, hashes, rows, statuses and authority must match;
-- **semantic** — invariant and outcome class must match, representation may
-  change under a versioned contract;
-- **evaluation** — non-deterministic model output is assessed by quality and
-  safety metrics, never text equality;
-- **retire** — legacy behavior has no target implementation and receives an
-  explicit retirement/migration plan.
+- `exact` — bytes, hashes, rows, statuses and acceptance/rejection match;
+- `semantic` — invariant/outcome class match under a versioned representation;
+- `evaluation` — non-deterministic output is judged by metrics, never text equality;
+- `retire` — behavior has no Rust target and has migration evidence.
 
-## Deterministic parity
+## Deterministic capabilities
 
-| Capability | Current Node anchors | Rust target | Strategy | Required evidence |
+| Capability | Node anchor | Rust target | Strategy | State | Cutover evidence |
+|---|---|---|---|---|---|
+| Record hashing | `workflow-kernel/record-hash.mjs` + callsites | compatibility kernel | exact | not_started | byte corpus + dual verifier |
+| Stable JSON | historical serializers | `LegacyStableJsonV1` | exact | not_started | adversarial number/string/object corpus |
+| Contract decode | `paper-domain`, `paper-ports` | domain crates | exact V1 / semantic V2 | partial | round-trip + unknown-field matrix |
+| Error/status values | distributed constants | registry crate | exact | design_ready | generated inventory diff |
+| SQLite schema 1–25 | store/migration modules | read-only then writer store | exact logical state | not_started | normalized production-shaped DB diff |
+| Campaign transitions | application/composition | campaign engine | semantic + exact effects | not_started | transition table + simulation |
+| Lease/generation fencing | campaign repositories | writer store | exact invariant | not_started | stale-generation stress |
+| Prepared results | attempt journals | campaign integration | semantic | broker_partial | crash recovery + exactly-once integration |
+| Workspace inventory | attempts/snapshots | workspace/CAS crates | exact | not_started | cross-language tree corpus |
+| Release receipt verification | release/authority modules | release verifier | exact | not_started | old/new accept/reject matrix |
+| Submission idempotency | outbox/dispatcher | dispatcher port | exact identity | not_started | replay/ambiguity matrix |
+
+## Codex execution behavior
+
+| Behavior | Node anchor | Rust strategy | Classification | State |
 |---|---|---|---|---|
-| Record hashing | `workflow-kernel/record-hash.mjs` and callsites | compatibility kernel | exact | byte corpus and Node oracle |
-| Stable JSON | historical serialization callsites | `LegacyStableJsonV1` | exact | adversarial number/string/object fixtures |
-| Contract decode | `paper-domain`, `paper-ports` | versioned domain crates | exact for V1; semantic for V2 | round-trip and unknown-field tests |
-| Error/status values | distributed string constants | registry crate | exact | generated inventory diff |
-| SQLite schema 1–25 | persistence/migration modules | read-only then writer store | exact logical state | normalized DB fixture diff |
-| Campaign transitions | application/composition state machines | campaign engine | semantic + exact status effects | transition table and simulation |
-| Lease/generation fencing | campaign/repository modules | writer store | exact invariant | stale-generation stress tests |
-| Prepared results | one-shot attempt journals | campaign integration | semantic | crash recovery and exactly-once tests |
-| Workspace inventory | workspace attempt/snapshot modules | workspace/CAS crates | exact bytes and node types | tree corpus and cross-verification |
-| Release receipt verification | release/authority modules | release verifier | exact acceptance/rejection | old/new cross-verifier matrix |
-| Submission idempotency | submission outbox/dispatcher | dispatcher port | exact side-effect identity | replay/ambiguity test matrix |
+| Executable/config/auth-root identity | runtime preflight | filesystem/content identity pre/postflight | semantic, stricter V2 | source_qualified |
+| Fresh sessions | capability/executor args | mandatory ephemeral new thread | exact invariant | source_qualified |
+| Author/reviewer separation | principal pool | separate principals/sockets/homes | semantic, stronger | source_partial |
+| Bounded execution | bounded child process | gate + containment + supervisor | semantic | process-group source_qualified; cgroup open |
+| Mutation detection | workspace tracker | exact before/after inventory | semantic, stronger | not_started |
+| Structured final output | permissive scans | terminal JSONL + output schema | fix-v2 | source_qualified |
+| OpenClaw runtime | managed OpenClaw paths | no target | retire | design_ready |
+| Model prose/code | model dependent | live evaluation | evaluation | not_started |
+| Reviewer narrative | model dependent | structured verdict + evaluation | evaluation | not_started |
 
-## Codex execution parity
-
-| Behavior | Current Node anchors | Rust strategy | Classification |
-|---|---|---|---|
-| Executable/config/auth-root identity | `codex-runtime-preflight.mjs`, capability binding | content and filesystem identity with pre/postflight | semantic, stricter V2 |
-| Fresh ephemeral sessions | capability receipts and executor args | mandatory `EphemeralNewThread` | exact invariant |
-| Author/reviewer separation | capability receipt fields, principal pool | distinct broker principals and role profiles | semantic, stronger isolation |
-| Bounded process execution | `bounded-child-process.mjs` | process-group supervisor | semantic |
-| Workspace mutation detection | workspace change tracker | before/after inventory verifier | semantic, stronger evidence |
-| Structured final output | permissive stdout scan plus managed path | JSONL terminal item + output schema | deliberate fix-v2 |
-| OpenClaw managed runtime | `codex-openclaw-managed-*` | no target runtime | retire |
-| Model prose/code | model-dependent | live evaluation | evaluation |
-| Reviewer narrative | model-dependent | issue/recommendation schema plus evaluation | evaluation |
-
-## Behaviors that must never be byte-differenced
-
-- manuscript prose;
-- generated source code;
-- reviewer natural-language comments;
-- model reasoning traces;
-- provider event timing;
-- token counts across different model/runtime versions.
-
-For these, compare bound inputs, permissions, schema validity, mutation policy,
-deterministic downstream checks and quality metrics.
-
-## Known behavior disposition process
-
-Before porting a Node behavior, record:
+## Behavior record required before porting
 
 ```text
-behavior ID
-source entrypoint and tests
-current observed behavior
-required invariant
-strategy: exact | semantic | evaluation | retire
-known defects
-versioning decision
-Rust owner
-cutover gate
-rollback path
+behavior_id
+source_entrypoints
+source_tests
+observed_behavior
+required_invariant
+strategy
+known_defects
+versioning_decision
+rust_owner
+oracle_or_metric
+cutover_gate
+rollback_path
+last_verified_commit/tree
 ```
-
-A known Node defect must not be smuggled into “parity.” It is either preserved
-only for read compatibility or corrected under a new contract/version.
-
-## Oracle design
-
-The Node oracle is a bounded, read-only process:
-
-- immutable baseline commit and lockfile;
-- no network and no production secrets;
-- bounded input, output and execution time;
-- canonical fixtures only;
-- exact executable/runtime identity recorded;
-- output includes algorithm version and input hash.
-
-The oracle is not a production dependency after cutover. It is retained as a
-historical compatibility verifier until its fixture corpus is independently
-reproduced and archived.
 
 ## Differential failure classes
 
 | Class | Meaning | Disposition |
 |---|---|---|
-| `encoding_byte_drift` | deterministic serialized bytes differ | blocker |
+| `encoding_byte_drift` | deterministic bytes differ | blocker |
 | `hash_drift` | record/receipt hash differs | blocker |
-| `logical_state_drift` | normalized SQLite state differs | blocker |
-| `authority_drift` | one side accepts an authority the other rejects | blocker and security review |
-| `known_defect_correction` | approved V2 correction | allowed only with ADR/migration |
-| `representation_only` | versioned internal shape differs, invariant equal | allowed with semantic proof |
-| `model_nondeterminism` | generated content differs | evaluation suite, not blocker by itself |
-| `legacy_retirement` | behavior intentionally absent | migration/retirement gate |
+| `logical_state_drift` | normalized SQLite differs | blocker |
+| `authority_drift` | one side accepts authority rejected by the other | blocker + security review |
+| `known_defect_correction` | approved V2 correction | ADR + migration required |
+| `representation_only` | versioned internal shape differs, invariant equal | semantic proof required |
+| `model_nondeterminism` | generated content differs | evaluation, not byte blocker |
+| `legacy_retirement` | behavior intentionally absent | retirement evidence required |
 
-## Initial mapping backlog
+## Never byte-difference
 
-The following Node areas require detailed callsite inventory before writer work:
+Manuscript prose, generated code, reviewer narrative, provider timing, reasoning
+traces and token counts across different model/runtime versions are evaluated by
+bound inputs, permissions, schema validity, deterministic downstream checks and
+quality metrics.
 
-1. `workflow-kernel` canonicalization and record hashes;
-2. campaign one-shot attempt journals and external-action recovery;
-3. SQLite mutation coordinator and schema transition modules;
-4. workspace attempt, change tracker, snapshot and release package transaction;
-5. Codex direct executor/capability/runtime preflight;
-6. reviewer principal pool and recoverable reviewer adapter;
-7. formal/empirical evidence and independent recomputation;
-8. release attestation, backup, WORM and submission outbox.
+## Cutover rule
 
-OpenClaw-managed files are inventoried only to identify consumers and retirement
-requirements. They do not generate Rust implementation tasks.
+A Rust capability becomes authoritative only after:
+
+1. parity strategy and defects are classified;
+2. the source gate passes;
+3. production-shaped shadow evidence is accepted;
+4. writer ownership is transferred atomically where applicable;
+5. rollback has been exercised;
+6. the Node authority path is disabled, not merely unused.

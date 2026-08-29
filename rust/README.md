@@ -1,37 +1,64 @@
 # hepta-paper Rust control plane
 
-This workspace is the additive, compatibility-first Rust replacement for the
-first-party hepta-paper control plane. It is not yet a production writer.
+This workspace is the additive, compatibility-preserving Rust replacement for
+first-party hepta-paper control-plane authority. It is currently a **broker
+source candidate**. It is not a production writer and real provider credentials
+remain forbidden.
 
-The current stacked slices contain:
+Canonical status and plan:
 
-- `hepta-codex-protocol`: versioned request/receipt contracts and role policy;
-- `hepta-codex-event-stream`: bounded `codex exec --json` decoder;
-- `hepta-codex-journal`: deterministic external-operation state machine;
-- `hepta-codex-runtime`: Unix runtime identity, environment isolation, bounded
-  process groups, schema authority, and qualified invocation construction;
-- `hepta-codex-broker`: bounded Unix-socket framing, peer credentials,
-  signed/expiring request capabilities, exact role/runtime binding, and an
-  isolated append-only SQLite operation journal with idempotency, nonce replay,
-  schema-manifest and crash-rollback protection;
-- `hepta-codex-testkit`: fault-injecting `fake-codex` process fixtures.
+- [`docs/rust/CURRENT_STATUS.md`](../docs/rust/CURRENT_STATUS.md)
+- [`docs/rust/current-status.v1.json`](../docs/rust/current-status.v1.json)
+- [`docs/rust/RUST_REWRITE_MASTER_PLAN.md`](../docs/rust/RUST_REWRITE_MASTER_PLAN.md)
+- [`docs/rust/RUST_REWRITE_BACKLOG.md`](../docs/rust/RUST_REWRITE_BACKLOG.md)
 
-OpenClaw is deliberately outside the Rust target architecture. Existing Node
-code remains the production compatibility oracle until capability-by-capability
-cutover gates are met.
+## Workspace crates
 
-The broker-state slice introduces no real Codex credentials, live model calls,
-campaign database writer, release authority, or submission authority. Its
-SQLite database is broker-local operational state only.
+- `hepta-codex-protocol` — versioned request/receipt and digest contracts;
+- `hepta-codex-event-stream` — bounded strict Codex JSONL decoder;
+- `hepta-codex-journal` — deterministic external-operation state machine;
+- `hepta-codex-runtime` — runtime identity, environment isolation, bounded
+  process execution, schema authority and durable pre-exec gate;
+- `hepta-codex-broker` — Unix framing/peer/capability admission, trust bundles,
+  listener lifecycle, broker-owned SQLite journal, recovery and prepared-result
+  acknowledgement;
+- `hepta-codex-testkit` — deterministic fault-injecting fake executor.
 
-`rust/Cargo.lock` is a required merge artifact; CI fails closed when it is
-missing or stale.
+OpenClaw is excluded from the Rust source, manifest and runtime graph.
+
+## Authority boundary
+
+The current Rust source cannot and must not:
+
+```text
+load real Codex credentials
+perform authenticated provider calls
+write the campaign database
+sign or publish a release
+access KMS/HSM/WORM
+hold portal credentials
+submit a paper
+```
+
+Hosted CI evidence is not target-host or external-authority evidence.
 
 ## Local validation
 
+The exact toolchain is pinned in `rust/rust-toolchain.toml` and the lockfile is
+mandatory.
+
 ```bash
+cargo metadata --manifest-path rust/Cargo.toml --locked --no-deps --format-version 1
 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --workspace --all-features --locked
-cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps
+RUSTDOCFLAGS=-Dwarnings cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps
+python3 docs/rust/tools/validate-program-truth.py
 ```
+
+## Development rule
+
+Every source change updates the backlog/gap it implements, its failure and
+recovery behavior, its authority/non-authority statement, and exact-head
+evidence. Do not describe a source or hosted fixture as production
+qualification.

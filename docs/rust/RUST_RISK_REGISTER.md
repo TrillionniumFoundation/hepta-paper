@@ -1,41 +1,57 @@
 # Rust rewrite risk register
 
-Risk scores use likelihood and impact from 1 (low) to 5 (critical). The register
-is reviewed at every milestone gate and whenever a TCB boundary changes.
+Likelihood and impact are 1–5. Score 20 or higher blocks the next dependent
+milestone unless the responsible external authority explicitly accepts a
+bounded residual risk. “Mitigated” requires negative evidence, not prose.
 
-| ID | Risk | L | I | Early signal | Mitigation | Gate owner |
+| ID | Risk | L | I | State | Owner | Required evidence |
 |---|---|---:|---:|---|---|---|
-| RR-001 | Untrusted Node baseline becomes a permanent oracle | 3 | 5 | fixture results change with baseline checkout | freeze signed commit, lockfile and oracle image; remove network/secrets | Compatibility |
-| RR-002 | Canonical hash drift invalidates history | 4 | 5 | first adversarial fixtures mismatch | immutable V1 spec, byte corpus, dual verifier | Compatibility |
-| RR-003 | Node and Rust become concurrent writers | 2 | 5 | both processes hold writer capabilities | explicit ownership lease and cutover migration; no dual-write tests | Database |
-| RR-004 | Codex credential leaks into generated commands | 3 | 5 | `env` or `/proc` probe sees provider secret | parent/child environment separation, distinct UIDs, qualification attack suite | Security |
-| RR-005 | Reviewer is only nominally independent | 4 | 4 | shared home/session/workspace or account claims | independence levels, frozen bundle, fresh session, truthful receipts | Evidence |
-| RR-006 | Post-spawn crash causes duplicate paid calls | 4 | 4 | retry lacks durable operation lookup | broker journal, idempotency index, ambiguous result classification | Broker |
-| RR-007 | Permissive JSONL parser treats protocol drift as success | 3 | 5 | new terminal event appears in logs | unknown terminal-like fail-closed, qualification fixtures | Broker |
-| RR-008 | Agent self-report bypasses mutation policy | 3 | 5 | claimed paths differ from filesystem | authoritative before/after inventory | Workspace |
-| RR-009 | Rust rewrite copies existing defects as “parity” | 4 | 4 | issue described only as matching Node | disposition ledger and ADR for V2 correction | Architecture |
-| RR-010 | Generic provider abstraction delays usable system | 4 | 3 | provider plug-in work without second provider | narrow author/reviewer ports, Codex-only composition | Product |
-| RR-011 | App Server experimental protocol expands TCB | 3 | 4 | production dependency on JSON-RPC/WebSocket | exec JSONL V1 only; separate future ADR/qualification | Broker |
-| RR-012 | Hidden session state causes campaign drift | 3 | 4 | use of `resume` without snapshot binding | ephemeral one-shot default; resume forbidden in V1 | Broker |
-| RR-013 | Shared Rust crate defeats independent verification | 4 | 5 | producer and verifier call same core function | independent implementation and cross-language/algorithm checks | Evidence |
-| RR-014 | Filesystem crash recovery is assumed from unit tests | 4 | 5 | no kill points or restore drills | descriptor-relative I/O, crash journal, kill injection | Workspace |
-| RR-015 | SQLite migration corrupts live state | 2 | 5 | migration tested only on synthetic DB | production-shaped copies, backup/restore and canary | Database |
-| RR-016 | Rust CI is advisory and drifts red | 4 | 3 | unprotected workflow or ignored failures | required protected checks and milestone evidence | SRE |
-| RR-017 | Dependency/toolchain upgrades silently alter behavior | 3 | 4 | floating `stable` or unlocked dependencies | exact toolchain, lockfile, qualification record, canary | SRE |
-| RR-018 | Model quality regresses while deterministic tests pass | 4 | 4 | compile passes but evidence/citation quality falls | live evaluation set and acceptance thresholds | Product/Evidence |
-| RR-019 | Cost accounting treats missing usage as zero | 3 | 4 | terminal without usage refunds budget | unknown/conservative classification and reconciliation | Campaign |
-| RR-020 | OpenClaw remains through an indirect Rust dependency | 3 | 3 | source/config contains OpenClaw runtime path | dependency/source CI ban and runtime graph inspection | Architecture |
-| RR-021 | Overlarge first PR cannot be reviewed or rolled back | 4 | 3 | mixed DB writer, broker and cutover changes | invariant-sized PRs and additive read-only stages | Program |
-| RR-022 | Security logs capture prompts or private manuscripts | 3 | 5 | raw JSONL/prompts uploaded to CI artifacts | field-level redaction, bounded encrypted evidence, fixture scrubbing | Security |
-| RR-023 | External submission is repeated after ambiguous response | 2 | 5 | retry based only on local timeout | external-action journal and portal reconciliation | Release |
-| RR-024 | Timeline pressure converts milestone gates into checklists | 4 | 4 | “done” without attached evidence | hard exit metrics and independent gate reviewer | Program |
+| RR-001 | Node baseline becomes a mutable permanent oracle | 3 | 5 | open | Compatibility | frozen commit/lock/image, offline corpus |
+| RR-002 | Canonical hash drift invalidates history | 4 | 5 | open | Compatibility | dual verifier + adversarial corpus |
+| RR-003 | Node and Rust write concurrently | 2 | 5 | open | Database | ownership lease + cutover drill |
+| RR-004 | Codex credential leaks into child command/process | 3 | 5 | mitigating | Security | environment, `/proc`, FD and path attack suite |
+| RR-005 | Reviewer independence is only nominal | 4 | 4 | open | Evidence | separate UID/home/socket/account receipts |
+| RR-006 | Post-release crash duplicates a paid provider call | 4 | 5 | mitigating | Broker | durable gate/journal + ambiguity tests |
+| RR-007 | Protocol drift becomes false success | 3 | 5 | mitigating | Broker | unknown terminal-like fuzz corpus |
+| RR-008 | Agent self-report bypasses mutation policy | 3 | 5 | open | Workspace | authoritative before/after inventory |
+| RR-009 | Existing defect is copied as parity | 4 | 4 | open | Architecture | disposition ledger + V2 ADR |
+| RR-010 | Generic provider framework delays usable system | 4 | 3 | controlled | Product | Codex-only production composition |
+| RR-011 | Experimental App Server expands TCB | 3 | 4 | controlled | Broker | exec JSONL V1-only architecture check |
+| RR-012 | Hidden session state causes campaign drift | 3 | 4 | controlled | Broker | fresh ephemeral session contract |
+| RR-013 | Shared implementation defeats independent verification | 4 | 5 | open | Evidence | implementation-diversity matrix |
+| RR-014 | Filesystem recovery is inferred from unit tests | 4 | 5 | open | Workspace | kill/rename/fsync/restore matrix |
+| RR-015 | SQLite migration corrupts live state | 2 | 5 | open | Database | production-shaped copies + restore canary |
+| RR-016 | CI is green but unprotected or tests wrong ref | 4 | 5 | open | SRE | exact head/tree manifest + branch ruleset |
+| RR-017 | Toolchain/dependency upgrade changes behavior | 3 | 4 | mitigating | SRE | lock, SBOM, vet/audit, reproducible build |
+| RR-018 | Model quality regresses while deterministic gates pass | 4 | 4 | open | Product/Evidence | live evaluation thresholds |
+| RR-019 | Missing usage is treated as zero cost | 3 | 4 | open | Campaign | conservative settlement/reconciliation |
+| RR-020 | OpenClaw enters Rust indirectly | 3 | 3 | mitigating | Architecture | source/dependency/runtime graph ban |
+| RR-021 | Oversized stacked PR cannot be reviewed/rolled back | 4 | 4 | open | Program | invariant-sized packages + integration branch |
+| RR-022 | Logs/artifacts capture prompts or manuscripts | 3 | 5 | open | Security | redaction schema + artifact scan |
+| RR-023 | Submission repeats after ambiguous response | 2 | 5 | open | Release | external action journal + portal reconcile |
+| RR-024 | Gate status becomes ceremonial checklist | 4 | 4 | open | Program | machine status + evidence expiry |
+| RR-025 | Listener permissions reject authorized separate UID | 5 | 4 | open | Broker | live authorized success + denied peer test |
+| RR-026 | Process escapes PGID using `setsid`/double fork | 4 | 5 | open | Runtime/SRE | cgroup-v2 empty-after-kill proof |
+| RR-027 | PID/PGID reuse causes signal to unrelated process | 2 | 5 | mitigating | Runtime | pidfd/start/boot/session identity tests |
+| RR-028 | Hosted UID test is mislabeled target-host proof | 4 | 5 | open | SRE/Security | tiered evidence schema + independent review |
+| RR-029 | Stale status SHA misleads operators | 5 | 4 | mitigating | Program | one canonical status + CI validator |
+| RR-030 | Trust-bundle key compromise cannot be stopped | 3 | 5 | blocked_external | Key owner | rotation/revocation/rollback drill |
 
-## Escalation rules
+## Automatic P0 incidents
 
-- Any score of 20 or more blocks the next milestone until reduced or formally
-  accepted by the responsible authority.
-- Credential disclosure, duplicate external side effect, stale-generation write,
-  historical hash drift and unrecoverable state corruption are automatic P0
-  incidents regardless of score.
-- A mitigation is not complete until a negative test demonstrates the forbidden
-  behavior is rejected.
+Regardless of score, these are P0:
+
+- credential disclosure;
+- duplicate external side effect;
+- stale-generation write;
+- historical hash drift;
+- signal sent to an unproven process identity;
+- unrecoverable state corruption;
+- evidence tier inflation;
+- unauthorized principal gaining listener or journal access.
+
+## Review rule
+
+Each milestone review must update state, owner, evidence link and residual risk.
+A risk cannot move to `accepted` without naming the authority allowed to accept
+it and an expiry/review date.

@@ -9,6 +9,14 @@ separate optional plane and is disabled by default.
 The single current architecture/runtime status is maintained in
 [`paper-core/docs/CURRENT_STATUS.md`](paper-core/docs/CURRENT_STATUS.md).
 
+The existing Node control plane remains authoritative until capability cutover.
+The additive Rust rewrite is a broker source candidate, not a production writer.
+Its canonical status, plan, evidence tiers and blockers are maintained in
+[`docs/rust/CURRENT_STATUS.md`](docs/rust/CURRENT_STATUS.md); source or hosted
+CI success does not authorize real Codex credentials, campaign writes, release
+signing or submission.
+
+
 ## Automation Plane
 
 The draft automation plane does not require owner signatures, academic

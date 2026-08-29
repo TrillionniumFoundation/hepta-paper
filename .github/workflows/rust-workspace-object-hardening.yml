@@ -1,0 +1,212 @@
+name: rust-workspace-object-hardening
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/workflows/rust-workspace-object-hardening.yml'
+      - 'rust/crates/hepta-workspace-authority/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rust-workspace-object-hardening-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+
+      - name: Replace path traversal with opened-object traversal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path('rust/crates/hepta-workspace-authority/Cargo.toml')
+          text = manifest.read_text(encoding='utf-8')
+          if 'nix.workspace = true' not in text:
+              text = text.replace('[dependencies]\n', '[dependencies]\nnix.workspace = true\n', 1)
+              manifest.write_text(text, encoding='utf-8')
+
+          lib = Path('rust/crates/hepta-workspace-authority/src/lib.rs')
+          text = lib.read_text(encoding='utf-8')
+          if 'mod bound;' not in text:
+              insert = 0
+              lines = text.splitlines()
+              while insert < len(lines):
+                  selected = lines[insert].strip()
+                  if selected.startswith('//!') or selected.startswith('#![') or selected == '':
+                      insert += 1
+                  else:
+                      break
+              lines[insert:insert] = ['mod bound;', '']
+              text = '\n'.join(lines) + '\n'
+          if 'use bound::{BoundKind, descriptor_path, open_bound_entry};' not in text:
+              marker = 'use thiserror::Error;\n'
+              text = text.replace(
+                  marker,
+                  marker + '\nuse bound::{BoundKind, descriptor_path, open_bound_entry};\n',
+                  1,
+              )
+          text = text.replace(
+              '''        let anchor = self.anchored_path(Path::new(""))?;
+        let mut entries = Vec::new();
+        walk_inventory(&anchor, Path::new(""), &mut entries)?;''',
+              '''        let mut entries = Vec::new();
+        walk_inventory(&self.descriptor, Path::new(""), &mut entries)?;''',
+          )
+          text = text.replace(
+              '''    let anchor = source.anchored_path(Path::new(""))?;
+    copy_tree(&anchor, &destination)?;''',
+              '''    source.verify_identity()?;
+    copy_tree(&source.descriptor, &destination)?;''',
+          )
+
+          copy_start = text.index('fn copy_tree(')
+          walk_start = text.index('\nfn walk_inventory(', copy_start)
+          hash_start = text.index('\nfn hash_entries(', walk_start)
+          replacement = r'''fn copy_tree(source: &File, destination: &Path) -> Result<(), WorkspaceError> {
+    let source_path = descriptor_path(source);
+    let mut entries = fs::read_dir(&source_path)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let name = entry.file_name();
+        validate_relative(Path::new(name.as_os_str()))?;
+        let bound = open_bound_entry(&entry.path())?;
+        let destination_path = destination.join(name);
+        match bound.kind {
+            BoundKind::Directory => {
+                fs::create_dir(&destination_path)?;
+                fs::set_permissions(&destination_path, fs::Permissions::from_mode(0o700))?;
+                copy_tree(&bound.file, &destination_path)?;
+                File::open(&destination_path)?.sync_all()?;
+            }
+            BoundKind::File => {
+                if bound.metadata.size() > MAXIMUM_FILE_BYTES {
+                    return Err(WorkspaceError::FileTooLarge);
+                }
+                let mut input = bound.file;
+                let mut output = OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .mode(bound.metadata.mode() & 0o777)
+                    .open(&destination_path)?;
+                std::io::copy(&mut input, &mut output)?;
+                output.sync_all()?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn walk_inventory(
+    directory: &File,
+    relative: &Path,
+    output: &mut Vec<WorkspaceEntryV1>,
+) -> Result<(), WorkspaceError> {
+    let selected = descriptor_path(directory);
+    let mut entries = fs::read_dir(&selected)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| WorkspaceError::NonUtf8Path)?;
+        let child_relative = relative.join(name);
+        validate_relative(&child_relative)?;
+        let mut bound = open_bound_entry(&entry.path())?;
+        let path = child_relative
+            .to_str()
+            .ok_or(WorkspaceError::NonUtf8Path)?
+            .replace('\\', "/");
+        match bound.kind {
+            BoundKind::Directory => {
+                output.push(WorkspaceEntryV1 {
+                    path,
+                    kind: "directory".to_owned(),
+                    mode: bound.metadata.mode() & 0o7777,
+                    size: 0,
+                    content_hash: None,
+                });
+                walk_inventory(&bound.file, &child_relative, output)?;
+            }
+            BoundKind::File => {
+                if bound.metadata.size() > MAXIMUM_FILE_BYTES {
+                    return Err(WorkspaceError::FileTooLarge);
+                }
+                output.push(WorkspaceEntryV1 {
+                    path,
+                    kind: "file".to_owned(),
+                    mode: bound.metadata.mode() & 0o7777,
+                    size: bound.metadata.size(),
+                    content_hash: Some(hash_open_file(&mut bound.file)?),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+'''
+          text = text[:copy_start] + replacement + text[hash_start:]
+          if 'fn hash_open_file(' not in text:
+              marker = '\nfn hash_file(path: &Path) -> Result<String, WorkspaceError> {'
+              helper = r'''
+fn hash_open_file(file: &mut File) -> Result<String, WorkspaceError> {
+    use std::io::{Seek, SeekFrom};
+    file.seek(SeekFrom::Start(0))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    file.seek(SeekFrom::Start(0))?;
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+}
+'''
+              text = text.replace(marker, helper + marker, 1)
+          lib.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Format and commit opened-object hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          if git diff --quiet -- rust/crates/hepta-workspace-authority; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/hepta-workspace-authority
+          git commit -m 'fix(rust): bind workspace traversal to opened objects'
+          git fetch origin "$GITHUB_REF_NAME"
+          if ! git rebase "origin/$GITHUB_REF_NAME"; then
+            git rebase --abort || true
+            exit 0
+          fi
+          git push origin "HEAD:${GITHUB_REF_NAME}"

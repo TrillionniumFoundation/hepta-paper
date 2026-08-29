@@ -30,16 +30,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_parent='80223a2531de32ceeeab7d5d4e6c9b36a605716f'
-          test "$(git rev-parse HEAD^)" = "$expected_parent"
+          baseline='80223a2531de32ceeeab7d5d4e6c9b36a605716f'
+          git merge-base --is-ancestor "$baseline" HEAD
           cat .automation/rust-docs-patch.part* \
             | base64 --decode \
             | gzip --decompress \
             > /tmp/rust-docs.patch
           echo '1f8c28dc7c13f9f15a11c00901e50291ab9eb3bc284fd83c0673ea80590a4eaf  /tmp/rust-docs.patch' \
             | sha256sum --check --strict
-          git apply --check /tmp/rust-docs.patch
-          git apply /tmp/rust-docs.patch
+          git apply --check --whitespace=nowarn /tmp/rust-docs.patch
+          git apply --whitespace=fix /tmp/rust-docs.patch
           python3 docs/rust/tools/validate-program-truth.py
           rm -f .automation/rust-docs-patch.part*
           rmdir .automation

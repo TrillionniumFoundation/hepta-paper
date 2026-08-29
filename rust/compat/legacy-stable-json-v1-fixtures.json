@@ -1,0 +1,6 @@
+[
+  {"name":"object_order","input":{"z":1,"a":[true,null,"x"]},"canonical":"{\"a\":[true,null,\"x\"],\"z\":1}"},
+  {"name":"unicode_keys","input":{"é":"line\n","z":"\\","aa":"\""},"canonical":"{\"aa\":\"\\\"\",\"z\":\"\\\\\",\"é\":\"line\\n\"}"},
+  {"name":"nested","input":{"b":{"y":2,"x":1},"a":[{"d":4,"c":3}]},"canonical":"{\"a\":[{\"c\":3,\"d\":4}],\"b\":{\"x\":1,\"y\":2}}"},
+  {"name":"number_shapes","input":{"integer":9007199254740991,"negative":-12,"fraction":1.25,"zero":0},"canonical":"{\"fraction\":1.25,\"integer\":9007199254740991,\"negative\":-12,\"zero\":0}"}
+]

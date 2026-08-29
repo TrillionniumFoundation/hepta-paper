@@ -2,11 +2,15 @@ use std::{
     collections::BTreeSet,
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
+    str::FromStr,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use hepta_campaign_writer::{CampaignWriterStoreV1, IntegrationDispositionV1};
+use hepta_campaign_writer::{
+    CampaignWriterPolicyV1, CampaignWriterStoreV1, NodeStatusV1, WriterLeaseV1,
+};
+use hepta_codex_protocol::Sha256Digest;
 use hepta_legacy_compatibility::hash_legacy_record_v1;
 use hepta_readonly_control::inspect_read_only_store;
 use hepta_workspace_authority::{
@@ -62,81 +66,100 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
         prepare_workspace_result_v1("attempt-1", &before, &after, &mutation, &policy)
             .expect("workspace prepared result");
     let receipt = json!({
-        "attemptId": workspace_result.attempt_id,
-        "beforeHash": workspace_result.before_hash,
-        "afterHash": workspace_result.after_hash,
-        "mutationHash": workspace_result.mutation_hash,
+        "attemptId": &workspace_result.attempt_id,
+        "beforeHash": &workspace_result.before_hash,
+        "afterHash": &workspace_result.after_hash,
+        "mutationHash": &workspace_result.mutation_hash,
     });
-    let prepared_hash = hash_legacy_record_v1(&receipt)
-        .expect("prepared receipt hash")
-        .as_str()
-        .to_owned();
+    let legacy_prepared_hash = hash_legacy_record_v1(&receipt).expect("prepared receipt hash");
+    let prepared_hash = Sha256Digest::from_str(legacy_prepared_hash.as_str())
+        .expect("typed prepared receipt hash");
+    let integrated_hash = Sha256Digest::from_str(&workspace_result.after_hash)
+        .expect("typed integrated workspace hash");
 
     let database = runtime.join("campaign.sqlite");
     let uid = fs::metadata(&runtime).expect("runtime metadata").uid();
-    let mut writer = CampaignWriterStoreV1::open(&database, uid).expect("writer");
-    let lease = writer.acquire_writer("writer-1", 10, 100).expect("lease");
+    let writer_policy = CampaignWriterPolicyV1::strict(uid);
+    let mut writer = CampaignWriterStoreV1::open(&database, writer_policy).expect("writer");
+    let lease = writer
+        .acquire_writer(
+            WriterLeaseV1 {
+                generation: 1,
+                token: "writer-1".to_owned(),
+                expires_at_unix_ms: 1_000,
+            },
+            10,
+        )
+        .expect("lease");
     writer
-        .create_campaign(&lease, 10, "campaign-1", 1_000)
+        .create_campaign(&lease, "campaign-1", 1_000, 4, 0, 10)
         .expect("campaign");
     let claim = writer
         .claim_node(
             &lease,
-            10,
             "campaign-1",
             "author-node",
             "attempt-1",
             0,
-            1,
+            "claim-1",
+            1_000,
             100,
             1,
+            0,
+            11,
         )
         .expect("claim");
-    writer
-        .prepare_result(
-            &lease,
-            11,
-            "campaign-1",
-            "author-node",
-            "attempt-1",
-            claim.node_generation,
-            &prepared_hash,
-        )
+    let prepared = writer
+        .store_prepared_result(&lease, &claim, &prepared_hash, false, 12)
         .expect("persist prepared result");
+    assert_eq!(prepared.status, NodeStatusV1::Prepared);
+    assert_eq!(prepared.prepared_result_hash.as_ref(), Some(&prepared_hash));
+    writer.checkpoint().expect("prepared checkpoint");
     drop(writer);
 
-    let mut writer = CampaignWriterStoreV1::open(&database, uid).expect("reopen writer");
+    let mut writer = CampaignWriterStoreV1::open(&database, writer_policy).expect("reopen writer");
+    let replacement = writer
+        .acquire_writer(
+            WriterLeaseV1 {
+                generation: 2,
+                token: "writer-2".to_owned(),
+                expires_at_unix_ms: 1_000,
+            },
+            20,
+        )
+        .expect("replacement lease");
+    let integrated = writer
+        .integrate_prepared_result(
+            &replacement,
+            &claim,
+            &prepared_hash,
+            &integrated_hash,
+            75,
+            21,
+        )
+        .expect("integrate");
+    assert_eq!(integrated.status, NodeStatusV1::Integrated);
     assert_eq!(
-        writer
-            .integrate_prepared_result(
-                &lease,
-                12,
-                "campaign-1",
-                "author-node",
-                "attempt-1",
-                claim.node_generation,
-                &prepared_hash,
-                Some(75),
-            )
-            .expect("integrate"),
-        IntegrationDispositionV1::Integrated
+        integrated.integrated_result_hash.as_ref(),
+        Some(&integrated_hash)
     );
-    assert_eq!(
-        writer
-            .integrate_prepared_result(
-                &lease,
-                13,
-                "campaign-1",
-                "author-node",
-                "attempt-1",
-                claim.node_generation,
-                &prepared_hash,
-                Some(75),
-            )
-            .expect("idempotent integration"),
-        IntegrationDispositionV1::AlreadyIntegrated
-    );
+    let replay = writer
+        .integrate_prepared_result(
+            &replacement,
+            &claim,
+            &prepared_hash,
+            &integrated_hash,
+            75,
+            22,
+        )
+        .expect("idempotent integration");
+    assert_eq!(replay, integrated);
+    let campaign = writer.load_campaign("campaign-1").expect("campaign snapshot");
+    assert_eq!(campaign.budget_remaining_microusd, 925);
+    assert_eq!(campaign.cpu_remaining, 4);
+    assert_eq!(campaign.gpu_remaining, 0);
     writer.validate_integrity().expect("writer integrity");
+    writer.checkpoint().expect("integrated checkpoint");
     drop(writer);
 
     let reviewer_before = attempt_root.inventory().expect("reviewer before");
@@ -155,7 +178,7 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
         .expect("reviewer remained read-only");
 
     let snapshot = inspect_read_only_store(&database).expect("read-only campaign projection");
-    assert_eq!(snapshot.schema_version, 25);
+    assert_eq!(snapshot.schema_version, 1);
     assert!(snapshot.table_count >= 4);
     fs::remove_dir_all(root).expect("cleanup");
 }

@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hepta-cgroup-containment = { path = "../hepta-cgroup-containment" }
 base64ct.workspace = true
 nix.workspace = true
 hex.workspace = true

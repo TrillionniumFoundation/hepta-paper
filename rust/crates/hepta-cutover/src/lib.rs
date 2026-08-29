@@ -173,8 +173,8 @@ impl CutoverStateV1 {
         }
     }
 
-    /// Production activation requires the external activation receipt and all prior evidence.
-    pub fn production_activation_eligible(&self) -> Result<bool, CutoverError> {
+    /// Reports completeness only; cryptographic authority must be verified externally.
+    pub fn activation_evidence_complete(&self) -> Result<bool, CutoverError> {
         if self.phase != CutoverPhaseV1::Activated {
             return Ok(false);
         }
@@ -220,9 +220,9 @@ fn validate_hash(value: &str) -> Result<(), CutoverError> {
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 /// Cutover plan, transition, evidence, or activation failure.
@@ -303,7 +303,7 @@ mod tests {
             )
             .expect("transfer");
         assert_eq!(state.authoritative_writer(), Some("rust-writer"));
-        assert!(!state.production_activation_eligible().expect("activation"));
+        assert!(!state.activation_evidence_complete().expect("activation"));
     }
 
     #[test]

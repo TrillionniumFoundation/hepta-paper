@@ -16,6 +16,9 @@ members = [
   "crates/hepta-readonly-control",
   "crates/hepta-workspace-authority",
   "crates/hepta-local-vertical",
+  "crates/hepta-scientific-evidence",
+  "crates/hepta-external-authority",
+  "crates/hepta-cutover",
 ]
 
 [workspace.package]

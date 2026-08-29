@@ -7,6 +7,11 @@
 
 #![forbid(unsafe_code)]
 
+pub use hepta_cgroup_containment::{
+    CgroupAuthorityModeV1, CgroupV2Error, CgroupV2OperationV1, CgroupV2PolicyV1,
+    ProcessContainmentModeV1,
+};
+
 #[cfg(not(unix))]
 compile_error!("hepta-codex-runtime Foundation V1 supports Unix targets only");
 

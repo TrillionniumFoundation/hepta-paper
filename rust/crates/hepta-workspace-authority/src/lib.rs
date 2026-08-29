@@ -217,7 +217,7 @@ pub fn compare_inventories_v1(
                     .checked_add(entry.size)
                     .ok_or(WorkspaceError::NumericOverflow)?;
             }
-            Some(previous) if **previous != *entry => {
+            Some(previous) if *previous != entry => {
                 changed.push(path.clone());
                 changed_bytes = changed_bytes
                     .checked_add(entry.size)
@@ -269,11 +269,12 @@ pub fn validate_mutation_v1(
         .chain(&mutation.changed)
         .chain(&mutation.removed)
     {
-        if !policy
-            .allowed_prefixes
-            .iter()
-            .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}/")))
-        {
+        if !policy.allowed_prefixes.iter().any(|prefix| {
+            path == prefix
+                || path
+                    .strip_prefix(prefix.as_str())
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        }) {
             return Err(WorkspaceError::PathForbidden(path.clone()));
         }
         if let Some(extension) = Path::new(path).extension().and_then(|value| value.to_str())
@@ -313,7 +314,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), WorkspaceError> {
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
         let name = entry.file_name();
-        validate_relative(Path::new(&name))?;
+        validate_relative(Path::new(name.as_os_str()))?;
         let source_path = entry.path();
         let destination_path = destination.join(name);
         let metadata = fs::symlink_metadata(&source_path)?;

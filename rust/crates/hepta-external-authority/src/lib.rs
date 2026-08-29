@@ -164,7 +164,12 @@ pub fn validate_distinct_authority_domains_v1(
         ExternalAuthorityKindV1::SubmissionDispatcher,
     ];
     for kind in required {
-        if receipts.iter().filter(|receipt| receipt.authority_kind == kind).count() != 1 {
+        if receipts
+            .iter()
+            .filter(|receipt| receipt.authority_kind == kind)
+            .count()
+            != 1
+        {
             return Err(ExternalAuthorityError::AuthoritySetIncomplete);
         }
     }
@@ -197,9 +202,9 @@ fn validate_hash(value: &str) -> Result<(), ExternalAuthorityError> {
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 /// External authority request, receipt, or verification failure.

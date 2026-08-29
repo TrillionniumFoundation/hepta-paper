@@ -1,0 +1,52 @@
+name: apply-rust-doc-bundle
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-runtime-gap-closure-20260829
+    paths:
+      - '.automation/rust-docs-patch.part*'
+      - '.github/workflows/apply-rust-doc-bundle.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-rust-doc-bundle
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact closure branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          ref: codex/rust-plan-runtime-gap-closure-20260829
+
+      - name: Verify and apply canonical documentation bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_parent='80223a2531de32ceeeab7d5d4e6c9b36a605716f'
+          test "$(git rev-parse HEAD^)" = "$expected_parent"
+          cat .automation/rust-docs-patch.part* \
+            | base64 --decode \
+            | gzip --decompress \
+            > /tmp/rust-docs.patch
+          echo '1f8c28dc7c13f9f15a11c00901e50291ab9eb3bc284fd83c0673ea80590a4eaf  /tmp/rust-docs.patch' \
+            | sha256sum --check --strict
+          git apply --check /tmp/rust-docs.patch
+          git apply /tmp/rust-docs.patch
+          python3 docs/rust/tools/validate-program-truth.py
+          rm -f .automation/rust-docs-patch.part*
+          rmdir .automation
+          rm -f .github/workflows/apply-rust-doc-bundle.yml
+          git add -A
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs(rust): establish plan v3 and canonical program truth'
+          git push origin HEAD:codex/rust-plan-runtime-gap-closure-20260829

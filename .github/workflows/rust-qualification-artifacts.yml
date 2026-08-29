@@ -1,0 +1,66 @@
+name: rust-qualification-artifacts
+
+on:
+  pull_request:
+    paths:
+      - rust/**
+      - docs/rust/qualification/**
+      - .github/workflows/rust-qualification-artifacts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-qualification-artifacts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate scripts and evidence schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n docs/rust/qualification/hepta-broker-host-qualification-v2.sh
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          schema = Path(
+              "docs/rust/qualification/hepta-broker-qualification-evidence-v1.schema.json"
+          )
+          decoded = json.loads(schema.read_text())
+          assert decoded["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+          assert decoded["properties"]["version"]["const"] == 1
+          assert decoded["additionalProperties"] is False
+          PY
+
+      - name: Build and smoke-test qualification CLIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --bin hepta-broker-journal-preflight \
+            --bin hepta-trust-bundle-preflight \
+            --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --bin hepta-broker-journal-preflight \
+            --bin hepta-trust-bundle-preflight \
+            --locked -- -D warnings
+
+          if rust/target/debug/hepta-broker-journal-preflight; then exit 1; fi
+          if rust/target/debug/hepta-trust-bundle-preflight; then exit 1; fi
+
+          fixture=$(mktemp -d)
+          chmod 0700 "$fixture"
+          owner_uid=$(stat -c %u "$fixture")
+          rust/target/debug/hepta-broker-journal-preflight \
+            "$fixture/broker.sqlite" "$owner_uid"
+          rust/target/debug/hepta-broker-journal-preflight \
+            "$fixture/broker.sqlite" "$owner_uid"
+          test "$(stat -c %a "$fixture/broker.sqlite")" = 600
+          rm -rf "$fixture"

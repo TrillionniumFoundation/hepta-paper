@@ -5,8 +5,7 @@ on:
     branches:
       - codex/rust-all-gap-closure-20260830
     paths:
-      - '.github/rust-gap-payload/**'
-      - '.github/workflows/apply-rust-gap-payload.yml'
+      - '.github/rust-gap-payload/READY'
   workflow_dispatch:
 
 permissions:

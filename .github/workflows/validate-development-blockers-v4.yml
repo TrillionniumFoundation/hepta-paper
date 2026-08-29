@@ -58,6 +58,7 @@ jobs:
           git apply --index "$RUNNER_TEMP/blockers.patch"
           python3 - <<'PY'
           from pathlib import Path
+
           path = Path("rust/crates/hepta-codex-broker/src/journal/path.rs")
           source = path.read_text()
           start_marker = "\nfn verify_initialization_candidate("
@@ -67,8 +68,22 @@ jobs:
           start = source.index(start_marker)
           end = source.index(end_marker, start)
           path.write_text(source[:start] + source[end:])
+
+          tests = Path("rust/crates/hepta-codex-broker/src/journal/tests.rs")
+          test_source = tests.read_text()
+          old = """                Some(digest('e')),
+                Some("sigkill_transition".to_owned()),
+"""
+          new = """                None,
+                None,
+"""
+          if test_source.count(old) != 1:
+              raise SystemExit("expected one SIGKILL transition metadata block")
+          tests.write_text(test_source.replace(old, new, 1))
           PY
-          git add rust/crates/hepta-codex-broker/src/journal/path.rs
+          git add \
+            rust/crates/hepta-codex-broker/src/journal/path.rs \
+            rust/crates/hepta-codex-broker/src/journal/tests.rs
           git diff --cached --check
 
       - name: Install qualified Rust

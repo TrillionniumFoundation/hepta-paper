@@ -432,6 +432,7 @@ name = "hepta-workspace-authority"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "nix",
  "serde",
  "serde_json",
  "sha2 0.10.8",

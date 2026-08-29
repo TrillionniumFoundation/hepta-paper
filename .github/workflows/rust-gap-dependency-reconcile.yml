@@ -1,0 +1,81 @@
+name: rust-gap-dependency-reconcile
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/workflows/rust-gap-dependency-reconcile.yml'
+      - 'rust/crates/hepta-workspace-authority/**'
+      - 'rust/crates/hepta-scientific-evidence/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rust-gap-dependency-reconcile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Install qualified Cargo
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+
+      - name: Reconcile manifests and lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          updates = [
+              (
+                  Path('rust/crates/hepta-workspace-authority/Cargo.toml'),
+                  'nix.workspace = true',
+                  '[dependencies]\n',
+              ),
+              (
+                  Path('rust/crates/hepta-scientific-evidence/Cargo.toml'),
+                  'serde_json.workspace = true',
+                  'serde.workspace = true\n',
+              ),
+          ]
+          for path, dependency, marker in updates:
+              text = path.read_text(encoding='utf-8')
+              if dependency not in text:
+                  text = text.replace(marker, marker + dependency + '\n', 1)
+                  path.write_text(text, encoding='utf-8')
+          PY
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+
+      - name: Commit dependency truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- rust/Cargo.lock rust/crates/*/Cargo.toml; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/Cargo.lock rust/crates/*/Cargo.toml
+          git commit -m 'build(rust): reconcile Plan v3 dependency graph'
+          git fetch origin "$GITHUB_REF_NAME"
+          if ! git rebase "origin/$GITHUB_REF_NAME"; then
+            git rebase --abort || true
+            exit 0
+          fi
+          git push origin "HEAD:${GITHUB_REF_NAME}"

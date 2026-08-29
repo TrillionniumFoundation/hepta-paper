@@ -122,14 +122,24 @@ jobs:
           sudo chown root:root /tmp/hepta-live-listener.py
           sudo chmod 0555 /tmp/hepta-live-listener.py
           sudo -u hepta-broker -g hepta-author-broker-client -- \
-            python3 /tmp/hepta-live-listener.py &
+            python3 /tmp/hepta-live-listener.py \
+            >/tmp/listener-server.stdout 2>/tmp/listener-server.stderr &
           listener_pid=$!
           trap 'sudo kill "$listener_pid" 2>/dev/null || true' EXIT
           for _ in $(seq 1 100); do
-            test -f /run/hepta-author-broker/listener.ready && break
+            if sudo test -f /run/hepta-author-broker/listener.ready; then
+              break
+            fi
+            if ! kill -0 "$listener_pid" 2>/dev/null; then
+              cat /tmp/listener-server.stdout >&2 || true
+              cat /tmp/listener-server.stderr >&2 || true
+              echo 'listener exited before publishing readiness' >&2
+              exit 1
+            fi
             sleep 0.05
           done
-          test -f /run/hepta-author-broker/listener.ready
+          sudo test -f /run/hepta-author-broker/listener.ready
+          test "$(sudo cat /run/hepta-author-broker/listener.ready)" = ready
 
           if sudo -u hepta-reviewer -- python3 - <<'PY'
           import socket
@@ -195,5 +205,7 @@ jobs:
             /tmp/listener-parent-identity.txt
             /tmp/listener-identity.txt
             /tmp/installed-v2-identity.txt
+            /tmp/listener-server.stdout
+            /tmp/listener-server.stderr
           if-no-files-found: warn
           retention-days: 90

@@ -427,10 +427,11 @@ pub fn spawn_blocked_preexec_gate(
         return Err(DurableGateError::InvalidGateProcessId(process_id));
     }
 
+    let gate_observation_path = PathBuf::from(&gate_identity.canonical_path);
     let stopped = wait_for_stopped_gate(
         &mut child,
         process_id,
-        &policy.gate_executable,
+        &gate_observation_path,
         Duration::from_millis(policy.stop_timeout_ms),
         Duration::from_millis(limits.poll_interval_ms),
     );

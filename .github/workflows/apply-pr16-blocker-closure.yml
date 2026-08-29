@@ -66,6 +66,8 @@ jobs:
             0c74ce74135b22a64c45b110b0d04a68aff6a0b3
           git apply --check /tmp/hepta-pr16-closure.patch
           git apply --index /tmp/hepta-pr16-closure.patch
+          sed -i 's/[[:space:]]\+$//' docs/adr/ADR-0004-durable-preexec-gate.md
+          git add docs/adr/ADR-0004-durable-preexec-gate.md
           git diff --cached --check
 
           test ! -e .automation/closure-patch

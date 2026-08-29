@@ -3,6 +3,28 @@
 Status: source-level development blockers closed for the bounded broker slice;
 installed-host and live-provider qualification remain separate hard gates.
 
+Source implementation commit:
+
+```text
+c05468c1cd8251316c93fd432cd9bf3146bdd902
+```
+
+Pre-publication GitHub-hosted validation:
+
+```text
+validate-development-blockers-v4  33239754160  success
+apply-development-blockers-v4     33239846464  success
+```
+
+Both runs used Ubuntu 24.04 and Rust 1.98.0 and completed locked metadata,
+rustfmt, workspace/all-target Clippy with `-D warnings`, all-feature workspace
+tests with one test thread, and rustdoc with warnings denied. The second run
+committed only after the complete gate set passed.
+
+This record update intentionally creates a human-authored PR head so the
+repository's protected pull-request workflows execute normally. Those exact-head
+workflow conclusions remain authoritative and must be recorded after completion.
+
 ## Closed source boundaries
 
 - existing broker databases are verified through a read-only, no-follow preflight

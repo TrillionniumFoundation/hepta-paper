@@ -1,0 +1,223 @@
+name: rust-gap-closure-bootstrap-v2
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-v2-20260830
+    paths:
+      - rust/**
+      - docs/rust/tools/normalize-gap-closure-source.py
+      - docs/rust/tools/normalize-gap-closure-source-v2.py
+      - .github/workflows/rust-gap-closure-bootstrap-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+concurrency:
+  group: rust-gap-closure-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  normalize-lock-and-qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Normalize and execute the complete source matrix
+        id: validation
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/hepta-gap-closure-logs
+          failed=0
+          run_step() {
+            name="$1"
+            shift
+            if "$@" > >(tee "/tmp/hepta-gap-closure-logs/${name}.log") 2>&1; then
+              printf '%s\n' "$name=success" | tee -a /tmp/hepta-gap-closure-logs/status.txt
+            else
+              code=$?
+              printf '%s\n' "$name=failure:$code" | tee -a /tmp/hepta-gap-closure-logs/status.txt
+              failed=1
+            fi
+          }
+
+          run_step normalize_v1 python3 docs/rust/tools/normalize-gap-closure-source.py
+          if [ "$failed" -eq 0 ]; then
+            run_step normalize_v2 python3 docs/rust/tools/normalize-gap-closure-source-v2.py
+          fi
+          if [ "$failed" -eq 0 ]; then
+            run_step rustfmt cargo fmt --manifest-path rust/Cargo.toml --all
+            run_step diff_check git diff --check
+          fi
+          if [ "$failed" -eq 0 ]; then
+            run_step lockfile cargo generate-lockfile --manifest-path rust/Cargo.toml
+            run_step metadata cargo metadata --manifest-path rust/Cargo.toml --format-version 1 --locked
+          fi
+          if [ "$failed" -eq 0 ]; then
+            run_step check cargo check --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked
+          fi
+          if [ "$failed" -eq 0 ]; then
+            run_step test cargo test --manifest-path rust/Cargo.toml --workspace --all-features --locked -- --test-threads=1
+          fi
+          if [ "$failed" -eq 0 ]; then
+            run_step clippy cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+          fi
+          if [ "$failed" -eq 0 ]; then
+            run_step rustdoc env RUSTDOCFLAGS=-D\ warnings cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps
+          fi
+          if [ "$failed" -eq 0 ]; then
+            run_step legacy_build cargo build --manifest-path rust/Cargo.toml -p hepta-legacy-compat --bin hepta-legacy-json-v1 --locked
+            run_step legacy_differential env HEPTA_LEGACY_ORACLE="$PWD/rust/target/debug/hepta-legacy-json-v1" node rust/compat/check-node-rust-parity.mjs
+            run_step program_truth python3 docs/rust/tools/validate-program-truth.py
+          fi
+
+          if [ "$failed" -eq 0 ]; then
+            echo 'success=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'success=false' >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Commit a validated normalized tree
+        if: steps.validation.outputs.success == 'true'
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/Cargo.toml rust/Cargo.lock rust/crates rust/compat
+          if [ -f docs/rust/evidence/bootstrap-diagnostics.md ]; then
+            git rm docs/rust/evidence/bootstrap-diagnostics.md
+          fi
+          if git diff --cached --quiet; then
+            result_sha=$source_sha
+            tested_tree=$(git rev-parse HEAD^{tree})
+            changed=false
+          else
+            tested_tree=$(git write-tree)
+            git commit -m 'build(rust): normalize and lock Plan v3 gap closure'
+            result_sha=$(git rev-parse HEAD)
+            result_tree=$(git rev-parse HEAD^{tree})
+            test "$tested_tree" = "$result_tree"
+            git push origin HEAD:codex/rust-all-gap-closure-v2-20260830
+            changed=true
+          fi
+          {
+            echo "changed=$changed"
+            echo "source_sha=$source_sha"
+            echo "result_sha=$result_sha"
+            echo "tested_tree=$tested_tree"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record bounded failure diagnostics
+        if: steps.validation.outputs.success != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          diagnostic=/tmp/bootstrap-diagnostics.md
+          {
+            echo '# Rust Plan v3 bootstrap diagnostics'
+            echo
+            echo 'This is source-development diagnostic evidence only. It grants no production authority.'
+            echo
+            echo "- source commit: \`$source_sha\`"
+            echo "- workflow run: \`$GITHUB_RUN_ID\` attempt \`$GITHUB_RUN_ATTEMPT\`"
+            echo
+            echo '## Step status'
+            echo '```text'
+            cat /tmp/hepta-gap-closure-logs/status.txt 2>/dev/null || true
+            echo '```'
+            for log in /tmp/hepta-gap-closure-logs/*.log; do
+              [ -f "$log" ] || continue
+              echo
+              echo "## $(basename "$log")"
+              echo '```text'
+              tail -n 300 "$log"
+              echo '```'
+            done
+          } > "$diagnostic"
+          git reset --hard HEAD
+          mkdir -p docs/rust/evidence
+          cp "$diagnostic" docs/rust/evidence/bootstrap-diagnostics.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/rust/evidence/bootstrap-diagnostics.md
+          git commit -m 'ci(rust): record Plan v3 bootstrap diagnostics'
+          git push origin HEAD:codex/rust-all-gap-closure-v2-20260830
+          exit 1
+
+      - name: Emit exact-tree qualification record
+        if: steps.validation.outputs.success == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.commit.outputs.source_sha }}
+          RESULT_SHA: ${{ steps.commit.outputs.result_sha }}
+          TESTED_TREE: ${{ steps.commit.outputs.tested_tree }}
+          CHANGED: ${{ steps.commit.outputs.changed }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hepta-gap-closure-evidence
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path.cwd()
+          record = {
+              "schemaVersion": 1,
+              "kind": "rust_gap_closure_source_qualification",
+              "sourceSha": os.environ["SOURCE_SHA"],
+              "resultSha": os.environ["RESULT_SHA"],
+              "testedTree": os.environ["TESTED_TREE"],
+              "normalizedCommitCreated": os.environ["CHANGED"] == "true",
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "workflowRunId": os.environ["GITHUB_RUN_ID"],
+              "workflowRunAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runnerOs": os.environ["RUNNER_OS"],
+              "cargoLockSha256": hashlib.sha256((root / "rust/Cargo.lock").read_bytes()).hexdigest(),
+              "programTruthSha256": hashlib.sha256((root / "docs/rust/current-status.v1.json").read_bytes()).hexdigest(),
+              "authority": "source_only_non_production",
+          }
+          pathlib.Path("/tmp/hepta-gap-closure-evidence/source-qualification.json").write_text(
+              json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          sha256sum /tmp/hepta-gap-closure-evidence/source-qualification.json \
+            > /tmp/hepta-gap-closure-evidence/SHA256SUMS
+
+      - name: Upload logs and exact-tree evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-gap-closure-v2-${{ github.sha }}
+          path: |
+            /tmp/hepta-gap-closure-logs
+            /tmp/hepta-gap-closure-evidence
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0

@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hepta.invalid/schemas/external-evidence-envelope-v1.schema.json",
+  "title": "HeptaExternalQualificationEvidenceV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "evidenceKind",
+    "packageId",
+    "challenge",
+    "subject",
+    "issuer",
+    "observedAtUnixMs",
+    "expiresAtUnixMs",
+    "claims",
+    "attachments",
+    "recordHash",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "evidenceKind": {
+      "enum": [
+        "independent_linux_review",
+        "target_host_qualification",
+        "storage_destructive_drill",
+        "capability_key_owner_drill",
+        "authenticated_codex_role_qualification",
+        "campaign_writer_cutover_soak",
+        "release_external_authority"
+      ]
+    },
+    "packageId": { "$ref": "#/$defs/identifier" },
+    "challenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["challengeId", "nonce", "issuedAtUnixMs", "expiresAtUnixMs", "repository", "commit", "tree"],
+      "properties": {
+        "challengeId": { "$ref": "#/$defs/identifier" },
+        "nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{32,160}$" },
+        "issuedAtUnixMs": { "$ref": "#/$defs/positiveInteger" },
+        "expiresAtUnixMs": { "$ref": "#/$defs/positiveInteger" },
+        "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+        "commit": { "$ref": "#/$defs/gitSha" },
+        "tree": { "$ref": "#/$defs/gitSha" }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "tree", "binaryDigests", "configurationDigests"],
+      "properties": {
+        "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+        "commit": { "$ref": "#/$defs/gitSha" },
+        "tree": { "$ref": "#/$defs/gitSha" },
+        "binaryDigests": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/digest" }
+        },
+        "configurationDigests": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/digest" }
+        },
+        "hostIdentityHash": { "$ref": "#/$defs/digest" },
+        "trustStoreHash": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorityId", "authorityClass", "keyId"],
+      "properties": {
+        "authorityId": { "$ref": "#/$defs/identifier" },
+        "authorityClass": {
+          "enum": [
+            "independent_reviewer",
+            "target_host_operator",
+            "storage_operator",
+            "capability_key_owner",
+            "provider_account_owner",
+            "campaign_database_owner",
+            "release_authority"
+          ]
+        },
+        "keyId": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "observedAtUnixMs": { "$ref": "#/$defs/positiveInteger" },
+    "expiresAtUnixMs": { "$ref": "#/$defs/positiveInteger" },
+    "claims": { "type": "object" },
+    "attachments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "bytes", "sha256"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$", "maxLength": 512 },
+          "bytes": { "type": "integer", "minimum": 0, "maximum": 1099511627776 },
+          "sha256": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "previousEvidenceHash": { "$ref": "#/$defs/digest" },
+    "recordHash": { "$ref": "#/$defs/digest" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "valueBase64Url"],
+      "properties": {
+        "algorithm": { "const": "ed25519" },
+        "valueBase64Url": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "evidenceKind": { "const": "independent_linux_review" } } },
+      "then": {
+        "properties": {
+          "issuer": { "properties": { "authorityClass": { "const": "independent_reviewer" } } },
+          "claims": { "$ref": "#/$defs/independentLinuxReviewClaims" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "evidenceKind": { "const": "target_host_qualification" } } },
+      "then": {
+        "properties": {
+          "issuer": { "properties": { "authorityClass": { "const": "target_host_operator" } } },
+          "claims": { "$ref": "#/$defs/targetHostClaims" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "evidenceKind": { "const": "storage_destructive_drill" } } },
+      "then": {
+        "properties": {
+          "issuer": { "properties": { "authorityClass": { "const": "storage_operator" } } },
+          "claims": { "$ref": "#/$defs/storageClaims" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "evidenceKind": { "const": "capability_key_owner_drill" } } },
+      "then": {
+        "properties": {
+          "issuer": { "properties": { "authorityClass": { "const": "capability_key_owner" } } },
+          "claims": { "$ref": "#/$defs/keyOwnerClaims" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "evidenceKind": { "const": "authenticated_codex_role_qualification" } } },
+      "then": {
+        "properties": {
+          "issuer": { "properties": { "authorityClass": { "const": "provider_account_owner" } } },
+          "claims": { "$ref": "#/$defs/codexClaims" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "evidenceKind": { "const": "campaign_writer_cutover_soak" } } },
+      "then": {
+        "properties": {
+          "issuer": { "properties": { "authorityClass": { "const": "campaign_database_owner" } } },
+          "claims": { "$ref": "#/$defs/writerClaims" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "evidenceKind": { "const": "release_external_authority" } } },
+      "then": {
+        "properties": {
+          "issuer": { "properties": { "authorityClass": { "const": "release_authority" } } },
+          "claims": { "$ref": "#/$defs/releaseClaims" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$" },
+    "positiveInteger": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 },
+    "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "strictClaimBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed"],
+      "properties": { "passed": { "const": true } }
+    },
+    "independentLinuxReviewClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "reviewedUnsafeBoundaries", "reviewedKernelAssumptions", "openCriticalFindings", "reviewerIndependenceAttestationHash"],
+      "properties": {
+        "passed": { "const": true },
+        "reviewedUnsafeBoundaries": { "const": true },
+        "reviewedKernelAssumptions": { "const": true },
+        "openCriticalFindings": { "const": 0 },
+        "reviewerIndependenceAttestationHash": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "targetHostClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "kernelRelease", "cgroupV2Qualified", "systemdHardeningQualified", "listenerAuthorizedPeerSucceeded", "listenerUnauthorizedPeerRejected", "gateAuthoritySeparated", "schemaAuthoritySeparated", "rebootRecoveryPassed"],
+      "properties": {
+        "passed": { "const": true },
+        "kernelRelease": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "cgroupV2Qualified": { "const": true },
+        "systemdHardeningQualified": { "const": true },
+        "listenerAuthorizedPeerSucceeded": { "const": true },
+        "listenerUnauthorizedPeerRejected": { "const": true },
+        "gateAuthoritySeparated": { "const": true },
+        "schemaAuthoritySeparated": { "const": true },
+        "rebootRecoveryPassed": { "const": true }
+      }
+    },
+    "storageClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "sigkillMatrixPassed", "hostRebootPassed", "diskFullPassed", "readOnlyRemountPassed", "walCorruptionRejected", "pageCorruptionRejected", "restoreDrillPassed", "liveProductionDataTouched"],
+      "properties": {
+        "passed": { "const": true },
+        "sigkillMatrixPassed": { "const": true },
+        "hostRebootPassed": { "const": true },
+        "diskFullPassed": { "const": true },
+        "readOnlyRemountPassed": { "const": true },
+        "walCorruptionRejected": { "const": true },
+        "pageCorruptionRejected": { "const": true },
+        "restoreDrillPassed": { "const": true },
+        "liveProductionDataTouched": { "const": false }
+      }
+    },
+    "keyOwnerClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "overlapRotationPassed", "revocationPassed", "rollbackRejected", "bundleSignerCompromiseDrillPassed", "requestSignerCompromiseDrillPassed", "emergencyAdmissionStopPassed"],
+      "properties": {
+        "passed": { "const": true },
+        "overlapRotationPassed": { "const": true },
+        "revocationPassed": { "const": true },
+        "rollbackRejected": { "const": true },
+        "bundleSignerCompromiseDrillPassed": { "const": true },
+        "requestSignerCompromiseDrillPassed": { "const": true },
+        "emergencyAdmissionStopPassed": { "const": true }
+      }
+    },
+    "codexClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "authorPrincipalDistinct", "reviewerPrincipalDistinct", "authorCanaryPassed", "reviewerCanaryPassed", "freshEphemeralSessions", "credentialLeakCount", "crossRoleReadCount", "providerNetworkCallsBounded"],
+      "properties": {
+        "passed": { "const": true },
+        "authorPrincipalDistinct": { "const": true },
+        "reviewerPrincipalDistinct": { "const": true },
+        "authorCanaryPassed": { "const": true },
+        "reviewerCanaryPassed": { "const": true },
+        "freshEphemeralSessions": { "const": true },
+        "credentialLeakCount": { "const": 0 },
+        "crossRoleReadCount": { "const": 0 },
+        "providerNetworkCallsBounded": { "const": true }
+      }
+    },
+    "writerClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "schemaVersion", "mixedWriterExcluded", "durationSeconds", "staleCommitCount", "duplicateIntegrationCount", "unexplainedBudgetDeltaMicrousd", "backupRestorePassed", "rollbackPassed"],
+      "properties": {
+        "passed": { "const": true },
+        "schemaVersion": { "const": 25 },
+        "mixedWriterExcluded": { "const": true },
+        "durationSeconds": { "type": "integer", "minimum": 259200 },
+        "staleCommitCount": { "const": 0 },
+        "duplicateIntegrationCount": { "const": 0 },
+        "unexplainedBudgetDeltaMicrousd": { "const": 0 },
+        "backupRestorePassed": { "const": true },
+        "rollbackPassed": { "const": true }
+      }
+    },
+    "releaseClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "kmsOrHsmQualified", "wormCustodyQualified", "releaseSignatureVerified", "singleUseDispatchQualified", "modelPrincipalSecretAccessCount", "ambiguousExternalActionReconciled"],
+      "properties": {
+        "passed": { "const": true },
+        "kmsOrHsmQualified": { "const": true },
+        "wormCustodyQualified": { "const": true },
+        "releaseSignatureVerified": { "const": true },
+        "singleUseDispatchQualified": { "const": true },
+        "modelPrincipalSecretAccessCount": { "const": 0 },
+        "ambiguousExternalActionReconciled": { "const": true }
+      }
+    }
+  }
+}

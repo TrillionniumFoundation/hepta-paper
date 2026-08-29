@@ -5,10 +5,10 @@ compile_error!("hepta-qualification-ingest requires Unix file identity semantics
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use base64ct::{Base64UrlUnpadded, Encoding};

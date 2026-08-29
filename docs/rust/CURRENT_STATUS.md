@@ -102,3 +102,18 @@ authority. Those gaps remain open until evidence arrives from their real owner.
 
 The mapping of canonical and historical documents is maintained in
 [`DOCUMENTATION_INDEX.md`](DOCUMENTATION_INDEX.md).
+
+<!-- PLAN_V3_REPOSITORY_LOCAL_STATUS:BEGIN -->
+## Repository-local Plan v3 source status
+
+The exact candidate source graph has passed format, compile, full tests,
+Clippy with warnings denied, rustdoc with warnings denied, canonical program
+truth validation, compatibility differential, immutable read-only store,
+workspace mutation, campaign-writer recovery, scientific evidence and cutover
+contract tests.
+
+This establishes `source_qualified` only. Production activation, real Codex
+credentials, live provider calls, independent target-host qualification,
+external key ownership, release signing, WORM custody, portal mutation and
+submission remain disabled or `blocked_external`.
+<!-- PLAN_V3_REPOSITORY_LOCAL_STATUS:END -->

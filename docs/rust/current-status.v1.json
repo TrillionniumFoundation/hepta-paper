@@ -29,7 +29,7 @@
     "external_authority"
   ],
   "current": {
-    "productStage": "broker_source_candidate",
+    "productStage": "repository_local_source_candidate",
     "productionActivation": "disabled",
     "realCodexCredentials": "forbidden",
     "liveProviderCalls": "forbidden",
@@ -56,57 +56,58 @@
     {
       "id": "WS",
       "name": "Workspace and mutation authority",
-      "status": "not_started",
-      "evidenceTier": "none"
+      "status": "source_qualified",
+      "evidenceTier": "source"
     },
     {
       "id": "CMP",
       "name": "Compatibility and canonicalization",
-      "status": "design_ready",
-      "evidenceTier": "design"
+      "status": "source_qualified",
+      "evidenceTier": "source"
     },
     {
       "id": "RO",
       "name": "Read-only Rust control plane",
-      "status": "not_started",
-      "evidenceTier": "none"
+      "status": "source_qualified",
+      "evidenceTier": "source"
     },
     {
       "id": "MVP",
       "name": "Local author-reviewer vertical slice",
-      "status": "not_started",
-      "evidenceTier": "none"
+      "status": "source_qualified",
+      "evidenceTier": "source"
     },
     {
       "id": "DB",
       "name": "Persistent Rust campaign writer",
-      "status": "not_started",
-      "evidenceTier": "none"
+      "status": "source_qualified",
+      "evidenceTier": "source"
     },
     {
       "id": "EVD",
       "name": "Scientific evidence orchestration",
-      "status": "not_started",
-      "evidenceTier": "none"
+      "status": "source_qualified",
+      "evidenceTier": "source"
     },
     {
       "id": "REL",
       "name": "Release and external authority",
       "status": "blocked_external",
-      "evidenceTier": "none"
+      "evidenceTier": "none",
+      "repositoryLocalStatus": "source_qualified"
     },
     {
       "id": "CUT",
       "name": "Shadow, cutover and retirement",
-      "status": "not_started",
-      "evidenceTier": "none"
+      "status": "source_qualified",
+      "evidenceTier": "source"
     }
   ],
   "gaps": [
     {
       "id": "GAP-GOV-001",
       "title": "Single machine-readable program truth and stale-document controls",
-      "status": "source_implemented",
+      "status": "source_qualified",
       "evidenceTier": "source",
       "external": false,
       "closesWhen": [
@@ -117,8 +118,8 @@
     {
       "id": "GAP-GOV-002",
       "title": "Exact-head and exact-tree qualification evidence",
-      "status": "design_ready",
-      "evidenceTier": "design",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "workflows explicitly checkout head SHA",
@@ -129,8 +130,8 @@
     {
       "id": "GAP-BRK-001",
       "title": "Authorized multi-principal Unix listener accessibility",
-      "status": "design_ready",
-      "evidenceTier": "design",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "shared-group listener mode is explicit",
@@ -141,8 +142,8 @@
     {
       "id": "GAP-BRK-002",
       "title": "Production process containment beyond process-group-only supervision",
-      "status": "design_ready",
-      "evidenceTier": "design",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "cgroup-v2 or equivalent containment is implemented",
@@ -153,8 +154,8 @@
     {
       "id": "GAP-BRK-003",
       "title": "Stable worker and lifecycle telemetry contract",
-      "status": "design_ready",
-      "evidenceTier": "design",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "machine error registry is versioned",
@@ -212,8 +213,8 @@
     {
       "id": "GAP-WS-001",
       "title": "Descriptor-relative COW workspace and mutation verifier",
-      "status": "not_started",
-      "evidenceTier": "none",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "workspace crates implement WS-001 through WS-009",
@@ -223,8 +224,8 @@
     {
       "id": "GAP-CMP-001",
       "title": "Historical canonicalization and Node-to-Rust parity kernel",
-      "status": "not_started",
-      "evidenceTier": "none",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "LegacyStableJsonV1 corpus is frozen",
@@ -234,8 +235,8 @@
     {
       "id": "GAP-RO-001",
       "title": "Schema-25 read-only Rust control plane",
-      "status": "not_started",
-      "evidenceTier": "none",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "immutable SQLite reader and normalized state diff are complete",
@@ -245,8 +246,8 @@
     {
       "id": "GAP-MVP-001",
       "title": "One-paper author-build-review-revise local vertical slice",
-      "status": "not_started",
-      "evidenceTier": "none",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "fake then qualified Codex prepared results traverse workspace and read-only campaign projection",
@@ -256,8 +257,8 @@
     {
       "id": "GAP-DB-001",
       "title": "Single-writer Rust campaign persistence and cutover fencing",
-      "status": "not_started",
-      "evidenceTier": "none",
+      "status": "source_qualified",
+      "evidenceTier": "source",
       "external": false,
       "closesWhen": [
         "DB-001 through DB-009 pass",
@@ -274,7 +275,14 @@
         "narrow ports are implemented",
         "real external authorities issue independently verifiable receipts",
         "model principals retain zero access"
-      ]
+      ],
+      "repositoryLocalStatus": "source_qualified"
     }
-  ]
+  ],
+  "qualificationCandidate": {
+    "branch": "codex/rust-all-gap-closure-20260830",
+    "commit": "b029bfb931e4c57ac0feafca8ff56b4814b15d6d",
+    "evidenceTier": "hosted_source_pending_final_head",
+    "productionAuthority": false
+  }
 }

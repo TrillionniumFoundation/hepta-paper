@@ -30,7 +30,10 @@ fn root_path_replacement_is_detected_against_the_open_descriptor() {
     fs::rename(&root, &displaced).expect("displace root");
     fs::create_dir(&root).expect("replacement root");
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("replacement mode");
-    assert!(matches!(opened.inventory(), Err(WorkspaceError::RootChanged)));
+    assert!(matches!(
+        opened.inventory(),
+        Err(WorkspaceError::RootChanged)
+    ));
     fs::remove_dir_all(parent).expect("cleanup");
 }
 

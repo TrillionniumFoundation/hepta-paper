@@ -4,7 +4,7 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     str::FromStr,
@@ -1817,7 +1817,6 @@ mod tests {
                     10 + index * 3,
                 )
                 .expect("claim");
-            revision = claim.campaign_revision;
             store
                 .fail_before_provider(&writer, &claim, 11 + index * 3)
                 .expect("refund");

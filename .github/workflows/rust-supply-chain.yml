@@ -1,0 +1,258 @@
+name: rust-supply-chain
+
+on:
+  pull_request:
+    paths:
+      - rust/**
+      - docs/rust/security/SUPPLY_CHAIN_POLICY.md
+      - .github/workflows/rust-supply-chain.yml
+  push:
+    branches: [main]
+    paths:
+      - rust/**
+      - docs/rust/security/SUPPLY_CHAIN_POLICY.md
+      - .github/workflows/rust-supply-chain.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_DENY_VERSION: 0.20.2
+  CARGO_DENY_ARCHIVE_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+  CARGO_CYCLONEDX_VERSION: 0.5.9
+  CARGO_CYCLONEDX_ARCHIVE_SHA256: 9bd3e599314f50810c9d98b8b68a617ff9d3cc20873968d90b29d121f6b226ff
+
+jobs:
+  policy-and-sbom:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+      CARGO_HOME: ${{ runner.temp }}/rust-supply-chain-cargo-home
+      EVIDENCE_ROOT: ${{ runner.temp }}/rust-supply-chain-evidence
+      TOOL_ROOT: ${{ runner.temp }}/rust-supply-chain-tools
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prove exact source identity before supply-chain checks
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          mkdir -p "$EVIDENCE_ROOT" "$TOOL_ROOT/bin" "$CARGO_HOME"
+          EVIDENCE_OUTPUT="$EVIDENCE_ROOT/preflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          sha256sum rust/Cargo.lock rust/deny.toml \
+            docs/rust/security/SUPPLY_CHAIN_POLICY.md \
+            > "$EVIDENCE_ROOT/input-sha256.txt"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Install pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          rustc -vV | tee "$EVIDENCE_ROOT/rustc-version.txt"
+          cargo -vV | tee "$EVIDENCE_ROOT/cargo-version.txt"
+
+      - name: Install checksum-verified supply-chain tools
+        run: |
+          set -euo pipefail
+          deny_archive="$TOOL_ROOT/cargo-deny.tar.gz"
+          cyclonedx_archive="$TOOL_ROOT/cargo-cyclonedx.tar.xz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            --output "$deny_archive"
+          printf '%s  %s\n' "$CARGO_DENY_ARCHIVE_SHA256" "$deny_archive" | sha256sum -c -
+          mkdir -p "$TOOL_ROOT/cargo-deny"
+          tar -xzf "$deny_archive" -C "$TOOL_ROOT/cargo-deny"
+          deny_binary="$(find "$TOOL_ROOT/cargo-deny" -type f -name cargo-deny -print -quit)"
+          test -n "$deny_binary"
+          install -m 0555 "$deny_binary" "$TOOL_ROOT/bin/cargo-deny"
+
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            "https://github.com/CycloneDX/cyclonedx-rust-cargo/releases/download/cargo-cyclonedx-${CARGO_CYCLONEDX_VERSION}/cargo-cyclonedx-x86_64-unknown-linux-musl.tar.xz" \
+            --output "$cyclonedx_archive"
+          printf '%s  %s\n' "$CARGO_CYCLONEDX_ARCHIVE_SHA256" "$cyclonedx_archive" | sha256sum -c -
+          mkdir -p "$TOOL_ROOT/cargo-cyclonedx"
+          tar -xJf "$cyclonedx_archive" -C "$TOOL_ROOT/cargo-cyclonedx"
+          cyclonedx_binary="$(find "$TOOL_ROOT/cargo-cyclonedx" -type f -name cargo-cyclonedx -print -quit)"
+          test -n "$cyclonedx_binary"
+          install -m 0555 "$cyclonedx_binary" "$TOOL_ROOT/bin/cargo-cyclonedx"
+
+          "$TOOL_ROOT/bin/cargo-deny" --version | tee "$EVIDENCE_ROOT/cargo-deny-version.txt"
+          "$TOOL_ROOT/bin/cargo-cyclonedx" --version | tee "$EVIDENCE_ROOT/cargo-cyclonedx-version.txt"
+          sha256sum "$deny_archive" "$cyclonedx_archive" \
+            "$TOOL_ROOT/bin/cargo-deny" "$TOOL_ROOT/bin/cargo-cyclonedx" \
+            > "$EVIDENCE_ROOT/tool-sha256.txt"
+
+      - name: Enforce advisory license source and version policy
+        run: |
+          set -euo pipefail
+          "$TOOL_ROOT/bin/cargo-deny" \
+            --manifest-path rust/Cargo.toml \
+            --config rust/deny.toml \
+            check advisories bans licenses sources \
+            2>&1 | tee "$EVIDENCE_ROOT/cargo-deny.txt"
+          advisory_git="$(find "$CARGO_HOME/advisory-dbs" -type d -name .git -print -quit)"
+          test -n "$advisory_git"
+          git -C "$(dirname "$advisory_git")" rev-parse HEAD \
+            | tee "$EVIDENCE_ROOT/advisory-db-commit.txt"
+
+      - name: Generate reproducible CycloneDX 1.5 SBOM set
+        run: |
+          set -euo pipefail
+          test -z "$(find rust -type f -name bom.json -print -quit)"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          "$TOOL_ROOT/bin/cargo-cyclonedx" cyclonedx \
+            --manifest-path rust/Cargo.toml \
+            --format json \
+            --describe crate \
+            --all-features \
+            --target all \
+            --license-strict \
+            --spec-version 1.5 \
+            2>&1 | tee "$EVIDENCE_ROOT/cargo-cyclonedx.txt"
+
+          mkdir -p "$EVIDENCE_ROOT/sbom"
+          count=0
+          while IFS= read -r -d '' source; do
+            relative="${source#rust/}"
+            destination="${relative//\//__}"
+            cp "$source" "$EVIDENCE_ROOT/sbom/$destination"
+            rm "$source"
+            count=$((count + 1))
+          done < <(find rust -type f -name bom.json -print0 | sort -z)
+          test "$count" -gt 0
+          printf '%s\n' "$count" > "$EVIDENCE_ROOT/sbom-count.txt"
+
+          python3 - "$EVIDENCE_ROOT/sbom" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          documents = sorted(root.glob("*.json"))
+          if not documents:
+              raise SystemExit("cyclonedx_sbom_set_empty")
+          for document in documents:
+              value = json.loads(document.read_text(encoding="utf-8"))
+              if value.get("bomFormat") != "CycloneDX" or value.get("specVersion") != "1.5":
+                  raise SystemExit(f"cyclonedx_document_invalid:{document.name}")
+              if not isinstance(value.get("components"), list):
+                  raise SystemExit(f"cyclonedx_components_missing:{document.name}")
+          PY
+          (
+            cd "$EVIDENCE_ROOT"
+            find sbom -type f -name '*.json' -print0 \
+              | sort -z \
+              | xargs -0 sha256sum \
+              > sbom-sha256.txt
+          )
+
+      - name: Build exact-head supply-chain evidence manifest
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE_ROOT" "$TOOL_ROOT/bin" <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+
+          evidence_root = pathlib.Path(sys.argv[1])
+          tool_root = pathlib.Path(sys.argv[2])
+
+          def command(*args: str) -> str:
+              return subprocess.check_output(args, text=True).strip()
+
+          def digest(path: pathlib.Path) -> str:
+              hasher = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      hasher.update(chunk)
+              return f"sha256:{hasher.hexdigest()}"
+
+          sboms = [
+              {"path": path.relative_to(evidence_root).as_posix(), "sha256": digest(path)}
+              for path in sorted((evidence_root / "sbom").glob("*.json"))
+          ]
+          if not sboms:
+              raise SystemExit("supply_chain_sbom_set_empty")
+
+          manifest = {
+              "version": 1,
+              "kind": "RustSupplyChainEvidence",
+              "status": "repository_local_supply_chain_qualified",
+              "source": {
+                  "repository": "TrillionniumFoundation/hepta-paper",
+                  "commit": command("git", "rev-parse", "HEAD"),
+                  "tree": command("git", "rev-parse", "HEAD^{tree}"),
+                  "expectedHead": os.environ["EXPECTED_HEAD_SHA"],
+                  "baseCommit": os.environ.get("BASE_SHA", ""),
+              },
+              "workflow": {
+                  "name": os.environ.get("GITHUB_WORKFLOW", ""),
+                  "runId": os.environ.get("GITHUB_RUN_ID", ""),
+                  "runAttempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+              },
+              "inputs": {
+                  "cargoLock": digest(pathlib.Path("rust/Cargo.lock")),
+                  "denyPolicy": digest(pathlib.Path("rust/deny.toml")),
+                  "policyDocument": digest(pathlib.Path("docs/rust/security/SUPPLY_CHAIN_POLICY.md")),
+              },
+              "tools": {
+                  "cargoDeny": {
+                      "version": os.environ["CARGO_DENY_VERSION"],
+                      "archiveSha256": f"sha256:{os.environ['CARGO_DENY_ARCHIVE_SHA256']}",
+                      "binarySha256": digest(tool_root / "cargo-deny"),
+                  },
+                  "cargoCycloneDx": {
+                      "version": os.environ["CARGO_CYCLONEDX_VERSION"],
+                      "archiveSha256": f"sha256:{os.environ['CARGO_CYCLONEDX_ARCHIVE_SHA256']}",
+                      "binarySha256": digest(tool_root / "cargo-cyclonedx"),
+                  },
+              },
+              "advisoryDatabaseCommit": (evidence_root / "advisory-db-commit.txt").read_text(encoding="utf-8").strip(),
+              "sboms": sboms,
+              "authority": {
+                  "productionAuthorized": False,
+                  "externalAuthorityClaimed": False,
+                  "classification": "repository_local_source_evidence_only",
+              },
+          }
+          if manifest["source"]["commit"] != manifest["source"]["expectedHead"]:
+              raise SystemExit("supply_chain_exact_head_mismatch")
+          output = evidence_root / "supply-chain-evidence.v1.json"
+          output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          sha256sum "$EVIDENCE_ROOT/supply-chain-evidence.v1.json" \
+            > "$EVIDENCE_ROOT/supply-chain-evidence.v1.json.sha256"
+
+      - name: Prove exact source identity after supply-chain checks
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          EVIDENCE_OUTPUT="$EVIDENCE_ROOT/postflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Upload supply-chain evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-supply-chain-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/rust-supply-chain-evidence
+          if-no-files-found: error
+          retention-days: 90

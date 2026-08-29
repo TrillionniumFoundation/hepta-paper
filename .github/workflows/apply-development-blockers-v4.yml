@@ -1,0 +1,155 @@
+name: apply-development-blockers-v4
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/apply-development-blockers-v4.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-development-blockers-v4
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: e16badd21c1d02334e5046bae12ed9afeb6b0def
+          fetch-depth: 0
+          submodules: false
+
+      - name: Reconstruct verified blocker patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = e16badd21c1d02334e5046bae12ed9afeb6b0def
+          transfer_branch=codex/current-source-export-20260829-v2
+          git fetch --no-tags origin \
+            "refs/heads/${transfer_branch}:refs/remotes/origin/development-blockers-v4"
+          : > "$RUNNER_TEMP/blockers.patch.gz.b64"
+          for item in 00a:3000 00b0:1000 00b1:1000 00b2:1000 00c:3000 01:5332; do
+            index=${item%%:*}
+            size=${item##*:}
+            git show "origin/development-blockers-v4:.automation/development-blockers-v4/chunk-${index}" \
+              | head -c "$size" >> "$RUNNER_TEMP/blockers.patch.gz.b64"
+          done
+          printf '%s  %s\n' \
+            47f69353860de022b8025b06a10c3900210e12d6032a61b7971d4d33a699b8a3 \
+            "$RUNNER_TEMP/blockers.patch.gz.b64" | sha256sum -c -
+          base64 -d "$RUNNER_TEMP/blockers.patch.gz.b64" > "$RUNNER_TEMP/blockers.patch.gz"
+          printf '%s  %s\n' \
+            9127354f15019850e21d59ed214ef0b34b82456e8d4ebdb464c51f7fa3853239 \
+            "$RUNNER_TEMP/blockers.patch.gz" | sha256sum -c -
+          gzip -dc "$RUNNER_TEMP/blockers.patch.gz" > "$RUNNER_TEMP/blockers.patch"
+          printf '%s  %s\n' \
+            2047516fbda0ab0dd645cc3e91334a68b06f80af8b6081523363e745cbfb34a7 \
+            "$RUNNER_TEMP/blockers.patch" | sha256sum -c -
+
+      - name: Apply source closure and deterministic follow-up fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B codex/rust-broker-service-20260828 \
+            e16badd21c1d02334e5046bae12ed9afeb6b0def
+          git apply --check "$RUNNER_TEMP/blockers.patch"
+          git apply "$RUNNER_TEMP/blockers.patch"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("rust/crates/hepta-codex-broker/src/journal/path.rs")
+          source = path.read_text()
+          start_marker = "\nfn verify_initialization_candidate("
+          end_marker = "\nfn verify_database_identity("
+          if source.count(start_marker) != 1 or source.count(end_marker) != 1:
+              raise SystemExit("expected one obsolete initialization helper")
+          start = source.index(start_marker)
+          end = source.index(end_marker, start)
+          path.write_text(source[:start] + source[end:])
+
+          tests = Path("rust/crates/hepta-codex-broker/src/journal/tests.rs")
+          test_source = tests.read_text()
+          old = (
+              "                Some(digest('e')),\n"
+              "                Some(\"sigkill_transition\".to_owned()),\n"
+          )
+          new = "                None,\n                None,\n"
+          if test_source.count(old) != 1:
+              raise SystemExit("expected one SIGKILL transition metadata block")
+          tests.write_text(test_source.replace(old, new, 1))
+          PY
+          cat > docs/rust/RUST_BROKER_SOURCE_CLOSURE_STATUS.md <<'EOF'
+          # Rust broker source closure status
+
+          Status: source-level development blockers closed for the bounded broker slice;
+          installed-host and live-provider qualification remain separate hard gates.
+
+          ## Closed source boundaries
+
+          - existing broker databases are verified through a read-only, no-follow preflight
+            before any writer connection or persistent pragma is permitted;
+          - unmarked empty and foreign populated SQLite files are rejected byte-identically
+            without WAL or SHM creation;
+          - duplicate admission ignores later broker-observation time while preserving the
+            original reservation, nonce count and transition count across restart;
+          - SIGKILL subprocess tests exercise open reservation and transition transactions and
+            prove recovery exposes only the pre-transaction or committed state;
+          - corrupt database, invalid sidecar and permission drift fail closed;
+          - signed Ed25519 trust bundles can be loaded only from a canonical, single-link,
+            separately owned, authority-controlled read-only source;
+          - corrupt, noncanonical, symlinked, writable or rejected refresh sources disable new
+            admission instead of retaining stale authority.
+
+          ## Authority retained outside this source slice
+
+          This code does not establish installed ACL/mount/systemd evidence, an independent
+          low-level Unix review, real Codex credentials, live provider compatibility, campaign
+          writer authority, release authority, KMS/HSM/WORM authority or submission authority.
+          EOF
+          sed -i 's/^          //' docs/rust/RUST_BROKER_SOURCE_CLOSURE_STATUS.md
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git add -A
+          git diff --cached --check
+
+      - name: Install qualified Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Run complete Rust hard gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --manifest-path rust/Cargo.toml --locked --format-version 1 >/dev/null
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked -- --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Commit and update PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "hepta-paper blocker closure"
+          git config user.email "actions@users.noreply.github.com"
+          test -n "$(git status --porcelain)"
+          git commit -m "fix(rust): close broker durability and trust-source blockers"
+          git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

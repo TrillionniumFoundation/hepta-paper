@@ -71,12 +71,11 @@ jobs:
 
           tests = Path("rust/crates/hepta-codex-broker/src/journal/tests.rs")
           test_source = tests.read_text()
-          old = """                Some(digest('e')),
-                Some("sigkill_transition".to_owned()),
-"""
-          new = """                None,
-                None,
-"""
+          old = (
+              "                Some(digest('e')),\n"
+              "                Some(\"sigkill_transition\".to_owned()),\n"
+          )
+          new = "                None,\n                None,\n"
           if test_source.count(old) != 1:
               raise SystemExit("expected one SIGKILL transition metadata block")
           tests.write_text(test_source.replace(old, new, 1))

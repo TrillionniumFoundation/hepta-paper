@@ -275,6 +275,17 @@ impl CapabilityTrustBundleManagerV1 {
     }
 
     pub fn disable(&self) -> Result<(), TrustBundleError> {
+        self.disable_with_reason(TrustBundleDisableReasonV1::OperatorStop)
+    }
+
+    pub(crate) fn reject_refresh(&self) -> Result<(), TrustBundleError> {
+        self.disable_with_reason(TrustBundleDisableReasonV1::RefreshRejected)
+    }
+
+    fn disable_with_reason(
+        &self,
+        reason: TrustBundleDisableReasonV1,
+    ) -> Result<(), TrustBundleError> {
         let mut state = self
             .state
             .write()
@@ -283,10 +294,7 @@ impl CapabilityTrustBundleManagerV1 {
             TrustBundleManagerStateV1::Active(bundle) => bundle.checkpoint(),
             TrustBundleManagerStateV1::Disabled { checkpoint, .. } => checkpoint.clone(),
         };
-        *state = TrustBundleManagerStateV1::Disabled {
-            checkpoint,
-            reason: TrustBundleDisableReasonV1::OperatorStop,
-        };
+        *state = TrustBundleManagerStateV1::Disabled { checkpoint, reason };
         Ok(())
     }
 }

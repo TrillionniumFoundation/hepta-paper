@@ -1,10 +1,12 @@
 use std::{
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
     str::FromStr,
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use hepta_codex_journal::OperationState;
@@ -67,6 +69,47 @@ impl Drop for TempJournal {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+fn sidecar_path(database: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{}", database.display(), suffix))
+}
+
+fn wait_for_file(path: &Path, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if path.is_file() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("timed out waiting for {}", path.display());
+}
+
+fn kill_worker_at_fault(fixture: &TempJournal, action: &str, operation_id: &str, fault_name: &str) {
+    let ready = fixture
+        .root
+        .join(format!("sigkill-{action}-{fault_name}.ready"));
+    let mut child = Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("--exact")
+        .arg("journal::tests::sigkill_crash_worker")
+        .arg("--ignored")
+        .arg("--nocapture")
+        .env("HEPTA_TEST_JOURNAL_ROOT", &fixture.root)
+        .env("HEPTA_TEST_SIGKILL_ACTION", action)
+        .env("HEPTA_TEST_SIGKILL_OPERATION", operation_id)
+        .env("HEPTA_TEST_SIGKILL_POINT", fault_name)
+        .env("HEPTA_TEST_SIGKILL_READY", &ready)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn SIGKILL crash worker");
+    wait_for_file(&ready, Duration::from_secs(10));
+    child.kill().expect("SIGKILL crash worker");
+    let status = child.wait().expect("reap SIGKILL crash worker");
+    assert!(!status.success());
+    let _ = fs::remove_file(ready);
 }
 
 fn digest(byte: char) -> Sha256Digest {
@@ -137,23 +180,79 @@ fn admitted(operation_id: &str, nonce: &str, idempotency: char) -> Authenticated
 }
 
 #[test]
-fn exact_duplicate_returns_existing_without_second_nonce() {
+fn exact_duplicate_returns_existing_without_second_nonce_or_time_drift() {
     let fixture = TempJournal::new();
     let mut store = fixture.open();
     let request = admitted("operation-1", "nonce-1", '1');
-    assert!(matches!(
-        store
-            .reserve_operation(&request, 12_000, FaultInjectionPointV1::None)
-            .expect("first reservation"),
-        ReservationOutcomeV1::Reserved(_),
-    ));
-    assert!(matches!(
-        store
-            .reserve_operation(&request, 12_001, FaultInjectionPointV1::None)
-            .expect("idempotent reservation"),
-        ReservationOutcomeV1::Existing(_),
-    ));
+    let reserved = store
+        .reserve_operation(&request, 12_000, FaultInjectionPointV1::None)
+        .expect("first reservation");
+    assert!(matches!(reserved, ReservationOutcomeV1::Reserved(_)));
+
+    // Arrival time is a broker observation, not immutable caller identity. Exercise
+    // both a near retry and the latest still-authenticated retry.
+    for retry_time in [12_001, 14_999] {
+        let existing = store
+            .reserve_operation(&request, retry_time, FaultInjectionPointV1::None)
+            .expect("idempotent reservation");
+        let ReservationOutcomeV1::Existing(journal) = existing else {
+            panic!("duplicate must return the existing journal");
+        };
+        assert_eq!(journal.current_state, OperationState::Reserved);
+        assert!(journal.transitions.is_empty());
+    }
+
     assert_eq!(store.operation_count().expect("operation count"), 1);
+    let connection = rusqlite::Connection::open_with_flags(
+        &fixture.path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .expect("read-only duplicate audit");
+    let (created_at, nonce_count, transition_count): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT operation.created_at_unix_ms,
+                    (SELECT count(*) FROM capability_nonces WHERE operation_id = operation.operation_id),
+                    (SELECT count(*) FROM operation_transitions WHERE operation_id = operation.operation_id)
+             FROM operations AS operation WHERE operation.operation_id = ?1",
+            [&request.request.operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("duplicate audit row");
+    assert_eq!(created_at, 12_000);
+    assert_eq!(nonce_count, 1);
+    assert_eq!(transition_count, 0);
+}
+
+#[test]
+fn exact_duplicate_survives_restart_without_reopening_the_journal() {
+    let fixture = TempJournal::new();
+    let request = admitted(
+        "operation-restart-duplicate",
+        "nonce-restart-duplicate",
+        'a',
+    );
+    {
+        let mut store = fixture.open();
+        assert!(matches!(
+            store
+                .reserve_operation(&request, 12_000, FaultInjectionPointV1::None)
+                .expect("first reservation"),
+            ReservationOutcomeV1::Reserved(_),
+        ));
+    }
+
+    let mut reopened = fixture.open();
+    let existing = reopened
+        .reserve_operation(&request, 14_999, FaultInjectionPointV1::None)
+        .expect("duplicate after restart");
+    let ReservationOutcomeV1::Existing(journal) = existing else {
+        panic!("restart duplicate must return existing");
+    };
+    assert_eq!(journal.current_state, OperationState::Reserved);
+    assert!(journal.transitions.is_empty());
+    assert_eq!(reopened.operation_count().expect("operation count"), 1);
 }
 
 #[test]
@@ -186,6 +285,146 @@ fn expired_authenticated_request_cannot_consume_nonce_or_operation_id() {
         Err(BrokerJournalError::AuthenticatedRequestExpired),
     ));
     assert_eq!(store.operation_count().expect("operation count"), 0);
+}
+
+#[test]
+fn sigkill_during_reservation_and_transition_leaves_only_atomic_state() {
+    let fixture = TempJournal::new();
+    fixture
+        .open()
+        .validate_integrity()
+        .expect("initial journal");
+
+    for (index, fault_name) in ["after_operation_insert", "after_nonce_insert"]
+        .into_iter()
+        .enumerate()
+    {
+        let operation_id = format!("operation-sigkill-reservation-{index}");
+        kill_worker_at_fault(&fixture, "reserve", &operation_id, fault_name);
+        let reopened = fixture.open();
+        assert_eq!(reopened.operation_count().expect("operation count"), 0);
+        reopened
+            .validate_integrity()
+            .expect("reservation SIGKILL integrity");
+    }
+
+    for (index, fault_name) in ["after_transition_insert", "after_projection_update"]
+        .into_iter()
+        .enumerate()
+    {
+        let operation_id = format!("operation-sigkill-transition-{index}");
+        {
+            let mut store = fixture.open();
+            let request = admitted(
+                &operation_id,
+                &format!("nonce-sigkill-transition-{index}"),
+                char::from(b'b' + u8::try_from(index).expect("small index")),
+            );
+            store
+                .reserve_operation(&request, 12_000, FaultInjectionPointV1::None)
+                .expect("reserve transition SIGKILL operation");
+        }
+        kill_worker_at_fault(&fixture, "transition", &operation_id, fault_name);
+        let reopened = fixture.open();
+        let journal = reopened
+            .load_journal(&operation_id)
+            .expect("journal after transition SIGKILL");
+        assert_eq!(journal.current_state, OperationState::Reserved);
+        assert!(journal.transitions.is_empty());
+        reopened
+            .validate_integrity()
+            .expect("transition SIGKILL integrity");
+    }
+}
+
+#[test]
+fn corrupt_database_and_sidecar_or_permission_drift_fail_closed() {
+    let fixture = TempJournal::new();
+    fixture
+        .open()
+        .validate_integrity()
+        .expect("initial journal");
+
+    fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o400))
+        .expect("make journal read-only");
+    assert!(matches!(
+        BrokerJournalStoreV1::open(
+            &fixture.path,
+            BrokerJournalPolicyV1::strict(fixture.owner_uid),
+        ),
+        Err(BrokerJournalError::DatabaseFilePermissionsInvalid(0o400)),
+    ));
+    fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o600))
+        .expect("restore journal mode");
+
+    let wal = sidecar_path(&fixture.path, "-wal");
+    fs::write(&wal, b"foreign-wal").expect("write invalid WAL sidecar");
+    fs::set_permissions(&wal, fs::Permissions::from_mode(0o666))
+        .expect("weaken invalid WAL sidecar");
+    assert!(matches!(
+        BrokerJournalStoreV1::open(
+            &fixture.path,
+            BrokerJournalPolicyV1::strict(fixture.owner_uid),
+        ),
+        Err(BrokerJournalError::DatabaseSidecarPermissionsInvalid { .. }),
+    ));
+    fs::remove_file(&wal).expect("remove invalid WAL sidecar");
+
+    let mut bytes = fs::read(&fixture.path).expect("read journal before corruption");
+    assert!(!bytes.is_empty());
+    bytes[0] ^= 0xff;
+    fs::write(&fixture.path, bytes).expect("corrupt main database");
+    assert!(
+        BrokerJournalStoreV1::open(
+            &fixture.path,
+            BrokerJournalPolicyV1::strict(fixture.owner_uid),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+#[ignore = "subprocess worker for SIGKILL crash qualification"]
+fn sigkill_crash_worker() {
+    let root = PathBuf::from(
+        std::env::var_os("HEPTA_TEST_JOURNAL_ROOT").expect("journal root environment"),
+    );
+    let path = root.join("broker.sqlite");
+    let owner_uid = fs::metadata(&root).expect("journal root metadata").uid();
+    let operation_id =
+        std::env::var("HEPTA_TEST_SIGKILL_OPERATION").expect("SIGKILL operation environment");
+    let fault_name = std::env::var("HEPTA_TEST_SIGKILL_POINT").expect("SIGKILL point environment");
+    let fault = match fault_name.as_str() {
+        "after_operation_insert" => FaultInjectionPointV1::AfterOperationInsert,
+        "after_nonce_insert" => FaultInjectionPointV1::AfterNonceInsert,
+        "after_transition_insert" => FaultInjectionPointV1::AfterTransitionInsert,
+        "after_projection_update" => FaultInjectionPointV1::AfterProjectionUpdate,
+        _ => panic!("unknown SIGKILL point: {fault_name}"),
+    };
+    let mut store = BrokerJournalStoreV1::open(&path, BrokerJournalPolicyV1::strict(owner_uid))
+        .expect("open crash worker journal");
+    match std::env::var("HEPTA_TEST_SIGKILL_ACTION")
+        .expect("SIGKILL action environment")
+        .as_str()
+    {
+        "reserve" => {
+            let request = admitted(&operation_id, "nonce-sigkill-worker", 'f');
+            let _ = store.reserve_operation(&request, 12_000, fault);
+        }
+        "transition" => {
+            let _ = store.append_transition(
+                &operation_id,
+                OperationState::Reserved,
+                OperationState::RequestBound,
+                12_001,
+                None,
+                None,
+                fault,
+            );
+        }
+        action => panic!("unknown SIGKILL action: {action}"),
+    }
+    panic!("SIGKILL worker passed its fault point without being killed");
 }
 
 #[test]
@@ -381,6 +620,65 @@ fn initialization_marker_cannot_authorize_an_unstamped_foreign_schema() {
         ),
         Err(BrokerJournalError::InitializationCandidateForeignSchema),
     ));
+}
+
+#[test]
+fn foreign_empty_database_is_rejected_without_any_persistent_mutation() {
+    let fixture = TempJournal::new();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&fixture.path)
+        .expect("create foreign empty database");
+    file.sync_all().expect("sync foreign empty database");
+    drop(file);
+    fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o600))
+        .expect("private foreign empty database");
+    let before = fs::read(&fixture.path).expect("read foreign empty database before");
+
+    assert!(matches!(
+        BrokerJournalStoreV1::open(
+            &fixture.path,
+            BrokerJournalPolicyV1::strict(fixture.owner_uid),
+        ),
+        Err(BrokerJournalError::DatabaseIdentityMismatch { .. }),
+    ));
+    assert_eq!(
+        fs::read(&fixture.path).expect("read foreign empty database after"),
+        before,
+    );
+    assert!(!PathBuf::from(format!("{}-wal", fixture.path.display())).exists());
+    assert!(!PathBuf::from(format!("{}-shm", fixture.path.display())).exists());
+}
+
+#[test]
+fn foreign_populated_database_is_rejected_without_any_persistent_mutation() {
+    let fixture = TempJournal::new();
+    let foreign = rusqlite::Connection::open(&fixture.path).expect("create foreign SQLite");
+    foreign
+        .execute_batch(
+            "CREATE TABLE foreign_state(value TEXT) STRICT;
+             INSERT INTO foreign_state VALUES ('kept');",
+        )
+        .expect("foreign schema and content");
+    drop(foreign);
+    fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o600))
+        .expect("private foreign database");
+    let before = fs::read(&fixture.path).expect("read foreign database before");
+
+    assert!(matches!(
+        BrokerJournalStoreV1::open(
+            &fixture.path,
+            BrokerJournalPolicyV1::strict(fixture.owner_uid),
+        ),
+        Err(BrokerJournalError::DatabaseIdentityMismatch { .. }),
+    ));
+    assert_eq!(
+        fs::read(&fixture.path).expect("read foreign database after"),
+        before,
+    );
+    assert!(!PathBuf::from(format!("{}-wal", fixture.path.display())).exists());
+    assert!(!PathBuf::from(format!("{}-shm", fixture.path.display())).exists());
 }
 
 #[test]

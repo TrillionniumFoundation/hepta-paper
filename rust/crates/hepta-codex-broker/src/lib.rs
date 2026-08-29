@@ -25,6 +25,7 @@ mod response;
 mod server;
 mod service;
 mod trust_bundle;
+mod trust_source;
 
 pub use acknowledgement::{
     PreparedResultAcknowledgementError, PreparedResultAcknowledgementPolicyV1,
@@ -78,4 +79,10 @@ pub use trust_bundle::{
     CapabilityTrustBundleManagerV1, CapabilityTrustBundleV1, CapabilityTrustKeyV1,
     SignedCapabilityTrustBundleV1, TrustBundleDisableReasonV1, TrustBundleError,
     VerifiedCapabilityTrustBundleV1, trust_bundle_signing_bytes, verify_capability_trust_bundle,
+};
+pub use trust_source::{
+    CapabilityTrustBundleSourceIdentityV1, CapabilityTrustBundleSourceInstallError,
+    CapabilityTrustBundleSourcePolicyV1, LoadedSignedCapabilityTrustBundleV1,
+    TrustBundleSourceError, install_signed_capability_trust_bundle_from_source,
+    load_signed_capability_trust_bundle,
 };

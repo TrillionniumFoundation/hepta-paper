@@ -72,6 +72,34 @@ pub enum FaultInjectionPointV1 {
     AfterProcessTermination,
 }
 
+#[cfg(test)]
+fn pause_for_sigkill_test(point: FaultInjectionPointV1) {
+    let expected = match point {
+        FaultInjectionPointV1::None => "none",
+        FaultInjectionPointV1::AfterOperationInsert => "after_operation_insert",
+        FaultInjectionPointV1::AfterNonceInsert => "after_nonce_insert",
+        FaultInjectionPointV1::AfterTransitionInsert => "after_transition_insert",
+        FaultInjectionPointV1::AfterProjectionUpdate => "after_projection_update",
+        FaultInjectionPointV1::AfterProcessIdentityInsert => "after_process_identity_insert",
+        FaultInjectionPointV1::AfterReleaseAuthorization => "after_release_authorization",
+        FaultInjectionPointV1::AfterProcessTermination => "after_process_termination",
+    };
+    if std::env::var("HEPTA_TEST_SIGKILL_POINT").ok().as_deref() != Some(expected) {
+        return;
+    }
+    let ready = std::env::var_os("HEPTA_TEST_SIGKILL_READY")
+        .map(PathBuf::from)
+        .expect("SIGKILL test ready path");
+    std::fs::write(
+        &ready, b"ready
+",
+    )
+    .expect("publish SIGKILL test readiness");
+    loop {
+        std::thread::park_timeout(std::time::Duration::from_secs(60));
+    }
+}
+
 /// Result of reserving an idempotent provider operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReservationOutcomeV1 {
@@ -244,6 +272,8 @@ impl BrokerJournalStoreV1 {
             ],
         )?;
         if fault == FaultInjectionPointV1::AfterOperationInsert {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         transaction.execute(
@@ -258,6 +288,8 @@ impl BrokerJournalStoreV1 {
             ],
         )?;
         if fault == FaultInjectionPointV1::AfterNonceInsert {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         transaction.commit()?;
@@ -295,6 +327,8 @@ impl BrokerJournalStoreV1 {
             .clone();
         insert_transition(&transaction, operation_id, &transition)?;
         if fault == FaultInjectionPointV1::AfterTransitionInsert {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
 
@@ -317,6 +351,8 @@ impl BrokerJournalStoreV1 {
             prepared_receipt_hash,
         )?;
         if fault == FaultInjectionPointV1::AfterProjectionUpdate {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         transaction.commit()?;
@@ -391,6 +427,8 @@ impl BrokerJournalStoreV1 {
             ],
         )?;
         if fault == FaultInjectionPointV1::AfterProcessIdentityInsert {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         let transition = journal
@@ -403,6 +441,8 @@ impl BrokerJournalStoreV1 {
             .clone();
         insert_transition(&transaction, operation_id, &transition)?;
         if fault == FaultInjectionPointV1::AfterTransitionInsert {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         update_operation_projection(
@@ -415,6 +455,8 @@ impl BrokerJournalStoreV1 {
             None,
         )?;
         if fault == FaultInjectionPointV1::AfterProjectionUpdate {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         transaction.commit()?;
@@ -474,6 +516,8 @@ impl BrokerJournalStoreV1 {
             return Err(BrokerJournalError::ConcurrentProcessStateChange);
         }
         if fault == FaultInjectionPointV1::AfterReleaseAuthorization {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         transaction.commit()?;
@@ -590,10 +634,14 @@ impl BrokerJournalStoreV1 {
             return Err(BrokerJournalError::ConcurrentProcessStateChange);
         }
         if fault == FaultInjectionPointV1::AfterProcessTermination {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         insert_transition(&transaction, operation_id, &transition)?;
         if fault == FaultInjectionPointV1::AfterTransitionInsert {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         let provider_action_may_have_started = journal
@@ -615,6 +663,8 @@ impl BrokerJournalStoreV1 {
             prepared_receipt_hash,
         )?;
         if fault == FaultInjectionPointV1::AfterProjectionUpdate {
+            #[cfg(test)]
+            pause_for_sigkill_test(fault);
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         transaction.commit()?;

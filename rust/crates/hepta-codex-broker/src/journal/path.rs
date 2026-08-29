@@ -22,19 +22,23 @@ pub(super) fn open_secure_database(
     policy: BrokerJournalPolicyV1,
 ) -> Result<(PathBuf, Connection), BrokerJournalError> {
     let (path, initialization_marker) = prepare_database_path(requested, policy)?;
+    let preflight =
+        preflight_database_before_writer(&path, initialization_marker.is_some(), policy)?;
+
+    // `prepare_database_path` has already established the exact file object. Do not
+    // retain SQLITE_OPEN_CREATE on the writer path: a replacement/removal race must
+    // fail rather than silently creating a new database under an accepted pathname.
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-        | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_NO_MUTEX
         | OpenFlags::SQLITE_OPEN_NOFOLLOW;
     let connection = Connection::open_with_flags(&path, flags)?;
+    verify_preflight_file_identity(&path, &preflight.file_identity, policy)?;
     connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;
     configure_safety_pragmas(&connection)?;
-    if initialization_marker.is_some() {
-        verify_initialization_candidate(&connection)?;
-    } else {
-        verify_database_identity(&connection)?;
+    match preflight.disposition {
+        DatabaseOpenDispositionV1::Initialize => connection.execute_batch(SCHEMA_SQL)?,
+        DatabaseOpenDispositionV1::Existing => verify_database_identity(&connection)?,
     }
-    connection.execute_batch(SCHEMA_SQL)?;
     configure_size_limit(&connection, policy.maximum_database_bytes)?;
     verify_database_contract(&connection)?;
     inspect_database_envelope(&path, policy)?;
@@ -42,6 +46,125 @@ pub(super) fn open_secure_database(
         finish_initialization(&marker)?;
     }
     Ok((path, connection))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatabaseOpenDispositionV1 {
+    Initialize,
+    Existing,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DatabaseFileIdentityV1 {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    uid: u32,
+    gid: u32,
+    link_count: u64,
+    size: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DatabasePreflightV1 {
+    disposition: DatabaseOpenDispositionV1,
+    file_identity: DatabaseFileIdentityV1,
+}
+
+/// Establishes database authority through a read-only connection before any
+/// writer connection, persistent pragma, or DDL can be issued.
+fn preflight_database_before_writer(
+    path: &Path,
+    initialization_marker_present: bool,
+    policy: BrokerJournalPolicyV1,
+) -> Result<DatabasePreflightV1, BrokerJournalError> {
+    inspect_database_file(path, policy)?;
+    for suffix in ["-wal", "-shm"] {
+        inspect_optional_sidecar(path, suffix, policy)?;
+    }
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| BrokerJournalError::Filesystem("journal_database", error.kind()))?;
+    let file_identity = database_file_identity(&metadata);
+    if metadata.size() == 0 {
+        return if initialization_marker_present {
+            Ok(DatabasePreflightV1 {
+                disposition: DatabaseOpenDispositionV1::Initialize,
+                file_identity,
+            })
+        } else {
+            Err(BrokerJournalError::DatabaseIdentityMismatch {
+                application_id: 0,
+                user_version: 0,
+            })
+        };
+    }
+
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+    let connection = Connection::open_with_flags(path, flags)?;
+    connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;
+    connection.execute_batch(
+        "PRAGMA query_only = ON;
+         PRAGMA trusted_schema = OFF;
+         PRAGMA temp_store = MEMORY;",
+    )?;
+
+    let application_id: i64 =
+        connection.query_row("PRAGMA application_id", [], |row| row.get(0))?;
+    let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if initialization_marker_present && application_id == 0 && user_version == 0 {
+        let object_count: i64 = connection.query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+            [],
+            |row| row.get(0),
+        )?;
+        if object_count == 0 {
+            return Ok(DatabasePreflightV1 {
+                disposition: DatabaseOpenDispositionV1::Initialize,
+                file_identity,
+            });
+        }
+        return Err(BrokerJournalError::InitializationCandidateForeignSchema);
+    }
+    if application_id != APPLICATION_ID || user_version != USER_VERSION {
+        return Err(BrokerJournalError::DatabaseIdentityMismatch {
+            application_id,
+            user_version,
+        });
+    }
+    verify_schema_version(&connection)?;
+    verify_schema_shape(&connection)?;
+    Ok(DatabasePreflightV1 {
+        disposition: DatabaseOpenDispositionV1::Existing,
+        file_identity,
+    })
+}
+
+fn database_file_identity(metadata: &fs::Metadata) -> DatabaseFileIdentityV1 {
+    DatabaseFileIdentityV1 {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode: metadata.mode(),
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+        link_count: metadata.nlink(),
+        size: metadata.size(),
+    }
+}
+
+fn verify_preflight_file_identity(
+    path: &Path,
+    expected: &DatabaseFileIdentityV1,
+    policy: BrokerJournalPolicyV1,
+) -> Result<(), BrokerJournalError> {
+    inspect_database_file(path, policy)?;
+    let observed = fs::symlink_metadata(path)
+        .map_err(|error| BrokerJournalError::Filesystem("journal_database", error.kind()))?;
+    if database_file_identity(&observed) != *expected {
+        return Err(BrokerJournalError::DatabasePathInvalid);
+    }
+    Ok(())
 }
 
 fn prepare_database_path(
@@ -406,32 +529,6 @@ pub(super) fn verify_database_contract(connection: &Connection) -> Result<(), Br
     verify_connection_pragmas(connection)?;
     verify_schema_version(connection)?;
     verify_schema_shape(connection)
-}
-
-fn verify_initialization_candidate(connection: &Connection) -> Result<(), BrokerJournalError> {
-    let application_id: i64 =
-        connection.query_row("PRAGMA application_id", [], |row| row.get(0))?;
-    let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    match (application_id, user_version) {
-        (0, 0) => {
-            let object_count: i64 = connection.query_row(
-                "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
-                [],
-                |row| row.get(0),
-            )?;
-            if object_count != 0 {
-                return Err(BrokerJournalError::InitializationCandidateForeignSchema);
-            }
-        }
-        (APPLICATION_ID, USER_VERSION) => {}
-        _ => {
-            return Err(BrokerJournalError::DatabaseIdentityMismatch {
-                application_id,
-                user_version,
-            });
-        }
-    }
-    Ok(())
 }
 
 fn verify_database_identity(connection: &Connection) -> Result<(), BrokerJournalError> {

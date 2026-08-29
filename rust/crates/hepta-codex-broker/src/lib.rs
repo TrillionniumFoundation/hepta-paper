@@ -52,8 +52,10 @@ pub use frame::{
 };
 pub use journal::{
     BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerJournalError, BrokerJournalPolicyV1,
-    BrokerJournalStoreV1, BrokerRecoveryCandidateV1, FaultInjectionPointV1, ReservationOutcomeV1,
-    create_broker_backup, list_recovery_candidates, load_persisted_request, restore_broker_backup,
+    BrokerJournalStoreV1, BrokerProcessLaunchV1, BrokerProcessReconciliationV1,
+    BrokerRecoveryCandidateV1, FaultInjectionPointV1, ProcessReconciliationDispositionV1,
+    ProcessReleaseStateV1, ReservationOutcomeV1, create_broker_backup, list_recovery_candidates,
+    load_persisted_request, restore_broker_backup,
 };
 pub use listener::{
     BrokerListenerError, BrokerListenerPolicyV1, BrokerListenerQualificationV1, BrokerListenerV1,

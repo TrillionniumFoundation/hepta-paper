@@ -9,9 +9,15 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64ct.workspace = true
+nix.workspace = true
 hex.workspace = true
 hepta-codex-protocol = { path = "../hepta-codex-protocol" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+
+[[bin]]
+name = "hepta-codex-preexec-gate"
+path = "src/bin/hepta-codex-preexec-gate.rs"

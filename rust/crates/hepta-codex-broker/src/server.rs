@@ -9,14 +9,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use hepta_codex_runtime::ProcessLimitsV1;
 use thiserror::Error;
 
 use crate::{
     AdmissionPolicyV1, BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1,
     BrokerListenerError, BrokerListenerQualificationV1, BrokerListenerV1, BrokerMachineCodeV1,
-    BrokerResponseError, BrokerResponseFramePolicyV1, BrokerResponseV1, BrokerStateError,
-    CapabilityTrustBundleManagerV1, FaultInjectionPointV1, PeerPolicyV1, ReservationOutcomeV1,
-    TrustBundleError, admit_and_reserve_unix_stream, write_response_frame,
+    BrokerProcessReconciliationV1, BrokerResponseError, BrokerResponseFramePolicyV1,
+    BrokerResponseV1, BrokerStateError, CapabilityTrustBundleManagerV1, FaultInjectionPointV1,
+    PeerPolicyV1, ProcessReconciliationDispositionV1, ReservationOutcomeV1, TrustBundleError,
+    admit_and_reserve_unix_stream, write_response_frame,
 };
 
 const HARD_MAXIMUM_WORKERS: usize = 32;
@@ -51,6 +53,7 @@ pub struct BrokerServerPolicyV1 {
     pub write_timeout_ms: u64,
     pub busy_retry_after_ms: u64,
     pub maximum_connections: u64,
+    pub startup_process_limits: ProcessLimitsV1,
 }
 
 impl Default for BrokerServerPolicyV1 {
@@ -63,6 +66,7 @@ impl Default for BrokerServerPolicyV1 {
             write_timeout_ms: 5_000,
             busy_retry_after_ms: 100,
             maximum_connections: HARD_MAXIMUM_CONNECTIONS_PER_RUN,
+            startup_process_limits: ProcessLimitsV1::default(),
         }
     }
 }
@@ -94,6 +98,7 @@ pub struct BrokerServerRunSummaryV1 {
     pub accepted_connections: u64,
     pub queued_connections: u64,
     pub busy_connections: u64,
+    pub reconciled_processes: u64,
     pub graceful_shutdown: bool,
 }
 
@@ -147,7 +152,14 @@ impl BrokerServerV1 {
     pub fn run(self) -> Result<BrokerServerRunSummaryV1, BrokerServerError> {
         let now = self.clock.now_unix_ms()?;
         let (_, _, startup_bundle_hash) = self.trust_manager.snapshot(now)?;
-        let journal_probe = BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)?;
+        let mut journal_probe =
+            BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)?;
+        journal_probe.validate_integrity()?;
+        let reconciled_processes = reconcile_before_listener_ready(
+            &mut journal_probe,
+            now,
+            self.server_policy.startup_process_limits,
+        )?;
         journal_probe.validate_integrity()?;
         drop(journal_probe);
         let qualification = self.listener.mark_ready()?;
@@ -224,9 +236,32 @@ impl BrokerServerV1 {
             accepted_connections,
             queued_connections,
             busy_connections,
+            reconciled_processes,
             graceful_shutdown: true,
         })
     }
+}
+
+fn reconcile_before_listener_ready(
+    journal: &mut BrokerJournalStoreV1,
+    now_unix_ms: u64,
+    limits: ProcessLimitsV1,
+) -> Result<u64, BrokerServerError> {
+    let records = journal.reconcile_pending_processes(now_unix_ms, limits)?;
+    validate_startup_reconciliation(&records)
+}
+
+fn validate_startup_reconciliation(
+    records: &[BrokerProcessReconciliationV1],
+) -> Result<u64, BrokerServerError> {
+    if let Some(record) = records.iter().find(|record| {
+        record.disposition == ProcessReconciliationDispositionV1::ManualIdentityMismatch
+    }) {
+        return Err(BrokerServerError::StartupProcessIdentityMismatch(
+            record.operation_id.clone(),
+        ));
+    }
+    u64::try_from(records.len()).map_err(|_| BrokerServerError::NumericOverflow)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -361,6 +396,10 @@ pub enum BrokerServerError {
     ClockUnavailable,
     #[error("broker listener trust-bundle binding changed")]
     TrustBundleBindingMismatch,
+    #[error("startup process identity mismatch requires manual recovery: {0}")]
+    StartupProcessIdentityMismatch(String),
+    #[error("broker numeric conversion overflowed")]
+    NumericOverflow,
     #[error("broker worker queue lock was poisoned")]
     WorkerQueuePoisoned,
     #[error("broker worker panicked")]
@@ -442,5 +481,37 @@ mod tests {
     #[test]
     fn fixed_clock_is_deterministic() {
         assert_eq!(FixedClock(42).now_unix_ms().expect("clock"), 42);
+    }
+
+    #[test]
+    fn startup_identity_mismatch_blocks_listener_readiness() {
+        use hepta_codex_journal::OperationState;
+        use hepta_codex_runtime::GateProcessObservationV1;
+
+        let records = [BrokerProcessReconciliationV1 {
+            operation_id: "operation-mismatch".to_owned(),
+            prior_state: OperationState::ProcessSpawned,
+            observation: GateProcessObservationV1::IdentityMismatch,
+            disposition: ProcessReconciliationDispositionV1::ManualIdentityMismatch,
+        }];
+        assert!(matches!(
+            validate_startup_reconciliation(&records),
+            Err(BrokerServerError::StartupProcessIdentityMismatch(operation_id))
+                if operation_id == "operation-mismatch"
+        ));
+    }
+
+    #[test]
+    fn successful_startup_reconciliation_is_counted() {
+        use hepta_codex_journal::OperationState;
+        use hepta_codex_runtime::GateProcessObservationV1;
+
+        let records = [BrokerProcessReconciliationV1 {
+            operation_id: "operation-recovered".to_owned(),
+            prior_state: OperationState::ProcessSpawned,
+            observation: GateProcessObservationV1::Blocked,
+            disposition: ProcessReconciliationDispositionV1::BlockedGateTerminated,
+        }];
+        assert_eq!(validate_startup_reconciliation(&records).expect("count"), 1);
     }
 }

@@ -41,6 +41,8 @@ Foundation slice 1 implements FND-001 through FND-010 except for the externally 
 | RUST-BRK-013 | P0 | Generate execution receipt | FND-003, BRK-006, BRK-008 | receipt validates and binds exact raw event stream |
 | RUST-BRK-014 | P0 | Implement conservative cost settlement | BRK-013 | missing usage is never interpreted as zero |
 | RUST-BRK-015 | P1 | Record scrubbed real-Codex fixtures | BRK-004 | no prompts, credentials or private content retained |
+| RUST-BRK-016 | P0 | Enforce durable pre-exec provider gate | BRK-006, BRK-008 | target cannot execute before process identity and release commits; startup reconciliation precedes Ready; ambiguity requires new attempt |
+| RUST-BRK-017 | P0 | Independently qualify installed gate authority | BRK-016 | separate owner/UID, ACL, mount, systemd, reboot and host-crash evidence accepted by an independent reviewer |
 
 ## Workspace and mutation authority
 

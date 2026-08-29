@@ -87,7 +87,7 @@ where
     result
 }
 
-fn supervise_spawned_group(
+pub(super) fn supervise_spawned_group(
     child: &mut Child,
     process_id: u32,
     request: &BoundedProcessRequestV1,
@@ -228,7 +228,7 @@ fn supervise_spawned_group(
     })
 }
 
-fn validate_request(
+pub(super) fn validate_request(
     request: &BoundedProcessRequestV1,
     limits: ProcessLimitsV1,
 ) -> Result<(), BoundedProcessError> {
@@ -292,7 +292,7 @@ fn validate_canonical_path(path: &Path, subject: &'static str) -> Result<(), Bou
     Ok(())
 }
 
-fn resolve_kill_utility() -> Result<PathBuf, BoundedProcessError> {
+pub(super) fn resolve_kill_utility() -> Result<PathBuf, BoundedProcessError> {
     for candidate in [Path::new("/usr/bin/kill"), Path::new("/bin/kill")] {
         let Ok(canonical) = fs::canonicalize(candidate) else {
             continue;
@@ -324,7 +324,7 @@ fn resolve_kill_utility() -> Result<PathBuf, BoundedProcessError> {
     Err(BoundedProcessError::ProcessGroupControlUnavailable)
 }
 
-fn send_group_signal(
+pub(super) fn send_group_signal(
     kill_utility: &Path,
     process_id: u32,
     signal: &str,
@@ -342,7 +342,10 @@ fn send_group_signal(
     }
 }
 
-fn process_group_alive(kill_utility: &Path, process_id: u32) -> Result<bool, BoundedProcessError> {
+pub(super) fn process_group_alive(
+    kill_utility: &Path,
+    process_id: u32,
+) -> Result<bool, BoundedProcessError> {
     Ok(group_signal_status(kill_utility, process_id, "0")?.success())
 }
 
@@ -363,7 +366,7 @@ fn group_signal_status(
         .map_err(|error| BoundedProcessError::SignalUtility(error.kind()))
 }
 
-fn cleanup_after_error(
+pub(super) fn cleanup_after_error(
     child: &mut Child,
     kill_utility: &Path,
     process_id: u32,

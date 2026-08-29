@@ -11,8 +11,9 @@ pub use maintenance::{
 };
 pub use request::load_persisted_request;
 pub use store::{
-    BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1, FaultInjectionPointV1,
-    ReservationOutcomeV1,
+    BrokerJournalError, BrokerJournalPolicyV1, BrokerJournalStoreV1, BrokerProcessLaunchV1,
+    BrokerProcessReconciliationV1, FaultInjectionPointV1, ProcessReconciliationDispositionV1,
+    ProcessReleaseStateV1, ReservationOutcomeV1,
 };
 
 #[cfg(test)]

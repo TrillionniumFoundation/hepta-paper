@@ -4,8 +4,8 @@ use hepta_codex_event_stream::{DecodedStream, StreamLimits, decode_stream};
 use hepta_codex_journal::{OperationJournalV1, OperationState};
 use hepta_codex_protocol::{Sha256Digest, TerminalEventKind};
 use hepta_codex_runtime::{
-    BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1, ProcessLimitsV1,
-    ProcessTerminationReason, run_bounded_process_with_spawn_hook,
+    BoundedProcessRequestV1, BoundedProcessResultV1, DurableGateError, DurableGatePolicyV1,
+    ProcessLimitsV1, ProcessTerminationReason, spawn_blocked_preexec_gate,
 };
 use thiserror::Error;
 
@@ -15,6 +15,7 @@ use crate::{BrokerJournalError, BrokerJournalStoreV1, FaultInjectionPointV1};
 pub struct FakeExecutionTimelineV1 {
     pub request_bound_unix_ms: u64,
     pub process_spawned_unix_ms: u64,
+    pub process_release_authorized_unix_ms: u64,
     pub event_stream_started_unix_ms: u64,
     pub terminal_event_observed_unix_ms: u64,
     pub final_output_captured_unix_ms: u64,
@@ -29,6 +30,7 @@ impl FakeExecutionTimelineV1 {
         let values = [
             self.request_bound_unix_ms,
             self.process_spawned_unix_ms,
+            self.process_release_authorized_unix_ms,
             self.event_stream_started_unix_ms,
             self.terminal_event_observed_unix_ms,
             self.final_output_captured_unix_ms,
@@ -46,7 +48,6 @@ impl FakeExecutionTimelineV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FakeExecutionEvidenceV1 {
-    pub process_start_identity_hash: Sha256Digest,
     pub final_output_hash: Sha256Digest,
     pub schema_validation_hash: Sha256Digest,
     pub workspace_snapshot_hash: Sha256Digest,
@@ -64,6 +65,7 @@ pub struct FakeBrokerExecutionPlanV1 {
     pub operation_id: String,
     pub process: BoundedProcessRequestV1,
     pub process_limits: ProcessLimitsV1,
+    pub gate_policy: DurableGatePolicyV1,
     pub maximum_event_count: usize,
     pub maximum_jsonl_line_bytes: usize,
     pub timeline: FakeExecutionTimelineV1,
@@ -78,8 +80,9 @@ pub struct FakeBrokerPreparedResultV1 {
     pub event_stream: DecodedStream,
 }
 
-/// Executes only a caller-supplied local fake process and durably links each
-/// deterministic observation to the broker operation journal.
+/// Executes only a caller-supplied local fake process. The trusted gate is stopped by the kernel
+/// before the target executable exists, its exact identity is committed with `process_spawned`,
+/// and only a second durable release authorization permits target execution.
 pub fn run_reserved_fake_operation(
     store: &mut BrokerJournalStoreV1,
     plan: FakeBrokerExecutionPlanV1,
@@ -108,59 +111,69 @@ pub fn run_reserved_fake_operation(
         fault_for(&plan, OperationState::RequestBound),
     )?;
 
-    let mut spawn_linked = false;
-    let mut spawn_journal_error = None;
-    let process = run_bounded_process_with_spawn_hook(&plan.process, plan.process_limits, |_| {
-        match store.append_transition(
-            &plan.operation_id,
-            OperationState::RequestBound,
-            OperationState::ProcessSpawned,
-            timeline.process_spawned_unix_ms,
-            Some(plan.evidence.process_start_identity_hash.clone()),
-            None,
-            fault_for(&plan, OperationState::ProcessSpawned),
-        ) {
-            Ok(_) => {
-                spawn_linked = true;
-                Ok(())
-            }
+    let blocked =
+        match spawn_blocked_preexec_gate(&plan.process, plan.process_limits, &plan.gate_policy) {
+            Ok(blocked) => blocked,
             Err(error) => {
-                spawn_journal_error = Some(error);
-                Err(BoundedProcessError::SpawnHookRejected)
-            }
-        }
-    });
-    let process = match process {
-        Ok(process) => process,
-        Err(_error) if spawn_journal_error.is_some() => {
-            return Err(FakeBrokerExecutionError::SpawnJournalLinkFailed(
-                spawn_journal_error.expect("checked spawn journal error"),
-            ));
-        }
-        Err(error) => {
-            let (from, to, reason) = if spawn_linked {
-                (
-                    OperationState::ProcessSpawned,
-                    OperationState::FailedAfterSpawn,
-                    "fake_process_failed_after_spawn",
-                )
-            } else {
-                (
+                let _ = store.append_transition(
+                    &plan.operation_id,
                     OperationState::RequestBound,
                     OperationState::FailedBeforeSpawn,
-                    "fake_process_failed_before_spawn",
-                )
-            };
-            let _ = store.append_transition(
+                    timeline.process_spawned_unix_ms,
+                    None,
+                    Some("fake_gate_failed_before_spawn".to_owned()),
+                    fault_for(&plan, OperationState::FailedBeforeSpawn),
+                );
+                return Err(FakeBrokerExecutionError::Gate(error));
+            }
+        };
+    let identity_hash = blocked.identity().identity_hash.clone();
+    if let Err(error) = store.link_blocked_process(
+        &plan.operation_id,
+        timeline.process_spawned_unix_ms,
+        blocked.identity(),
+        fault_for(&plan, OperationState::ProcessSpawned),
+    ) {
+        let _ = blocked.terminate_blocked();
+        return Err(FakeBrokerExecutionError::SpawnJournalLinkFailed(error));
+    }
+
+    if let Err(error) = store.authorize_process_release(
+        &plan.operation_id,
+        &identity_hash,
+        timeline.process_release_authorized_unix_ms,
+        fault_for(&plan, OperationState::ProcessSpawned),
+    ) {
+        let _ = blocked.terminate_blocked();
+        let _ = store.finish_process_and_transition(
+            &plan.operation_id,
+            &identity_hash,
+            OperationState::ProcessSpawned,
+            OperationState::FailedAfterSpawn,
+            timeline.process_release_authorized_unix_ms,
+            None,
+            Some("fake_release_authorization_failed".to_owned()),
+            "fake_release_authorization_failed",
+            FaultInjectionPointV1::None,
+        );
+        return Err(FakeBrokerExecutionError::ReleaseAuthorizationFailed(error));
+    }
+
+    let process = match blocked.release_and_supervise() {
+        Ok((_identity, process)) => process,
+        Err(error) => {
+            let _ = store.finish_process_and_transition(
                 &plan.operation_id,
-                from,
-                to,
-                timeline.process_spawned_unix_ms,
+                &identity_hash,
+                OperationState::ProcessSpawned,
+                OperationState::FailedAfterSpawn,
+                timeline.event_stream_started_unix_ms,
                 None,
-                Some(reason.to_owned()),
-                fault_for(&plan, to),
+                Some("fake_gate_execution_failed".to_owned()),
+                "fake_gate_execution_failed",
+                fault_for(&plan, OperationState::FailedAfterSpawn),
             );
-            return Err(FakeBrokerExecutionError::Process(error));
+            return Err(FakeBrokerExecutionError::Gate(error));
         }
     };
 
@@ -173,13 +186,15 @@ pub fn run_reserved_fake_operation(
         } else {
             (OperationState::FailedAfterSpawn, "fake_process_failed")
         };
-        store.append_transition(
+        store.finish_process_and_transition(
             &plan.operation_id,
+            &identity_hash,
             OperationState::ProcessSpawned,
             state,
             timeline.event_stream_started_unix_ms,
             None,
             Some(reason.to_owned()),
+            reason,
             fault_for(&plan, state),
         )?;
         return Err(FakeBrokerExecutionError::TerminalProcessFailure(Box::new(
@@ -189,25 +204,29 @@ pub fn run_reserved_fake_operation(
     let stdout_len = usize::try_from(process.stdout_bytes)
         .map_err(|_| FakeBrokerExecutionError::IncompleteStdoutCapture)?;
     if process.stdout_truncated || stdout_len != process.stdout_tail.len() {
-        store.append_transition(
+        store.finish_process_and_transition(
             &plan.operation_id,
+            &identity_hash,
             OperationState::ProcessSpawned,
             OperationState::EventStreamInvalid,
             timeline.event_stream_started_unix_ms,
             None,
             Some("fake_stdout_incomplete".to_owned()),
+            "fake_stdout_incomplete",
             fault_for(&plan, OperationState::EventStreamInvalid),
         )?;
         return Err(FakeBrokerExecutionError::IncompleteStdoutCapture);
     }
 
-    store.append_transition(
+    store.finish_process_and_transition(
         &plan.operation_id,
+        &identity_hash,
         OperationState::ProcessSpawned,
         OperationState::EventStreamStarted,
         timeline.event_stream_started_unix_ms,
         None,
         None,
+        "fake_process_completed",
         fault_for(&plan, OperationState::EventStreamStarted),
     )?;
     let stream_limits = StreamLimits {
@@ -351,10 +370,12 @@ pub enum FakeBrokerExecutionError {
         expected: OperationState,
         observed: OperationState,
     },
-    #[error("spawned fake process could not be durably linked to its operation journal")]
+    #[error("spawned fake gate could not be durably linked to its operation journal")]
     SpawnJournalLinkFailed(BrokerJournalError),
-    #[error("fake process execution failed: {0}")]
-    Process(BoundedProcessError),
+    #[error("durable fake-process release authorization failed")]
+    ReleaseAuthorizationFailed(BrokerJournalError),
+    #[error("durable fake-process gate failed: {0}")]
+    Gate(DurableGateError),
     #[error("fake process terminated unsuccessfully")]
     TerminalProcessFailure(Box<BoundedProcessResultV1>),
     #[error("fake process stdout was not captured completely")]

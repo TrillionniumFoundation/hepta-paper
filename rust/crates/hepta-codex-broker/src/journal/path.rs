@@ -10,7 +10,7 @@ use std::{
 use rusqlite::{Connection, OpenFlags};
 
 pub(super) const INITIALIZATION_MARKER_SUFFIX: &str = ".initializing";
-pub(super) const INITIALIZATION_MARKER_BYTES: &[u8] = b"HEPTA_BROKER_JOURNAL_INIT_V1\n";
+pub(super) const INITIALIZATION_MARKER_BYTES: &[u8] = b"HEPTA_BROKER_JOURNAL_INIT_V2\n";
 
 use super::{
     schema::{APPLICATION_ID, EXPECTED_SCHEMA_OBJECTS, SCHEMA_SQL, SCHEMA_VERSION, USER_VERSION},
@@ -499,6 +499,7 @@ fn verify_schema_shape(connection: &Connection) -> Result<(), BrokerJournalError
         "broker_metadata",
         "operations",
         "capability_nonces",
+        "operation_processes",
         "operation_transitions",
     ] {
         let strict: i64 = connection.query_row(

@@ -5,7 +5,7 @@
 This document specifies the long-running local service around the Rust broker
 admission and operation journal. V1 is qualified only for fake/local executable
 work. Real Codex credentials, provider calls and production composition remain
-blocked by Issue #17 and installed-host qualification.
+blocked from real provider composition until ADR-0004 independent review and installed-host qualification.
 
 ## One service per role
 
@@ -209,8 +209,9 @@ is attached to `terminal_event_observed`. Failure transitions use bounded reason
 codes. Journal-transition fault injection proves transaction rollback.
 
 The post-spawn hook kills and reaps the group when journal linkage fails, but it
-is not sufficient for live Codex atomicity. Issue #17 requires an OS-level
-pre-exec gate before real provider execution.
+was not sufficient for live Codex atomicity. ADR-0004 now provides an
+OS-level stopped pre-exec gate; real provider execution still requires
+independent low-level review and installed-host qualification.
 
 ## Prepared-result acknowledgement
 
@@ -316,7 +317,7 @@ ordinary telemetry.
 
 Real Codex remains disabled until all are satisfied:
 
-- Issue #17 pre-exec durable launch gate;
+- ADR-0004 independent pre-exec-gate review and installed-host qualification;
 - installed Codex binary/version/help/JSONL qualification;
 - credential and role-principal isolation;
 - schema authority, parent ACL and mount qualification;

@@ -277,20 +277,20 @@ fn append_only_state_survives_reopen_and_validates_projection() {
             .append_transition(
                 "operation-1",
                 OperationState::RequestBound,
-                OperationState::ProcessSpawned,
+                OperationState::FailedBeforeSpawn,
                 12_002,
-                Some(digest('9')),
                 None,
+                Some("pre_spawn_failure".to_owned()),
                 FaultInjectionPointV1::None,
             )
-            .expect("process spawned");
+            .expect("terminal pre-spawn failure");
         store.validate_integrity().expect("integrity");
     }
     let reopened = fixture.open();
     let journal = reopened
         .load_journal("operation-1")
         .expect("reopened journal");
-    assert_eq!(journal.current_state, OperationState::ProcessSpawned);
+    assert_eq!(journal.current_state, OperationState::FailedBeforeSpawn);
     reopened.validate_integrity().expect("reopened integrity");
 }
 

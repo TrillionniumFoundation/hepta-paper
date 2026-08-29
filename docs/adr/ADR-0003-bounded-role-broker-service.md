@@ -117,7 +117,8 @@ execution before journal commit. Issue #17 is the production gate.
 
 ## Follow-up
 
-The next slice must implement the OS-enforced pre-exec launch gate, startup
+The next qualification slice must independently review the OS-enforced
+pre-exec launch gate, complete installed-host startup
 process reconciliation and installed-host qualification before enabling real
 Codex. Workspace COW/mutation authority and read-only Rust control-plane work can
 continue in parallel without provider credentials.

@@ -188,10 +188,11 @@ fn local_fixture_policy_is_explicitly_not_production_eligible() {
 fn same_owner_production_schema_policy_is_rejected() {
     let fixture = Fixture::new();
     let mut request = fixture.request(SandboxPolicy::ReadOnly);
+    const NON_ROOT_EXECUTION_UID: u32 = 42_424;
     request.policy = CodexInvocationPolicyV1::separate_schema_authority(
-        fixture.owner_uid,
+        NON_ROOT_EXECUTION_UID,
         fixture.owner_gid,
-        fixture.owner_uid,
+        NON_ROOT_EXECUTION_UID,
     );
     assert!(matches!(
         build_codex_invocation(request),

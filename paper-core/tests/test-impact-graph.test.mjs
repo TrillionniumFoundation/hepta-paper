@@ -27,7 +27,14 @@ function fixtureGraph() {
     'paper-core/bin/tool.mjs': 'process.stdout.write(\"ok\");\n',
   };
   return buildTestImpactGraph({
-    files: [...Object.keys(sources), 'paper-core/config/policy.json', 'README.md'],
+    files: [
+      ...Object.keys(sources),
+      'paper-core/config/policy.json',
+      'README.md',
+      'docs/rust/RUST_PLAN.md',
+      'rust/Cargo.toml',
+      'rust/crates/example/src/lib.rs',
+    ],
     readSource: (file) => sources[file] || '',
   });
 }
@@ -67,6 +74,17 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
   });
   assert.equal(documentation.status, 'test_impact_selection_no_tests_required');
   assert.deepEqual(documentation.selectedTests, []);
+
+  for (const changedFile of [
+    'docs/rust/RUST_PLAN.md',
+    'rust/Cargo.toml',
+    'rust/crates/example/src/lib.rs',
+  ]) {
+    const isolated = selectImpactedTests({ graph, changedFiles: [changedFile] });
+    assert.equal(isolated.status, 'test_impact_selection_no_tests_required', changedFile);
+    assert.deepEqual(isolated.selectedTests, [], changedFile);
+    assert.deepEqual(isolated.fallbackFiles, [], changedFile);
+  }
 });
 
 test('deterministic shards cover each selected test exactly once', () => {

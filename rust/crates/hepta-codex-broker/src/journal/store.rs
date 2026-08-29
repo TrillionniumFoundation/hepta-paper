@@ -5,6 +5,10 @@ use std::{
 
 use hepta_codex_journal::{JournalError, JournalTransitionV1, OperationJournalV1, OperationState};
 use hepta_codex_protocol::{CodexExecutionRequestV1, Sha256Digest};
+use hepta_codex_runtime::{
+    GateProcessObservationV1, PreExecGateIdentityV1, ProcessLimitsV1, observe_preexec_gate_process,
+    terminate_journaled_preexec_gate,
+};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
 
@@ -63,6 +67,9 @@ pub enum FaultInjectionPointV1 {
     AfterNonceInsert,
     AfterTransitionInsert,
     AfterProjectionUpdate,
+    AfterProcessIdentityInsert,
+    AfterReleaseAuthorization,
+    AfterProcessTermination,
 }
 
 /// Result of reserving an idempotent provider operation.
@@ -70,6 +77,72 @@ pub enum FaultInjectionPointV1 {
 pub enum ReservationOutcomeV1 {
     Reserved(OperationJournalV1),
     Existing(OperationJournalV1),
+}
+
+/// Durable release phase for one pre-exec gate identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessReleaseStateV1 {
+    Blocked,
+    Authorized,
+    Terminated,
+}
+
+impl ProcessReleaseStateV1 {
+    fn from_db(value: &str) -> Result<Self, BrokerJournalError> {
+        match value {
+            "blocked" => Ok(Self::Blocked),
+            "authorized" => Ok(Self::Authorized),
+            "terminated" => Ok(Self::Terminated),
+            _ => Err(BrokerJournalError::CorruptDatabaseValue(
+                "process_release_state",
+            )),
+        }
+    }
+}
+
+/// Exact process identity and release state persisted with `process_spawned`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrokerProcessLaunchV1 {
+    pub operation_id: String,
+    pub identity: PreExecGateIdentityV1,
+    pub release_state: ProcessReleaseStateV1,
+    pub linked_at_unix_ms: u64,
+    pub release_authorized_at_unix_ms: Option<u64>,
+    pub terminated_at_unix_ms: Option<u64>,
+    pub reconciliation_disposition: Option<String>,
+}
+
+/// Deterministic startup recovery result for one durable process launch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessReconciliationDispositionV1 {
+    BlockedGateTerminated,
+    ReleasedProcessTerminated,
+    OrphanedProcessGroupTerminated,
+    BlockedGateAlreadyAbsent,
+    ReleasedProcessOutcomeAmbiguous,
+    ManualIdentityMismatch,
+}
+
+impl ProcessReconciliationDispositionV1 {
+    fn as_reason(self) -> &'static str {
+        match self {
+            Self::BlockedGateTerminated => "startup_blocked_gate_terminated",
+            Self::ReleasedProcessTerminated => "startup_released_process_terminated",
+            Self::OrphanedProcessGroupTerminated => "startup_orphaned_process_group_terminated",
+            Self::BlockedGateAlreadyAbsent => "startup_blocked_gate_absent",
+            Self::ReleasedProcessOutcomeAmbiguous => "startup_released_process_outcome_ambiguous",
+            Self::ManualIdentityMismatch => "startup_process_identity_mismatch",
+        }
+    }
+}
+
+/// One startup reconciliation record. Identity mismatches are reported without signaling.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrokerProcessReconciliationV1 {
+    pub operation_id: String,
+    pub prior_state: OperationState,
+    pub observation: GateProcessObservationV1,
+    pub disposition: ProcessReconciliationDispositionV1,
 }
 
 /// Single-connection broker journal store. It is `Send` but intentionally not `Sync`.
@@ -204,6 +277,9 @@ impl BrokerJournalStoreV1 {
         reason_code: Option<String>,
         fault: FaultInjectionPointV1,
     ) -> Result<OperationJournalV1, BrokerJournalError> {
+        if next_state == OperationState::ProcessSpawned {
+            return Err(BrokerJournalError::ProcessSpawnedRequiresGateIdentity);
+        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -217,21 +293,7 @@ impl BrokerJournalStoreV1 {
         let transition = journal
             .transition(next_state, recorded_at_unix_ms, evidence_hash, reason_code)?
             .clone();
-        transaction.execute(
-            "INSERT INTO operation_transitions (
-                operation_id, sequence, from_state, to_state, recorded_at_unix_ms,
-                evidence_hash, reason_code
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                operation_id,
-                to_i64(transition.sequence)?,
-                state_to_db(transition.from),
-                state_to_db(transition.to),
-                to_i64(transition.recorded_at_unix_ms)?,
-                transition.evidence_hash.as_ref().map(Sha256Digest::as_str),
-                transition.reason_code,
-            ],
-        )?;
+        insert_transition(&transaction, operation_id, &transition)?;
         if fault == FaultInjectionPointV1::AfterTransitionInsert {
             return Err(BrokerJournalError::InjectedFault(fault));
         }
@@ -245,37 +307,438 @@ impl BrokerJournalStoreV1 {
         } else {
             None
         };
-        let updated = transaction.execute(
-            "UPDATE operations
-             SET current_state = ?1,
-                 updated_at_unix_ms = ?2,
-                 provider_action_may_have_started = MAX(
-                     provider_action_may_have_started, ?3
-                 ),
-                 prepared_receipt_hash = COALESCE(?4, prepared_receipt_hash)
-             WHERE operation_id = ?5 AND current_state = ?6",
-            params![
-                state_to_db(next_state),
-                to_i64(recorded_at_unix_ms)?,
-                if provider_action_may_have_started {
-                    1_i64
-                } else {
-                    0_i64
-                },
-                prepared_receipt_hash,
-                operation_id,
-                state_to_db(expected_state),
-            ],
+        update_operation_projection(
+            &transaction,
+            operation_id,
+            expected_state,
+            next_state,
+            recorded_at_unix_ms,
+            provider_action_may_have_started,
+            prepared_receipt_hash,
         )?;
-        if updated != 1 {
-            return Err(BrokerJournalError::ConcurrentStateChange);
-        }
         if fault == FaultInjectionPointV1::AfterProjectionUpdate {
             return Err(BrokerJournalError::InjectedFault(fault));
         }
         transaction.commit()?;
         inspect_database_envelope(&self.path, self.policy)?;
         Ok(journal)
+    }
+
+    /// Atomically binds a stopped OS gate identity and the `process_spawned` transition.
+    pub fn link_blocked_process(
+        &mut self,
+        operation_id: &str,
+        recorded_at_unix_ms: u64,
+        identity: &PreExecGateIdentityV1,
+        fault: FaultInjectionPointV1,
+    ) -> Result<OperationJournalV1, BrokerJournalError> {
+        if recorded_at_unix_ms == 0 {
+            return Err(BrokerJournalError::InvalidRecordedTime);
+        }
+        identity
+            .validate_hash()
+            .map_err(|_| BrokerJournalError::InvalidProcessIdentity)?;
+        let identity_payload =
+            serde_json::to_vec(identity).map_err(|_| BrokerJournalError::InvalidProcessIdentity)?;
+        if identity_payload.is_empty() || identity_payload.len() > HARD_MAXIMUM_REQUEST_BYTES {
+            return Err(BrokerJournalError::InvalidProcessIdentity);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut journal = load_journal_from_connection(&transaction, operation_id)?;
+        if journal.current_state != OperationState::RequestBound {
+            return Err(BrokerJournalError::StateConflict {
+                expected: OperationState::RequestBound,
+                observed: journal.current_state,
+            });
+        }
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT identity_hash FROM operation_processes WHERE operation_id = ?1",
+                [operation_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if existing.is_some() {
+            return Err(BrokerJournalError::ProcessIdentityConflict);
+        }
+        transaction.execute(
+            "INSERT INTO operation_processes (
+                operation_id, identity_payload, identity_hash, pid, process_group_id,
+                session_id, start_time_ticks, process_uid, boot_id_hash,
+                gate_executable_hash, target_executable_hash, launch_envelope_hash,
+                release_state, linked_at_unix_ms, release_authorized_at_unix_ms,
+                terminated_at_unix_ms, reconciliation_disposition
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                'blocked', ?13, NULL, NULL, NULL
+             )",
+            params![
+                operation_id,
+                identity_payload,
+                identity.identity_hash.as_str(),
+                i64::from(identity.pid),
+                i64::from(identity.process_group_id),
+                i64::from(identity.session_id),
+                to_i64(identity.start_time_ticks)?,
+                i64::from(identity.uid),
+                identity.boot_id_hash.as_str(),
+                identity.gate_executable.content_hash.as_str(),
+                identity.target_executable.content_hash.as_str(),
+                identity.launch_envelope.content_hash.as_str(),
+                to_i64(recorded_at_unix_ms)?,
+            ],
+        )?;
+        if fault == FaultInjectionPointV1::AfterProcessIdentityInsert {
+            return Err(BrokerJournalError::InjectedFault(fault));
+        }
+        let transition = journal
+            .transition(
+                OperationState::ProcessSpawned,
+                recorded_at_unix_ms,
+                Some(identity.identity_hash.clone()),
+                None,
+            )?
+            .clone();
+        insert_transition(&transaction, operation_id, &transition)?;
+        if fault == FaultInjectionPointV1::AfterTransitionInsert {
+            return Err(BrokerJournalError::InjectedFault(fault));
+        }
+        update_operation_projection(
+            &transaction,
+            operation_id,
+            OperationState::RequestBound,
+            OperationState::ProcessSpawned,
+            recorded_at_unix_ms,
+            true,
+            None,
+        )?;
+        if fault == FaultInjectionPointV1::AfterProjectionUpdate {
+            return Err(BrokerJournalError::InjectedFault(fault));
+        }
+        transaction.commit()?;
+        inspect_database_envelope(&self.path, self.policy)?;
+        Ok(journal)
+    }
+
+    /// Durably authorizes release before the stopped gate receives `SIGCONT`.
+    pub fn authorize_process_release(
+        &mut self,
+        operation_id: &str,
+        identity_hash: &Sha256Digest,
+        recorded_at_unix_ms: u64,
+        fault: FaultInjectionPointV1,
+    ) -> Result<BrokerProcessLaunchV1, BrokerJournalError> {
+        if recorded_at_unix_ms == 0 {
+            return Err(BrokerJournalError::InvalidRecordedTime);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let journal = load_journal_from_connection(&transaction, operation_id)?;
+        if journal.current_state != OperationState::ProcessSpawned {
+            return Err(BrokerJournalError::StateConflict {
+                expected: OperationState::ProcessSpawned,
+                observed: journal.current_state,
+            });
+        }
+        let launch = load_process_launch_from_connection(&transaction, operation_id)?;
+        if &launch.identity.identity_hash != identity_hash {
+            return Err(BrokerJournalError::ProcessIdentityConflict);
+        }
+        match launch.release_state {
+            ProcessReleaseStateV1::Blocked => {}
+            ProcessReleaseStateV1::Authorized => {
+                transaction.commit()?;
+                return Ok(launch);
+            }
+            ProcessReleaseStateV1::Terminated => {
+                return Err(BrokerJournalError::ProcessAlreadyTerminated);
+            }
+        }
+        if recorded_at_unix_ms < launch.linked_at_unix_ms {
+            return Err(BrokerJournalError::InvalidRecordedTime);
+        }
+        let updated = transaction.execute(
+            "UPDATE operation_processes
+             SET release_state = 'authorized', release_authorized_at_unix_ms = ?1
+             WHERE operation_id = ?2 AND identity_hash = ?3 AND release_state = 'blocked'",
+            params![
+                to_i64(recorded_at_unix_ms)?,
+                operation_id,
+                identity_hash.as_str(),
+            ],
+        )?;
+        if updated != 1 {
+            return Err(BrokerJournalError::ConcurrentProcessStateChange);
+        }
+        if fault == FaultInjectionPointV1::AfterReleaseAuthorization {
+            return Err(BrokerJournalError::InjectedFault(fault));
+        }
+        transaction.commit()?;
+        inspect_database_envelope(&self.path, self.policy)?;
+        self.load_process_launch(operation_id)
+    }
+
+    /// Records that the bound process group is no longer live. The identity remains immutable.
+    pub fn mark_process_terminated(
+        &mut self,
+        operation_id: &str,
+        identity_hash: &Sha256Digest,
+        recorded_at_unix_ms: u64,
+        disposition: &str,
+    ) -> Result<BrokerProcessLaunchV1, BrokerJournalError> {
+        if recorded_at_unix_ms == 0 || !valid_reason_code(disposition) {
+            return Err(BrokerJournalError::InvalidRecordedTime);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let launch = load_process_launch_from_connection(&transaction, operation_id)?;
+        if &launch.identity.identity_hash != identity_hash {
+            return Err(BrokerJournalError::ProcessIdentityConflict);
+        }
+        if launch.release_state == ProcessReleaseStateV1::Terminated {
+            if launch.reconciliation_disposition.as_deref() == Some(disposition) {
+                transaction.commit()?;
+                return Ok(launch);
+            }
+            return Err(BrokerJournalError::ProcessAlreadyTerminated);
+        }
+        if recorded_at_unix_ms < launch.linked_at_unix_ms {
+            return Err(BrokerJournalError::InvalidRecordedTime);
+        }
+        let updated = transaction.execute(
+            "UPDATE operation_processes
+             SET release_state = 'terminated', terminated_at_unix_ms = ?1,
+                 reconciliation_disposition = ?2
+             WHERE operation_id = ?3 AND identity_hash = ?4
+               AND release_state IN ('blocked', 'authorized')",
+            params![
+                to_i64(recorded_at_unix_ms)?,
+                disposition,
+                operation_id,
+                identity_hash.as_str(),
+            ],
+        )?;
+        if updated != 1 {
+            return Err(BrokerJournalError::ConcurrentProcessStateChange);
+        }
+        transaction.commit()?;
+        inspect_database_envelope(&self.path, self.policy)?;
+        self.load_process_launch(operation_id)
+    }
+
+    /// Atomically records process-group termination and the state transition that consumes the
+    /// supervised process result. This prevents restart recovery from observing a terminated
+    /// process row without the corresponding journal disposition, or vice versa.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_process_and_transition(
+        &mut self,
+        operation_id: &str,
+        identity_hash: &Sha256Digest,
+        expected_state: OperationState,
+        next_state: OperationState,
+        recorded_at_unix_ms: u64,
+        evidence_hash: Option<Sha256Digest>,
+        reason_code: Option<String>,
+        disposition: &str,
+        fault: FaultInjectionPointV1,
+    ) -> Result<OperationJournalV1, BrokerJournalError> {
+        if recorded_at_unix_ms == 0 || !valid_reason_code(disposition) {
+            return Err(BrokerJournalError::InvalidRecordedTime);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut journal = load_journal_from_connection(&transaction, operation_id)?;
+        if journal.current_state != expected_state {
+            return Err(BrokerJournalError::StateConflict {
+                expected: expected_state,
+                observed: journal.current_state,
+            });
+        }
+        let launch = load_process_launch_from_connection(&transaction, operation_id)?;
+        if &launch.identity.identity_hash != identity_hash {
+            return Err(BrokerJournalError::ProcessIdentityConflict);
+        }
+        if launch.release_state == ProcessReleaseStateV1::Terminated {
+            return Err(BrokerJournalError::ProcessAlreadyTerminated);
+        }
+        if recorded_at_unix_ms < launch.linked_at_unix_ms {
+            return Err(BrokerJournalError::InvalidRecordedTime);
+        }
+
+        let transition = journal
+            .transition(next_state, recorded_at_unix_ms, evidence_hash, reason_code)?
+            .clone();
+        let terminated = transaction.execute(
+            "UPDATE operation_processes
+             SET release_state = 'terminated', terminated_at_unix_ms = ?1,
+                 reconciliation_disposition = ?2
+             WHERE operation_id = ?3 AND identity_hash = ?4
+               AND release_state IN ('blocked', 'authorized')",
+            params![
+                to_i64(recorded_at_unix_ms)?,
+                disposition,
+                operation_id,
+                identity_hash.as_str(),
+            ],
+        )?;
+        if terminated != 1 {
+            return Err(BrokerJournalError::ConcurrentProcessStateChange);
+        }
+        if fault == FaultInjectionPointV1::AfterProcessTermination {
+            return Err(BrokerJournalError::InjectedFault(fault));
+        }
+        insert_transition(&transaction, operation_id, &transition)?;
+        if fault == FaultInjectionPointV1::AfterTransitionInsert {
+            return Err(BrokerJournalError::InjectedFault(fault));
+        }
+        let provider_action_may_have_started = journal
+            .transitions
+            .iter()
+            .any(|item| item.to == OperationState::ProcessSpawned);
+        let prepared_receipt_hash = if next_state == OperationState::ResultPrepared {
+            transition.evidence_hash.as_ref().map(Sha256Digest::as_str)
+        } else {
+            None
+        };
+        update_operation_projection(
+            &transaction,
+            operation_id,
+            expected_state,
+            next_state,
+            recorded_at_unix_ms,
+            provider_action_may_have_started,
+            prepared_receipt_hash,
+        )?;
+        if fault == FaultInjectionPointV1::AfterProjectionUpdate {
+            return Err(BrokerJournalError::InjectedFault(fault));
+        }
+        transaction.commit()?;
+        inspect_database_envelope(&self.path, self.policy)?;
+        Ok(journal)
+    }
+
+    /// Loads and revalidates one exact process-launch identity.
+    pub fn load_process_launch(
+        &self,
+        operation_id: &str,
+    ) -> Result<BrokerProcessLaunchV1, BrokerJournalError> {
+        load_process_launch_from_connection(&self.connection, operation_id)
+    }
+
+    /// Reconciles every pending gate before a listener can be marked ready.
+    pub fn reconcile_pending_processes(
+        &mut self,
+        now_unix_ms: u64,
+        limits: ProcessLimitsV1,
+    ) -> Result<Vec<BrokerProcessReconciliationV1>, BrokerJournalError> {
+        if now_unix_ms == 0 {
+            return Err(BrokerJournalError::InvalidRecordedTime);
+        }
+        let mut statement = self.connection.prepare(
+            "SELECT operation_id FROM operations
+             WHERE current_state IN ('process_spawned', 'event_stream_started')
+             ORDER BY operation_id",
+        )?;
+        let operation_ids = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        let mut results = Vec::with_capacity(operation_ids.len());
+        for operation_id in operation_ids {
+            let journal = self.load_journal(&operation_id)?;
+            let launch = self.load_process_launch(&operation_id)?;
+            let observation = observe_preexec_gate_process(&launch.identity)
+                .map_err(BrokerJournalError::ProcessRuntime)?;
+            let disposition = match observation {
+                GateProcessObservationV1::IdentityMismatch => {
+                    results.push(BrokerProcessReconciliationV1 {
+                        operation_id,
+                        prior_state: journal.current_state,
+                        observation,
+                        disposition: ProcessReconciliationDispositionV1::ManualIdentityMismatch,
+                    });
+                    continue;
+                }
+                GateProcessObservationV1::Blocked => {
+                    terminate_journaled_preexec_gate(&launch.identity, limits)
+                        .map_err(BrokerJournalError::ProcessRuntime)?;
+                    if launch.release_state == ProcessReleaseStateV1::Blocked {
+                        ProcessReconciliationDispositionV1::BlockedGateTerminated
+                    } else {
+                        ProcessReconciliationDispositionV1::ReleasedProcessOutcomeAmbiguous
+                    }
+                }
+                GateProcessObservationV1::ReleasedOrRunning => {
+                    terminate_journaled_preexec_gate(&launch.identity, limits)
+                        .map_err(BrokerJournalError::ProcessRuntime)?;
+                    ProcessReconciliationDispositionV1::ReleasedProcessTerminated
+                }
+                GateProcessObservationV1::OrphanedProcessGroup => {
+                    terminate_journaled_preexec_gate(&launch.identity, limits)
+                        .map_err(BrokerJournalError::ProcessRuntime)?;
+                    ProcessReconciliationDispositionV1::OrphanedProcessGroupTerminated
+                }
+                GateProcessObservationV1::Absent => {
+                    if launch.release_state == ProcessReleaseStateV1::Blocked {
+                        ProcessReconciliationDispositionV1::BlockedGateAlreadyAbsent
+                    } else {
+                        ProcessReconciliationDispositionV1::ReleasedProcessOutcomeAmbiguous
+                    }
+                }
+            };
+            let transition_time = journal
+                .transitions
+                .last()
+                .map_or(now_unix_ms, |transition| {
+                    now_unix_ms.max(transition.recorded_at_unix_ms.saturating_add(1))
+                });
+            let release_was_authorized = launch.release_authorized_at_unix_ms.is_some();
+            let next_state = if !release_was_authorized
+                && matches!(
+                    disposition,
+                    ProcessReconciliationDispositionV1::BlockedGateTerminated
+                        | ProcessReconciliationDispositionV1::BlockedGateAlreadyAbsent
+                ) {
+                OperationState::FailedAfterSpawn
+            } else {
+                OperationState::ResultAmbiguous
+            };
+            if launch.release_state == ProcessReleaseStateV1::Terminated {
+                self.append_transition(
+                    &operation_id,
+                    journal.current_state,
+                    next_state,
+                    transition_time,
+                    None,
+                    Some(disposition.as_reason().to_owned()),
+                    FaultInjectionPointV1::None,
+                )?;
+            } else {
+                self.finish_process_and_transition(
+                    &operation_id,
+                    &launch.identity.identity_hash,
+                    journal.current_state,
+                    next_state,
+                    transition_time,
+                    None,
+                    Some(disposition.as_reason().to_owned()),
+                    disposition.as_reason(),
+                    FaultInjectionPointV1::None,
+                )?;
+            }
+            results.push(BrokerProcessReconciliationV1 {
+                operation_id,
+                prior_state: journal.current_state,
+                observation,
+                disposition,
+            });
+        }
+        Ok(results)
     }
 
     /// Loads and re-validates one complete append-only operation journal.
@@ -328,6 +791,18 @@ impl BrokerJournalStoreV1 {
         if nonce_mismatch_count != 0 || orphan_nonce_count != 0 {
             return Err(BrokerJournalError::NonceProjectionMismatch);
         }
+        let orphan_process_count: i64 = self.connection.query_row(
+            "SELECT count(*)
+             FROM operation_processes AS process
+             LEFT JOIN operations AS operation
+               ON operation.operation_id = process.operation_id
+             WHERE operation.operation_id IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        if orphan_process_count != 0 {
+            return Err(BrokerJournalError::ProcessIdentityProjectionMismatch);
+        }
 
         let mut statement = self
             .connection
@@ -340,6 +815,7 @@ impl BrokerJournalStoreV1 {
             let journal = self.load_journal(&operation_id)?;
             validate_operation_record(&self.connection, &operation_id)?;
             validate_operation_projection(&self.connection, &journal)?;
+            validate_process_projection(&self.connection, &journal)?;
         }
         Ok(())
     }
@@ -351,6 +827,172 @@ impl BrokerJournalStoreV1 {
                 .query_row("SELECT count(*) FROM operations", [], |row| row.get(0))?;
         from_i64(value)
     }
+}
+
+fn insert_transition(
+    transaction: &Transaction<'_>,
+    operation_id: &str,
+    transition: &JournalTransitionV1,
+) -> Result<(), BrokerJournalError> {
+    transaction.execute(
+        "INSERT INTO operation_transitions (
+            operation_id, sequence, from_state, to_state, recorded_at_unix_ms,
+            evidence_hash, reason_code
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            operation_id,
+            to_i64(transition.sequence)?,
+            state_to_db(transition.from),
+            state_to_db(transition.to),
+            to_i64(transition.recorded_at_unix_ms)?,
+            transition.evidence_hash.as_ref().map(Sha256Digest::as_str),
+            transition.reason_code,
+        ],
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_operation_projection(
+    transaction: &Transaction<'_>,
+    operation_id: &str,
+    expected_state: OperationState,
+    next_state: OperationState,
+    recorded_at_unix_ms: u64,
+    provider_action_may_have_started: bool,
+    prepared_receipt_hash: Option<&str>,
+) -> Result<(), BrokerJournalError> {
+    let updated = transaction.execute(
+        "UPDATE operations
+         SET current_state = ?1,
+             updated_at_unix_ms = ?2,
+             provider_action_may_have_started = MAX(
+                 provider_action_may_have_started, ?3
+             ),
+             prepared_receipt_hash = COALESCE(?4, prepared_receipt_hash)
+         WHERE operation_id = ?5 AND current_state = ?6",
+        params![
+            state_to_db(next_state),
+            to_i64(recorded_at_unix_ms)?,
+            if provider_action_may_have_started {
+                1_i64
+            } else {
+                0_i64
+            },
+            prepared_receipt_hash,
+            operation_id,
+            state_to_db(expected_state),
+        ],
+    )?;
+    if updated != 1 {
+        return Err(BrokerJournalError::ConcurrentStateChange);
+    }
+    Ok(())
+}
+
+fn load_process_launch_from_connection(
+    connection: &Connection,
+    operation_id: &str,
+) -> Result<BrokerProcessLaunchV1, BrokerJournalError> {
+    let row = connection
+        .query_row(
+            "SELECT identity_payload, identity_hash, pid, process_group_id, session_id,
+                    start_time_ticks, process_uid, boot_id_hash, gate_executable_hash,
+                    target_executable_hash, launch_envelope_hash, release_state,
+                    linked_at_unix_ms, release_authorized_at_unix_ms,
+                    terminated_at_unix_ms, reconciliation_disposition
+             FROM operation_processes WHERE operation_id = ?1",
+            [operation_id],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, i64>(12)?,
+                    row.get::<_, Option<i64>>(13)?,
+                    row.get::<_, Option<i64>>(14)?,
+                    row.get::<_, Option<String>>(15)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| BrokerJournalError::ProcessIdentityNotFound(operation_id.to_owned()))?;
+    let identity: PreExecGateIdentityV1 = serde_json::from_slice(&row.0)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("process_identity_payload"))?;
+    identity
+        .validate_hash()
+        .map_err(|_| BrokerJournalError::InvalidProcessIdentity)?;
+    let identity_hash = Sha256Digest::from_str(&row.1)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("process_identity_hash"))?;
+    let boot_id_hash = Sha256Digest::from_str(&row.7)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("process_boot_id_hash"))?;
+    let gate_hash = Sha256Digest::from_str(&row.8)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("gate_executable_hash"))?;
+    let target_hash = Sha256Digest::from_str(&row.9)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("target_executable_hash"))?;
+    let envelope_hash = Sha256Digest::from_str(&row.10)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("launch_envelope_hash"))?;
+    let pid = u32::try_from(row.2)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("process_pid"))?;
+    let process_group_id = u32::try_from(row.3)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("process_group_id"))?;
+    let session_id = u32::try_from(row.4)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("process_session_id"))?;
+    let process_uid = u32::try_from(row.6)
+        .map_err(|_| BrokerJournalError::CorruptDatabaseValue("process_uid"))?;
+    if identity_hash != identity.identity_hash
+        || pid != identity.pid
+        || process_group_id != identity.process_group_id
+        || session_id != identity.session_id
+        || from_i64(row.5)? != identity.start_time_ticks
+        || process_uid != identity.uid
+        || boot_id_hash != identity.boot_id_hash
+        || gate_hash != identity.gate_executable.content_hash
+        || target_hash != identity.target_executable.content_hash
+        || envelope_hash != identity.launch_envelope.content_hash
+    {
+        return Err(BrokerJournalError::ProcessIdentityProjectionMismatch);
+    }
+    let linked_at_unix_ms = from_i64(row.12)?;
+    let release_authorized_at_unix_ms = row.13.map(from_i64).transpose()?;
+    let terminated_at_unix_ms = row.14.map(from_i64).transpose()?;
+    let release_state = ProcessReleaseStateV1::from_db(&row.11)?;
+    if release_authorized_at_unix_ms.is_some_and(|value| value < linked_at_unix_ms)
+        || terminated_at_unix_ms.is_some_and(|value| value < linked_at_unix_ms)
+        || (release_state == ProcessReleaseStateV1::Blocked
+            && release_authorized_at_unix_ms.is_some())
+        || (release_state == ProcessReleaseStateV1::Authorized
+            && release_authorized_at_unix_ms.is_none())
+        || (release_state == ProcessReleaseStateV1::Terminated && terminated_at_unix_ms.is_none())
+    {
+        return Err(BrokerJournalError::ProcessIdentityProjectionMismatch);
+    }
+    Ok(BrokerProcessLaunchV1 {
+        operation_id: operation_id.to_owned(),
+        identity,
+        release_state,
+        linked_at_unix_ms,
+        release_authorized_at_unix_ms,
+        terminated_at_unix_ms,
+        reconciliation_disposition: row.15,
+    })
+}
+
+fn valid_reason_code(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.')
+        })
 }
 
 #[derive(Debug)]
@@ -616,6 +1258,37 @@ fn validate_operation_projection(
     Ok(())
 }
 
+fn validate_process_projection(
+    connection: &Connection,
+    journal: &OperationJournalV1,
+) -> Result<(), BrokerJournalError> {
+    let process_transition = journal
+        .transitions
+        .iter()
+        .find(|transition| transition.to == OperationState::ProcessSpawned);
+    let process_exists = connection
+        .query_row(
+            "SELECT 1 FROM operation_processes WHERE operation_id = ?1",
+            [&journal.operation_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    match (process_transition, process_exists) {
+        (None, false) => Ok(()),
+        (Some(transition), true) => {
+            let launch = load_process_launch_from_connection(connection, &journal.operation_id)?;
+            if transition.evidence_hash.as_ref() != Some(&launch.identity.identity_hash)
+                || transition.recorded_at_unix_ms != launch.linked_at_unix_ms
+            {
+                return Err(BrokerJournalError::ProcessIdentityProjectionMismatch);
+            }
+            Ok(())
+        }
+        _ => Err(BrokerJournalError::ProcessIdentityProjectionMismatch),
+    }
+}
+
 fn validate_authenticated_request(
     admitted: &AuthenticatedBrokerRequestV1,
 ) -> Result<(), BrokerJournalError> {
@@ -741,6 +1414,20 @@ pub enum BrokerJournalError {
     },
     #[error("operation state changed concurrently")]
     ConcurrentStateChange,
+    #[error("process_spawned requires an exact durable gate identity")]
+    ProcessSpawnedRequiresGateIdentity,
+    #[error("durable gate process identity is invalid")]
+    InvalidProcessIdentity,
+    #[error("durable gate process identity already exists or differs")]
+    ProcessIdentityConflict,
+    #[error("durable gate process identity was not found: {0}")]
+    ProcessIdentityNotFound(String),
+    #[error("durable gate process identity projection differs from its payload")]
+    ProcessIdentityProjectionMismatch,
+    #[error("durable gate process state changed concurrently")]
+    ConcurrentProcessStateChange,
+    #[error("durable gate process was already terminated")]
+    ProcessAlreadyTerminated,
     #[error("injected transactional fault: {0:?}")]
     InjectedFault(FaultInjectionPointV1),
     #[error("broker journal integrity check failed: {0}")]
@@ -763,6 +1450,8 @@ pub enum BrokerJournalError {
     NumericOverflow,
     #[error("failed to construct broker journal digest")]
     DigestConstruction,
+    #[error(transparent)]
+    ProcessRuntime(hepta_codex_runtime::DurableGateError),
     #[error(transparent)]
     Journal(#[from] JournalError),
     #[error(transparent)]

@@ -32,7 +32,9 @@ use hepta_codex_protocol::{
     AgentRole, ApprovalPolicy, CodexExecutionRequestV1, NetworkPolicy, RequestCapabilityV1,
     SandboxPolicy, SessionPolicy, Sha256Digest, TaskKind, Transport,
 };
-use hepta_codex_runtime::{BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1};
+use hepta_codex_runtime::{
+    BoundedProcessRequestV1, DurableGatePolicyV1, EnvironmentPolicyV1, ProcessLimitsV1,
+};
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -71,6 +73,37 @@ impl TempTree {
     fn open_journal(&self) -> BrokerJournalStoreV1 {
         BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy())
             .expect("open broker journal")
+    }
+
+    fn gate_policy(&self) -> DurableGatePolicyV1 {
+        let current_executable = std::env::current_exe().expect("current test executable");
+        let target_debug = current_executable
+            .parent()
+            .and_then(Path::parent)
+            .expect("Cargo target debug directory");
+        let built_gate = target_debug.join("hepta-codex-preexec-gate");
+        assert!(
+            built_gate.is_file(),
+            "workspace tests must build the runtime gate binary at {}",
+            built_gate.display(),
+        );
+        let sequence = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let gate = self
+            .root
+            .join(format!("hepta-codex-preexec-gate-{sequence}"));
+        fs::copy(&built_gate, &gate).expect("copy gate binary into private single-link root");
+        fs::set_permissions(&gate, fs::Permissions::from_mode(0o700))
+            .expect("set private gate mode");
+        File::open(&gate)
+            .expect("open copied gate")
+            .sync_all()
+            .expect("sync copied gate");
+        File::open(&self.root)
+            .expect("open gate parent")
+            .sync_all()
+            .expect("sync gate parent");
+        assert_eq!(fs::metadata(&gate).expect("gate metadata").nlink(), 1);
+        DurableGatePolicyV1::strict(gate, self.root.clone(), self.owner_uid)
     }
 }
 
@@ -186,65 +219,36 @@ fn reserve_operation(
 
 fn append_prepared_path(
     store: &mut BrokerJournalStoreV1,
+    fixture: &TempTree,
     operation_id: &str,
     prepared_receipt_hash: Sha256Digest,
 ) {
-    let states = [
-        (OperationState::Reserved, OperationState::RequestBound, None),
-        (
-            OperationState::RequestBound,
-            OperationState::ProcessSpawned,
-            Some(digest('8')),
-        ),
-        (
-            OperationState::ProcessSpawned,
-            OperationState::EventStreamStarted,
-            None,
-        ),
-        (
-            OperationState::EventStreamStarted,
-            OperationState::TerminalEventObserved,
-            Some(digest('9')),
-        ),
-        (
-            OperationState::TerminalEventObserved,
-            OperationState::FinalOutputCaptured,
-            Some(digest('a')),
-        ),
-        (
-            OperationState::FinalOutputCaptured,
-            OperationState::SchemaValidated,
-            Some(digest('b')),
-        ),
-        (
-            OperationState::SchemaValidated,
-            OperationState::WorkspaceSnapshotted,
-            Some(digest('c')),
-        ),
-        (
-            OperationState::WorkspaceSnapshotted,
-            OperationState::MutationValidated,
-            Some(digest('d')),
-        ),
-        (
-            OperationState::MutationValidated,
-            OperationState::ResultPrepared,
-            Some(prepared_receipt_hash),
-        ),
-    ];
-    for (index, (from, to, evidence)) in states.into_iter().enumerate() {
-        store
-            .append_transition(
-                operation_id,
-                from,
-                to,
-                12_001 + u64::try_from(index).expect("small transition sequence"),
-                evidence,
-                None,
-                FaultInjectionPointV1::None,
-            )
-            .expect("append prepared path transition");
-    }
+    let script = r#"#!/bin/sh
+set -eu
+cat <<'EOF'
+{"type":"thread.started","thread_id":"thread-ack"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item-ack"}}
+{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}
+EOF
+"#;
+    let mut evidence = fake_evidence();
+    evidence.prepared_receipt_hash = prepared_receipt_hash;
+    run_reserved_fake_operation(
+        store,
+        FakeBrokerExecutionPlanV1 {
+            operation_id: operation_id.to_owned(),
+            process: fake_process_request(fixture, script),
+            process_limits: ProcessLimitsV1::default(),
+            gate_policy: fixture.gate_policy(),
+            maximum_event_count: 16,
+            maximum_jsonl_line_bytes: 4096,
+            timeline: timeline(),
+            evidence,
+            fault: None,
+        },
+    )
+    .expect("prepare operation through durable gate");
 }
 
 #[test]
@@ -301,7 +305,12 @@ fn signed_acknowledgement_closes_only_the_exact_prepared_subject() {
     let mut store = fixture.open_journal();
     let (request, request_hash) = reserve_operation(&mut store, "operation-ack");
     let prepared_hash = digest('e');
-    append_prepared_path(&mut store, &request.operation_id, prepared_hash.clone());
+    append_prepared_path(
+        &mut store,
+        &fixture,
+        &request.operation_id,
+        prepared_hash.clone(),
+    );
     let journal = store
         .load_journal(&request.operation_id)
         .expect("prepared journal");
@@ -405,19 +414,19 @@ fn timeline() -> FakeExecutionTimelineV1 {
     FakeExecutionTimelineV1 {
         request_bound_unix_ms: 12_001,
         process_spawned_unix_ms: 12_002,
-        event_stream_started_unix_ms: 12_003,
-        terminal_event_observed_unix_ms: 12_004,
-        final_output_captured_unix_ms: 12_005,
-        schema_validated_unix_ms: 12_006,
-        workspace_snapshotted_unix_ms: 12_007,
-        mutation_validated_unix_ms: 12_008,
-        result_prepared_unix_ms: 12_009,
+        process_release_authorized_unix_ms: 12_003,
+        event_stream_started_unix_ms: 12_004,
+        terminal_event_observed_unix_ms: 12_005,
+        final_output_captured_unix_ms: 12_006,
+        schema_validated_unix_ms: 12_007,
+        workspace_snapshotted_unix_ms: 12_008,
+        mutation_validated_unix_ms: 12_009,
+        result_prepared_unix_ms: 12_010,
     }
 }
 
 fn fake_evidence() -> FakeExecutionEvidenceV1 {
     FakeExecutionEvidenceV1 {
-        process_start_identity_hash: digest('8'),
         final_output_hash: digest('9'),
         schema_validation_hash: digest('a'),
         workspace_snapshot_hash: digest('b'),
@@ -446,6 +455,7 @@ EOF
             operation_id: "operation-fake-success".to_owned(),
             process: fake_process_request(&fixture, script),
             process_limits: ProcessLimitsV1::default(),
+            gate_policy: fixture.gate_policy(),
             maximum_event_count: 16,
             maximum_jsonl_line_bytes: 4096,
             timeline: timeline(),
@@ -480,6 +490,7 @@ fn failed_spawn_journal_commit_kills_fake_process_and_rolls_back_transition() {
                 timeout_ms: 5_000,
                 ..ProcessLimitsV1::default()
             },
+            gate_policy: fixture.gate_policy(),
             maximum_event_count: 16,
             maximum_jsonl_line_bytes: 4096,
             timeline: timeline(),

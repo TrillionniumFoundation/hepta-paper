@@ -293,8 +293,10 @@ dependencies = [
 name = "hepta-codex-runtime"
 version = "0.1.0"
 dependencies = [
+ "base64ct",
  "hepta-codex-protocol",
  "hex",
+ "nix",
  "serde",
  "serde_json",
  "sha2 0.10.8",

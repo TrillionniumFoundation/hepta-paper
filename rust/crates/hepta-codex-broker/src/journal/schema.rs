@@ -1,10 +1,11 @@
-pub(super) const SCHEMA_VERSION: &str = "1";
+pub(super) const SCHEMA_VERSION: &str = "2";
 pub(super) const APPLICATION_ID: i64 = 1_213_224_001; // ASCII "HPTA"
-pub(super) const USER_VERSION: i64 = 1;
+pub(super) const USER_VERSION: i64 = 2;
 
 pub(super) const EXPECTED_SCHEMA_OBJECTS: &[(&str, &str)] = &[
     ("table", "broker_metadata"),
     ("table", "capability_nonces"),
+    ("table", "operation_processes"),
     ("table", "operation_transitions"),
     ("table", "operations"),
     ("trigger", "broker_metadata_no_delete"),
@@ -12,6 +13,9 @@ pub(super) const EXPECTED_SCHEMA_OBJECTS: &[(&str, &str)] = &[
     ("trigger", "broker_metadata_no_update"),
     ("trigger", "capability_nonces_no_delete"),
     ("trigger", "capability_nonces_no_update"),
+    ("trigger", "operation_processes_immutable_fields"),
+    ("trigger", "operation_processes_no_delete"),
+    ("trigger", "operation_processes_state_guard"),
     ("trigger", "operation_transition_projection_guard"),
     ("trigger", "operation_transitions_no_delete"),
     ("trigger", "operation_transitions_no_update"),
@@ -29,7 +33,7 @@ PRAGMA temp_store = MEMORY;
 PRAGMA wal_autocheckpoint = 256;
 PRAGMA journal_size_limit = 67108864;
 PRAGMA application_id = 1213224001;
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 CREATE TABLE IF NOT EXISTS broker_metadata (
     key TEXT PRIMARY KEY,
@@ -37,7 +41,7 @@ CREATE TABLE IF NOT EXISTS broker_metadata (
 ) STRICT;
 
 INSERT OR IGNORE INTO broker_metadata(key, value)
-VALUES ('schema_version', '1');
+VALUES ('schema_version', '2');
 
 CREATE TABLE IF NOT EXISTS operations (
     operation_id TEXT PRIMARY KEY,
@@ -107,6 +111,62 @@ CREATE TABLE IF NOT EXISTS capability_nonces (
     FOREIGN KEY(operation_id) REFERENCES operations(operation_id)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS operation_processes (
+    operation_id TEXT PRIMARY KEY,
+    identity_payload BLOB NOT NULL,
+    identity_hash TEXT NOT NULL UNIQUE,
+    pid INTEGER NOT NULL CHECK (pid > 0),
+    process_group_id INTEGER NOT NULL CHECK (process_group_id > 0),
+    session_id INTEGER NOT NULL CHECK (session_id > 0),
+    start_time_ticks INTEGER NOT NULL CHECK (start_time_ticks > 0),
+    process_uid INTEGER NOT NULL CHECK (process_uid >= 0),
+    boot_id_hash TEXT NOT NULL,
+    gate_executable_hash TEXT NOT NULL,
+    target_executable_hash TEXT NOT NULL,
+    launch_envelope_hash TEXT NOT NULL,
+    release_state TEXT NOT NULL CHECK (release_state IN ('blocked', 'authorized', 'terminated')),
+    linked_at_unix_ms INTEGER NOT NULL CHECK (linked_at_unix_ms > 0),
+    release_authorized_at_unix_ms INTEGER,
+    terminated_at_unix_ms INTEGER,
+    reconciliation_disposition TEXT,
+    FOREIGN KEY(operation_id) REFERENCES operations(operation_id),
+    CHECK (length(identity_payload) BETWEEN 1 AND 1048576),
+    CHECK (
+        length(identity_hash) = 71
+        AND substr(identity_hash, 1, 7) = 'sha256:'
+        AND substr(identity_hash, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    CHECK (
+        length(boot_id_hash) = 71
+        AND substr(boot_id_hash, 1, 7) = 'sha256:'
+        AND substr(boot_id_hash, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    CHECK (
+        length(gate_executable_hash) = 71
+        AND substr(gate_executable_hash, 1, 7) = 'sha256:'
+        AND substr(gate_executable_hash, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    CHECK (
+        length(target_executable_hash) = 71
+        AND substr(target_executable_hash, 1, 7) = 'sha256:'
+        AND substr(target_executable_hash, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    CHECK (
+        length(launch_envelope_hash) = 71
+        AND substr(launch_envelope_hash, 1, 7) = 'sha256:'
+        AND substr(launch_envelope_hash, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    CHECK (
+        (release_state = 'blocked' AND release_authorized_at_unix_ms IS NULL)
+        OR (release_state IN ('authorized', 'terminated') AND release_authorized_at_unix_ms IS NOT NULL)
+        OR (release_state = 'terminated' AND release_authorized_at_unix_ms IS NULL)
+    ),
+    CHECK (release_authorized_at_unix_ms IS NULL OR release_authorized_at_unix_ms >= linked_at_unix_ms),
+    CHECK (terminated_at_unix_ms IS NULL OR terminated_at_unix_ms >= linked_at_unix_ms),
+    CHECK (release_state != 'terminated' OR terminated_at_unix_ms IS NOT NULL),
+    CHECK (reconciliation_disposition IS NULL OR length(reconciliation_disposition) BETWEEN 1 AND 128)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS operation_transitions (
     operation_id TEXT NOT NULL,
     sequence INTEGER NOT NULL CHECK (sequence > 0),
@@ -158,10 +218,10 @@ CREATE TRIGGER IF NOT EXISTS broker_metadata_no_insert
 BEFORE INSERT ON broker_metadata
 WHEN NOT (
     NEW.key = 'schema_version'
-    AND NEW.value = '1'
+    AND NEW.value = '2'
     AND EXISTS (
         SELECT 1 FROM broker_metadata
-        WHERE key = 'schema_version' AND value = '1'
+        WHERE key = 'schema_version' AND value = '2'
     )
 )
 BEGIN
@@ -178,6 +238,54 @@ CREATE TRIGGER IF NOT EXISTS broker_metadata_no_delete
 BEFORE DELETE ON broker_metadata
 BEGIN
     SELECT RAISE(ABORT, 'broker metadata is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS operation_processes_no_delete
+BEFORE DELETE ON operation_processes
+BEGIN
+    SELECT RAISE(ABORT, 'operation process identity is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS operation_processes_immutable_fields
+BEFORE UPDATE ON operation_processes
+WHEN NEW.operation_id != OLD.operation_id
+  OR NEW.identity_payload != OLD.identity_payload
+  OR NEW.identity_hash != OLD.identity_hash
+  OR NEW.pid != OLD.pid
+  OR NEW.process_group_id != OLD.process_group_id
+  OR NEW.session_id != OLD.session_id
+  OR NEW.start_time_ticks != OLD.start_time_ticks
+  OR NEW.process_uid != OLD.process_uid
+  OR NEW.boot_id_hash != OLD.boot_id_hash
+  OR NEW.gate_executable_hash != OLD.gate_executable_hash
+  OR NEW.target_executable_hash != OLD.target_executable_hash
+  OR NEW.launch_envelope_hash != OLD.launch_envelope_hash
+  OR NEW.linked_at_unix_ms != OLD.linked_at_unix_ms
+BEGIN
+    SELECT RAISE(ABORT, 'operation process identity is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS operation_processes_state_guard
+BEFORE UPDATE ON operation_processes
+WHEN NEW.release_state != OLD.release_state
+  OR NEW.release_authorized_at_unix_ms IS NOT OLD.release_authorized_at_unix_ms
+  OR NEW.terminated_at_unix_ms IS NOT OLD.terminated_at_unix_ms
+  OR NEW.reconciliation_disposition IS NOT OLD.reconciliation_disposition
+BEGIN
+    SELECT CASE WHEN NOT (
+        (OLD.release_state = 'blocked' AND NEW.release_state IN ('authorized', 'terminated'))
+        OR (OLD.release_state = 'authorized' AND NEW.release_state = 'terminated')
+        OR (OLD.release_state = NEW.release_state)
+    ) THEN RAISE(ABORT, 'operation process state transition is invalid') END;
+    SELECT CASE WHEN OLD.release_authorized_at_unix_ms IS NOT NULL
+        AND NEW.release_authorized_at_unix_ms IS NOT OLD.release_authorized_at_unix_ms
+        THEN RAISE(ABORT, 'release authorization is immutable') END;
+    SELECT CASE WHEN OLD.terminated_at_unix_ms IS NOT NULL
+        AND NEW.terminated_at_unix_ms IS NOT OLD.terminated_at_unix_ms
+        THEN RAISE(ABORT, 'termination observation is immutable') END;
+    SELECT CASE WHEN OLD.reconciliation_disposition IS NOT NULL
+        AND NEW.reconciliation_disposition IS NOT OLD.reconciliation_disposition
+        THEN RAISE(ABORT, 'reconciliation disposition is immutable') END;
 END;
 
 CREATE TRIGGER IF NOT EXISTS operation_transitions_no_update
@@ -241,6 +349,13 @@ BEGIN
     SELECT CASE WHEN NEW.recorded_at_unix_ms < (
         SELECT updated_at_unix_ms FROM operations WHERE operation_id = NEW.operation_id
     ) THEN RAISE(ABORT, 'transition time predates operation projection') END;
+    SELECT CASE WHEN NEW.to_state = 'process_spawned' AND NOT EXISTS (
+        SELECT 1 FROM operation_processes
+        WHERE operation_id = NEW.operation_id
+          AND identity_hash = NEW.evidence_hash
+          AND linked_at_unix_ms = NEW.recorded_at_unix_ms
+          AND release_state = 'blocked'
+    ) THEN RAISE(ABORT, 'process_spawned transition lacks exact blocked gate identity') END;
 END;
 
 CREATE TRIGGER IF NOT EXISTS operations_projection_guard

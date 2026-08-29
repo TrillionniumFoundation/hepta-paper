@@ -4,7 +4,8 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const PORTABLE_TEST = /^(?:paper-core|migration)\/tests\/.*\.test\.mjs$/;
-const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:paper-core\/docs|paper-adapters)\/.*\.md$/;
+const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:docs|paper-core\/docs|paper-adapters)\/.*\.md$/;
+const RUST_ONLY = /^rust\//;
 const GLOBAL_IMPACT = Object.freeze([
   /^\.github\//,
   /^package(?:-lock)?\.json$/,
@@ -106,8 +107,9 @@ export function buildTestImpactGraph({ files, readSource }) {
 
 function fullFallbackRequired(changedFiles) {
   return changedFiles.filter((file) => (
-    GLOBAL_IMPACT.some((pattern) => pattern.test(file))
-      || (!file.endsWith('.mjs') && !DOCUMENTATION.test(file))
+    !RUST_ONLY.test(file)
+      && (GLOBAL_IMPACT.some((pattern) => pattern.test(file))
+        || (!file.endsWith('.mjs') && !DOCUMENTATION.test(file)))
   ));
 }
 

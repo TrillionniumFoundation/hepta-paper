@@ -93,7 +93,7 @@ jobs:
           install -m 0555 "$cyclonedx_binary" "$TOOL_ROOT/bin/cargo-cyclonedx"
 
           "$TOOL_ROOT/bin/cargo-deny" --version | tee "$EVIDENCE_ROOT/cargo-deny-version.txt"
-          "$TOOL_ROOT/bin/cargo-cyclonedx" --version | tee "$EVIDENCE_ROOT/cargo-cyclonedx-version.txt"
+          "$TOOL_ROOT/bin/cargo-cyclonedx" cyclonedx --version | tee "$EVIDENCE_ROOT/cargo-cyclonedx-version.txt"
           sha256sum "$deny_archive" "$cyclonedx_archive" \
             "$TOOL_ROOT/bin/cargo-deny" "$TOOL_ROOT/bin/cargo-cyclonedx" \
             > "$EVIDENCE_ROOT/tool-sha256.txt"

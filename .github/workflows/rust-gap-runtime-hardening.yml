@@ -1,0 +1,151 @@
+name: rust-gap-runtime-hardening
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/workflows/rust-gap-runtime-hardening.yml'
+      - 'rust/crates/hepta-cgroup-containment/**'
+      - 'rust/crates/hepta-codex-runtime/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rust-gap-runtime-hardening-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+
+      - name: Repair integration ordering and fixture process-set semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          runtime = Path('rust/crates/hepta-codex-runtime/src/lib.rs')
+          text = runtime.read_text(encoding='utf-8')
+          export = '''pub use hepta_cgroup_containment::{
+    CgroupAuthorityModeV1, CgroupV2Error, CgroupV2OperationV1, CgroupV2PolicyV1,
+    ProcessContainmentModeV1,
+};
+'''
+          text = text.replace(export, '')
+          lines = text.splitlines()
+          index = 0
+          while index < len(lines):
+              stripped = lines[index].strip()
+              if stripped.startswith('#![') or stripped.startswith('//!') or stripped == '':
+                  index += 1
+                  continue
+              break
+          lines[index:index] = export.rstrip().splitlines() + ['']
+          runtime.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+          cgroup = Path('rust/crates/hepta-cgroup-containment/src/lib.rs')
+          text = cgroup.read_text(encoding='utf-8')
+          old = '''        write_control(&self.path.join("cgroup.procs"), &pid.to_string())
+'''
+          new = '''        if self.policy.authority_mode == CgroupAuthorityModeV1::LocalFixture {
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(self.path.join("cgroup.procs"))
+                .map_err(|error| CgroupV2Error::Filesystem("fixture_attach", error.kind()))?;
+            writeln!(file, "{pid}")
+                .map_err(|error| CgroupV2Error::Filesystem("fixture_attach", error.kind()))
+        } else {
+            write_control(&self.path.join("cgroup.procs"), &pid.to_string())
+        }
+'''
+          text = text.replace(old, new)
+          text = text.replace('(\"cgroup.procs\", \"0\"),', '("cgroup.procs", ""),')
+          cgroup.write_text(text, encoding='utf-8')
+          PY
+
+          cat > rust/crates/hepta-cgroup-containment/tests/process_set.rs <<'RS'
+          use std::{
+              fs,
+              os::unix::fs::{MetadataExt, PermissionsExt},
+              path::PathBuf,
+              sync::atomic::{AtomicU64, Ordering},
+              time::{SystemTime, UNIX_EPOCH},
+          };
+
+          use hepta_cgroup_containment::{
+              CgroupV2OperationV1, CgroupV2PolicyV1, ProcessContainmentModeV1,
+          };
+
+          static NEXT: AtomicU64 = AtomicU64::new(0);
+
+          fn fixture() -> (PathBuf, u32) {
+              let nonce = SystemTime::now()
+                  .duration_since(UNIX_EPOCH)
+                  .expect("clock")
+                  .as_nanos();
+              let root = std::env::temp_dir().join(format!(
+                  "hepta-cgroup-process-set-{}-{nonce}-{}",
+                  std::process::id(),
+                  NEXT.fetch_add(1, Ordering::Relaxed)
+              ));
+              fs::create_dir(&root).expect("fixture root");
+              fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("mode");
+              let uid = fs::metadata(&root).expect("metadata").uid();
+              (root, uid)
+          }
+
+          #[test]
+          fn process_set_membership_is_not_a_process_group_identity() {
+              assert!(!ProcessContainmentModeV1::ProcessGroupOnly
+                  .production_eligible()
+                  .expect("process-group decision"));
+              let (root, uid) = fixture();
+              let operation = CgroupV2OperationV1::create(
+                  CgroupV2PolicyV1::local_fixture(root.clone(), uid),
+                  "daemonization-fixture",
+              )
+              .expect("operation");
+              operation.attach_pid(1001).expect("session leader");
+              operation.attach_pid(1002).expect("setsid descendant");
+              operation.attach_pid(1003).expect("double-fork descendant");
+              let members = fs::read_to_string(operation.path().join("cgroup.procs"))
+                  .expect("process set");
+              assert_eq!(members.lines().collect::<Vec<_>>(), ["1001", "1002", "1003"]);
+              operation.kill_and_cleanup().expect("cleanup");
+              fs::remove_dir(root).expect("remove root");
+          }
+          RS
+
+      - name: Format and commit deterministic hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          if git diff --quiet -- rust/crates/hepta-cgroup-containment rust/crates/hepta-codex-runtime; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/hepta-cgroup-containment rust/crates/hepta-codex-runtime
+          git commit -m 'fix(rust): bind production containment into runtime'
+          git push origin "HEAD:${GITHUB_REF_NAME}"

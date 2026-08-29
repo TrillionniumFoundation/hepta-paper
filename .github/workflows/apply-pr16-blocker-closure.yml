@@ -21,69 +21,61 @@ jobs:
       - name: Check out exact PR head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: 0c74ce74135b22a64c45b110b0d04a68aff6a0b3
+          ref: 668f250d3ec183861e81222473d103c0eed5491f
           fetch-depth: 0
           submodules: false
 
-      - name: Reconstruct and verify closure patch
+      - name: Apply canonical gate observation path fix
         shell: bash
         run: |
           set -euo pipefail
-          expected_head=0c74ce74135b22a64c45b110b0d04a68aff6a0b3
-          transfer_branch=codex/current-source-export-20260829-v2
-          test "$(git rev-parse HEAD)" = "$expected_head"
-          git fetch --no-tags origin \
-            "refs/heads/${transfer_branch}:refs/remotes/origin/pr16-patch-transfer"
+          test "$(git rev-parse HEAD)" = 668f250d3ec183861e81222473d103c0eed5491f
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("rust/crates/hepta-codex-runtime/src/process/gate.rs")
+          source = path.read_text()
+          old = '''    let stopped = wait_for_stopped_gate(
+              &mut child,
+              process_id,
+              &policy.gate_executable,
+              Duration::from_millis(policy.stop_timeout_ms),
+              Duration::from_millis(limits.poll_interval_ms),
+          );
+          '''
+          new = '''    let gate_observation_path = PathBuf::from(&gate_identity.canonical_path);
+          let stopped = wait_for_stopped_gate(
+              &mut child,
+              process_id,
+              &gate_observation_path,
+              Duration::from_millis(policy.stop_timeout_ms),
+              Duration::from_millis(limits.poll_interval_ms),
+          );
+          '''
+          if source.count(old) != 1:
+              raise SystemExit("expected exactly one gate observation block")
+          path.write_text(source.replace(old, new, 1))
+          PY
+          git diff --check
+          git diff -- rust/crates/hepta-codex-runtime/src/process/gate.rs
 
-          : > /tmp/hepta-pr16-closure.b64
-          for item in 00:9500 01:9500 02:9500 03:9500 04:9500 05:9500 06:228; do
-            index=${item%%:*}
-            expected_size=${item##*:}
-            source=/tmp/chunk-${index}
-            git show "origin/pr16-patch-transfer:.automation/pr16-closure/chunk-${index}" > "$source"
-            actual_size=$(wc -c < "$source")
-            test "$actual_size" -ge "$expected_size"
-            head -c "$expected_size" "$source" >> /tmp/hepta-pr16-closure.b64
-          done
-
-          printf '%s  %s\n' \
-            4ab0718bc7de93b8e78d63a01a3762c0730793efcf6706515143a831f8159110 \
-            /tmp/hepta-pr16-closure.b64 | sha256sum -c -
-          base64 -d /tmp/hepta-pr16-closure.b64 > /tmp/hepta-pr16-closure.patch.gz
-          printf '%s  %s\n' \
-            169a78a23cd8f4b615459452746ab1422088b5af70f660e0bf49e309296877c5 \
-            /tmp/hepta-pr16-closure.patch.gz | sha256sum -c -
-          gzip -dc /tmp/hepta-pr16-closure.patch.gz > /tmp/hepta-pr16-closure.patch
-          printf '%s  %s\n' \
-            8012ec6e7fd508db6ceee9019ee2e3cd214ce13601764c3cd8e465f5e14a9dc2 \
-            /tmp/hepta-pr16-closure.patch | sha256sum -c -
-
-      - name: Apply source-only blocker closure
+      - name: Validate focused durable process suite
         shell: bash
         run: |
           set -euo pipefail
-          git checkout -B codex/rust-broker-service-20260828 \
-            0c74ce74135b22a64c45b110b0d04a68aff6a0b3
-          git apply --check /tmp/hepta-pr16-closure.patch
-          git apply --index /tmp/hepta-pr16-closure.patch
-          sed -i 's/[[:space:]]\+$//' docs/adr/ADR-0004-durable-preexec-gate.md
-          git add docs/adr/ADR-0004-durable-preexec-gate.md
-          git diff --cached --check
-
-          test ! -e .automation/closure-patch
-          test ! -e .automation/release-transport-probe.txt
-          test ! -e .github/workflows/apply-local-closure-patch.yml
-          test ! -e .github/workflows/apply-local-closure-patch-v2.yml
-          test -f rust/crates/hepta-codex-runtime/src/bin/hepta-codex-preexec-gate.rs
-          test -f rust/crates/hepta-codex-runtime/tests/durable_gate.rs
-          test -f docs/adr/ADR-0004-durable-preexec-gate.md
-
-      - name: Run focused pre-push checks
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --test paper-core/tests/test-impact-graph.test.mjs
-          git diff --cached --name-only
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo build \
+            --manifest-path rust/Cargo.toml \
+            -p hepta-codex-runtime \
+            --bin hepta-codex-preexec-gate \
+            --locked
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --test durable_process_journal \
+            --locked \
+            -- --test-threads=1
 
       - name: Commit and update PR branch
         shell: bash
@@ -91,5 +83,6 @@ jobs:
           set -euo pipefail
           git config user.name "hepta-paper blocker closure"
           git config user.email "actions@users.noreply.github.com"
-          git commit -m "feat(rust): close broker launch and impacted-test blockers"
+          git add rust/crates/hepta-codex-runtime/src/process/gate.rs
+          git commit -m "fix(rust): observe the canonical pre-exec gate path"
           git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

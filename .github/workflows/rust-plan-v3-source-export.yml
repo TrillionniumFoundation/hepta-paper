@@ -1,0 +1,49 @@
+name: rust-plan-v3-source-export
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - .github/workflows/rust-plan-v3-source-export.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Bind exact source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git rev-parse HEAD > "$RUNNER_TEMP/source.commit"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/source.tree"
+          git status --porcelain=v1 | tee "$RUNNER_TEMP/source.status"
+          test ! -s "$RUNNER_TEMP/source.status"
+      - name: Package exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git -czf "$RUNNER_TEMP/hepta-plan-v3-source.tar.gz" .
+          sha256sum "$RUNNER_TEMP/hepta-plan-v3-source.tar.gz" > "$RUNNER_TEMP/hepta-plan-v3-source.sha256"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-plan-v3-source-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/hepta-plan-v3-source.tar.gz
+            ${{ runner.temp }}/hepta-plan-v3-source.sha256
+            ${{ runner.temp }}/source.commit
+            ${{ runner.temp }}/source.tree
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error

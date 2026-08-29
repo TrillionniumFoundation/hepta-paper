@@ -281,7 +281,7 @@
   ],
   "qualificationCandidate": {
     "branch": "codex/rust-all-gap-closure-20260830",
-    "commit": "6d18836ebdda5cb0737af422a17fbd392bedfaaa",
+    "commit": "ba0aa52c23ad2aaab3bcbfd3aa3c86bd44207601",
     "evidenceTier": "hosted_source_pending_final_head",
     "productionAuthority": false
   }

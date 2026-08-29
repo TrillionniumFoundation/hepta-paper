@@ -8,13 +8,24 @@ Source implementation commits:
 ```text
 7f97c1c0a6f3fecc5763cd94412d3753a4f74ebf  durable gate and recovery implementation
 56362a1255e576b7b8450c61b12a0f2b298643c2  canonical gate observation path fix
+352ec22848b9518a14cb405ed3a5bb8348872205  executable object identity and pre-exec race fix
 ```
 
-The second commit closes a cross-host path-alias defect exposed by GitHub-hosted
-runners: Linux `/proc/<pid>/exe` is compared with the already inspected canonical
-gate path rather than the caller's lexical policy path. Its focused 9-case
-durable process journal suite passed on the publishing runner before the commit
-was pushed.
+The latest commit closes the remaining GitHub-hosted-runner race. After
+`Command::spawn` returns, Linux may briefly expose the parent's executable image
+through `/proc/<pid>/exe` before the child execs the gate. The implementation now:
+
+- accepts only a stopped process whose executable device/inode match the exact
+  pre-inspected gate object;
+- treats a pre-stop executable mismatch as transient only inside the bounded
+  stop deadline;
+- keeps a persistent mismatch fail-closed;
+- uses the same executable-object identity for startup reconciliation of both
+  the blocked gate and the released target.
+
+Its focused durable process journal suite, including all transaction fault
+loops, passed 9/9 on the publishing GitHub-hosted runner before the commit was
+pushed.
 
 This record update creates a human-authored PR head so protected GitHub Actions
 execute normally after source commits published by a restricted `GITHUB_TOKEN`
@@ -33,7 +44,8 @@ workflow.
 - ambiguity-to-new-attempt retry classification;
 - local-fixture and separate-owner production authority modes;
 - schema-v2 integrity checks and fault injection;
-- canonical observation of the launched gate object across host path aliases.
+- executable-object observation resilient to lexical host path aliases and the
+  bounded fork/exec transition window.
 
 ## Deterministic source evidence
 

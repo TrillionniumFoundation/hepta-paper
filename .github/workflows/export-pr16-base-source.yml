@@ -1,0 +1,45 @@
+name: export-pr16-base-source
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact PR base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: a9ba785925b08d7aeba1d5ffb92a7a9c86c8815f
+          fetch-depth: 1
+          submodules: false
+
+      - name: Verify and archive exact base tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=a9ba785925b08d7aeba1d5ffb92a7a9c86c8815f
+          actual=$(git rev-parse HEAD)
+          test "$actual" = "$expected"
+          mkdir -p /tmp/hepta-pr16-base
+          git archive --format=tar.gz --prefix=hepta-paper/ \
+            --output=/tmp/hepta-pr16-base/hepta-paper-${actual}.tar.gz "$actual"
+          sha256sum /tmp/hepta-pr16-base/hepta-paper-${actual}.tar.gz \
+            > /tmp/hepta-pr16-base/SHA256SUMS
+          printf '%s\n' "$actual" > /tmp/hepta-pr16-base/HEAD
+
+      - name: Upload exact base source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-pr16-exact-base-a9ba78
+          path: /tmp/hepta-pr16-base
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

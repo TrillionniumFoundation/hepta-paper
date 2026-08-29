@@ -1,0 +1,57 @@
+name: apply-rust-gap-payload
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/rust-gap-payload/**'
+      - '.github/workflows/apply-rust-gap-payload.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-rust-gap-payload-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-all-gap-closure-20260830
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Decode and verify payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/rust-gap-payload/part-* > "$RUNNER_TEMP/rust-gap-payload.b64"
+          base64 -d "$RUNNER_TEMP/rust-gap-payload.b64" > "$RUNNER_TEMP/rust-gap-phase1.tar.gz"
+          echo '0dcef24ea02667ceea3a40407fc6ba8429423465d5951a8e4680892d3056a9f1  '"$RUNNER_TEMP/rust-gap-phase1.tar.gz" | sha256sum -c -
+          tar -tzf "$RUNNER_TEMP/rust-gap-phase1.tar.gz"
+
+      - name: Apply source payload and remove bootstrap material
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf "$RUNNER_TEMP/rust-gap-phase1.tar.gz"
+          rm -rf .github/rust-gap-payload
+          rm -f .github/workflows/apply-rust-gap-payload.yml
+
+      - name: Commit exact source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'feat(rust): close foundational repository-local gaps'
+          git push origin HEAD:codex/rust-all-gap-closure-20260830

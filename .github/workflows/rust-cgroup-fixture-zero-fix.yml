@@ -1,0 +1,51 @@
+name: rust-cgroup-fixture-zero-fix
+
+on:
+  push:
+    branches:
+      - codex/rust-all-gap-closure-20260830
+    paths:
+      - '.github/workflows/rust-cgroup-fixture-zero-fix.yml'
+      - 'rust/crates/hepta-cgroup-containment/src/lib.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Remove the fake PID-zero member and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('rust/crates/hepta-cgroup-containment/src/lib.rs')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('("cgroup.procs", "0"),', '("cgroup.procs", ""),')
+          path.write_text(text, encoding='utf-8')
+          PY
+          grep -Fq '("cgroup.procs", ""),' rust/crates/hepta-cgroup-containment/src/lib.rs
+          rm .github/workflows/rust-cgroup-fixture-zero-fix.yml
+
+      - name: Commit correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/hepta-cgroup-containment/src/lib.rs \
+            .github/workflows/rust-cgroup-fixture-zero-fix.yml
+          git commit -m 'fix(rust): remove cgroup fixture PID-zero sentinel'
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

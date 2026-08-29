@@ -1,0 +1,699 @@
+name: apply-pr16-development-blocker-closure-v5
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/apply-pr16-development-blocker-closure-v5.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-pr16-development-blocker-closure-v5
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out exact qualified PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: e16badd21c1d02334e5046bae12ed9afeb6b0def
+          fetch-depth: 0
+          submodules: false
+
+      - name: Close SQLite and trust-bundle file authority gaps
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = e16badd21c1d02334e5046bae12ed9afeb6b0def
+          python3 - <<'PY'
+          from pathlib import Path
+
+          journal = Path("rust/crates/hepta-codex-broker/src/journal/path.rs")
+          source = journal.read_text()
+          old = '''    let (path, initialization_marker) = prepare_database_path(requested, policy)?;
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+    let connection = Connection::open_with_flags(&path, flags)?;
+    connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;
+    configure_safety_pragmas(&connection)?;
+    if initialization_marker.is_some() {
+        verify_initialization_candidate(&connection)?;
+    } else {
+        verify_database_identity(&connection)?;
+    }
+    connection.execute_batch(SCHEMA_SQL)?;
+'''
+          new = '''    let (path, initialization_marker) = prepare_database_path(requested, policy)?;
+    preflight_database_before_writer(&path, initialization_marker.is_some())?;
+
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+    let connection = Connection::open_with_flags(&path, flags)?;
+    connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;
+    configure_safety_pragmas(&connection)?;
+    if initialization_marker.is_some() {
+        verify_initialization_candidate(&connection)?;
+        connection.execute_batch(SCHEMA_SQL)?;
+    } else {
+        verify_database_identity(&connection)?;
+    }
+'''
+          if source.count(old) != 1:
+              raise SystemExit("expected exactly one broker database open block")
+          source = source.replace(old, new, 1)
+          addition = '''
+          fn preflight_database_before_writer(
+              path: &Path,
+              initialization_marker_present: bool,
+          ) -> Result<(), BrokerJournalError> {
+              let metadata = fs::metadata(path).map_err(|error| {
+                  BrokerJournalError::Filesystem("journal_database", error.kind())
+              })?;
+              if metadata.len() == 0 {
+                  return if initialization_marker_present {
+                      Ok(())
+                  } else {
+                      Err(BrokerJournalError::DatabaseIdentityMismatch {
+                          application_id: 0,
+                          user_version: 0,
+                      })
+                  };
+              }
+
+              let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
+                  | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                  | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+              let connection = Connection::open_with_flags(path, flags)?;
+              connection.busy_timeout(Duration::from_millis(100))?;
+              if initialization_marker_present {
+                  verify_initialization_candidate(&connection)?;
+                  let application_id: i64 =
+                      connection.query_row("PRAGMA application_id", [], |row| row.get(0))?;
+                  if application_id == APPLICATION_ID {
+                      verify_schema_version(&connection)?;
+                      verify_schema_shape(&connection)?;
+                  }
+              } else {
+                  verify_database_identity(&connection)?;
+                  verify_schema_version(&connection)?;
+                  verify_schema_shape(&connection)?;
+              }
+              Ok(())
+          }
+
+          '''
+          marker = "fn prepare_database_path(\n"
+          if source.count(marker) != 1:
+              raise SystemExit("expected prepare_database_path marker")
+          source = source.replace(marker, addition + marker, 1)
+          journal.write_text(source)
+
+          tests = Path("rust/crates/hepta-codex-broker/src/journal/tests.rs")
+          source = tests.read_text()
+          marker = '''#[test]
+          fn foreign_or_unstamped_sqlite_database_is_rejected() {
+          '''
+          addition = '''#[test]
+          fn foreign_empty_database_is_rejected_without_mutation() {
+              let fixture = TempJournal::new();
+              let file = fs::OpenOptions::new()
+                  .write(true)
+                  .create_new(true)
+                  .open(&fixture.path)
+                  .expect("create foreign empty database");
+              file.sync_all().expect("sync foreign empty database");
+              drop(file);
+              fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o600))
+                  .expect("private foreign empty database");
+              let before = fs::read(&fixture.path).expect("read foreign empty database before");
+              assert!(matches!(
+                  BrokerJournalStoreV1::open(
+                      &fixture.path,
+                      BrokerJournalPolicyV1::strict(fixture.owner_uid),
+                  ),
+                  Err(BrokerJournalError::DatabaseIdentityMismatch { .. }),
+              ));
+              assert_eq!(
+                  fs::read(&fixture.path).expect("read foreign empty database after"),
+                  before,
+              );
+              assert!(!std::path::PathBuf::from(format!("{}-wal", fixture.path.display())).exists());
+              assert!(!std::path::PathBuf::from(format!("{}-shm", fixture.path.display())).exists());
+          }
+
+          #[test]
+          fn foreign_populated_database_is_rejected_without_mutation() {
+              let fixture = TempJournal::new();
+              let foreign = rusqlite::Connection::open(&fixture.path)
+                  .expect("create foreign SQLite database");
+              foreign
+                  .execute_batch(
+                      "CREATE TABLE foreign_state(value TEXT) STRICT;\n\
+                       INSERT INTO foreign_state VALUES ('kept');",
+                  )
+                  .expect("create foreign schema and content");
+              drop(foreign);
+              fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o600))
+                  .expect("private foreign database");
+              let before = fs::read(&fixture.path).expect("read foreign database before");
+              assert!(matches!(
+                  BrokerJournalStoreV1::open(
+                      &fixture.path,
+                      BrokerJournalPolicyV1::strict(fixture.owner_uid),
+                  ),
+                  Err(BrokerJournalError::DatabaseIdentityMismatch { .. }),
+              ));
+              assert_eq!(
+                  fs::read(&fixture.path).expect("read foreign database after"),
+                  before,
+              );
+              assert!(!std::path::PathBuf::from(format!("{}-wal", fixture.path.display())).exists());
+              assert!(!std::path::PathBuf::from(format!("{}-shm", fixture.path.display())).exists());
+          }
+
+          '''
+          if source.count(marker) != 1:
+              raise SystemExit("expected foreign database test marker")
+          tests.write_text(source.replace(marker, addition + marker, 1))
+
+          manifest = Path("rust/crates/hepta-codex-broker/Cargo.toml")
+          source = manifest.read_text()
+          if "\nlibc = " not in source:
+              marker = "[dependencies]\n"
+              if source.count(marker) != 1:
+                  raise SystemExit("expected broker dependency table")
+              source = source.replace(marker, marker + 'libc = "0.2.189"\n', 1)
+              manifest.write_text(source)
+
+          lib = Path("rust/crates/hepta-codex-broker/src/lib.rs")
+          source = lib.read_text()
+          if "mod trust_bundle_file;" not in source and "pub mod trust_bundle_file;" not in source:
+              source += "\npub mod trust_bundle_file;\n"
+              lib.write_text(source)
+          PY
+
+          cat > rust/crates/hepta-codex-broker/src/trust_bundle_file.rs <<'RS'
+          use std::{
+              fs::{self, File, OpenOptions},
+              io::{self, Read},
+              os::unix::fs::{MetadataExt, OpenOptionsExt},
+              path::{Path, PathBuf},
+          };
+
+          use serde::{de::DeserializeOwned, Serialize};
+          use sha2::{Digest, Sha256};
+          use thiserror::Error;
+
+          const HARD_MAXIMUM_TRUST_BUNDLE_BYTES: u64 = 4 * 1024 * 1024;
+
+          #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+          pub struct TrustBundleFilePolicyV1 {
+              pub version: u16,
+              pub authority_uid: u32,
+              pub authority_gid: Option<u32>,
+              pub broker_uid: u32,
+              pub maximum_bytes: u64,
+              pub require_separate_authority: bool,
+          }
+
+          impl TrustBundleFilePolicyV1 {
+              #[must_use]
+              pub const fn local_fixture(owner_uid: u32) -> Self {
+                  Self {
+                      version: 1,
+                      authority_uid: owner_uid,
+                      authority_gid: None,
+                      broker_uid: owner_uid,
+                      maximum_bytes: 1024 * 1024,
+                      require_separate_authority: false,
+                  }
+              }
+
+              #[must_use]
+              pub const fn production(
+                  authority_uid: u32,
+                  authority_gid: Option<u32>,
+                  broker_uid: u32,
+              ) -> Self {
+                  Self {
+                      version: 1,
+                      authority_uid,
+                      authority_gid,
+                      broker_uid,
+                      maximum_bytes: 1024 * 1024,
+                      require_separate_authority: true,
+                  }
+              }
+
+              fn validate(self) -> Result<Self, TrustBundleFileError> {
+                  if self.version != 1
+                      || self.maximum_bytes == 0
+                      || self.maximum_bytes > HARD_MAXIMUM_TRUST_BUNDLE_BYTES
+                      || (self.require_separate_authority
+                          && self.authority_uid == self.broker_uid)
+                  {
+                      return Err(TrustBundleFileError::InvalidPolicy);
+                  }
+                  Ok(self)
+              }
+          }
+
+          #[derive(Clone, Debug, Eq, PartialEq)]
+          pub struct TrustBundleFileIdentityV1 {
+              pub canonical_path: PathBuf,
+              pub device: u64,
+              pub inode: u64,
+              pub mode: u32,
+              pub uid: u32,
+              pub gid: u32,
+              pub bytes: u64,
+              pub content_sha256: [u8; 32],
+          }
+
+          #[derive(Clone, Debug, Eq, PartialEq)]
+          pub struct AuthorityOwnedTrustBundleBytesV1 {
+              pub identity: TrustBundleFileIdentityV1,
+              bytes: Vec<u8>,
+          }
+
+          impl AuthorityOwnedTrustBundleBytesV1 {
+              pub fn decode_canonical_json<T>(&self) -> Result<T, TrustBundleFileError>
+              where
+                  T: DeserializeOwned + Serialize,
+              {
+                  let decoded: T = serde_json::from_slice(&self.bytes)?;
+                  if serde_json::to_vec(&decoded)? != self.bytes {
+                      return Err(TrustBundleFileError::NonCanonicalJson);
+                  }
+                  Ok(decoded)
+              }
+
+              #[must_use]
+              pub fn as_bytes(&self) -> &[u8] {
+                  &self.bytes
+              }
+          }
+
+          #[derive(Debug, Error)]
+          pub enum TrustBundleFileError {
+              #[error("trust-bundle file policy is invalid")]
+              InvalidPolicy,
+              #[error("trust-bundle path must be absolute and canonical")]
+              NonCanonicalPath,
+              #[error("trust-bundle parent authority is invalid")]
+              ParentAuthorityInvalid,
+              #[error("trust-bundle file authority or mode is invalid")]
+              FileAuthorityInvalid,
+              #[error("trust-bundle file is not a single-link regular file")]
+              FileObjectInvalid,
+              #[error("trust-bundle file changed while it was read")]
+              FileChangedDuringRead,
+              #[error("trust-bundle file exceeds the configured bound")]
+              FileTooLarge,
+              #[error("trust-bundle JSON is not canonical")]
+              NonCanonicalJson,
+              #[error("trust-bundle JSON is invalid: {0}")]
+              Json(#[from] serde_json::Error),
+              #[error("trust-bundle filesystem operation {operation} failed: {kind:?}")]
+              Filesystem {
+                  operation: &'static str,
+                  kind: io::ErrorKind,
+              },
+          }
+
+          pub fn load_authority_owned_trust_bundle(
+              requested_path: &Path,
+              policy: TrustBundleFilePolicyV1,
+          ) -> Result<AuthorityOwnedTrustBundleBytesV1, TrustBundleFileError> {
+              let policy = policy.validate()?;
+              if !requested_path.is_absolute() {
+                  return Err(TrustBundleFileError::NonCanonicalPath);
+              }
+              let requested_parent = requested_path
+                  .parent()
+                  .ok_or(TrustBundleFileError::NonCanonicalPath)?;
+              let canonical_parent = fs::canonicalize(requested_parent)
+                  .map_err(|error| filesystem("canonicalize_parent", error))?;
+              if canonical_parent != requested_parent {
+                  return Err(TrustBundleFileError::NonCanonicalPath);
+              }
+              verify_parent(&canonical_parent, policy)?;
+
+              let before = fs::symlink_metadata(requested_path)
+                  .map_err(|error| filesystem("inspect_path", error))?;
+              verify_file_metadata(&before, policy)?;
+              let canonical_path = fs::canonicalize(requested_path)
+                  .map_err(|error| filesystem("canonicalize_file", error))?;
+              if canonical_path != requested_path
+                  || canonical_path.parent() != Some(canonical_parent.as_path())
+              {
+                  return Err(TrustBundleFileError::NonCanonicalPath);
+              }
+
+              let mut file = open_nofollow(requested_path)?;
+              let opened = file
+                  .metadata()
+                  .map_err(|error| filesystem("inspect_open_file", error))?;
+              verify_file_metadata(&opened, policy)?;
+              if !same_object(&before, &opened) {
+                  return Err(TrustBundleFileError::FileChangedDuringRead);
+              }
+
+              let mut bytes = Vec::with_capacity(
+                  usize::try_from(opened.len().min(policy.maximum_bytes)).unwrap_or(0),
+              );
+              {
+                  let mut bounded = (&mut file).take(policy.maximum_bytes + 1);
+                  bounded
+                      .read_to_end(&mut bytes)
+                      .map_err(|error| filesystem("read_file", error))?;
+              }
+              if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > policy.maximum_bytes {
+                  return Err(TrustBundleFileError::FileTooLarge);
+              }
+
+              let after_open = file
+                  .metadata()
+                  .map_err(|error| filesystem("reinspect_open_file", error))?;
+              let after_path = fs::symlink_metadata(requested_path)
+                  .map_err(|error| filesystem("reinspect_path", error))?;
+              if !same_object(&opened, &after_open)
+                  || !same_object(&opened, &after_path)
+                  || after_open.len() != u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+              {
+                  return Err(TrustBundleFileError::FileChangedDuringRead);
+              }
+
+              Ok(AuthorityOwnedTrustBundleBytesV1 {
+                  identity: TrustBundleFileIdentityV1 {
+                      canonical_path,
+                      device: opened.dev(),
+                      inode: opened.ino(),
+                      mode: opened.mode() & 0o7777,
+                      uid: opened.uid(),
+                      gid: opened.gid(),
+                      bytes: opened.len(),
+                      content_sha256: Sha256::digest(&bytes).into(),
+                  },
+                  bytes,
+              })
+          }
+
+          fn open_nofollow(path: &Path) -> Result<File, TrustBundleFileError> {
+              OpenOptions::new()
+                  .read(true)
+                  .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                  .open(path)
+                  .map_err(|error| filesystem("open_nofollow", error))
+          }
+
+          fn verify_parent(
+              parent: &Path,
+              policy: TrustBundleFilePolicyV1,
+          ) -> Result<(), TrustBundleFileError> {
+              let metadata = fs::metadata(parent)
+                  .map_err(|error| filesystem("inspect_parent", error))?;
+              let group_matches = policy
+                  .authority_gid
+                  .is_none_or(|authority_gid| metadata.gid() == authority_gid);
+              if !metadata.is_dir()
+                  || metadata.uid() != policy.authority_uid
+                  || !group_matches
+                  || metadata.mode() & 0o022 != 0
+              {
+                  return Err(TrustBundleFileError::ParentAuthorityInvalid);
+              }
+              Ok(())
+          }
+
+          fn verify_file_metadata(
+              metadata: &fs::Metadata,
+              policy: TrustBundleFilePolicyV1,
+          ) -> Result<(), TrustBundleFileError> {
+              if !metadata.file_type().is_file() || metadata.nlink() != 1 {
+                  return Err(TrustBundleFileError::FileObjectInvalid);
+              }
+              let mode = metadata.mode() & 0o7777;
+              let group_matches = policy.authority_gid.map_or(mode == 0o400, |authority_gid| {
+                  metadata.gid() == authority_gid && matches!(mode, 0o400 | 0o440)
+              });
+              if metadata.uid() != policy.authority_uid
+                  || !group_matches
+                  || metadata.len() == 0
+                  || metadata.len() > policy.maximum_bytes
+              {
+                  return Err(TrustBundleFileError::FileAuthorityInvalid);
+              }
+              Ok(())
+          }
+
+          fn same_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+              left.dev() == right.dev()
+                  && left.ino() == right.ino()
+                  && left.mode() == right.mode()
+                  && left.uid() == right.uid()
+                  && left.gid() == right.gid()
+                  && left.nlink() == right.nlink()
+                  && left.len() == right.len()
+          }
+
+          fn filesystem(operation: &'static str, error: io::Error) -> TrustBundleFileError {
+              TrustBundleFileError::Filesystem {
+                  operation,
+                  kind: error.kind(),
+              }
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use std::{
+                  fs::{self, OpenOptions},
+                  io::Write,
+                  os::unix::fs::{symlink, MetadataExt, OpenOptionsExt, PermissionsExt},
+                  path::PathBuf,
+                  process,
+                  sync::atomic::{AtomicU64, Ordering},
+              };
+
+              use serde::{Deserialize, Serialize};
+
+              use super::{
+                  load_authority_owned_trust_bundle, TrustBundleFileError,
+                  TrustBundleFilePolicyV1,
+              };
+
+              static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
+
+              #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+              struct CanonicalFixture {
+                  version: u16,
+                  generation: u64,
+                  issuer: String,
+              }
+
+              struct Fixture {
+                  root: PathBuf,
+                  path: PathBuf,
+                  owner_uid: u32,
+              }
+
+              impl Fixture {
+                  fn new() -> Self {
+                      let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+                      let root = std::env::temp_dir().join(format!(
+                          "hepta-trust-bundle-{}-{id}",
+                          process::id()
+                      ));
+                      fs::create_dir(&root).expect("create fixture root");
+                      fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+                          .expect("make fixture root private");
+                      let owner_uid = fs::metadata(&root).expect("fixture metadata").uid();
+                      let path = root.join("bundle.json");
+                      Self {
+                          root,
+                          path,
+                          owner_uid,
+                      }
+                  }
+
+                  fn write(&self, bytes: &[u8]) {
+                      let mut file = OpenOptions::new()
+                          .write(true)
+                          .create_new(true)
+                          .mode(0o600)
+                          .open(&self.path)
+                          .expect("create fixture bundle");
+                      file.write_all(bytes).expect("write fixture bundle");
+                      file.sync_all().expect("sync fixture bundle");
+                      drop(file);
+                      fs::set_permissions(&self.path, fs::Permissions::from_mode(0o400))
+                          .expect("seal fixture bundle");
+                  }
+              }
+
+              impl Drop for Fixture {
+                  fn drop(&mut self) {
+                      let _ = fs::remove_dir_all(&self.root);
+                  }
+              }
+
+              #[test]
+              fn loads_single_link_read_only_canonical_json() {
+                  let fixture = Fixture::new();
+                  let expected = CanonicalFixture {
+                      version: 1,
+                      generation: 7,
+                      issuer: "deployment-authority".to_owned(),
+                  };
+                  fixture.write(&serde_json::to_vec(&expected).expect("canonical fixture"));
+                  let loaded = load_authority_owned_trust_bundle(
+                      &fixture.path,
+                      TrustBundleFilePolicyV1::local_fixture(fixture.owner_uid),
+                  )
+                  .expect("load authority-owned bundle");
+                  assert_eq!(
+                      loaded
+                          .decode_canonical_json::<CanonicalFixture>()
+                          .expect("decode canonical bundle"),
+                      expected,
+                  );
+                  assert_eq!(loaded.identity.mode, 0o400);
+                  assert_eq!(loaded.identity.bytes as usize, loaded.as_bytes().len());
+              }
+
+              #[test]
+              fn rejects_noncanonical_json() {
+                  let fixture = Fixture::new();
+                  fixture.write(b"{\"version\":1, \"generation\":7,\"issuer\":\"x\"}");
+                  let loaded = load_authority_owned_trust_bundle(
+                      &fixture.path,
+                      TrustBundleFilePolicyV1::local_fixture(fixture.owner_uid),
+                  )
+                  .expect("load bounded bytes");
+                  assert!(matches!(
+                      loaded.decode_canonical_json::<CanonicalFixture>(),
+                      Err(TrustBundleFileError::NonCanonicalJson),
+                  ));
+              }
+
+              #[test]
+              fn rejects_symlink_writable_and_hardlinked_files() {
+                  let fixture = Fixture::new();
+                  fixture.write(b"{\"version\":1,\"generation\":7,\"issuer\":\"x\"}");
+                  let policy = TrustBundleFilePolicyV1::local_fixture(fixture.owner_uid);
+
+                  fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o600))
+                      .expect("make fixture writable");
+                  assert!(matches!(
+                      load_authority_owned_trust_bundle(&fixture.path, policy),
+                      Err(TrustBundleFileError::FileAuthorityInvalid),
+                  ));
+
+                  fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o400))
+                      .expect("reseal fixture");
+                  let second = fixture.root.join("second-link.json");
+                  fs::hard_link(&fixture.path, &second).expect("create hard link");
+                  assert!(matches!(
+                      load_authority_owned_trust_bundle(&fixture.path, policy),
+                      Err(TrustBundleFileError::FileObjectInvalid),
+                  ));
+                  fs::remove_file(second).expect("remove hard link");
+
+                  let alias = fixture.root.join("bundle-alias.json");
+                  symlink(&fixture.path, &alias).expect("create symlink");
+                  assert!(matches!(
+                      load_authority_owned_trust_bundle(&alias, policy),
+                      Err(TrustBundleFileError::FileObjectInvalid)
+                          | Err(TrustBundleFileError::NonCanonicalPath),
+                  ));
+              }
+
+              #[test]
+              fn production_policy_requires_a_distinct_authority_uid() {
+                  let fixture = Fixture::new();
+                  fixture.write(b"{\"version\":1,\"generation\":7,\"issuer\":\"x\"}");
+                  assert!(matches!(
+                      load_authority_owned_trust_bundle(
+                          &fixture.path,
+                          TrustBundleFilePolicyV1::production(
+                              fixture.owner_uid,
+                              None,
+                              fixture.owner_uid,
+                          ),
+                      ),
+                      Err(TrustBundleFileError::InvalidPolicy),
+                  ));
+              }
+          }
+          RS
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          service = Path("docs/codex/CODEX_BROKER_SERVICE_V1.md")
+          source = service.read_text()
+          marker = "## Development blocker closure: database and trust-bundle files"
+          if marker not in source:
+              source += f'''\n\n{marker}\n\nBefore any writer connection, an existing broker database is opened read-only\nwith `NOFOLLOW` and its application ID, schema version and closed schema shape\nare verified. A foreign empty or populated SQLite file is rejected byte-for-byte\nwithout creating WAL/SHM sidecars. Schema DDL executes only for an exclusively\ncreated, initialization-marked journal.\n\nCapability trust-bundle bytes are loaded through a Linux `O_NOFOLLOW` descriptor\nfrom one canonical, single-link, authority-owned, read-only file under a\nnon-group/world-writable authority directory. Production policy requires the\nauthority UID to differ from the broker UID. The post-read pathname and opened\ndescriptor must still identify the same device/inode/mode/owner/length, and typed\nconsumers can require canonical JSON before passing a signed bundle to the\nexisting generation/signature/revocation manager.\n'''
+              service.write_text(source)
+
+          backlog = Path("docs/rust/RUST_REWRITE_BACKLOG.md")
+          source = backlog.read_text()
+          marker = "## 2026-08-29 development blocker closure"
+          if marker not in source:
+              source += f'''\n\n{marker}\n\n- Foreign broker SQLite files are now verified through a read-only, no-follow\n  preflight before any persistent pragma, DDL or writer connection.\n- Capability trust-bundle source files have a separate-authority production\n  policy, bounded canonical reads and descriptor/path object revalidation.\n- Exact duplicate admission, stable `CODEX_HOME` root identity, separate schema\n  authority, signed Ed25519 bundle rotation/revocation, private listeners and the\n  durable pre-exec gate remain covered by their existing source contracts and\n  tests.\n- Installed-host, live-provider, KMS/HSM, WORM and submission evidence remains a\n  qualification track, not a source-development substitute.\n'''
+              backlog.write_text(source)
+          PY
+
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+          git status --short
+
+      - name: Run fixed Rust hard gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo metadata --manifest-path rust/Cargo.toml --locked --format-version 1 >/dev/null
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked -- --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc \
+            --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Run focused repository gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          node --test paper-core/tests/test-impact-graph.test.mjs
+          npm run lint
+          npm run test:security
+
+      - name: Commit verified source changes to PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "hepta-paper development blocker closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          test -n "$(git status --porcelain)"
+          git commit -m "fix(rust): close database and trust-bundle authority blockers"
+          git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

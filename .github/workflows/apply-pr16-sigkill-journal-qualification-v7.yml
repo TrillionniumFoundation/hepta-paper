@@ -1,0 +1,196 @@
+name: apply-pr16-sigkill-journal-qualification-v7
+
+on:
+  push:
+    branches:
+      - codex/current-source-export-20260829-v2
+    paths:
+      - .github/workflows/apply-pr16-sigkill-journal-qualification-v7.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-pr16-sigkill-journal-qualification-v7
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-broker-service-20260828
+          fetch-depth: 0
+
+      - name: Add real SIGKILL WAL recovery tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("rust/crates/hepta-codex-broker/src/journal/tests.rs")
+          source = path.read_text()
+          if "sigkill_before_commit_preserves_qualified_journal" in source:
+              raise SystemExit(0)
+
+          marker = '''#[test]
+          fn foreign_empty_database_is_rejected_without_mutation() {
+          '''
+          if source.count(marker) != 1:
+              raise SystemExit("expected foreign-empty database test marker")
+
+          addition = r'''#[test]
+          fn sigkill_writer_child_probe() {
+              let Ok(database_path) = std::env::var("HEPTA_SIGKILL_DATABASE") else {
+                  return;
+              };
+              let marker_path = std::env::var("HEPTA_SIGKILL_MARKER")
+                  .expect("SIGKILL child marker path");
+              let phase = std::env::var("HEPTA_SIGKILL_PHASE")
+                  .expect("SIGKILL child phase");
+              let connection = rusqlite::Connection::open_with_flags(
+                  &database_path,
+                  rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                      | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+                      | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+              )
+              .expect("open broker database in crash child");
+              connection
+                  .execute_batch("BEGIN IMMEDIATE; PRAGMA user_version = 999;")
+                  .expect("stage transactional page-one mutation");
+              if phase == "committed" {
+                  connection
+                      .execute_batch("COMMIT;")
+                      .expect("commit deliberate corrupting mutation");
+              } else {
+                  assert_eq!(phase, "uncommitted");
+              }
+              let marker = fs::OpenOptions::new()
+                  .write(true)
+                  .create_new(true)
+                  .open(&marker_path)
+                  .expect("publish SIGKILL child marker");
+              marker.sync_all().expect("sync SIGKILL child marker");
+              loop {
+                  std::thread::sleep(std::time::Duration::from_secs(60));
+              }
+          }
+
+          #[test]
+          fn sigkill_before_commit_preserves_qualified_journal() {
+              let fixture = TempJournal::new();
+              let store = BrokerJournalStoreV1::open(
+                  &fixture.path,
+                  BrokerJournalPolicyV1::strict(fixture.owner_uid),
+              )
+              .expect("initialize broker journal");
+              store.validate_integrity().expect("initial journal integrity");
+              drop(store);
+
+              run_sigkill_writer_probe(&fixture.path, "uncommitted");
+
+              let reopened = BrokerJournalStoreV1::open(
+                  &fixture.path,
+                  BrokerJournalPolicyV1::strict(fixture.owner_uid),
+              )
+              .expect("reopen journal after uncommitted writer SIGKILL");
+              reopened
+                  .validate_integrity()
+                  .expect("journal remains qualified after rollback recovery");
+          }
+
+          #[test]
+          fn sigkill_after_committed_header_corruption_fails_closed() {
+              let fixture = TempJournal::new();
+              let store = BrokerJournalStoreV1::open(
+                  &fixture.path,
+                  BrokerJournalPolicyV1::strict(fixture.owner_uid),
+              )
+              .expect("initialize broker journal");
+              store.validate_integrity().expect("initial journal integrity");
+              drop(store);
+
+              run_sigkill_writer_probe(&fixture.path, "committed");
+
+              assert!(BrokerJournalStoreV1::open(
+                  &fixture.path,
+                  BrokerJournalPolicyV1::strict(fixture.owner_uid),
+              )
+              .is_err());
+          }
+
+          fn run_sigkill_writer_probe(database_path: &Path, phase: &str) {
+              let marker_path = database_path.with_extension(format!("{phase}.sigkill-ready"));
+              let mut child = std::process::Command::new(
+                  std::env::current_exe().expect("current Rust test executable"),
+              )
+              .arg("--exact")
+              .arg("journal::tests::sigkill_writer_child_probe")
+              .arg("--nocapture")
+              .arg("--test-threads=1")
+              .env("HEPTA_SIGKILL_DATABASE", database_path)
+              .env("HEPTA_SIGKILL_MARKER", &marker_path)
+              .env("HEPTA_SIGKILL_PHASE", phase)
+              .stdin(std::process::Stdio::null())
+              .stdout(std::process::Stdio::null())
+              .stderr(std::process::Stdio::null())
+              .spawn()
+              .expect("spawn SIGKILL writer child");
+
+              let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+              while !marker_path.exists() {
+                  if let Some(status) = child.try_wait().expect("inspect crash child") {
+                      panic!("SIGKILL writer child exited before marker: {status}");
+                  }
+                  assert!(
+                      std::time::Instant::now() < deadline,
+                      "SIGKILL writer child did not reach the requested fault point",
+                  );
+                  std::thread::sleep(std::time::Duration::from_millis(10));
+              }
+
+              let status = std::process::Command::new("/bin/kill")
+                  .arg("-KILL")
+                  .arg(child.id().to_string())
+                  .status()
+                  .expect("invoke kill utility");
+              assert!(status.success());
+              let child_status = child.wait().expect("reap SIGKILL writer child");
+              assert!(!child_status.success());
+              fs::remove_file(marker_path).expect("remove SIGKILL marker");
+          }
+
+          '''
+          path.write_text(source.replace(marker, addition + marker, 1))
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+
+      - name: Run Rust qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked -- --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Publish verified tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --porcelain)" ]]; then exit 0; fi
+          git config user.name "hepta-paper crash qualification"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "test(rust): qualify broker WAL recovery with real SIGKILL"
+          git push origin HEAD:refs/heads/codex/rust-broker-service-20260828

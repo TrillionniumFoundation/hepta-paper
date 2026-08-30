@@ -9,11 +9,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-hepta-cgroup-containment = { path = "../hepta-cgroup-containment" }
+hepta-cgroup-containment = { version = "=0.1.0", path = "../hepta-cgroup-containment" }
 base64ct.workspace = true
 nix.workspace = true
 hex.workspace = true
-hepta-codex-protocol = { path = "../hepta-codex-protocol" }
+hepta-codex-protocol = { version = "=0.1.0", path = "../hepta-codex-protocol" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

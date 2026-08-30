@@ -9,8 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-hepta-campaign-writer = { path = "../hepta-campaign-writer" }
-hepta-legacy-compatibility = { path = "../hepta-legacy-compatibility" }
-hepta-readonly-control = { path = "../hepta-readonly-control" }
-hepta-workspace-authority = { path = "../hepta-workspace-authority" }
+hepta-campaign-writer = { version = "=0.1.0", path = "../hepta-campaign-writer" }
+hepta-legacy-compatibility = { version = "=0.1.0", path = "../hepta-legacy-compatibility" }
+hepta-readonly-control = { version = "=0.1.0", path = "../hepta-readonly-control" }
+hepta-workspace-authority = { version = "=0.1.0", path = "../hepta-workspace-authority" }
 serde_json.workspace = true

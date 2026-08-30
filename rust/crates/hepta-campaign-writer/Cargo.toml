@@ -9,7 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-hepta-codex-protocol = { path = "../hepta-codex-protocol" }
+hepta-codex-protocol = { version = "=0.1.0", path = "../hepta-codex-protocol" }
 hex.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

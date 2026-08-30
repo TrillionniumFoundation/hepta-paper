@@ -9,7 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-hepta-codex-event-stream = { path = "../hepta-codex-event-stream" }
+hepta-codex-event-stream = { version = "=0.1.0", path = "../hepta-codex-event-stream" }
 
 [[bin]]
 name = "fake-codex"

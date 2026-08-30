@@ -167,7 +167,7 @@ impl BrokerListenerV1 {
 
         write_marker_atomic(
             &marker_path,
-            &marker_for(&policy, ListenerPhaseV1::Binding, None, None),
+            &marker_for(&policy, ListenerPhaseV1::Binding, None, None)?,
             &policy,
         )?;
 
@@ -192,7 +192,7 @@ impl BrokerListenerV1 {
                 ListenerPhaseV1::Bound,
                 Some(socket_identity.clone()),
                 None,
-            ),
+            )?,
             &policy,
         )?;
         Ok(Self {
@@ -218,7 +218,7 @@ impl BrokerListenerV1 {
                 ListenerPhaseV1::Ready,
                 Some(observed.clone()),
                 Some(qualification_hash.clone()),
-            ),
+            )?,
             &self.policy,
         )?;
         Ok(BrokerListenerQualificationV1 {
@@ -281,7 +281,7 @@ impl BrokerListenerV1 {
                 ListenerPhaseV1::Stopped,
                 Some(self.socket_identity.clone()),
                 None,
-            ),
+            )?,
             &self.policy,
         )?;
         self.stopped = true;
@@ -308,21 +308,21 @@ fn marker_for(
     phase: ListenerPhaseV1,
     socket_identity: Option<BrokerSocketIdentityV1>,
     qualification_hash: Option<Sha256Digest>,
-) -> ListenerMarkerV1 {
-    ListenerMarkerV1 {
+) -> Result<ListenerMarkerV1, BrokerListenerError> {
+    Ok(ListenerMarkerV1 {
         version: 1,
         generation: policy.instance_generation,
         phase,
         role: policy.role,
         access_mode: policy.access_mode,
-        socket_path_hash: hash_path(&policy.socket_path).expect("validated socket path hash"),
+        socket_path_hash: hash_path(&policy.socket_path)?,
         runtime_identity_hash: policy.runtime_identity_hash.clone(),
         trust_bundle_hash: policy.trust_bundle_hash.clone(),
         journal_path_hash: policy.journal_path_hash.clone(),
         peer_policy_hash: policy.peer_policy_hash.clone(),
         socket_identity,
         qualification_hash,
-    }
+    })
 }
 
 fn recover_predecessor(

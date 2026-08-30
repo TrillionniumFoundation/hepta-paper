@@ -396,20 +396,20 @@ fn assemble_receipt(
 
     let packages = QualificationPackageIdV1::ALL
         .into_iter()
-        .map(|package| {
+        .map(|package| -> Result<ClosurePackageReceiptV1, ClosureError> {
             let record = by_package
                 .get(&package)
-                .expect("complete package set checked above");
-            ClosurePackageReceiptV1 {
+                .ok_or(ClosureError::PackageSetIncomplete)?;
+            Ok(ClosurePackageReceiptV1 {
                 package_id: package.as_str().to_owned(),
                 payload_hash: record.payload_hash.clone(),
                 authority_domain_id: record.authority_domain_id.clone(),
                 signer_key_id: record.signer_key_id.clone(),
                 nonce: record.nonce.clone(),
                 signing_message_hash: record.signing_message_hash.clone(),
-            }
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     let authority_groups = authority_groups
         .into_iter()
         .map(|(group, domains)| (group, domains.into_iter().collect()))

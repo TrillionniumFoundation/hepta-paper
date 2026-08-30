@@ -197,9 +197,10 @@ impl RestrictedEnvironmentV1 {
 
 /// Production-shaped parent environment for the qualified Codex CLI process.
 pub fn codex_parent_environment_policy_v1() -> EnvironmentPolicyV1 {
-    EnvironmentPolicyV1::new(
-        "codex-parent-v1",
-        [
+    EnvironmentPolicyV1 {
+        version: 1,
+        policy_id: "codex-parent-v1".to_owned(),
+        allowed_keys: [
             "PATH",
             "HOME",
             "LANG",
@@ -210,17 +211,23 @@ pub fn codex_parent_environment_policy_v1() -> EnvironmentPolicyV1 {
             "SSL_CERT_FILE",
             "SSL_CERT_DIR",
             "CODEX_HOME",
-        ],
-        ["PATH", "HOME", "TMPDIR", "CODEX_HOME"],
-    )
-    .expect("static Codex parent environment policy must be valid")
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
+        required_keys: ["PATH", "HOME", "TMPDIR", "CODEX_HOME"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+    }
 }
 
 /// Environment visible to commands launched by the model inside the workspace.
 pub fn model_child_environment_policy_v1() -> EnvironmentPolicyV1 {
-    EnvironmentPolicyV1::new(
-        "codex-model-child-v1",
-        [
+    EnvironmentPolicyV1 {
+        version: 1,
+        policy_id: "codex-model-child-v1".to_owned(),
+        allowed_keys: [
             "PATH",
             "HOME",
             "LANG",
@@ -231,10 +238,15 @@ pub fn model_child_environment_policy_v1() -> EnvironmentPolicyV1 {
             "SOURCE_DATE_EPOCH",
             "SSL_CERT_FILE",
             "SSL_CERT_DIR",
-        ],
-        ["PATH", "HOME", "TMPDIR"],
-    )
-    .expect("static Codex model child environment policy must be valid")
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
+        required_keys: ["PATH", "HOME", "TMPDIR"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+    }
 }
 
 fn valid_policy_id(value: &str) -> bool {
@@ -384,6 +396,16 @@ mod tests {
         .into_iter()
         .map(|(key, value)| (OsString::from(key), OsString::from(value)))
         .collect()
+    }
+
+    #[test]
+    fn static_policies_remain_valid() {
+        codex_parent_environment_policy_v1()
+            .validate()
+            .expect("parent policy");
+        model_child_environment_policy_v1()
+            .validate()
+            .expect("model child policy");
     }
 
     #[test]

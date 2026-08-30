@@ -1,0 +1,92 @@
+name: listener-stale-recovery-flake-fix-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-main-integration-20260830
+    paths:
+      - '.github/workflows/listener-stale-recovery-flake-fix-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: listener-stale-recovery-flake-fix-once-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fix-and-stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+
+      - name: Make stale-close propagation test bounded and deterministic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('rust/crates/hepta-codex-broker/src/listener.rs')
+          text = path.read_text(encoding='utf-8')
+          old = '\n'.join([
+              '        let second = BrokerListenerV1::bind(policy(&tree, 2)).expect("recover stale socket");',
+              '        second.shutdown().expect("shutdown second");',
+          ])
+          new = '\n'.join([
+              '        let mut close_propagation_attempts = 0_u16;',
+              '        let second = loop {',
+              '            match BrokerListenerV1::bind(policy(&tree, 2)) {',
+              '                Ok(listener) => break listener,',
+              '                Err(BrokerListenerError::LiveListenerExists)',
+              '                    if close_propagation_attempts < 100 =>',
+              '                {',
+              '                    close_propagation_attempts += 1;',
+              '                    std::thread::sleep(std::time::Duration::from_millis(1));',
+              '                }',
+              '                Err(error) => panic!("recover stale socket: {error}"),',
+              '            }',
+              '        };',
+              '        second.shutdown().expect("shutdown second");',
+          ])
+          if text.count(old) != 1:
+              raise SystemExit(f'listener test block match count: {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          for iteration in $(seq 1 64); do
+            echo "stale recovery stress iteration ${iteration}"
+            cargo test --manifest-path rust/Cargo.toml --locked \
+              -p hepta-codex-broker \
+              listener::tests::recovers_recorded_stale_socket_with_new_generation \
+              -- --exact --test-threads=1
+          done
+          cargo clippy --manifest-path rust/Cargo.toml --locked \
+            -p hepta-codex-broker --all-targets --all-features -- -D warnings
+          test "$(git diff --name-only)" = 'rust/crates/hepta-codex-broker/src/listener.rs'
+          git diff --check
+
+      - name: Commit validated test-harness repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/hepta-codex-broker/src/listener.rs
+          git commit -m 'test(rust): stabilize stale listener recovery qualification'
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

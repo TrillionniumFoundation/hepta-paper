@@ -50,7 +50,7 @@ jobs:
           rustc --version --verbose
           cargo --version --verbose
 
-      - name: Reject latent production panic and placeholder paths
+      - name: Inventory production control surfaces and reject lexical panic paths
         shell: bash
         run: |
           set -euo pipefail
@@ -60,15 +60,18 @@ jobs:
           import json
           import re
 
+          # Rust compiler and Clippy below are authoritative for unsafe syntax.  A
+          # raw word scan is intentionally not used because user-facing error
+          # strings and documentation legitimately describe "unsafe" states.
           hard_patterns = {
               "todo_macro": re.compile(r"\btodo!\s*\("),
               "unimplemented_macro": re.compile(r"\bunimplemented!\s*\("),
-              "unsafe_token": re.compile(r"\bunsafe\b"),
               "panic_macro": re.compile(r"\bpanic!\s*\("),
               "unwrap_call": re.compile(r"\.unwrap\s*\("),
               "expect_call": re.compile(r"\.expect\s*\("),
           }
           inventory_patterns = {
+              "unsafe_word": re.compile(r"\bunsafe\b"),
               "process_command": re.compile(r"(?:std::process::|process::)?Command::new\s*\("),
               "process_exit": re.compile(r"(?:std::process::|process::)exit\s*\("),
               "environment_read": re.compile(r"(?:std::env::|env::)(?:var|var_os)\s*\("),
@@ -115,7 +118,7 @@ jobs:
           )
           print(json.dumps(report, indent=2, sort_keys=True))
           if hard_hits:
-              raise SystemExit("production placeholder, unsafe, unwrap, expect, or panic path found")
+              raise SystemExit("production todo, unimplemented, unwrap, expect, or panic path found")
           PY
 
       - name: Validate format, production lints, release tests and docs

@@ -5,9 +5,10 @@ Status: normative qualification procedure; no repository or hosted-CI authority.
 ## Purpose
 
 Repository source can implement validators, schemas, harnesses and fail-closed
-composition. It cannot manufacture facts controlled by a production host,
-independent reviewer, capability key owner, Codex account owner, KMS/HSM,
-immutable-storage custodian, restore operator or submission provider.
+composition. It cannot manufacture facts controlled by a repository ruleset,
+production host, independent reviewer, capability key owner, Codex account
+owner, KMS/HSM, immutable-storage custodian, restore operator or submission
+provider.
 
 Each package below therefore has two distinct states:
 
@@ -17,6 +18,9 @@ Each package below therefore has two distinct states:
    configuration.
 
 `package_ready` never implies `externally_accepted` or production activation.
+The machine mapping from external gaps to package IDs and schemas is
+`external-package-map.v1.json`; an external gap without a mapped package is a
+source-governance failure.
 
 ## Common evidence envelope
 
@@ -41,6 +45,37 @@ signature and trust-bundle generation
 
 The implementation author, repository administrator and GitHub-hosted runner
 must not act as the sole external reviewer or authority owner.
+
+## EXT-GOV-MAIN-001 — protected main merge boundary
+
+A repository administrator distinct from the implementation change activates a
+ruleset targeting `refs/heads/main`. The active ruleset must require pull
+requests, current-head status checks, CODEOWNER review, stale-approval dismissal,
+last-push approval, resolved conversations, no force push, no branch deletion and
+no bypass actor. Signed commits or a verified GitHub merge-commit policy and the
+chosen history policy must be explicit.
+
+Evidence conforms to `protected-main-ruleset-evidence-v1.schema.json` and binds
+repository ID `1349108143`, the exact source commit/tree under review, the ruleset
+ID and exported ruleset hash, all required check contexts and separate
+administrator/reviewer authority domains.
+
+The following denial tests are mandatory and must each retain content-hashed
+raw evidence:
+
+```text
+direct push
+stale approval after a new head
+missing required check
+failed required check
+force push
+main deletion
+administrator bypass
+```
+
+A CODEOWNERS file, post-push workflow, prose policy or screenshot without an
+exported ruleset and denial evidence cannot satisfy this package. Acceptance does
+not merge a pull request automatically.
 
 ## EXT-HOST-CGROUP-001 — Linux process containment
 

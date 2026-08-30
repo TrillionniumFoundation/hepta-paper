@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# one-shot attempt 6: pre/post normalization preserves exact generation anchors
+# one-shot attempt 7: generate first, then normalize test-scoped imports
 
 on:
   push:
@@ -51,7 +51,6 @@ jobs:
         run: |
           set -euo pipefail
           cp rust/Cargo.lock "$RUNNER_TEMP/Cargo.lock.before"
-          python3 .github/one-shot/normalize_clock_hardening.py
           python3 .github/one-shot/harden_external_qualification.py
           python3 .github/one-shot/normalize_clock_hardening.py
           cargo fmt --manifest-path rust/Cargo.toml --all

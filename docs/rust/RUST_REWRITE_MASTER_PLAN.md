@@ -107,9 +107,11 @@ release/submission ports owned by separate external authorities
 ### FND — contracts and protocol
 
 Versioned request/receipt types, canonical digests, strict JSONL, operation
-state machine, fake executor and pinned toolchain.
+state machine, fake executor, pinned toolchain, supply-chain policy and
+machine-compared program truth.
 
-Exit: exact-source fmt, lint, test and rustdoc are green with a committed lock.
+Repository-local exit: exact-head format, lint, tests, rustdoc, workflow syntax,
+dependency policy and SBOM gates are green with a committed lock.
 
 ### BRK — broker, runtime and durable launch
 
@@ -117,70 +119,85 @@ Executable/home identity, environment scrubbing, listener/peer/capability
 admission, broker SQLite, durable pre-exec gate, containment, recovery and
 prepared acknowledgement.
 
-Exit: authorized role UIDs can reach only their listener; escaped descendants
-remain contained; every ambiguous launch has one durable disposition.
+Repository-local exit: source and hosted-installed fixtures prove the protocol,
+listener admission, durable gate and cgroup-v2 source contract. Production exit:
+issue #17 supplies independent target-host/service evidence, issue #14 supplies
+key-owner evidence and issue #21 supplies authenticated Codex canaries.
 
 ### WS — workspace and mutation authority
 
 Descriptor-relative root opening, COW attempts, deterministic inventory,
 versioned role mutation policy, prepared workspace results and orphan recovery.
 
-Exit: canonical source is untouched until fenced integration and every injected
-crash yields a classified workspace.
+Repository-local exit: canonical source remains untouched before fenced
+integration and injected source-level crashes yield a classified workspace.
+Target-host filesystem and storage behavior remains part of issues #17 and #12.
 
 ### CMP — compatibility kernel
 
 Legacy stable JSON, historical hash corpus, Node oracle, Rust verifier,
 status/error registry and deterministic differentials.
 
-Exit: zero unexplained byte/hash/authority drift.
+Repository-local exit: zero unexplained byte/hash/authority drift in the frozen
+source corpus.
 
 ### RO — read-only control plane
 
 Immutable schema-1..25 SQLite inspection, campaign/artifact/ledger decoding and
 normalized parity bundles.
 
-Exit: no write flags, WAL or sidecar mutation; normalized diff is zero.
+Repository-local exit: no write flags, WAL creation or sidecar mutation in the
+supported source fixture matrix.
 
 ### MVP — local research vertical slice
 
-One author, build, frozen reviewer, revision, rebuild and local package using
-prepared results and COW workspaces.
+One fake-provider author/reviewer loop, prepared results, COW workspaces,
+read-only review and replay-safe integration.
 
-Exit: crash/cancel/retry does not duplicate provider work or pollute canonical
-source.
+Repository-local exit: crash/cancel/retry does not duplicate fake-provider work
+or pollute canonical source. Production/provider exit: issue #21 proves separate
+authenticated author and reviewer principals against the qualified Codex
+executable; a fake provider can never satisfy that gate.
 
 ### DB — persistent Rust writer
 
 Writer ownership, claims, leases, generation fencing, prepared integration,
-budgets, scheduler, backup/restore and soak testing.
+budgets, resource reservations, backup/restore and deterministic simulation.
 
-Exit: Node/Rust dual write is mechanically impossible and 72-hour soak has zero
-stale or duplicate commit.
+Repository-local exit: Node/Rust dual write is mechanically fenced, prepared
+integration is replay-idempotent, backup/restore source drills pass and the 10k
+simulation has zero stale or duplicate commit. Production exit: issue #12 runs
+the real 72-hour topology soak, reboot, disk-full and corruption drills on the
+separately controlled target storage.
 
 ### EVD — scientific evidence
 
 Formal, empirical and numerical orchestration with producer/verifier
 implementation independence.
 
-Exit: migration does not increase evidence class and cross-verifier matrices
-pass.
+Repository-local exit: migration does not increase evidence class and source
+cross-verifier contracts pass. Any external assurance still requires its real
+independent producer or reviewer.
 
 ### REL — release and external authority
 
 KMS/HSM command ports, immutable deployment, WORM custody, backup authority,
 release packages, submission permits and dispatch.
 
-Exit: model principals hold no external authority secret; every irreversible
-operation is idempotent or explicitly ambiguous.
+Repository-local exit: narrow receipt-verifying ports and denial boundaries pass
+source tests. Production exit: issue #22 supplies real KMS/HSM, WORM, release,
+portal and submission receipts while model principals retain zero external
+authority secret.
 
 ### CUT — shadow, cutover and retirement
 
 Read-only shadow, isolated dual execution, capability writer cutover, rollback,
 canary and Node authority retirement.
 
-Exit: 30-day shadow and 14-day canary complete with zero unexplained state diff
-or duplicate side effect.
+Repository-local exit: phase transitions, writer fencing, receipt verification
+and rollback contracts pass. Production exit: all prerequisite target-host and
+external-authority issues are accepted, followed by the required 30-day shadow,
+14-day canary and final retirement evidence.
 
 ## 7. Milestone gates
 
@@ -201,22 +218,27 @@ or duplicate side effect.
 Dates are forecasts, never gate substitutes. A milestone does not pass because
 its calendar window elapsed.
 
-## 8. Current package sequence
+## 8. Current closure sequence
 
-The next merge-sized packages are ordered by dependency:
+The repository-local source packages formerly listed as the next sequence are
+implemented and represented in the canonical backlog as `source_qualified`:
+program truth, listener access, exact-head evidence, cgroup-v2 containment,
+descriptor-bound workspaces, legacy compatibility, schema-25 read-only
+inspection, the fake-provider local loop and the fenced campaign writer.
 
-1. `RUST-GOV-TRUTH-V1` — canonical status, machine truth and exact-evidence schema.
-2. `RUST-BRK-LISTENER-ACCESS-V2` — explicit private/shared-group listener modes.
-3. `RUST-BRK-EXACT-HEAD-CI-V1` — head/tree-bound workflow evidence.
-4. `RUST-BRK-CONTAINMENT-V1` — cgroup-v2/pidfd production containment.
-5. `RUST-WS-COW-INVENTORY-V1` — descriptor-relative COW and exact inventory.
-6. `RUST-CMP-LEGACY-JSON-V1` — frozen corpus, Node oracle and Rust verifier.
-7. `RUST-RO-SCHEMA25-V1` — immutable read-only store inspection.
-8. `RUST-MVP-LOCAL-LOOP-V1` — one complete fake then qualified-provider loop.
-9. `RUST-DB-SINGLE-WRITER-V1` — ownership lease and fenced writer alpha.
+The remaining dependency order is now external and operational:
 
-No package may bypass an unmet dependency by relabeling a fixture as external
-evidence.
+1. Keep the exact-head Rust, Node, workflow-lint, supply-chain and canonical-truth matrix green.
+2. `GAP-HOST-001` / issue #17 — independent target-host listener, gate, schema, cgroup and service-manager qualification.
+3. `GAP-HOST-002` / issue #12 — destructive WAL, reboot, disk-full, corruption and 72-hour topology soak.
+4. `GAP-KEY-001` / issue #14 — independently owned key rotation, revocation, rollback and compromise drills.
+5. `GAP-CODEX-001` / issue #21 — separate authenticated author/reviewer homes and live Codex canaries.
+6. `GAP-REL-001` / issue #22 — real KMS/HSM, WORM, release, portal and submission receipts.
+7. After all prerequisite evidence is accepted, execute production shadow, canary, rollback, writer cutover and Node-authority retirement.
+
+No package or issue may bypass an unmet dependency by relabeling a fixture,
+GitHub-hosted runner, self-signed record or implementation-author approval as
+independent target-host or external-authority evidence.
 
 ## 9. Merge contract
 
@@ -240,6 +262,7 @@ not independently approve target-host or external-authority evidence.
 Mandatory source layers:
 
 ```text
+actionlint over every GitHub Actions workflow
 rustfmt
 clippy --all-targets --all-features -D warnings
 workspace tests
@@ -251,7 +274,9 @@ SQLite transaction/SIGKILL tests
 filesystem race and crash tests
 Node/Rust deterministic differentials
 secret/redaction scans
-supply-chain policy and SBOM
+cargo-deny advisory/license/source/version policy
+CycloneDX 1.5 all-feature/all-target SBOM with clean postflight
+exact-head/tree and canonical-document parity evidence
 ```
 
 Production layers additionally require real principal topology, cgroup/service

@@ -14,6 +14,7 @@
 | Evidence tiers | `EVIDENCE_AND_QUALIFICATION_MODEL.md` |
 | Crash semantics | `CRASH_AND_RECOVERY_MATRIX.md` |
 | Operator procedures | `OPERATIONS_RUNBOOK.md` |
+| Supply-chain policy | `security/SUPPLY_CHAIN_POLICY.md` |
 | Codex protocol details | `../codex/*.md` |
 | Architecture decisions | `../adr/*.md` |
 
@@ -36,7 +37,19 @@ qualification/PR16_*_TRIGGER_*.md
 
 Historical files may bind the exact commit they observed. They must not use an
 unqualified present-tense statement such as “the current head is ready”. New
-status changes go only to `CURRENT_STATUS.md` and `current-status.v1.json`.
+status changes go only to `CURRENT_STATUS.md`, `current-status.v1.json` and the
+machine-compared backlog table.
+
+## Workflow discipline
+
+Persistent workflows are read-only validators or explicitly scoped evidence
+collectors. Historical one-shot workflows that modified source, pushed directly,
+self-dispatched or self-deleted are retired after their source changes are
+absorbed. They are not part of the current control plane.
+
+Every retained workflow must pass the pinned `workflow-lint` actionlint gate.
+Custom self-hosted labels are declared in `.github/actionlint.yaml`; syntax or
+Actions-expression failures cannot remain as silent runs with no jobs.
 
 ## Change discipline
 
@@ -50,6 +63,8 @@ explicitly state no delta to:
 5. crash/rollback behavior;
 6. operator impact.
 
-CI validates the machine file, stable IDs, status vocabulary and canonical
-file presence. Exact execution evidence remains a workflow artifact rather than
-being copied into timestamped prose files.
+CI machine-compares all stable backlog IDs and statuses, product-status rows and
+external issue ledgers across `current-status.v1.json`, `CURRENT_STATUS.md` and
+`RUST_REWRITE_BACKLOG.md`. It also validates every workflow, exact head/tree
+identity, dependency policy and reproducible SBOM evidence. Exact run evidence
+remains a workflow artifact rather than being copied into self-staling prose.

@@ -1,0 +1,90 @@
+name: rust-governance-package-reconcile-v4
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-main-integration-20260830
+    paths:
+      - '.github/workflows/rust-governance-package-reconcile-v4.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rust-governance-package-reconcile-v4-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Apply only the validated Rust source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/rust-governance-package-reconcile-v2.yml')
+          lines = source.read_text(encoding='utf-8').splitlines()
+          start = lines.index("          python3 - <<'PY'") + 1
+          end = lines.index('          PY', start)
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in lines[start:end]
+          ) + '\n'
+          script = script.replace(
+              'if not separator or tail:',
+              'if not separator or tail.strip():',
+              1,
+          )
+          script = script[:script.index("workflow_path = Path(")]
+          Path('/tmp/reconcile-governance-package-source.py').write_text(
+              script,
+              encoding='utf-8',
+          )
+          PY
+          python3 /tmp/reconcile-governance-package-source.py
+
+      - name: Format and test package closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-qualification-ingest
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          source = Path('rust/crates/hepta-qualification-ingest/src/lib.rs').read_text(
+              encoding='utf-8'
+          )
+          runtime = set(re.findall(r'=> "(EXT-[A-Z0-9-]+)"', source))
+          mapping = json.loads(Path(
+              'docs/rust/qualification/external-package-map.v1.json'
+          ).read_text(encoding='utf-8'))
+          mapped = {row['packageId'] for row in mapping['packages']}
+          if runtime != mapped:
+              raise SystemExit(f'package vocabulary mismatch: {runtime} != {mapped}')
+          PY
+
+      - name: Commit only Rust source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/hepta-qualification-ingest/src/lib.rs
+          git diff --cached --check
+          git commit -m 'feat(governance): ingest protected-main qualification evidence'
+          git push origin "HEAD:${GITHUB_REF_NAME}"

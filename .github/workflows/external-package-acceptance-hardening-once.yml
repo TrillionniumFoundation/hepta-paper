@@ -1,0 +1,177 @@
+name: external-package-acceptance-hardening-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-main-integration-20260830
+    paths:
+      - '.github/workflows/external-package-acceptance-hardening-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: external-package-acceptance-hardening-once-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Apply and validate strict external package acceptance
+        shell: bash
+        env:
+          PATCH_SHA256: ebd5541558d0030ce8277de6da75bff2796983eca9603d671ccb05f9587a27cf
+        run: |
+          set -euo pipefail
+          cat .github/one-shot/external-package-acceptance.patch.part{00,01,02,03,04,05,06,07} > "$RUNNER_TEMP/patch.b64"
+          base64 -d "$RUNNER_TEMP/patch.b64" | gzip -d > "$RUNNER_TEMP/harden.py"
+          printf '%s  %s\n' "$PATCH_SHA256" "$RUNNER_TEMP/harden.py" | sha256sum -c -
+          python3 -m py_compile "$RUNNER_TEMP/harden.py"
+          python3 "$RUNNER_TEMP/harden.py"
+          cargo fmt --manifest-path rust/Cargo.toml --all
+
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest --all-features --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest --all-targets --all-features --locked -- -D warnings
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("docs/rust/qualification")
+          schemas = [
+              "protected-main-ruleset-evidence-v1.schema.json",
+              "independent-linux-review-v1.schema.json",
+              "external-host-storage-package-v1.schema.json",
+              "external-key-owner-drill-v1.schema.json",
+              "authenticated-codex-role-canary-v1.schema.json",
+              "production-cutover-soak-v1.schema.json",
+              "external-authority-set-v1.schema.json",
+              "external-qualification-closure-receipt-v1.schema.json",
+          ]
+          for name in schemas:
+              value = json.loads((root / name).read_text(encoding="utf-8"))
+              assert value["$schema"] == "https://json-schema.org/draft/2020-12/schema", name
+              assert value["type"] == "object", name
+              assert value["additionalProperties"] is False, name
+              assert value["required"], name
+              if "decision" in value["properties"]:
+                  assert value["properties"]["decision"] == {"const": "approved"}, name
+
+          mapping = json.loads((root / "external-package-map.v1.json").read_text(encoding="utf-8"))
+          by_id = {row["packageId"]: row for row in mapping["packages"]}
+          assert by_id["EXT-HOST-STORAGE-001"]["schemas"] == [
+              "external-host-storage-package-v1.schema.json"
+          ]
+          assert len(by_id) == 7
+
+          source = Path(
+              "rust/crates/hepta-qualification-ingest/src/bin/"
+              "hepta-qualification-closure.rs"
+          ).read_text(encoding="utf-8")
+          module = Path(
+              "rust/crates/hepta-qualification-ingest/src/package_payload.rs"
+          ).read_text(encoding="utf-8")
+          for required in [
+              "validate_external_package_payload_v1",
+              "strict_package_v1",
+              "durable_sqlite_v2",
+              "ClockRollback",
+              "VERIFIER_CLOCK_STATE_SCHEMA",
+              "normalize_sql",
+              "replay_ledger_schema_version: 2",
+          ]:
+              assert required in source or required in module, required
+          PY
+
+          git rm .github/one-shot/external-package-acceptance.patch.part{00,01,02,03,04,05,06,07}
+          git diff --check
+
+          mapfile -t changed < <(
+            {
+              git diff --name-only
+              git ls-files --others --exclude-standard
+            } | sort -u
+          )
+          mapfile -t expected < <(printf '%s\n' \
+            .github/one-shot/external-package-acceptance.patch.part00 \
+            .github/one-shot/external-package-acceptance.patch.part01 \
+            .github/one-shot/external-package-acceptance.patch.part02 \
+            .github/one-shot/external-package-acceptance.patch.part03 \
+            .github/one-shot/external-package-acceptance.patch.part04 \
+            .github/one-shot/external-package-acceptance.patch.part05 \
+            .github/one-shot/external-package-acceptance.patch.part06 \
+            .github/one-shot/external-package-acceptance.patch.part07 \
+            docs/rust/qualification/EXTERNAL_EVIDENCE_INGESTION_RUNBOOK.md \
+            docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md \
+            docs/rust/qualification/PLAN_V3_EXTERNAL_GAP_EXECUTION.md \
+            docs/rust/qualification/PLAN_V3_EXTERNAL_PACKAGE_INDEX.md \
+            docs/rust/qualification/README.md \
+            docs/rust/qualification/authenticated-codex-role-canary-v1.schema.json \
+            docs/rust/qualification/external-authority-set-v1.schema.json \
+            docs/rust/qualification/external-host-storage-package-v1.schema.json \
+            docs/rust/qualification/external-key-owner-drill-v1.schema.json \
+            docs/rust/qualification/external-package-map.v1.json \
+            docs/rust/qualification/external-qualification-closure-receipt-v1.schema.json \
+            docs/rust/qualification/independent-linux-review-v1.schema.json \
+            docs/rust/qualification/production-cutover-soak-v1.schema.json \
+            docs/rust/qualification/protected-main-ruleset-evidence-v1.schema.json \
+            rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs \
+            rust/crates/hepta-qualification-ingest/src/lib.rs \
+            rust/crates/hepta-qualification-ingest/src/package_payload.rs \
+            | sort)
+          printf '%s\n' '--- expected hardening files ---'
+          printf '%s\n' "${expected[@]}"
+          printf '%s\n' '--- actual hardening files ---'
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq "${#expected[@]}"
+          diff -u <(printf '%s\n' "${expected[@]}") <(printf '%s\n' "${changed[@]}")
+
+      - name: Commit validated product changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            docs/rust/qualification/EXTERNAL_EVIDENCE_INGESTION_RUNBOOK.md \
+            docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md \
+            docs/rust/qualification/PLAN_V3_EXTERNAL_GAP_EXECUTION.md \
+            docs/rust/qualification/PLAN_V3_EXTERNAL_PACKAGE_INDEX.md \
+            docs/rust/qualification/README.md \
+            docs/rust/qualification/authenticated-codex-role-canary-v1.schema.json \
+            docs/rust/qualification/external-authority-set-v1.schema.json \
+            docs/rust/qualification/external-host-storage-package-v1.schema.json \
+            docs/rust/qualification/external-key-owner-drill-v1.schema.json \
+            docs/rust/qualification/external-package-map.v1.json \
+            docs/rust/qualification/external-qualification-closure-receipt-v1.schema.json \
+            docs/rust/qualification/independent-linux-review-v1.schema.json \
+            docs/rust/qualification/production-cutover-soak-v1.schema.json \
+            docs/rust/qualification/protected-main-ruleset-evidence-v1.schema.json \
+            rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs \
+            rust/crates/hepta-qualification-ingest/src/lib.rs \
+            rust/crates/hepta-qualification-ingest/src/package_payload.rs
+          git add -u .github/one-shot
+          git diff --cached --check
+          git commit -m 'fix(qualification): enforce external package semantics'
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

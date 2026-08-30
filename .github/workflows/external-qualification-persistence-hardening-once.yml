@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# one-shot attempt 9: include untracked generated files in the exact change-set guard
+# one-shot attempt 10: publish validated product files separately from workflows
 
 on:
   push:
@@ -56,8 +56,6 @@ jobs:
           python3 .github/one-shot/normalize_clock_hardening.py
           cargo fmt --manifest-path rust/Cargo.toml --all
 
-          # Preserve the resolved package set and let Cargo add only the new
-          # workspace-crate dependency edge required by the manifest change.
           cargo metadata --manifest-path rust/Cargo.toml \
             --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
           python3 - "$RUNNER_TEMP/Cargo.lock.before" rust/Cargo.lock <<'PY'
@@ -137,15 +135,13 @@ jobs:
           "$RUNNER_TEMP/actionlint" -color -shellcheck= -pyflakes=
           git diff --check
 
-      - name: Commit only the validated product changes
+      - name: Commit validated non-workflow product changes
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
-            .github/workflows/rust-plan-v3-external-contracts.yml \
-            .github/workflows/rust-qualification-artifacts.yml \
             docs/rust/qualification/EXTERNAL_EVIDENCE_INGESTION_RUNBOOK.md \
             docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md \
             docs/rust/qualification/README.md \
@@ -157,6 +153,14 @@ jobs:
             rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs
           git diff --cached --check
           git commit -m 'fix(qualification): persist trust and replay closure state'
+
+          # The exact workflow edits were validated above but are published by
+          # the connector that has the dedicated workflows permission.
+          git restore --worktree -- \
+            .github/workflows/rust-plan-v3-external-contracts.yml \
+            .github/workflows/rust-qualification-artifacts.yml
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
           git fetch origin "$GITHUB_REF_NAME"
           git rebase "origin/$GITHUB_REF_NAME"
           git push origin "HEAD:${GITHUB_REF_NAME}"

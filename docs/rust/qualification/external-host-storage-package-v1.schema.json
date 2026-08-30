@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://trillionnium.example/schemas/independent-linux-review-v1.schema.json",
-  "title": "Independent Linux Target Host Review V1",
+  "$id": "https://trillionnium.example/schemas/external-host-storage-package-v1.schema.json",
+  "title": "External Host Storage Qualification Package V1",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,20 +11,26 @@
     "commit",
     "tree",
     "hostIdentityHash",
-    "bootIdentityHash",
-    "kernelIdentityHash",
-    "systemdIdentityHash",
-    "cgroupIdentityHash",
-    "listenerIdentityHash",
-    "schemaIdentityHash",
-    "gateIdentityHash",
-    "journalIdentityHash",
-    "drills",
+    "bootSequenceHash",
+    "filesystemIdentityHash",
+    "mountIdentityHash",
+    "blockDeviceIdentityHash",
+    "databaseIdentityHash",
+    "walIdentityHash",
+    "shmIdentityHash",
+    "artifactManifestHash",
+    "serviceUnitHash",
+    "rawEvidenceManifestHash",
+    "faultMatrix",
+    "operationCount",
+    "continuousSoakSeconds",
+    "staleCommitCount",
+    "duplicateProviderCallCount",
+    "duplicateIntegrationCount",
+    "unclassifiedRecoveryCount",
     "operatorAuthorityDomain",
     "reviewerAuthorityDomain",
     "reviewerKeyId",
-    "reviewedObjects",
-    "kernelAssumptions",
     "findings",
     "decision",
     "issuedAt",
@@ -36,7 +42,7 @@
       "const": 1
     },
     "packageId": {
-      "const": "EXT-HOST-CGROUP-001"
+      "const": "EXT-HOST-STORAGE-001"
     },
     "repository": {
       "const": "TrillionniumFoundation/hepta-paper"
@@ -50,73 +56,119 @@
     "hostIdentityHash": {
       "$ref": "#/$defs/sha256"
     },
-    "bootIdentityHash": {
+    "bootSequenceHash": {
       "$ref": "#/$defs/sha256"
     },
-    "kernelIdentityHash": {
+    "filesystemIdentityHash": {
       "$ref": "#/$defs/sha256"
     },
-    "systemdIdentityHash": {
+    "mountIdentityHash": {
       "$ref": "#/$defs/sha256"
     },
-    "cgroupIdentityHash": {
+    "blockDeviceIdentityHash": {
       "$ref": "#/$defs/sha256"
     },
-    "listenerIdentityHash": {
+    "databaseIdentityHash": {
       "$ref": "#/$defs/sha256"
     },
-    "schemaIdentityHash": {
+    "walIdentityHash": {
       "$ref": "#/$defs/sha256"
     },
-    "gateIdentityHash": {
+    "shmIdentityHash": {
       "$ref": "#/$defs/sha256"
     },
-    "journalIdentityHash": {
+    "artifactManifestHash": {
       "$ref": "#/$defs/sha256"
     },
-    "drills": {
+    "serviceUnitHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "rawEvidenceManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "faultMatrix": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "listenerLifecycle",
-        "schemaSubstitution",
-        "durablePreExec",
-        "setsidEscape",
-        "doubleForkEscape",
-        "cgroupKill",
-        "serviceCrashRecovery",
-        "hostRebootRecovery",
-        "providerStartBeforeReleaseDenied"
+        "sigkillBoundaries",
+        "serviceRestart",
+        "hostReboot",
+        "diskFull",
+        "quotaExhaustion",
+        "writeFsyncFailure",
+        "readOnlyRemount",
+        "walTruncation",
+        "shmTruncation",
+        "mainPageCorruption",
+        "staleSidecar",
+        "backupRestore",
+        "foreignBackupRejection",
+        "clockRegression"
       ],
       "properties": {
-        "listenerLifecycle": {
+        "sigkillBoundaries": {
           "const": "passed"
         },
-        "schemaSubstitution": {
+        "serviceRestart": {
           "const": "passed"
         },
-        "durablePreExec": {
+        "hostReboot": {
           "const": "passed"
         },
-        "setsidEscape": {
+        "diskFull": {
           "const": "passed"
         },
-        "doubleForkEscape": {
+        "quotaExhaustion": {
           "const": "passed"
         },
-        "cgroupKill": {
+        "writeFsyncFailure": {
           "const": "passed"
         },
-        "serviceCrashRecovery": {
+        "readOnlyRemount": {
           "const": "passed"
         },
-        "hostRebootRecovery": {
+        "walTruncation": {
           "const": "passed"
         },
-        "providerStartBeforeReleaseDenied": {
+        "shmTruncation": {
+          "const": "passed"
+        },
+        "mainPageCorruption": {
+          "const": "passed"
+        },
+        "staleSidecar": {
+          "const": "passed"
+        },
+        "backupRestore": {
+          "const": "passed"
+        },
+        "foreignBackupRejection": {
+          "const": "passed"
+        },
+        "clockRegression": {
           "const": "passed"
         }
       }
+    },
+    "operationCount": {
+      "type": "integer",
+      "minimum": 10000
+    },
+    "continuousSoakSeconds": {
+      "type": "integer",
+      "minimum": 259200
+    },
+    "staleCommitCount": {
+      "const": 0
+    },
+    "duplicateProviderCallCount": {
+      "const": 0
+    },
+    "duplicateIntegrationCount": {
+      "const": 0
+    },
+    "unclassifiedRecoveryCount": {
+      "const": 0
     },
     "operatorAuthorityDomain": {
       "$ref": "#/$defs/id"
@@ -126,39 +178,6 @@
     },
     "reviewerKeyId": {
       "$ref": "#/$defs/id"
-    },
-    "reviewedObjects": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "path",
-          "sha256"
-        ],
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 512
-          },
-          "sha256": {
-            "$ref": "#/$defs/sha256"
-          }
-        }
-      }
-    },
-    "kernelAssumptions": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 512
-      }
     },
     "findings": {
       "type": "array",

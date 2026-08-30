@@ -39,8 +39,10 @@ The trust store and external files must be canonical regular files owned outside
 the verifier UID, single-linked, read-only (`0400` or `0440`), opened with
 `O_NOFOLLOW|O_CLOEXEC`, bounded before and during reads, and unchanged across
 full descriptor/path metadata revalidation. Every payload byte sequence is hashed
-and must equal the signed envelope `payloadHash`; package-specific schema and
-semantic validation remains the responsibility of the named external executor.
+and must equal the signed envelope `payloadHash`. The verifier then parses the
+package-specific closed root vocabulary, binds its exact subject, requires an
+`approved` decision and mandatory success states, and binds the independent
+reviewer fields to the signed outer-envelope authority domain and key.
 
 The trust store matches `qualification-trust-store-v1.schema.json`, has a bounded
 validity interval, and carries a monotonically chained generation. Generation 1
@@ -56,13 +58,17 @@ The verifier fails closed unless:
 1. all seven package IDs occur exactly once;
 2. every package signature verifies for the exact repository, commit, tree and package;
 3. every immutable payload matches its signed hash;
-4. every nonce and signed payload hash is unique within the set;
-5. one authority domain or public key is not reused across independent governance,
+4. every payload passes the package-specific schema and success semantics;
+5. every payload reviewer matches the envelope signer and remains distinct from
+   the package operator/owner;
+6. every nonce and signed payload hash is unique within the set;
+7. one authority domain or public key is not reused across independent governance,
    target-host, key-owner, Codex-account and release/cutover groups;
-6. the request consumer UID equals the running process effective UID;
-7. the private replay ledger is a canonical single-link `0600` SQLite file in a
+8. the request consumer UID equals the running process effective UID;
+9. the private replay ledger is a canonical single-link `0600` SQLite file in a
    verifier-owned `0700` directory;
-8. trust-store generation/hash chaining and all seven nonce reservations commit
+10. the complete ledger DDL fingerprint, a durable nondecreasing verifier-clock
+   floor, trust-store generation/hash chaining and all seven nonce reservations commit
    together under `BEGIN IMMEDIATE`, `journal_mode=DELETE` and `synchronous=FULL`.
 
 An exact retry of the same seven-package receipt is idempotent and returns the
@@ -82,7 +88,10 @@ allPackagesVerified=true
 automaticActivation=false
 productionActivation=false
 sourceStatusUnchanged=true
-replayProtection=durable_sqlite_v1
+payloadSemantics=strict_package_v1
+clockRollbackProtection=true
+replayLedgerSchemaVersion=2
+replayProtection=durable_sqlite_v2
 replayLedgerCommitted=true
 ```
 
@@ -95,6 +104,7 @@ writer, release an artifact or submit a paper.
 ## Failure and recovery
 
 Missing, duplicated, expired, mismatched, self-authorized, authority-collapsed,
-aliased, writable, replaced, partially replayed or trust-rollback inputs exit
+aliased, writable, replaced, non-approved, semantically incomplete, clock-rollback,
+ledger-schema-drift, partially replayed or trust-rollback inputs exit
 nonzero and emit no receipt. Correct the external publication and run again.
 Only an exact already-committed retry is recoverable without fresh nonces.

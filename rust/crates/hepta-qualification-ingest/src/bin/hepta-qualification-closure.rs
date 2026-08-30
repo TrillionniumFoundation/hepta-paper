@@ -24,9 +24,10 @@ use std::{
 use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::VerifyingKey;
 use hepta_qualification_ingest::{
-    QualificationIngestError, QualificationPackageIdV1, QualificationSubjectV1,
-    QualificationTrustStoreV1, VerifiedExternalQualificationV1,
-    load_external_qualification_file_v1, verify_external_qualification_v1,
+    QualificationIngestError, QualificationPackageIdV1, QualificationPayloadError,
+    QualificationSubjectV1, QualificationTrustStoreV1, VerifiedExternalQualificationV1,
+    load_external_qualification_file_v1, validate_external_package_payload_v1,
+    verify_external_qualification_v1,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,34 @@ const MAXIMUM_TRUST_STORE_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_PAYLOAD_BYTES: u64 = 32 * 1024 * 1024;
 const MAXIMUM_TRUST_VALIDITY_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 const REPLAY_LEDGER_APPLICATION_ID: i32 = 0x4851_4c31;
-const REPLAY_LEDGER_USER_VERSION: i32 = 1;
+const REPLAY_LEDGER_USER_VERSION: i32 = 2;
+const TRUST_STORE_STATE_SCHEMA: &str = "CREATE TABLE trust_store_state_v1 (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    trust_store_hash TEXT NOT NULL,
+    previous_trust_store_hash TEXT,
+    accepted_at_unix_ms INTEGER NOT NULL CHECK (accepted_at_unix_ms > 0)
+) STRICT";
+const VERIFIER_CLOCK_STATE_SCHEMA: &str = "CREATE TABLE verifier_clock_state_v1 (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    maximum_observed_unix_ms INTEGER NOT NULL CHECK (maximum_observed_unix_ms > 0)
+) STRICT";
+const CLOSURE_RECEIPT_SCHEMA: &str = "CREATE TABLE closure_receipt_v1 (
+    receipt_hash TEXT PRIMARY KEY NOT NULL,
+    repository TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    tree_hash TEXT NOT NULL,
+    canonical_receipt BLOB NOT NULL,
+    accepted_at_unix_ms INTEGER NOT NULL CHECK (accepted_at_unix_ms > 0)
+) STRICT";
+const REPLAY_NONCE_SCHEMA: &str = "CREATE TABLE replay_nonce_v1 (
+    nonce TEXT PRIMARY KEY NOT NULL,
+    receipt_hash TEXT NOT NULL,
+    package_id TEXT NOT NULL,
+    package_record_hash TEXT NOT NULL,
+    FOREIGN KEY (receipt_hash) REFERENCES closure_receipt_v1(receipt_hash)
+) STRICT";
+
 const REQUIRED_REPOSITORY: &str = "TrillionniumFoundation/hepta-paper";
 const REQUIRED_FORBIDDEN_DOMAINS: [&str; 3] = [
     "implementation-author",
@@ -129,6 +157,9 @@ struct ExternalQualificationClosureBodyV1 {
     automatic_activation: bool,
     production_activation: bool,
     source_status_unchanged: bool,
+    payload_semantics: &'static str,
+    clock_rollback_protection: bool,
+    replay_ledger_schema_version: u16,
     trust_store_generation: u64,
     trust_store_hash: String,
     replay_protection: &'static str,
@@ -165,6 +196,8 @@ enum ClosureError {
     TrustStoreFork,
     #[error("the verifier system clock is invalid")]
     ClockInvalid,
+    #[error("the verifier wall clock regressed below durable acceptance state")]
+    ClockRollback,
     #[error("closure request consumer UID does not match the effective process UID")]
     ConsumerIdentityMismatch,
     #[error("authority-owned file boundary is invalid")]
@@ -185,6 +218,8 @@ enum ClosureError {
     AuthoritySeparationViolation,
     #[error("external qualification envelope path does not match its declared package")]
     PackageBindingMismatch,
+    #[error(transparent)]
+    Payload(#[from] QualificationPayloadError),
     #[error(transparent)]
     Ingest(#[from] QualificationIngestError),
     #[error(transparent)]
@@ -288,6 +323,12 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
         if hash_bytes(&payload_bytes) != envelope.payload_hash {
             return Err(ClosureError::PayloadHashMismatch);
         }
+        validate_external_package_payload_v1(
+            &payload_bytes,
+            &subject,
+            &record.authority_domain_id,
+            &record.signer_key_id,
+        )?;
         verified.push(record);
     }
 
@@ -428,9 +469,12 @@ fn assemble_receipt(
         automatic_activation: false,
         production_activation: false,
         source_status_unchanged: true,
+        payload_semantics: "strict_package_v1",
+        clock_rollback_protection: true,
+        replay_ledger_schema_version: 2,
         trust_store_generation,
         trust_store_hash: trust_store_hash.to_owned(),
-        replay_protection: "durable_sqlite_v1",
+        replay_protection: "durable_sqlite_v2",
         replay_ledger_committed: true,
     };
     let body_bytes = serde_json::to_vec(&body)?;
@@ -625,7 +669,17 @@ fn open_replay_ledger(
 
 fn initialize_replay_ledger(connection: &Connection) -> Result<(), ClosureError> {
     let schema = format!(
-        "PRAGMA journal_mode=DELETE;\n             PRAGMA synchronous=FULL;\n             PRAGMA foreign_keys=ON;\n             PRAGMA trusted_schema=OFF;\n             PRAGMA secure_delete=ON;\n             PRAGMA application_id={REPLAY_LEDGER_APPLICATION_ID};\n             PRAGMA user_version={REPLAY_LEDGER_USER_VERSION};\n             CREATE TABLE trust_store_state_v1 (\n                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1),\n                 generation INTEGER NOT NULL CHECK (generation > 0),\n                 trust_store_hash TEXT NOT NULL,\n                 previous_trust_store_hash TEXT,\n                 accepted_at_unix_ms INTEGER NOT NULL CHECK (accepted_at_unix_ms > 0)\n             ) STRICT;\n             CREATE TABLE closure_receipt_v1 (\n                 receipt_hash TEXT PRIMARY KEY NOT NULL,\n                 repository TEXT NOT NULL,\n                 commit_hash TEXT NOT NULL,\n                 tree_hash TEXT NOT NULL,\n                 canonical_receipt BLOB NOT NULL,\n                 accepted_at_unix_ms INTEGER NOT NULL CHECK (accepted_at_unix_ms > 0)\n             ) STRICT;\n             CREATE TABLE replay_nonce_v1 (\n                 nonce TEXT PRIMARY KEY NOT NULL,\n                 receipt_hash TEXT NOT NULL,\n                 package_id TEXT NOT NULL,\n                 package_record_hash TEXT NOT NULL,\n                 FOREIGN KEY (receipt_hash) REFERENCES closure_receipt_v1(receipt_hash)\n             ) STRICT;"
+        "PRAGMA journal_mode=DELETE;
+         PRAGMA synchronous=FULL;
+         PRAGMA foreign_keys=ON;
+         PRAGMA trusted_schema=OFF;
+         PRAGMA secure_delete=ON;
+         PRAGMA application_id={REPLAY_LEDGER_APPLICATION_ID};
+         PRAGMA user_version={REPLAY_LEDGER_USER_VERSION};
+         {TRUST_STORE_STATE_SCHEMA};
+         {VERIFIER_CLOCK_STATE_SCHEMA};
+         {CLOSURE_RECEIPT_SCHEMA};
+         {REPLAY_NONCE_SCHEMA};"
     );
     connection.execute_batch(&schema)?;
     Ok(())
@@ -637,8 +691,11 @@ fn verify_replay_ledger_schema(connection: &Connection) -> Result<(), ClosureErr
     if quick_check != "ok" {
         return Err(ClosureError::ReplayLedgerInvalid);
     }
+
     let mut statement = connection.prepare(
-        "SELECT type, name FROM sqlite_schema\n             WHERE name NOT LIKE 'sqlite_%'\n             ORDER BY type, name",
+        "SELECT type, name FROM sqlite_schema
+         WHERE name NOT LIKE 'sqlite_%'
+         ORDER BY type, name",
     )?;
     let rows = statement.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -648,11 +705,44 @@ fn verify_replay_ledger_schema(connection: &Connection) -> Result<(), ClosureErr
         ("table".to_owned(), "closure_receipt_v1".to_owned()),
         ("table".to_owned(), "replay_nonce_v1".to_owned()),
         ("table".to_owned(), "trust_store_state_v1".to_owned()),
+        ("table".to_owned(), "verifier_clock_state_v1".to_owned()),
     ];
     if actual != expected {
         return Err(ClosureError::ReplayLedgerInvalid);
     }
+
+    for (name, expected_sql) in [
+        ("trust_store_state_v1", TRUST_STORE_STATE_SCHEMA),
+        ("verifier_clock_state_v1", VERIFIER_CLOCK_STATE_SCHEMA),
+        ("closure_receipt_v1", CLOSURE_RECEIPT_SCHEMA),
+        ("replay_nonce_v1", REPLAY_NONCE_SCHEMA),
+    ] {
+        let actual_sql = connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+                params![name],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(ClosureError::ReplayLedgerInvalid)?;
+        if normalize_sql(&actual_sql) != normalize_sql(expected_sql) {
+            return Err(ClosureError::ReplayLedgerInvalid);
+        }
+    }
+
+    let foreign_keys: i64 = connection.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    let synchronous: i64 = connection.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+    let trusted_schema: i64 =
+        connection.query_row("PRAGMA trusted_schema", [], |row| row.get(0))?;
+    let journal_mode: String = connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+    if foreign_keys != 1 || synchronous != 2 || trusted_schema != 0 || journal_mode != "delete" {
+        return Err(ClosureError::ReplayLedgerInvalid);
+    }
     Ok(())
+}
+
+fn normalize_sql(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn commit_replay_receipt(
@@ -668,6 +758,7 @@ fn commit_replay_receipt(
     let canonical_receipt = serde_json::to_vec(receipt)?;
     let now = i64::try_from(now_unix_ms).map_err(|_| ClosureError::ClockInvalid)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    advance_verifier_clock(&transaction, now)?;
     advance_trust_store_state(
         &transaction,
         trust_store_generation,
@@ -761,6 +852,41 @@ fn commit_replay_receipt(
         return Err(ClosureError::ReplayLedgerInvalid);
     }
     file.sync_all()?;
+    Ok(())
+}
+
+fn advance_verifier_clock(
+    transaction: &rusqlite::Transaction<'_>,
+    now_unix_ms: i64,
+) -> Result<(), ClosureError> {
+    let maximum_observed = transaction
+        .query_row(
+            "SELECT maximum_observed_unix_ms
+             FROM verifier_clock_state_v1 WHERE singleton = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    match maximum_observed {
+        None => {
+            transaction.execute(
+                "INSERT INTO verifier_clock_state_v1
+                 (singleton, maximum_observed_unix_ms) VALUES (1, ?1)",
+                params![now_unix_ms],
+            )?;
+        }
+        Some(previous) if now_unix_ms < previous => {
+            return Err(ClosureError::ClockRollback);
+        }
+        Some(previous) if now_unix_ms > previous => {
+            transaction.execute(
+                "UPDATE verifier_clock_state_v1
+                 SET maximum_observed_unix_ms = ?1 WHERE singleton = 1",
+                params![now_unix_ms],
+            )?;
+        }
+        Some(_) => {}
+    }
     Ok(())
 }
 
@@ -1062,7 +1188,10 @@ mod tests {
         assert!(receipt.body.source_status_unchanged);
         assert_eq!(receipt.body.trust_store_generation, 1);
         assert_eq!(receipt.body.trust_store_hash, TEST_TRUST_HASH);
-        assert_eq!(receipt.body.replay_protection, "durable_sqlite_v1");
+        assert_eq!(receipt.body.payload_semantics, "strict_package_v1");
+        assert!(receipt.body.clock_rollback_protection);
+        assert_eq!(receipt.body.replay_ledger_schema_version, 2);
+        assert_eq!(receipt.body.replay_protection, "durable_sqlite_v2");
         assert!(receipt.body.replay_ledger_committed);
         assert_eq!(receipt.body.packages.len(), 7);
         assert_eq!(receipt.body.authority_groups.len(), 5);
@@ -1316,6 +1445,63 @@ mod tests {
                 &rollback,
             ),
             Err(ClosureError::TrustStoreRollback)
+        ));
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn replay_ledger_rejects_verifier_clock_rollback() {
+        let (directory, ledger) = test_ledger("clock-rollback");
+        let receipt = assemble_test_receipt(
+            REQUIRED_REPOSITORY,
+            &"a".repeat(40),
+            &"b".repeat(40),
+            complete_set(),
+        )
+        .expect("receipt");
+        commit_replay_receipt(
+            &ledger,
+            ledger.owner_uid,
+            1,
+            TEST_TRUST_HASH,
+            None,
+            30_000,
+            &receipt,
+        )
+        .expect("first acceptance");
+        assert!(matches!(
+            commit_replay_receipt(
+                &ledger,
+                ledger.owner_uid,
+                1,
+                TEST_TRUST_HASH,
+                None,
+                29_999,
+                &receipt,
+            ),
+            Err(ClosureError::ClockRollback)
+        ));
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn replay_ledger_rejects_same_named_but_tampered_schema() {
+        let (directory, ledger) = test_ledger("schema-tamper");
+        drop(open_replay_ledger(&ledger, ledger.owner_uid).expect("initialize ledger"));
+        let connection = Connection::open(&ledger.path).expect("open ledger for tamper fixture");
+        connection
+            .execute_batch(
+                "DROP TABLE verifier_clock_state_v1;
+             CREATE TABLE verifier_clock_state_v1 (
+                 singleton INTEGER PRIMARY KEY,
+                 maximum_observed_unix_ms TEXT NOT NULL
+             ) STRICT;",
+            )
+            .expect("tamper fixture schema");
+        drop(connection);
+        assert!(matches!(
+            open_replay_ledger(&ledger, ledger.owner_uid),
+            Err(ClosureError::ReplayLedgerInvalid)
         ));
         fs::remove_dir_all(directory).expect("remove test directory");
     }

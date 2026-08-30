@@ -3,6 +3,10 @@
 #[cfg(not(unix))]
 compile_error!("hepta-qualification-ingest requires Unix file identity semantics");
 
+mod package_payload;
+
+pub use package_payload::{QualificationPayloadError, validate_external_package_payload_v1};
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},

@@ -3,7 +3,12 @@
 ## Preconditions
 
 - candidate Git commit and tree are immutable and independently identified;
-- each package payload passes its JSON Schema and package-specific semantic checks;
+- each package payload is canonical JSON matching its closed root schema;
+- the package decision is `approved` and every mandatory drill/result field is in
+  its success state;
+- the independently reviewing authority named in the payload exactly matches the
+  signed outer envelope, and is distinct from the operator/owner domains required
+  by that package;
 - every immutable payload file hashes exactly to the signed envelope `payloadHash`;
 - the external signer domain/key is present in a canonical trust store matching
   `qualification-trust-store-v1.schema.json`;
@@ -19,23 +24,27 @@
 2. Obtain current time from the verifier operating system, never from request input.
 3. Open trust, envelope and payload files with no-follow and close-on-exec semantics.
 4. Recheck path/descriptor device, inode, owner, mode, link count, size and timestamps.
-5. Require canonical JSON and the closed V1 field vocabulary.
+5. Require canonical JSON and each package's exact closed field vocabulary.
 6. Bind repository, package, exact commit, exact tree and exact payload bytes/hash.
-7. Check evidence and trust issue/expiry times and bounded validity windows.
-8. Reject forbidden/unknown domains, duplicate public-key aliases and bad signatures.
-9. Under one private SQLite `BEGIN IMMEDIATE` transaction, reject partial/conflicting
-   nonce replay, enforce trust generation/hash chaining, and persist all seven nonce
-   reservations plus the canonical aggregate receipt.
-10. Emit the receipt only after durable commit; exact retries are idempotent.
-11. Require an independent governance decision before changing an external gap to
+7. Reject non-approved decisions, failed/inconclusive drills, open findings, missing
+   mandatory evidence, duplicate authority kinds/roles and reviewer/operator collapse.
+8. Check evidence and trust issue/expiry times and bounded validity windows.
+9. Reject forbidden/unknown domains, duplicate public-key aliases and bad signatures.
+10. Under one private SQLite `BEGIN IMMEDIATE` transaction, verify the complete
+    ledger DDL fingerprint, reject system-clock rollback, reject partial/conflicting
+    nonce replay, enforce trust generation/hash chaining, and persist all seven nonce
+    reservations plus the canonical aggregate receipt.
+11. Emit the receipt only after durable commit; exact retries are idempotent.
+12. Require an independent governance decision before changing an external gap to
     `externally_accepted`.
 
 ## Failure handling
 
-A path change, noncanonical encoding, stale record, subject/payload mismatch,
-signature failure, partial/conflicting replay, forbidden domain, trust rollback,
-trust fork or ambiguous database state rejects the entire operation. Partial
-validation grants no retained authority and the SQLite transaction rolls back.
+A path change, noncanonical encoding, schema/subject mismatch, non-approved decision,
+failed mandatory drill, authority collapse, stale record, payload mismatch, signature
+failure, clock rollback, partial/conflicting replay, trust rollback, trust fork or
+ledger-schema drift rejects the entire operation. Partial validation grants no
+retained authority and the SQLite transaction rolls back.
 
 Evidence acceptance never performs any of the following automatically:
 

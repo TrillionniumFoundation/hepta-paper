@@ -1,0 +1,402 @@
+name: qualification-closure-hardening-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-qualification-hardening-20260830
+    paths:
+      - '.github/workflows/qualification-closure-hardening-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qualification-closure-hardening-once
+  cancel-in-progress: false
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TARGET_BRANCH: codex/rust-plan-v3-final-product-20260830
+      EXPECTED_HEAD: aa985a9a0ceed5fb35d4174cb499e4b337e785e3
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-plan-v3-final-product-20260830
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Harden schema parity, ledger schema and clock rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+          root = Path('.')
+          lib_path = root / 'rust/crates/hepta-qualification-ingest/src/lib.rs'
+          lib = lib_path.read_text(encoding='utf-8')
+          lib = replace_once(
+              lib,
+              '''        let forbidden_authority_domains = forbidden_domains.into_iter().collect::<BTreeSet<_>>();
+        if forbidden_authority_domains
+            .iter()
+            .any(|value| !valid_identifier(value))
+        {
+            return Err(QualificationIngestError::TrustStoreInvalid);
+        }
+        Ok(Self {
+            keys,
+            forbidden_authority_domains,
+        })
+''',
+              '''        let mut forbidden_authority_domains = BTreeSet::new();
+        for domain in forbidden_domains {
+            if !valid_identifier(&domain)
+                || forbidden_authority_domains.len() == 128
+                || !forbidden_authority_domains.insert(domain)
+            {
+                return Err(QualificationIngestError::TrustStoreInvalid);
+            }
+        }
+        Ok(Self {
+            keys,
+            forbidden_authority_domains,
+        })
+''',
+              'forbidden authority-domain set validation',
+          )
+          lib = replace_once(
+              lib,
+              '''fn valid_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+}
+''',
+              '''fn valid_identifier(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    matches!(bytes.next(), Some(first) if first.is_ascii_alphanumeric())
+        && value.len() <= 128
+        && bytes.all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
+        })
+}
+''',
+              'schema-aligned identifier validation',
+          )
+          identifier_test = '''    #[test]
+    fn identifiers_match_schema_and_forbidden_domains_are_unique() {
+        for valid in ["a", "A0", "review:key-1", "authority_domain.v1"] {
+            assert!(valid_identifier(valid), "{valid}");
+        }
+        for invalid in ["", "-leading", "_leading", ".leading", ":leading", "é"] {
+            assert!(!valid_identifier(invalid), "{invalid}");
+        }
+        assert!(!valid_identifier(&"a".repeat(129)));
+
+        let signing = SigningKey::from_bytes(&[24_u8; 32]);
+        let duplicate_forbidden = QualificationTrustStoreV1::new(
+            [(
+                "independent-review".to_owned(),
+                "review-key".to_owned(),
+                signing.verifying_key(),
+            )],
+            [
+                "repository-admin".to_owned(),
+                "repository-admin".to_owned(),
+            ],
+        );
+        assert!(matches!(
+            duplicate_forbidden,
+            Err(QualificationIngestError::TrustStoreInvalid)
+        ));
+    }
+
+'''
+          lib = replace_once(
+              lib,
+              '    #[test]\n    fn closed_package_vocabulary_round_trips_canonical_external_ids() {\n',
+              identifier_test + '    #[test]\n    fn closed_package_vocabulary_round_trips_canonical_external_ids() {\n',
+              'identifier regression test',
+          )
+          lib_path.write_text(lib, encoding='utf-8')
+
+          closure_path = root / 'rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs'
+          closure = closure_path.read_text(encoding='utf-8')
+          schema_start = closure.index('fn verify_replay_ledger_schema(')
+          schema_end = closure.index('fn commit_replay_receipt(', schema_start)
+          schema_verifier = r'''fn normalized_schema_sql(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn verify_replay_ledger_schema(connection: &Connection) -> Result<(), ClosureError> {
+    let quick_check: String =
+        connection.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
+    if quick_check != "ok" {
+        return Err(ClosureError::ReplayLedgerInvalid);
+    }
+    let mut statement = connection.prepare(
+        "SELECT type, name, COALESCE(sql, '') FROM sqlite_schema\n             WHERE name NOT LIKE 'sqlite_%'\n             ORDER BY type, name",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            normalized_schema_sql(&row.get::<_, String>(2)?),
+        ))
+    })?;
+    let actual = rows.collect::<Result<Vec<_>, _>>()?;
+    let expected = vec![
+        (
+            "table".to_owned(),
+            "closure_receipt_v1".to_owned(),
+            normalized_schema_sql(
+                "CREATE TABLE closure_receipt_v1 (\n                     receipt_hash TEXT PRIMARY KEY NOT NULL,\n                     repository TEXT NOT NULL,\n                     commit_hash TEXT NOT NULL,\n                     tree_hash TEXT NOT NULL,\n                     canonical_receipt BLOB NOT NULL,\n                     accepted_at_unix_ms INTEGER NOT NULL CHECK (accepted_at_unix_ms > 0)\n                 ) STRICT",
+            ),
+        ),
+        (
+            "table".to_owned(),
+            "replay_nonce_v1".to_owned(),
+            normalized_schema_sql(
+                "CREATE TABLE replay_nonce_v1 (\n                     nonce TEXT PRIMARY KEY NOT NULL,\n                     receipt_hash TEXT NOT NULL,\n                     package_id TEXT NOT NULL,\n                     package_record_hash TEXT NOT NULL,\n                     FOREIGN KEY (receipt_hash) REFERENCES closure_receipt_v1(receipt_hash)\n                 ) STRICT",
+            ),
+        ),
+        (
+            "table".to_owned(),
+            "trust_store_state_v1".to_owned(),
+            normalized_schema_sql(
+                "CREATE TABLE trust_store_state_v1 (\n                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),\n                     generation INTEGER NOT NULL CHECK (generation > 0),\n                     trust_store_hash TEXT NOT NULL,\n                     previous_trust_store_hash TEXT,\n                     accepted_at_unix_ms INTEGER NOT NULL CHECK (accepted_at_unix_ms > 0)\n                 ) STRICT",
+            ),
+        ),
+    ];
+    if actual != expected {
+        return Err(ClosureError::ReplayLedgerInvalid);
+    }
+    Ok(())
+}
+
+'''
+          closure = closure[:schema_start] + schema_verifier + closure[schema_end:]
+
+          trust_start = closure.index('fn advance_trust_store_state(')
+          trust_end = closure.index('fn read_authority_file(', trust_start)
+          trust_function = r'''fn advance_trust_store_state(
+    transaction: &rusqlite::Transaction<'_>,
+    generation: u64,
+    trust_store_hash: &str,
+    previous_trust_store_hash: Option<&str>,
+    now_unix_ms: i64,
+) -> Result<(), ClosureError> {
+    let generation = i64::try_from(generation).map_err(|_| ClosureError::TrustStoreInvalid)?;
+    let existing = transaction
+        .query_row(
+            "SELECT generation, trust_store_hash, previous_trust_store_hash,\n                    accepted_at_unix_ms\n                 FROM trust_store_state_v1 WHERE singleton = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    match existing {
+        None => {
+            if generation != 1 || previous_trust_store_hash.is_some() {
+                return Err(ClosureError::TrustStoreFork);
+            }
+            transaction.execute(
+                "INSERT INTO trust_store_state_v1 (\n                         singleton, generation, trust_store_hash,\n                         previous_trust_store_hash, accepted_at_unix_ms\n                     ) VALUES (1, ?1, ?2, NULL, ?3)",
+                params![generation, trust_store_hash, now_unix_ms],
+            )?;
+        }
+        Some((stored_generation, stored_hash, stored_previous, stored_accepted_at)) => {
+            if now_unix_ms < stored_accepted_at {
+                return Err(ClosureError::ClockInvalid);
+            }
+            if generation < stored_generation {
+                return Err(ClosureError::TrustStoreRollback);
+            }
+            if generation == stored_generation {
+                if stored_hash != trust_store_hash
+                    || stored_previous.as_deref() != previous_trust_store_hash
+                {
+                    return Err(ClosureError::TrustStoreFork);
+                }
+                transaction.execute(
+                    "UPDATE trust_store_state_v1\n                         SET accepted_at_unix_ms = ?1\n                         WHERE singleton = 1",
+                    params![now_unix_ms],
+                )?;
+            } else {
+                if generation != stored_generation + 1
+                    || previous_trust_store_hash != Some(stored_hash.as_str())
+                {
+                    return Err(ClosureError::TrustStoreFork);
+                }
+                transaction.execute(
+                    "UPDATE trust_store_state_v1\n                         SET generation = ?1, trust_store_hash = ?2,\n                             previous_trust_store_hash = ?3, accepted_at_unix_ms = ?4\n                         WHERE singleton = 1",
+                    params![
+                        generation,
+                        trust_store_hash,
+                        previous_trust_store_hash,
+                        now_unix_ms,
+                    ],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+'''
+          closure = closure[:trust_start] + trust_function + closure[trust_end:]
+
+          clock_assertion = '''        assert!(matches!(
+            commit_replay_receipt(
+                &ledger,
+                ledger.owner_uid,
+                1,
+                TEST_TRUST_HASH,
+                None,
+                10_000,
+                &receipt,
+            ),
+            Err(ClosureError::ClockInvalid)
+        ));
+'''
+          clock_anchor = '''        commit_replay_receipt(
+            &ledger,
+            ledger.owner_uid,
+            1,
+            TEST_TRUST_HASH,
+            None,
+            10_001,
+            &receipt,
+        )
+        .expect("exact idempotent retry");
+'''
+          closure = replace_once(
+              closure,
+              clock_anchor,
+              clock_anchor + clock_assertion,
+              'clock rollback regression test',
+          )
+
+          forged_schema_test = r'''    #[test]
+    fn replay_ledger_rejects_forged_same_name_schema() {
+        let (directory, ledger) = test_ledger("forged-schema");
+        {
+            let connection = Connection::open(&ledger.path).expect("create forged ledger");
+            connection
+                .execute_batch(&format!(
+                    "PRAGMA application_id={REPLAY_LEDGER_APPLICATION_ID};\n                     PRAGMA user_version={REPLAY_LEDGER_USER_VERSION};\n                     CREATE TABLE trust_store_state_v1 (\n                         singleton INTEGER, generation INTEGER, trust_store_hash TEXT,\n                         previous_trust_store_hash TEXT, accepted_at_unix_ms INTEGER\n                     ) STRICT;\n                     CREATE TABLE closure_receipt_v1 (\n                         receipt_hash TEXT, repository TEXT, commit_hash TEXT, tree_hash TEXT,\n                         canonical_receipt BLOB, accepted_at_unix_ms INTEGER\n                     ) STRICT;\n                     CREATE TABLE replay_nonce_v1 (\n                         nonce TEXT, receipt_hash TEXT, package_id TEXT, package_record_hash TEXT\n                     ) STRICT;"
+                ))
+                .expect("forge same-name schema");
+        }
+        fs::set_permissions(&ledger.path, fs::Permissions::from_mode(0o600))
+            .expect("private ledger permissions");
+        assert!(matches!(
+            open_replay_ledger(&ledger, ledger.owner_uid),
+            Err(ClosureError::ReplayLedgerInvalid)
+        ));
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+'''
+          closure = replace_once(
+              closure,
+              '    #[test]\n    fn replay_ledger_is_durable_idempotent_and_conflict_closed() {\n',
+              forged_schema_test
+              + '    #[test]\n    fn replay_ledger_is_durable_idempotent_and_conflict_closed() {\n',
+              'forged schema regression test',
+          )
+          closure_path.write_text(closure, encoding='utf-8')
+
+          closure_doc_path = root / 'docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md'
+          closure_doc = closure_doc_path.read_text(encoding='utf-8')
+          closure_doc = replace_once(
+              closure_doc,
+              '''8. trust-store generation/hash chaining and all seven nonce reservations commit
+   together under `BEGIN IMMEDIATE`, `journal_mode=DELETE` and `synchronous=FULL`.
+''',
+              '''8. trust-store generation/hash chaining and all seven nonce reservations commit
+   together under `BEGIN IMMEDIATE`, `journal_mode=DELETE` and `synchronous=FULL`;
+9. the ledger rejects verifier-clock regression below the last durable acceptance.
+''',
+              'closure clock rollback documentation',
+          )
+          closure_doc_path.write_text(closure_doc, encoding='utf-8')
+
+          runbook_path = root / 'docs/rust/qualification/EXTERNAL_EVIDENCE_INGESTION_RUNBOOK.md'
+          runbook = runbook_path.read_text(encoding='utf-8')
+          runbook = replace_once(
+              runbook,
+              '''9. Under one private SQLite `BEGIN IMMEDIATE` transaction, reject partial/conflicting
+   nonce replay, enforce trust generation/hash chaining, and persist all seven nonce
+   reservations plus the canonical aggregate receipt.
+''',
+              '''9. Under one private SQLite `BEGIN IMMEDIATE` transaction, reject partial/conflicting
+   nonce replay and verifier-clock rollback, enforce trust generation/hash chaining,
+   validate the exact ledger schema, and persist all seven nonce reservations plus the
+   canonical aggregate receipt.
+''',
+              'runbook replay and clock hardening',
+          )
+          runbook = replace_once(
+              runbook,
+              '''signature failure, partial/conflicting replay, forbidden domain, trust rollback,
+trust fork or ambiguous database state rejects the entire operation. Partial
+''',
+              '''signature failure, partial/conflicting replay, forbidden domain, clock regression,
+trust rollback, trust fork or ambiguous database state rejects the entire operation. Partial
+''',
+              'runbook failure list',
+          )
+          runbook_path.write_text(runbook, encoding='utf-8')
+          PY
+
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml -p hepta-qualification-ingest --all-features --locked
+          cargo clippy --manifest-path rust/Cargo.toml -p hepta-qualification-ingest --all-targets --all-features --locked -- -D warnings
+          git diff --check
+
+      - name: Commit validated hardening to frozen product branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code --quiet && { echo 'no product changes'; exit 1; }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            rust/crates/hepta-qualification-ingest/src/lib.rs \
+            rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs \
+            docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md \
+            docs/rust/qualification/EXTERNAL_EVIDENCE_INGESTION_RUNBOOK.md
+          git diff --cached --check
+          git commit -m 'fix(qualification): fence schema drift and clock rollback'
+          git fetch origin "$TARGET_BRANCH"
+          test "$(git rev-parse "origin/$TARGET_BRANCH")" = "$EXPECTED_HEAD"
+          git push origin "HEAD:$TARGET_BRANCH"

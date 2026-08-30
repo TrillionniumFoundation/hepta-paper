@@ -1,0 +1,62 @@
+name: plan-v3-exact-source-export
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-deep-audit-20260830
+    paths:
+      - '.github/workflows/plan-v3-source-export-once.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-v3-exact-source-export
+  cancel-in-progress: true
+
+env:
+  EXPECTED_HEAD: 1992dffd7f520a11813cffc34691e94ff0dfd7c8
+  EXPECTED_TREE: 8e4865411781e2c64289d6387377f0632c2aa38e
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact product head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build deterministic exact-source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test -z "$(git status --porcelain)"
+          mkdir -p /tmp/hepta-exact-source
+          git archive --format=tar --prefix="hepta-paper-${EXPECTED_HEAD}/" "$EXPECTED_HEAD" \
+            | gzip -9 > /tmp/hepta-exact-source/exact-source.tar.gz
+          git ls-files | LC_ALL=C sort > /tmp/hepta-exact-source/tracked-files.txt
+          sha256sum /tmp/hepta-exact-source/exact-source.tar.gz \
+            > /tmp/hepta-exact-source/SHA256SUMS
+          {
+            printf 'repository=TrillionniumFoundation/hepta-paper\n'
+            printf 'commit=%s\n' "$EXPECTED_HEAD"
+            printf 'tree=%s\n' "$EXPECTED_TREE"
+            printf 'tracked_file_count=%s\n' "$(wc -l < /tmp/hepta-exact-source/tracked-files.txt)"
+          } > /tmp/hepta-exact-source/IDENTITY
+          cat /tmp/hepta-exact-source/IDENTITY
+          cat /tmp/hepta-exact-source/SHA256SUMS
+
+      - name: Upload exact product source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-plan-v3-exact-source-1992dffd
+          path: /tmp/hepta-exact-source
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

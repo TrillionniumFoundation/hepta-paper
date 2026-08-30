@@ -54,6 +54,7 @@ jobs:
               'protected-main-ruleset-evidence-v1.schema.json',
               'external-qualification-closure-request-v1.schema.json',
               'external-qualification-closure-receipt-v1.schema.json',
+              'qualification-trust-store-v1.schema.json',
           }
           expected_packages = {
               'EXT-GOV-MAIN-001',
@@ -163,6 +164,7 @@ jobs:
               'hepta-qualification-closure',
               'external-qualification-closure-request-v1.schema.json',
               'external-qualification-closure-receipt-v1.schema.json',
+              'qualification-trust-store-v1.schema.json',
               'automaticActivation=false',
               'productionActivation=false',
           ]:
@@ -178,11 +180,28 @@ jobs:
               'DuplicateNonce',
               'DuplicatePayload',
               'AuthoritySeparationViolation',
+              'PayloadHashMismatch',
+              'ReplayConflict',
+              'PartialReplay',
+              'TrustStoreRollback',
+              'TrustStoreFork',
               'automatic_activation: false',
               'production_activation: false',
               'source_status_unchanged: true',
+              'replay_ledger_committed: true',
+              'system_unix_ms()',
           ]:
               assert required in closure_source, required
+          assert 'request.now_unix_ms' not in closure_source
+          request_schema = json.loads((
+              root / 'external-qualification-closure-request-v1.schema.json'
+          ).read_text(encoding='utf-8'))
+          assert 'nowUnixMs' not in request_schema['properties']
+          assert 'replayLedger' in request_schema['required']
+          envelope_required = set(
+              request_schema['properties']['envelopes']['items']['required']
+          )
+          assert {'payloadPath', 'payloadOwnerUid'} <= envelope_required
           PY
 
       - name: Prove harness is fail-closed without external acknowledgement

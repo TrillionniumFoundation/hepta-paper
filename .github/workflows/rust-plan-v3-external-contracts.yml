@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'docs/rust/qualification/**'
+      - 'docs/rust/current-status.v1.json'
       - '.github/workflows/rust-plan-v3-external-contracts.yml'
   push:
     branches: [main]
     paths:
       - 'docs/rust/qualification/**'
+      - 'docs/rust/current-status.v1.json'
       - '.github/workflows/rust-plan-v3-external-contracts.yml'
   workflow_dispatch:
 
@@ -31,28 +33,40 @@ jobs:
           bash -n docs/rust/qualification/hepta-broker-host-qualification-v2.sh
           bash -n docs/rust/qualification/hepta-cgroup-v2-target-host-qualification.sh
 
-      - name: Validate JSON Schema contracts
+      - name: Validate schemas and external-gap package coverage
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
+          import re
           from pathlib import Path
 
-          expected = {
+          expected_schemas = {
               'hepta-broker-qualification-evidence-v1.schema.json',
               'independent-linux-review-v1.schema.json',
               'external-key-owner-drill-v1.schema.json',
               'authenticated-codex-role-canary-v1.schema.json',
               'production-cutover-soak-v1.schema.json',
               'external-authority-set-v1.schema.json',
+              'protected-main-ruleset-evidence-v1.schema.json',
+          }
+          expected_packages = {
+              'EXT-GOV-MAIN-001',
+              'EXT-HOST-CGROUP-001',
+              'EXT-HOST-STORAGE-001',
+              'EXT-KEY-OWNER-001',
+              'EXT-CODEX-ROLE-001',
+              'EXT-CUTOVER-SOAK-001',
+              'EXT-AUTHORITY-SET-001',
           }
           root = Path('docs/rust/qualification')
-          present = {path.name for path in root.glob('*.schema.json')}
-          missing = expected - present
+          present_schemas = {path.name for path in root.glob('*.schema.json')}
+          missing = expected_schemas - present_schemas
           if missing:
               raise SystemExit(f'missing schemas: {sorted(missing)}')
-          for name in sorted(expected):
+
+          for name in sorted(expected_schemas):
               path = root / name
               value = json.loads(path.read_text(encoding='utf-8'))
               assert value['$schema'] == 'https://json-schema.org/draft/2020-12/schema', name
@@ -60,6 +74,71 @@ jobs:
               assert value['additionalProperties'] is False, name
               assert value['properties']['schemaVersion']['const'] == 1, name
               assert value['required'], name
+
+          truth = json.loads(
+              Path('docs/rust/current-status.v1.json').read_text(encoding='utf-8')
+          )
+          external_gaps = {
+              row['id']: row['issue']
+              for row in truth['gaps']
+              if row.get('external') is True
+          }
+          assert external_gaps, 'external gap set must not be empty'
+
+          mapping = json.loads(
+              (root / 'external-package-map.v1.json').read_text(encoding='utf-8')
+          )
+          assert mapping == {
+              'schemaVersion': 1,
+              'program': 'hepta-paper-rust-rewrite',
+              'status': 'canonical_external_package_map',
+              'packages': mapping['packages'],
+          }
+          rows = mapping['packages']
+          assert isinstance(rows, list) and rows
+          package_ids = [row['packageId'] for row in rows]
+          assert len(package_ids) == len(set(package_ids)), 'duplicate package ID'
+          assert set(package_ids) == expected_packages, (
+              set(package_ids), expected_packages
+          )
+
+          covered = set()
+          for row in rows:
+              assert set(row) == {
+                  'gapId',
+                  'issue',
+                  'packageId',
+                  'schemas',
+                  'executor',
+                  'automaticActivation',
+              }, row
+              gap_id = row['gapId']
+              assert gap_id in external_gaps, f'unknown/non-external gap: {gap_id}'
+              assert row['issue'] == external_gaps[gap_id], (
+                  gap_id, row['issue'], external_gaps[gap_id]
+              )
+              assert re.fullmatch(r'EXT-[A-Z0-9-]{3,96}', row['packageId'])
+              assert isinstance(row['schemas'], list) and row['schemas']
+              assert len(row['schemas']) == len(set(row['schemas']))
+              for schema in row['schemas']:
+                  assert schema in expected_schemas, (row['packageId'], schema)
+              assert re.fullmatch(r'[a-z][a-z0-9_]{2,127}', row['executor'])
+              assert row['automaticActivation'] is False
+              covered.add(gap_id)
+          assert covered == set(external_gaps), (covered, set(external_gaps))
+
+          protocol = (root / 'PLAN_V3_EXTERNAL_GAP_EXECUTION.md').read_text(
+              encoding='utf-8'
+          )
+          package_index = (root / 'PLAN_V3_EXTERNAL_PACKAGE_INDEX.md').read_text(
+              encoding='utf-8'
+          )
+          for row in rows:
+              assert row['packageId'] in protocol, row['packageId']
+              assert row['packageId'] in package_index, row['packageId']
+              assert row['gapId'] in package_index, row['gapId']
+              for schema in row['schemas']:
+                  assert schema in protocol or schema in package_index, schema
           PY
 
       - name: Prove harness is fail-closed without external acknowledgement

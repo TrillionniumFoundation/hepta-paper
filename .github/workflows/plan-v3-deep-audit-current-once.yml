@@ -1,0 +1,173 @@
+name: plan-v3-deep-audit-current-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-deep-audit-20260830
+    paths:
+      - '.github/workflows/plan-v3-deep-audit-current-once.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-v3-deep-audit-current-once
+  cancel-in-progress: true
+
+env:
+  EXPECTED_HEAD: 7d0660be80b119251c2313e59965a4df9625c34b
+  EXPECTED_TREE: 5a27495c5d3382932ba5619a288955183e5ad055
+  RUSTFLAGS: -Dunsafe-code -C overflow-checks=yes
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact frozen product head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prove exact source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test -z "$(git status --porcelain)"
+
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Inventory production control surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import json
+          import re
+
+          patterns = {
+              "todo_macro_text": re.compile(r"\btodo!\s*\("),
+              "unimplemented_macro_text": re.compile(r"\bunimplemented!\s*\("),
+              "panic_macro_text": re.compile(r"\bpanic!\s*\("),
+              "unwrap_call_text": re.compile(r"\.unwrap\s*\("),
+              "expect_call_text": re.compile(r"\.expect\s*\("),
+              "unsafe_word": re.compile(r"\bunsafe\b"),
+              "process_command": re.compile(r"(?:std::process::|process::)?Command::new\s*\("),
+              "process_exit": re.compile(r"(?:std::process::|process::)exit\s*\("),
+              "environment_read": re.compile(r"(?:std::env::|env::)(?:var|var_os)\s*\("),
+              "lint_allow": re.compile(r"#\s*!?\s*\[\s*allow\s*\("),
+              "todo_comment_text": re.compile(r"\b(?:TODO|FIXME|XXX|HACK)\b", re.IGNORECASE),
+          }
+          counts = Counter()
+          hits = []
+          rust_files = sorted(Path("rust/crates").rglob("*.rs"))
+          production_files = []
+          for path in rust_files:
+              if "tests" in path.parts or path.name == "tests.rs":
+                  continue
+              production_files.append(path)
+              text = path.read_text(encoding="utf-8")
+              production = text.split("#[cfg(test)]", 1)[0]
+              for number, line in enumerate(production.splitlines(), 1):
+                  for name, pattern in patterns.items():
+                      if pattern.search(line):
+                          counts[name] += 1
+                          hits.append({
+                              "kind": name,
+                              "path": str(path),
+                              "line": number,
+                              "source": line.strip(),
+                          })
+          report = {
+              "expectedHead": "7d0660be80b119251c2313e59965a4df9625c34b",
+              "expectedTree": "5a27495c5d3382932ba5619a288955183e5ad055",
+              "rustFileCount": len(rust_files),
+              "productionFileCount": len(production_files),
+              "inventoryCounts": dict(sorted(counts.items())),
+              "inventory": hits,
+              "semanticUnsafeAuthority": "cargo clippy -D unsafe-code",
+              "semanticPanicAuthority": "cargo clippy production lib/bin denies",
+          }
+          out = Path("/tmp/hepta-plan-v3-audit")
+          out.mkdir(parents=True, exist_ok=True)
+          (out / "static-inventory.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+
+      - name: Validate format, production lints, release tests and docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- \
+            -D warnings -D unsafe-code -D clippy::todo -D clippy::unimplemented
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --lib --bins --all-features --locked -- \
+            -D warnings -D unsafe-code \
+            -D clippy::todo -D clippy::unimplemented \
+            -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked --release -- \
+            --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Export dependency and exact-source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hepta-plan-v3-audit
+          cargo metadata --manifest-path rust/Cargo.toml --format-version 1 --locked \
+            > /tmp/hepta-plan-v3-audit/cargo-metadata.json
+          cargo tree --manifest-path rust/Cargo.toml --workspace --all-features \
+            --locked --edges normal,build \
+            > /tmp/hepta-plan-v3-audit/cargo-tree.txt
+          git ls-files | LC_ALL=C sort > /tmp/hepta-plan-v3-audit/tracked-files.txt
+          git archive --format=tar --prefix="hepta-paper-${EXPECTED_HEAD}/" "$EXPECTED_HEAD" \
+            | gzip -9 > /tmp/hepta-plan-v3-audit/exact-source.tar.gz
+          sha256sum \
+            /tmp/hepta-plan-v3-audit/exact-source.tar.gz \
+            /tmp/hepta-plan-v3-audit/cargo-metadata.json \
+            /tmp/hepta-plan-v3-audit/cargo-tree.txt \
+            /tmp/hepta-plan-v3-audit/static-inventory.json \
+            > /tmp/hepta-plan-v3-audit/SHA256SUMS
+          {
+            printf 'repository=TrillionniumFoundation/hepta-paper\n'
+            printf 'commit=%s\n' "$EXPECTED_HEAD"
+            printf 'tree=%s\n' "$EXPECTED_TREE"
+            printf 'tracked_file_count=%s\n' "$(wc -l < /tmp/hepta-plan-v3-audit/tracked-files.txt)"
+            printf 'rustc=%s\n' "$(rustc --version)"
+            printf 'cargo=%s\n' "$(cargo --version)"
+          } > /tmp/hepta-plan-v3-audit/IDENTITY
+          cat /tmp/hepta-plan-v3-audit/IDENTITY
+          cat /tmp/hepta-plan-v3-audit/SHA256SUMS
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test -z "$(git status --porcelain)"
+
+      - name: Upload exact-source audit bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-plan-v3-deep-audit-7d0660be
+          path: /tmp/hepta-plan-v3-audit
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

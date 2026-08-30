@@ -31,7 +31,11 @@ function fixtureGraph() {
       ...Object.keys(sources),
       'paper-core/config/policy.json',
       'README.md',
+      '.github/actionlint.yaml',
+      '.github/workflows/workflow-lint.yml',
       'docs/rust/RUST_PLAN.md',
+      'docs/rust/current-status.v1.json',
+      'docs/rust/tools/validate-program-truth.py',
       'rust/Cargo.toml',
       'rust/crates/example/src/lib.rs',
     ],
@@ -77,10 +81,14 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
   assert.deepEqual(documentation.selectedTests, []);
 
   for (const changedFile of [
+    '.github/actionlint.yaml',
     '.github/workflows/rust-foundation.yml',
     '.github/workflows/rust-broker-installed-qualification-v2.yml',
     '.github/workflows/exact-head-source-validation.yml',
+    '.github/workflows/workflow-lint.yml',
     'docs/rust/RUST_PLAN.md',
+    'docs/rust/current-status.v1.json',
+    'docs/rust/tools/validate-program-truth.py',
     'docs/rust/qualification/hepta-broker-host-qualification.sh',
     'docs/rust/qualification/hepta-broker-qualification-evidence-v1.schema.json',
     'rust/Cargo.toml',
@@ -91,6 +99,22 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
     assert.deepEqual(isolated.selectedTests, [], changedFile);
     assert.deepEqual(isolated.fallbackFiles, [], changedFile);
   }
+});
+
+test('mixed Rust governance and mapped JavaScript changes run only mapped tests', () => {
+  const graph = fixtureGraph();
+  const selection = selectImpactedTests({
+    graph,
+    changedFiles: [
+      '.github/actionlint.yaml',
+      'docs/rust/current-status.v1.json',
+      'paper-domain/claim.mjs',
+    ],
+  });
+  assert.equal(selection.status, 'test_impact_selection_ready');
+  assert.equal(selection.fullFallback, false);
+  assert.deepEqual(selection.fallbackFiles, []);
+  assert.deepEqual(selection.selectedTests, ['paper-core/tests/claim.test.mjs']);
 });
 
 test('deterministic shards cover each selected test exactly once', () => {

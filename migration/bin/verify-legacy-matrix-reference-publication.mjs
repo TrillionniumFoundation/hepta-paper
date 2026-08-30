@@ -180,7 +180,11 @@ function validatePointer(pointer) {
     || typeof pointer.custody?.repository !== 'string'
     || typeof pointer.custody?.commit !== 'string'
     || typeof pointer.custody?.tag !== 'string'
-    || typeof pointer.custody?.releaseTag !== 'string') {
+    || typeof pointer.custody?.releaseTag !== 'string'
+    || pointer.custody?.releaseAssetDigest !== pointer.canonicalArchiveSha256
+    || pointer.custody?.releaseAssetBytes !== pointer.custody?.archiveBytes
+    || pointer.custody?.releaseAssetState !== 'uploaded'
+    || pointer.custody?.releasePlatformImmutable !== false) {
     fail('publication_pointer_custody_invalid');
   }
   return pointer;
@@ -310,6 +314,8 @@ function verify(options) {
     companionCommit: pointer.custody.commit,
     companionTag: pointer.custody.tag,
     releaseTag: pointer.custody.releaseTag,
+    releaseAssetId: pointer.custody.releaseAssetId,
+    releaseAssetDigest: pointer.custody.releaseAssetDigest,
   };
   if (options.metadataOnly) return Object.freeze(result);
   if (!options.archivePath) fail('archive_path_required');

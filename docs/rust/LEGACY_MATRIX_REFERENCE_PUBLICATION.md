@@ -14,6 +14,13 @@ at commit `e275812d279007a87be536df6af3d5d6e9d84955` and tag
 The repository-local locator is
 [`migration/fixtures/legacy-matrix-reference-publication-v1.json`](../../migration/fixtures/legacy-matrix-reference-publication-v1.json).
 
+The release API records asset `536563599` as uploaded with digest
+`sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d`
+and size `22,506,525`. GitHub reports the release container itself as mutable,
+so the digest must be recomputed on every download; the companion commit/tag,
+LFS object ID, and retention policy provide the content-addressed binding rather
+than an unsupported WORM claim.
+
 ## Verification procedure
 
 Use a trusted, authenticated environment to download the private release. Do

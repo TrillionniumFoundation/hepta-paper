@@ -27,8 +27,12 @@ collected on separately controlled infrastructure.
 
 ### External authority
 
-Binds a real key owner, provider account, KMS/HSM, WORM custodian, release
-attestor or submission authority. Repository code cannot manufacture this tier.
+Binds an active protected-repository ruleset, real key owner, provider account,
+KMS/HSM, WORM custodian, release attestor or submission authority. Repository
+source and GitHub-hosted workflow execution cannot manufacture this tier. For a
+repository ruleset, the configuring administrator and independent reviewer must
+remain distinct authority domains and the evidence must include denial tests,
+not only a settings snapshot.
 
 ## Mandatory evidence envelope
 
@@ -75,6 +79,7 @@ manifest; copying does not upgrade its tier.
 The implementation author may produce source and hosted-installed evidence.
 They may not self-approve:
 
+- protected-main ruleset installation, bypass policy or denial-test evidence;
 - low-level Linux primitive review;
 - target-host ownership/ACL/mount/systemd facts;
 - external key-owner custody;
@@ -82,12 +87,17 @@ They may not self-approve:
 - KMS/HSM/WORM custody;
 - live release or submission permission.
 
+The administrator who configures a protected ruleset may produce its exported
+configuration and denial observations, but cannot be the sole independent
+reviewer accepting `EXT-GOV-MAIN-001`.
+
 ## Evidence expiry and revocation
 
-Target-host and external evidence carries an expiry or review deadline. A host,
-key, binary, configuration, trust generation, mount, service unit or provider
-change invalidates the affected evidence immediately. Revoked evidence remains
-archived but cannot satisfy current status.
+Target-host and external evidence carries an expiry or review deadline. A
+ruleset, required-check set, bypass actor, host, key, binary, configuration,
+trust generation, mount, service unit or provider change invalidates the
+affected evidence immediately. Revoked evidence remains archived but cannot
+satisfy current status.
 
 ## Workflow contract
 

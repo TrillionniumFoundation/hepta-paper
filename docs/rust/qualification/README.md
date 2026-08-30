@@ -84,3 +84,9 @@ A successful source or GitHub-hosted run does not authorize real Codex
 credentials, live provider calls, release signing or submission. External
 package acceptance never merges a pull request or activates production
 automatically.
+
+## Aggregate trust and replay boundary
+
+The aggregate verifier uses `qualification-trust-store-v1.schema.json`, immutable
+payload hash binding and a private durable SQLite nonce/trust-generation ledger.
+See `EXTERNAL_QUALIFICATION_CLOSURE.md`.

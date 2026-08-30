@@ -9,9 +9,9 @@
     "repository",
     "commit",
     "tree",
-    "nowUnixMs",
     "consumerUid",
     "trustStore",
+    "replayLedger",
     "envelopes"
   ],
   "properties": {
@@ -26,11 +26,6 @@
     },
     "tree": {
       "$ref": "#/$defs/gitHash"
-    },
-    "nowUnixMs": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Caller-observed Unix epoch milliseconds. The verifier compares this value with its system clock and rejects absolute skew above 300000 milliseconds."
     },
     "consumerUid": {
       "type": "integer",
@@ -50,7 +45,9 @@
         "required": [
           "packageId",
           "path",
-          "ownerUid"
+          "ownerUid",
+          "payloadPath",
+          "payloadOwnerUid"
         ],
         "properties": {
           "packageId": {
@@ -62,9 +59,19 @@
           "ownerUid": {
             "type": "integer",
             "minimum": 0
+          },
+          "payloadPath": {
+            "$ref": "#/$defs/absolutePath"
+          },
+          "payloadOwnerUid": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
+    },
+    "replayLedger": {
+      "$ref": "#/$defs/privateLedger"
     }
   },
   "$defs": {
@@ -90,6 +97,23 @@
       ]
     },
     "authorityFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "ownerUid"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "ownerUid": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "privateLedger": {
       "type": "object",
       "additionalProperties": false,
       "required": [

@@ -17,6 +17,10 @@
     "automaticActivation",
     "productionActivation",
     "sourceStatusUnchanged",
+    "trustStoreGeneration",
+    "trustStoreHash",
+    "replayProtection",
+    "replayLedgerCommitted",
     "receiptHash"
   ],
   "properties": {
@@ -143,6 +147,19 @@
     },
     "receiptHash": {
       "$ref": "#/$defs/sha256"
+    },
+    "trustStoreGeneration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "trustStoreHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "replayProtection": {
+      "const": "durable_sqlite_v1"
+    },
+    "replayLedgerCommitted": {
+      "const": true
     }
   },
   "$defs": {

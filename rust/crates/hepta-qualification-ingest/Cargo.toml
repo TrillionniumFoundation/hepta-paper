@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 nix.workspace = true
+rusqlite.workspace = true
 base64ct.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true

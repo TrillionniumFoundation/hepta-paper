@@ -21,20 +21,55 @@ const MAXIMUM_EVIDENCE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Closed package vocabulary accepted by the source verifier.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "SCREAMING-KEBAB-CASE")]
 pub enum QualificationPackageIdV1 {
+    /// Protected-main ruleset and denial evidence.
+    #[serde(rename = "EXT-GOV-MAIN-001")]
+    ExtGovMain001,
     /// Linux cgroup and low-level review.
+    #[serde(rename = "EXT-HOST-CGROUP-001")]
     ExtHostCgroup001,
     /// Journal/storage destructive failure matrix.
+    #[serde(rename = "EXT-HOST-STORAGE-001")]
     ExtHostStorage001,
     /// Capability key-owner lifecycle.
+    #[serde(rename = "EXT-KEY-OWNER-001")]
     ExtKeyOwner001,
     /// Authenticated separate-role Codex canaries.
+    #[serde(rename = "EXT-CODEX-ROLE-001")]
     ExtCodexRole001,
     /// Production-shaped cutover and soak.
+    #[serde(rename = "EXT-CUTOVER-SOAK-001")]
     ExtCutoverSoak001,
     /// Four-domain irreversible-action authority set.
+    #[serde(rename = "EXT-AUTHORITY-SET-001")]
     ExtAuthoritySet001,
+}
+
+impl QualificationPackageIdV1 {
+    /// Complete package vocabulary accepted by this source version.
+    pub const ALL: [Self; 7] = [
+        Self::ExtGovMain001,
+        Self::ExtHostCgroup001,
+        Self::ExtHostStorage001,
+        Self::ExtKeyOwner001,
+        Self::ExtCodexRole001,
+        Self::ExtCutoverSoak001,
+        Self::ExtAuthoritySet001,
+    ];
+
+    /// Canonical externally visible package identifier.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExtGovMain001 => "EXT-GOV-MAIN-001",
+            Self::ExtHostCgroup001 => "EXT-HOST-CGROUP-001",
+            Self::ExtHostStorage001 => "EXT-HOST-STORAGE-001",
+            Self::ExtKeyOwner001 => "EXT-KEY-OWNER-001",
+            Self::ExtCodexRole001 => "EXT-CODEX-ROLE-001",
+            Self::ExtCutoverSoak001 => "EXT-CUTOVER-SOAK-001",
+            Self::ExtAuthoritySet001 => "EXT-AUTHORITY-SET-001",
+        }
+    }
 }
 
 /// Signed envelope around one schema-validated external payload hash.
@@ -249,7 +284,7 @@ pub fn qualification_signing_bytes_v1(
     for value in [
         "HeptaExternalQualificationEnvelopeV1".as_bytes(),
         &envelope.version.to_be_bytes(),
-        package_name(envelope.package_id).as_bytes(),
+        envelope.package_id.as_str().as_bytes(),
         envelope.repository.as_bytes(),
         envelope.commit.as_bytes(),
         envelope.tree.as_bytes(),
@@ -329,17 +364,6 @@ fn nix_no_follow_cloexec() -> i32 {
     nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC
 }
 
-fn package_name(value: QualificationPackageIdV1) -> &'static str {
-    match value {
-        QualificationPackageIdV1::ExtHostCgroup001 => "EXT-HOST-CGROUP-001",
-        QualificationPackageIdV1::ExtHostStorage001 => "EXT-HOST-STORAGE-001",
-        QualificationPackageIdV1::ExtKeyOwner001 => "EXT-KEY-OWNER-001",
-        QualificationPackageIdV1::ExtCodexRole001 => "EXT-CODEX-ROLE-001",
-        QualificationPackageIdV1::ExtCutoverSoak001 => "EXT-CUTOVER-SOAK-001",
-        QualificationPackageIdV1::ExtAuthoritySet001 => "EXT-AUTHORITY-SET-001",
-    }
-}
-
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -416,6 +440,8 @@ pub enum QualificationIngestError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use base64ct::{Base64UrlUnpadded, Encoding};
     use ed25519_dalek::{Signer, SigningKey};
 
@@ -500,5 +526,61 @@ mod tests {
             verify_external_qualification_v1(&value, &subject, 15_000, &trust),
             Err(QualificationIngestError::AuthorityDomainForbidden)
         ));
+    }
+    #[test]
+    fn closed_package_vocabulary_round_trips_canonical_external_ids() {
+        let expected = [
+            (QualificationPackageIdV1::ExtGovMain001, "EXT-GOV-MAIN-001"),
+            (
+                QualificationPackageIdV1::ExtHostCgroup001,
+                "EXT-HOST-CGROUP-001",
+            ),
+            (
+                QualificationPackageIdV1::ExtHostStorage001,
+                "EXT-HOST-STORAGE-001",
+            ),
+            (
+                QualificationPackageIdV1::ExtKeyOwner001,
+                "EXT-KEY-OWNER-001",
+            ),
+            (
+                QualificationPackageIdV1::ExtCodexRole001,
+                "EXT-CODEX-ROLE-001",
+            ),
+            (
+                QualificationPackageIdV1::ExtCutoverSoak001,
+                "EXT-CUTOVER-SOAK-001",
+            ),
+            (
+                QualificationPackageIdV1::ExtAuthoritySet001,
+                "EXT-AUTHORITY-SET-001",
+            ),
+        ];
+        assert_eq!(QualificationPackageIdV1::ALL.len(), expected.len());
+        for (package, name) in expected {
+            assert!(QualificationPackageIdV1::ALL.contains(&package));
+            assert_eq!(package.as_str(), name);
+            let encoded = serde_json::to_string(&package).expect("serialize package");
+            assert_eq!(encoded, format!("\"{name}\""));
+            assert_eq!(
+                serde_json::from_str::<QualificationPackageIdV1>(&encoded)
+                    .expect("deserialize package"),
+                package
+            );
+        }
+    }
+
+    #[test]
+    fn every_package_changes_the_signed_domain() {
+        let base = envelope();
+        let messages = QualificationPackageIdV1::ALL
+            .into_iter()
+            .map(|package_id| {
+                let mut value = base.clone();
+                value.package_id = package_id;
+                qualification_signing_bytes_v1(&value).expect("signing bytes")
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(messages.len(), QualificationPackageIdV1::ALL.len());
     }
 }

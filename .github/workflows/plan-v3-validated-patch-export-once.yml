@@ -1,0 +1,95 @@
+name: plan-v3-validated-patch-export-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-deep-audit-20260830
+    paths:
+      - '.github/workflows/plan-v3-validated-patch-export-once.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-v3-validated-patch-export-once
+  cancel-in-progress: true
+
+env:
+  EXPECTED_HEAD: 36d10763559eca47810654bafd018f4874bfcbf5
+  EXPECTED_TREE: 0067b9f528e34cf25c18099bc1a60ed54938c3d2
+  PATCH_SHA256: 0cbbb667d50dc365daf08e0796bdaaf1b95841f8d3b9746a81f72dae7e16210c
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact product head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          path: product
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out immutable patch source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 632bba9856d18956c6695a93b39a37e6011928d6
+          path: audit
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Materialize exact validated file set
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C product rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git -C product rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          echo "$PATCH_SHA256  audit/.github/audit/plan_v3_patch_36d.py" | sha256sum --check --strict
+          cd product
+          python3 ../audit/.github/audit/plan_v3_patch_36d.py
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+          git diff --name-only | LC_ALL=C sort > /tmp/changed-files.txt
+          cat > /tmp/expected-files.txt <<'EOF'
+          .github/workflows/rust-foundation.yml
+          docs/rust/qualification/protected-main-ruleset-evidence-v1.schema.json
+          rust/crates/hepta-codex-broker/tests/durable_process_journal.rs
+          rust/crates/hepta-qualification-ingest/src/package_payload.rs
+          EOF
+          diff -u /tmp/expected-files.txt /tmp/changed-files.txt
+
+          root=/tmp/hepta-plan-v3-validated-patch/root
+          mkdir -p "$root"
+          while IFS= read -r path; do
+            mkdir -p "$root/$(dirname "$path")"
+            cp "$path" "$root/$path"
+          done < /tmp/expected-files.txt
+          git diff --binary > /tmp/hepta-plan-v3-validated-patch/validated.patch
+          cp /tmp/expected-files.txt /tmp/hepta-plan-v3-validated-patch/changed-files.txt
+          {
+            printf 'repository=TrillionniumFoundation/hepta-paper\n'
+            printf 'base_commit=%s\n' "$EXPECTED_HEAD"
+            printf 'base_tree=%s\n' "$EXPECTED_TREE"
+            printf 'patch_script_sha256=%s\n' "$PATCH_SHA256"
+            printf 'validated_workflow_run=33304800238\n'
+            printf 'validated_workflow_job=99239321965\n'
+          } > /tmp/hepta-plan-v3-validated-patch/IDENTITY
+          find /tmp/hepta-plan-v3-validated-patch/root -type f -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 sha256sum \
+            > /tmp/hepta-plan-v3-validated-patch/SHA256SUMS
+          cat /tmp/hepta-plan-v3-validated-patch/IDENTITY
+          cat /tmp/hepta-plan-v3-validated-patch/SHA256SUMS
+
+      - name: Upload validated patch file set
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-plan-v3-validated-patch-36d10763
+          path: /tmp/hepta-plan-v3-validated-patch
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

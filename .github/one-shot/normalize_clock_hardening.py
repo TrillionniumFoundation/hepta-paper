@@ -44,3 +44,14 @@ if clock_test_start >= 0:
     source = source[:clock_test_start] + source[clock_test_end:]
 
 source_path.write_text(source, encoding="utf-8")
+
+workflow_path = root / ".github/workflows/rust-plan-v3-external-contracts.yml"
+workflow = workflow_path.read_text(encoding="utf-8")
+old = "              'external-qualification-closure-receipt-v1.schema.json',\n"
+new = old + "              'qualification-trust-store-v1.schema.json',\n"
+if "              'qualification-trust-store-v1.schema.json',\n" not in workflow:
+    count = workflow.count(old)
+    if count != 2:
+        raise SystemExit(f"expected two closure receipt schema anchors, found {count}")
+    workflow = workflow.replace(old, new)
+workflow_path.write_text(workflow, encoding="utf-8")

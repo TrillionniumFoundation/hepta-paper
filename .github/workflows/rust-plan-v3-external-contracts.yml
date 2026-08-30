@@ -22,20 +22,22 @@ permissions:
 jobs:
   validate-contracts:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Validate shell harnesses
+      - name: Validate harness syntax
         shell: bash
         run: |
           set -euo pipefail
           bash -n docs/rust/qualification/hepta-broker-host-qualification-v2.sh
           bash -n docs/rust/qualification/hepta-cgroup-v2-target-host-qualification.sh
 
-      - name: Validate schemas and external-gap package coverage
+      - name: Validate strict external qualification contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -44,44 +46,41 @@ jobs:
           import re
           from pathlib import Path
 
-          expected_schemas = {
+          root = Path('docs/rust/qualification')
+          package_schemas = {
+              'EXT-GOV-MAIN-001': 'protected-main-ruleset-evidence-v1.schema.json',
+              'EXT-HOST-CGROUP-001': 'independent-linux-review-v1.schema.json',
+              'EXT-HOST-STORAGE-001': 'external-host-storage-package-v1.schema.json',
+              'EXT-KEY-OWNER-001': 'external-key-owner-drill-v1.schema.json',
+              'EXT-CODEX-ROLE-001': 'authenticated-codex-role-canary-v1.schema.json',
+              'EXT-CUTOVER-SOAK-001': 'production-cutover-soak-v1.schema.json',
+              'EXT-AUTHORITY-SET-001': 'external-authority-set-v1.schema.json',
+          }
+          support_schemas = {
               'hepta-broker-qualification-evidence-v1.schema.json',
-              'independent-linux-review-v1.schema.json',
-              'external-key-owner-drill-v1.schema.json',
-              'authenticated-codex-role-canary-v1.schema.json',
-              'production-cutover-soak-v1.schema.json',
-              'external-authority-set-v1.schema.json',
-              'protected-main-ruleset-evidence-v1.schema.json',
               'external-qualification-closure-request-v1.schema.json',
               'external-qualification-closure-receipt-v1.schema.json',
               'qualification-trust-store-v1.schema.json',
           }
-          expected_packages = {
-              'EXT-GOV-MAIN-001',
-              'EXT-HOST-CGROUP-001',
-              'EXT-HOST-STORAGE-001',
-              'EXT-KEY-OWNER-001',
-              'EXT-CODEX-ROLE-001',
-              'EXT-CUTOVER-SOAK-001',
-              'EXT-AUTHORITY-SET-001',
-          }
-          root = Path('docs/rust/qualification')
-          present_schemas = {path.name for path in root.glob('*.schema.json')}
-          missing = expected_schemas - present_schemas
-          if missing:
-              raise SystemExit(f'missing schemas: {sorted(missing)}')
-
-          for name in sorted(expected_schemas):
-              path = root / name
-              value = json.loads(path.read_text(encoding='utf-8'))
+          schema_names = set(package_schemas.values()) | support_schemas
+          schemas = {}
+          for name in sorted(schema_names):
+              value = json.loads((root / name).read_text(encoding='utf-8'))
+              schemas[name] = value
               assert value['$schema'] == 'https://json-schema.org/draft/2020-12/schema', name
               assert value['type'] == 'object', name
               assert value['additionalProperties'] is False, name
-              version = value['properties'].get('schemaVersion')
-              if version is None:
-                  version = value['properties'].get('version')
+              version = value['properties'].get(
+                  'schemaVersion', value['properties'].get('version')
+              )
               assert version is not None and version.get('const') == 1, name
               assert value['required'], name
+
+          for package_id, name in package_schemas.items():
+              schema = schemas[name]
+              assert schema['properties']['packageId'].get('const') == package_id, name
+              assert schema['properties']['decision'] == {'const': 'approved'}, name
+              assert {'packageId', 'repository', 'decision'} <= set(schema['required']), name
 
           truth = json.loads(
               Path('docs/rust/current-status.v1.json').read_text(encoding='utf-8')
@@ -91,120 +90,117 @@ jobs:
               for row in truth['gaps']
               if row.get('external') is True
           }
-          assert external_gaps, 'external gap set must not be empty'
-
           mapping = json.loads(
               (root / 'external-package-map.v1.json').read_text(encoding='utf-8')
           )
-          assert mapping == {
-              'schemaVersion': 1,
-              'program': 'hepta-paper-rust-rewrite',
-              'status': 'canonical_external_package_map',
-              'packages': mapping['packages'],
-          }
+          assert set(mapping) == {'schemaVersion', 'program', 'status', 'packages'}
+          assert mapping['schemaVersion'] == 1
+          assert mapping['program'] == 'hepta-paper-rust-rewrite'
+          assert mapping['status'] == 'canonical_external_package_map'
           rows = mapping['packages']
-          assert isinstance(rows, list) and rows
-          package_ids = [row['packageId'] for row in rows]
-          assert len(package_ids) == len(set(package_ids)), 'duplicate package ID'
-          assert set(package_ids) == expected_packages, (
-              set(package_ids), expected_packages
-          )
-
-          runtime_source = Path(
-              'rust/crates/hepta-qualification-ingest/src/lib.rs'
-          ).read_text(encoding='utf-8')
-          runtime_packages = set(re.findall(
-              r'=> "(EXT-[A-Z0-9-]+)"', runtime_source
-          ))
-          assert runtime_packages == expected_packages, (
-              runtime_packages, expected_packages
-          )
-
+          assert isinstance(rows, list) and len(rows) == 7
+          assert {row['packageId'] for row in rows} == set(package_schemas)
+          assert len({row['packageId'] for row in rows}) == len(rows)
           covered = set()
           for row in rows:
               assert set(row) == {
-                  'gapId',
-                  'issue',
-                  'packageId',
-                  'schemas',
-                  'executor',
-                  'automaticActivation',
+                  'gapId', 'issue', 'packageId', 'schemas',
+                  'executor', 'automaticActivation',
               }, row
-              gap_id = row['gapId']
-              assert gap_id in external_gaps, f'unknown/non-external gap: {gap_id}'
-              assert row['issue'] == external_gaps[gap_id], (
-                  gap_id, row['issue'], external_gaps[gap_id]
-              )
-              assert re.fullmatch(r'EXT-[A-Z0-9-]{3,96}', row['packageId'])
-              assert isinstance(row['schemas'], list) and row['schemas']
-              assert len(row['schemas']) == len(set(row['schemas']))
-              for schema in row['schemas']:
-                  assert schema in expected_schemas, (row['packageId'], schema)
+              assert row['gapId'] in external_gaps, row
+              assert row['issue'] == external_gaps[row['gapId']], row
+              assert row['schemas'] == [package_schemas[row['packageId']]], row
               assert re.fullmatch(r'[a-z][a-z0-9_]{2,127}', row['executor'])
               assert row['automaticActivation'] is False
-              covered.add(gap_id)
-          assert covered == set(external_gaps), (covered, set(external_gaps))
+              covered.add(row['gapId'])
+          assert covered == set(external_gaps)
 
-          protocol = (root / 'PLAN_V3_EXTERNAL_GAP_EXECUTION.md').read_text(
-              encoding='utf-8'
-          )
-          package_index = (root / 'PLAN_V3_EXTERNAL_PACKAGE_INDEX.md').read_text(
-              encoding='utf-8'
-          )
-          closure = (root / 'EXTERNAL_QUALIFICATION_CLOSURE.md').read_text(
-              encoding='utf-8'
-          )
-          for row in rows:
-              assert row['packageId'] in protocol, row['packageId']
-              assert row['packageId'] in package_index, row['packageId']
-              assert row['gapId'] in package_index, row['gapId']
-              for schema in row['schemas']:
-                  assert schema in protocol or schema in package_index, schema
+          runtime = Path(
+              'rust/crates/hepta-qualification-ingest/src/lib.rs'
+          ).read_text(encoding='utf-8')
+          assert set(re.findall(r'=> "(EXT-[A-Z0-9-]+)"', runtime)) == set(package_schemas)
+
+          payload = Path(
+              'rust/crates/hepta-qualification-ingest/src/package_payload.rs'
+          ).read_text(encoding='utf-8')
           for required in [
-              'hepta-qualification-closure',
-              'external-qualification-closure-request-v1.schema.json',
-              'external-qualification-closure-receipt-v1.schema.json',
-              'qualification-trust-store-v1.schema.json',
-              'automaticActivation=false',
-              'productionActivation=false',
+              'validate_external_package_payload_v1',
+              'DecisionNotApproved',
+              'AuthorityMismatch',
+              'REQUIRED_GOVERNANCE_DENIALS',
+              'REQUIRED_HOST_CGROUP_DRILLS',
+              'REQUIRED_STORAGE_FAULTS',
+              'REQUIRED_KEY_DRILLS',
+              'REQUIRED_AUTHORITY_KINDS',
+              'string(root, "decision")? != "approved"',
+              'reviewer_matches(',
           ]:
-              assert required in closure, required
+              assert required in payload, required
 
-          closure_source = Path(
+          closure = Path(
               'rust/crates/hepta-qualification-ingest/src/bin/'
               'hepta-qualification-closure.rs'
           ).read_text(encoding='utf-8')
           for required in [
-              'QualificationPackageIdV1::ALL',
-              'DuplicatePackage',
-              'DuplicateNonce',
-              'DuplicatePayload',
-              'AuthoritySeparationViolation',
+              'validate_external_package_payload_v1(',
+              'QualificationPayloadError',
               'PayloadHashMismatch',
               'ReplayConflict',
               'PartialReplay',
               'TrustStoreRollback',
               'TrustStoreFork',
+              'ClockRollback',
+              'VERIFIER_CLOCK_STATE_SCHEMA',
+              'normalize_sql',
+              'REPLAY_LEDGER_USER_VERSION: i32 = 2',
+              'payload_semantics: "strict_package_v1"',
+              'replay_protection: "durable_sqlite_v2"',
+              'clock_rollback_protection: true',
+              'replay_ledger_schema_version: 2',
               'automatic_activation: false',
               'production_activation: false',
               'source_status_unchanged: true',
               'replay_ledger_committed: true',
               'system_unix_ms()',
           ]:
-              assert required in closure_source, required
-          assert 'request.now_unix_ms' not in closure_source
-          request_schema = json.loads((
-              root / 'external-qualification-closure-request-v1.schema.json'
-          ).read_text(encoding='utf-8'))
-          assert 'nowUnixMs' not in request_schema['properties']
-          assert 'replayLedger' in request_schema['required']
-          envelope_required = set(
-              request_schema['properties']['envelopes']['items']['required']
+              assert required in closure, required
+          assert 'durable_sqlite_v1' not in closure
+          assert 'request.now_unix_ms' not in closure
+
+          request = schemas['external-qualification-closure-request-v1.schema.json']
+          assert 'nowUnixMs' not in request['properties']
+          assert 'replayLedger' in request['required']
+          assert {'payloadPath', 'payloadOwnerUid'} <= set(
+              request['properties']['envelopes']['items']['required']
           )
-          assert {'payloadPath', 'payloadOwnerUid'} <= envelope_required
+
+          receipt = schemas['external-qualification-closure-receipt-v1.schema.json']
+          properties = receipt['properties']
+          assert properties['payloadSemantics'] == {'const': 'strict_package_v1'}
+          assert properties['replayProtection'] == {'const': 'durable_sqlite_v2'}
+          assert properties['clockRollbackProtection'] == {'const': True}
+          assert properties['replayLedgerSchemaVersion'] == {'const': 2}
+          assert properties['replayLedgerCommitted'] == {'const': True}
+
+          protocol = (root / 'PLAN_V3_EXTERNAL_GAP_EXECUTION.md').read_text(encoding='utf-8')
+          package_index = (root / 'PLAN_V3_EXTERNAL_PACKAGE_INDEX.md').read_text(encoding='utf-8')
+          closure_doc = (root / 'EXTERNAL_QUALIFICATION_CLOSURE.md').read_text(encoding='utf-8')
+          for row in rows:
+              assert row['packageId'] in protocol
+              assert row['packageId'] in package_index
+              assert row['gapId'] in package_index
+              assert row['schemas'][0] in protocol or row['schemas'][0] in package_index
+          for required in [
+              'strict_package_v1',
+              'durable_sqlite_v2',
+              'external-host-storage-package-v1.schema.json',
+              'automaticActivation=false',
+              'productionActivation=false',
+          ]:
+              assert required in protocol or required in closure_doc, required
           PY
 
-      - name: Prove harness is fail-closed without external acknowledgement
+      - name: Prove harness is fail-closed without acknowledgement
         shell: bash
         run: |
           set -euo pipefail

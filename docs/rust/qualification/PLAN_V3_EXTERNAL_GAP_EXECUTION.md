@@ -103,8 +103,11 @@ Execute SIGKILL, reboot, disk-full, quota, read-only remount, WAL/SHM truncation
 main-page corruption, stale sidecar, backup and restore cases. Production data
 must never be used as the destructive target.
 
-Acceptance requires byte/object identities, exact failure point, post-restart
-classification, no duplicate provider eligibility and an independent observer.
+Acceptance uses `external-host-storage-package-v1.schema.json` as the single
+canonical package root. It requires byte/object identities, exact failure points,
+all destructive fault outcomes in `passed`, a 72-hour/10,000-operation soak, zero
+duplicate or unclassified residue, and an independent reviewer bound to the outer
+signed envelope. Harness and Linux-review outputs remain content-hashed raw evidence.
 
 ## EXT-KEY-OWNER-001 — capability authority lifecycle
 
@@ -164,8 +167,11 @@ can satisfy this package.
 
 ## Acceptance and ingestion
 
-External evidence is staged read-only, schema-validated, signature-verified and
-bound to the current candidate. Ingestion may change an external gap from
+External evidence is staged read-only, schema-validated, package-semantics-validated,
+signature-verified and bound to the current candidate. The aggregate verifier
+requires `decision=approved`, package-specific mandatory success states, exact
+reviewer/envelope authority binding, complete SQLite DDL identity and a durable
+nondecreasing verifier-clock floor. Ingestion may change an external gap from
 `blocked_external` to `externally_accepted`; it must not modify source status,
 merge a PR, enable credentials or activate production automatically.
 

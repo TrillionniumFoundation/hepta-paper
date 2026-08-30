@@ -28,8 +28,7 @@
       "issue": 12,
       "packageId": "EXT-HOST-STORAGE-001",
       "schemas": [
-        "hepta-broker-qualification-evidence-v1.schema.json",
-        "independent-linux-review-v1.schema.json"
+        "external-host-storage-package-v1.schema.json"
       ],
       "executor": "destructive_test_mount_operator_and_independent_reviewer",
       "automaticActivation": false

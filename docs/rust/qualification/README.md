@@ -90,3 +90,9 @@ automatically.
 The aggregate verifier uses `qualification-trust-store-v1.schema.json`, immutable
 payload hash binding and a private durable SQLite nonce/trust-generation ledger.
 See `EXTERNAL_QUALIFICATION_CLOSURE.md`.
+
+## Package-semantic acceptance boundary
+
+Aggregate acceptance is not a hash-only operation. The verifier requires compact canonical JSON, an exact package root vocabulary, an `approved` decision, every mandatory drill/result in its success state, and an independently reviewing domain/key that matches the signed outer envelope. `EXT-HOST-STORAGE-001` uses `external-host-storage-package-v1.schema.json` as its single canonical root; host-harness and Linux-review artifacts are referenced by content hash rather than pretending one JSON document satisfies two incompatible root schemas.
+
+Replay protection is `durable_sqlite_v2`: the verifier fingerprints all ledger DDL and persists a nondecreasing operating-system clock floor in the same `BEGIN IMMEDIATE` transaction as trust generation, nonce reservations and the aggregate receipt.

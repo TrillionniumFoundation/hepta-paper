@@ -1,0 +1,180 @@
+name: plan-v3-deep-audit-source-export
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-deep-audit-20260830
+    paths:
+      - '.github/workflows/plan-v3-deep-audit-once.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-v3-deep-audit-source-export
+  cancel-in-progress: true
+
+env:
+  EXPECTED_HEAD: 1992dffd7f520a11813cffc34691e94ff0dfd7c8
+  EXPECTED_TREE: 8e4865411781e2c64289d6387377f0632c2aa38e
+  RUSTFLAGS: -Dunsafe-code -C overflow-checks=yes
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact frozen product head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prove exact source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          git status --short
+          test -z "$(git status --porcelain)"
+
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Reject latent production panic and placeholder paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import json
+          import re
+
+          hard_patterns = {
+              "todo_macro": re.compile(r"\btodo!\s*\("),
+              "unimplemented_macro": re.compile(r"\bunimplemented!\s*\("),
+              "unsafe_token": re.compile(r"\bunsafe\b"),
+              "panic_macro": re.compile(r"\bpanic!\s*\("),
+              "unwrap_call": re.compile(r"\.unwrap\s*\("),
+              "expect_call": re.compile(r"\.expect\s*\("),
+          }
+          inventory_patterns = {
+              "process_command": re.compile(r"(?:std::process::|process::)?Command::new\s*\("),
+              "process_exit": re.compile(r"(?:std::process::|process::)exit\s*\("),
+              "environment_read": re.compile(r"(?:std::env::|env::)(?:var|var_os)\s*\("),
+              "lint_allow": re.compile(r"#\s*!?\s*\[\s*allow\s*\("),
+              "todo_comment": re.compile(r"\b(?:TODO|FIXME|XXX|HACK)\b", re.IGNORECASE),
+          }
+
+          hard_counts = Counter()
+          inventory_counts = Counter()
+          hard_hits = []
+          inventory_hits = []
+          rust_files = sorted(Path("rust/crates").rglob("*.rs"))
+          production_files = []
+          for path in rust_files:
+              if "tests" in path.parts or path.name == "tests.rs":
+                  continue
+              production_files.append(path)
+              text = path.read_text(encoding="utf-8")
+              production = text.split("#[cfg(test)]", 1)[0]
+              for number, line in enumerate(production.splitlines(), 1):
+                  for name, pattern in hard_patterns.items():
+                      if pattern.search(line):
+                          hard_counts[name] += 1
+                          hard_hits.append({"kind": name, "path": str(path), "line": number, "source": line.strip()})
+                  for name, pattern in inventory_patterns.items():
+                      if pattern.search(line):
+                          inventory_counts[name] += 1
+                          inventory_hits.append({"kind": name, "path": str(path), "line": number, "source": line.strip()})
+
+          report = {
+              "expectedHead": "1992dffd7f520a11813cffc34691e94ff0dfd7c8",
+              "expectedTree": "8e4865411781e2c64289d6387377f0632c2aa38e",
+              "rustFileCount": len(rust_files),
+              "productionFileCount": len(production_files),
+              "hardHitCounts": dict(sorted(hard_counts.items())),
+              "hardHits": hard_hits,
+              "authoritySensitiveInventoryCounts": dict(sorted(inventory_counts.items())),
+              "authoritySensitiveInventory": inventory_hits,
+          }
+          Path("/tmp/hepta-plan-v3-audit").mkdir(parents=True, exist_ok=True)
+          Path("/tmp/hepta-plan-v3-audit/static-inventory.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(report, indent=2, sort_keys=True))
+          if hard_hits:
+              raise SystemExit("production placeholder, unsafe, unwrap, expect, or panic path found")
+          PY
+
+      - name: Validate format, production lints, release tests and docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- \
+            -D warnings -D unsafe-code -D clippy::todo -D clippy::unimplemented
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --lib --bins --all-features --locked -- \
+            -D warnings -D unsafe-code \
+            -D clippy::todo -D clippy::unimplemented \
+            -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked --release -- \
+            --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+
+      - name: Export dependency and exact-source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hepta-plan-v3-audit
+          cargo metadata --manifest-path rust/Cargo.toml --format-version 1 --locked \
+            > /tmp/hepta-plan-v3-audit/cargo-metadata.json
+          cargo tree --manifest-path rust/Cargo.toml --workspace --all-features \
+            --locked --edges normal,build \
+            > /tmp/hepta-plan-v3-audit/cargo-tree.txt
+          git ls-files | LC_ALL=C sort > /tmp/hepta-plan-v3-audit/tracked-files.txt
+          git archive --format=tar --prefix="hepta-paper-${EXPECTED_HEAD}/" "$EXPECTED_HEAD" \
+            | gzip -9 > /tmp/hepta-plan-v3-audit/exact-source.tar.gz
+          sha256sum \
+            /tmp/hepta-plan-v3-audit/exact-source.tar.gz \
+            /tmp/hepta-plan-v3-audit/cargo-metadata.json \
+            /tmp/hepta-plan-v3-audit/cargo-tree.txt \
+            /tmp/hepta-plan-v3-audit/static-inventory.json \
+            > /tmp/hepta-plan-v3-audit/SHA256SUMS
+          {
+            printf 'repository=TrillionniumFoundation/hepta-paper\n'
+            printf 'commit=%s\n' "$EXPECTED_HEAD"
+            printf 'tree=%s\n' "$EXPECTED_TREE"
+            printf 'tracked_file_count=%s\n' "$(wc -l < /tmp/hepta-plan-v3-audit/tracked-files.txt)"
+            printf 'rustc=%s\n' "$(rustc --version)"
+            printf 'cargo=%s\n' "$(cargo --version)"
+          } > /tmp/hepta-plan-v3-audit/IDENTITY
+          cat /tmp/hepta-plan-v3-audit/IDENTITY
+          cat /tmp/hepta-plan-v3-audit/SHA256SUMS
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test -z "$(git status --porcelain)"
+
+      - name: Upload exact-source audit bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-plan-v3-deep-audit-1992dffd
+          path: /tmp/hepta-plan-v3-audit
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

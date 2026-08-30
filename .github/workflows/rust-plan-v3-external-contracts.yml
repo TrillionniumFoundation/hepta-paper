@@ -134,6 +134,12 @@ jobs:
               'REQUIRED_AUTHORITY_KINDS',
               'string(root, "decision")? != "approved"',
               'reviewer_matches(',
+              'authority_set_subject_hash_v1',
+              'HeptaExternalAuthorityReceiptV1',
+              'HeptaExternalAuthoritySetReviewV1',
+              'verify_authority_signature_v1',
+              'current_time_window(',
+              'SignatureInvalid',
           ]:
               assert required in payload, required
 
@@ -166,6 +172,12 @@ jobs:
               assert required in closure, required
           assert 'durable_sqlite_v1' not in closure
           assert 'request.now_unix_ms' not in closure
+
+          authority_set_schema = schemas['external-authority-set-v1.schema.json']
+          assert authority_set_schema['$defs']['signature'] == {
+              'type': 'string',
+              'pattern': '^[A-Za-z0-9_-]{86}$',
+          }
 
           request = schemas['external-qualification-closure-request-v1.schema.json']
           assert 'nowUnixMs' not in request['properties']

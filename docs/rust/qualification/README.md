@@ -1,9 +1,26 @@
-# Installed broker qualification
+# Installed and external qualification
 
-This directory contains the evidence-producing work that cannot be inferred from
-source compilation alone.
+This directory contains evidence-producing work that cannot be inferred from
+source compilation alone. Repository-local schemas, validators and harnesses may
+reach `package_ready`; only separately controlled execution and signed review may
+reach `externally_accepted`.
 
-## Artifacts
+## Canonical package authority
+
+- `external-package-map.v1.json` is the machine-readable mapping from every
+  external gap in `docs/rust/current-status.v1.json` to its package ID, issue,
+  schema set and executor domain.
+- `PLAN_V3_EXTERNAL_PACKAGE_INDEX.md` is the reviewer-facing index.
+- `PLAN_V3_EXTERNAL_GAP_EXECUTION.md` is the normative execution and ingestion
+  protocol.
+- `protected-main-ruleset-evidence-v1.schema.json` defines the no-bypass
+  `refs/heads/main` ruleset and seven-denial-test evidence for `GAP-GOV-003`.
+
+An unmapped external gap, unknown package, missing schema, mismatched issue or
+`automaticActivation: true` is a source-governance failure and is rejected by
+`rust-plan-v3-external-contracts`.
+
+## Installed broker artifacts
 
 - `hepta-broker-host-qualification-v2.sh` runs against a **dedicated,
   non-production qualification instance** on the target host.
@@ -64,4 +81,6 @@ change `independentReview` from `pending` to `approved` in a separately signed
 review record. The harness deliberately cannot self-approve that field.
 
 A successful source or GitHub-hosted run does not authorize real Codex
-credentials, live provider calls, release signing or submission.
+credentials, live provider calls, release signing or submission. External
+package acceptance never merges a pull request or activates production
+automatically.

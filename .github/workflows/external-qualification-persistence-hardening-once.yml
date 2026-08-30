@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# one-shot attempt 7: generate first, then normalize test-scoped imports
+# one-shot attempt 8: reconcile clock normalization and print exact generated files
 
 on:
   push:
@@ -51,6 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           cp rust/Cargo.lock "$RUNNER_TEMP/Cargo.lock.before"
+          python3 .github/one-shot/normalize_clock_hardening.py
           python3 .github/one-shot/harden_external_qualification.py
           python3 .github/one-shot/normalize_clock_hardening.py
           cargo fmt --manifest-path rust/Cargo.toml --all
@@ -101,15 +102,6 @@ jobs:
               assert sorted(new_dependencies) == sorted(old_dependencies + ['rusqlite'])
           PY
 
-          cargo metadata --manifest-path rust/Cargo.toml \
-            --format-version 1 --locked > /dev/null
-          cargo test --manifest-path rust/Cargo.toml \
-            -p hepta-qualification-ingest --all-features --locked
-          cargo clippy --manifest-path rust/Cargo.toml \
-            -p hepta-qualification-ingest --all-targets --all-features --locked -- -D warnings
-          "$RUNNER_TEMP/actionlint" -color -shellcheck= -pyflakes=
-          git diff --check
-
           mapfile -t changed < <(git diff --name-only | sort)
           mapfile -t expected < <(printf '%s\n' \
             .github/workflows/rust-plan-v3-external-contracts.yml \
@@ -124,8 +116,21 @@ jobs:
             rust/crates/hepta-qualification-ingest/Cargo.toml \
             rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs \
             | sort)
+          printf '%s\n' '--- expected generated files ---'
+          printf '%s\n' "${expected[@]}"
+          printf '%s\n' '--- actual generated files ---'
+          printf '%s\n' "${changed[@]}"
           test "${#changed[@]}" -eq "${#expected[@]}"
           diff -u <(printf '%s\n' "${expected[@]}") <(printf '%s\n' "${changed[@]}")
+
+          cargo metadata --manifest-path rust/Cargo.toml \
+            --format-version 1 --locked > /dev/null
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest --all-features --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest --all-targets --all-features --locked -- -D warnings
+          "$RUNNER_TEMP/actionlint" -color -shellcheck= -pyflakes=
+          git diff --check
 
       - name: Commit only the validated product changes
         shell: bash

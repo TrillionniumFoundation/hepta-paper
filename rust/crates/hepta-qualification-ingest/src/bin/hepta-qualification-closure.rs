@@ -229,11 +229,9 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
             VerifyingKey::from_bytes(&key_bytes).map_err(|_| ClosureError::TrustStoreInvalid)?;
         trust_entries.push((key.authority_domain_id, key.signer_key_id, verifying_key));
     }
-    let trust_store = QualificationTrustStoreV1::new(
-        trust_entries,
-        trust_document.forbidden_authority_domains,
-    )
-    .map_err(|_| ClosureError::TrustStoreInvalid)?;
+    let trust_store =
+        QualificationTrustStoreV1::new(trust_entries, trust_document.forbidden_authority_domains)
+            .map_err(|_| ClosureError::TrustStoreInvalid)?;
 
     let mut verified = Vec::with_capacity(request.envelopes.len());
     for source in &request.envelopes {
@@ -322,7 +320,8 @@ fn assemble_receipt(
     let mut domain_group = BTreeMap::<String, String>::new();
     for (package, record) in &by_package {
         let group = authority_group(*package).to_owned();
-        if let Some(previous) = domain_group.insert(record.authority_domain_id.clone(), group.clone())
+        if let Some(previous) =
+            domain_group.insert(record.authority_domain_id.clone(), group.clone())
             && previous != group
         {
             return Err(ClosureError::AuthoritySeparationViolation);

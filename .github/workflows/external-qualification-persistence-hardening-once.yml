@@ -49,6 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 .github/one-shot/normalize_clock_hardening.py
           python3 .github/one-shot/harden_external_qualification.py
           cargo fmt --manifest-path rust/Cargo.toml --all
           cargo test --manifest-path rust/Cargo.toml \

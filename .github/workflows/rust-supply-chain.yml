@@ -52,7 +52,7 @@ jobs:
           mkdir -p "$EVIDENCE_ROOT" "$TOOL_ROOT/bin" "$CARGO_HOME"
           EVIDENCE_OUTPUT="$EVIDENCE_ROOT/preflight.json" \
             python3 docs/rust/tools/write-exact-head-evidence.py
-          sha256sum rust/Cargo.lock rust/deny.toml \
+          sha256sum rust/Cargo.toml rust/Cargo.lock rust/deny.toml \
             docs/rust/security/SUPPLY_CHAIN_POLICY.md \
             > "$EVIDENCE_ROOT/input-sha256.txt"
           git diff --exit-code
@@ -114,8 +114,19 @@ jobs:
       - name: Generate reproducible CycloneDX 1.5 SBOM set
         run: |
           set -euo pipefail
-          test -z "$(find rust -type f -name bom.json -print -quit)"
-          trap 'find rust -type f -name bom.json -delete' EXIT
+          generated_sbom_find=(
+            find rust -type f '('
+              -name '*.cdx.json' -o -name '*.cdx.xml' -o
+              -name 'bom.json' -o -name 'bom.xml'
+            ')'
+          )
+          test -z "$("${generated_sbom_find[@]}" -print -quit)"
+          cleanup_generated_sboms() {
+            "${generated_sbom_find[@]}" -delete
+          }
+          trap cleanup_generated_sboms EXIT
+
+          before_lock_sha="$(sha256sum rust/Cargo.lock | cut -d' ' -f1)"
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           "$TOOL_ROOT/bin/cargo-cyclonedx" cyclonedx \
             --manifest-path rust/Cargo.toml \
@@ -126,7 +137,14 @@ jobs:
             --license-strict \
             --license-accept-named 'MIT/Apache-2.0' \
             --spec-version 1.5 \
+            --verbose --verbose --verbose \
             2>&1 | tee "$EVIDENCE_ROOT/cargo-cyclonedx.txt"
+          after_lock_sha="$(sha256sum rust/Cargo.lock | cut -d' ' -f1)"
+          {
+            printf 'before=%s\n' "$before_lock_sha"
+            printf 'after=%s\n' "$after_lock_sha"
+          } > "$EVIDENCE_ROOT/cargo-lock-before-after.txt"
+          test "$before_lock_sha" = "$after_lock_sha"
 
           mkdir -p "$EVIDENCE_ROOT/sbom"
           count=0
@@ -134,9 +152,8 @@ jobs:
             relative="${source#rust/}"
             destination="${relative//\//__}"
             cp "$source" "$EVIDENCE_ROOT/sbom/$destination"
-            rm "$source"
             count=$((count + 1))
-          done < <(find rust -type f -name bom.json -print0 | sort -z)
+          done < <(find rust -type f -name '*.cdx.json' -print0 | sort -z)
           test "$count" -gt 0
           printf '%s\n' "$count" > "$EVIDENCE_ROOT/sbom-count.txt"
 
@@ -163,6 +180,8 @@ jobs:
               | xargs -0 sha256sum \
               > sbom-sha256.txt
           )
+          cleanup_generated_sboms
+          test -z "$("${generated_sbom_find[@]}" -print -quit)"
 
       - name: Build exact-head supply-chain evidence manifest
         run: |
@@ -212,6 +231,7 @@ jobs:
                   "runAttempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
               },
               "inputs": {
+                  "cargoManifest": digest(pathlib.Path("rust/Cargo.toml")),
                   "cargoLock": digest(pathlib.Path("rust/Cargo.lock")),
                   "denyPolicy": digest(pathlib.Path("rust/deny.toml")),
                   "policyDocument": digest(pathlib.Path("docs/rust/security/SUPPLY_CHAIN_POLICY.md")),
@@ -227,6 +247,15 @@ jobs:
                       "archiveSha256": f"sha256:{os.environ['CARGO_CYCLONEDX_ARCHIVE_SHA256']}",
                       "binarySha256": digest(tool_root / "cargo-cyclonedx"),
                   },
+              },
+              "sbomGeneration": {
+                  "format": "CycloneDX 1.5 JSON",
+                  "descriptionMode": "crate",
+                  "features": "all",
+                  "target": "all",
+                  "outputPattern": "<crate>.cdx.json",
+                  "sourceDateEpoch": command("git", "show", "-s", "--format=%ct", "HEAD"),
+                  "lockFileUnchanged": True,
               },
               "sbomCompatibility": {
                   "strictLicenseParsing": True,
@@ -257,7 +286,11 @@ jobs:
             python3 docs/rust/tools/write-exact-head-evidence.py
           git diff --exit-code
           git diff --cached --exit-code
-          test -z "$(git status --porcelain --untracked-files=all)"
+          status="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$status" ]; then
+            printf '%s\n' "$status" | tee "$EVIDENCE_ROOT/unexpected-worktree-status.txt"
+          fi
+          test -z "$status"
 
       - name: Upload supply-chain evidence
         if: always()

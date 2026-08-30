@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# one-shot attempt 8: reconcile clock normalization and print exact generated files
+# one-shot attempt 9: include untracked generated files in the exact change-set guard
 
 on:
   push:
@@ -102,7 +102,12 @@ jobs:
               assert sorted(new_dependencies) == sorted(old_dependencies + ['rusqlite'])
           PY
 
-          mapfile -t changed < <(git diff --name-only | sort)
+          mapfile -t changed < <(
+            {
+              git diff --name-only
+              git ls-files --others --exclude-standard
+            } | sort -u
+          )
           mapfile -t expected < <(printf '%s\n' \
             .github/workflows/rust-plan-v3-external-contracts.yml \
             .github/workflows/rust-qualification-artifacts.yml \

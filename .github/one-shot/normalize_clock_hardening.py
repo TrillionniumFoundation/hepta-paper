@@ -43,6 +43,22 @@ if clock_test_start >= 0:
         raise SystemExit("clock test end marker missing")
     source = source[:clock_test_start] + source[clock_test_end:]
 
+source = source.replace(
+    "    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},\n",
+    "    os::unix::fs::{MetadataExt, OpenOptionsExt},\n",
+    1,
+)
+test_import_anchor = "#[cfg(test)]\nmod tests {\n    use super::*;\n"
+test_import_replacement = (
+    "#[cfg(test)]\nmod tests {\n"
+    "    use super::*;\n"
+    "    use std::os::unix::fs::PermissionsExt;\n"
+)
+if test_import_replacement not in source:
+    if source.count(test_import_anchor) != 1:
+        raise SystemExit("test permission import anchor missing or ambiguous")
+    source = source.replace(test_import_anchor, test_import_replacement, 1)
+
 source_path.write_text(source, encoding="utf-8")
 
 workflow_path = root / ".github/workflows/rust-plan-v3-external-contracts.yml"

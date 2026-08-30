@@ -17,6 +17,7 @@ concurrency:
 env:
   TARGET_BRANCH: codex/rust-plan-v3-final-product-20260830
   EXPECTED_HEAD: 1992dffd7f520a11813cffc34691e94ff0dfd7c8
+  PATCH_SHA256: b925c72c2d8e58a8d3b2ae8e724852991b46dbcef14882628e70c3859853a918
   RUSTFLAGS: -Dunsafe-code
   CARGO_TERM_COLOR: always
 
@@ -42,158 +43,97 @@ jobs:
           rustc --version --verbose
           cargo --version --verbose
 
-      - name: Apply profile and program-truth hardening
+      - name: Apply exact hash-bound hardening patch
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import json
-
-          test_path = Path('rust/crates/hepta-codex-broker/tests/durable_process_journal.rs')
-          text = test_path.read_text(encoding='utf-8')
-          old = '''    fn copied_gate(&self) -> PathBuf {
-              let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-                  .map(PathBuf::from)
-                  .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"));
-              let built = if target_dir.is_absolute() {
-                  target_dir.join("debug/hepta-codex-preexec-gate")
-              } else {
-                  PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                      .join("../..")
-                      .join(target_dir)
-                      .join("debug/hepta-codex-preexec-gate")
-              };
-              let built = fs::canonicalize(&built).unwrap_or_else(|error| {
-                  panic!(
-                      "durable gate binary must be built by the workspace all-targets gate: {}: {error}",
-                      built.display(),
-                  )
-              });
-          '''
-          new = '''    fn copied_gate(&self) -> PathBuf {
-              let current_test = std::env::current_exe().expect("current integration-test executable");
-              let profile_dir = current_test
-                  .parent()
-                  .and_then(Path::parent)
-                  .expect("Cargo integration test must execute from target/<profile>/deps");
-              let built = profile_dir.join(format!(
-                  "hepta-codex-preexec-gate{}",
-                  std::env::consts::EXE_SUFFIX,
-              ));
-              let built = fs::canonicalize(&built).unwrap_or_else(|error| {
-                  panic!(
-                      "durable gate binary must be built in the active Cargo profile by the workspace all-targets gate: {}: {error}",
-                      built.display(),
-                  )
-              });
-          '''
-          if old not in text:
-              raise SystemExit('durable process test anchor missing')
-          test_path.write_text(text.replace(old, new), encoding='utf-8')
-
-          workflow_path = Path('.github/workflows/rust-foundation.yml')
-          text = workflow_path.read_text(encoding='utf-8')
-          old = '''      - name: Run tests
-              shell: bash
-              run: |
-                set -euo pipefail
-                cargo test \\
-                  --manifest-path rust/Cargo.toml \\
-                  --workspace \\
-                  --all-features \\
-                  --locked \\
-                  2>&1 | tee /tmp/hepta-rust-validation/test.log
-          
-            - name: Build documentation
-          '''
-          new = '''      - name: Run debug-profile tests
-              shell: bash
-              run: |
-                set -euo pipefail
-                cargo test \\
-                  --manifest-path rust/Cargo.toml \\
-                  --workspace \\
-                  --all-targets \\
-                  --all-features \\
-                  --locked \\
-                  2>&1 | tee /tmp/hepta-rust-validation/test-debug.log
-          
-            - name: Run release-profile tests
-              shell: bash
-              run: |
-                set -euo pipefail
-                cargo test \\
-                  --manifest-path rust/Cargo.toml \\
-                  --workspace \\
-                  --all-targets \\
-                  --all-features \\
-                  --locked \\
-                  --release \\
-                  -- \\
-                  --test-threads=1 \\
-                  2>&1 | tee /tmp/hepta-rust-validation/test-release.log
-          
-            - name: Build documentation
-          '''
-          if old not in text:
-              raise SystemExit('rust-foundation test anchor missing')
-          workflow_path.write_text(text.replace(old, new), encoding='utf-8')
-
-          status_path = Path('docs/rust/current-status.v1.json')
-          data = json.loads(status_path.read_text(encoding='utf-8'))
-          candidate = data.get('qualificationCandidate')
-          if not isinstance(candidate, dict):
-              raise SystemExit('qualificationCandidate missing')
-          if candidate.pop('branch', None) != 'codex/rust-plan-v3-main-integration-20260830':
-              raise SystemExit('unexpected qualification candidate branch')
-          data['qualificationCandidate'] = {
-              'refSource': 'workflow_event_source',
-              'binding': candidate['binding'],
-              'evidenceTier': candidate['evidenceTier'],
-              'productionAuthority': candidate['productionAuthority'],
-          }
-          status_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
-
-          validator_path = Path('docs/rust/tools/validate-program-truth.py')
-          text = validator_path.read_text(encoding='utf-8')
-          old = '''    if candidate.get("binding") != "exact_head_workflow_evidence":
-              fail("qualificationCandidate must bind through exact-head workflow evidence")
-          if "commit" in candidate:
-              fail("qualificationCandidate must not embed a self-staling commit literal")
-          if candidate.get("productionAuthority") is not False:
-              fail("qualificationCandidate cannot grant production authority")
-          '''
-          new = '''    if candidate.get("binding") != "exact_head_workflow_evidence":
-              fail("qualificationCandidate must bind through exact-head workflow evidence")
-          if candidate.get("refSource") != "workflow_event_source":
-              fail("qualificationCandidate must derive its ref from the workflow event")
-          stale_identity_fields = sorted({"branch", "commit", "tree"}.intersection(candidate))
-          if stale_identity_fields:
-              fail(
-                  "qualificationCandidate must not embed self-staling source identity fields: "
-                  + ", ".join(stale_identity_fields)
-              )
-          if candidate.get("productionAuthority") is not False:
-              fail("qualificationCandidate cannot grant production authority")
-          '''
-          if old not in text:
-              raise SystemExit('program truth validator anchor missing')
-          validator_path.write_text(text.replace(old, new), encoding='utf-8')
-
-          risk_path = Path('docs/rust/RUST_RISK_REGISTER.md')
-          text = risk_path.read_text(encoding='utf-8')
-          old = '| RR-021 | Oversized stacked PR cannot be reviewed or rolled back | 1 | 4 | mitigated | Program | PR #24 single-commit exact-tree integration surface; historical branches retained for provenance |'
-          new = '| RR-021 | Oversized stacked PR cannot be reviewed or rolled back | 1 | 4 | mitigated | Program | frozen exact-head/tree integration surface; temporary writer workflows excluded; historical branches retained for provenance |'
-          if old not in text:
-              raise SystemExit('RR-021 anchor missing')
-          text = text.replace(old, new)
-          anchor = '| RR-031 | An external gap has no executable package, issue or evidence schema | 1 | 5 | mitigated | Program/Evidence | `external-package-map.v1.json` cross-checked against machine truth and protocol/index by CI |'
-          addition = anchor + '\n| RR-032 | Critical integration tests depend on debug-profile build side effects | 2 | 4 | mitigated | Broker/SRE | profile-relative helper discovery plus debug and release `--all-targets` matrices |'
-          if anchor not in text:
-              raise SystemExit('RR-031 anchor missing')
-          risk_path.write_text(text.replace(anchor, addition), encoding='utf-8')
-          PY
+          base64 -d <<'B64' | gzip -d > /tmp/plan-v3-final-hardening.patch
+          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
+          G6mVc/v2qikQfNj5P8BDSWp6PQAA
+          B64
+          printf '%s  %s\n' "$PATCH_SHA256" /tmp/plan-v3-final-hardening.patch | sha256sum -c -
+          git apply --check /tmp/plan-v3-final-hardening.patch
+          git apply /tmp/plan-v3-final-hardening.patch
           cargo fmt --manifest-path rust/Cargo.toml --all
           python3 -m json.tool docs/rust/current-status.v1.json >/dev/null
           python3 -m py_compile docs/rust/tools/validate-program-truth.py
@@ -201,6 +141,27 @@ jobs:
           node paper-core/bin/check-mjs-syntax.mjs
           node paper-core/bin/source-supply-chain-security.mjs
           git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          expected = {
+              '.github/workflows/rust-foundation.yml',
+              'docs/rust/RUST_RISK_REGISTER.md',
+              'docs/rust/current-status.v1.json',
+              'docs/rust/tools/validate-program-truth.py',
+              'rust/crates/hepta-codex-broker/tests/durable_process_journal.rs',
+              'rust/crates/hepta-codex-runtime/src/bin/hepta-codex-preexec-gate.rs',
+          }
+          observed = set(
+              subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()
+          )
+          if observed != expected:
+              raise SystemExit(f'unexpected patch surface: {sorted(observed ^ expected)}')
+          if Path('.github/workflows/plan-v3-profile-truth-hardening-once.yml').exists():
+              pass
+          print('exact hardening surface verified')
+          PY
           git diff --stat
 
       - name: Validate Rust debug and release profiles
@@ -235,10 +196,11 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
-            rust/crates/hepta-codex-broker/tests/durable_process_journal.rs \
             .github/workflows/rust-foundation.yml \
+            docs/rust/RUST_RISK_REGISTER.md \
             docs/rust/current-status.v1.json \
             docs/rust/tools/validate-program-truth.py \
-            docs/rust/RUST_RISK_REGISTER.md
-          git commit -m 'fix(rust): make qualification profile-independent and truth-bound'
+            rust/crates/hepta-codex-broker/tests/durable_process_journal.rs \
+            rust/crates/hepta-codex-runtime/src/bin/hepta-codex-preexec-gate.rs
+          git commit -m 'fix(rust): close profile and gate-read evidence gaps'
           git push origin "HEAD:$TARGET_BRANCH"

@@ -44,5 +44,22 @@ clock_test_end = text.index(
     clock_test_start,
 )
 text = text[:clock_test_start] + text[clock_test_end:]
-
 path.write_text(text, encoding="utf-8")
+
+# The receipt schema is referenced once in the schema set and once in the
+# documentation-token assertions. The generator must extend only the schema set.
+workflow_path = Path(".github/workflows/rust-plan-v3-external-contracts.yml")
+workflow = workflow_path.read_text(encoding="utf-8")
+old = (
+    "              'external-qualification-closure-receipt-v1.schema.json',\n"
+    "              'automaticActivation=false',\n"
+)
+new = (
+    '              "external-qualification-closure-receipt-v1.schema.json",\n'
+    "              'automaticActivation=false',\n"
+)
+if workflow.count(old) != 1:
+    raise SystemExit(
+        f"documentation receipt-schema assertion anchor: expected one match, found {workflow.count(old)}"
+    )
+workflow_path.write_text(workflow.replace(old, new, 1), encoding="utf-8")

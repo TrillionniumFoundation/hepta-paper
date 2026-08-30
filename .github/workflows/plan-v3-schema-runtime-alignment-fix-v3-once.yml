@@ -1,0 +1,95 @@
+name: plan-v3-schema-runtime-alignment-fix-v3-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-deep-audit-20260830
+    paths:
+      - '.github/workflows/plan-v3-schema-runtime-alignment-fix-v3-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plan-v3-schema-runtime-alignment-fix-v3-once
+  cancel-in-progress: false
+
+env:
+  TARGET_BRANCH: codex/rust-plan-v3-final-product-20260830
+  EXPECTED_HEAD: 7d0660be80b119251c2313e59965a4df9625c34b
+  PATCH_SHA256: 4eb85fd4a62f65a4067bee3a64948708228e7f6d8f29ef82453c4736ae2bc53a
+  RUSTFLAGS: -Dunsafe-code -C overflow-checks=yes
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact product branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-plan-v3-final-product-20260830
+          path: product
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Check out immutable audit patch source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: b1104e33920722ee538ca0f7441c2d74469730e2
+          path: audit
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prove exact inputs and install toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C product rev-parse HEAD)" = "$EXPECTED_HEAD"
+          echo "$PATCH_SHA256  audit/.github/audit/plan_v3_patch.py" | sha256sum --check --strict
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Apply and validate schema/runtime/profile patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd product
+          python3 ../audit/.github/audit/plan_v3_patch.py
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest --all-features --locked
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-runtime --bin hepta-codex-preexec-gate --release --locked
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker --test durable_process_journal \
+            --release --locked -- --test-threads=1
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --lib --bins --all-features --locked -- \
+            -D warnings -D unsafe-code \
+            -D clippy::todo -D clippy::unimplemented \
+            -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+          python3 -m json.tool \
+            docs/rust/qualification/protected-main-ruleset-evidence-v1.schema.json \
+            >/dev/null
+          git diff --check
+          test -n "$(git status --porcelain)"
+
+      - name: Commit validated hardening with expected-head guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd product
+          git fetch origin "$TARGET_BRANCH"
+          test "$(git rev-parse origin/$TARGET_BRANCH)" = "$EXPECTED_HEAD"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            rust/crates/hepta-qualification-ingest/src/package_payload.rs \
+            rust/crates/hepta-codex-broker/tests/durable_process_journal.rs \
+            docs/rust/qualification/protected-main-ruleset-evidence-v1.schema.json \
+            .github/workflows/rust-foundation.yml
+          git commit -m 'fix(qualification): align payload schemas and release tests'
+          git push origin "HEAD:$TARGET_BRANCH"

@@ -72,7 +72,9 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
     HEPTA_EVIDENCE_CLASS: 'technical_conformance',
     HEPTA_RELEASE_COMMIT: provenance.commit || '',
     HEPTA_LEGACY_REFERENCE_PREPARED: '1',
-    HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath,
+    HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath || '',
+    HEPTA_LEGACY_REFERENCE_VERIFIED_ARCHIVE_SHA256: legacyReference.archiveSha256,
+    HEPTA_LEGACY_REFERENCE_VERIFIED_MATRIX_SHA256: legacyReference.matrixSha256,
     PAPER_FACTORY_LEGACY_ROOT: legacyReference.root,
   };
   const result = run(env);

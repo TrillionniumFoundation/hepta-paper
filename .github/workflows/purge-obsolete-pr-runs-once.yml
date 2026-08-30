@@ -1,0 +1,84 @@
+name: purge-obsolete-pr-runs-once
+
+on:
+  push:
+    branches:
+      - codex/rust-final-gap-closure-20260830
+    paths:
+      - '.github/workflows/purge-obsolete-pr-runs-once.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: purge-obsolete-pr-runs-once
+  cancel-in-progress: false
+
+jobs:
+  purge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Cancel only obsolete unfinished runs for the integration branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_BRANCH: codex/rust-plan-v3-main-integration-20260830
+          KEEP_SHA: aa985a9a0ceed5fb35d4174cb499e4b337e785e3
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          test -n "$TARGET_BRANCH"
+          test "$KEEP_SHA" = "aa985a9a0ceed5fb35d4174cb499e4b337e785e3"
+
+          cancelled=0
+          page=1
+          while :; do
+            response="$RUNNER_TEMP/runs-$page.json"
+            curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs?branch=$TARGET_BRANCH&per_page=100&page=$page" \
+              --output "$response"
+
+            mapfile -t obsolete < <(
+              jq -r --arg keep "$KEEP_SHA" --argjson self "$GITHUB_RUN_ID" '
+                .workflow_runs[]
+                | select(.status != "completed")
+                | select(.head_sha != $keep)
+                | select(.id != $self)
+                | .id
+              ' "$response"
+            )
+            for run_id in "${obsolete[@]}"; do
+              test -n "$run_id"
+              curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+                --request POST \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'X-GitHub-Api-Version: 2022-11-28' \
+                "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel"
+              cancelled=$((cancelled + 1))
+            done
+
+            count=$(jq '.workflow_runs | length' "$response")
+            if [ "$count" -lt 100 ]; then
+              break
+            fi
+            page=$((page + 1))
+          done
+
+          verify="$RUNNER_TEMP/current.json"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs?branch=$TARGET_BRANCH&head_sha=$KEEP_SHA&per_page=100" \
+            --output "$verify"
+          jq -e --arg keep "$KEEP_SHA" '
+            (.workflow_runs | length) >= 10
+            and all(.workflow_runs[]; .head_sha == $keep)
+          ' "$verify" >/dev/null
+          printf 'cancelledObsoleteRuns=%s\nkeptHead=%s\n' "$cancelled" "$KEEP_SHA" >> "$GITHUB_STEP_SUMMARY"

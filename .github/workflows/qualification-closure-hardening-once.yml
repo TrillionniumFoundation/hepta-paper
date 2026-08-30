@@ -1,4 +1,4 @@
-name: remove-production-expect-once
+name: remove-production-panic-paths-once
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: remove-production-expect-once
+  group: remove-production-panic-paths-once
   cancel-in-progress: false
 
 jobs:
@@ -39,44 +39,238 @@ jobs:
           rustc --version --verbose
           cargo --version --verbose
 
-      - name: Remove production expect paths and validate
+      - name: Remove production panic paths and validate
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d <<'B64' | gzip -d > "$RUNNER_TEMP/remove_expect.py"
-          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
-          B64
-          python3 "$RUNNER_TEMP/remove_expect.py"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+          def replace_region(text: str, start: str, end: str, replacement: str, label: str) -> str:
+              begin = text.find(start)
+              if begin < 0:
+                  raise SystemExit(f"{label}: start marker missing")
+              finish = text.find(end, begin)
+              if finish < 0:
+                  raise SystemExit(f"{label}: end marker missing")
+              return text[:begin] + replacement + text[finish:]
+
+          environment_path = Path('rust/crates/hepta-codex-runtime/src/environment.rs')
+          environment = environment_path.read_text(encoding='utf-8')
+          policies = '''/// Production-shaped parent environment for the qualified Codex CLI process.
+          pub fn codex_parent_environment_policy_v1() -> EnvironmentPolicyV1 {
+              EnvironmentPolicyV1 {
+                  version: 1,
+                  policy_id: "codex-parent-v1".to_owned(),
+                  allowed_keys: [
+                      "PATH",
+                      "HOME",
+                      "LANG",
+                      "LC_ALL",
+                      "LC_CTYPE",
+                      "TZ",
+                      "TMPDIR",
+                      "SSL_CERT_FILE",
+                      "SSL_CERT_DIR",
+                      "CODEX_HOME",
+                  ]
+                  .into_iter()
+                  .map(str::to_owned)
+                  .collect(),
+                  required_keys: ["PATH", "HOME", "TMPDIR", "CODEX_HOME"]
+                      .into_iter()
+                      .map(str::to_owned)
+                      .collect(),
+              }
+          }
+
+          /// Environment visible to commands launched by the model inside the workspace.
+          pub fn model_child_environment_policy_v1() -> EnvironmentPolicyV1 {
+              EnvironmentPolicyV1 {
+                  version: 1,
+                  policy_id: "codex-model-child-v1".to_owned(),
+                  allowed_keys: [
+                      "PATH",
+                      "HOME",
+                      "LANG",
+                      "LC_ALL",
+                      "LC_CTYPE",
+                      "TZ",
+                      "TMPDIR",
+                      "SOURCE_DATE_EPOCH",
+                      "SSL_CERT_FILE",
+                      "SSL_CERT_DIR",
+                  ]
+                  .into_iter()
+                  .map(str::to_owned)
+                  .collect(),
+                  required_keys: ["PATH", "HOME", "TMPDIR"]
+                      .into_iter()
+                      .map(str::to_owned)
+                      .collect(),
+              }
+          }
+
+          '''
+          environment = replace_region(
+              environment,
+              '/// Production-shaped parent environment for the qualified Codex CLI process.\n',
+              'fn valid_policy_id(value: &str) -> bool {\n',
+              policies,
+              'static environment policies',
+          )
+          static_test = '''    #[test]
+              fn static_policies_remain_valid() {
+                  codex_parent_environment_policy_v1()
+                      .validate()
+                      .expect("parent policy");
+                  model_child_environment_policy_v1()
+                      .validate()
+                      .expect("model child policy");
+              }
+
+          '''
+          environment = replace_once(
+              environment,
+              '    #[test]\n    fn parent_policy_selects_only_explicit_nonsecret_keys() {\n',
+              static_test + '    #[test]\n    fn parent_policy_selects_only_explicit_nonsecret_keys() {\n',
+              'static policy regression test',
+          )
+          environment_path.write_text(environment, encoding='utf-8')
+
+          closure_path = Path(
+              'rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs'
+          )
+          closure = closure_path.read_text(encoding='utf-8')
+          package_collection = '''    let packages = QualificationPackageIdV1::ALL
+              .into_iter()
+              .map(|package| -> Result<ClosurePackageReceiptV1, ClosureError> {
+                  let record = by_package
+                      .get(&package)
+                      .ok_or(ClosureError::PackageSetIncomplete)?;
+                  Ok(ClosurePackageReceiptV1 {
+                      package_id: package.as_str().to_owned(),
+                      payload_hash: record.payload_hash.clone(),
+                      authority_domain_id: record.authority_domain_id.clone(),
+                      signer_key_id: record.signer_key_id.clone(),
+                      nonce: record.nonce.clone(),
+                      signing_message_hash: record.signing_message_hash.clone(),
+                  })
+              })
+              .collect::<Result<Vec<_>, _>>()?;
+          '''
+          closure = replace_region(
+              closure,
+              '    let packages = QualificationPackageIdV1::ALL\n',
+              '    let authority_groups = authority_groups\n',
+              package_collection,
+              'qualification receipt package collection',
+          )
+          closure_path.write_text(closure, encoding='utf-8')
+
+          listener_path = Path('rust/crates/hepta-codex-broker/src/listener.rs')
+          listener = listener_path.read_text(encoding='utf-8')
+          listener = replace_once(
+              listener,
+              '''            &marker_for(&policy, ListenerPhaseV1::Binding, None, None),
+          ''',
+              '''            &marker_for(&policy, ListenerPhaseV1::Binding, None, None)?,
+          ''',
+              'binding marker propagation',
+          )
+          listener = replace_once(
+              listener,
+              '''            &marker_for(
+                          &policy,
+                          ListenerPhaseV1::Bound,
+                          Some(socket_identity.clone()),
+                          None,
+                      ),
+          ''',
+              '''            &marker_for(
+                          &policy,
+                          ListenerPhaseV1::Bound,
+                          Some(socket_identity.clone()),
+                          None,
+                      )?,
+          ''',
+              'bound marker propagation',
+          )
+          listener = replace_once(
+              listener,
+              '''            &marker_for(
+                          &self.policy,
+                          ListenerPhaseV1::Ready,
+                          Some(observed.clone()),
+                          Some(qualification_hash.clone()),
+                      ),
+          ''',
+              '''            &marker_for(
+                          &self.policy,
+                          ListenerPhaseV1::Ready,
+                          Some(observed.clone()),
+                          Some(qualification_hash.clone()),
+                      )?,
+          ''',
+              'ready marker propagation',
+          )
+          listener = replace_once(
+              listener,
+              '''            &marker_for(
+                          &self.policy,
+                          ListenerPhaseV1::Stopped,
+                          Some(self.socket_identity.clone()),
+                          None,
+                      ),
+          ''',
+              '''            &marker_for(
+                          &self.policy,
+                          ListenerPhaseV1::Stopped,
+                          Some(self.socket_identity.clone()),
+                          None,
+                      )?,
+          ''',
+              'stopped marker propagation',
+          )
+          marker = '''fn marker_for(
+              policy: &BrokerListenerPolicyV1,
+              phase: ListenerPhaseV1,
+              socket_identity: Option<BrokerSocketIdentityV1>,
+              qualification_hash: Option<Sha256Digest>,
+          ) -> Result<ListenerMarkerV1, BrokerListenerError> {
+              Ok(ListenerMarkerV1 {
+                  version: 1,
+                  generation: policy.instance_generation,
+                  phase,
+                  role: policy.role,
+                  access_mode: policy.access_mode,
+                  socket_path_hash: hash_path(&policy.socket_path)?,
+                  runtime_identity_hash: policy.runtime_identity_hash.clone(),
+                  trust_bundle_hash: policy.trust_bundle_hash.clone(),
+                  journal_path_hash: policy.journal_path_hash.clone(),
+                  peer_policy_hash: policy.peer_policy_hash.clone(),
+                  socket_identity,
+                  qualification_hash,
+              })
+          }
+
+          '''
+          listener = replace_region(
+              listener,
+              'fn marker_for(\n',
+              'fn recover_predecessor(\n',
+              marker,
+              'listener marker construction',
+          )
+          listener_path.write_text(listener, encoding='utf-8')
+          PY
+
           cargo fmt --manifest-path rust/Cargo.toml --all
           cargo test --manifest-path rust/Cargo.toml \
             -p hepta-codex-runtime -p hepta-codex-broker -p hepta-qualification-ingest \
@@ -100,7 +294,7 @@ jobs:
             rust/crates/hepta-codex-broker/src/listener.rs \
             rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs
           git diff --cached --check
-          git commit -m 'fix(rust): remove remaining production expect paths'
+          git commit -m 'fix(rust): remove production panic paths'
           git fetch origin "$TARGET_BRANCH"
           test "$(git rev-parse "origin/$TARGET_BRANCH")" = "$EXPECTED_HEAD"
           git push origin "HEAD:$TARGET_BRANCH"

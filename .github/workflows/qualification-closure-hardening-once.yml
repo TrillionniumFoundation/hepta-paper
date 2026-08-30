@@ -1,4 +1,4 @@
-name: final-product-security-audit-once
+name: remove-production-expect-once
 
 on:
   push:
@@ -8,116 +8,88 @@ on:
       - '.github/workflows/qualification-closure-hardening-once.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: final-product-security-audit-once
-  cancel-in-progress: true
+  group: remove-production-expect-once
+  cancel-in-progress: false
 
 jobs:
-  audit:
+  harden:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
+    env:
+      TARGET_BRANCH: codex/rust-plan-v3-final-product-20260830
+      EXPECTED_HEAD: 3313964f2a21ee3e7b6c56b3c2e3cae1a3c7e966
+      RUSTFLAGS: '-Dunsafe-code'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: 3313964f2a21ee3e7b6c56b3c2e3cae1a3c7e966
-          fetch-depth: 1
-          persist-credentials: false
+          ref: codex/rust-plan-v3-final-product-20260830
+          fetch-depth: 2
+          persist-credentials: true
 
       - name: Install exact Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal --component clippy
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.98.0
           rustc --version --verbose
           cargo --version --verbose
 
-      - name: Reject semantic unsafe, TODO and unimplemented code
+      - name: Remove production expect paths and validate
         shell: bash
-        env:
-          RUSTFLAGS: '-Dunsafe-code'
         run: |
           set -euo pipefail
-          cargo check --manifest-path rust/Cargo.toml \
-            --workspace --all-targets --all-features --locked
+          base64 -d <<'B64' | gzip -d > "$RUNNER_TEMP/remove_expect.py"
+          H4sIACnhk2oC/+1YXW/bNhR9969gNWCRMduB3watSRE43hIgbbwkK7YVAyFT1zFhiVRJyomR+r/v
+          kqJtyVYar1u6dZteTPHyfh8eUp4omZE8NtOUjwnPcqkMGeFrq5XAhCjI05gBlYJBaODeREQb1SEy
+          TfxIwJ0fpfEYUjduk+6x/Y1aBB8mC2HIEbHqPfcSonrbyfjEi18ckX653D4q5hrI9UIbyIb33IST
+          4MGZX0YE7nNgBhIiBZAsNmzaIRO0kZAHZ2oZlKYVmEKJ0qtPw/p1EXdIv91qKSltXDbbMOihWgvE
+          nCspMhCG2pqg1C06JIEqtDlkKjagD6eQm7jLZAL3XYUueQaHWrHDinpP6aBqDi1tG8eo4oTa+EIQ
+          aIyL26OgMJPut1uh2CiqfXDpVeQdN3FwcJAXYzIRxAWGLpT1VPMqU84WdN4PXYeGG9HISd72yYOz
+          1SCJIqxbuO5QUGZfOunO+0FnLXq3HrmFo5Obs4rUzZ1dvh5uz12cvPlhZ25ATy4uGmYHN7+Mdizc
+          /Loz83p0en61PXt9fUEHw6sb+v35xfBRYYPi4PJ0+DPdCv63SuY+2VWCmwBqul6jhGmvxHMYaBMb
+          zsjA1pWUda02mZTNIxnikIyBzOOUJwiUZQsb/1kQ4CX2mYPSXIqI9DfJe9MciWEHHD0jqbwTkITt
+          jUKcpvIOEjqDhY7+c6hZj3pcYHW4ARW2N5NZnIfXRiEnRNEEKboiYjJNLWIqpVTwvuBqU8s9cViL
+          szGOJ2JpimdZhWTggezBXWIEy/DnCC5DeKWUTXmaPDO/OU9d5+lLI7nLn64GQ3p6cjOkw9Hl4Oyv
+          wPM+XLcHu7mqElfVT6a458DAH2a4LXj8K2juWXDzt7Dd5+C3KpQbSM5DBi+NluRQzSp99c6+l9Eh
+          kku1ErgcNFWQxVxQh34E8QaTsdag8Dx//yLc54DvOQt4YcXIyeUsDNvt9ndNxvbYSo/bWrZsNT6J
+          zRtq4TPynjXYwms0ky4oMoktkKFCCg0Mr/eu/65C635U6/3NM/kIan3GXG8VaEsWxLpxfd+56t8p
+          BN7qrr+pBGm4+LNU6kLB098f7wvsyYQzDEaKLhpB7+4zZMxF4xJv2X2a+DE6qPr76CfJRmW3vV5W
+          a20KyOgxm8UYGCr9WI1lVM6fJ/bgRRbbgx8+eFsfKjti5UYBkypBJ+MF9ctqa5yRWzDh117a3hWv
+          Tiomsxxtwip2otEBmwKb4TdnPJZzCCrbyD6DMnmf0xUw4LmpnSbrE6Rc4o4QP+7FmuKnMm6xpsNj
+          o7hIJbZmGutp5NPtVSd72AEBTapxYaYS4begiXTEYp17Cw2yxw1pfitA2Q1RNVGbfVxZWKysldzb
+          xz0h9GiG+8qWq5Z1k7DZ1HL9ttw9UKLo5VtgL+nxcYjtrF4wvkDsyhmVKvQ4HColVRT5MK/BnIsV
+          ptuv6shFJv8fvP9Q8LafQO8V6CI1HsQdUm2+xfSrCqh3OS2Vclbk7qyq8X/lnFpRetMZleNlCakS
+          bypIhwnJlUwKZveG/3fO/aGoceXvA3lLbl4UAAA=
+          B64
+          python3 "$RUNNER_TEMP/remove_expect.py"
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-codex-runtime -p hepta-qualification-ingest \
+            --all-features --locked
           cargo clippy --manifest-path rust/Cargo.toml \
-            --workspace --all-targets --all-features --locked -- \
-            -D warnings -D unsafe-code -D clippy::todo -D clippy::unimplemented
-
-      - name: Inventory production panic and authority-sensitive surfaces
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from collections import Counter
-          from pathlib import Path
-          import json
-          import re
-
-          patterns = {
-              'panic_macro': re.compile(r'\bpanic!\s*\('),
-              'unwrap_call': re.compile(r'\.unwrap\s*\('),
-              'expect_call': re.compile(r'\.expect\s*\('),
-              'process_command': re.compile(r'(?:std::process::|process::)?Command::new\s*\('),
-              'process_exit': re.compile(r'(?:std::process::|process::)exit\s*\('),
-              'environment_read': re.compile(r'(?:std::env::|env::)(?:var|var_os)\s*\('),
-              'lint_allow': re.compile(r'#\s*!?\s*\[\s*allow\s*\('),
-              'todo_comment': re.compile(r'\b(?:TODO|FIXME|XXX|HACK)\b', re.IGNORECASE),
-          }
-          counts = Counter()
-          hits = []
-          rust_files = sorted(Path('rust').rglob('*.rs'))
-          production_files = []
-          for path in rust_files:
-              if 'tests' in path.parts or path.name == 'tests.rs':
-                  continue
-              production_files.append(path)
-              text = path.read_text(encoding='utf-8')
-              production = text.split('#[cfg(test)]', 1)[0]
-              for number, line in enumerate(production.splitlines(), 1):
-                  for name, pattern in patterns.items():
-                      if pattern.search(line):
-                          counts[name] += 1
-                          hits.append({
-                              'kind': name,
-                              'path': str(path),
-                              'line': number,
-                              'source': line.strip(),
-                          })
-          report = {
-              'rustFiles': len(rust_files),
-              'productionFiles': len(production_files),
-              'productionHitCounts': dict(sorted(counts.items())),
-              'productionHits': hits,
-          }
-          print(json.dumps(report, indent=2, ensure_ascii=True))
-          PY
-
-      - name: Check locked dependency graph and clean source
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo metadata --manifest-path rust/Cargo.toml \
-            --format-version 1 --locked > "$RUNNER_TEMP/metadata.json"
-          python3 - "$RUNNER_TEMP/metadata.json" <<'PY'
-          from pathlib import Path
-          import json
-          import sys
-
-          metadata = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-          workspace = set(metadata['workspace_members'])
-          packages = []
-          for package in sorted(metadata['packages'], key=lambda item: item['name']):
-              if package['id'] not in workspace:
-                  continue
-              packages.append({
-                  'name': package['name'],
-                  'targets': sorted(target['name'] for target in package['targets']),
-                  'dependencyCount': len(package['dependencies']),
-              })
-          print(json.dumps({'workspacePackages': packages}, indent=2))
-          PY
+            --workspace --lib --bins --all-features --locked -- \
+            -D warnings -D unsafe-code \
+            -D clippy::todo -D clippy::unimplemented \
+            -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
           git diff --check
-          test -z "$(git status --porcelain)"
+
+      - name: Commit validated source hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code --quiet && { echo 'no product changes'; exit 1; }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            rust/crates/hepta-codex-runtime/src/environment.rs \
+            rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs
+          git diff --cached --check
+          git commit -m 'fix(rust): remove remaining production expect paths'
+          git fetch origin "$TARGET_BRANCH"
+          test "$(git rev-parse "origin/$TARGET_BRANCH")" = "$EXPECTED_HEAD"
+          git push origin "HEAD:$TARGET_BRANCH"

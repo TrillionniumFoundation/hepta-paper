@@ -34,11 +34,27 @@ env:
   COMPANION_RELEASE: legacy-reference-v0.6.0-e431c4c7
 
 jobs:
+  gate:
+    name: administrator-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the administrator fallback gate
+        shell: bash
+        env:
+          TRUSTED_GATE: ${{ vars.HEPTA_LEGACY_REFERENCE_TRUSTED }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = TrillionniumFoundation/hepta-paper
+          test "$GITHUB_REF" = refs/heads/main
+          test "$TRUSTED_GATE" = 1
+
   verify:
+    needs: gate
     # The public repository workflow is a guarded fallback. The canonical
     # secret-bearing run lives in the private companion repository; this job
     # must only be enabled on a protected default branch by an administrator.
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.HEPTA_LEGACY_REFERENCE_TRUSTED == '1' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -47,8 +63,8 @@ jobs:
         shell: bash
         run: install -d -m 0700 "$RUNNER_TEMP/legacy-matrix-reference-evidence"
 
-      # This job is only enabled on protected main. The external secret binds
-      # the workflow tree before any private credential is materialized.
+      # The gate fails explicitly (rather than being job-skipped, which GitHub
+      # reports as success) before any private credential is materialized.
       - name: Checkout workflow source for identity only
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -133,7 +149,6 @@ jobs:
         id: npm_install
         working-directory: candidate
         env:
-          NPM_CONFIG_USERCONFIG: /dev/null
           npm_config_userconfig: /dev/null
           npm_config_cache: ${{ runner.temp }}/npm-cache
           npm_config_ignore_scripts: 'true'
@@ -190,6 +205,7 @@ jobs:
           test -n "$GH_TOKEN"
           reference_dir="$RUNNER_TEMP/hepta-legacy-reference"
           install -d -m 0700 "$reference_dir"
+          test -d "$reference_dir" && test ! -L "$reference_dir"
           release_json="$RUNNER_TEMP/legacy-matrix-reference-evidence/release.json"
           gh api "repos/$COMPANION_REPOSITORY/releases/379268751" > "$release_json"
           jq -e --arg tag "$COMPANION_RELEASE" \
@@ -255,10 +271,12 @@ jobs:
           archive_removed=false
           manifest_removed=false
           prepared_destroyed=false
-          [ ! -e "$reference_dir/paper-factory-control-plane-reference.tar.gz" ] && archive_removed=true
-          [ ! -e "$reference_dir/PUBLICATION_MANIFEST.v1.json" ] && manifest_removed=true
+          [ ! -e "$reference_dir/paper-factory-control-plane-reference.tar.gz" ] && [ ! -L "$reference_dir/paper-factory-control-plane-reference.tar.gz" ] && archive_removed=true
+          [ ! -e "$reference_dir/PUBLICATION_MANIFEST.v1.json" ] && [ ! -L "$reference_dir/PUBLICATION_MANIFEST.v1.json" ] && manifest_removed=true
           reference_empty=false
-          if [ -d "$reference_dir" ]; then
+          if [ -L "$reference_dir" ]; then
+            reference_empty=false
+          elif [ -d "$reference_dir" ]; then
             [ -z "$(find -P "$reference_dir" -mindepth 1 -print -quit 2>/dev/null)" ] && reference_empty=true
           else
             reference_empty=true
@@ -288,7 +306,8 @@ jobs:
           npm_status=$(jq -r '.exitCode // 125' "$RUNNER_TEMP/legacy-matrix-reference-evidence/npm-ci.json" 2>/dev/null || printf '125')
           removal_ok=$(jq -r '(.archiveRemoved and .manifestRemoved and .referenceDirectoryEmpty)' "$RUNNER_TEMP/legacy-matrix-reference-evidence/archive-removal.json" 2>/dev/null || printf 'false')
           if [ "$verification_status" = 0 ] && [ "$npm_status" = 0 ] && [ "$removal_ok" = true ] \
-            && [ ! -e "$ARCHIVE_PATH" ] && [ ! -e "$MANIFEST_PATH" ] \
+            && [ ! -e "$ARCHIVE_PATH" ] && [ ! -L "$ARCHIVE_PATH" ] \
+            && [ ! -e "$MANIFEST_PATH" ] && [ ! -L "$MANIFEST_PATH" ] \
             && [ -d "$PREPARED_ROOT" ] && [ -d "$CANDIDATE_ROOT" ]; then
             set +e
             node "$TRUSTED_ROOT/migration/bin/run-legacy-matrix-reference-replay.mjs" \

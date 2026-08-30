@@ -299,16 +299,29 @@ function verificationIsComplete(verification, policy) {
     && SHA256.test(verification.matrixSha256 || '');
 }
 
+function expectedArtifactUrl(artifactId) {
+  const id = String(artifactId || '');
+  const serverUrl = String(process.env.GITHUB_SERVER_URL || 'https://github.com').replace(/\/+$/u, '');
+  const repository = String(process.env.GITHUB_REPOSITORY || '');
+  const runId = String(process.env.GITHUB_RUN_ID || '');
+  if (!ARTIFACT_ID.test(id) || !/^https:\/\//u.test(serverUrl)
+    || !/^[^/]+\/[^/]+$/u.test(repository) || !/^\d+$/u.test(runId)) return null;
+  return `${serverUrl}/${repository}/actions/runs/${runId}/artifacts/${id}`;
+}
+
 function artifactBindingComplete(options) {
   const expectedName = process.env.GITHUB_RUN_ID
     ? `legacy-matrix-reference-evidence-${process.env.GITHUB_RUN_ID}`
     : null;
+  const expectedUrl = expectedArtifactUrl(options.artifactId);
   return ARTIFACT_ID.test(String(options.artifactId || ''))
     && SHA256.test(String(options.artifactDigest || ''))
     && (!expectedName || options.artifactName === expectedName)
-    && /^https:\/\/api\.github\.com\/repos\/[^/]+\/actions\/artifacts\/[0-9]+(?:\/|$)/u.test(
-      String(options.artifactUrl || ''),
-    );
+    // actions/upload-artifact@v4 emits the web URL, not the REST API URL.
+    // Bind it to this exact repository/run/artifact so a copied URL cannot
+    // satisfy the receipt contract.
+    && Boolean(expectedUrl)
+    && String(options.artifactUrl || '') === expectedUrl;
 }
 
 function canonicalize(value) {
@@ -513,6 +526,8 @@ function main() {
       id: options.artifactId || null,
       digest: options.artifactDigest || null,
       url: options.artifactUrl || null,
+      expectedUrl: expectedArtifactUrl(options.artifactId),
+      urlBindingComplete: artifactBindingComplete(options),
     },
     authority: 'non_authorizing_archive_integrity_and_migration_replay_evidence_only',
     externalAuthorityGranted: false,

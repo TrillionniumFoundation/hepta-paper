@@ -93,6 +93,10 @@ candidate/reference/runtime mounts. It emits one receipt binding candidate and
 workflow SHA/tree, policy digest, run/attempt, release/manifest/matrix digests,
 tool and action pins, dependency-install hashes, replay commands/results and
 artifact digest. Raw private replay logs are discarded after hashing.
+The receipt also requires the `actions/upload-artifact@v4` web URL to equal
+`${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts/${artifact-id}`;
+the REST API URL is not accepted, so the artifact cannot be rebound to another
+repository or run.
 
 A successful archive verification does not by itself promote Rust parity,
 production, release, submission, or external-authority status; those plan gates

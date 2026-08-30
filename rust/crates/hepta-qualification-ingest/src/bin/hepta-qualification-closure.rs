@@ -631,6 +631,10 @@ fn initialize_replay_ledger(connection: &Connection) -> Result<(), ClosureError>
     Ok(())
 }
 
+fn normalized_schema_sql(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn verify_replay_ledger_schema(connection: &Connection) -> Result<(), ClosureError> {
     let quick_check: String =
         connection.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
@@ -638,16 +642,59 @@ fn verify_replay_ledger_schema(connection: &Connection) -> Result<(), ClosureErr
         return Err(ClosureError::ReplayLedgerInvalid);
     }
     let mut statement = connection.prepare(
-        "SELECT type, name FROM sqlite_schema\n             WHERE name NOT LIKE 'sqlite_%'\n             ORDER BY type, name",
+        "SELECT type, name, COALESCE(sql, '') FROM sqlite_schema
+             WHERE name NOT LIKE 'sqlite_%'
+             ORDER BY type, name",
     )?;
     let rows = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            normalized_schema_sql(&row.get::<_, String>(2)?),
+        ))
     })?;
     let actual = rows.collect::<Result<Vec<_>, _>>()?;
     let expected = vec![
-        ("table".to_owned(), "closure_receipt_v1".to_owned()),
-        ("table".to_owned(), "replay_nonce_v1".to_owned()),
-        ("table".to_owned(), "trust_store_state_v1".to_owned()),
+        (
+            "table".to_owned(),
+            "closure_receipt_v1".to_owned(),
+            normalized_schema_sql(
+                "CREATE TABLE closure_receipt_v1 (
+                     receipt_hash TEXT PRIMARY KEY NOT NULL,
+                     repository TEXT NOT NULL,
+                     commit_hash TEXT NOT NULL,
+                     tree_hash TEXT NOT NULL,
+                     canonical_receipt BLOB NOT NULL,
+                     accepted_at_unix_ms INTEGER NOT NULL CHECK (accepted_at_unix_ms > 0)
+                 ) STRICT",
+            ),
+        ),
+        (
+            "table".to_owned(),
+            "replay_nonce_v1".to_owned(),
+            normalized_schema_sql(
+                "CREATE TABLE replay_nonce_v1 (
+                     nonce TEXT PRIMARY KEY NOT NULL,
+                     receipt_hash TEXT NOT NULL,
+                     package_id TEXT NOT NULL,
+                     package_record_hash TEXT NOT NULL,
+                     FOREIGN KEY (receipt_hash) REFERENCES closure_receipt_v1(receipt_hash)
+                 ) STRICT",
+            ),
+        ),
+        (
+            "table".to_owned(),
+            "trust_store_state_v1".to_owned(),
+            normalized_schema_sql(
+                "CREATE TABLE trust_store_state_v1 (
+                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                     generation INTEGER NOT NULL CHECK (generation > 0),
+                     trust_store_hash TEXT NOT NULL,
+                     previous_trust_store_hash TEXT,
+                     accepted_at_unix_ms INTEGER NOT NULL CHECK (accepted_at_unix_ms > 0)
+                 ) STRICT",
+            ),
+        ),
     ];
     if actual != expected {
         return Err(ClosureError::ReplayLedgerInvalid);
@@ -774,13 +821,16 @@ fn advance_trust_store_state(
     let generation = i64::try_from(generation).map_err(|_| ClosureError::TrustStoreInvalid)?;
     let existing = transaction
         .query_row(
-            "SELECT generation, trust_store_hash, previous_trust_store_hash\n                 FROM trust_store_state_v1 WHERE singleton = 1",
+            "SELECT generation, trust_store_hash, previous_trust_store_hash,
+                    accepted_at_unix_ms
+                 FROM trust_store_state_v1 WHERE singleton = 1",
             [],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3)?,
                 ))
             },
         )
@@ -791,11 +841,17 @@ fn advance_trust_store_state(
                 return Err(ClosureError::TrustStoreFork);
             }
             transaction.execute(
-                "INSERT INTO trust_store_state_v1 (\n                         singleton, generation, trust_store_hash,\n                         previous_trust_store_hash, accepted_at_unix_ms\n                     ) VALUES (1, ?1, ?2, NULL, ?3)",
+                "INSERT INTO trust_store_state_v1 (
+                         singleton, generation, trust_store_hash,
+                         previous_trust_store_hash, accepted_at_unix_ms
+                     ) VALUES (1, ?1, ?2, NULL, ?3)",
                 params![generation, trust_store_hash, now_unix_ms],
             )?;
         }
-        Some((stored_generation, stored_hash, stored_previous)) => {
+        Some((stored_generation, stored_hash, stored_previous, stored_accepted_at)) => {
+            if now_unix_ms < stored_accepted_at {
+                return Err(ClosureError::ClockInvalid);
+            }
             if generation < stored_generation {
                 return Err(ClosureError::TrustStoreRollback);
             }
@@ -805,6 +861,12 @@ fn advance_trust_store_state(
                 {
                     return Err(ClosureError::TrustStoreFork);
                 }
+                transaction.execute(
+                    "UPDATE trust_store_state_v1
+                         SET accepted_at_unix_ms = ?1
+                         WHERE singleton = 1",
+                    params![now_unix_ms],
+                )?;
             } else {
                 if generation != stored_generation + 1
                     || previous_trust_store_hash != Some(stored_hash.as_str())
@@ -812,7 +874,10 @@ fn advance_trust_store_state(
                     return Err(ClosureError::TrustStoreFork);
                 }
                 transaction.execute(
-                    "UPDATE trust_store_state_v1\n                         SET generation = ?1, trust_store_hash = ?2,\n                             previous_trust_store_hash = ?3, accepted_at_unix_ms = ?4\n                         WHERE singleton = 1",
+                    "UPDATE trust_store_state_v1
+                         SET generation = ?1, trust_store_hash = ?2,
+                             previous_trust_store_hash = ?3, accepted_at_unix_ms = ?4
+                         WHERE singleton = 1",
                     params![
                         generation,
                         trust_store_hash,
@@ -1162,6 +1227,38 @@ mod tests {
     }
 
     #[test]
+    fn replay_ledger_rejects_forged_same_name_schema() {
+        let (directory, ledger) = test_ledger("forged-schema");
+        {
+            let connection = Connection::open(&ledger.path).expect("create forged ledger");
+            connection
+                .execute_batch(&format!(
+                    "PRAGMA application_id={REPLAY_LEDGER_APPLICATION_ID};
+                     PRAGMA user_version={REPLAY_LEDGER_USER_VERSION};
+                     CREATE TABLE trust_store_state_v1 (
+                         singleton INTEGER, generation INTEGER, trust_store_hash TEXT,
+                         previous_trust_store_hash TEXT, accepted_at_unix_ms INTEGER
+                     ) STRICT;
+                     CREATE TABLE closure_receipt_v1 (
+                         receipt_hash TEXT, repository TEXT, commit_hash TEXT, tree_hash TEXT,
+                         canonical_receipt BLOB, accepted_at_unix_ms INTEGER
+                     ) STRICT;
+                     CREATE TABLE replay_nonce_v1 (
+                         nonce TEXT, receipt_hash TEXT, package_id TEXT, package_record_hash TEXT
+                     ) STRICT;"
+                ))
+                .expect("forge same-name schema");
+        }
+        fs::set_permissions(&ledger.path, fs::Permissions::from_mode(0o600))
+            .expect("private ledger permissions");
+        assert!(matches!(
+            open_replay_ledger(&ledger, ledger.owner_uid),
+            Err(ClosureError::ReplayLedgerInvalid)
+        ));
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
     fn replay_ledger_is_durable_idempotent_and_conflict_closed() {
         let (directory, ledger) = test_ledger("replay");
         let receipt = assemble_test_receipt(
@@ -1191,6 +1288,18 @@ mod tests {
             &receipt,
         )
         .expect("exact idempotent retry");
+        assert!(matches!(
+            commit_replay_receipt(
+                &ledger,
+                ledger.owner_uid,
+                1,
+                TEST_TRUST_HASH,
+                None,
+                10_000,
+                &receipt,
+            ),
+            Err(ClosureError::ClockInvalid)
+        ));
         assert_eq!(
             fs::symlink_metadata(&ledger.path)
                 .expect("ledger metadata")

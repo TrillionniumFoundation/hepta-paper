@@ -63,7 +63,8 @@ The verifier fails closed unless:
 7. the private replay ledger is a canonical single-link `0600` SQLite file in a
    verifier-owned `0700` directory;
 8. trust-store generation/hash chaining and all seven nonce reservations commit
-   together under `BEGIN IMMEDIATE`, `journal_mode=DELETE` and `synchronous=FULL`.
+   together under `BEGIN IMMEDIATE`, `journal_mode=DELETE` and `synchronous=FULL`;
+9. the ledger rejects verifier-clock regression below the last durable acceptance.
 
 An exact retry of the same seven-package receipt is idempotent and returns the
 same deterministic receipt. A partial overlap, nonce reuse with different content,

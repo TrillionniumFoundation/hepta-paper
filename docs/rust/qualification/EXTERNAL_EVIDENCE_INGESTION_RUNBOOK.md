@@ -24,8 +24,9 @@
 7. Check evidence and trust issue/expiry times and bounded validity windows.
 8. Reject forbidden/unknown domains, duplicate public-key aliases and bad signatures.
 9. Under one private SQLite `BEGIN IMMEDIATE` transaction, reject partial/conflicting
-   nonce replay, enforce trust generation/hash chaining, and persist all seven nonce
-   reservations plus the canonical aggregate receipt.
+   nonce replay and verifier-clock rollback, enforce trust generation/hash chaining,
+   validate the exact ledger schema, and persist all seven nonce reservations plus the
+   canonical aggregate receipt.
 10. Emit the receipt only after durable commit; exact retries are idempotent.
 11. Require an independent governance decision before changing an external gap to
     `externally_accepted`.
@@ -33,8 +34,8 @@
 ## Failure handling
 
 A path change, noncanonical encoding, stale record, subject/payload mismatch,
-signature failure, partial/conflicting replay, forbidden domain, trust rollback,
-trust fork or ambiguous database state rejects the entire operation. Partial
+signature failure, partial/conflicting replay, forbidden domain, clock regression,
+trust rollback, trust fork or ambiguous database state rejects the entire operation. Partial
 validation grants no retained authority and the SQLite transaction rolls back.
 
 Evidence acceptance never performs any of the following automatically:

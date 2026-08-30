@@ -54,6 +54,4 @@ jobs:
           "$RUNNER_TEMP/actionlint" \
             -color \
             -shellcheck= \
-            -pyflakes= \
-            .github/workflows/*.yml \
-            .github/workflows/*.yaml
+            -pyflakes=

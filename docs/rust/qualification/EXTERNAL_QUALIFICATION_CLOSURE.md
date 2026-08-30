@@ -66,6 +66,11 @@ The verifier fails closed unless:
    together under `BEGIN IMMEDIATE`, `journal_mode=DELETE` and `synchronous=FULL`;
 9. the ledger rejects verifier-clock regression below the last durable acceptance.
 
+The verifier compares the ledger's normalized `sqlite_schema` definitions with the
+closed V1 table contract, rather than trusting table names alone. It also advances
+the durable last-accepted clock on exact retries, so a later wall-clock rollback
+cannot make previously expired evidence acceptable through the same ledger.
+
 An exact retry of the same seven-package receipt is idempotent and returns the
 same deterministic receipt. A partial overlap, nonce reuse with different content,
 trust rollback, generation skip or same-generation trust fork is rejected and

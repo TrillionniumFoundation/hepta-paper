@@ -45,10 +45,6 @@ jobs:
           printf '%s  %s\n' "$PATCH_SHA256" "$RUNNER_TEMP/harden.py" | sha256sum -c -
           python3 -m py_compile "$RUNNER_TEMP/harden.py"
 
-          # The source branch already carries the final ClockInvalid spelling. The
-          # generated batch was authored against the immediately preceding spelling,
-          # so remove only that one overlapping replacement statement, then apply the
-          # exact final variant below. The original payload hash is checked first.
           python3 - "$RUNNER_TEMP/harden.py" <<'PY'
           import ast
           import sys
@@ -75,9 +71,7 @@ jobs:
           start = target.lineno - 1
           end = target.end_lineno
           indent = lines[start][:len(lines[start]) - len(lines[start].lstrip())]
-          lines[start:end] = [
-              f'{indent}pass  # applied by workflow compatibility boundary\n'
-          ]
+          lines[start:end] = [f'{indent}pass  # compatibility replacement below\n']
           path.write_text(''.join(lines), encoding='utf-8')
           ast.parse(path.read_text(encoding='utf-8'))
           PY
@@ -101,14 +95,14 @@ jobs:
               text = text.replace(
                   anchor,
                   anchor
-                  + '    #[error("the verifier system clock moved backwards")]\n'
+                  + '    #[error("the verifier wall clock regressed below durable acceptance state")]\n'
                   + '    ClockRollback,\n',
                   1,
               )
               path.write_text(text, encoding='utf-8')
           PY
-          cargo fmt --manifest-path rust/Cargo.toml --all
 
+          cargo fmt --manifest-path rust/Cargo.toml --all
           cargo test --manifest-path rust/Cargo.toml \
             -p hepta-qualification-ingest --all-features --locked
           cargo clippy --manifest-path rust/Cargo.toml \
@@ -118,48 +112,46 @@ jobs:
           import json
           from pathlib import Path
 
-          root = Path("docs/rust/qualification")
+          root = Path('docs/rust/qualification')
           schemas = [
-              "protected-main-ruleset-evidence-v1.schema.json",
-              "independent-linux-review-v1.schema.json",
-              "external-host-storage-package-v1.schema.json",
-              "external-key-owner-drill-v1.schema.json",
-              "authenticated-codex-role-canary-v1.schema.json",
-              "production-cutover-soak-v1.schema.json",
-              "external-authority-set-v1.schema.json",
-              "external-qualification-closure-receipt-v1.schema.json",
+              'protected-main-ruleset-evidence-v1.schema.json',
+              'independent-linux-review-v1.schema.json',
+              'external-host-storage-package-v1.schema.json',
+              'external-key-owner-drill-v1.schema.json',
+              'authenticated-codex-role-canary-v1.schema.json',
+              'production-cutover-soak-v1.schema.json',
+              'external-authority-set-v1.schema.json',
+              'external-qualification-closure-receipt-v1.schema.json',
           ]
           for name in schemas:
-              value = json.loads((root / name).read_text(encoding="utf-8"))
-              assert value["$schema"] == "https://json-schema.org/draft/2020-12/schema", name
-              assert value["type"] == "object", name
-              assert value["additionalProperties"] is False, name
-              assert value["required"], name
-              if "decision" in value["properties"]:
-                  assert value["properties"]["decision"] == {"const": "approved"}, name
-
-          mapping = json.loads((root / "external-package-map.v1.json").read_text(encoding="utf-8"))
-          by_id = {row["packageId"]: row for row in mapping["packages"]}
-          assert by_id["EXT-HOST-STORAGE-001"]["schemas"] == [
-              "external-host-storage-package-v1.schema.json"
-          ]
+              value = json.loads((root / name).read_text(encoding='utf-8'))
+              assert value['$schema'] == 'https://json-schema.org/draft/2020-12/schema', name
+              assert value['type'] == 'object', name
+              assert value['additionalProperties'] is False, name
+              assert value['required'], name
+              if 'decision' in value['properties']:
+                  assert value['properties']['decision'] == {'const': 'approved'}, name
+          mapping = json.loads((root / 'external-package-map.v1.json').read_text(encoding='utf-8'))
+          by_id = {row['packageId']: row for row in mapping['packages']}
           assert len(by_id) == 7
-
+          assert by_id['EXT-HOST-STORAGE-001']['schemas'] == [
+              'external-host-storage-package-v1.schema.json'
+          ]
           source = Path(
-              "rust/crates/hepta-qualification-ingest/src/bin/"
-              "hepta-qualification-closure.rs"
-          ).read_text(encoding="utf-8")
+              'rust/crates/hepta-qualification-ingest/src/bin/'
+              'hepta-qualification-closure.rs'
+          ).read_text(encoding='utf-8')
           module = Path(
-              "rust/crates/hepta-qualification-ingest/src/package_payload.rs"
-          ).read_text(encoding="utf-8")
+              'rust/crates/hepta-qualification-ingest/src/package_payload.rs'
+          ).read_text(encoding='utf-8')
           for required in [
-              "validate_external_package_payload_v1",
-              "strict_package_v1",
-              "durable_sqlite_v2",
-              "ClockRollback",
-              "VERIFIER_CLOCK_STATE_SCHEMA",
-              "normalize_sql",
-              "replay_ledger_schema_version: 2",
+              'validate_external_package_payload_v1',
+              'strict_package_v1',
+              'durable_sqlite_v2',
+              'ClockRollback',
+              'VERIFIER_CLOCK_STATE_SCHEMA',
+              'normalize_sql',
+              'replay_ledger_schema_version: 2',
           ]:
               assert required in source or required in module, required
           PY
@@ -169,7 +161,7 @@ jobs:
 
           mapfile -t changed < <(
             {
-              git diff --name-only
+              git diff HEAD --name-only
               git ls-files --others --exclude-standard
             } | sort -u
           )

@@ -1,0 +1,244 @@
+name: plan-v3-profile-truth-hardening-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-deep-audit-20260830
+    paths:
+      - '.github/workflows/plan-v3-profile-truth-hardening-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plan-v3-profile-truth-hardening-once
+  cancel-in-progress: false
+
+env:
+  TARGET_BRANCH: codex/rust-plan-v3-final-product-20260830
+  EXPECTED_HEAD: 1992dffd7f520a11813cffc34691e94ff0dfd7c8
+  RUSTFLAGS: -Dunsafe-code
+  CARGO_TERM_COLOR: always
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact product branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Prove expected parent and install Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Apply profile and program-truth hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          test_path = Path('rust/crates/hepta-codex-broker/tests/durable_process_journal.rs')
+          text = test_path.read_text(encoding='utf-8')
+          old = '''    fn copied_gate(&self) -> PathBuf {
+              let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+                  .map(PathBuf::from)
+                  .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+              let built = if target_dir.is_absolute() {
+                  target_dir.join("debug/hepta-codex-preexec-gate")
+              } else {
+                  PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                      .join("../..")
+                      .join(target_dir)
+                      .join("debug/hepta-codex-preexec-gate")
+              };
+              let built = fs::canonicalize(&built).unwrap_or_else(|error| {
+                  panic!(
+                      "durable gate binary must be built by the workspace all-targets gate: {}: {error}",
+                      built.display(),
+                  )
+              });
+          '''
+          new = '''    fn copied_gate(&self) -> PathBuf {
+              let current_test = std::env::current_exe().expect("current integration-test executable");
+              let profile_dir = current_test
+                  .parent()
+                  .and_then(Path::parent)
+                  .expect("Cargo integration test must execute from target/<profile>/deps");
+              let built = profile_dir.join(format!(
+                  "hepta-codex-preexec-gate{}",
+                  std::env::consts::EXE_SUFFIX,
+              ));
+              let built = fs::canonicalize(&built).unwrap_or_else(|error| {
+                  panic!(
+                      "durable gate binary must be built in the active Cargo profile by the workspace all-targets gate: {}: {error}",
+                      built.display(),
+                  )
+              });
+          '''
+          if old not in text:
+              raise SystemExit('durable process test anchor missing')
+          test_path.write_text(text.replace(old, new), encoding='utf-8')
+
+          workflow_path = Path('.github/workflows/rust-foundation.yml')
+          text = workflow_path.read_text(encoding='utf-8')
+          old = '''      - name: Run tests
+              shell: bash
+              run: |
+                set -euo pipefail
+                cargo test \\
+                  --manifest-path rust/Cargo.toml \\
+                  --workspace \\
+                  --all-features \\
+                  --locked \\
+                  2>&1 | tee /tmp/hepta-rust-validation/test.log
+          
+            - name: Build documentation
+          '''
+          new = '''      - name: Run debug-profile tests
+              shell: bash
+              run: |
+                set -euo pipefail
+                cargo test \\
+                  --manifest-path rust/Cargo.toml \\
+                  --workspace \\
+                  --all-targets \\
+                  --all-features \\
+                  --locked \\
+                  2>&1 | tee /tmp/hepta-rust-validation/test-debug.log
+          
+            - name: Run release-profile tests
+              shell: bash
+              run: |
+                set -euo pipefail
+                cargo test \\
+                  --manifest-path rust/Cargo.toml \\
+                  --workspace \\
+                  --all-targets \\
+                  --all-features \\
+                  --locked \\
+                  --release \\
+                  -- \\
+                  --test-threads=1 \\
+                  2>&1 | tee /tmp/hepta-rust-validation/test-release.log
+          
+            - name: Build documentation
+          '''
+          if old not in text:
+              raise SystemExit('rust-foundation test anchor missing')
+          workflow_path.write_text(text.replace(old, new), encoding='utf-8')
+
+          status_path = Path('docs/rust/current-status.v1.json')
+          data = json.loads(status_path.read_text(encoding='utf-8'))
+          candidate = data.get('qualificationCandidate')
+          if not isinstance(candidate, dict):
+              raise SystemExit('qualificationCandidate missing')
+          if candidate.pop('branch', None) != 'codex/rust-plan-v3-main-integration-20260830':
+              raise SystemExit('unexpected qualification candidate branch')
+          data['qualificationCandidate'] = {
+              'refSource': 'workflow_event_source',
+              'binding': candidate['binding'],
+              'evidenceTier': candidate['evidenceTier'],
+              'productionAuthority': candidate['productionAuthority'],
+          }
+          status_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+          validator_path = Path('docs/rust/tools/validate-program-truth.py')
+          text = validator_path.read_text(encoding='utf-8')
+          old = '''    if candidate.get("binding") != "exact_head_workflow_evidence":
+              fail("qualificationCandidate must bind through exact-head workflow evidence")
+          if "commit" in candidate:
+              fail("qualificationCandidate must not embed a self-staling commit literal")
+          if candidate.get("productionAuthority") is not False:
+              fail("qualificationCandidate cannot grant production authority")
+          '''
+          new = '''    if candidate.get("binding") != "exact_head_workflow_evidence":
+              fail("qualificationCandidate must bind through exact-head workflow evidence")
+          if candidate.get("refSource") != "workflow_event_source":
+              fail("qualificationCandidate must derive its ref from the workflow event")
+          stale_identity_fields = sorted({"branch", "commit", "tree"}.intersection(candidate))
+          if stale_identity_fields:
+              fail(
+                  "qualificationCandidate must not embed self-staling source identity fields: "
+                  + ", ".join(stale_identity_fields)
+              )
+          if candidate.get("productionAuthority") is not False:
+              fail("qualificationCandidate cannot grant production authority")
+          '''
+          if old not in text:
+              raise SystemExit('program truth validator anchor missing')
+          validator_path.write_text(text.replace(old, new), encoding='utf-8')
+
+          risk_path = Path('docs/rust/RUST_RISK_REGISTER.md')
+          text = risk_path.read_text(encoding='utf-8')
+          old = '| RR-021 | Oversized stacked PR cannot be reviewed or rolled back | 1 | 4 | mitigated | Program | PR #24 single-commit exact-tree integration surface; historical branches retained for provenance |'
+          new = '| RR-021 | Oversized stacked PR cannot be reviewed or rolled back | 1 | 4 | mitigated | Program | frozen exact-head/tree integration surface; temporary writer workflows excluded; historical branches retained for provenance |'
+          if old not in text:
+              raise SystemExit('RR-021 anchor missing')
+          text = text.replace(old, new)
+          anchor = '| RR-031 | An external gap has no executable package, issue or evidence schema | 1 | 5 | mitigated | Program/Evidence | `external-package-map.v1.json` cross-checked against machine truth and protocol/index by CI |'
+          addition = anchor + '\n| RR-032 | Critical integration tests depend on debug-profile build side effects | 2 | 4 | mitigated | Broker/SRE | profile-relative helper discovery plus debug and release `--all-targets` matrices |'
+          if anchor not in text:
+              raise SystemExit('RR-031 anchor missing')
+          risk_path.write_text(text.replace(anchor, addition), encoding='utf-8')
+          PY
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          python3 -m json.tool docs/rust/current-status.v1.json >/dev/null
+          python3 -m py_compile docs/rust/tools/validate-program-truth.py
+          python3 docs/rust/tools/validate-program-truth.py
+          node paper-core/bin/check-mjs-syntax.mjs
+          node paper-core/bin/source-supply-chain-security.mjs
+          git diff --check
+          git diff --stat
+
+      - name: Validate Rust debug and release profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- \
+            -D warnings -D unsafe-code -D clippy::todo -D clippy::unimplemented
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --lib --bins --all-features --locked -- \
+            -D warnings -D unsafe-code \
+            -D clippy::todo -D clippy::unimplemented \
+            -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked --release -- \
+            --test-threads=1
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked --no-deps
+          git diff --check
+
+      - name: Commit exact validated hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -n "$(git status --porcelain)"
+          git fetch origin "$TARGET_BRANCH"
+          test "$(git rev-parse "origin/$TARGET_BRANCH")" = "$EXPECTED_HEAD"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            rust/crates/hepta-codex-broker/tests/durable_process_journal.rs \
+            .github/workflows/rust-foundation.yml \
+            docs/rust/current-status.v1.json \
+            docs/rust/tools/validate-program-truth.py \
+            docs/rust/RUST_RISK_REGISTER.md
+          git commit -m 'fix(rust): make qualification profile-independent and truth-bound'
+          git push origin "HEAD:$TARGET_BRANCH"

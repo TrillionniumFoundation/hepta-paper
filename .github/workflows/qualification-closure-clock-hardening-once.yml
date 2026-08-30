@@ -1,0 +1,194 @@
+name: qualification-closure-clock-hardening-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-main-integration-20260830
+    paths:
+      - '.github/workflows/qualification-closure-clock-hardening-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qualification-closure-clock-hardening-once-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harden-clock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+
+      - name: Bind caller time to the verifier system clock
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          source_path = Path(
+              'rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs'
+          )
+          source = source_path.read_text(encoding='utf-8')
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          source = replace_once(
+              source,
+              '    path::{Path, PathBuf},\n    process::ExitCode,\n};',
+              '    path::{Path, PathBuf},\n    process::ExitCode,\n    time::{SystemTime, UNIX_EPOCH},\n};',
+              'time imports',
+          )
+          source = replace_once(
+              source,
+              'const MAXIMUM_TRUST_STORE_BYTES: u64 = 1024 * 1024;\nconst REQUIRED_REPOSITORY:',
+              'const MAXIMUM_TRUST_STORE_BYTES: u64 = 1024 * 1024;\nconst MAXIMUM_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;\nconst REQUIRED_REPOSITORY:',
+              'clock skew constant',
+          )
+          source = replace_once(
+              source,
+              '    #[error("closure request consumer UID does not match the effective process UID")]\n    ConsumerIdentityMismatch,\n    #[error("authority-owned file boundary is invalid")]',
+              '    #[error("closure request consumer UID does not match the effective process UID")]\n    ConsumerIdentityMismatch,\n    #[error("closure request time differs from the verifier clock beyond the allowed skew")]\n    ClockMismatch,\n    #[error("verifier system clock is invalid")]\n    SystemClockInvalid,\n    #[error("authority-owned file boundary is invalid")]',
+              'clock errors',
+          )
+          source = replace_once(
+              source,
+              '    if request.consumer_uid != effective_uid {\n        return Err(ClosureError::ConsumerIdentityMismatch);\n    }\n\n    let trust_bytes =',
+              '    if request.consumer_uid != effective_uid {\n        return Err(ClosureError::ConsumerIdentityMismatch);\n    }\n    validate_wall_clock(request.now_unix_ms)?;\n\n    let trust_bytes =',
+              'clock invocation',
+          )
+          clock_functions = '\n'.join([
+              'fn validate_wall_clock(requested_now_unix_ms: u64) -> Result<(), ClosureError> {',
+              '    let observed = SystemTime::now()',
+              '        .duration_since(UNIX_EPOCH)',
+              '        .map_err(|_| ClosureError::SystemClockInvalid)?;',
+              '    let observed_now_unix_ms = u64::try_from(observed.as_millis())',
+              '        .map_err(|_| ClosureError::SystemClockInvalid)?;',
+              '    validate_wall_clock_at(requested_now_unix_ms, observed_now_unix_ms)',
+              '}',
+              '',
+              'fn validate_wall_clock_at(',
+              '    requested_now_unix_ms: u64,',
+              '    observed_now_unix_ms: u64,',
+              ') -> Result<(), ClosureError> {',
+              '    if requested_now_unix_ms == 0',
+              '        || observed_now_unix_ms == 0',
+              '        || requested_now_unix_ms.abs_diff(observed_now_unix_ms) > MAXIMUM_CLOCK_SKEW_MS',
+              '    {',
+              '        return Err(ClosureError::ClockMismatch);',
+              '    }',
+              '    Ok(())',
+              '}',
+              '',
+          ])
+          anchor = 'fn valid_git_hash(value: &str) -> bool {'
+          if source.count(anchor) != 1:
+              raise SystemExit('clock function anchor mismatch')
+          source = source.replace(anchor, clock_functions + anchor, 1)
+
+          clock_test = '\n'.join([
+              '    #[test]',
+              '    fn request_time_is_bounded_to_the_verifier_clock() {',
+              '        let observed = 1_800_000_000_000_u64;',
+              '        assert!(validate_wall_clock_at(observed, observed).is_ok());',
+              '        assert!(',
+              '            validate_wall_clock_at(observed - MAXIMUM_CLOCK_SKEW_MS, observed).is_ok()',
+              '        );',
+              '        assert!(',
+              '            validate_wall_clock_at(observed + MAXIMUM_CLOCK_SKEW_MS, observed).is_ok()',
+              '        );',
+              '        assert!(matches!(',
+              '            validate_wall_clock_at(observed - MAXIMUM_CLOCK_SKEW_MS - 1, observed),',
+              '            Err(ClosureError::ClockMismatch)',
+              '        ));',
+              '        assert!(matches!(',
+              '            validate_wall_clock_at(observed + MAXIMUM_CLOCK_SKEW_MS + 1, observed),',
+              '            Err(ClosureError::ClockMismatch)',
+              '        ));',
+              '    }',
+              '',
+          ])
+          test_anchor = '    #[test]\n    fn help_is_read_only_and_succeeds() {'
+          if source.count(test_anchor) != 1:
+              raise SystemExit('clock test anchor mismatch')
+          source = source.replace(test_anchor, clock_test + test_anchor, 1)
+          source_path.write_text(source, encoding='utf-8')
+
+          schema_path = Path(
+              'docs/rust/qualification/external-qualification-closure-request-v1.schema.json'
+          )
+          schema = json.loads(schema_path.read_text(encoding='utf-8'))
+          schema['properties']['nowUnixMs']['description'] = (
+              'Caller-observed Unix epoch milliseconds. The verifier compares this value '
+              'with its system clock and rejects absolute skew above 300000 milliseconds.'
+          )
+          schema_path.write_text(json.dumps(schema, indent=2) + '\n', encoding='utf-8')
+
+          docs_path = Path('docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md')
+          docs = docs_path.read_text(encoding='utf-8')
+          old = '6. the request consumer UID equals the running process effective UID.\n'
+          new = (
+              '6. the request consumer UID equals the running process effective UID;\n'
+              '7. request `nowUnixMs` differs from the verifier system clock by no more '\
+              'than 300000 milliseconds, preventing caller-controlled expiry rollback.\n'
+          )
+          if docs.count(old) != 1:
+              raise SystemExit('clock documentation anchor mismatch')
+          docs_path.write_text(docs.replace(old, new, 1), encoding='utf-8')
+          PY
+
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml --locked \
+            -p hepta-qualification-ingest --all-features
+          cargo clippy --manifest-path rust/Cargo.toml --locked \
+            -p hepta-qualification-ingest --all-targets --all-features -- -D warnings
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          schema = json.loads(Path(
+              'docs/rust/qualification/external-qualification-closure-request-v1.schema.json'
+          ).read_text(encoding='utf-8'))
+          description = schema['properties']['nowUnixMs']['description']
+          assert '300000' in description
+          assert 'system clock' in description
+          PY
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 3
+          printf '%s\n' "${changed[@]}" | sort -u | diff -u - <(printf '%s\n' \
+            docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md \
+            docs/rust/qualification/external-qualification-closure-request-v1.schema.json \
+            rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs | sort -u)
+          git diff --check
+
+      - name: Commit validated clock hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md \
+            docs/rust/qualification/external-qualification-closure-request-v1.schema.json \
+            rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs
+          git commit -m 'fix(qualification): bind closure freshness to verifier clock'
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

@@ -1,104 +1,405 @@
 name: legacy-matrix-reference-verification
 
+# This is intentionally a manually-triggered, administrator-controlled gate.
+# It must not receive the private companion credential from a pull request or a
+# mutable branch/tag selected by an untrusted caller.
 on:
   workflow_dispatch:
     inputs:
-      candidate_ref:
-        description: Exact commit, tag, or branch to qualify with the 263-file reference
+      candidate_sha:
+        description: Exact allowlisted candidate commit (40 lower-case hex characters)
         required: true
-        default: codex/rust-plan-v3-final-product-20260830
+        default: 37543c9e06113199bc2aa8a6a344203ece6c71e5
+        type: string
+      candidate_tree:
+        description: Exact Git tree for the allowlisted candidate commit
+        required: true
+        default: c490cb85b33637f9882f640ab3718323fb47c7df
         type: string
 
 permissions:
   contents: read
 
+env:
+  # These values are the administrator-approved, immutable PR #29 candidate
+  # snapshot. A future candidate requires a reviewed policy/workflow change.
+  APPROVED_CANDIDATE_SHA: 37543c9e06113199bc2aa8a6a344203ece6c71e5
+  APPROVED_CANDIDATE_TREE: c490cb85b33637f9882f640ab3718323fb47c7df
+  APPROVED_BASE_SHA: 220bbf100b1d0227bdc1a1c18d13fc78be37a98f
+  APPROVED_BASE_TREE: 10e25c39f5dab9c0e63cb15685e0b35a62181ac9
+  POLICY_PATH: migration/fixtures/legacy-matrix-reference-verification-policy-v1.json
+  APPROVED_ARCHIVE_SHA: sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d
+  APPROVED_MATRIX_SHA: sha256:59446f5e96cc5f086b27266f0fb0604d4f7f0e5bf1f62cb1a90933208a0f162a
+  COMPANION_REPOSITORY: TrillionniumFoundation/hepta-paper-legacy-reference
+  COMPANION_RELEASE: legacy-reference-v0.6.0-e431c4c7
+
 jobs:
   verify:
+    # The public repository workflow is a guarded fallback. The canonical
+    # secret-bearing run lives in the private companion repository; this job
+    # must only be enabled on a protected default branch by an administrator.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.HEPTA_LEGACY_REFERENCE_TRUSTED == '1' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      CANDIDATE_REF: ${{ inputs.candidate_ref }}
-      COMPANION_REPOSITORY: TrillionniumFoundation/hepta-paper-legacy-reference
-      COMPANION_RELEASE: legacy-reference-v0.6.0-e431c4c7
+    timeout-minutes: 45
     steps:
-      - name: Checkout exact candidate
+      - name: Initialize retained evidence directory
+        if: always()
+        shell: bash
+        run: install -d -m 0700 "$RUNNER_TEMP/legacy-matrix-reference-evidence"
+
+      # This job is only enabled on protected main. The external secret binds
+      # the workflow tree before any private credential is materialized.
+      - name: Checkout workflow source for identity only
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ inputs.candidate_ref }}
+          ref: ${{ github.sha }}
+          path: trusted-workflow
           fetch-depth: 1
           persist-credentials: false
+        continue-on-error: true
+
+      - name: Validate trusted workflow and exact candidate allowlist
+        shell: bash
+        env:
+          INPUT_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          INPUT_CANDIDATE_TREE: ${{ inputs.candidate_tree }}
+          TRUSTED_WORKFLOW_SHA: ${{ secrets.HEPTA_LEGACY_REFERENCE_WORKFLOW_SHA }}
+          TRUSTED_WORKFLOW_TREE: ${{ secrets.HEPTA_LEGACY_REFERENCE_WORKFLOW_TREE }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/trusted-workflow"
+          test -n "$TRUSTED_WORKFLOW_SHA"
+          test -n "$TRUSTED_WORKFLOW_TREE"
+          [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TRUSTED_WORKFLOW_TREE" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$TRUSTED_WORKFLOW_SHA"
+          test "$(git rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$TRUSTED_WORKFLOW_TREE"
+          [[ "$INPUT_CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INPUT_CANDIDATE_TREE" =~ ^[0-9a-f]{40}$ ]]
+          test "$INPUT_CANDIDATE_SHA" = "$APPROVED_CANDIDATE_SHA"
+          test "$INPUT_CANDIDATE_TREE" = "$APPROVED_CANDIDATE_TREE"
+          test "$APPROVED_BASE_SHA" = 220bbf100b1d0227bdc1a1c18d13fc78be37a98f
+          test "$APPROVED_BASE_TREE" = 10e25c39f5dab9c0e63cb15685e0b35a62181ac9
+          mkdir -p "$RUNNER_TEMP/legacy-matrix-reference-evidence"
+          test "$(jq -r '.archive.archiveSha256' "$POLICY_PATH")" = "$APPROVED_ARCHIVE_SHA"
+          test "$(jq -r '.archive.matrixSha256' "$POLICY_PATH")" = "$APPROVED_MATRIX_SHA"
+          node migration/bin/verify-legacy-matrix-reference-policy.mjs \
+            --policy "$POLICY_PATH" \
+            --candidate-sha "$INPUT_CANDIDATE_SHA" \
+            --candidate-tree "$INPUT_CANDIDATE_TREE" \
+            > "$RUNNER_TEMP/legacy-matrix-reference-evidence/policy.json"
+          printf 'candidate_sha=%s\ncandidate_tree=%s\nworkflow_sha=%s\nworkflow_tree=%s\n' \
+            "$INPUT_CANDIDATE_SHA" "$INPUT_CANDIDATE_TREE" \
+            "$TRUSTED_WORKFLOW_SHA" "$TRUSTED_WORKFLOW_TREE" \
+            > "$RUNNER_TEMP/legacy-matrix-reference-evidence/identity.env"
+
+      - name: Checkout the allowlisted candidate source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+        continue-on-error: true
+
+      - name: Prove candidate SHA and tree before installing dependencies
+        shell: bash
+        env:
+          INPUT_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          INPUT_CANDIDATE_TREE: ${{ inputs.candidate_tree }}
+        run: |
+          set -euo pipefail
+          test "$(git -C "$GITHUB_WORKSPACE/candidate" rev-parse HEAD)" = "$INPUT_CANDIDATE_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE/candidate" rev-parse HEAD^{tree})" = "$INPUT_CANDIDATE_TREE"
+          test -z "$(git -C "$GITHUB_WORKSPACE/candidate" status --porcelain=v1 --untracked-files=all)"
+          git -C "$GITHUB_WORKSPACE/candidate" diff --quiet
+          git -C "$GITHUB_WORKSPACE/candidate" diff --cached --quiet
+          git -C "$GITHUB_WORKSPACE/candidate" ls-files -s > "$RUNNER_TEMP/legacy-matrix-reference-evidence/candidate-index.txt"
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.1'
           cache: npm
+          cache-dependency-path: candidate/package-lock.json
 
-      - name: Install migration verification dependencies
+      # Install while the private archive does not exist. --ignore-scripts
+      # prevents package lifecycle code from executing at all. The report is
+      # retained as hashes only; npm stdout/stderr never enter the evidence
+      # bundle.
+      - name: Install locked candidate dependencies before private materialization
+        id: npm_install
+        working-directory: candidate
         shell: bash
         run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y sqlite3
-          npm ci --ignore-scripts --no-audit --no-fund
+          set +e
+          npm ci --ignore-scripts --no-audit --no-fund \
+            > "$RUNNER_TEMP/npm-ci.stdout" 2> "$RUNNER_TEMP/npm-ci.stderr"
+          status=$?
+          node --input-type=module -e '
+            import crypto from "node:crypto";
+            import fs from "node:fs";
+            const hash = (p) => `sha256:${crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex")}`;
+            const out = { command: ["npm","ci","--ignore-scripts","--no-audit","--no-fund"], exitCode: Number(process.argv[1]), stdoutSha256: hash(process.argv[2]), stderrSha256: hash(process.argv[3]) };
+            fs.writeFileSync(process.argv[4], JSON.stringify(out, null, 2) + "\n", { mode: 0o444 });
+          ' "$status" "$RUNNER_TEMP/npm-ci.stdout" "$RUNNER_TEMP/npm-ci.stderr" \
+            "$RUNNER_TEMP/legacy-matrix-reference-evidence/npm-ci.json"
+          rm -f -- "$RUNNER_TEMP/npm-ci.stdout" "$RUNNER_TEMP/npm-ci.stderr"
+          printf 'exit=%s\n' "$status" >> "$GITHUB_OUTPUT"
+          exit 0
 
-      - name: Require trusted private-reference credential
+      - name: Re-prove candidate identity after dependency installation
+        if: always()
         shell: bash
         env:
-          LEGACY_REFERENCE_TOKEN: ${{ secrets.HEPTA_LEGACY_REFERENCE_READ_TOKEN }}
+          INPUT_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          INPUT_CANDIDATE_TREE: ${{ inputs.candidate_tree }}
         run: |
           set -euo pipefail
-          test -n "$LEGACY_REFERENCE_TOKEN"
+          test -d "$GITHUB_WORKSPACE/candidate"
+          test "$(git -C "$GITHUB_WORKSPACE/candidate" rev-parse HEAD)" = "$INPUT_CANDIDATE_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE/candidate" rev-parse HEAD^{tree})" = "$INPUT_CANDIDATE_TREE"
+          test -z "$(git -C "$GITHUB_WORKSPACE/candidate" status --porcelain=v1 --untracked-files=all)"
+          git -C "$GITHUB_WORKSPACE/candidate" diff --quiet
+          git -C "$GITHUB_WORKSPACE/candidate" diff --cached --quiet
 
-      - name: Materialize private exact archive
+      - name: Record toolchain without mutable system package installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version | tee "$RUNNER_TEMP/legacy-matrix-reference-evidence/node.version"
+          npm --version | tee "$RUNNER_TEMP/legacy-matrix-reference-evidence/npm.version"
+          git --version | tee "$RUNNER_TEMP/legacy-matrix-reference-evidence/git.version"
+          tar --version | head -1 | tee "$RUNNER_TEMP/legacy-matrix-reference-evidence/tar.version"
+          node --input-type=module -e "import('node:sqlite')"
+
+      - name: Materialize private exact archive with a short-lived credential
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.HEPTA_LEGACY_REFERENCE_READ_TOKEN }}
         run: |
           set -euo pipefail
+          test -n "$GH_TOKEN"
           reference_dir="$RUNNER_TEMP/hepta-legacy-reference"
-          mkdir -p "$reference_dir"
+          install -d -m 0700 "$reference_dir"
+          release_json="$RUNNER_TEMP/legacy-matrix-reference-evidence/release.json"
+          gh api "repos/$COMPANION_REPOSITORY/releases/379268751" > "$release_json"
+          jq -e --arg tag "$COMPANION_RELEASE" \
+            --argjson release_id 379268751 \
+            --arg digest 'sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d' \
+            --argjson bytes 22506525 \
+            '.id == $release_id and .tag_name == $tag and ([.assets[] | select(.id == 536563599 and .name == "paper-factory-control-plane-reference.tar.gz" and .digest == $digest and .size == $bytes)] | length == 1)' \
+            "$release_json" >/dev/null
+          sha256sum "$release_json" | awk '{print "sha256:" $1}' \
+            > "$RUNNER_TEMP/legacy-matrix-reference-evidence/release-api.sha256"
           gh release download "$COMPANION_RELEASE" \
             --repo "$COMPANION_REPOSITORY" \
             --pattern 'paper-factory-control-plane-reference.tar.gz' \
-            --dir "$reference_dir" \
-            --clobber
+            --dir "$reference_dir" --clobber
           gh release download "$COMPANION_RELEASE" \
             --repo "$COMPANION_REPOSITORY" \
             --pattern 'PUBLICATION_MANIFEST.v1.json' \
-            --dir "$reference_dir" \
-            --clobber
+            --dir "$reference_dir" --clobber
           test -f "$reference_dir/paper-factory-control-plane-reference.tar.gz"
           test -f "$reference_dir/PUBLICATION_MANIFEST.v1.json"
-          printf 'candidate_sha=%s\n' "$(git rev-parse HEAD)"
-          printf 'candidate_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+          test ! -L "$reference_dir/paper-factory-control-plane-reference.tar.gz"
+          test ! -L "$reference_dir/PUBLICATION_MANIFEST.v1.json"
+          chmod 0400 "$reference_dir/paper-factory-control-plane-reference.tar.gz"
+          chmod 0400 "$reference_dir/PUBLICATION_MANIFEST.v1.json"
+          unset GH_TOKEN
 
-      - name: Verify archive, matrix, and every source hash
+      - name: Verify archive and all 263 source hashes with trusted code
+        id: archive_verify
         shell: bash
         env:
           ARCHIVE: ${{ runner.temp }}/hepta-legacy-reference/paper-factory-control-plane-reference.tar.gz
           COMPANION_MANIFEST: ${{ runner.temp }}/hepta-legacy-reference/PUBLICATION_MANIFEST.v1.json
+          EXTRACT_DIR: ${{ runner.temp }}/legacy-matrix-reference-prepared
+          TRUSTED_ROOT: ${{ github.workspace }}/trusted-workflow
+          CANDIDATE_ROOT: ${{ github.workspace }}/candidate
         run: |
-          set -euo pipefail
-          node migration/bin/verify-legacy-matrix-reference-publication.mjs \
+          set +e
+          node "$TRUSTED_ROOT/migration/bin/verify-legacy-matrix-reference-publication.mjs" \
+            --pointer "$TRUSTED_ROOT/migration/fixtures/legacy-matrix-reference-publication-v1.json" \
+            --matrix "$CANDIDATE_ROOT/migration/legacy-semantic-migration-matrix.json" \
             --archive "$ARCHIVE" \
             --companion-manifest "$COMPANION_MANIFEST" \
-            > "$RUNNER_TEMP/legacy-matrix-reference-verification.json"
-          cat "$RUNNER_TEMP/legacy-matrix-reference-verification.json"
+            --extract-dir "$EXTRACT_DIR" \
+            --json > "$RUNNER_TEMP/legacy-matrix-reference-evidence/verification.json" \
+            2> "$RUNNER_TEMP/legacy-matrix-reference-evidence/verification.stderr"
+          status=$?
+          printf '%s\n' "$status" > "$RUNNER_TEMP/legacy-matrix-reference-evidence/verification.exit"
+          if [ -f "$COMPANION_MANIFEST" ]; then
+            sha256sum "$COMPANION_MANIFEST" \
+              | awk '{print "sha256:" $1}' \
+              > "$RUNNER_TEMP/legacy-matrix-reference-evidence/companion-manifest.sha256"
+          fi
+          exit 0
 
-      - name: Replay migration gates on the same candidate
+      - name: Remove private archive and manifest before candidate execution
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          reference_dir="$RUNNER_TEMP/hepta-legacy-reference"
+          rm -f -- "$reference_dir/paper-factory-control-plane-reference.tar.gz"
+          rm -f -- "$reference_dir/PUBLICATION_MANIFEST.v1.json"
+          archive_removed=false
+          manifest_removed=false
+          prepared_destroyed=false
+          [ ! -e "$reference_dir/paper-factory-control-plane-reference.tar.gz" ] && archive_removed=true
+          [ ! -e "$reference_dir/PUBLICATION_MANIFEST.v1.json" ] && manifest_removed=true
+          reference_empty=false
+          if [ -d "$reference_dir" ]; then
+            [ -z "$(find -P "$reference_dir" -mindepth 1 -print -quit 2>/dev/null)" ] && reference_empty=true
+          else
+            reference_empty=true
+          fi
+          node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; fs.writeFileSync(p, JSON.stringify({archiveRemoved:process.argv[2]==="true",manifestRemoved:process.argv[3]==="true",referenceDirectoryEmpty:process.argv[4]==="true"})+"\n", {mode:0o600});' \
+            "$RUNNER_TEMP/legacy-matrix-reference-evidence/archive-removal.json" \
+            "$archive_removed" "$manifest_removed" "$reference_empty"
+
+      - name: Replay candidate migration commands in a networkless sandbox
+        id: migration_replay
+        if: always()
         shell: bash
         env:
-          HEPTA_LEGACY_REFERENCE_ARCHIVE: ${{ runner.temp }}/hepta-legacy-reference/paper-factory-control-plane-reference.tar.gz
+          TRUSTED_ROOT: ${{ github.workspace }}/trusted-workflow
+          CANDIDATE_ROOT: ${{ github.workspace }}/candidate
+          PREPARED_ROOT: ${{ runner.temp }}/legacy-matrix-reference-prepared
+          ARCHIVE_PATH: ${{ runner.temp }}/hepta-legacy-reference/paper-factory-control-plane-reference.tar.gz
+          MANIFEST_PATH: ${{ runner.temp }}/hepta-legacy-reference/PUBLICATION_MANIFEST.v1.json
+          MATRIX: ${{ github.workspace }}/candidate/migration/legacy-semantic-migration-matrix.json
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_TREE: ${{ inputs.candidate_tree }}
+          ARCHIVE_SHA: ${{ env.APPROVED_ARCHIVE_SHA }}
+          MATRIX_SHA: ${{ env.APPROVED_MATRIX_SHA }}
         run: |
           set -euo pipefail
-          npm run migration:matrix-integrity
-          npm run test:migration-differential
+          verification_status=$(cat "$RUNNER_TEMP/legacy-matrix-reference-evidence/verification.exit" 2>/dev/null || printf '125')
+          npm_status=$(jq -r '.exitCode // 125' "$RUNNER_TEMP/legacy-matrix-reference-evidence/npm-ci.json" 2>/dev/null || printf '125')
+          removal_ok=$(jq -r '(.archiveRemoved and .manifestRemoved)' "$RUNNER_TEMP/legacy-matrix-reference-evidence/archive-removal.json" 2>/dev/null || printf 'false')
+          if [ "$verification_status" = 0 ] && [ "$npm_status" = 0 ] && [ "$removal_ok" = true ] \
+            && [ ! -e "$ARCHIVE_PATH" ] && [ ! -e "$MANIFEST_PATH" ] \
+            && [ -d "$PREPARED_ROOT" ] && [ -d "$CANDIDATE_ROOT" ]; then
+            set +e
+            node "$TRUSTED_ROOT/migration/bin/run-legacy-matrix-reference-replay.mjs" \
+              --candidate-root "$CANDIDATE_ROOT" \
+              --prepared-root "$PREPARED_ROOT" \
+              --matrix "$MATRIX" \
+              --expected-sha "$CANDIDATE_SHA" \
+              --expected-tree "$CANDIDATE_TREE" \
+              --expected-archive-sha256 "$ARCHIVE_SHA" \
+              --expected-matrix-sha256 "$MATRIX_SHA" \
+              --output "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json" \
+              --log-dir "$RUNNER_TEMP/legacy-matrix-reference-private-logs"
+            replay_status=$?
+            set -e
+          else
+            replay_status=125
+            node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; fs.writeFileSync(p, JSON.stringify({version:1,kind:"LegacyMatrixReferenceReplay",status:"blocked_archive_verification_or_cleanup_failed",overallExitCode:125,commands:[],archivePresentDuringCandidateExecution:null,candidateNetwork:"not_executed",candidateSecrets:[],sourceMutation:null,runtimeMutation:null}, null, 2)+"\n", {mode:0o444});' \
+              "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json"
+          fi
+          if [ ! -s "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json" ]; then
+            node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; fs.writeFileSync(p, JSON.stringify({version:1,kind:"LegacyMatrixReferenceReplay",status:"blocked_replay_runner_failure",overallExitCode:125,commands:[]}, null, 2)+"\n", {mode:0o444});' \
+              "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json"
+          fi
+          printf '%s\n' "$replay_status" > "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.exit"
+          exit 0
 
-      - name: Upload verification record
-        if: ${{ always() }}
+      - name: Remove sanitized reference and private replay logs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          prepared="$RUNNER_TEMP/legacy-matrix-reference-prepared"
+          logs="$RUNNER_TEMP/legacy-matrix-reference-private-logs"
+          if [ -e "$prepared" ]; then
+            find -P "$prepared" -type f -exec chmod 0600 {} + 2>/dev/null
+            find -P "$prepared" -type d -exec chmod 0700 {} + 2>/dev/null
+            rm -rf -- "$prepared"
+          fi
+          if [ -e "$logs" ]; then
+            find -P "$logs" -type f -exec chmod 0600 {} + 2>/dev/null
+            find -P "$logs" -type d -exec chmod 0700 {} + 2>/dev/null
+            rm -rf -- "$logs"
+          fi
+          prepared_destroyed=false
+          [ ! -e "$prepared" ] && prepared_destroyed=true
+          report="$RUNNER_TEMP/legacy-matrix-reference-evidence/archive-removal.json"
+          node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; const old=fs.existsSync(p) ? JSON.parse(fs.readFileSync(p,"utf8")) : {}; fs.chmodSync(p,0o600); fs.writeFileSync(p, JSON.stringify({...old,preparedRootDestroyed:process.argv[2]==="true"})+"\n", {mode:0o600}); fs.chmodSync(p,0o444);' \
+            "$report" "$prepared_destroyed"
+
+      - name: Upload evidence bundle
+        id: upload_evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: legacy-matrix-reference-verification-${{ github.run_id }}
-          path: ${{ runner.temp }}/legacy-matrix-reference-verification.json
-          if-no-files-found: ignore
+          name: legacy-matrix-reference-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/legacy-matrix-reference-evidence
+          if-no-files-found: error
           retention-days: 90
+
+      - name: Bind exact-head verification receipt
+        if: always()
+        shell: bash
+        env:
+          TRUSTED_ROOT: ${{ github.workspace }}/trusted-workflow
+          CANDIDATE_ROOT: ${{ github.workspace }}/candidate
+          POLICY: ${{ github.workspace }}/trusted-workflow/migration/fixtures/legacy-matrix-reference-verification-policy-v1.json
+          COMPANION_MANIFEST_SHA: ${{ runner.temp }}/legacy-matrix-reference-evidence/companion-manifest.sha256
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_TREE: ${{ inputs.candidate_tree }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          WORKFLOW_TREE: ${{ secrets.HEPTA_LEGACY_REFERENCE_WORKFLOW_TREE }}
+          HEPTA_BASE_SHA: ${{ env.APPROVED_BASE_SHA }}
+          HEPTA_BASE_TREE: ${{ env.APPROVED_BASE_TREE }}
+          EVIDENCE_ARTIFACT_ID: ${{ steps.upload_evidence.outputs.artifact-id }}
+          EVIDENCE_ARTIFACT_DIGEST: ${{ steps.upload_evidence.outputs.artifact-digest }}
+          EVIDENCE_ARTIFACT_URL: ${{ steps.upload_evidence.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          node "$TRUSTED_ROOT/migration/bin/write-legacy-matrix-reference-receipt.mjs" \
+            --verification "$RUNNER_TEMP/legacy-matrix-reference-evidence/verification.json" \
+            --replay "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --trusted-root "$TRUSTED_ROOT" \
+            --workflow-file "$TRUSTED_ROOT/.github/workflows/legacy-matrix-reference-verification.yml" \
+            --policy "$POLICY" \
+            --companion-manifest-sha256 "$(cat "$COMPANION_MANIFEST_SHA" 2>/dev/null || true)" \
+            --release-api-hash "$(cat "$RUNNER_TEMP/legacy-matrix-reference-evidence/release-api.sha256" 2>/dev/null || true)" \
+            --cleanup-report "$RUNNER_TEMP/legacy-matrix-reference-evidence/archive-removal.json" \
+            --matrix "$CANDIDATE_ROOT/migration/legacy-semantic-migration-matrix.json" \
+            --dependency-report "$RUNNER_TEMP/legacy-matrix-reference-evidence/npm-ci.json" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --candidate-tree "$CANDIDATE_TREE" \
+            --workflow-sha "$WORKFLOW_SHA" \
+            --workflow-tree "$WORKFLOW_TREE" \
+            --output "$RUNNER_TEMP/legacy-matrix-reference-evidence/receipt.json" \
+            --artifact-name "legacy-matrix-reference-evidence-${GITHUB_RUN_ID}" \
+            --artifact-id "${EVIDENCE_ARTIFACT_ID:-}" \
+            --artifact-digest "${EVIDENCE_ARTIFACT_DIGEST:-}" \
+            --artifact-url "${EVIDENCE_ARTIFACT_URL:-}"
+
+      - name: Upload exact-head receipt
+        id: upload_receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: legacy-matrix-reference-receipt-${{ github.run_id }}
+          path: ${{ runner.temp }}/legacy-matrix-reference-evidence/receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Fail unless the receipt records a complete exact-head replay
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const receipt = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (receipt.status !== "legacy_matrix_reference_exact_head_verified") {
+              throw new Error(`exact-head receipt blocked: ${receipt.status}`);
+            }
+          ' "$RUNNER_TEMP/legacy-matrix-reference-evidence/receipt.json"

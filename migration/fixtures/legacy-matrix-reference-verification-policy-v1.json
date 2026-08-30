@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "kind": "LegacyMatrixReferenceVerificationPolicy",
+  "repository": "TrillionniumFoundation/hepta-paper",
+  "candidate": {
+    "pullRequest": 29,
+    "branch": "codex/legacy-matrix-reference-publication-20260830",
+    "sha": "37543c9e06113199bc2aa8a6a344203ece6c71e5",
+    "tree": "c490cb85b33637f9882f640ab3718323fb47c7df",
+    "description": "reviewed post-Plan-v3 snapshot with sealed prepared-reference compatibility"
+  },
+  "base": {
+    "pullRequest": 26,
+    "sha": "220bbf100b1d0227bdc1a1c18d13fc78be37a98f",
+    "tree": "10e25c39f5dab9c0e63cb15685e0b35a62181ac9"
+  },
+  "archive": {
+    "companionRepository": "TrillionniumFoundation/hepta-paper-legacy-reference",
+    "companionCommit": "e275812d279007a87be536df6af3d5d6e9d84955",
+    "companionTag": "legacy-reference-v0.6.0-e431c4c7-r1",
+    "releaseTag": "legacy-reference-v0.6.0-e431c4c7",
+    "releaseId": 379268751,
+    "releaseAssetId": 536563599,
+    "archiveSha256": "sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d",
+    "archiveBytes": 22506525,
+    "matrixSha256": "sha256:59446f5e96cc5f086b27266f0fb0604d4f7f0e5bf1f62cb1a90933208a0f162a",
+    "sourceFileCount": 263
+  },
+  "workflow": {
+    "canonicalRepository": "TrillionniumFoundation/hepta-paper-legacy-reference",
+    "canonicalPath": ".github/workflows/legacy-matrix-reference-verification.yml",
+    "requiredRef": "refs/heads/main",
+    "trustMode": "private-companion-admin-controlled",
+    "mainRepositoryWorkflowMode": "untrusted-until-protected-main-and-admin-secret-review"
+  },
+  "actions": {
+    "checkout": "34e114876b0b11c390a56381ad16ebd13914f8d5",
+    "setupNode": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "uploadArtifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+  },
+  "authority": "archive_integrity_and_exact_head_replay_evidence_only; never parity production release submission academic or external authority"
+}

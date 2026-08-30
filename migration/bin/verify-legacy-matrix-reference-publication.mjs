@@ -31,6 +31,7 @@ function parseArgs(argv) {
     archivePath: process.env.HEPTA_LEGACY_REFERENCE_ARCHIVE || null,
     matrixPath: null,
     companionManifestPath: null,
+    extractDir: null,
     metadataOnly: false,
     json: false,
   };
@@ -45,6 +46,7 @@ function parseArgs(argv) {
     else if (argument === '--archive') result.archivePath = value();
     else if (argument === '--matrix') result.matrixPath = value();
     else if (argument === '--companion-manifest') result.companionManifestPath = value();
+    else if (argument === '--extract-dir') result.extractDir = value();
     else if (argument === '--metadata-only') result.metadataOnly = true;
     else if (argument === '--json') result.json = true;
     else if (argument === '--help') {
@@ -53,8 +55,9 @@ function parseArgs(argv) {
         '',
         '  --archive PATH             Exact private archive to hash and inspect.',
         '  --pointer PATH             Repository publication locator (default: canonical locator).',
-        '  --matrix PATH              Override the matrix path (normally from the locator).',
-        '  --companion-manifest PATH  Verify a downloaded private publication manifest.',
+      '  --matrix PATH              Override the matrix path (normally from the locator).',
+      '  --companion-manifest PATH  Verify a downloaded private publication manifest.',
+      '  --extract-dir PATH         Preserve a read-only 263-file sanitized extraction.',
         '  --metadata-only            Verify locator/manifest without an archive.',
         '  --json                     Emit the verification record as JSON.',
       ].join('\n') + '\n');
@@ -131,6 +134,15 @@ function safeRelativeSourcePath(value) {
   return value;
 }
 
+function safeRelativeRepositoryPath(value, label) {
+  if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0')
+    || path.posix.isAbsolute(value) || path.posix.normalize(value) !== value
+    || value.split('/').some((part) => part === '..' || part === '')) {
+    fail(`${label}_unsafe`, { path: value });
+  }
+  return value;
+}
+
 function normalizeSourceHash(value) {
   const text = String(value || '');
   const normalized = text.startsWith('sha256:') ? text.slice('sha256:'.length) : text;
@@ -170,6 +182,13 @@ function validatePointer(pointer) {
   if (!pointer.canonicalManifestPath || !pointer.canonicalArchiveBasename) {
     fail('publication_pointer_binding_missing');
   }
+  safeRelativeRepositoryPath(pointer.canonicalManifestPath, 'canonical_manifest_path');
+  safeRelativeRepositoryPath(pointer.matrix?.path, 'matrix_path');
+  if (path.basename(pointer.canonicalArchiveBasename) !== pointer.canonicalArchiveBasename
+    || pointer.canonicalArchiveBasename.includes('\0')
+    || pointer.canonicalArchiveBasename.includes('\\')) {
+    fail('canonical_archive_basename_invalid');
+  }
   if (!SHA256.test(pointer.canonicalArchiveSha256)
     || !SHA256.test(pointer.matrix?.sha256)
     || !Number.isSafeInteger(pointer.matrix?.sourceFileCount)
@@ -181,6 +200,11 @@ function validatePointer(pointer) {
     || typeof pointer.custody?.commit !== 'string'
     || typeof pointer.custody?.tag !== 'string'
     || typeof pointer.custody?.releaseTag !== 'string'
+    || !Number.isSafeInteger(pointer.custody?.archiveBytes)
+    || pointer.custody.archiveBytes < 1
+    || !Number.isSafeInteger(pointer.custody?.releaseAssetId)
+    || pointer.custody.releaseAssetId < 1
+    || !SHA256.test(pointer.custody?.releaseAssetDigest)
     || pointer.custody?.releaseAssetDigest !== pointer.canonicalArchiveSha256
     || pointer.custody?.releaseAssetBytes !== pointer.custody?.archiveBytes
     || pointer.custody?.releaseAssetState !== 'uploaded'
@@ -213,11 +237,18 @@ function validateCompanionManifest(manifest, pointer) {
 }
 
 function archiveInventory(archivePath, sourcePaths) {
-  const names = runTar(['-tzf', archivePath, '--quoting-style=escape'], 'archive_listing')
+  const names = runTar(['-tzf', archivePath, '--quoting-style=literal'], 'archive_listing')
     .split('\n').filter(Boolean).map((name) => name.endsWith('/') ? name.slice(0, -1) : name);
+  for (const name of names) {
+    if (!name || name.includes('\0') || name.includes('\\') || path.posix.isAbsolute(name)
+      || path.posix.normalize(name) !== name
+      || name.split('/').some((part) => part === '..' || part === '')) {
+      fail('archive_member_path_unsafe', { name });
+    }
+  }
   const nameCounts = new Map();
   for (const name of names) nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
-  const verbose = runTar(['-tvzf', archivePath, '--quoting-style=escape'], 'archive_type_listing')
+  const verbose = runTar(['-tvzf', archivePath, '--quoting-style=literal'], 'archive_type_listing')
     .split('\n').filter(Boolean);
   const typeFor = (name) => {
     const candidates = verbose.filter((line) => line.endsWith(` ${name}`)
@@ -251,8 +282,50 @@ function archiveInventory(archivePath, sourcePaths) {
   });
 }
 
-function verifySourceHashes(archivePath, entries) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-legacy-matrix-verify-'));
+function makeReadOnlyTree(root) {
+  const pending = [root];
+  while (pending.length) {
+    const current = pending.pop();
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) fail('prepared_tree_symlink_forbidden', { path: current });
+    if (stat.isDirectory()) {
+      fs.chmodSync(current, 0o555);
+      for (const entry of fs.readdirSync(current)) pending.push(path.join(current, entry));
+    } else if (stat.isFile()) fs.chmodSync(current, 0o444);
+    else fail('prepared_tree_member_type_forbidden', { path: current });
+  }
+}
+
+function makeWritableTree(root) {
+  const pending = [root];
+  const directories = [];
+  while (pending.length) {
+    const current = pending.pop();
+    let stat;
+    try { stat = fs.lstatSync(current); } catch { continue; }
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) {
+      fs.chmodSync(current, 0o700);
+      directories.push(current);
+      for (const entry of fs.readdirSync(current)) pending.push(path.join(current, entry));
+    } else if (stat.isFile()) fs.chmodSync(current, 0o600);
+  }
+  // Directory permissions are restored before recursive removal; process
+  // children first so a read-only parent can never strand a child.
+  for (const directory of directories.reverse()) fs.chmodSync(directory, 0o700);
+}
+
+function verifySourceHashes(archivePath, entries, requestedRoot = null) {
+  if (requestedRoot !== null) {
+    if (!path.isAbsolute(requestedRoot) || path.resolve(requestedRoot) !== requestedRoot) {
+      fail('extract_dir_absolute_path_required');
+    }
+    if (fs.existsSync(requestedRoot)) fail('extract_dir_must_not_exist');
+    fs.mkdirSync(requestedRoot, { recursive: false, mode: 0o700 });
+  }
+  const root = requestedRoot || fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-legacy-matrix-verify-'));
+  const persistent = requestedRoot !== null;
+  let completed = false;
   try {
     const paths = entries.map((entry) => entry.path);
     runTar([
@@ -263,15 +336,30 @@ function verifySourceHashes(archivePath, entries) {
     for (const entry of entries) {
       const extracted = path.join(root, entry.path);
       absoluteRegularFile(extracted, 'extracted_matrix_member');
+      const relativeParent = path.relative(root, extracted);
+      let parent = root;
+      for (const part of path.dirname(relativeParent).split(path.sep)) {
+        if (!part || part === '.') continue;
+        parent = path.join(parent, part);
+        const parentStat = fs.lstatSync(parent);
+        if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+          fail('prepared_tree_parent_not_directory', { path: parent });
+        }
+      }
       const actual = sha256File(extracted);
       if (actual !== entry.sha256) fail('archive_matrix_source_hash_mismatch', {
         path: entry.path, expected: entry.sha256, actual,
       });
       matched += 1;
     }
-    return matched;
+    makeReadOnlyTree(root);
+    completed = true;
+    return { matched, root: persistent ? root : null };
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    if (!persistent || !completed) {
+      makeWritableTree(root);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 }
 
@@ -314,12 +402,21 @@ function verify(options) {
     companionCommit: pointer.custody.commit,
     companionTag: pointer.custody.tag,
     releaseTag: pointer.custody.releaseTag,
-    releaseAssetId: pointer.custody.releaseAssetId,
-    releaseAssetDigest: pointer.custody.releaseAssetDigest,
+      releaseAssetId: pointer.custody.releaseAssetId,
+      releaseAssetDigest: pointer.custody.releaseAssetDigest,
+      releaseAssetBytes: pointer.custody.releaseAssetBytes,
+      releaseId: pointer.custody.releaseId,
+      archiveBytes: pointer.custody.archiveBytes,
   };
   if (options.metadataOnly) return Object.freeze(result);
   if (!options.archivePath) fail('archive_path_required');
   const archivePath = absoluteRegularFile(path.resolve(options.archivePath), 'archive');
+  if (path.basename(archivePath) !== pointer.canonicalArchiveBasename) {
+    fail('archive_basename_mismatch', {
+      expected: pointer.canonicalArchiveBasename,
+      actual: path.basename(archivePath),
+    });
+  }
   const archiveSha256 = sha256File(archivePath);
   if (archiveSha256 !== pointer.canonicalArchiveSha256) fail('archive_hash_mismatch', {
     expected: pointer.canonicalArchiveSha256, actual: archiveSha256,
@@ -331,7 +428,7 @@ function verify(options) {
     || inventory.symlinks !== pointer.archiveInventory.symlinks) {
     fail('archive_inventory_mismatch', { expected: pointer.archiveInventory, actual: inventory });
   }
-  const sourceHashesMatched = verifySourceHashes(archivePath, entries);
+  const sourceVerification = verifySourceHashes(archivePath, entries, options.extractDir);
   return Object.freeze({
     ...result,
     status: 'legacy_matrix_reference_publication_verified',
@@ -339,9 +436,10 @@ function verify(options) {
     archiveSha256,
     archiveBytes: fs.statSync(archivePath).size,
     archiveInventory: inventory,
-    sourceHashesMatched,
+    sourceHashesMatched: sourceVerification.matched,
     sourceHashesMissing: 0,
     sourceHashesMismatched: 0,
+    ...(sourceVerification.root ? { preparedRoot: sourceVerification.root } : {}),
   });
 }
 
@@ -358,7 +456,9 @@ if (options) {
       code: error.code || 'verification_failed',
       ...(error.details ? { details: error.details } : {}),
     };
-    process.stderr.write(`${JSON.stringify(failure, null, 2)}\n`);
+    const serialized = `${JSON.stringify(failure, null, 2)}\n`;
+    if (options.json) process.stdout.write(serialized);
+    else process.stderr.write(serialized);
     process.exitCode = 1;
   }
 }

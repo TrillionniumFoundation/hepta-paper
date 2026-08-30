@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TrillionniumFoundation/hepta-paper/blob/main/migration/fixtures/legacy-matrix-reference-exact-head-receipt-v1.schema.json",
+  "title": "Legacy matrix reference exact-head receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "subject",
+    "workflow",
+    "run",
+    "reference",
+    "matrix",
+    "isolation",
+    "dependencies",
+    "verification",
+    "replay",
+    "tools",
+    "evidenceArtifact",
+    "authority",
+    "externalAuthorityGranted",
+    "receiptSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": { "const": "LegacyMatrixReferenceExactHeadReceipt" },
+    "status": {
+      "enum": [
+        "legacy_matrix_reference_exact_head_verified",
+        "legacy_matrix_reference_exact_head_blocked"
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "repository",
+        "candidateSha",
+        "candidateTree",
+        "allowlistPolicySha256",
+        "candidateAllowlisted",
+        "policyMatch"
+      ],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "candidateSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "candidateTree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "allowlistPolicySha256": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" },
+        "candidateAllowlisted": { "type": "boolean" },
+        "policyMatch": { "type": "boolean" }
+      }
+    },
+    "workflow": { "type": "object" },
+    "run": { "type": "object" },
+    "reference": { "type": "object" },
+    "matrix": { "type": "object" },
+    "isolation": { "type": "object" },
+    "dependencies": { "type": "object" },
+    "verification": { "type": "object" },
+    "replay": { "type": "object" },
+    "tools": { "type": "object" },
+    "evidenceArtifact": { "type": "object" },
+    "authority": { "const": "non_authorizing_archive_integrity_and_migration_replay_evidence_only" },
+    "externalAuthorityGranted": { "const": false },
+    "receiptSha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  }
+}

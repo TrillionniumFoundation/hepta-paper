@@ -18,6 +18,18 @@ const pointer = path.join(
   'fixtures',
   'legacy-matrix-reference-publication-v1.json',
 );
+const policy = path.join(
+  workspaceRoot,
+  'migration',
+  'fixtures',
+  'legacy-matrix-reference-verification-policy-v1.json',
+);
+const receiptSchema = path.join(
+  workspaceRoot,
+  'migration',
+  'fixtures',
+  'legacy-matrix-reference-exact-head-receipt-v1.schema.json',
+);
 
 test('legacy matrix publication locator is metadata-verifiable offline', () => {
   assert.equal(fs.existsSync(pointer), true);
@@ -67,4 +79,16 @@ test('prepared reference status binds the verified digests without reopening the
   } finally {
     fs.rmSync(preparedRoot, { recursive: true, force: true });
   }
+});
+
+test('verification policy and receipt schema bind the reviewed candidate snapshot', () => {
+  const policyDocument = JSON.parse(fs.readFileSync(policy, 'utf8'));
+  assert.equal(policyDocument.kind, 'LegacyMatrixReferenceVerificationPolicy');
+  assert.equal(policyDocument.candidate.sha, '37543c9e06113199bc2aa8a6a344203ece6c71e5');
+  assert.equal(policyDocument.candidate.tree, 'c490cb85b33637f9882f640ab3718323fb47c7df');
+  assert.equal(policyDocument.archive.sourceFileCount, 263);
+  assert.equal(policyDocument.workflow.trustMode, 'private-companion-admin-controlled');
+  const schemaDocument = JSON.parse(fs.readFileSync(receiptSchema, 'utf8'));
+  assert.equal(schemaDocument.properties.schemaVersion.const, 2);
+  assert.equal(schemaDocument.properties.externalAuthorityGranted.const, false);
 });

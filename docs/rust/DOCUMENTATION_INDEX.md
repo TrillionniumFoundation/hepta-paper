@@ -17,6 +17,7 @@
 | External gap-to-package mapping | `qualification/external-package-map.v1.json` |
 | External package reviewer index | `qualification/PLAN_V3_EXTERNAL_PACKAGE_INDEX.md` |
 | External execution and ingestion protocol | `qualification/PLAN_V3_EXTERNAL_GAP_EXECUTION.md` |
+| Legacy 263-file reference publication and receipt | `LEGACY_MATRIX_REFERENCE_PUBLICATION.md` + `../../migration/fixtures/legacy-matrix-reference-verification-policy-v1.json` |
 | Protected-main acceptance schema | `qualification/protected-main-ruleset-evidence-v1.schema.json` |
 | Supply-chain policy | `security/SUPPLY_CHAIN_POLICY.md` |
 | Codex protocol details | `../codex/*.md` |

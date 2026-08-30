@@ -33,7 +33,7 @@ gh release download legacy-reference-v0.6.0-e431c4c7 \
   --pattern 'paper-factory-control-plane-reference.tar.gz' \
   --dir "$RUNNER_TEMP/legacy-reference"
 
-node migration/bin/verify-legacy-matrix-reference-publication.mjs \
+node /path/to/trusted-workflow/migration/bin/verify-legacy-matrix-reference-publication.mjs \
   --archive "$RUNNER_TEMP/legacy-reference/paper-factory-control-plane-reference.tar.gz"
 ```
 
@@ -43,23 +43,43 @@ recomputes every source hash and fails closed on missing, duplicate, unsafe,
 symlink, or mismatched members. `--metadata-only` verifies the locator without
 requiring private materialization.
 
-After the archive gate, run the matrix integrity and differential commands on
-the same exact candidate commit:
+After the archive gate, remove the archive and run the exact candidate commands
+against the sealed extraction (the workflow's replay helper performs this in a
+networkless namespace):
 
 ```sh
-HEPTA_LEGACY_REFERENCE_ARCHIVE="$RUNNER_TEMP/legacy-reference/paper-factory-control-plane-reference.tar.gz" \
-  npm run migration:matrix-integrity
-HEPTA_LEGACY_REFERENCE_ARCHIVE="$RUNNER_TEMP/legacy-reference/paper-factory-control-plane-reference.tar.gz" \
-  npm run test:migration-differential
+test ! -e "$RUNNER_TEMP/hepta-legacy-reference/paper-factory-control-plane-reference.tar.gz"
+test ! -e "$RUNNER_TEMP/hepta-legacy-reference/PUBLICATION_MANIFEST.v1.json"
+npm --ignore-scripts --offline run migration:matrix-integrity
+npm --ignore-scripts --offline run test:migration-differential
 ```
 
-The manual workflow
-`.github/workflows/legacy-matrix-reference-verification.yml` performs this
-sequence with the `HEPTA_LEGACY_REFERENCE_READ_TOKEN` secret. It is deliberately
-`workflow_dispatch`-only: an untrusted fork must never receive the private
-companion credential. A successful archive verification does not by itself
-promote Rust parity, production, release, submission, or external-authority
-status; those plan gates remain independent.
+The checked-in policy
+[`legacy-matrix-reference-verification-policy-v1.json`](../../migration/fixtures/legacy-matrix-reference-verification-policy-v1.json)
+allowlists the reviewed post-Plan-v3 candidate snapshot (`37543c9e…` /
+`c490cb85…`) and binds the archive, matrix and companion release identifiers.
+The exact-head receipt contract is described by
+[`legacy-matrix-reference-exact-head-receipt-v1.schema.json`](../../migration/fixtures/legacy-matrix-reference-exact-head-receipt-v1.schema.json).
+
+The secret-bearing run is intentionally owned by the private companion
+repository's administrator-controlled workflow. The public repository workflow
+is only a guarded fallback: it runs on protected `main` with
+`HEPTA_LEGACY_REFERENCE_TRUSTED=1`, never on a pull-request or fork ref. The
+workflow installs the candidate lockfile before private materialization, verifies
+the release API asset identity, extracts only the 263 allowlisted regular files,
+destroys the archive and manifest, then runs the exact npm migration commands in
+a bubblewrap namespace with no network, no candidate secrets, and read-only
+candidate/reference/runtime mounts. It emits one receipt binding candidate and
+workflow SHA/tree, policy digest, run/attempt, release/manifest/matrix digests,
+tool and action pins, dependency-install hashes, replay commands/results and
+artifact digest. Raw private replay logs are discarded after hashing.
+
+A successful archive verification does not by itself promote Rust parity,
+production, release, submission, or external-authority status; those plan gates
+remain independent. Until an administrator completes a trusted hosted run and
+retains the resulting receipt, issue #28 remains open and this publication is
+classified as `published_locator_pending_hosted_replay`, not as a closed
+external-authority gap.
 
 ## Custody boundary
 
@@ -71,5 +91,7 @@ boundary, and an indefinite-retention/no-rewrite policy. The local read-only and
 Ed25519 receipts retain their original authority limit: build/archive integrity
 only, not runtime, academic, reviewer, release, or submission authority.
 
-This closes artifact availability/provenance for the exact `e431…` object. It
-does not change the Rust rewrite's broader compatibility or production status.
+The private companion closes local artifact availability and content provenance
+for the exact `e431…` object. Hosted exact-head replay and independent owner
+acceptance are still required to close the migration evidence gap. Nothing here
+changes the Rust rewrite's broader compatibility or production status.

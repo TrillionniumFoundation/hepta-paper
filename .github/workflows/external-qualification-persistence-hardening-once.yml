@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# isolated finalizer: normalize the prior clock slice before persistence generation
+# isolated finalizer attempt 2: disambiguate schema-set insertion
 
 on:
   push:

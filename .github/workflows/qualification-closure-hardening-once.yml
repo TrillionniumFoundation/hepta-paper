@@ -17,7 +17,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -25,7 +25,28 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Scan production Rust surfaces for latent blockers
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Reject semantic unsafe, TODO and unimplemented code
+        shell: bash
+        env:
+          RUSTFLAGS: '-Dunsafe-code'
+        run: |
+          set -euo pipefail
+          cargo check --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- \
+            -D warnings -D unsafe-code -D clippy::todo -D clippy::unimplemented
+
+      - name: Inventory production panic and authority-sensitive surfaces
         shell: bash
         run: |
           set -euo pipefail
@@ -36,67 +57,67 @@ jobs:
           import re
 
           patterns = {
-              "todo_macro": re.compile(r"\btodo!\s*\("),
-              "unimplemented_macro": re.compile(r"\bunimplemented!\s*\("),
-              "unsafe_token": re.compile(r"\bunsafe\b"),
-              "panic_macro": re.compile(r"\bpanic!\s*\("),
-              "unwrap_call": re.compile(r"\.unwrap\s*\("),
-              "expect_call": re.compile(r"\.expect\s*\("),
-              "process_command": re.compile(r"(?:std::process::|process::)?Command::new\s*\("),
-              "process_exit": re.compile(r"(?:std::process::|process::)exit\s*\("),
-              "environment_read": re.compile(r"(?:std::env::|env::)(?:var|var_os)\s*\("),
-              "lint_allow": re.compile(r"#\s*!?\s*\[\s*allow\s*\("),
-              "todo_comment": re.compile(r"\b(?:TODO|FIXME|XXX|HACK)\b", re.IGNORECASE),
+              'panic_macro': re.compile(r'\bpanic!\s*\('),
+              'unwrap_call': re.compile(r'\.unwrap\s*\('),
+              'expect_call': re.compile(r'\.expect\s*\('),
+              'process_command': re.compile(r'(?:std::process::|process::)?Command::new\s*\('),
+              'process_exit': re.compile(r'(?:std::process::|process::)exit\s*\('),
+              'environment_read': re.compile(r'(?:std::env::|env::)(?:var|var_os)\s*\('),
+              'lint_allow': re.compile(r'#\s*!?\s*\[\s*allow\s*\('),
+              'todo_comment': re.compile(r'\b(?:TODO|FIXME|XXX|HACK)\b', re.IGNORECASE),
           }
           counts = Counter()
           hits = []
-          for path in sorted(Path("rust").rglob("*.rs")):
-              text = path.read_text(encoding="utf-8")
-              production = text.split("#[cfg(test)]", 1)[0]
+          rust_files = sorted(Path('rust').rglob('*.rs'))
+          production_files = []
+          for path in rust_files:
+              if 'tests' in path.parts or path.name == 'tests.rs':
+                  continue
+              production_files.append(path)
+              text = path.read_text(encoding='utf-8')
+              production = text.split('#[cfg(test)]', 1)[0]
               for number, line in enumerate(production.splitlines(), 1):
                   for name, pattern in patterns.items():
                       if pattern.search(line):
                           counts[name] += 1
                           hits.append({
-                              "kind": name,
-                              "path": str(path),
-                              "line": number,
-                              "source": line.strip(),
+                              'kind': name,
+                              'path': str(path),
+                              'line': number,
+                              'source': line.strip(),
                           })
           report = {
-              "rustFiles": len(list(Path("rust").rglob("*.rs"))),
-              "productionHitCounts": dict(sorted(counts.items())),
-              "productionHits": hits,
+              'rustFiles': len(rust_files),
+              'productionFiles': len(production_files),
+              'productionHitCounts': dict(sorted(counts.items())),
+              'productionHits': hits,
           }
           print(json.dumps(report, indent=2, ensure_ascii=True))
-          if counts["todo_macro"] or counts["unimplemented_macro"] or counts["unsafe_token"]:
-              raise SystemExit("hard blocker token found in production Rust")
           PY
 
-      - name: Check source hygiene and dependency graph
+      - name: Check locked dependency graph and clean source
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal
-          rustup default 1.98.0
-          cargo metadata --manifest-path rust/Cargo.toml --format-version 1 --locked > "$RUNNER_TEMP/metadata.json"
+          cargo metadata --manifest-path rust/Cargo.toml \
+            --format-version 1 --locked > "$RUNNER_TEMP/metadata.json"
           python3 - "$RUNNER_TEMP/metadata.json" <<'PY'
           from pathlib import Path
           import json
           import sys
-          metadata = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          packages = metadata["packages"]
-          workspace = set(metadata["workspace_members"])
-          summary = []
-          for package in sorted(packages, key=lambda item: item["name"]):
-              if package["id"] not in workspace:
+
+          metadata = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          workspace = set(metadata['workspace_members'])
+          packages = []
+          for package in sorted(metadata['packages'], key=lambda item: item['name']):
+              if package['id'] not in workspace:
                   continue
-              summary.append({
-                  "name": package["name"],
-                  "targets": sorted(target["name"] for target in package["targets"]),
-                  "dependencyCount": len(package["dependencies"]),
+              packages.append({
+                  'name': package['name'],
+                  'targets': sorted(target['name'] for target in package['targets']),
+                  'dependencyCount': len(package['dependencies']),
               })
-          print(json.dumps({"workspacePackages": summary}, indent=2))
+          print(json.dumps({'workspacePackages': packages}, indent=2))
           PY
-          git status --short
+          git diff --check
           test -z "$(git status --porcelain)"

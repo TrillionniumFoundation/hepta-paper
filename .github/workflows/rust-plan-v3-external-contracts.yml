@@ -47,6 +47,7 @@ jobs:
           expected_schemas = {
               'hepta-broker-qualification-evidence-v1.schema.json',
               'independent-linux-review-v1.schema.json',
+              'external-host-storage-package-v1.schema.json',
               'external-key-owner-drill-v1.schema.json',
               'authenticated-codex-role-canary-v1.schema.json',
               'production-cutover-soak-v1.schema.json',

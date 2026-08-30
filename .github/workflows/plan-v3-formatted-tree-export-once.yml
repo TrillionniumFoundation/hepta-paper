@@ -1,0 +1,109 @@
+name: plan-v3-formatted-tree-export-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-deep-audit-20260830
+    paths:
+      - '.github/workflows/plan-v3-formatted-tree-export-once.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-v3-formatted-tree-export-once
+  cancel-in-progress: true
+
+env:
+  EXPECTED_HEAD: 1992dffd7f520a11813cffc34691e94ff0dfd7c8
+  EXPECTED_TREE: 8e4865411781e2c64289d6387377f0632c2aa38e
+  PATCH_SHA256: b925c72c2d8e58a8d3b2ae8e724852991b46dbcef14882628e70c3859853a918
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out audit branch containing the validated patch payload
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Recover and verify the exact validated patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import gzip
+
+          source = Path('.github/workflows/plan-v3-profile-truth-hardening-once.yml').read_text(encoding='utf-8')
+          payload = []
+          capture = False
+          for line in source.splitlines():
+              if "base64 -d <<'B64' | gzip -d" in line:
+                  capture = True
+                  continue
+              if capture and line.strip() == 'B64':
+                  break
+              if capture:
+                  payload.append(line.strip())
+          if not payload:
+              raise SystemExit('validated patch payload missing')
+          compressed = base64.b64decode(''.join(payload), validate=True)
+          Path('/tmp/plan-v3-final-hardening.patch').write_bytes(gzip.decompress(compressed))
+          PY
+          printf '%s  %s\n' "$PATCH_SHA256" /tmp/plan-v3-final-hardening.patch | sha256sum -c -
+
+      - name: Apply to exact product head and export rustfmt-normalized tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$EXPECTED_HEAD"
+          git checkout --detach "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          git apply --check /tmp/plan-v3-final-hardening.patch
+          git apply /tmp/plan-v3-final-hardening.patch
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          python3 docs/rust/tools/validate-program-truth.py
+          git diff --check
+
+          mapfile -t files <<'EOF'
+          .github/workflows/rust-foundation.yml
+          docs/rust/RUST_RISK_REGISTER.md
+          docs/rust/current-status.v1.json
+          docs/rust/tools/validate-program-truth.py
+          rust/crates/hepta-codex-broker/tests/durable_process_journal.rs
+          rust/crates/hepta-codex-runtime/src/bin/hepta-codex-preexec-gate.rs
+          EOF
+          mkdir -p /tmp/hepta-formatted-tree
+          git diff --binary > /tmp/hepta-formatted-tree/validated-formatted.patch
+          tar -czf /tmp/hepta-formatted-tree/files.tar.gz "${files[@]}"
+          printf 'repository=TrillionniumFoundation/hepta-paper\ncommit=%s\ntree=%s\n' \
+            "$EXPECTED_HEAD" "$EXPECTED_TREE" > /tmp/hepta-formatted-tree/IDENTITY
+          git diff --name-only | LC_ALL=C sort > /tmp/hepta-formatted-tree/changed-files.txt
+          printf '%s\n' "${files[@]}" | LC_ALL=C sort > /tmp/hepta-formatted-tree/expected-files.txt
+          cmp /tmp/hepta-formatted-tree/expected-files.txt /tmp/hepta-formatted-tree/changed-files.txt
+          sha256sum \
+            /tmp/hepta-formatted-tree/validated-formatted.patch \
+            /tmp/hepta-formatted-tree/files.tar.gz \
+            > /tmp/hepta-formatted-tree/SHA256SUMS
+          cat /tmp/hepta-formatted-tree/IDENTITY
+          cat /tmp/hepta-formatted-tree/SHA256SUMS
+          git diff --stat
+
+      - name: Upload rustfmt-normalized validated tree
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hepta-plan-v3-formatted-tree-1992dffd
+          path: /tmp/hepta-formatted-tree
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

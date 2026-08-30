@@ -475,6 +475,10 @@ fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
         && left.gid() == right.gid()
         && left.nlink() == right.nlink()
         && left.size() == right.size()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
 }
 
 #[cfg(target_os = "linux")]

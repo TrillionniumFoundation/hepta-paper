@@ -117,8 +117,13 @@ impl QualificationTrustStoreV1 {
         J: IntoIterator<Item = String>,
     {
         let mut keys = BTreeMap::new();
+        let mut key_material = BTreeSet::new();
         for (domain, key_id, key) in entries {
-            if !valid_identifier(&domain) || !valid_identifier(&key_id) || key.is_weak() {
+            if !valid_identifier(&domain)
+                || !valid_identifier(&key_id)
+                || key.is_weak()
+                || !key_material.insert(key.to_bytes())
+            {
                 return Err(QualificationIngestError::TrustStoreInvalid);
             }
             if keys.insert((domain, key_id), key).is_some() {
@@ -219,7 +224,14 @@ pub fn load_external_qualification_file_v1(
     let capacity =
         usize::try_from(opened.size()).map_err(|_| QualificationIngestError::EvidenceTooLarge)?;
     let mut bytes = Vec::with_capacity(capacity);
-    file.read_to_end(&mut bytes)?;
+    (&mut file)
+        .take(MAXIMUM_EVIDENCE_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).map_err(|_| QualificationIngestError::EvidenceTooLarge)?
+        != opened.size()
+    {
+        return Err(QualificationIngestError::FileChanged);
+    }
     let after_path = fs::symlink_metadata(path)?;
     let after_open = file.metadata()?;
     if !same_file(&opened, &after_open) || !same_file(&after_open, &after_path) {
@@ -334,7 +346,7 @@ fn inspect_ancestors(path: &Path, consumer_uid: u32) -> Result<(), Qualification
         if canonical != current
             || metadata.file_type().is_symlink()
             || !metadata.is_dir()
-            || mode & 0o002 != 0
+            || mode & 0o022 != 0
             || (metadata.uid() == consumer_uid && mode & 0o200 != 0)
         {
             return Err(QualificationIngestError::FileAuthorityInvalid);
@@ -358,6 +370,10 @@ fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
         && left.gid() == right.gid()
         && left.nlink() == right.nlink()
         && left.size() == right.size()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
 }
 
 fn nix_no_follow_cloexec() -> i32 {
@@ -527,6 +543,27 @@ mod tests {
             Err(QualificationIngestError::AuthorityDomainForbidden)
         ));
     }
+    #[test]
+    fn one_public_key_cannot_alias_multiple_authority_domains() {
+        let signing = SigningKey::from_bytes(&[23_u8; 32]);
+        let verifying = signing.verifying_key();
+        let result = QualificationTrustStoreV1::new(
+            [
+                (
+                    "governance-review".to_owned(),
+                    "governance-key".to_owned(),
+                    verifying,
+                ),
+                ("linux-review".to_owned(), "linux-key".to_owned(), verifying),
+            ],
+            std::iter::empty::<String>(),
+        );
+        assert!(matches!(
+            result,
+            Err(QualificationIngestError::TrustStoreInvalid)
+        ));
+    }
+
     #[test]
     fn closed_package_vocabulary_round_trips_canonical_external_ids() {
         let expected = [

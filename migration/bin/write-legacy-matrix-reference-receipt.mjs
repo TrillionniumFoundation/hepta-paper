@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 
 const SHA40 = /^[0-9a-f]{40}$/u;
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
+const HEX64 = /^[0-9a-f]{64}$/u;
 const ARTIFACT_ID = /^[0-9]+$/u;
 
 function fail(message) { throw new Error(message); }
@@ -309,13 +310,21 @@ function expectedArtifactUrl(artifactId) {
   return `${serverUrl}/${repository}/actions/runs/${runId}/artifacts/${id}`;
 }
 
+function normalizeArtifactDigest(value) {
+  const text = String(value || '').trim();
+  if (SHA256.test(text)) return text;
+  if (HEX64.test(text)) return `sha256:${text}`;
+  return null;
+}
+
 function artifactBindingComplete(options) {
   const expectedName = process.env.GITHUB_RUN_ID
     ? `legacy-matrix-reference-evidence-${process.env.GITHUB_RUN_ID}`
     : null;
   const expectedUrl = expectedArtifactUrl(options.artifactId);
+  const artifactDigest = normalizeArtifactDigest(options.artifactDigest);
   return ARTIFACT_ID.test(String(options.artifactId || ''))
-    && SHA256.test(String(options.artifactDigest || ''))
+    && Boolean(artifactDigest)
     && (!expectedName || options.artifactName === expectedName)
     // actions/upload-artifact@v4 emits the web URL, not the REST API URL.
     // Bind it to this exact repository/run/artifact so a copied URL cannot
@@ -524,7 +533,9 @@ function main() {
     evidenceArtifact: {
       name: options.artifactName,
       id: options.artifactId || null,
-      digest: options.artifactDigest || null,
+      // upload-artifact@v4 emits a bare lowercase hex digest; retain a
+      // canonical sha256: form in the receipt for cross-tool comparison.
+      digest: normalizeArtifactDigest(options.artifactDigest),
       url: options.artifactUrl || null,
       expectedUrl: expectedArtifactUrl(options.artifactId),
       urlBindingComplete: artifactBindingComplete(options),

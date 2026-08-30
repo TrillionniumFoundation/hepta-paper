@@ -1,0 +1,85 @@
+name: plan-v3-schema-runtime-alignment-fix-v2-once
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-deep-audit-20260830
+    paths:
+      - '.github/workflows/plan-v3-schema-runtime-alignment-fix-v2-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plan-v3-schema-runtime-alignment-fix-v2-once
+  cancel-in-progress: false
+
+env:
+  TARGET_BRANCH: codex/rust-plan-v3-final-product-20260830
+  EXPECTED_HEAD: 7d0660be80b119251c2313e59965a4df9625c34b
+  RUSTFLAGS: -Dunsafe-code -C overflow-checks=yes
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact product branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-plan-v3-final-product-20260830
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Prove expected head and install toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Apply schema/runtime/profile patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d <<'B64' | gzip -d > "$RUNNER_TEMP/plan_v3_patch.py"
+          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
+          B64
+          python3 "$RUNNER_TEMP/plan_v3_patch.py"
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest --all-features --locked
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-runtime --bin hepta-codex-preexec-gate --release --locked
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker --test durable_process_journal \
+            --release --locked -- --test-threads=1
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --lib --bins --all-features --locked -- \
+            -D warnings -D unsafe-code \
+            -D clippy::todo -D clippy::unimplemented \
+            -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+          python3 -m json.tool \
+            docs/rust/qualification/protected-main-ruleset-evidence-v1.schema.json \
+            >/dev/null
+          git diff --check
+          test -n "$(git status --porcelain)"
+
+      - name: Commit validated hardening with expected-head guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$TARGET_BRANCH"
+          test "$(git rev-parse origin/$TARGET_BRANCH)" = "$EXPECTED_HEAD"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            rust/crates/hepta-qualification-ingest/src/package_payload.rs \
+            rust/crates/hepta-codex-broker/tests/durable_process_journal.rs \
+            docs/rust/qualification/protected-main-ruleset-evidence-v1.schema.json \
+            .github/workflows/rust-foundation.yml
+          git commit -m 'fix(qualification): align payload schemas and release tests'
+          git push origin "HEAD:$TARGET_BRANCH"

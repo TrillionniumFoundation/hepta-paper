@@ -5,22 +5,25 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const verifier = path.join(
-  workspaceRoot,
-  'migration',
-  'bin',
-  'verify-legacy-matrix-reference-publication.mjs',
-);
-const pointer = path.join(
-  workspaceRoot,
-  'migration',
-  'fixtures',
-  'legacy-matrix-reference-publication-v1.json',
-);
+const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+const workspaceRoot = path.resolve(testDirectory, '..', '..');
+const workflowRelativePath = '../../.github/workflows/legacy-matrix-reference-verification.yml';
+const verifierRelativePath = '../bin/verify-legacy-matrix-reference-publication.mjs';
+const pointerRelativePath = '../fixtures/legacy-matrix-reference-publication-v1.json';
+const workflow = path.resolve(testDirectory, workflowRelativePath);
+const verifier = path.resolve(testDirectory, verifierRelativePath);
+const pointer = path.resolve(testDirectory, pointerRelativePath);
 
 test('legacy matrix publication locator is metadata-verifiable offline', () => {
+  assert.equal(fs.existsSync(workflow), true);
+  assert.equal(fs.existsSync(verifier), true);
   assert.equal(fs.existsSync(pointer), true);
+  const workflowSource = fs.readFileSync(workflow, 'utf8');
+  assert.match(workflowSource, /^name: legacy-matrix-reference-verification$/mu);
+  assert.match(workflowSource, /^permissions:\n  contents: read$/mu);
+  assert.match(workflowSource, /HEPTA_LEGACY_REFERENCE_READ_TOKEN/u);
+  assert.doesNotMatch(workflowSource, /\bpull_request_target\s*:/u);
+  assert.doesNotMatch(workflowSource, /\bcontents:\s*write\b/u);
   const result = spawnSync(process.execPath, [verifier, '--metadata-only'], {
     cwd: workspaceRoot,
     encoding: 'utf8',

@@ -38,6 +38,12 @@ function fixtureGraph() {
       "const runnerGroups = '../../.github/runner-groups.yml';",
       '',
     ].join('\n'),
+    'migration/tests/legacy-matrix-reference-publication.test.mjs': [
+      "const workflow = '../../.github/workflows/legacy-matrix-reference-verification.yml';",
+      "const verifier = '../bin/verify-legacy-matrix-reference-publication.mjs';",
+      "const pointer = '../fixtures/legacy-matrix-reference-publication-v1.json';",
+      '',
+    ].join('\n'),
     'paper-core/bin/tool.mjs': 'process.stdout.write("ok");\n',
     'rust/oracle/legacy-stable-json-v1.mjs': 'process.stdout.write("rust-oracle");\n',
   };
@@ -50,8 +56,11 @@ function fixtureGraph() {
       '.github/actionlint.yaml',
       '.github/runner-groups.yml',
       '.github/workflows/ci.yml',
+      '.github/workflows/legacy-matrix-reference-verification.yml',
       '.github/workflows/workflow-lint.yml',
       '.gitignore',
+      'migration/bin/verify-legacy-matrix-reference-publication.mjs',
+      'migration/fixtures/legacy-matrix-reference-publication-v1.json',
       'docs/rust/RUST_PLAN.md',
       'docs/rust/current-status.v1.json',
       'docs/rust/tools/validate-program-truth.py',
@@ -153,6 +162,43 @@ test('repository control-plane changes are narrow only when contract-tested', ()
   });
   assert.equal(selection.status, 'test_impact_selection_full_fallback');
   assert.deepEqual(selection.fallbackFiles, ['.github/CODEOWNERS']);
+  assert.deepEqual(selection.selectedTests, unmapped.tests);
+});
+
+test('legacy matrix publication control surfaces are narrow only when contract-tested', () => {
+  const graph = fixtureGraph();
+  for (const changedFile of [
+    '.github/workflows/legacy-matrix-reference-verification.yml',
+    'migration/bin/verify-legacy-matrix-reference-publication.mjs',
+    'migration/fixtures/legacy-matrix-reference-publication-v1.json',
+  ]) {
+    const selection = selectImpactedTests({ graph, changedFiles: [changedFile] });
+    assert.equal(selection.status, 'test_impact_selection_ready', changedFile);
+    assert.equal(selection.fullFallback, false, changedFile);
+    assert.deepEqual(selection.fallbackFiles, [], changedFile);
+    assert.deepEqual(
+      selection.selectedTests,
+      ['migration/tests/legacy-matrix-reference-publication.test.mjs'],
+      changedFile,
+    );
+  }
+
+  const unmapped = buildTestImpactGraph({
+    files: [
+      '.github/workflows/legacy-matrix-reference-verification.yml',
+      'paper-core/tests/other.test.mjs',
+    ],
+    readSource: () => '',
+  });
+  const selection = selectImpactedTests({
+    graph: unmapped,
+    changedFiles: ['.github/workflows/legacy-matrix-reference-verification.yml'],
+  });
+  assert.equal(selection.status, 'test_impact_selection_full_fallback');
+  assert.deepEqual(
+    selection.fallbackFiles,
+    ['.github/workflows/legacy-matrix-reference-verification.yml'],
+  );
   assert.deepEqual(selection.selectedTests, unmapped.tests);
 });
 

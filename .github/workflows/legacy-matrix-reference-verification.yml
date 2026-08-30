@@ -94,10 +94,10 @@ jobs:
             "$TRUSTED_WORKFLOW_SHA" "$TRUSTED_WORKFLOW_TREE" \
             > "$RUNNER_TEMP/legacy-matrix-reference-evidence/identity.env"
 
-      - name: Checkout the allowlisted candidate source
+      - name: Checkout the policy-pinned candidate source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ env.APPROVED_CANDIDATE_SHA }}
           path: candidate
           fetch-depth: 1
           persist-credentials: false
@@ -278,7 +278,7 @@ jobs:
           set -euo pipefail
           verification_status=$(cat "$RUNNER_TEMP/legacy-matrix-reference-evidence/verification.exit" 2>/dev/null || printf '125')
           npm_status=$(jq -r '.exitCode // 125' "$RUNNER_TEMP/legacy-matrix-reference-evidence/npm-ci.json" 2>/dev/null || printf '125')
-          removal_ok=$(jq -r '(.archiveRemoved and .manifestRemoved)' "$RUNNER_TEMP/legacy-matrix-reference-evidence/archive-removal.json" 2>/dev/null || printf 'false')
+          removal_ok=$(jq -r '(.archiveRemoved and .manifestRemoved and .referenceDirectoryEmpty)' "$RUNNER_TEMP/legacy-matrix-reference-evidence/archive-removal.json" 2>/dev/null || printf 'false')
           if [ "$verification_status" = 0 ] && [ "$npm_status" = 0 ] && [ "$removal_ok" = true ] \
             && [ ! -e "$ARCHIVE_PATH" ] && [ ! -e "$MANIFEST_PATH" ] \
             && [ -d "$PREPARED_ROOT" ] && [ -d "$CANDIDATE_ROOT" ]; then
@@ -297,11 +297,11 @@ jobs:
             set -e
           else
             replay_status=125
-            node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; fs.writeFileSync(p, JSON.stringify({version:1,kind:"LegacyMatrixReferenceReplay",status:"blocked_archive_verification_or_cleanup_failed",overallExitCode:125,commands:[],archivePresentDuringCandidateExecution:null,candidateNetwork:"not_executed",candidateSecrets:[],sourceMutation:null,runtimeMutation:null}, null, 2)+"\n", {mode:0o444});' \
+            node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; fs.writeFileSync(p, JSON.stringify({version:1,kind:"LegacyMatrixReferenceReplay",status:"blocked_archive_verification_or_cleanup_failed",overallExitCode:125,commands:[],archivePresentDuringCandidateExecution:null,candidateNetwork:"not_executed",namespaceEstablished:false,candidateSecrets:[],sourceMutation:null,runtimeMutation:null}, null, 2)+"\n", {mode:0o444});' \
               "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json"
           fi
           if [ ! -s "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json" ]; then
-            node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; fs.writeFileSync(p, JSON.stringify({version:1,kind:"LegacyMatrixReferenceReplay",status:"blocked_replay_runner_failure",overallExitCode:125,commands:[]}, null, 2)+"\n", {mode:0o444});' \
+            node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; fs.writeFileSync(p, JSON.stringify({version:1,kind:"LegacyMatrixReferenceReplay",status:"blocked_replay_runner_failure",overallExitCode:125,commands:[],archivePresentDuringCandidateExecution:null,candidateNetwork:"not_executed",namespaceEstablished:false}, null, 2)+"\n", {mode:0o444});' \
               "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json"
           fi
           printf '%s\n' "$replay_status" > "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.exit"
@@ -325,10 +325,14 @@ jobs:
             rm -rf -- "$logs"
           fi
           prepared_destroyed=false
-          [ ! -e "$prepared" ] && prepared_destroyed=true
+          [ ! -e "$prepared" ] && [ ! -L "$prepared" ] && prepared_destroyed=true
+          private_logs_destroyed=false
+          [ ! -e "$logs" ] && [ ! -L "$logs" ] && private_logs_destroyed=true
+          runtime_destroyed=false
+          [ ! -e "$logs/runtime" ] && [ ! -L "$logs/runtime" ] && runtime_destroyed=true
           report="$RUNNER_TEMP/legacy-matrix-reference-evidence/archive-removal.json"
-          node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; const old=fs.existsSync(p) ? JSON.parse(fs.readFileSync(p,"utf8")) : {}; fs.chmodSync(p,0o600); fs.writeFileSync(p, JSON.stringify({...old,preparedRootDestroyed:process.argv[2]==="true"})+"\n", {mode:0o600}); fs.chmodSync(p,0o444);' \
-            "$report" "$prepared_destroyed"
+          node --input-type=module -e 'import fs from "node:fs"; const p=process.argv[1]; const old=fs.existsSync(p) ? JSON.parse(fs.readFileSync(p,"utf8")) : {}; fs.chmodSync(p,0o600); fs.writeFileSync(p, JSON.stringify({...old,preparedRootDestroyed:process.argv[2]==="true",privateLogsDestroyed:process.argv[3]==="true",runtimeDestroyed:process.argv[4]==="true"})+"\n", {mode:0o600}); fs.chmodSync(p,0o444);' \
+            "$report" "$prepared_destroyed" "$private_logs_destroyed" "$runtime_destroyed"
 
       - name: Upload evidence bundle
         id: upload_evidence
@@ -391,15 +395,61 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Bind receipt artifact index
+        if: always()
+        env:
+          RECEIPT_UPLOAD_OUTCOME: ${{ steps.upload_receipt.outcome }}
+          RECEIPT_ARTIFACT_ID: ${{ steps.upload_receipt.outputs.artifact-id }}
+          RECEIPT_ARTIFACT_DIGEST: ${{ steps.upload_receipt.outputs.artifact-digest }}
+          RECEIPT_ARTIFACT_URL: ${{ steps.upload_receipt.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import fs from "node:fs";
+            let receipt = null;
+            try { receipt = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch {}
+            fs.writeFileSync(process.argv[2], JSON.stringify({
+              version: 1,
+              kind: "LegacyMatrixReferenceReceiptArtifactIndex",
+              runId: process.env.GITHUB_RUN_ID,
+              receiptStatus: receipt?.status || "missing",
+              receiptSha256: receipt?.receiptSha256 || null,
+              uploadOutcome: process.env.RECEIPT_UPLOAD_OUTCOME || null,
+              artifactId: process.env.RECEIPT_ARTIFACT_ID || null,
+              artifactDigest: process.env.RECEIPT_ARTIFACT_DIGEST || null,
+              artifactUrl: process.env.RECEIPT_ARTIFACT_URL || null,
+            }, null, 2) + "\n", { mode: 0o444 });
+          ' "$RUNNER_TEMP/legacy-matrix-reference-evidence/receipt.json" \
+            "$RUNNER_TEMP/legacy-matrix-reference-evidence/receipt-index.json"
+
+      - name: Upload receipt artifact index
+        id: upload_receipt_index
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: legacy-matrix-reference-receipt-index-${{ github.run_id }}
+          path: ${{ runner.temp }}/legacy-matrix-reference-evidence/receipt-index.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Fail unless the receipt records a complete exact-head replay
         if: always()
         shell: bash
         run: |
           set -euo pipefail
+          test '${{ steps.upload_receipt.outcome }}' = success
+          test '${{ steps.upload_receipt_index.outcome }}' = success
           node --input-type=module -e '
+            import crypto from "node:crypto";
             import fs from "node:fs";
+            const canonicalize = (value) => Array.isArray(value) ? value.map(canonicalize) : (value && typeof value === "object" ? Object.fromEntries(Object.keys(value).filter((key) => key !== "receiptSha256").sort().map((key) => [key, canonicalize(value[key])])) : value);
             const receipt = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const payload = {...receipt}; delete payload.receiptSha256;
+            const expected = `sha256:${crypto.createHash("sha256").update(JSON.stringify(canonicalize(payload))).digest("hex")}`;
+            if (receipt.receiptSha256 !== expected) throw new Error("receipt self-hash mismatch");
             if (receipt.status !== "legacy_matrix_reference_exact_head_verified") {
               throw new Error(`exact-head receipt blocked: ${receipt.status}`);
             }
-          ' "$RUNNER_TEMP/legacy-matrix-reference-evidence/receipt.json"
+            const index = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+            if (index.uploadOutcome !== "success" || index.receiptSha256 !== receipt.receiptSha256) throw new Error("receipt artifact index mismatch");
+          ' "$RUNNER_TEMP/legacy-matrix-reference-evidence/receipt.json" "$RUNNER_TEMP/legacy-matrix-reference-evidence/receipt-index.json"

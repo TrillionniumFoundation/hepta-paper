@@ -150,6 +150,13 @@ function assertCandidateCredentialFree(candidateRoot) {
   for (const raw of String(listed.stdout || '').split('\0').filter(Boolean)) {
     if (forbidden.test(raw)) fail(`candidate_credential_path_forbidden:${raw}`);
   }
+  // A ignored/untracked root .npmrc is still consulted by npm.  Reject it
+  // before entering the sandbox rather than relying on the Git index alone.
+  for (const configName of ['.npmrc', '.yarnrc', '.yarnrc.yml', '.netrc']) {
+    if (fs.existsSync(path.join(candidateRoot, configName))) {
+      fail(`candidate_credential_path_forbidden:${configName}`);
+    }
+  }
   const gitDir = git(candidateRoot, 'rev-parse', '--git-dir');
   const configPath = path.resolve(candidateRoot, gitDir, 'config');
   if (fs.existsSync(configPath)) {
@@ -244,6 +251,11 @@ function sandboxCommand({ candidateRoot, preparedRoot, runtimeRoot, command, env
   }
   const bwrap = spawnSync('bwrap', ['--version'], { encoding: 'utf8' });
   if (bwrap.status !== 0) fail('bubblewrap_required');
+  const sandboxEnv = Object.freeze({
+    PATH: '/node-runtime/bin:/usr/local/bin:/usr/bin:/bin',
+    LANG: 'C.UTF-8',
+    LC_ALL: 'C.UTF-8',
+  });
   const args = [
     '--die-with-parent', '--new-session', '--as-pid-1',
     '--unshare-user', '--uid', String(uid), '--gid', String(gid),
@@ -278,9 +290,14 @@ function sandboxCommand({ candidateRoot, preparedRoot, runtimeRoot, command, env
     '--setenv', 'npm_config_fund', 'false',
     '--setenv', 'npm_config_update_notifier', 'false',
     '--setenv', 'npm_config_offline', 'true',
+    '--setenv', 'npm_config_ignore_scripts', 'true',
+    '--setenv', 'npm_config_userconfig', '/dev/null',
+    '--setenv', 'npm_config_cache', '/tmp/npm-cache',
+    '--setenv', 'npm_config_global', 'false',
+    '--dir', '/tmp/npm-cache',
     '--', ...command,
   ];
-  return { command: 'bwrap', args, display: ['bwrap', ...args] };
+  return { command: 'bwrap', args, env: sandboxEnv, display: ['bwrap', ...args] };
 }
 
 function runCommand({ options, command, label, index, runtimeRoot, archiveSha256, matrixSha256, logDir }) {
@@ -297,6 +314,7 @@ function runCommand({ options, command, label, index, runtimeRoot, archiveSha256
     env,
   });
   const result = spawnSync(sandbox.command, sandbox.args, {
+    env: sandbox.env,
     encoding: 'utf8',
     timeout: 15 * 60 * 1000,
     maxBuffer: 64 * 1024 * 1024,
@@ -311,6 +329,7 @@ function runCommand({ options, command, label, index, runtimeRoot, archiveSha256
     label,
     argv: command,
     sandbox: 'bubblewrap_network_none_readonly_candidate_readonly_reference_readonly_runtime',
+    namespaceEstablished: true,
     cwd: '/candidate',
     network: 'none',
     secrets: [],
@@ -324,10 +343,39 @@ function runCommand({ options, command, label, index, runtimeRoot, archiveSha256
     endedAt: new Date().toISOString(),
     stdout: { bytes: Buffer.byteLength(stdout), sha256: hashText(stdout), path: path.basename(stdoutPath) },
     stderr: { bytes: Buffer.byteLength(stderr), sha256: hashText(stderr), path: path.basename(stderrPath) },
+    environment: {
+      keys: Object.keys(sandbox.env).sort(),
+      secretVariables: [],
+      inheritedEnvironmentDiscarded: true,
+      policy: 'clearenv-explicit-minimal-path-locale-only',
+    },
   };
   return Object.freeze({
     ...record,
     resultHash: hashText(JSON.stringify(record)),
+  });
+}
+
+function probeSandbox({ options, runtimeRoot, archiveSha256, matrixSha256 }) {
+  const sandbox = sandboxCommand({
+    candidateRoot: options.candidateRoot,
+    preparedRoot: options.preparedRoot,
+    runtimeRoot,
+    command: ['/node-runtime/bin/node', '-e', 'process.exit(0)'],
+    env: { archiveSha256, matrixSha256 },
+  });
+  const result = spawnSync(sandbox.command, sandbox.args, {
+    env: sandbox.env,
+    encoding: 'utf8',
+    timeout: 30 * 1000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error || result.status !== 0) {
+    fail(`sandbox_namespace_unavailable:${result.error?.message || String(result.stderr || '').trim()}`);
+  }
+  return Object.freeze({
+    established: true,
+    policy: 'bubblewrap_network_none_readonly_candidate_readonly_reference_readonly_runtime',
   });
 }
 
@@ -339,14 +387,20 @@ function prepareRuntime(logDir) {
   fs.mkdirSync(assetRoot, { recursive: false, mode: 0o700 });
   // The runtime database is initialized by the trusted orchestration tree,
   // while candidate commands receive only the already-closed database through
-  // the read/write runtime bind.  No candidate module participates in setup.
+  // a read-only runtime bind. No candidate module participates in setup.
   prepareIsolatedRuntimeStore({ root: assetRoot, runtimeRoot, dbPath });
   return runtimeRoot;
 }
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  fs.mkdirSync(options.logDir, { recursive: true, mode: 0o700 });
+  if (fs.existsSync(options.logDir)) {
+    if (!fs.lstatSync(options.logDir).isDirectory() || fs.readdirSync(options.logDir).length !== 0) {
+      fail('log_dir_must_be_new_or_empty');
+    }
+  } else {
+    fs.mkdirSync(options.logDir, { recursive: true, mode: 0o700 });
+  }
   const candidateSha = git(options.candidateRoot, 'rev-parse', 'HEAD');
   const candidateTree = git(options.candidateRoot, 'rev-parse', 'HEAD^{tree}');
   if (candidateSha !== options.expectedSha || candidateTree !== options.expectedTree) {
@@ -361,6 +415,12 @@ function main() {
   const preparedRootTreeSha256 = hashText(JSON.stringify(before));
   const runtimeRoot = prepareRuntime(options.logDir);
   const runtimeBefore = treeDigest(runtimeRoot);
+  const namespace = probeSandbox({
+    options,
+    runtimeRoot,
+    archiveSha256: options.expectedArchiveSha,
+    matrixSha256: options.expectedMatrixSha,
+  });
   const commands = [
     runCommand({ options, label: 'migration:matrix-integrity', command: ['npm', '--ignore-scripts', '--offline', 'run', 'migration:matrix-integrity'], index: 0, runtimeRoot, archiveSha256: options.expectedArchiveSha, matrixSha256: options.expectedMatrixSha, logDir: options.logDir }),
     runCommand({ options, label: 'test:migration-differential', command: ['npm', '--ignore-scripts', '--offline', 'run', 'test:migration-differential'], index: 1, runtimeRoot, archiveSha256: options.expectedArchiveSha, matrixSha256: options.expectedMatrixSha, logDir: options.logDir }),
@@ -380,7 +440,14 @@ function main() {
     preparedRoot: '/legacy-reference',
     archivePresentDuringCandidateExecution: false,
     candidateNetwork: 'none',
+    namespaceEstablished: namespace.established,
     candidateSecrets: [],
+    environment: {
+      keys: ['LANG', 'LC_ALL', 'PATH'],
+      secretVariables: [],
+      inheritedEnvironmentDiscarded: true,
+      policy: 'clearenv-explicit-minimal-path-locale-only',
+    },
     candidateUid: typeof process.getuid === 'function' ? process.getuid() : null,
     candidateGid: typeof process.getgid === 'function' ? process.getgid() : null,
     namespacePolicy: {
@@ -429,6 +496,7 @@ catch (error) {
         commands: [],
         archivePresentDuringCandidateExecution: null,
         candidateNetwork: 'not_executed',
+        namespaceEstablished: false,
         candidateSecrets: [],
         sourceMutation: null,
         authority: 'non_authorizing_migration_replay_evidence',

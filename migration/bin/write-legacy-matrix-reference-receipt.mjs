@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 
 const SHA40 = /^[0-9a-f]{40}$/u;
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
+const ARTIFACT_ID = /^[0-9]+$/u;
 
 function fail(message) { throw new Error(message); }
 
@@ -169,9 +170,25 @@ function policyHashAndCheck(policyPath, candidateSha, candidateTree) {
   if (policy?.kind !== 'LegacyMatrixReferenceVerificationPolicy' || policy?.version !== 1) {
     fail('policy_kind_invalid');
   }
+  if (policy.repository !== 'TrillionniumFoundation/hepta-paper'
+    || policy.workflow?.canonicalRepository !== 'TrillionniumFoundation/hepta-paper-legacy-reference'
+    || policy.workflow?.canonicalPath !== '.github/workflows/legacy-matrix-reference-verification.yml'
+    || policy.workflow?.requiredRef !== 'refs/heads/main'
+    || policy.workflow?.trustMode !== 'private-companion-admin-controlled') {
+    fail('policy_workflow_binding_invalid');
+  }
   const approvedSha = String(policy?.candidate?.sha || '');
   const approvedTree = String(policy?.candidate?.tree || '');
   if (!SHA40.test(approvedSha) || !SHA40.test(approvedTree)) fail('policy_candidate_identity_invalid');
+  if (policy.archive?.releaseId !== 379268751
+    || policy.archive?.releaseAssetId !== 536563599
+    || (policy.archive?.assetName || policy.archive?.releaseAssetName)
+      !== 'paper-factory-control-plane-reference.tar.gz'
+    || !SHA256.test(policy.archive?.archiveSha256 || '')
+    || !SHA256.test(policy.archive?.matrixSha256 || '')
+    || policy.archive?.sourceFileCount !== 263) {
+    fail('policy_archive_binding_invalid');
+  }
   const approved = candidateSha === approvedSha && candidateTree === approvedTree;
   if (!approved) fail(`candidate_not_allowlisted:${candidateSha}/${candidateTree}`);
   const repository = process.env.GITHUB_REPOSITORY || null;
@@ -204,6 +221,23 @@ function actionPins(workflowText) {
   )].sort());
 }
 
+function expectedActionPins(policy) {
+  const names = {
+    checkout: 'actions/checkout',
+    setupNode: 'actions/setup-node',
+    uploadArtifact: 'actions/upload-artifact',
+  };
+  return Object.entries(names).map(([key, name]) => {
+    const pin = String(policy?.actions?.[key] || '');
+    if (!SHA40.test(pin)) fail(`policy_action_pin_invalid:${key}`);
+    return `${name}@${pin}`;
+  }).sort();
+}
+
+function exactArrayEqual(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function readDependencyReport(file) {
   if (!file) return null;
   return readJson(file, 'dependency_report', true);
@@ -213,12 +247,17 @@ function replayIsComplete(replay) {
   if (replay?.status !== 'legacy_matrix_reference_replay_verified'
     || replay?.overallExitCode !== 0
     || replay?.candidateNetwork !== 'none'
+    || replay?.namespaceEstablished !== true
     || !Array.isArray(replay?.candidateSecrets)
     || replay.candidateSecrets.length !== 0
     || replay?.archivePresentDuringCandidateExecution !== false
     || replay?.sourceMutation !== false
     || replay?.runtimeMutation !== false
     || replay?.runtimeBefore !== replay?.runtimeAfter
+    || replay?.environment?.policy !== 'clearenv-explicit-minimal-path-locale-only'
+    || JSON.stringify(replay?.environment?.keys || []) !== JSON.stringify(['LANG', 'LC_ALL', 'PATH'])
+    || !Array.isArray(replay?.environment?.secretVariables)
+    || replay.environment.secretVariables.length !== 0
     || !SHA256.test(replay?.preparedRootTreeSha256 || '')
     || !Array.isArray(replay?.commands)
     || replay.commands.length !== 2) return false;
@@ -230,9 +269,14 @@ function replayIsComplete(replay) {
     && command.status === 'passed'
     && command.exitCode === 0
     && command.network === 'none'
+    && command.namespaceEstablished === true
     && command.archivePresent === false
     && Array.isArray(command.secrets)
     && command.secrets.length === 0
+    && command.environment?.inheritedEnvironmentDiscarded === true
+    && JSON.stringify(command.environment?.keys || []) === JSON.stringify(['LANG', 'LC_ALL', 'PATH'])
+    && Array.isArray(command.environment?.secretVariables)
+    && command.environment.secretVariables.length === 0
     && SHA256.test(command.stdout?.sha256 || '')
     && SHA256.test(command.stderr?.sha256 || '')
     && SHA256.test(command.resultHash || '')
@@ -242,12 +286,29 @@ function replayIsComplete(replay) {
 function verificationIsComplete(verification, policy) {
   return verification?.status === 'legacy_matrix_reference_publication_verified'
     && verification.archiveSha256 === policy?.archive?.archiveSha256
+    && verification.matrixSha256 === policy?.archive?.matrixSha256
     && Number(verification.archiveBytes) === Number(policy?.archive?.archiveBytes)
     && Number(verification.sourceFileCount) === Number(policy?.archive?.sourceFileCount)
     && Number(verification.sourceHashesMatched) === Number(policy?.archive?.sourceFileCount)
     && Number(verification.sourceHashesMissing) === 0
     && Number(verification.sourceHashesMismatched) === 0
+    && verification.releaseId === policy?.archive?.releaseId
+    && verification.releaseAssetId === policy?.archive?.releaseAssetId
+    && verification.releaseAssetDigest === policy?.archive?.archiveSha256
+    && Number(verification.releaseAssetBytes) === Number(policy?.archive?.archiveBytes)
     && SHA256.test(verification.matrixSha256 || '');
+}
+
+function artifactBindingComplete(options) {
+  const expectedName = process.env.GITHUB_RUN_ID
+    ? `legacy-matrix-reference-evidence-${process.env.GITHUB_RUN_ID}`
+    : null;
+  return ARTIFACT_ID.test(String(options.artifactId || ''))
+    && SHA256.test(String(options.artifactDigest || ''))
+    && (!expectedName || options.artifactName === expectedName)
+    && /^https:\/\/api\.github\.com\/repos\/[^/]+\/actions\/artifacts\/[0-9]+(?:\/|$)/u.test(
+      String(options.artifactUrl || ''),
+    );
 }
 
 function canonicalize(value) {
@@ -271,6 +332,11 @@ function main() {
   const candidate = identity(options.candidateRoot, options.candidateSha, options.candidateTree, 'candidate');
   const workflow = identity(options.trustedRoot, options.workflowSha, options.workflowTree, 'workflow');
   const policyBinding = policyHashAndCheck(options.policy, candidate.sha, candidate.tree);
+  const workflowRelativePath = path.relative(options.trustedRoot, options.workflowFile)
+    .split(path.sep).join('/');
+  if (workflowRelativePath !== policyBinding.policy.workflow.canonicalPath) {
+    fail(`workflow_path_not_canonical:${workflowRelativePath}`);
+  }
   const candidateStatus = gitStatus(options.candidateRoot);
   const workflowStatus = gitStatus(options.trustedRoot);
   const companionManifestSha256 = options.companionManifest
@@ -281,6 +347,14 @@ function main() {
     fail('input_hash_unreadable');
   }
   const workflowText = fs.readFileSync(options.workflowFile, 'utf8');
+  const workflowActionPins = actionPins(workflowText);
+  const expectedPins = expectedActionPins(policyBinding.policy);
+  const actionsMatch = exactArrayEqual(workflowActionPins, expectedPins);
+  const pointerPath = path.join(options.candidateRoot, 'migration', 'fixtures',
+    'legacy-matrix-reference-publication-v1.json');
+  const pointer = readJson(pointerPath, 'publication_pointer');
+  const expectedCompanionManifestSha256 = pointer?.custody?.publicationManifestSha256;
+  const companionManifestMatches = companionManifestSha256 === expectedCompanionManifestSha256;
   const dependencyReport = readDependencyReport(options.dependencyReport);
   const cleanupReport = readJson(options.cleanupReport, 'cleanup_report', true);
   const packageLock = optionalHash(path.join(options.candidateRoot, 'package-lock.json'));
@@ -296,20 +370,29 @@ function main() {
       && process.env.GITHUB_WORKFLOW_REF
       && process.env.GITHUB_EVENT_NAME
       && process.env.GITHUB_ACTOR,
-  );
+  ) && process.env.GITHUB_REPOSITORY === policyBinding.policy?.workflow?.canonicalRepository
+    && process.env.GITHUB_REF === policyBinding.policy?.workflow?.requiredRef;
+  const cleanupComplete = cleanupReport?.archiveRemoved === true
+    && cleanupReport?.manifestRemoved === true
+    && cleanupReport?.referenceDirectoryEmpty === true
+    && cleanupReport?.preparedRootDestroyed === true
+    && cleanupReport?.privateLogsDestroyed === true
+    && cleanupReport?.runtimeDestroyed === true;
+  const releaseApiComplete = SHA256.test(options.releaseApiHash || '');
   const complete = policyBinding.approved
     && candidateStatus.clean
     && workflowStatus.clean
+    && actionsMatch
     && verificationComplete
+    && companionManifestMatches
     && replayStatus === 'legacy_matrix_reference_replay_verified'
     && replayComplete
     && Number(dependencyReport?.exitCode) === 0
-    && cleanupReport?.archiveRemoved === true
-    && cleanupReport?.manifestRemoved === true
-    && cleanupReport?.preparedRootDestroyed === true
+    && cleanupComplete
+    && releaseApiComplete
     && policyBinding.policy?.workflow?.trustMode === 'private-companion-admin-controlled'
     && hostedIdentityComplete
-    && Boolean(options.artifactDigest);
+    && artifactBindingComplete(options);
   const payload = {
     schemaVersion: 2,
     kind: 'LegacyMatrixReferenceExactHeadReceipt',
@@ -338,8 +421,14 @@ function main() {
       sha: workflow.sha,
       tree: workflow.tree,
       fileSha256: sha256File(options.workflowFile),
-      actionPins: actionPins(workflowText),
+      actionPins: workflowActionPins,
+      expectedActionPins: expectedPins,
+      actionPinsMatch: actionsMatch,
       repository: process.env.GITHUB_REPOSITORY || 'TrillionniumFoundation/hepta-paper',
+      verifierRepository: policyBinding.policy?.workflow?.canonicalRepository || null,
+      mode: process.env.GITHUB_REPOSITORY === policyBinding.policy?.workflow?.canonicalRepository
+        ? 'private_companion'
+        : 'public_protected_fallback',
       trustMode: policyBinding.policy?.workflow?.trustMode || 'unspecified',
     },
     run: {
@@ -371,6 +460,9 @@ function main() {
       releaseAssetDigest: verification?.releaseAssetDigest || policyBinding.policy?.archive?.archiveSha256 || null,
       releaseAssetBytes: verification?.releaseAssetBytes || policyBinding.policy?.archive?.archiveBytes || null,
       releaseApiResponseSha256: options.releaseApiHash || null,
+      releaseApiResponseBound: releaseApiComplete,
+      companionManifestExpectedSha256: expectedCompanionManifestSha256 || null,
+      companionManifestMatches,
     },
     matrix: {
       sha256: matrixSha256,
@@ -384,7 +476,7 @@ function main() {
       archivePresentDuringCandidateExecution: replay?.archivePresentDuringCandidateExecution ?? null,
       preparedReferenceRoot: replay?.preparedRoot || null,
       preparedRootTreeSha256: replay?.preparedRootTreeSha256 || null,
-      privateLogsRetained: false,
+      privateLogsRetained: cleanupReport?.privateLogsDestroyed !== true,
       cleanup: cleanupReport,
     },
     dependencies: {

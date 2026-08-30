@@ -60,8 +60,14 @@ function main() {
     fail('policy_companion_binding_invalid');
   }
   if (policy.workflow?.requiredRef !== 'refs/heads/main'
-    || policy.workflow?.trustMode !== 'private-companion-admin-controlled') {
+    || policy.workflow?.trustMode !== 'private-companion-admin-controlled'
+    || policy.workflow?.canonicalRepository !== 'TrillionniumFoundation/hepta-paper-legacy-reference'
+    || policy.workflow?.canonicalPath !== '.github/workflows/legacy-matrix-reference-verification.yml') {
     fail('policy_workflow_trust_invalid');
+  }
+  const actionKeys = Object.keys(policy.actions || {}).sort();
+  if (JSON.stringify(actionKeys) !== JSON.stringify(['checkout', 'setupNode', 'uploadArtifact'])) {
+    fail('policy_action_set_invalid');
   }
   for (const pin of Object.values(policy.actions || {})) {
     if (!SHA40.test(String(pin))) fail('policy_action_pin_invalid');
@@ -69,7 +75,10 @@ function main() {
   if (!SHA256.test(policy.archive?.archiveSha256 || '') || !SHA256.test(policy.archive?.matrixSha256 || '')) {
     fail('policy_archive_identity_invalid');
   }
-  if (policy.archive?.sourceFileCount !== 263) fail('policy_source_count_invalid');
+  if (policy.archive?.sourceFileCount !== 263
+    || (policy.archive?.assetName || policy.archive?.releaseAssetName)
+      !== 'paper-factory-control-plane-reference.tar.gz'
+    || policy.archive?.archiveBytes !== 22506525) fail('policy_source_count_or_asset_invalid');
   const report = {
     version: 1,
     kind: 'LegacyMatrixReferencePolicyVerification',

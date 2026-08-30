@@ -253,10 +253,13 @@ networkless replay boundary. The minimum acceptance sequence is:
 3. the archive and manifest are absent before exact npm migration commands run in
    a networkless sandbox; and
 4. one retained receipt binds the workflow/candidate/run identities and artifact
-   digest, with independent owner/reviewer acknowledgement.
+   digest (plus a separately retained receipt-artifact index), with independent
+   owner/reviewer acknowledgement.
 
-The public repository workflow is a guarded fallback and is not trusted on a PR
-or mutable ref. Until a hosted run satisfies this sequence, issue #28 remains
+The canonical secret-bearing workflow is committed to the private companion
+repository and must be run from its administrator-controlled `main`; the public
+repository workflow is only a guarded fallback and cannot produce a verified
+receipt. Until a hosted run satisfies this sequence, issue #28 remains
 `blocked_external`/pending hosted evidence. Publishing a private locator or a
 self-signed local receipt never changes `GAP-CMP-001`, Rust parity, production,
 release or external-authority status.

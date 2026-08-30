@@ -32,9 +32,18 @@ gh release download legacy-reference-v0.6.0-e431c4c7 \
   --repo TrillionniumFoundation/hepta-paper-legacy-reference \
   --pattern 'paper-factory-control-plane-reference.tar.gz' \
   --dir "$RUNNER_TEMP/legacy-reference"
+gh release download legacy-reference-v0.6.0-e431c4c7 \
+  --repo TrillionniumFoundation/hepta-paper-legacy-reference \
+  --pattern 'PUBLICATION_MANIFEST.v1.json' \
+  --dir "$RUNNER_TEMP/legacy-reference"
 
 node /path/to/trusted-workflow/migration/bin/verify-legacy-matrix-reference-publication.mjs \
-  --archive "$RUNNER_TEMP/legacy-reference/paper-factory-control-plane-reference.tar.gz"
+  --pointer /path/to/trusted-workflow/migration/fixtures/legacy-matrix-reference-publication-v1.json \
+  --matrix /path/to/trusted-workflow/migration/legacy-semantic-migration-matrix.json \
+  --archive "$RUNNER_TEMP/legacy-reference/paper-factory-control-plane-reference.tar.gz" \
+  --companion-manifest "$RUNNER_TEMP/legacy-reference/PUBLICATION_MANIFEST.v1.json" \
+  --extract-dir "$RUNNER_TEMP/legacy-matrix-reference-prepared" \
+  --json
 ```
 
 The verifier first checks the canonical archive and matrix digests, then audits
@@ -43,15 +52,25 @@ recomputes every source hash and fails closed on missing, duplicate, unsafe,
 symlink, or mismatched members. `--metadata-only` verifies the locator without
 requiring private materialization.
 
-After the archive gate, remove the archive and run the exact candidate commands
-against the sealed extraction (the workflow's replay helper performs this in a
-networkless namespace):
+After the archive gate, remove the archive and use the trusted replay helper to
+run the exact candidate commands against the sealed extraction. The helper
+performs the execution in a networkless namespace with an explicit minimal
+environment; the following commands are only a diagnostic checklist, not a
+replacement for the sandboxed hosted run:
 
 ```sh
 test ! -e "$RUNNER_TEMP/hepta-legacy-reference/paper-factory-control-plane-reference.tar.gz"
 test ! -e "$RUNNER_TEMP/hepta-legacy-reference/PUBLICATION_MANIFEST.v1.json"
-npm --ignore-scripts --offline run migration:matrix-integrity
-npm --ignore-scripts --offline run test:migration-differential
+node /path/to/trusted-workflow/migration/bin/run-legacy-matrix-reference-replay.mjs \
+  --candidate-root /path/to/candidate \
+  --prepared-root "$RUNNER_TEMP/legacy-matrix-reference-prepared" \
+  --matrix /path/to/candidate/migration/legacy-semantic-migration-matrix.json \
+  --expected-sha 37543c9e06113199bc2aa8a6a344203ece6c71e5 \
+  --expected-tree c490cb85b33637f9882f640ab3718323fb47c7df \
+  --expected-archive-sha256 sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d \
+  --expected-matrix-sha256 sha256:59446f5e96cc5f086b27266f0fb0604d4f7f0e5bf1f62cb1a90933208a0f162a \
+  --output "$RUNNER_TEMP/legacy-matrix-reference-evidence/replay.json" \
+  --log-dir "$RUNNER_TEMP/legacy-matrix-reference-private-logs"
 ```
 
 The checked-in policy
@@ -63,8 +82,9 @@ The exact-head receipt contract is described by
 
 The secret-bearing run is intentionally owned by the private companion
 repository's administrator-controlled workflow. The public repository workflow
-is only a guarded fallback: it runs on protected `main` with
-`HEPTA_LEGACY_REFERENCE_TRUSTED=1`, never on a pull-request or fork ref. The
+is only a guarded diagnostic fallback: it runs on protected `main` with
+`HEPTA_LEGACY_REFERENCE_TRUSTED=1`, never on a pull-request or fork ref, and
+the receipt writer rejects it as a trusted source. The
 workflow installs the candidate lockfile before private materialization, verifies
 the release API asset identity, extracts only the 263 allowlisted regular files,
 destroys the archive and manifest, then runs the exact npm migration commands in

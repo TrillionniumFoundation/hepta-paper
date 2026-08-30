@@ -4,7 +4,9 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const PORTABLE_TEST = /^(?:paper-core|migration)\/tests\/.*\.test\.mjs$/;
-const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:paper-core\/docs|paper-adapters)\/.*\.md$/;
+const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:docs|paper-core\/docs|paper-adapters)\/.*\.md$/;
+const RUST_ISOLATED = /^(?:rust\/|docs\/rust\/|\.github\/actionlint\.ya?ml$|\.github\/workflows\/(?:rust-[^/]+|exact-head-source-validation|workflow-lint)\.ya?ml$)/;
+const REPOSITORY_CONTROL_PLANE = /^(?:\.gitignore|\.github\/CODEOWNERS|\.github\/runner-groups\.ya?ml|\.github\/workflows\/ci\.ya?ml)$/;
 const GLOBAL_IMPACT = Object.freeze([
   /^\.github\//,
   /^package(?:-lock)?\.json$/,
@@ -106,8 +108,10 @@ export function buildTestImpactGraph({ files, readSource }) {
 
 function fullFallbackRequired(changedFiles) {
   return changedFiles.filter((file) => (
-    GLOBAL_IMPACT.some((pattern) => pattern.test(file))
-      || (!file.endsWith('.mjs') && !DOCUMENTATION.test(file))
+    !RUST_ISOLATED.test(file)
+      && !REPOSITORY_CONTROL_PLANE.test(file)
+      && (GLOBAL_IMPACT.some((pattern) => pattern.test(file))
+        || (!file.endsWith('.mjs') && !DOCUMENTATION.test(file)))
   ));
 }
 
@@ -146,6 +150,9 @@ export function selectImpactedTests({ graph, changedFiles }) {
   const referencedByTest = new Set(graph.testReferences.flatMap((entry) => (
     entry.references.map((reference) => `${reference}\0${entry.test}`)
   )));
+  const referencedByPortableTest = (file) => graph.tests.some((testFile) => (
+    referencedByTest.has(`${file}\0${testFile}`)
+  ));
   const moduleMapsToTest = (file) => {
     const visited = new Set([file]);
     const queue = [file];
@@ -159,18 +166,25 @@ export function selectImpactedTests({ graph, changedFiles }) {
         }
       }
     }
-    return graph.tests.some((testFile) => (
-      referencedByTest.has(`${file}\0${testFile}`)
-    ));
+    return referencedByPortableTest(file);
   };
   const unmappedModules = changed.filter((file) => (
     file.endsWith('.mjs')
+      && !RUST_ISOLATED.test(file)
       && !testSet.has(file)
       && !DOCUMENTATION.test(file)
       && !moduleMapsToTest(file)
   ));
+  const unmappedRepositoryControlPlane = changed.filter((file) => (
+    REPOSITORY_CONTROL_PLANE.test(file)
+      && !referencedByPortableTest(file)
+  ));
   const fallbackFiles = Object.freeze([
-    ...new Set([...globalFallbackFiles, ...unmappedModules]),
+    ...new Set([
+      ...globalFallbackFiles,
+      ...unmappedModules,
+      ...unmappedRepositoryControlPlane,
+    ]),
   ].sort());
   const fullFallback = fallbackFiles.length > 0;
   const selectedTests = Object.freeze(

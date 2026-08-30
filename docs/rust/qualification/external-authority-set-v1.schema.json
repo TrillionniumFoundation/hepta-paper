@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/external-authority-set-v1.schema.json",
+  "title": "External Authority Set V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageId",
+    "repository",
+    "commit",
+    "tree",
+    "subjectHash",
+    "receipts",
+    "authorityDomainsDistinct",
+    "decision",
+    "issuedAt",
+    "setSignatureBase64"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "packageId": { "const": "EXT-AUTHORITY-SET-001" },
+    "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+    "commit": { "$ref": "#/$defs/gitHash" },
+    "tree": { "$ref": "#/$defs/gitHash" },
+    "subjectHash": { "$ref": "#/$defs/sha256" },
+    "receipts": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "authorityKind",
+          "authorityDomainId",
+          "operationId",
+          "requestHash",
+          "resultHash",
+          "nonce",
+          "issuedAt",
+          "expiresAt",
+          "signerKeyId",
+          "trustGeneration",
+          "signatureBase64"
+        ],
+        "properties": {
+          "authorityKind": {
+            "enum": ["release_signer", "worm_custody", "backup_restore", "submission_dispatcher"]
+          },
+          "authorityDomainId": { "$ref": "#/$defs/id" },
+          "operationId": { "$ref": "#/$defs/id" },
+          "requestHash": { "$ref": "#/$defs/sha256" },
+          "resultHash": { "$ref": "#/$defs/sha256" },
+          "nonce": { "$ref": "#/$defs/id" },
+          "issuedAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "signerKeyId": { "$ref": "#/$defs/id" },
+          "trustGeneration": { "type": "integer", "minimum": 1 },
+          "externalActionMayHaveStarted": { "type": "boolean" },
+          "signatureBase64": { "type": "string", "minLength": 40, "maxLength": 512 }
+        }
+      }
+    },
+    "authorityDomainsDistinct": { "const": true },
+    "repositoryOrLocalFixtureAuthorityCount": { "const": 0 },
+    "decision": { "enum": ["approved", "rejected", "inconclusive"] },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "setSignatureBase64": { "type": "string", "minLength": 40, "maxLength": 512 }
+  },
+  "$defs": {
+    "gitHash": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$" }
+  }
+}

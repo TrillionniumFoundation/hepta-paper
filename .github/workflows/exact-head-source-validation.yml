@@ -1,0 +1,180 @@
+name: exact-head-source-validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+  FORMAL_SANDBOX_IMAGE: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+
+jobs:
+  exact-head-static-gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove exact source identity before validation
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          mkdir -p "$RUNNER_TEMP/exact-head-static"
+          EVIDENCE_OUTPUT="$RUNNER_TEMP/exact-head-static/preflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+
+      - name: Install exact-head static-gate dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run exact-head static, architecture, and dependency gates
+        run: |
+          set -euo pipefail
+          npm run static:check
+          npm run security:npm-audit
+
+      - name: Prove exact source identity after validation
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          EVIDENCE_OUTPUT="$RUNNER_TEMP/exact-head-static/postflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Upload exact-head static evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: exact-head-static-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/exact-head-static
+          if-no-files-found: error
+          retention-days: 90
+
+  exact-head-impacted-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+
+      - name: Prove exact head and plan impacted shard
+        id: impact
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          evidence_root="$RUNNER_TEMP/exact-head-impact-${{ matrix.shard }}"
+          mkdir -p "$evidence_root"
+          EVIDENCE_OUTPUT="$evidence_root/preflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          node paper-core/bin/run-impacted-tests.mjs \
+            --base-ref "$BASE_SHA" \
+            --head-ref "$EXPECTED_HEAD_SHA" \
+            --shard-count 4 \
+            --shard-index "${{ matrix.shard }}" \
+            --dry-run --json > "$evidence_root/impact-plan.json"
+          cat "$evidence_root/impact-plan.json"
+          node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\n')" \
+            "$evidence_root/impact-plan.json" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pinned Lean and formal runtime cache
+        if: steps.impact.outputs.count != '0'
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ~/.elan
+          key: ${{ runner.os }}-formal-runtime-v4.30.0-d9e853e-${{ hashFiles('paper-domain/research/formal-verifier-policy.mjs', 'paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs') }}
+
+      - name: Materialize pinned Lean and formal runtime
+        if: steps.impact.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
+            echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
+            tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
+            /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          ELAN_TOOLCHAIN="$ELAN_TOOLCHAIN" "$HOME/.elan/bin/elan" which lake
+          if ! docker image inspect "$FORMAL_SANDBOX_IMAGE" >/dev/null 2>&1; then
+            docker pull "$FORMAL_SANDBOX_IMAGE"
+          fi
+          docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
+            | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
+
+      - name: Install selected test dependencies
+        if: steps.impact.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run exact-head impacted shard
+        if: steps.impact.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          npm run test:impacted -- \
+            --base-ref "$BASE_SHA" \
+            --head-ref "$EXPECTED_HEAD_SHA" \
+            --shard-count 4 \
+            --shard-index "${{ matrix.shard }}"
+
+      - name: Prove exact source identity after shard
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          evidence_root="$RUNNER_TEMP/exact-head-impact-${{ matrix.shard }}"
+          EVIDENCE_OUTPUT="$evidence_root/postflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Upload exact-head impacted evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: exact-head-impact-${{ matrix.shard }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/exact-head-impact-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 90

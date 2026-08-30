@@ -1,0 +1,224 @@
+name: rust-broker-installed-qualification
+
+on:
+  pull_request:
+    paths:
+      - rust/**
+      - .github/workflows/rust-broker-installed-qualification.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  installed-principal-negative-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Build installed qualification targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --bin hepta-trust-bundle-preflight \
+            --release --locked
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-runtime \
+            --bin hepta-codex-preexec-gate \
+            --release --locked
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --test service_lifecycle \
+            --no-run --locked
+
+      - name: Materialize distinct installed principals and immutable objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo groupadd --system hepta-trust-read
+          sudo groupadd --system hepta-schema-author-read
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --groups hepta-trust-read hepta-broker
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --groups hepta-schema-author-read hepta-codex-author
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            hepta-codex-reviewer
+
+          trust_gid=$(getent group hepta-trust-read | cut -d: -f3)
+          schema_gid=$(getent group hepta-schema-author-read | cut -d: -f3)
+          broker_uid=$(id -u hepta-broker)
+
+          sudo install -d -o root -g root -m 0755 /usr/local/libexec/hepta
+          sudo install -o root -g root -m 0555 \
+            rust/target/release/hepta-trust-bundle-preflight \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight
+          sudo install -o root -g root -m 0555 \
+            rust/target/release/hepta-codex-preexec-gate \
+            /usr/local/libexec/hepta/hepta-codex-preexec-gate
+
+          sudo install -d -o root -g hepta-trust-read -m 0750 /etc/hepta/trust
+          printf '%s' \
+            '{"activeKeys":[],"generation":1,"issuer":"qualification","version":1}' \
+            | sudo tee /etc/hepta/trust/bundle.json >/dev/null
+          sudo chown root:hepta-trust-read /etc/hepta/trust/bundle.json
+          sudo chmod 0440 /etc/hepta/trust/bundle.json
+
+          sudo install -d -o root -g hepta-schema-author-read -m 0750 \
+            /etc/hepta/schema-author
+          printf '%s' '{"additionalProperties":false,"type":"object"}' \
+            | sudo tee /etc/hepta/schema-author/output.schema.json >/dev/null
+          sudo chown root:hepta-schema-author-read \
+            /etc/hepta/schema-author/output.schema.json
+          sudo chmod 0440 /etc/hepta/schema-author/output.schema.json
+
+          sudo install -d -o hepta-broker -g hepta-broker -m 0700 \
+            /var/lib/hepta-broker /var/lib/hepta-broker/tmp
+
+          test "$(sudo stat -c %u /etc/hepta/trust/bundle.json)" = 0
+          test "$(sudo stat -c %g /etc/hepta/trust/bundle.json)" = "$trust_gid"
+          test "$(sudo stat -c %a /etc/hepta/trust/bundle.json)" = 440
+          test "$(sudo stat -c %u /usr/local/libexec/hepta/hepta-codex-preexec-gate)" = 0
+          test "$(sudo stat -c %a /usr/local/libexec/hepta/hepta-codex-preexec-gate)" = 555
+
+          {
+            echo "broker_uid=$broker_uid"
+            echo "trust_gid=$trust_gid"
+            echo "schema_gid=$schema_gid"
+            sudo stat -c 'trust=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+              /etc/hepta/trust/bundle.json
+            sudo stat -c 'schema=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+              /etc/hepta/schema-author/output.schema.json
+            sudo stat -c 'gate=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+              /usr/local/libexec/hepta/hepta-codex-preexec-gate
+            sudo sha256sum /etc/hepta/trust/bundle.json \
+              /etc/hepta/schema-author/output.schema.json \
+              /usr/local/libexec/hepta/hepta-codex-preexec-gate
+          } | tee /tmp/installed-identity.txt
+
+      - name: Verify trust-bundle authority as the broker principal
+        shell: bash
+        run: |
+          set -euo pipefail
+          trust_gid=$(getent group hepta-trust-read | cut -d: -f3)
+          broker_uid=$(id -u hepta-broker)
+          sudo -u hepta-broker -- \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight \
+            /etc/hepta/trust/bundle.json 0 "$trust_gid" "$broker_uid" \
+            | tee /tmp/trust-preflight.txt
+
+          ! sudo -u hepta-codex-author -- cat /etc/hepta/trust/bundle.json
+          ! sudo -u hepta-codex-reviewer -- cat /etc/hepta/trust/bundle.json
+          ! sudo -u hepta-broker -- chmod 0600 /etc/hepta/trust/bundle.json
+          ! sudo -u hepta-broker -- sh -c \
+            'printf x > /etc/hepta/trust/bundle.json'
+          ! sudo -u hepta-broker -- mv \
+            /etc/hepta/trust/bundle.json /etc/hepta/trust/replaced.json
+          ! sudo -u hepta-broker -- ln \
+            /etc/hepta/trust/bundle.json /etc/hepta/trust/second.json
+          ! sudo -u hepta-broker -- ln -s \
+            /etc/hepta/trust/bundle.json /etc/hepta/trust/alias.json
+
+          sudo ln /etc/hepta/trust/bundle.json /etc/hepta/trust/root-second.json
+          ! sudo -u hepta-broker -- \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight \
+            /etc/hepta/trust/bundle.json 0 "$trust_gid" "$broker_uid"
+          sudo rm /etc/hepta/trust/root-second.json
+
+          sudo ln -s /etc/hepta/trust/bundle.json /tmp/hepta-trust-alias.json
+          ! sudo -u hepta-broker -- \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight \
+            /tmp/hepta-trust-alias.json 0 "$trust_gid" "$broker_uid"
+          sudo rm /tmp/hepta-trust-alias.json
+
+          sudo chmod 0640 /etc/hepta/trust/bundle.json
+          ! sudo -u hepta-broker -- \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight \
+            /etc/hepta/trust/bundle.json 0 "$trust_gid" "$broker_uid"
+          sudo chmod 0440 /etc/hepta/trust/bundle.json
+
+          sudo chmod 0770 /etc/hepta/trust
+          ! sudo -u hepta-broker -- \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight \
+            /etc/hepta/trust/bundle.json 0 "$trust_gid" "$broker_uid"
+          sudo chmod 0750 /etc/hepta/trust
+
+          sudo -u hepta-broker -- sh -c \
+            'mkdir -m 700 /var/lib/hepta-broker/same-owner && printf %s '\''{"a":1}'\'' > /var/lib/hepta-broker/same-owner/bundle.json && chmod 400 /var/lib/hepta-broker/same-owner/bundle.json'
+          ! sudo -u hepta-broker -- \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight \
+            /var/lib/hepta-broker/same-owner/bundle.json \
+            "$broker_uid" - "$broker_uid"
+
+      - name: Verify schema and executable separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -u hepta-codex-author -- \
+            cat /etc/hepta/schema-author/output.schema.json >/dev/null
+          ! sudo -u hepta-codex-reviewer -- \
+            cat /etc/hepta/schema-author/output.schema.json
+          ! sudo -u hepta-codex-author -- chmod 0600 \
+            /etc/hepta/schema-author/output.schema.json
+          ! sudo -u hepta-codex-author -- sh -c \
+            'printf x > /etc/hepta/schema-author/output.schema.json'
+          ! sudo -u hepta-codex-author -- mv \
+            /etc/hepta/schema-author/output.schema.json \
+            /etc/hepta/schema-author/replaced.json
+          ! sudo -u hepta-codex-author -- ln \
+            /etc/hepta/schema-author/output.schema.json \
+            /etc/hepta/schema-author/second.json
+          ! sudo -u hepta-broker -- chmod 0755 \
+            /usr/local/libexec/hepta/hepta-codex-preexec-gate
+          ! sudo -u hepta-broker -- sh -c \
+            'printf x >> /usr/local/libexec/hepta/hepta-codex-preexec-gate'
+
+      - name: Run listener lifecycle tests as installed broker UID
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_binary=$(find rust/target/debug/deps -maxdepth 1 -type f \
+            -name 'service_lifecycle-*' -perm -111 | head -n 1)
+          test -n "$test_binary"
+          sudo install -d -o root -g root -m 0755 \
+            /usr/local/libexec/hepta/deps
+          sudo install -o root -g root -m 0555 "$test_binary" \
+            /usr/local/libexec/hepta/deps/service-lifecycle-tests
+          sudo -u hepta-broker -- env \
+            HOME=/var/lib/hepta-broker \
+            TMPDIR=/var/lib/hepta-broker/tmp \
+            RUST_BACKTRACE=1 \
+            /usr/local/libexec/hepta/deps/service-lifecycle-tests \
+            --test-threads=1 --nocapture \
+            | tee /tmp/service-lifecycle-installed.txt
+
+      - name: Upload installed qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-broker-installed-qualification-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/installed-identity.txt
+            /tmp/trust-preflight.txt
+            /tmp/service-lifecycle-installed.txt
+          if-no-files-found: error
+          retention-days: 90

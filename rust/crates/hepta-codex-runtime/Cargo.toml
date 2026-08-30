@@ -1,0 +1,24 @@
+[package]
+name = "hepta-codex-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hepta-cgroup-containment = { version = "=0.1.0", path = "../hepta-cgroup-containment" }
+base64ct.workspace = true
+nix.workspace = true
+hex.workspace = true
+hepta-codex-protocol = { version = "=0.1.0", path = "../hepta-codex-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[[bin]]
+name = "hepta-codex-preexec-gate"
+path = "src/bin/hepta-codex-preexec-gate.rs"

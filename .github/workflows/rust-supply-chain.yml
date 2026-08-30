@@ -115,6 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           test -z "$(find rust -type f -name bom.json -print -quit)"
+          trap 'find rust -type f -name bom.json -delete' EXIT
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           "$TOOL_ROOT/bin/cargo-cyclonedx" cyclonedx \
             --manifest-path rust/Cargo.toml \
@@ -123,6 +124,7 @@ jobs:
             --all-features \
             --target all \
             --license-strict \
+            --license-accept-named 'MIT/Apache-2.0' \
             --spec-version 1.5 \
             2>&1 | tee "$EVIDENCE_ROOT/cargo-cyclonedx.txt"
 
@@ -225,6 +227,10 @@ jobs:
                       "archiveSha256": f"sha256:{os.environ['CARGO_CYCLONEDX_ARCHIVE_SHA256']}",
                       "binarySha256": digest(tool_root / "cargo-cyclonedx"),
                   },
+              },
+              "sbomCompatibility": {
+                  "strictLicenseParsing": True,
+                  "acceptedLegacyNamedLicenseStrings": ["MIT/Apache-2.0"],
               },
               "advisoryDatabaseCommit": (evidence_root / "advisory-db-commit.txt").read_text(encoding="utf-8").strip(),
               "sboms": sboms,

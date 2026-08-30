@@ -14,6 +14,10 @@
 | Evidence tiers | `EVIDENCE_AND_QUALIFICATION_MODEL.md` |
 | Crash semantics | `CRASH_AND_RECOVERY_MATRIX.md` |
 | Operator procedures | `OPERATIONS_RUNBOOK.md` |
+| External gap-to-package mapping | `qualification/external-package-map.v1.json` |
+| External package reviewer index | `qualification/PLAN_V3_EXTERNAL_PACKAGE_INDEX.md` |
+| External execution and ingestion protocol | `qualification/PLAN_V3_EXTERNAL_GAP_EXECUTION.md` |
+| Protected-main acceptance schema | `qualification/protected-main-ruleset-evidence-v1.schema.json` |
 | Supply-chain policy | `security/SUPPLY_CHAIN_POLICY.md` |
 | Codex protocol details | `../codex/*.md` |
 | Architecture decisions | `../adr/*.md` |
@@ -61,10 +65,13 @@ explicitly state no delta to:
 3. TCB/principal matrix;
 4. risk register;
 5. crash/rollback behavior;
-6. operator impact.
+6. operator impact;
+7. external gap-to-package mapping and schemas.
 
 CI machine-compares all stable backlog IDs and statuses, product-status rows and
 external issue ledgers across `current-status.v1.json`, `CURRENT_STATUS.md` and
-`RUST_REWRITE_BACKLOG.md`. It also validates every workflow, exact head/tree
-identity, dependency policy and reproducible SBOM evidence. Exact run evidence
-remains a workflow artifact rather than being copied into self-staling prose.
+`RUST_REWRITE_BACKLOG.md`. It also verifies that every external gap has a mapped,
+non-activating qualification package with existing schemas, and validates every
+workflow, exact head/tree identity, dependency policy and reproducible SBOM
+evidence. Exact run evidence remains a workflow artifact rather than being
+copied into self-staling prose.

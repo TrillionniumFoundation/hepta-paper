@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# one-shot attempt 4: validate the exact Cargo.lock dependency-edge change
+# one-shot attempt 5: generated test-only traits are scoped under cfg(test)
 
 on:
   push:
@@ -53,6 +53,7 @@ jobs:
           cp rust/Cargo.lock "$RUNNER_TEMP/Cargo.lock.before"
           python3 .github/one-shot/normalize_clock_hardening.py
           python3 .github/one-shot/harden_external_qualification.py
+          python3 .github/one-shot/normalize_clock_hardening.py
           cargo fmt --manifest-path rust/Cargo.toml --all
 
           # Preserve the resolved package set and let Cargo add only the new

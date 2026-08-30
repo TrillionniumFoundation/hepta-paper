@@ -1,9 +1,14 @@
-use std::collections::BTreeSet;
+use std::{cmp::Ordering, collections::BTreeSet};
 
+use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::Signature;
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{QualificationPackageIdV1, QualificationSubjectV1};
+use crate::{
+    QualificationPackageIdV1, QualificationSubjectV1, QualificationTrustStoreV1, valid_git_hash,
+};
 
 const REQUIRED_REPOSITORY_ID: u64 = 1_349_108_143;
 const REQUIRED_GOVERNANCE_DENIALS: [&str; 7] = [
@@ -77,6 +82,9 @@ pub enum QualificationPayloadError {
     /// The package reviewer does not match the signed envelope or is not independent.
     #[error("external qualification payload authority separation is invalid")]
     AuthorityMismatch,
+    /// A nested external authority signature is malformed, unknown, or invalid.
+    #[error("external qualification payload authority signature is invalid")]
+    SignatureInvalid,
     /// A mandatory package-specific success invariant is absent.
     #[error("external qualification payload semantic invariant is invalid")]
     SemanticInvalid,
@@ -88,6 +96,39 @@ pub enum QualificationPayloadError {
 /// each package must bind the exact subject, carry an approved independent decision,
 /// and satisfy the closed success vocabulary for its governance or runtime domain.
 pub fn validate_external_package_payload_v1(
+    bytes: &[u8],
+    subject: &QualificationSubjectV1,
+    envelope_authority_domain: &str,
+    envelope_signer_key_id: &str,
+    verifier_now_unix_ms: u64,
+    trust_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<(), QualificationPayloadError> {
+    validate_external_package_payload_shape_v1(
+        bytes,
+        subject,
+        envelope_authority_domain,
+        envelope_signer_key_id,
+    )?;
+    let value: Value =
+        serde_json::from_slice(bytes).map_err(|_| QualificationPayloadError::EncodingInvalid)?;
+    let root = object(&value)?;
+    current_time_window(root, verifier_now_unix_ms)?;
+    if subject.package_id == QualificationPackageIdV1::ExtAuthoritySet001 {
+        validate_authority_set_crypto_v1(
+            root,
+            subject,
+            envelope_authority_domain,
+            envelope_signer_key_id,
+            verifier_now_unix_ms,
+            trust_generation,
+            trust_store,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_external_package_payload_shape_v1(
     bytes: &[u8],
     subject: &QualificationSubjectV1,
     envelope_authority_domain: &str,
@@ -814,6 +855,343 @@ fn validate_authority_set(
     Ok(())
 }
 
+fn validate_authority_set_crypto_v1(
+    root: &Map<String, Value>,
+    subject: &QualificationSubjectV1,
+    envelope_domain: &str,
+    envelope_key: &str,
+    verifier_now_unix_ms: u64,
+    trust_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<(), QualificationPayloadError> {
+    if trust_generation == 0 {
+        return Err(QualificationPayloadError::SemanticInvalid);
+    }
+    let expected_subject_hash = authority_set_subject_hash_v1(subject)?;
+    let subject_hash = sha256(root, "subjectHash")?;
+    if subject_hash != expected_subject_hash {
+        return Err(QualificationPayloadError::SubjectMismatch);
+    }
+    let (set_issued, _) = current_time_window(root, verifier_now_unix_ms)?;
+
+    for receipt_value in array(root, "receipts")? {
+        let receipt = object(receipt_value)?;
+        if unsigned(receipt, "trustGeneration")? != trust_generation {
+            return Err(QualificationPayloadError::SemanticInvalid);
+        }
+        let (receipt_issued, receipt_expires) = current_time_window(receipt, verifier_now_unix_ms)?;
+        if compare_timestamps(&receipt_issued, &set_issued) == Ordering::Greater
+            || compare_timestamps(&set_issued, &receipt_expires) != Ordering::Less
+        {
+            return Err(QualificationPayloadError::SemanticInvalid);
+        }
+        let authority_domain = identifier(receipt, "authorityDomainId")?;
+        let signer_key = identifier(receipt, "signerKeyId")?;
+        let message = authority_receipt_signing_bytes_v1(subject_hash, receipt_value)?;
+        verify_authority_signature_v1(
+            trust_store,
+            authority_domain,
+            signer_key,
+            &message,
+            signature_field(receipt, "signatureBase64")?,
+        )?;
+    }
+
+    let payload = Value::Object(root.clone());
+    let message = authority_set_signing_bytes_v1(subject_hash, &payload)?;
+    verify_authority_signature_v1(
+        trust_store,
+        envelope_domain,
+        envelope_key,
+        &message,
+        signature_field(root, "setSignatureBase64")?,
+    )
+}
+
+/// Computes the exact candidate hash bound into `EXT-AUTHORITY-SET-001`.
+pub fn authority_set_subject_hash_v1(
+    subject: &QualificationSubjectV1,
+) -> Result<String, QualificationPayloadError> {
+    if subject.package_id != QualificationPackageIdV1::ExtAuthoritySet001
+        || subject.repository != "TrillionniumFoundation/hepta-paper"
+        || !valid_git_hash(&subject.commit)
+        || !valid_git_hash(&subject.tree)
+    {
+        return Err(QualificationPayloadError::SubjectMismatch);
+    }
+    let message = domain_separated_message_v1(
+        "HeptaExternalAuthoritySetSubjectV1",
+        &[
+            subject.repository.as_bytes(),
+            subject.commit.as_bytes(),
+            subject.tree.as_bytes(),
+            subject.package_id.as_str().as_bytes(),
+        ],
+    )?;
+    Ok(hash_bytes_v1(&message))
+}
+
+/// Returns the deterministic Ed25519 message for one inner authority receipt.
+pub fn authority_receipt_signing_bytes_v1(
+    subject_hash: &str,
+    receipt: &Value,
+) -> Result<Vec<u8>, QualificationPayloadError> {
+    if !valid_sha256(subject_hash) {
+        return Err(QualificationPayloadError::SchemaInvalid);
+    }
+    let canonical = canonical_without_signature_v1(receipt, "signatureBase64")?;
+    domain_separated_message_v1(
+        "HeptaExternalAuthorityReceiptV1",
+        &[subject_hash.as_bytes(), &canonical],
+    )
+}
+
+/// Returns the deterministic reviewer message for the complete authority set.
+pub fn authority_set_signing_bytes_v1(
+    subject_hash: &str,
+    payload: &Value,
+) -> Result<Vec<u8>, QualificationPayloadError> {
+    if !valid_sha256(subject_hash) {
+        return Err(QualificationPayloadError::SchemaInvalid);
+    }
+    let canonical = canonical_without_signature_v1(payload, "setSignatureBase64")?;
+    domain_separated_message_v1(
+        "HeptaExternalAuthoritySetReviewV1",
+        &[subject_hash.as_bytes(), &canonical],
+    )
+}
+
+fn canonical_without_signature_v1(
+    value: &Value,
+    signature_name: &str,
+) -> Result<Vec<u8>, QualificationPayloadError> {
+    let mut unsigned = object(value)?.clone();
+    if !unsigned
+        .remove(signature_name)
+        .is_some_and(|signature| signature.is_string())
+    {
+        return Err(QualificationPayloadError::SchemaInvalid);
+    }
+    serde_json::to_vec(&Value::Object(unsigned))
+        .map_err(|_| QualificationPayloadError::EncodingInvalid)
+}
+
+fn domain_separated_message_v1(
+    domain: &str,
+    fields: &[&[u8]],
+) -> Result<Vec<u8>, QualificationPayloadError> {
+    let mut output = Vec::new();
+    append_length_prefixed_v1(&mut output, domain.as_bytes())?;
+    for field in fields {
+        append_length_prefixed_v1(&mut output, field)?;
+    }
+    Ok(output)
+}
+
+fn append_length_prefixed_v1(
+    output: &mut Vec<u8>,
+    value: &[u8],
+) -> Result<(), QualificationPayloadError> {
+    let length =
+        u64::try_from(value.len()).map_err(|_| QualificationPayloadError::EncodingInvalid)?;
+    output.extend_from_slice(&length.to_be_bytes());
+    output.extend_from_slice(value);
+    Ok(())
+}
+
+fn verify_authority_signature_v1(
+    trust_store: &QualificationTrustStoreV1,
+    authority_domain: &str,
+    signer_key_id: &str,
+    message: &[u8],
+    signature_base64: &str,
+) -> Result<(), QualificationPayloadError> {
+    let key = trust_store
+        .key(authority_domain, signer_key_id)
+        .map_err(|_| QualificationPayloadError::AuthorityMismatch)?;
+    let signature_bytes = Base64UrlUnpadded::decode_vec(signature_base64)
+        .map_err(|_| QualificationPayloadError::SignatureInvalid)?;
+    if Base64UrlUnpadded::encode_string(&signature_bytes) != signature_base64 {
+        return Err(QualificationPayloadError::SignatureInvalid);
+    }
+    let signature = Signature::try_from(signature_bytes.as_slice())
+        .map_err(|_| QualificationPayloadError::SignatureInvalid)?;
+    key.verify_strict(message, &signature)
+        .map_err(|_| QualificationPayloadError::SignatureInvalid)
+}
+
+#[derive(Clone, Debug)]
+struct ParsedUtcTimestamp {
+    epoch_seconds: i64,
+    fraction: Vec<u8>,
+}
+
+fn parsed_time_window(
+    root: &Map<String, Value>,
+) -> Result<(ParsedUtcTimestamp, ParsedUtcTimestamp), QualificationPayloadError> {
+    let issued = parse_utc_timestamp(string(root, "issuedAt")?)?;
+    let expires = parse_utc_timestamp(string(root, "expiresAt")?)?;
+    if compare_timestamps(&issued, &expires) != Ordering::Less {
+        return Err(QualificationPayloadError::SemanticInvalid);
+    }
+    Ok((issued, expires))
+}
+
+fn current_time_window(
+    root: &Map<String, Value>,
+    verifier_now_unix_ms: u64,
+) -> Result<(ParsedUtcTimestamp, ParsedUtcTimestamp), QualificationPayloadError> {
+    if verifier_now_unix_ms == 0 {
+        return Err(QualificationPayloadError::SemanticInvalid);
+    }
+    let (issued, expires) = parsed_time_window(root)?;
+    let now_seconds = i64::try_from(verifier_now_unix_ms / 1_000)
+        .map_err(|_| QualificationPayloadError::SemanticInvalid)?;
+    let now_fraction = format!("{:03}", verifier_now_unix_ms % 1_000).into_bytes();
+    let now = ParsedUtcTimestamp {
+        epoch_seconds: now_seconds,
+        fraction: now_fraction,
+    };
+    if compare_timestamps(&issued, &now) == Ordering::Greater
+        || compare_timestamps(&now, &expires) != Ordering::Less
+    {
+        return Err(QualificationPayloadError::SemanticInvalid);
+    }
+    Ok((issued, expires))
+}
+
+fn compare_timestamps(left: &ParsedUtcTimestamp, right: &ParsedUtcTimestamp) -> Ordering {
+    left.epoch_seconds
+        .cmp(&right.epoch_seconds)
+        .then_with(|| compare_decimal_fractions(&left.fraction, &right.fraction))
+}
+
+fn compare_decimal_fractions(left: &[u8], right: &[u8]) -> Ordering {
+    let length = left.len().max(right.len());
+    for index in 0..length {
+        let left_digit = left.get(index).copied().unwrap_or(b'0');
+        let right_digit = right.get(index).copied().unwrap_or(b'0');
+        match left_digit.cmp(&right_digit) {
+            Ordering::Equal => {}
+            ordering => return ordering,
+        }
+    }
+    Ordering::Equal
+}
+
+fn parse_utc_timestamp(value: &str) -> Result<ParsedUtcTimestamp, QualificationPayloadError> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 20
+        || bytes.get(4) != Some(&b'-')
+        || bytes.get(7) != Some(&b'-')
+        || bytes.get(10) != Some(&b'T')
+        || bytes.get(13) != Some(&b':')
+        || bytes.get(16) != Some(&b':')
+    {
+        return Err(QualificationPayloadError::SchemaInvalid);
+    }
+    let fraction = if bytes.len() == 20 {
+        if bytes.get(19) != Some(&b'Z') {
+            return Err(QualificationPayloadError::SchemaInvalid);
+        }
+        Vec::new()
+    } else {
+        if bytes.get(19) != Some(&b'.') || bytes.last() != Some(&b'Z') {
+            return Err(QualificationPayloadError::SchemaInvalid);
+        }
+        let digits = bytes
+            .get(20..bytes.len().saturating_sub(1))
+            .ok_or(QualificationPayloadError::SchemaInvalid)?;
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return Err(QualificationPayloadError::SchemaInvalid);
+        }
+        digits.to_vec()
+    };
+
+    let year = parse_decimal_v1(bytes, 0, 4)?;
+    let month = parse_decimal_v1(bytes, 5, 2)?;
+    let day = parse_decimal_v1(bytes, 8, 2)?;
+    let hour = parse_decimal_v1(bytes, 11, 2)?;
+    let minute = parse_decimal_v1(bytes, 14, 2)?;
+    let second = parse_decimal_v1(bytes, 17, 2)?;
+    if year == 0
+        || year > 9_999
+        || !(1..=12).contains(&month)
+        || day == 0
+        || day > days_in_month_v1(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return Err(QualificationPayloadError::SchemaInvalid);
+    }
+    let days = days_from_civil_v1(i64::from(year), month, day);
+    let epoch_seconds = days
+        .saturating_mul(86_400)
+        .saturating_add(i64::from(hour) * 3_600)
+        .saturating_add(i64::from(minute) * 60)
+        .saturating_add(i64::from(second));
+    Ok(ParsedUtcTimestamp {
+        epoch_seconds,
+        fraction,
+    })
+}
+
+fn parse_decimal_v1(
+    bytes: &[u8],
+    start: usize,
+    length: usize,
+) -> Result<u32, QualificationPayloadError> {
+    let end = start
+        .checked_add(length)
+        .ok_or(QualificationPayloadError::SchemaInvalid)?;
+    let digits = bytes
+        .get(start..end)
+        .ok_or(QualificationPayloadError::SchemaInvalid)?;
+    let mut value = 0_u32;
+    for digit in digits {
+        if !digit.is_ascii_digit() {
+            return Err(QualificationPayloadError::SchemaInvalid);
+        }
+        value = value * 10 + u32::from(*digit - b'0');
+    }
+    Ok(value)
+}
+
+fn days_in_month_v1(year: u32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year_v1(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn is_leap_year_v1(year: u32) -> bool {
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+}
+
+fn days_from_civil_v1(year: i64, month: u32, day: u32) -> i64 {
+    let adjusted_year = year - i64::from(month <= 2);
+    let era = if adjusted_year >= 0 {
+        adjusted_year
+    } else {
+        adjusted_year - 399
+    } / 400;
+    let year_of_era = adjusted_year - era * 400;
+    let month_prime = i64::from(month) + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+fn hash_bytes_v1(value: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value);
+    format!("sha256:{}", hex::encode(hasher.finalize()))
+}
+
 fn common_subject(
     root: &Map<String, Value>,
     subject: &QualificationSubjectV1,
@@ -950,12 +1328,7 @@ fn zero_fields(root: &Map<String, Value>, names: &[&str]) -> Result<(), Qualific
 }
 
 fn time_window(root: &Map<String, Value>) -> Result<(), QualificationPayloadError> {
-    let issued = timestamp(root, "issuedAt")?;
-    let expires = timestamp(root, "expiresAt")?;
-    if issued >= expires {
-        return Err(QualificationPayloadError::SemanticInvalid);
-    }
-    Ok(())
+    parsed_time_window(root).map(|_| ())
 }
 
 fn signature_field<'a>(
@@ -1069,10 +1442,10 @@ fn valid_sha256(value: &str) -> bool {
 }
 
 fn valid_identifier(value: &str) -> bool {
-    !value.is_empty()
+    let mut bytes = value.bytes();
+    matches!(bytes.next(), Some(first) if first.is_ascii_alphanumeric())
         && value.len() <= 128
-        && value
-            .bytes()
+        && bytes
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
@@ -1089,21 +1462,13 @@ fn valid_check_name(value: &str) -> bool {
 }
 
 fn valid_utc_timestamp(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    (20..=40).contains(&bytes.len())
-        && bytes.get(4) == Some(&b'-')
-        && bytes.get(7) == Some(&b'-')
-        && bytes.get(10) == Some(&b'T')
-        && bytes.get(13) == Some(&b':')
-        && bytes.get(16) == Some(&b':')
-        && bytes.last() == Some(&b'Z')
-        && [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18]
-            .into_iter()
-            .all(|index| bytes.get(index).is_some_and(u8::is_ascii_digit))
+    parse_utc_timestamp(value).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
+    use base64ct::{Base64UrlUnpadded, Encoding};
+    use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
 
     use super::*;
@@ -1113,6 +1478,46 @@ mod tests {
     const TREE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const REVIEWER: &str = "independent-reviewer";
     const REVIEWER_KEY: &str = "reviewer-key";
+    const NOW_UNIX_MS: u64 = 1_788_091_200_000;
+
+    fn reviewer_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[91_u8; 32])
+    }
+
+    fn reviewer_trust_store() -> QualificationTrustStoreV1 {
+        let signing = reviewer_signing_key();
+        QualificationTrustStoreV1::new(
+            [(
+                REVIEWER.to_owned(),
+                REVIEWER_KEY.to_owned(),
+                signing.verifying_key(),
+            )],
+            [
+                "implementation-author".to_owned(),
+                "repository-admin".to_owned(),
+                "github-hosted-ci".to_owned(),
+            ],
+        )
+        .expect("reviewer trust store")
+    }
+
+    fn validate_payload(
+        bytes: &[u8],
+        subject: &QualificationSubjectV1,
+        envelope_domain: &str,
+        envelope_key: &str,
+    ) -> Result<(), QualificationPayloadError> {
+        let trust = reviewer_trust_store();
+        validate_external_package_payload_v1(
+            bytes,
+            subject,
+            envelope_domain,
+            envelope_key,
+            NOW_UNIX_MS,
+            1,
+            &trust,
+        )
+    }
 
     fn subject(package_id: QualificationPackageIdV1) -> QualificationSubjectV1 {
         QualificationSubjectV1 {
@@ -1383,21 +1788,16 @@ mod tests {
             (QualificationPackageIdV1::ExtCodexRole001, codex_role()),
             (QualificationPackageIdV1::ExtCutoverSoak001, cutover()),
         ] {
-            validate_external_package_payload_v1(
-                &encoded(payload),
-                &subject(package),
-                REVIEWER,
-                REVIEWER_KEY,
-            )
-            .unwrap_or_else(|error| {
-                panic!("valid payload rejected for {}: {error}", package.as_str())
-            });
+            validate_payload(&encoded(payload), &subject(package), REVIEWER, REVIEWER_KEY)
+                .unwrap_or_else(|error| {
+                    panic!("valid payload rejected for {}: {error}", package.as_str())
+                });
         }
     }
 
     #[test]
     fn approved_governance_payload_is_accepted() {
-        validate_external_package_payload_v1(
+        validate_payload(
             &encoded(governance()),
             &subject(QualificationPackageIdV1::ExtGovMain001),
             REVIEWER,
@@ -1411,7 +1811,7 @@ mod tests {
         let mut value = governance();
         value["decision"] = json!("rejected");
         assert!(matches!(
-            validate_external_package_payload_v1(
+            validate_payload(
                 &encoded(value),
                 &subject(QualificationPackageIdV1::ExtGovMain001),
                 REVIEWER,
@@ -1424,7 +1824,7 @@ mod tests {
     #[test]
     fn envelope_reviewer_must_match_payload_reviewer() {
         assert!(matches!(
-            validate_external_package_payload_v1(
+            validate_payload(
                 &encoded(governance()),
                 &subject(QualificationPackageIdV1::ExtGovMain001),
                 "different-reviewer",
@@ -1434,61 +1834,213 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn authority_set_requires_four_distinct_kinds_and_domains() {
-        let receipt = |kind: &str, domain: &str, marker: &str| {
-            json!({
+    fn signed_authority_set() -> (Value, QualificationTrustStoreV1) {
+        let authority_subject = subject(QualificationPackageIdV1::ExtAuthoritySet001);
+        let subject_hash =
+            authority_set_subject_hash_v1(&authority_subject).expect("authority subject hash");
+        let authorities = [
+            ("release_signer", "release-domain", "release-key", 31_u8),
+            ("worm_custody", "worm-domain", "worm-key", 32_u8),
+            ("backup_restore", "backup-domain", "backup-key", 33_u8),
+            (
+                "submission_dispatcher",
+                "submission-domain",
+                "submission-key",
+                34_u8,
+            ),
+        ];
+        let mut trust_entries = Vec::new();
+        let mut receipts = Vec::new();
+        for (index, (kind, domain, key_id, marker)) in authorities.into_iter().enumerate() {
+            let signing = SigningKey::from_bytes(&[marker; 32]);
+            let mut receipt = json!({
                 "authorityKind": kind,
                 "authorityDomainId": domain,
-                "operationId": format!("operation-{marker}"),
-                "requestHash": SHA,
-                "resultHash": SHA,
+                "operationId": format!("operation-{}", index + 1),
+                "requestHash": hash(100 + index as u8),
+                "resultHash": hash(110 + index as u8),
                 "outcome": "succeeded",
-                "nonce": format!("nonce-{marker}"),
+                "nonce": format!("nonce-{}", index + 1),
                 "issuedAt": "2026-08-30T00:00:00Z",
                 "expiresAt": "2026-09-30T00:00:00Z",
-                "signerKeyId": format!("key-{marker}"),
+                "signerKeyId": key_id,
                 "trustGeneration": 1,
                 "externalActionMayHaveStarted": true,
-                "signatureBase64": "B".repeat(64)
-            })
-        };
-        let value = json!({
+                "signatureBase64": ""
+            });
+            let message = authority_receipt_signing_bytes_v1(&subject_hash, &receipt)
+                .expect("receipt signing bytes");
+            receipt["signatureBase64"] = json!(Base64UrlUnpadded::encode_string(
+                &signing.sign(&message).to_bytes()
+            ));
+            trust_entries.push((
+                domain.to_owned(),
+                key_id.to_owned(),
+                signing.verifying_key(),
+            ));
+            receipts.push(receipt);
+        }
+
+        let reviewer = reviewer_signing_key();
+        trust_entries.push((
+            REVIEWER.to_owned(),
+            REVIEWER_KEY.to_owned(),
+            reviewer.verifying_key(),
+        ));
+        let mut value = json!({
             "schemaVersion": 1,
             "packageId": "EXT-AUTHORITY-SET-001",
             "repository": "TrillionniumFoundation/hepta-paper",
             "commit": COMMIT,
             "tree": TREE,
-            "subjectHash": SHA,
-            "receipts": [
-                receipt("release_signer", "release-domain", "1"),
-                receipt("worm_custody", "worm-domain", "2"),
-                receipt("backup_restore", "backup-domain", "3"),
-                receipt("submission_dispatcher", "submission-domain", "4")
-            ],
+            "subjectHash": subject_hash,
+            "receipts": receipts,
             "authorityDomainsDistinct": true,
             "repositoryOrLocalFixtureAuthorityCount": 0,
             "reviewerAuthorityDomain": REVIEWER,
             "reviewerKeyId": REVIEWER_KEY,
             "decision": "approved",
-            "issuedAt": "2026-08-30T00:00:00Z",
-            "expiresAt": "2026-09-30T00:00:00Z",
-            "setSignatureBase64": "C".repeat(64)
+            "issuedAt": "2026-08-30T01:00:00Z",
+            "expiresAt": "2026-09-15T00:00:00Z",
+            "setSignatureBase64": ""
         });
+        let message = authority_set_signing_bytes_v1(
+            value["subjectHash"].as_str().expect("subject hash"),
+            &value,
+        )
+        .expect("set signing bytes");
+        value["setSignatureBase64"] = json!(Base64UrlUnpadded::encode_string(
+            &reviewer.sign(&message).to_bytes()
+        ));
+        let trust_store = QualificationTrustStoreV1::new(
+            trust_entries,
+            [
+                "implementation-author".to_owned(),
+                "repository-admin".to_owned(),
+                "github-hosted-ci".to_owned(),
+            ],
+        )
+        .expect("authority trust store");
+        (value, trust_store)
+    }
+
+    #[test]
+    fn authority_set_requires_four_valid_independent_signatures() {
+        let (value, trust) = signed_authority_set();
         validate_external_package_payload_v1(
             &encoded(value),
             &subject(QualificationPackageIdV1::ExtAuthoritySet001),
             REVIEWER,
             REVIEWER_KEY,
+            NOW_UNIX_MS,
+            1,
+            &trust,
         )
-        .expect("distinct authority set");
+        .expect("cryptographically valid authority set");
+    }
+
+    #[test]
+    fn authority_set_rejects_nested_or_set_signature_tampering() {
+        let (mut nested, trust) = signed_authority_set();
+        nested["receipts"][0]["resultHash"] = json!(hash(120));
+        assert!(matches!(
+            validate_external_package_payload_v1(
+                &encoded(nested),
+                &subject(QualificationPackageIdV1::ExtAuthoritySet001),
+                REVIEWER,
+                REVIEWER_KEY,
+                NOW_UNIX_MS,
+                1,
+                &trust,
+            ),
+            Err(QualificationPayloadError::SignatureInvalid)
+        ));
+
+        let (mut set, trust) = signed_authority_set();
+        set["setSignatureBase64"] = json!("A".repeat(86));
+        assert!(matches!(
+            validate_external_package_payload_v1(
+                &encoded(set),
+                &subject(QualificationPackageIdV1::ExtAuthoritySet001),
+                REVIEWER,
+                REVIEWER_KEY,
+                NOW_UNIX_MS,
+                1,
+                &trust,
+            ),
+            Err(QualificationPayloadError::SignatureInvalid)
+        ));
+    }
+
+    #[test]
+    fn authority_set_rejects_subject_or_trust_generation_substitution() {
+        let (mut subject_substitution, trust) = signed_authority_set();
+        subject_substitution["subjectHash"] = json!(SHA);
+        assert!(matches!(
+            validate_external_package_payload_v1(
+                &encoded(subject_substitution),
+                &subject(QualificationPackageIdV1::ExtAuthoritySet001),
+                REVIEWER,
+                REVIEWER_KEY,
+                NOW_UNIX_MS,
+                1,
+                &trust,
+            ),
+            Err(QualificationPayloadError::SubjectMismatch)
+        ));
+
+        let (generation_substitution, trust) = signed_authority_set();
+        assert!(matches!(
+            validate_external_package_payload_v1(
+                &encoded(generation_substitution),
+                &subject(QualificationPackageIdV1::ExtAuthoritySet001),
+                REVIEWER,
+                REVIEWER_KEY,
+                NOW_UNIX_MS,
+                2,
+                &trust,
+            ),
+            Err(QualificationPayloadError::SemanticInvalid)
+        ));
+    }
+
+    #[test]
+    fn identifiers_and_utc_windows_match_the_schema_semantics() {
+        for valid in ["a", "A0", "review:key-1", "authority_domain.v1"] {
+            assert!(valid_identifier(valid), "{valid}");
+        }
+        for invalid in ["", "-leading", "_leading", ".leading", ":leading", "é"] {
+            assert!(!valid_identifier(invalid), "{invalid}");
+        }
+        for invalid in [
+            "2026-08-30T00:00:00abcZ",
+            "2026-08-30T00:00:00.Z",
+            "2026-13-30T00:00:00Z",
+            "2026-02-30T00:00:00Z",
+            "2026-08-30T24:00:00Z",
+        ] {
+            assert!(!valid_utc_timestamp(invalid), "{invalid}");
+        }
+        let valid_fraction = json!({
+            "issuedAt": "2026-08-30T00:00:00Z",
+            "expiresAt": "2026-08-30T00:00:00.1Z"
+        });
+        assert!(time_window(valid_fraction.as_object().expect("window")).is_ok());
+        let reversed_fraction = json!({
+            "issuedAt": "2026-08-30T00:00:00.10Z",
+            "expiresAt": "2026-08-30T00:00:00.099Z"
+        });
+        assert!(matches!(
+            time_window(reversed_fraction.as_object().expect("window")),
+            Err(QualificationPayloadError::SemanticInvalid)
+        ));
     }
 
     #[test]
     fn canonical_compact_json_is_required() {
         let pretty = serde_json::to_vec_pretty(&governance()).expect("pretty JSON");
         assert!(matches!(
-            validate_external_package_payload_v1(
+            validate_payload(
                 &pretty,
                 &subject(QualificationPackageIdV1::ExtGovMain001),
                 REVIEWER,

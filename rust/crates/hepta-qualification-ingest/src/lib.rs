@@ -5,7 +5,10 @@ compile_error!("hepta-qualification-ingest requires Unix file identity semantics
 
 mod package_payload;
 
-pub use package_payload::{QualificationPayloadError, validate_external_package_payload_v1};
+pub use package_payload::{
+    QualificationPayloadError, authority_receipt_signing_bytes_v1, authority_set_signing_bytes_v1,
+    authority_set_subject_hash_v1, validate_external_package_payload_v1,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -152,7 +155,11 @@ impl QualificationTrustStoreV1 {
         })
     }
 
-    fn key(&self, domain: &str, key_id: &str) -> Result<&VerifyingKey, QualificationIngestError> {
+    pub(crate) fn key(
+        &self,
+        domain: &str,
+        key_id: &str,
+    ) -> Result<&VerifyingKey, QualificationIngestError> {
         if self.forbidden_authority_domains.contains(domain) {
             return Err(QualificationIngestError::AuthorityDomainForbidden);
         }

@@ -163,7 +163,21 @@ separately administered authority domains. Each receipt binds one exact request,
 subject, nonce, deadline, result and current trust generation.
 
 No fixture, repository key, local admin delegation or shared authority domain
-can satisfy this package.
+can satisfy this package. The repository verifier recomputes `subjectHash`,
+requires every inner receipt `trustGeneration` to equal the active qualification
+trust generation, checks every receipt and set deadline against verifier time,
+and cryptographically verifies all four inner signatures plus the independent
+set-review signature.
+
+Signing material is deterministic. Each field is encoded as an unsigned 64-bit
+big-endian byte length followed by its exact bytes. `subjectHash` is SHA-256 of
+the sequence `HeptaExternalAuthoritySetSubjectV1`, repository, commit, tree and
+package ID. An inner receipt signs the sequence
+`HeptaExternalAuthorityReceiptV1`, `subjectHash`, and canonical compact JSON of
+the receipt with `signatureBase64` removed. The set reviewer signs the sequence
+`HeptaExternalAuthoritySetReviewV1`, `subjectHash`, and canonical compact JSON
+of the complete set with `setSignatureBase64` removed. Signatures are canonical
+URL-safe unpadded Ed25519 encodings (86 ASCII characters).
 
 ## Acceptance and ingestion
 

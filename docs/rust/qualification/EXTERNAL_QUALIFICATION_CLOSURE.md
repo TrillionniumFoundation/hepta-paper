@@ -108,3 +108,11 @@ aliased, writable, replaced, non-approved, semantically incomplete, clock-rollba
 ledger-schema-drift, partially replayed or trust-rollback inputs exit
 nonzero and emit no receipt. Correct the external publication and run again.
 Only an exact already-committed retry is recoverable without fresh nonces.
+
+## Nested irreversible-authority verification
+
+`EXT-AUTHORITY-SET-001` is not accepted from field vocabulary alone. The
+verifier recomputes the exact-candidate subject hash, checks the active trust
+generation and verifier-time windows, verifies the four independently keyed
+`HeptaExternalAuthorityReceiptV1` signatures, and verifies the separate
+`HeptaExternalAuthoritySetReviewV1` signature before replay-ledger commit.

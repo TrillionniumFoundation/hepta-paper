@@ -328,6 +328,9 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
             &subject,
             &record.authority_domain_id,
             &record.signer_key_id,
+            now_unix_ms,
+            trust_generation,
+            &trust_store,
         )?;
         verified.push(record);
     }

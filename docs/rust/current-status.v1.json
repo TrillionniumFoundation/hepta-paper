@@ -40,6 +40,21 @@
     "canonicalPlanDocument": "docs/rust/RUST_REWRITE_MASTER_PLAN.md",
     "canonicalBacklogDocument": "docs/rust/RUST_REWRITE_BACKLOG.md"
   },
+  "currentStatusRows": {
+    "Foundation contracts": "source_qualified",
+    "Broker protocol/journal": "source_qualified",
+    "Durable pre-exec gate": "source_qualified",
+    "Workspace mutation authority": "source_qualified",
+    "Compatibility kernel": "source_qualified",
+    "Read-only Rust campaign plane": "source_qualified",
+    "Local author/reviewer slice": "source_qualified",
+    "Rust campaign writer": "source_qualified",
+    "Scientific evidence orchestration": "source_qualified",
+    "Cutover/retirement contracts": "source_qualified",
+    "Production target host": "blocked_external",
+    "Real Codex credentials/provider": "blocked_external",
+    "Release/KMS/WORM/submission": "blocked_external"
+  },
   "workstreams": [
     {
       "id": "FND",
@@ -103,6 +118,83 @@
       "evidenceTier": "source"
     }
   ],
+  "backlogItemStatus": {
+    "RUST-FND-001": "source_qualified",
+    "RUST-FND-002": "source_qualified",
+    "RUST-FND-003": "source_qualified",
+    "RUST-FND-004": "source_qualified",
+    "RUST-FND-005": "source_qualified",
+    "RUST-FND-006": "source_qualified",
+    "RUST-FND-007": "source_qualified",
+    "RUST-FND-008": "source_qualified",
+    "RUST-FND-009": "source_qualified",
+    "RUST-FND-010": "source_qualified",
+    "RUST-FND-011": "source_qualified",
+    "RUST-FND-012": "source_qualified",
+    "RUST-FND-013": "source_qualified",
+    "RUST-BRK-001": "source_qualified",
+    "RUST-BRK-002": "source_qualified",
+    "RUST-BRK-003": "source_qualified",
+    "RUST-BRK-004": "blocked_external",
+    "RUST-BRK-005": "source_qualified",
+    "RUST-BRK-006": "source_qualified",
+    "RUST-BRK-007": "source_qualified",
+    "RUST-BRK-008": "source_qualified",
+    "RUST-BRK-009": "source_qualified",
+    "RUST-BRK-010": "source_qualified",
+    "RUST-BRK-011": "source_qualified",
+    "RUST-BRK-012": "source_qualified",
+    "RUST-BRK-013": "source_qualified",
+    "RUST-BRK-014": "source_qualified",
+    "RUST-BRK-015": "blocked_external",
+    "RUST-BRK-016": "source_qualified",
+    "RUST-BRK-017": "blocked_external",
+    "RUST-BRK-018": "source_qualified",
+    "RUST-BRK-019": "source_qualified",
+    "RUST-BRK-020": "source_qualified",
+    "RUST-BRK-021": "source_qualified",
+    "RUST-WS-001": "source_qualified",
+    "RUST-WS-002": "source_qualified",
+    "RUST-WS-003": "source_qualified",
+    "RUST-WS-004": "source_qualified",
+    "RUST-WS-005": "source_qualified",
+    "RUST-WS-006": "source_qualified",
+    "RUST-WS-007": "source_qualified",
+    "RUST-WS-008": "source_qualified",
+    "RUST-WS-009": "source_qualified",
+    "RUST-CMP-001": "source_qualified",
+    "RUST-CMP-002": "source_qualified",
+    "RUST-CMP-003": "source_qualified",
+    "RUST-CMP-004": "source_qualified",
+    "RUST-CMP-005": "source_qualified",
+    "RUST-CMP-006": "source_qualified",
+    "RUST-CMP-007": "source_qualified",
+    "RUST-CMP-008": "source_qualified",
+    "RUST-RO-001": "source_qualified",
+    "RUST-RO-002": "source_qualified",
+    "RUST-RO-003": "source_qualified",
+    "RUST-RO-004": "source_qualified",
+    "RUST-RO-005": "source_qualified",
+    "RUST-RO-006": "source_qualified",
+    "RUST-MVP-001": "source_qualified",
+    "RUST-MVP-002": "source_qualified",
+    "RUST-MVP-003": "source_qualified",
+    "RUST-MVP-004": "source_qualified",
+    "RUST-MVP-005": "source_qualified",
+    "RUST-MVP-006": "source_qualified",
+    "RUST-MVP-007": "source_qualified",
+    "RUST-MVP-008": "source_qualified",
+    "RUST-MVP-009": "source_qualified",
+    "RUST-DB-001": "source_qualified",
+    "RUST-DB-002": "source_qualified",
+    "RUST-DB-003": "source_qualified",
+    "RUST-DB-004": "source_qualified",
+    "RUST-DB-005": "source_qualified",
+    "RUST-DB-006": "source_qualified",
+    "RUST-DB-007": "source_qualified",
+    "RUST-DB-008": "source_qualified",
+    "RUST-DB-009": "source_qualified"
+  },
   "gaps": [
     {
       "id": "GAP-GOV-001",
@@ -111,8 +203,9 @@
       "evidenceTier": "source",
       "external": false,
       "closesWhen": [
-        "program-truth validator runs in CI",
-        "historical status files cannot override CURRENT_STATUS"
+        "program-truth validator runs on the exact head",
+        "CURRENT_STATUS and RUST_REWRITE_BACKLOG are machine-compared with this file",
+        "historical status files cannot override the canonical set"
       ]
     },
     {
@@ -122,9 +215,9 @@
       "evidenceTier": "source",
       "external": false,
       "closesWhen": [
-        "workflows explicitly checkout head SHA",
+        "workflows explicitly checkout the pull-request head SHA",
         "artifacts record head/base/tested commit and tree",
-        "mismatch fails closed"
+        "mismatch and dirty postflight fail closed"
       ]
     },
     {
@@ -141,14 +234,14 @@
     },
     {
       "id": "GAP-BRK-002",
-      "title": "Production process containment beyond process-group-only supervision",
+      "title": "Production containment source contract beyond process-group-only supervision",
       "status": "source_qualified",
       "evidenceTier": "source",
       "external": false,
       "closesWhen": [
-        "cgroup-v2 or equivalent containment is implemented",
-        "setsid/double-fork escape tests pass",
-        "production mode rejects process-group-only containment"
+        "cgroup-v2 process-set authority is implemented",
+        "setsid and double-fork source tests pass",
+        "production mode rejects process-group-only and fixture containment"
       ]
     },
     {
@@ -159,7 +252,7 @@
       "external": false,
       "closesWhen": [
         "machine error registry is versioned",
-        "worker/queue/journal/reconciliation counters are emitted without sensitive data"
+        "worker queue journal and reconciliation counters exclude sensitive data"
       ]
     },
     {
@@ -169,21 +262,23 @@
       "evidenceTier": "none",
       "external": true,
       "issue": 17,
+      "repositoryLocalStatus": "hosted_installed_qualified",
       "closesWhen": [
-        "separately controlled host evidence exists",
-        "independent reviewer signs approval"
+        "separately controlled target-host evidence exists",
+        "independent Linux reviewer signs approval"
       ]
     },
     {
       "id": "GAP-HOST-002",
-      "title": "Production WAL, reboot, disk-full and corruption drill",
+      "title": "Production WAL, reboot, disk-full, long-soak and corruption drill",
       "status": "blocked_external",
       "evidenceTier": "none",
       "external": true,
       "issue": 12,
+      "repositoryLocalStatus": "hosted_installed_qualified",
       "closesWhen": [
         "destructive qualification completes on a dedicated target-host mount",
-        "evidence is independently reviewed"
+        "72-hour production-topology soak and recovery evidence are independently reviewed"
       ]
     },
     {
@@ -193,9 +288,10 @@
       "evidenceTier": "none",
       "external": true,
       "issue": 14,
+      "repositoryLocalStatus": "hosted_installed_qualified",
       "closesWhen": [
-        "independent key owner performs rotation/revocation/rollback/compromise drills",
-        "signed evidence is accepted"
+        "independent key owner performs rotation revocation rollback and compromise drills",
+        "signed target-host evidence is accepted"
       ]
     },
     {
@@ -204,10 +300,12 @@
       "status": "blocked_external",
       "evidenceTier": "none",
       "external": true,
+      "issue": 21,
+      "repositoryLocalStatus": "source_qualified",
       "closesWhen": [
         "qualified Codex executable and CLI surface are pinned",
-        "separate homes authenticate",
-        "live canaries pass without leaking authority"
+        "separate homes authenticate under independent credential custody",
+        "live author and reviewer canaries pass without leaking authority"
       ]
     },
     {
@@ -217,8 +315,8 @@
       "evidenceTier": "source",
       "external": false,
       "closesWhen": [
-        "workspace crates implement WS-001 through WS-009",
-        "fault and mutation policy suites pass"
+        "workspace packages cover root identity COW inventory mutation policy prepared results and incomplete-attempt recovery",
+        "path-race fault and read-only mutation suites pass"
       ]
     },
     {
@@ -239,19 +337,20 @@
       "evidenceTier": "source",
       "external": false,
       "closesWhen": [
-        "immutable SQLite reader and normalized state diff are complete",
-        "no WAL or write path is opened"
+        "immutable SQLite readers and normalized state projections are complete",
+        "no WAL sidecar or write path is opened"
       ]
     },
     {
       "id": "GAP-MVP-001",
-      "title": "One-paper author-build-review-revise local vertical slice",
+      "title": "One-paper fake-provider author/reviewer local vertical slice",
       "status": "source_qualified",
       "evidenceTier": "source",
       "external": false,
       "closesWhen": [
-        "fake then qualified Codex prepared results traverse workspace and read-only campaign projection",
-        "crash/cancel matrix passes"
+        "fake-provider prepared results traverse workspace and read-only campaign projection",
+        "crash cancel replay and duplicate-integration source tests pass",
+        "real-provider qualification remains separately bound to GAP-CODEX-001"
       ]
     },
     {
@@ -261,8 +360,9 @@
       "evidenceTier": "source",
       "external": false,
       "closesWhen": [
-        "DB-001 through DB-009 pass",
-        "Node/Rust dual writer is mechanically impossible"
+        "DB-001 through DB-009 source contracts and deterministic simulations pass",
+        "Node/Rust dual writer is mechanically fenced",
+        "real 72-hour target-host soak remains separately bound to GAP-HOST-002"
       ]
     },
     {
@@ -271,18 +371,19 @@
       "status": "blocked_external",
       "evidenceTier": "none",
       "external": true,
+      "issue": 22,
+      "repositoryLocalStatus": "source_qualified",
       "closesWhen": [
-        "narrow ports are implemented",
+        "narrow receipt-verifying ports remain source-qualified",
         "real external authorities issue independently verifiable receipts",
-        "model principals retain zero access"
-      ],
-      "repositoryLocalStatus": "source_qualified"
+        "model principals retain zero key custody portal or submission access"
+      ]
     }
   ],
   "qualificationCandidate": {
-    "branch": "codex/rust-all-gap-closure-20260830",
-    "commit": "ba0aa52c23ad2aaab3bcbfd3aa3c86bd44207601",
-    "evidenceTier": "hosted_source_pending_final_head",
+    "branch": "codex/rust-final-gap-closure-20260830",
+    "binding": "exact_head_workflow_evidence",
+    "evidenceTier": "source",
     "productionAuthority": false
   }
 }

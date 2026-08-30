@@ -51,7 +51,8 @@ The verifier fails closed unless:
 4. every signed payload hash is unique;
 5. one authority domain is not reused across independent governance,
    target-host, key-owner, Codex-account, and release/cutover groups;
-6. the request consumer UID equals the running process effective UID.
+6. the request consumer UID equals the running process effective UID;
+7. request `nowUnixMs` differs from the verifier system clock by no more than 300000 milliseconds, preventing caller-controlled expiry rollback.
 
 Host containment and storage packages may use different reviewers within the
 same target-host group. Cutover and irreversible-authority packages may use

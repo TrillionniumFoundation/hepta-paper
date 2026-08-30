@@ -18,6 +18,7 @@ use std::{
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process::ExitCode,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use base64ct::{Base64UrlUnpadded, Encoding};
@@ -33,6 +34,7 @@ use thiserror::Error;
 
 const MAXIMUM_REQUEST_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_TRUST_STORE_BYTES: u64 = 1024 * 1024;
+const MAXIMUM_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
 const REQUIRED_REPOSITORY: &str = "TrillionniumFoundation/hepta-paper";
 const REQUIRED_FORBIDDEN_DOMAINS: [&str; 2] = ["implementation-author", "repository-admin"];
 
@@ -124,6 +126,10 @@ enum ClosureError {
     RequestInvalid,
     #[error("closure request consumer UID does not match the effective process UID")]
     ConsumerIdentityMismatch,
+    #[error("closure request time differs from the verifier clock beyond the allowed skew")]
+    ClockMismatch,
+    #[error("verifier system clock is invalid")]
+    SystemClockInvalid,
     #[error("authority-owned file boundary is invalid")]
     FileAuthorityInvalid,
     #[error("authority-owned file changed while it was read")]
@@ -188,6 +194,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
     if request.consumer_uid != effective_uid {
         return Err(ClosureError::ConsumerIdentityMismatch);
     }
+    validate_wall_clock(request.now_unix_ms)?;
 
     let trust_bytes = read_authority_file(
         &request.trust_store.path,
@@ -505,6 +512,27 @@ fn effective_uid() -> Result<u32, ClosureError> {
     Err(ClosureError::ConsumerIdentityMismatch)
 }
 
+fn validate_wall_clock(requested_now_unix_ms: u64) -> Result<(), ClosureError> {
+    let observed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ClosureError::SystemClockInvalid)?;
+    let observed_now_unix_ms =
+        u64::try_from(observed.as_millis()).map_err(|_| ClosureError::SystemClockInvalid)?;
+    validate_wall_clock_at(requested_now_unix_ms, observed_now_unix_ms)
+}
+
+fn validate_wall_clock_at(
+    requested_now_unix_ms: u64,
+    observed_now_unix_ms: u64,
+) -> Result<(), ClosureError> {
+    if requested_now_unix_ms == 0
+        || observed_now_unix_ms == 0
+        || requested_now_unix_ms.abs_diff(observed_now_unix_ms) > MAXIMUM_CLOCK_SKEW_MS
+    {
+        return Err(ClosureError::ClockMismatch);
+    }
+    Ok(())
+}
 fn valid_git_hash(value: &str) -> bool {
     value.len() == 40
         && value
@@ -678,6 +706,21 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn request_time_is_bounded_to_the_verifier_clock() {
+        let observed = 1_800_000_000_000_u64;
+        assert!(validate_wall_clock_at(observed, observed).is_ok());
+        assert!(validate_wall_clock_at(observed - MAXIMUM_CLOCK_SKEW_MS, observed).is_ok());
+        assert!(validate_wall_clock_at(observed + MAXIMUM_CLOCK_SKEW_MS, observed).is_ok());
+        assert!(matches!(
+            validate_wall_clock_at(observed - MAXIMUM_CLOCK_SKEW_MS - 1, observed),
+            Err(ClosureError::ClockMismatch)
+        ));
+        assert!(matches!(
+            validate_wall_clock_at(observed + MAXIMUM_CLOCK_SKEW_MS + 1, observed),
+            Err(ClosureError::ClockMismatch)
+        ));
+    }
     #[test]
     fn help_is_read_only_and_succeeds() {
         assert!(

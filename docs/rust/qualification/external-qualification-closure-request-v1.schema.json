@@ -29,7 +29,8 @@
     },
     "nowUnixMs": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "Caller-observed Unix epoch milliseconds. The verifier compares this value with its system clock and rejects absolute skew above 300000 milliseconds."
     },
     "consumerUid": {
       "type": "integer",

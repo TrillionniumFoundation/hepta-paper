@@ -1,4 +1,5 @@
 name: external-qualification-persistence-hardening-once
+# one-shot attempt 3: repeated workflow anchors normalized before the product patch
 
 on:
   push:

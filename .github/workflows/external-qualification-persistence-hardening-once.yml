@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# one-shot attempt 5: generated test-only traits are scoped under cfg(test)
+# one-shot attempt 6: pre/post normalization preserves exact generation anchors
 
 on:
   push:

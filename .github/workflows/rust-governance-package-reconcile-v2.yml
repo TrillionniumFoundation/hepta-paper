@@ -1,0 +1,235 @@
+name: rust-governance-package-reconcile-v2
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-main-integration-20260830
+    paths:
+      - '.github/workflows/rust-governance-package-reconcile-v2.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rust-governance-package-reconcile-v2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Patch closed package vocabulary and contract gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('rust/crates/hepta-qualification-ingest/src/lib.rs')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '#[serde(rename_all = "SCREAMING-KEBAB-CASE")]\n'
+              'pub enum QualificationPackageIdV1 {\n',
+              'pub enum QualificationPackageIdV1 {\n'
+              '    /// Protected-main ruleset and denial evidence.\n'
+              '    #[serde(rename = "EXT-GOV-MAIN-001")]\n'
+              '    ExtGovMain001,\n',
+              1,
+          )
+          variants = [
+              ('ExtHostCgroup001', 'EXT-HOST-CGROUP-001'),
+              ('ExtHostStorage001', 'EXT-HOST-STORAGE-001'),
+              ('ExtKeyOwner001', 'EXT-KEY-OWNER-001'),
+              ('ExtCodexRole001', 'EXT-CODEX-ROLE-001'),
+              ('ExtCutoverSoak001', 'EXT-CUTOVER-SOAK-001'),
+              ('ExtAuthoritySet001', 'EXT-AUTHORITY-SET-001'),
+          ]
+          for variant, external in variants:
+              needle = f'    {variant},'
+              replacement = (
+                  f'    #[serde(rename = "{external}")]\n'
+                  f'    {variant},'
+              )
+              if needle not in text:
+                  raise SystemExit(f'missing package variant: {variant}')
+              text = text.replace(needle, replacement, 1)
+
+          enum_end = (
+              '    #[serde(rename = "EXT-AUTHORITY-SET-001")]\n'
+              '    ExtAuthoritySet001,\n'
+              '}\n\n'
+              '/// Signed envelope around one schema-validated external payload hash.'
+          )
+          impl_lines = [
+              '    #[serde(rename = "EXT-AUTHORITY-SET-001")]',
+              '    ExtAuthoritySet001,',
+              '}',
+              '',
+              'impl QualificationPackageIdV1 {',
+              '    /// Complete package vocabulary accepted by this source version.',
+              '    pub const ALL: [Self; 7] = [',
+              '        Self::ExtGovMain001,',
+              '        Self::ExtHostCgroup001,',
+              '        Self::ExtHostStorage001,',
+              '        Self::ExtKeyOwner001,',
+              '        Self::ExtCodexRole001,',
+              '        Self::ExtCutoverSoak001,',
+              '        Self::ExtAuthoritySet001,',
+              '    ];',
+              '',
+              '    /// Canonical externally visible package identifier.',
+              '    #[must_use]',
+              "    pub const fn as_str(self) -> &'static str {",
+              '        match self {',
+              '            Self::ExtGovMain001 => "EXT-GOV-MAIN-001",',
+              '            Self::ExtHostCgroup001 => "EXT-HOST-CGROUP-001",',
+              '            Self::ExtHostStorage001 => "EXT-HOST-STORAGE-001",',
+              '            Self::ExtKeyOwner001 => "EXT-KEY-OWNER-001",',
+              '            Self::ExtCodexRole001 => "EXT-CODEX-ROLE-001",',
+              '            Self::ExtCutoverSoak001 => "EXT-CUTOVER-SOAK-001",',
+              '            Self::ExtAuthoritySet001 => "EXT-AUTHORITY-SET-001",',
+              '        }',
+              '    }',
+              '}',
+              '',
+              '/// Signed envelope around one schema-validated external payload hash.',
+          ]
+          impl_block = '\n'.join(impl_lines)
+          if enum_end not in text:
+              raise SystemExit('enum end did not match')
+          text = text.replace(enum_end, impl_block, 1)
+          text = text.replace(
+              'package_name(envelope.package_id).as_bytes(),',
+              'envelope.package_id.as_str().as_bytes(),',
+              1,
+          )
+          start = text.index('fn package_name(value: QualificationPackageIdV1)')
+          end = text.index('fn valid_identifier(value: &str)', start)
+          text = text[:start] + text[end:]
+          text = text.replace(
+              '    use base64ct::{Base64UrlUnpadded, Encoding};\n',
+              '    use std::collections::BTreeSet;\n\n'
+              '    use base64ct::{Base64UrlUnpadded, Encoding};\n',
+              1,
+          )
+          test_lines = [
+              '',
+              '    #[test]',
+              '    fn closed_package_vocabulary_round_trips_canonical_external_ids() {',
+              '        let expected = [',
+              '            (QualificationPackageIdV1::ExtGovMain001, "EXT-GOV-MAIN-001"),',
+              '            (QualificationPackageIdV1::ExtHostCgroup001, "EXT-HOST-CGROUP-001"),',
+              '            (QualificationPackageIdV1::ExtHostStorage001, "EXT-HOST-STORAGE-001"),',
+              '            (QualificationPackageIdV1::ExtKeyOwner001, "EXT-KEY-OWNER-001"),',
+              '            (QualificationPackageIdV1::ExtCodexRole001, "EXT-CODEX-ROLE-001"),',
+              '            (QualificationPackageIdV1::ExtCutoverSoak001, "EXT-CUTOVER-SOAK-001"),',
+              '            (QualificationPackageIdV1::ExtAuthoritySet001, "EXT-AUTHORITY-SET-001"),',
+              '        ];',
+              '        assert_eq!(QualificationPackageIdV1::ALL.len(), expected.len());',
+              '        for (package, name) in expected {',
+              '            assert!(QualificationPackageIdV1::ALL.contains(&package));',
+              '            assert_eq!(package.as_str(), name);',
+              '            let encoded = serde_json::to_string(&package).expect("serialize package");',
+              '            assert_eq!(encoded, format!("\\\"{name}\\\""));',
+              '            assert_eq!(',
+              '                serde_json::from_str::<QualificationPackageIdV1>(&encoded)',
+              '                    .expect("deserialize package"),',
+              '                package',
+              '            );',
+              '        }',
+              '    }',
+              '',
+              '    #[test]',
+              '    fn every_package_changes_the_signed_domain() {',
+              '        let base = envelope();',
+              '        let messages = QualificationPackageIdV1::ALL',
+              '            .into_iter()',
+              '            .map(|package_id| {',
+              '                let mut value = base.clone();',
+              '                value.package_id = package_id;',
+              '                qualification_signing_bytes_v1(&value).expect("signing bytes")',
+              '            })',
+              '            .collect::<BTreeSet<_>>();',
+              '        assert_eq!(messages.len(), QualificationPackageIdV1::ALL.len());',
+              '    }',
+          ]
+          test_block = '\n'.join(test_lines)
+          body, separator, tail = text.rpartition('\n}')
+          if not separator or tail:
+              raise SystemExit('tests module tail did not match')
+          path.write_text(body + test_block + '\n}', encoding='utf-8')
+
+          workflow_path = Path('.github/workflows/rust-plan-v3-external-contracts.yml')
+          workflow = workflow_path.read_text(encoding='utf-8')
+          trigger = "      - 'docs/rust/current-status.v1.json'\n"
+          runtime_trigger = "      - 'rust/crates/hepta-qualification-ingest/src/lib.rs'\n"
+          if workflow.count(trigger) != 2:
+              raise SystemExit('external-contract trigger block did not match')
+          workflow = workflow.replace(trigger, trigger + runtime_trigger)
+          anchor = (
+              '          assert set(package_ids) == expected_packages, (\n'
+              '              set(package_ids), expected_packages\n'
+              '          )\n\n'
+          )
+          runtime_lines = [
+              "          runtime_source = Path(",
+              "              'rust/crates/hepta-qualification-ingest/src/lib.rs'",
+              "          ).read_text(encoding='utf-8')",
+              "          runtime_packages = set(re.findall(",
+              "              r'=> \\\"(EXT-[A-Z0-9-]+)\\\"', runtime_source",
+              "          ))",
+              "          assert runtime_packages == expected_packages, (",
+              "              runtime_packages, expected_packages",
+              "          )",
+              "",
+          ]
+          runtime_check = '\n'.join(runtime_lines)
+          if anchor not in workflow:
+              raise SystemExit('external-contract package-set anchor did not match')
+          workflow_path.write_text(
+              workflow.replace(anchor, anchor + runtime_check, 1),
+              encoding='utf-8',
+          )
+          PY
+
+          git rm .github/workflows/rust-governance-package-reconcile.yml
+          git rm .github/workflows/rust-governance-package-reconcile-v2.yml
+
+      - name: Format and test package closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-qualification-ingest
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+          source = Path('rust/crates/hepta-qualification-ingest/src/lib.rs').read_text(encoding='utf-8')
+          runtime = set(re.findall(r'=> "(EXT-[A-Z0-9-]+)"', source))
+          mapping = json.loads(Path('docs/rust/qualification/external-package-map.v1.json').read_text(encoding='utf-8'))
+          mapped = {row['packageId'] for row in mapping['packages']}
+          if runtime != mapped:
+              raise SystemExit(f'package vocabulary mismatch: {runtime} != {mapped}')
+          PY
+
+      - name: Commit runtime package closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/hepta-qualification-ingest/src/lib.rs \
+            .github/workflows/rust-plan-v3-external-contracts.yml
+          git diff --cached --check
+          git commit -m 'feat(governance): ingest protected-main qualification evidence'
+          git push origin "HEAD:${GITHUB_REF_NAME}"

@@ -137,12 +137,14 @@ impl QualificationTrustStoreV1 {
         if keys.is_empty() || keys.len() > 128 {
             return Err(QualificationIngestError::TrustStoreInvalid);
         }
-        let forbidden_authority_domains = forbidden_domains.into_iter().collect::<BTreeSet<_>>();
-        if forbidden_authority_domains
-            .iter()
-            .any(|value| !valid_identifier(value))
-        {
-            return Err(QualificationIngestError::TrustStoreInvalid);
+        let mut forbidden_authority_domains = BTreeSet::new();
+        for domain in forbidden_domains {
+            if !valid_identifier(&domain)
+                || forbidden_authority_domains.len() == 128
+                || !forbidden_authority_domains.insert(domain)
+            {
+                return Err(QualificationIngestError::TrustStoreInvalid);
+            }
         }
         Ok(Self {
             keys,
@@ -385,10 +387,10 @@ fn nix_no_follow_cloexec() -> i32 {
 }
 
 fn valid_identifier(value: &str) -> bool {
-    !value.is_empty()
+    let mut bytes = value.bytes();
+    matches!(bytes.next(), Some(first) if first.is_ascii_alphanumeric())
         && value.len() <= 128
-        && value
-            .bytes()
+        && bytes
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
@@ -564,6 +566,41 @@ mod tests {
         );
         assert!(matches!(
             result,
+            Err(QualificationIngestError::TrustStoreInvalid)
+        ));
+    }
+
+    #[test]
+    fn identifiers_match_schema_and_forbidden_domains_are_unique_and_bounded() {
+        for valid in ["a", "A0", "review:key-1", "authority_domain.v1"] {
+            assert!(valid_identifier(valid), "{valid}");
+        }
+        for invalid in ["", "-leading", "_leading", ".leading", ":leading", "é"] {
+            assert!(!valid_identifier(invalid), "{invalid}");
+        }
+        assert!(!valid_identifier(&"a".repeat(129)));
+
+        let signing = SigningKey::from_bytes(&[24_u8; 32]);
+        let entry = || {
+            [(
+                "independent-review".to_owned(),
+                "review-key".to_owned(),
+                signing.verifying_key(),
+            )]
+        };
+        assert!(matches!(
+            QualificationTrustStoreV1::new(
+                entry(),
+                ["repository-admin".to_owned(), "repository-admin".to_owned()],
+            ),
+            Err(QualificationIngestError::TrustStoreInvalid)
+        ));
+
+        let oversized_forbidden = (0..129)
+            .map(|index| format!("authority-domain-{index}"))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            QualificationTrustStoreV1::new(entry(), oversized_forbidden),
             Err(QualificationIngestError::TrustStoreInvalid)
         ));
     }

@@ -5,14 +5,14 @@ on:
     paths:
       - 'docs/rust/qualification/**'
       - 'docs/rust/current-status.v1.json'
-      - 'rust/crates/hepta-qualification-ingest/src/lib.rs'
+      - 'rust/crates/hepta-qualification-ingest/**'
       - '.github/workflows/rust-plan-v3-external-contracts.yml'
   push:
     branches: [main]
     paths:
       - 'docs/rust/qualification/**'
       - 'docs/rust/current-status.v1.json'
-      - 'rust/crates/hepta-qualification-ingest/src/lib.rs'
+      - 'rust/crates/hepta-qualification-ingest/**'
       - '.github/workflows/rust-plan-v3-external-contracts.yml'
   workflow_dispatch:
 
@@ -52,6 +52,8 @@ jobs:
               'production-cutover-soak-v1.schema.json',
               'external-authority-set-v1.schema.json',
               'protected-main-ruleset-evidence-v1.schema.json',
+              'external-qualification-closure-request-v1.schema.json',
+              'external-qualification-closure-receipt-v1.schema.json',
           }
           expected_packages = {
               'EXT-GOV-MAIN-001',
@@ -74,7 +76,10 @@ jobs:
               assert value['$schema'] == 'https://json-schema.org/draft/2020-12/schema', name
               assert value['type'] == 'object', name
               assert value['additionalProperties'] is False, name
-              assert value['properties']['schemaVersion']['const'] == 1, name
+              version = value['properties'].get('schemaVersion')
+              if version is None:
+                  version = value['properties'].get('version')
+              assert version == {'const': 1}, name
               assert value['required'], name
 
           truth = json.loads(
@@ -145,12 +150,39 @@ jobs:
           package_index = (root / 'PLAN_V3_EXTERNAL_PACKAGE_INDEX.md').read_text(
               encoding='utf-8'
           )
+          closure = (root / 'EXTERNAL_QUALIFICATION_CLOSURE.md').read_text(
+              encoding='utf-8'
+          )
           for row in rows:
               assert row['packageId'] in protocol, row['packageId']
               assert row['packageId'] in package_index, row['packageId']
               assert row['gapId'] in package_index, row['gapId']
               for schema in row['schemas']:
                   assert schema in protocol or schema in package_index, schema
+          for required in [
+              'hepta-qualification-closure',
+              'external-qualification-closure-request-v1.schema.json',
+              'external-qualification-closure-receipt-v1.schema.json',
+              'automaticActivation=false',
+              'productionActivation=false',
+          ]:
+              assert required in closure, required
+
+          closure_source = Path(
+              'rust/crates/hepta-qualification-ingest/src/bin/'
+              'hepta-qualification-closure.rs'
+          ).read_text(encoding='utf-8')
+          for required in [
+              'QualificationPackageIdV1::ALL',
+              'DuplicatePackage',
+              'DuplicateNonce',
+              'DuplicatePayload',
+              'AuthoritySeparationViolation',
+              'automatic_activation: false',
+              'production_activation: false',
+              'source_status_unchanged: true',
+          ]:
+              assert required in closure_source, required
           PY
 
       - name: Prove harness is fail-closed without external acknowledgement

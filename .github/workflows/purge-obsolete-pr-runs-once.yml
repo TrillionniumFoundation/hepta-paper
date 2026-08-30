@@ -8,7 +8,6 @@ on:
       - '.github/workflows/purge-obsolete-pr-runs-once.yml'
 
 permissions:
-  actions: write
   contents: read
 
 concurrency:
@@ -16,85 +15,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  purge:
+  disarmed:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - name: Cancel obsolete and duplicate unfinished integration runs
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET_BRANCH: codex/rust-plan-v3-main-integration-20260830
-          KEEP_SHA: aa985a9a0ceed5fb35d4174cb499e4b337e785e3
-          KEEP_RUN_IDS: 33297715522,33297715544
+      - name: Preserve all current exact-head runs
         run: |
           set -euo pipefail
-          test -n "$GH_TOKEN"
-          test -n "$TARGET_BRANCH"
-          test "$KEEP_SHA" = "aa985a9a0ceed5fb35d4174cb499e4b337e785e3"
-          test "$KEEP_RUN_IDS" = "33297715522,33297715544"
-
-          obsolete_file="$RUNNER_TEMP/obsolete-run-ids"
-          : > "$obsolete_file"
-          page=1
-          while :; do
-            response="$RUNNER_TEMP/runs-$page.json"
-            curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-              --header "Authorization: Bearer $GH_TOKEN" \
-              --header 'Accept: application/vnd.github+json' \
-              --header 'X-GitHub-Api-Version: 2022-11-28' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs?branch=$TARGET_BRANCH&per_page=100&page=$page" \
-              --output "$response"
-
-            jq -r --arg keep_ids "$KEEP_RUN_IDS" '
-              .workflow_runs[]
-              | select(.status != "completed")
-              | select(
-                  (.id | tostring) as $id
-                  | (($keep_ids | split(",")) | index($id) | not)
-                )
-              | .id
-            ' "$response" >> "$obsolete_file"
-
-            count=$(jq '.workflow_runs | length' "$response")
-            if [ "$count" -lt 100 ]; then
-              break
-            fi
-            page=$((page + 1))
-            test "$page" -le 50
-          done
-
-          sort -nu -o "$obsolete_file" "$obsolete_file"
-          cancelled=0
-          while IFS= read -r run_id; do
-            [ -n "$run_id" ] || continue
-            case ",$KEEP_RUN_IDS," in
-              *",$run_id,"*)
-                echo "refusing to cancel canonical keep run $run_id" >&2
-                exit 1
-                ;;
-            esac
-            curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-              --request POST \
-              --header "Authorization: Bearer $GH_TOKEN" \
-              --header 'Accept: application/vnd.github+json' \
-              --header 'X-GitHub-Api-Version: 2022-11-28' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel"
-            cancelled=$((cancelled + 1))
-          done < "$obsolete_file"
-
-          for keep_run in ${KEEP_RUN_IDS//,/ }; do
-            verify="$RUNNER_TEMP/keep-$keep_run.json"
-            curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-              --header "Authorization: Bearer $GH_TOKEN" \
-              --header 'Accept: application/vnd.github+json' \
-              --header 'X-GitHub-Api-Version: 2022-11-28' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$keep_run" \
-              --output "$verify"
-            jq -e --arg keep "$KEEP_SHA" '
-              .head_sha == $keep and .conclusion != "cancelled"
-            ' "$verify" >/dev/null
-          done
-
-          printf 'cancelledObsoleteOrDuplicateRuns=%s\nkeptHead=%s\nkeptRuns=%s\n' \
-            "$cancelled" "$KEEP_SHA" "$KEEP_RUN_IDS" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Obsolete-run purge disarmed because the canonical exact-head and CI jobs acquired runners.'
+          echo 'No Actions cancellation endpoint was invoked by this revision.' >> "$GITHUB_STEP_SUMMARY"

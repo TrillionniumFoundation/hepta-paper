@@ -1,4 +1,4 @@
-name: qualification-closure-hardening-once
+name: final-product-security-audit-once
 
 on:
   push:
@@ -8,126 +8,95 @@ on:
       - '.github/workflows/qualification-closure-hardening-once.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: qualification-closure-hardening-once
-  cancel-in-progress: false
+  group: final-product-security-audit-once
+  cancel-in-progress: true
 
 jobs:
-  harden:
+  audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      TARGET_BRANCH: codex/rust-plan-v3-final-product-20260830
-      EXPECTED_HEAD: aa985a9a0ceed5fb35d4174cb499e4b337e785e3
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: codex/rust-plan-v3-final-product-20260830
-          fetch-depth: 2
-          persist-credentials: true
+          ref: 3313964f2a21ee3e7b6c56b3c2e3cae1a3c7e966
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Install exact Rust toolchain
+      - name: Scan production Rust surfaces for latent blockers
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          python3 - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import json
+          import re
+
+          patterns = {
+              "todo_macro": re.compile(r"\btodo!\s*\("),
+              "unimplemented_macro": re.compile(r"\bunimplemented!\s*\("),
+              "unsafe_token": re.compile(r"\bunsafe\b"),
+              "panic_macro": re.compile(r"\bpanic!\s*\("),
+              "unwrap_call": re.compile(r"\.unwrap\s*\("),
+              "expect_call": re.compile(r"\.expect\s*\("),
+              "process_command": re.compile(r"(?:std::process::|process::)?Command::new\s*\("),
+              "process_exit": re.compile(r"(?:std::process::|process::)exit\s*\("),
+              "environment_read": re.compile(r"(?:std::env::|env::)(?:var|var_os)\s*\("),
+              "lint_allow": re.compile(r"#\s*!?\s*\[\s*allow\s*\("),
+              "todo_comment": re.compile(r"\b(?:TODO|FIXME|XXX|HACK)\b", re.IGNORECASE),
+          }
+          counts = Counter()
+          hits = []
+          for path in sorted(Path("rust").rglob("*.rs")):
+              text = path.read_text(encoding="utf-8")
+              production = text.split("#[cfg(test)]", 1)[0]
+              for number, line in enumerate(production.splitlines(), 1):
+                  for name, pattern in patterns.items():
+                      if pattern.search(line):
+                          counts[name] += 1
+                          hits.append({
+                              "kind": name,
+                              "path": str(path),
+                              "line": number,
+                              "source": line.strip(),
+                          })
+          report = {
+              "rustFiles": len(list(Path("rust").rglob("*.rs"))),
+              "productionHitCounts": dict(sorted(counts.items())),
+              "productionHits": hits,
+          }
+          print(json.dumps(report, indent=2, ensure_ascii=True))
+          if counts["todo_macro"] or counts["unimplemented_macro"] or counts["unsafe_token"]:
+              raise SystemExit("hard blocker token found in production Rust")
+          PY
+
+      - name: Check source hygiene and dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
           rustup default 1.98.0
-          rustc --version --verbose
-          cargo --version --verbose
-
-      - name: Harden schema parity, ledger schema and clock rollback
-        shell: bash
-        run: |
-          set -euo pipefail
-          base64 -d <<'B64' | gzip -d > "$RUNNER_TEMP/hepta_patch.py"
-          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
-          B64
-          python3 "$RUNNER_TEMP/hepta_patch.py"
-          cargo fmt --manifest-path rust/Cargo.toml --all
-          cargo test --manifest-path rust/Cargo.toml -p hepta-qualification-ingest --all-features --locked
-          cargo clippy --manifest-path rust/Cargo.toml -p hepta-qualification-ingest --all-targets --all-features --locked -- -D warnings
-          git diff --check
-
-      - name: Commit validated hardening to frozen product branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --exit-code --quiet && { echo 'no product changes'; exit 1; }
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            rust/crates/hepta-qualification-ingest/src/lib.rs \
-            rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs \
-            docs/rust/qualification/EXTERNAL_QUALIFICATION_CLOSURE.md \
-            docs/rust/qualification/EXTERNAL_EVIDENCE_INGESTION_RUNBOOK.md
-          git diff --cached --check
-          git commit -m 'fix(qualification): fence schema drift and clock rollback'
-          git fetch origin "$TARGET_BRANCH"
-          test "$(git rev-parse "origin/$TARGET_BRANCH")" = "$EXPECTED_HEAD"
-          git push origin "HEAD:$TARGET_BRANCH"
+          cargo metadata --manifest-path rust/Cargo.toml --format-version 1 --locked > "$RUNNER_TEMP/metadata.json"
+          python3 - "$RUNNER_TEMP/metadata.json" <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+          metadata = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          packages = metadata["packages"]
+          workspace = set(metadata["workspace_members"])
+          summary = []
+          for package in sorted(packages, key=lambda item: item["name"]):
+              if package["id"] not in workspace:
+                  continue
+              summary.append({
+                  "name": package["name"],
+                  "targets": sorted(target["name"] for target in package["targets"]),
+                  "dependencyCount": len(package["dependencies"]),
+              })
+          print(json.dumps({"workspacePackages": summary}, indent=2))
+          PY
+          git status --short
+          test -z "$(git status --porcelain)"

@@ -838,7 +838,19 @@ mod tests {
         first.mark_ready().expect("ready");
         first.abandon_for_test();
         assert!(first_policy.socket_path.exists());
-        let second = BrokerListenerV1::bind(policy(&tree, 2)).expect("recover stale socket");
+        let mut close_propagation_attempts = 0_u16;
+        let second = loop {
+            match BrokerListenerV1::bind(policy(&tree, 2)) {
+                Ok(listener) => break listener,
+                Err(BrokerListenerError::LiveListenerExists)
+                    if close_propagation_attempts < 100 =>
+                {
+                    close_propagation_attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(error) => panic!("recover stale socket: {error}"),
+            }
+        };
         second.shutdown().expect("shutdown second");
     }
 

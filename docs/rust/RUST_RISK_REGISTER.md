@@ -21,12 +21,12 @@ bounded residual risk. “Mitigated” requires negative evidence, not prose.
 | RR-013 | Shared implementation defeats independent verification | 4 | 5 | open | Evidence | implementation-diversity matrix |
 | RR-014 | Filesystem recovery is inferred from unit tests | 4 | 5 | open | Workspace | kill/rename/fsync/restore matrix |
 | RR-015 | SQLite migration corrupts live state | 2 | 5 | open | Database | production-shaped copies + restore canary |
-| RR-016 | CI is green but unprotected or tests wrong ref | 4 | 5 | open | SRE | exact head/tree manifest + branch ruleset |
+| RR-016 | CI is green but `main` is unprotected, bypassable or checks the wrong ref | 4 | 5 | blocked_external | SRE/Governance | approved `EXT-GOV-MAIN-001` ruleset export and seven denial tests |
 | RR-017 | Toolchain/dependency upgrade changes behavior | 3 | 4 | mitigating | SRE | lock, SBOM, vet/audit, reproducible build |
 | RR-018 | Model quality regresses while deterministic gates pass | 4 | 4 | open | Product/Evidence | live evaluation thresholds |
 | RR-019 | Missing usage is treated as zero cost | 3 | 4 | open | Campaign | conservative settlement/reconciliation |
 | RR-020 | OpenClaw enters Rust indirectly | 3 | 3 | mitigating | Architecture | source/dependency/runtime graph ban |
-| RR-021 | Oversized stacked PR cannot be reviewed/rolled back | 4 | 4 | open | Program | invariant-sized packages + integration branch |
+| RR-021 | Oversized stacked PR cannot be reviewed or rolled back | 1 | 4 | mitigated | Program | PR #24 single-commit exact-tree integration surface; historical branches retained for provenance |
 | RR-022 | Logs/artifacts capture prompts or manuscripts | 3 | 5 | open | Security | redaction schema + artifact scan |
 | RR-023 | Submission repeats after ambiguous response | 2 | 5 | open | Release | external action journal + portal reconcile |
 | RR-024 | Gate status becomes ceremonial checklist | 4 | 4 | open | Program | machine status + evidence expiry |
@@ -36,6 +36,7 @@ bounded residual risk. “Mitigated” requires negative evidence, not prose.
 | RR-028 | Hosted UID test is mislabeled target-host proof | 4 | 5 | open | SRE/Security | tiered evidence schema + independent review |
 | RR-029 | Stale status SHA misleads operators | 5 | 4 | mitigating | Program | one canonical status + CI validator |
 | RR-030 | Trust-bundle key compromise cannot be stopped | 3 | 5 | blocked_external | Key owner | rotation/revocation/rollback drill |
+| RR-031 | An external gap has no executable package, issue or evidence schema | 1 | 5 | mitigated | Program/Evidence | `external-package-map.v1.json` cross-checked against machine truth and protocol/index by CI |
 
 ## Automatic P0 incidents
 
@@ -48,10 +49,13 @@ Regardless of score, these are P0:
 - signal sent to an unproven process identity;
 - unrecoverable state corruption;
 - evidence tier inflation;
-- unauthorized principal gaining listener or journal access.
+- unauthorized principal gaining listener or journal access;
+- a production-relevant `main` update bypassing current-head required checks or independent review.
 
 ## Review rule
 
 Each milestone review must update state, owner, evidence link and residual risk.
 A risk cannot move to `accepted` without naming the authority allowed to accept
-it and an expiry/review date.
+it and an expiry/review date. `blocked_external` means the repository-local
+mitigation/package is ready but the separately controlled fact is still absent;
+it is never equivalent to `mitigated` or `accepted`.

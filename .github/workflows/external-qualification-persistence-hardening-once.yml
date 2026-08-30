@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# isolated finalizer attempt 2: disambiguate schema-set insertion
+# isolated finalizer attempt 3: include untracked generated schema in the write whitelist
 
 on:
   push:
@@ -96,7 +96,10 @@ jobs:
               assert sorted(new_dependencies) == sorted(old_dependencies + ['rusqlite'])
           PY
 
-          mapfile -t changed < <(git diff --name-only | sort)
+          mapfile -t changed < <({
+            git diff --name-only
+            git ls-files --others --exclude-standard
+          } | sort -u)
           mapfile -t expected < <(printf '%s\n' \
             .github/workflows/rust-plan-v3-external-contracts.yml \
             .github/workflows/rust-qualification-artifacts.yml \

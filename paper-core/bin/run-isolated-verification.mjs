@@ -169,7 +169,9 @@ const env = {
   HEPTA_EVIDENCE_CLASS: 'technical_conformance',
   HEPTA_RELEASE_COMMIT: provenanceBefore.commit || '',
   HEPTA_LEGACY_REFERENCE_PREPARED: '1',
-  HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath,
+  HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath || '',
+  HEPTA_LEGACY_REFERENCE_VERIFIED_ARCHIVE_SHA256: legacyReference.archiveSha256,
+  HEPTA_LEGACY_REFERENCE_VERIFIED_MATRIX_SHA256: legacyReference.matrixSha256,
   PAPER_FACTORY_LEGACY_ROOT: legacyReference.root,
 };
 const startedAt = new Date().toISOString();

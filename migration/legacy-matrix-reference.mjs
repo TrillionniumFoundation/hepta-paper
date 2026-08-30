@@ -13,6 +13,42 @@ function sha256File(file) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
 }
 
+function preparedReferenceStatus(manifest) {
+  if (process.env.HEPTA_LEGACY_REFERENCE_PREPARED !== '1') return null;
+  const preparedRoot = process.env.PAPER_FACTORY_LEGACY_ROOT;
+  const archiveSha256 = process.env.HEPTA_LEGACY_REFERENCE_VERIFIED_ARCHIVE_SHA256;
+  const matrixSha256 = process.env.HEPTA_LEGACY_REFERENCE_VERIFIED_MATRIX_SHA256;
+  if (!preparedRoot || !path.isAbsolute(preparedRoot)
+    || path.resolve(preparedRoot) !== preparedRoot
+    || !/^sha256:[0-9a-f]{64}$/u.test(archiveSha256 || '')
+    || !/^sha256:[0-9a-f]{64}$/u.test(matrixSha256 || '')) {
+    throw new Error('prepared_legacy_matrix_reference_identity_required');
+  }
+  let stat;
+  try { stat = fs.lstatSync(preparedRoot); }
+  catch (error) { throw new Error(`prepared_legacy_matrix_reference_root_missing:${error.message}`); }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error('prepared_legacy_matrix_reference_root_directory_required');
+  }
+  if (archiveSha256 !== manifest.archiveSha256 || matrixSha256 !== manifest.matrixSha256) {
+    throw new Error('prepared_legacy_matrix_reference_digest_mismatch');
+  }
+  return Object.freeze({
+    version: 1,
+    kind: 'ImmutableLegacyMatrixReferenceStatus',
+    status: 'immutable_legacy_matrix_reference_prepared',
+    manifestPath,
+    archivePath: null,
+    archiveSha256,
+    matrixPath: path.join(workspaceRoot, manifest.matrixPath),
+    matrixSha256,
+    sourceFileCount: manifest.sourceFileCount,
+    preparedRoot,
+    archiveMaterialized: false,
+    liveLegacyRootRequired: false,
+  });
+}
+
 function walk(directory, basename, rows = []) {
   if (!fs.existsSync(directory)) return rows;
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -84,6 +120,8 @@ export function prepareImmutableLegacyMatrixReference() {
 
 export function immutableLegacyMatrixReferenceStatus() {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const prepared = preparedReferenceStatus(manifest);
+  if (prepared) return prepared;
   const archivePath = resolveImmutableLegacyMatrixArchive({ manifest });
   return Object.freeze({
     version: 1,

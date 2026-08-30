@@ -238,6 +238,32 @@ The remaining dependency order is now external and operational:
 7. `GAP-REL-001` / issue #22 — real KMS/HSM, WORM, release, portal and submission receipts.
 8. After all prerequisite evidence is accepted, execute production shadow, canary, rollback, writer cutover and Node-authority retirement.
 
+### Legacy matrix reference evidence gate
+
+Issue #28's historical input is a separate migration-evidence gate, not a Rust
+parity or production milestone. The private companion repository now retains the
+exact 22,506,525-byte archive and its 263-entry matrix binding. The checked-in
+publication policy and receipt schema bind the reviewed candidate SHA/tree,
+archive and release-asset digests, matrix count, dependency/tool provenance and
+networkless replay boundary. The minimum acceptance sequence is:
+
+1. an administrator-controlled private workflow verifies the release API asset,
+   archive inventory and all 263 source hashes;
+2. only a read-only, matrix-listed extraction survives into candidate execution;
+3. the archive and manifest are absent before exact npm migration commands run in
+   a networkless sandbox; and
+4. one retained receipt binds the workflow/candidate/run identities and artifact
+   digest (plus a separately retained receipt-artifact index), with independent
+   owner/reviewer acknowledgement.
+
+The canonical secret-bearing workflow is committed to the private companion
+repository and must be run from its administrator-controlled `main`; the public
+repository workflow is only a guarded fallback and cannot produce a verified
+receipt. Until a hosted run satisfies this sequence, issue #28 remains
+`blocked_external`/pending hosted evidence. Publishing a private locator or a
+self-signed local receipt never changes `GAP-CMP-001`, Rust parity, production,
+release or external-authority status.
+
 No package or issue may bypass an unmet dependency by relabeling a fixture,
 GitHub-hosted runner, self-signed record or implementation-author approval as
 independent target-host or external-authority evidence.

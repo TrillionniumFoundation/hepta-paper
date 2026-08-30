@@ -1,5 +1,5 @@
 name: external-qualification-persistence-hardening-once
-# one-shot attempt 3: repeated workflow anchors normalized before the product patch
+# one-shot attempt 4: validate the exact Cargo.lock dependency-edge change
 
 on:
   push:
@@ -50,9 +50,59 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cp rust/Cargo.lock "$RUNNER_TEMP/Cargo.lock.before"
           python3 .github/one-shot/normalize_clock_hardening.py
           python3 .github/one-shot/harden_external_qualification.py
           cargo fmt --manifest-path rust/Cargo.toml --all
+
+          # Preserve the resolved package set and let Cargo add only the new
+          # workspace-crate dependency edge required by the manifest change.
+          cargo metadata --manifest-path rust/Cargo.toml \
+            --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+          python3 - "$RUNNER_TEMP/Cargo.lock.before" rust/Cargo.lock <<'PY'
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          before = tomllib.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          after = tomllib.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+          assert {k: v for k, v in before.items() if k != 'package'} == {
+              k: v for k, v in after.items() if k != 'package'
+          }
+
+          def package_key(package):
+              return (
+                  package['name'],
+                  package['version'],
+                  package.get('source'),
+              )
+
+          before_packages = {package_key(row): row for row in before['package']}
+          after_packages = {package_key(row): row for row in after['package']}
+          assert len(before_packages) == len(before['package'])
+          assert len(after_packages) == len(after['package'])
+          assert before_packages.keys() == after_packages.keys()
+
+          target_key = next(
+              key for key in before_packages
+              if key[0] == 'hepta-qualification-ingest'
+          )
+          for key in before_packages:
+              old = dict(before_packages[key])
+              new = dict(after_packages[key])
+              if key != target_key:
+                  assert old == new, key
+                  continue
+              old_dependencies = list(old.pop('dependencies', []))
+              new_dependencies = list(new.pop('dependencies', []))
+              assert old == new
+              assert 'rusqlite' not in old_dependencies
+              assert new_dependencies.count('rusqlite') == 1
+              assert sorted(new_dependencies) == sorted(old_dependencies + ['rusqlite'])
+          PY
+
+          cargo metadata --manifest-path rust/Cargo.toml \
+            --format-version 1 --locked > /dev/null
           cargo test --manifest-path rust/Cargo.toml \
             -p hepta-qualification-ingest --all-features --locked
           cargo clippy --manifest-path rust/Cargo.toml \
@@ -70,6 +120,7 @@ jobs:
             docs/rust/qualification/external-qualification-closure-receipt-v1.schema.json \
             docs/rust/qualification/external-qualification-closure-request-v1.schema.json \
             docs/rust/qualification/qualification-trust-store-v1.schema.json \
+            rust/Cargo.lock \
             rust/crates/hepta-qualification-ingest/Cargo.toml \
             rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs \
             | sort)
@@ -91,6 +142,7 @@ jobs:
             docs/rust/qualification/external-qualification-closure-receipt-v1.schema.json \
             docs/rust/qualification/external-qualification-closure-request-v1.schema.json \
             docs/rust/qualification/qualification-trust-store-v1.schema.json \
+            rust/Cargo.lock \
             rust/crates/hepta-qualification-ingest/Cargo.toml \
             rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs
           git diff --cached --check

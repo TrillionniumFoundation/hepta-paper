@@ -1,10 +1,10 @@
 name: external-qualification-persistence-hardening-once
-# one-shot attempt 8: reconcile clock normalization and print exact generated files
+# isolated finalizer: normalize the prior clock slice before persistence generation
 
 on:
   push:
     branches:
-      - codex/rust-plan-v3-main-integration-20260830
+      - codex/rust-plan-v3-persistence-finalize-20260830
     paths:
       - '.github/workflows/external-qualification-persistence-hardening-once.yml'
 
@@ -51,13 +51,11 @@ jobs:
         run: |
           set -euo pipefail
           cp rust/Cargo.lock "$RUNNER_TEMP/Cargo.lock.before"
-          python3 .github/one-shot/normalize_clock_hardening.py
+          python3 .github/one-shot/prepare_persistence_hardening.py
           python3 .github/one-shot/harden_external_qualification.py
           python3 .github/one-shot/normalize_clock_hardening.py
           cargo fmt --manifest-path rust/Cargo.toml --all
 
-          # Preserve the resolved package set and let Cargo add only the new
-          # workspace-crate dependency edge required by the manifest change.
           cargo metadata --manifest-path rust/Cargo.toml \
             --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
           python3 - "$RUNNER_TEMP/Cargo.lock.before" rust/Cargo.lock <<'PY'
@@ -72,11 +70,7 @@ jobs:
           }
 
           def package_key(package):
-              return (
-                  package['name'],
-                  package['version'],
-                  package.get('source'),
-              )
+              return (package['name'], package['version'], package.get('source'))
 
           before_packages = {package_key(row): row for row in before['package']}
           after_packages = {package_key(row): row for row in after['package']}

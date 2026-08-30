@@ -44,32 +44,42 @@ jobs:
         run: |
           set -euo pipefail
           base64 -d <<'B64' | gzip -d > "$RUNNER_TEMP/remove_expect.py"
-          H4sIACnhk2oC/+1YXW/bNhR9969gNWCRMduB3watSRE43hIgbbwkK7YVAyFT1zFhiVRJyomR+r/v
-          kqJtyVYar1u6dZteTPHyfh8eUp4omZE8NtOUjwnPcqkMGeFrq5XAhCjI05gBlYJBaODeREQb1SEy
-          TfxIwJ0fpfEYUjduk+6x/Y1aBB8mC2HIEbHqPfcSonrbyfjEi18ckX653D4q5hrI9UIbyIb33IST
-          4MGZX0YE7nNgBhIiBZAsNmzaIRO0kZAHZ2oZlKYVmEKJ0qtPw/p1EXdIv91qKSltXDbbMOihWgvE
-          nCspMhCG2pqg1C06JIEqtDlkKjagD6eQm7jLZAL3XYUueQaHWrHDinpP6aBqDi1tG8eo4oTa+EIQ
-          aIyL26OgMJPut1uh2CiqfXDpVeQdN3FwcJAXYzIRxAWGLpT1VPMqU84WdN4PXYeGG9HISd72yYOz
-          1SCJIqxbuO5QUGZfOunO+0FnLXq3HrmFo5Obs4rUzZ1dvh5uz12cvPlhZ25ATy4uGmYHN7+Mdizc
-          /Loz83p0en61PXt9fUEHw6sb+v35xfBRYYPi4PJ0+DPdCv63SuY+2VWCmwBqul6jhGmvxHMYaBMb
-          zsjA1pWUda02mZTNIxnikIyBzOOUJwiUZQsb/1kQ4CX2mYPSXIqI9DfJe9MciWEHHD0jqbwTkITt
-          jUKcpvIOEjqDhY7+c6hZj3pcYHW4ARW2N5NZnIfXRiEnRNEEKboiYjJNLWIqpVTwvuBqU8s9cViL
-          szGOJ2JpimdZhWTggezBXWIEy/DnCC5DeKWUTXmaPDO/OU9d5+lLI7nLn64GQ3p6cjOkw9Hl4Oyv
-          wPM+XLcHu7mqElfVT6a458DAH2a4LXj8K2juWXDzt7Dd5+C3KpQbSM5DBi+NluRQzSp99c6+l9Eh
-          kku1ErgcNFWQxVxQh34E8QaTsdag8Dx//yLc54DvOQt4YcXIyeUsDNvt9ndNxvbYSo/bWrZsNT6J
-          zRtq4TPynjXYwms0ky4oMoktkKFCCg0Mr/eu/65C635U6/3NM/kIan3GXG8VaEsWxLpxfd+56t8p
-          BN7qrr+pBGm4+LNU6kLB098f7wvsyYQzDEaKLhpB7+4zZMxF4xJv2X2a+DE6qPr76CfJRmW3vV5W
-          a20KyOgxm8UYGCr9WI1lVM6fJ/bgRRbbgx8+eFsfKjti5UYBkypBJ+MF9ctqa5yRWzDh117a3hWv
-          Tiomsxxtwip2otEBmwKb4TdnPJZzCCrbyD6DMnmf0xUw4LmpnSbrE6Rc4o4QP+7FmuKnMm6xpsNj
-          o7hIJbZmGutp5NPtVSd72AEBTapxYaYS4begiXTEYp17Cw2yxw1pfitA2Q1RNVGbfVxZWKysldzb
-          xz0h9GiG+8qWq5Z1k7DZ1HL9ttw9UKLo5VtgL+nxcYjtrF4wvkDsyhmVKvQ4HColVRT5MK/BnIsV
-          ptuv6shFJv8fvP9Q8LafQO8V6CI1HsQdUm2+xfSrCqh3OS2Vclbk7qyq8X/lnFpRetMZleNlCakS
-          bypIhwnJlUwKZveG/3fO/aGoceXvA3lLbl4UAAA=
+          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
           B64
           python3 "$RUNNER_TEMP/remove_expect.py"
           cargo fmt --manifest-path rust/Cargo.toml --all
           cargo test --manifest-path rust/Cargo.toml \
-            -p hepta-codex-runtime -p hepta-qualification-ingest \
+            -p hepta-codex-runtime -p hepta-codex-broker -p hepta-qualification-ingest \
             --all-features --locked
           cargo clippy --manifest-path rust/Cargo.toml \
             --workspace --lib --bins --all-features --locked -- \
@@ -87,6 +97,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             rust/crates/hepta-codex-runtime/src/environment.rs \
+            rust/crates/hepta-codex-broker/src/listener.rs \
             rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs
           git diff --cached --check
           git commit -m 'fix(rust): remove remaining production expect paths'

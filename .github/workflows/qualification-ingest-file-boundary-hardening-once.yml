@@ -85,33 +85,34 @@ jobs:
 
           test_marker = '    fn one_public_key_cannot_alias_multiple_authority_domains()'
           if test_marker not in lib:
-              insertion = '''
-    #[test]
-    fn one_public_key_cannot_alias_multiple_authority_domains() {
-        let signing = SigningKey::from_bytes(&[23_u8; 32]);
-        let verifying = signing.verifying_key();
-        let result = QualificationTrustStoreV1::new(
-            [
-                (
-                    "governance-review".to_owned(),
-                    "governance-key".to_owned(),
-                    verifying,
-                ),
-                (
-                    "linux-review".to_owned(),
-                    "linux-key".to_owned(),
-                    verifying,
-                ),
-            ],
-            std::iter::empty::<String>(),
-        );
-        assert!(matches!(
-            result,
-            Err(QualificationIngestError::TrustStoreInvalid)
-        ));
-    }
-
-'''
+              insertion = '\n'.join([
+                  '    #[test]',
+                  '    fn one_public_key_cannot_alias_multiple_authority_domains() {',
+                  '        let signing = SigningKey::from_bytes(&[23_u8; 32]);',
+                  '        let verifying = signing.verifying_key();',
+                  '        let result = QualificationTrustStoreV1::new(',
+                  '            [',
+                  '                (',
+                  '                    "governance-review".to_owned(),',
+                  '                    "governance-key".to_owned(),',
+                  '                    verifying,',
+                  '                ),',
+                  '                (',
+                  '                    "linux-review".to_owned(),',
+                  '                    "linux-key".to_owned(),',
+                  '                    verifying,',
+                  '                ),',
+                  '            ],',
+                  '            std::iter::empty::<String>(),',
+                  '        );',
+                  '        assert!(matches!(',
+                  '            result,',
+                  '            Err(QualificationIngestError::TrustStoreInvalid)',
+                  '        ));',
+                  '    }',
+                  '',
+                  '',
+              ])
               anchor = '    #[test]\n    fn closed_package_vocabulary_round_trips_canonical_external_ids() {'
               if lib.count(anchor) != 1:
                   raise SystemExit('duplicate-public-key test anchor missing or ambiguous')

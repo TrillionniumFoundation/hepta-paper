@@ -82,10 +82,12 @@ jobs:
           test "$APPROVED_BASE_SHA" = 220bbf100b1d0227bdc1a1c18d13fc78be37a98f
           test "$APPROVED_BASE_TREE" = 10e25c39f5dab9c0e63cb15685e0b35a62181ac9
           mkdir -p "$RUNNER_TEMP/legacy-matrix-reference-evidence"
-          test "$(jq -r '.archive.archiveSha256' "$POLICY_PATH")" = "$APPROVED_ARCHIVE_SHA"
-          test "$(jq -r '.archive.matrixSha256' "$POLICY_PATH")" = "$APPROVED_MATRIX_SHA"
+          policy_path="$GITHUB_WORKSPACE/trusted-workflow/$POLICY_PATH"
+          test -f "$policy_path"
+          test "$(jq -r '.archive.archiveSha256' "$policy_path")" = "$APPROVED_ARCHIVE_SHA"
+          test "$(jq -r '.archive.matrixSha256' "$policy_path")" = "$APPROVED_MATRIX_SHA"
           node migration/bin/verify-legacy-matrix-reference-policy.mjs \
-            --policy "$POLICY_PATH" \
+            --policy "$policy_path" \
             --candidate-sha "$INPUT_CANDIDATE_SHA" \
             --candidate-tree "$INPUT_CANDIDATE_TREE" \
             > "$RUNNER_TEMP/legacy-matrix-reference-evidence/policy.json"
@@ -130,6 +132,12 @@ jobs:
       - name: Install locked candidate dependencies before private materialization
         id: npm_install
         working-directory: candidate
+        env:
+          NPM_CONFIG_USERCONFIG: /dev/null
+          npm_config_userconfig: /dev/null
+          npm_config_cache: ${{ runner.temp }}/npm-cache
+          npm_config_ignore_scripts: 'true'
+          NODE_AUTH_TOKEN: ''
         shell: bash
         run: |
           set +e

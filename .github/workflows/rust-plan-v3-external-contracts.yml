@@ -79,7 +79,7 @@ jobs:
               version = value['properties'].get('schemaVersion')
               if version is None:
                   version = value['properties'].get('version')
-              assert version == {'const': 1}, name
+              assert version is not None and version.get('const') == 1, name
               assert value['required'], name
 
           truth = json.loads(

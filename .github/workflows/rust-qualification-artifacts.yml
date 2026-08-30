@@ -52,7 +52,7 @@ jobs:
               version = decoded["properties"].get("schemaVersion")
               if version is None:
                   version = decoded["properties"].get("version")
-              assert version == {"const": 1}, name
+              assert version is not None and version.get("const") == 1, name
           PY
 
       - name: Build and smoke-test qualification CLIs

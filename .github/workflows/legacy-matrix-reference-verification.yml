@@ -63,6 +63,33 @@ jobs:
         shell: bash
         run: install -d -m 0700 "$RUNNER_TEMP/legacy-matrix-reference-evidence"
 
+      - name: Install and qualify the bubblewrap sandbox prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v bwrap >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bubblewrap
+          fi
+          bwrap_path="$(command -v bwrap)"
+          bwrap --version | tee "$RUNNER_TEMP/legacy-matrix-reference-evidence/bwrap.version"
+          dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' bubblewrap \
+            | tee "$RUNNER_TEMP/legacy-matrix-reference-evidence/bwrap.package"
+          sha256sum "$bwrap_path" | awk '{print "sha256:" $1}' \
+            > "$RUNNER_TEMP/legacy-matrix-reference-evidence/bwrap.sha256"
+          if before="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)"; then
+            printf '%s\n' "$before" > "$RUNNER_TEMP/legacy-matrix-reference-evidence/apparmor-userns.before"
+            if [ "$before" = 1 ]; then
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null
+            fi
+            after="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)"
+            printf '%s\n' "$after" > "$RUNNER_TEMP/legacy-matrix-reference-evidence/apparmor-userns.after"
+            test "$after" = 0
+          else
+            printf '%s\n' unavailable > "$RUNNER_TEMP/legacy-matrix-reference-evidence/apparmor-userns.before"
+            printf '%s\n' unavailable > "$RUNNER_TEMP/legacy-matrix-reference-evidence/apparmor-userns.after"
+          fi
+
       # The gate fails explicitly (rather than being job-skipped, which GitHub
       # reports as success) before any private credential is materialized.
       - name: Checkout workflow source for identity only

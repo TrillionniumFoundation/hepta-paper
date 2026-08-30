@@ -97,6 +97,11 @@ The receipt also requires the `actions/upload-artifact@v4` web URL to equal
 `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts/${artifact-id}`;
 the REST API URL is not accepted, so the artifact cannot be rebound to another
 repository or run.
+The workflow qualifies `bubblewrap` on the ephemeral Ubuntu runner and records
+the package/binary identity; where Ubuntu's AppArmor user-namespace restriction
+is enabled it temporarily sets `kernel.apparmor_restrict_unprivileged_userns=0`
+before the namespace preflight. A missing package or failed sysctl change is a
+hard failure, never a successful replay.
 
 A successful archive verification does not by itself promote Rust parity,
 production, release, submission, or external-authority status; those plan gates

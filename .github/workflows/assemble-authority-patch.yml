@@ -26,7 +26,10 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           cat \
-            .github/patch-chunks/part-00 \
+            .github/patch-chunks/part-00-00 \
+            .github/patch-chunks/part-00-01 \
+            .github/patch-chunks/part-00-02 \
+            .github/patch-chunks/part-00-03 \
             .github/patch-chunks/part-01 \
             .github/patch-chunks/part-02 \
             | base64 --decode > /tmp/hepta-authority-patch.tar.gz

@@ -1,0 +1,59 @@
+name: rust-gap-closure-helper
+
+on:
+  push:
+    branches:
+      - codex/rust-gap-closure-helper-20260831
+    paths:
+      - .github/one-shot/rust-gap-closure.trigger
+
+permissions:
+  contents: write
+
+jobs:
+  apply-clean-tree:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout helper payload branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Verify payload and publish a clean non-helper descendant
+        shell: bash
+        env:
+          BASE_SHA: 2701c507ca6da6f5ae5678f41c8a478f67d06fc6
+          TARGET_BRANCH: codex/rust-plan-v3-audit-gap-closure-20260831
+          PAYLOAD_SHA256: 801d63fae434e969d2f2b2f8f9b634238ac1570204bef15b88555df5417fdfb8
+          PATCH_GZIP_SHA256: 8ab93226febb33b873018846e701562603b725d76346f02eaec21b3b78e69802
+          PATCH_SHA256: cdcb238e248d04c75a8b3d79be98c81d3fb6821dfd1fdb32e7a308ad8c6371cb
+        run: |
+          set -euo pipefail
+          payload=.github/one-shot/rust-gap-closure.patch.gz.b64
+          trigger=.github/one-shot/rust-gap-closure.trigger
+          test -f "$payload"
+          test -f "$trigger"
+          test "$(tr -d '\r\n' < "$trigger")" = "$PATCH_SHA256"
+          echo "$PAYLOAD_SHA256  $payload" | sha256sum -c -
+          base64 -d "$payload" > /tmp/rust-gap-closure.patch.gz
+          echo "$PATCH_GZIP_SHA256  /tmp/rust-gap-closure.patch.gz" | sha256sum -c -
+          gzip -dc /tmp/rust-gap-closure.patch.gz > /tmp/rust-gap-closure.patch
+          echo "$PATCH_SHA256  /tmp/rust-gap-closure.patch" | sha256sum -c -
+
+          git fetch --no-tags origin "$BASE_SHA"
+          test "$(git rev-parse "$TARGET_BRANCH")" = "$BASE_SHA" || \
+            test "$(git rev-parse "origin/$TARGET_BRANCH")" = "$BASE_SHA"
+          git checkout --detach "$BASE_SHA"
+          git apply --index --whitespace=error-all /tmp/rust-gap-closure.patch
+          test ! -e .github/one-shot
+          test ! -e .github/workflows/rust-gap-closure-helper.yml
+          git diff --cached --check
+          python3 docs/rust/tools/validate-program-truth.py
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'fix(rust): close workspace and writer authority audit gaps'
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH" \
+            --force-with-lease="refs/heads/$TARGET_BRANCH:$BASE_SHA"

@@ -62,7 +62,10 @@ workflow
 runId
 runAttempt
 requiredContexts
-observedChecks
+producerManifestSha256
+capabilityEvidenceSha256
+normalizedCheckSnapshotIdentity
+observedChecks with workflow/run/job/step identities
 staticTruthSha256
 effectiveCapabilityStatus
 effectiveBacklogStatus
@@ -82,18 +85,44 @@ commit/tree:
 
 1. The checked-out commit equals the pull-request head SHA.
 2. The worktree is clean before and after validation.
-3. Every required context appears at least once.
-4. The latest completed run for every required context concludes `success`.
-5. No required context concludes `skipped`, `neutral`, `cancelled`,
-   `timed_out`, `action_required`, `failure` or `stale`.
-6. Program truth, backlog, parity and external-package maps are semantically
-   consistent.
-7. Rust format, Clippy, tests, rustdoc, supply-chain, Node static gates,
-   impacted tests and installed qualification gates are represented.
-8. The result artifact binds the exact workflow/run/head/tree and the digest of
-   static machine truth.
+3. Every required context has exactly one manifest-bound producer definition.
+4. The producer workflow ID, path, candidate-tree Git blob and SHA-256 match the
+   committed producer manifest.
+5. The producer run is a pull-request event for the exact PR/base/head and its
+   newest run/attempt is authoritative.
+6. The check suite resolves to one exact non-empty job with non-empty successful
+   execution steps; colliding producers are rejected.
+7. No required context or step concludes `skipped`, `neutral`, `cancelled`,
+   `timed_out`, `action_required`, `failure`, `startup_failure` or `stale`.
+8. Program truth, backlog, parity, external-package maps and the
+   capability-evidence manifest are semantically consistent.
+9. Every promotable product/workstream/backlog/parity/gap projection has a
+   non-empty capability-specific context set, and every parity dependency is
+   qualified on the same exact source snapshot.
+10. Rust format, Clippy, tests, rustdoc, supply-chain, Node static gates,
+    impacted tests and installed qualification gates are represented as required
+    by that capability.
+11. Normalized check evidence and the complete effective artifact validate
+    against their committed JSON Schemas.
+12. The artifact binds the exact source, producer definitions, run/job/step
+    snapshot identity and non-authority statement.
+13. `source-qualification-current` re-collects the newest producer snapshot and
+    accepts the artifact without recursion.
 
 A zero-job check-run collection is failure, not absence of evidence.
+
+### Capability-specific closure
+
+Global matrix success is not blanket promotion.
+`qualification/source-capability-evidence.v1.json` maps every promotable row to
+one or more named context sets. A row with no binding, an empty context set or an
+unqualified dependency remains `source_implemented`. Retired and external rows
+are never promoted through this mechanism.
+
+The normalized check evidence is validated against
+`qualification/required-check-evidence-v2.schema.json`; the final artifact is
+validated against `qualification/effective-status-v1.schema.json`. Selected
+constant checks are not a schema substitute.
 
 ### `source_qualified` → `hosted_installed_qualified`
 
@@ -120,7 +149,8 @@ An effective source qualification is invalid immediately when any of the
 following occurs:
 
 - the branch head, commit tree or relevant workflow changes;
-- a required check is rerun and no longer succeeds;
+- any producer workflow obtains a newer run ID or run attempt: a newer success
+  requires regeneration, and a newer non-success demotes immediately;
 - a required job is absent or skipped;
 - an artifact, lockfile, schema, policy or dependency digest changes;
 - the worktree is dirty after a gate;
@@ -169,8 +199,11 @@ An effective artifact is accepted only when:
 artifact commit == live PR head
 artifact tree == live PR head tree
 artifact staticTruthSha256 == current machine truth digest
-every required context is successful
-no later run invalidates a required context
+every required context is producer-authenticated and successful
+artifact producer snapshot identity == current newest producer snapshot identity
+all bound workflow/script/schema/manifest digests still match the source tree
+no later run or attempt exists without artifact regeneration
+`source-qualification-current` succeeds without observing itself
 latest-push review requirements are satisfied
 ```
 

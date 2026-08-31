@@ -29,9 +29,12 @@ Binds exact repository commit/tree, static truth digest, lockfile, toolchain,
 workflow definitions, required check-run identities, commands and test results.
 It establishes implementation behavior in the workflow environment only.
 
-A source qualification is valid only when every required context exists and the
-latest run for each context is `completed/success`. Zero-job,
-`action_required`, skipped, missing, stale or dirty-postflight runs are invalid.
+A source qualification is valid only when every required context comes from its
+manifest-bound workflow ID/path/blob/digest, the exact pull-request event and
+subject, and the newest run/attempt contains one exact non-empty successful job
+with non-empty successful execution steps. Context-name/App-ID matching alone is
+not authentication. Zero-job, collision, `action_required`, skipped, missing,
+stale or dirty-postflight runs are invalid.
 
 ### Hosted installed
 
@@ -86,6 +89,10 @@ canonical required-context manifest. It includes:
     "tree": "...",
     "staticTruthSha256": "sha256:...",
     "requiredChecksSha256": "sha256:...",
+    "producerManifestSha256": "sha256:...",
+    "capabilityEvidenceSha256": "sha256:...",
+    "checkEvidenceSchemaSha256": "sha256:...",
+    "effectiveSchemaSha256": "sha256:...",
     "boundFiles": {}
   },
   "workflow": {
@@ -104,8 +111,18 @@ canonical required-context manifest. It includes:
 }
 ```
 
-The effective artifact promotes only `source_implemented` rows. It leaves
-`blocked_external` and `retired` unchanged.
+The effective artifact promotes only `source_implemented` rows having a
+non-empty capability-specific mapping whose contexts and declared dependencies
+are qualified in the same normalized producer snapshot. It leaves
+`blocked_external` and `retired` unchanged. Both the normalized check evidence
+and the final artifact undergo complete committed-schema validation before
+publication.
+
+The artifact is deliberately ephemeral evidence. A newer run or rerun from any
+bound producer changes the current snapshot identity. Even a newer success
+requires regeneration; a newer non-success immediately demotes. The
+`source-qualification-current` workflow performs this live check and is excluded
+from the matrix it observes.
 
 ## Mandatory external evidence envelope
 
@@ -192,8 +209,11 @@ reviewer accepting it.
 
 ## Expiry, invalidation and revocation
 
-A source head, required check set, workflow, dependency, artifact, review or
-static-truth digest change invalidates effective source qualification.
+A source head, required check set, producer workflow definition, capability
+mapping, schema, dependency, artifact, review or static-truth digest change
+invalidates effective source qualification. Any newer producer run/attempt also
+invalidates the old artifact until successful regeneration and live
+revalidation.
 
 A ruleset, bypass actor, host, key, binary, configuration, trust generation,
 mount, service unit or provider change invalidates affected external evidence.
@@ -205,13 +225,19 @@ Qualification workflows:
 
 1. explicitly checkout the intended head;
 2. derive and record its tree;
-3. bind static truth, workflow and lockfile digests;
+3. bind static truth, lockfile, producer workflow IDs/paths/Git blobs/SHA-256,
+   capability mappings and complete schema digests;
 4. run with minimal permissions and pinned actions;
 5. emit a machine envelope even on failure where feasible;
-6. fail on zero jobs, missing contexts, skipped required jobs or stale heads;
+6. fail on context collisions, zero jobs/steps, missing contexts, skipped
+   required jobs, wrong PR/event/ref/run attempt or stale heads;
 7. use exact non-secret subject identities;
 8. avoid prompts, manuscripts, credentials and raw provider payloads;
 9. fail when required evidence files are absent;
 10. preserve logs long enough for independent review;
 11. never set independent approval fields themselves;
-12. leave the source worktree byte-clean.
+12. leave the source worktree byte-clean;
+13. validate normalized evidence and the final artifact against their complete
+    committed schemas;
+14. revalidate currentness after every producer workflow completion without
+    making the revalidator part of its own source matrix.

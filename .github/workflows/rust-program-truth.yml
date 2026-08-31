@@ -8,9 +8,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
-  checks: read
-  pull-requests: read
 
 concurrency:
   group: rust-program-truth-${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
@@ -20,7 +17,7 @@ jobs:
   exact-program-truth:
     name: exact-program-truth
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
@@ -41,39 +38,21 @@ jobs:
           EVIDENCE_OUTPUT="$RUNNER_TEMP/rust-program-truth/preflight.json" \
             python3 docs/rust/tools/write-exact-head-evidence.py
 
-      - name: Validate Plan v4 canonical program truth
+      - name: Validate Plan v4 canonical program truth and adversarial qualification tests
         shell: bash
         run: |
           set -euo pipefail
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile \
             docs/rust/tools/validate-program-truth.py \
+            docs/rust/tools/strict_json_schema.py \
             docs/rust/tools/collect-required-checks.py \
             docs/rust/tools/derive-effective-status.py \
+            docs/rust/tools/verify-effective-status-current.py \
             docs/rust/tools/test-plan-v4-qualification.py
           python3 docs/rust/tools/validate-program-truth.py \
             | tee "$RUNNER_TEMP/rust-program-truth/validation.json"
           python3 docs/rust/tools/test-plan-v4-qualification.py \
             2>&1 | tee "$RUNNER_TEMP/rust-program-truth/qualification-selftest.log"
-
-      - name: Prove effective-status derivation fails closed on an empty job set
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf '{"total_count":0,"check_runs":[]}\n' \
-            > "$RUNNER_TEMP/rust-program-truth/empty-check-runs.json"
-          if python3 docs/rust/tools/derive-effective-status.py \
-              --check-runs "$RUNNER_TEMP/rust-program-truth/empty-check-runs.json" \
-              --repository "$GITHUB_REPOSITORY" \
-              --commit "$EXPECTED_HEAD_SHA" \
-              --tree "$(git rev-parse HEAD^{tree})" \
-              --workflow "$GITHUB_WORKFLOW" \
-              --run-id "$GITHUB_RUN_ID" \
-              --run-attempt "$GITHUB_RUN_ATTEMPT" \
-              --output "$RUNNER_TEMP/rust-program-truth/forbidden-effective-status.json"; then
-            echo "empty check-run set unexpectedly qualified the source" >&2
-            exit 1
-          fi
-          test ! -e "$RUNNER_TEMP/rust-program-truth/forbidden-effective-status.json"
 
       - name: Prove exact source identity after validation
         if: always()
@@ -92,110 +71,6 @@ jobs:
         with:
           name: rust-program-truth-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/rust-program-truth
-          if-no-files-found: error
-          retention-days: 90
-          compression-level: 0
-
-  effective-source-qualification:
-    name: effective-source-qualification
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    needs: exact-program-truth
-    runs-on: ubuntu-24.04
-    timeout-minutes: 55
-    env:
-      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      CHECK_EVIDENCE_ROOT: ${{ runner.temp }}/rust-effective-source
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Establish exact immutable candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -d -m 0700 "$CHECK_EVIDENCE_ROOT"
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
-          git rev-parse HEAD^{tree} > "$CHECK_EVIDENCE_ROOT/tree.txt"
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          EVIDENCE_OUTPUT="$CHECK_EVIDENCE_ROOT/preflight.json" \
-            python3 docs/rust/tools/write-exact-head-evidence.py
-
-      - name: Validate static Plan v4 truth
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 docs/rust/tools/validate-program-truth.py \
-            | tee "$CHECK_EVIDENCE_ROOT/static-validation.json"
-
-      - name: Await and bind the complete required check matrix
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 docs/rust/tools/collect-required-checks.py \
-            --repository "$GITHUB_REPOSITORY" \
-            --commit "$EXPECTED_HEAD_SHA" \
-            --token "$GH_TOKEN" \
-            --api-url "$GITHUB_API_URL" \
-            --output "$CHECK_EVIDENCE_ROOT/check-runs.json"
-
-      - name: Derive exact-head effective source status
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 docs/rust/tools/derive-effective-status.py \
-            --check-runs "$CHECK_EVIDENCE_ROOT/check-runs.json" \
-            --repository "$GITHUB_REPOSITORY" \
-            --commit "$EXPECTED_HEAD_SHA" \
-            --tree "$(cat "$CHECK_EVIDENCE_ROOT/tree.txt")" \
-            --workflow "$GITHUB_WORKFLOW" \
-            --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --output "$CHECK_EVIDENCE_ROOT/effective-status.v1.json" \
-            | tee "$CHECK_EVIDENCE_ROOT/derivation.json"
-          python3 - "$CHECK_EVIDENCE_ROOT/effective-status.v1.json" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-          assert value["status"] == "exact_head_source_qualified"
-          assert value["authority"] == {
-              "campaignWriterActivated": False,
-              "classification": "exact_head_repository_source_evidence_only",
-              "externalAuthorityClaimed": False,
-              "liveProviderAuthorized": False,
-              "productionAuthorized": False,
-              "releaseAuthorized": False,
-              "submissionAuthorized": False,
-          }
-          assert len(value["requiredContexts"]) == len(value["observedChecks"])
-          PY
-          sha256sum "$CHECK_EVIDENCE_ROOT/effective-status.v1.json" \
-            > "$CHECK_EVIDENCE_ROOT/effective-status.v1.json.sha256"
-
-      - name: Prove exact source identity after qualification
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
-          test "$(git rev-parse HEAD^{tree})" = "$(cat "$CHECK_EVIDENCE_ROOT/tree.txt")"
-          EVIDENCE_OUTPUT="$CHECK_EVIDENCE_ROOT/postflight.json" \
-            python3 docs/rust/tools/write-exact-head-evidence.py
-          git diff --exit-code
-          git diff --cached --exit-code
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: rust-effective-source-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ runner.temp }}/rust-effective-source
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

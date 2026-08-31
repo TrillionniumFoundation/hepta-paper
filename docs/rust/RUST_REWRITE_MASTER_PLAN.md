@@ -1,6 +1,6 @@
 # hepta-paper Rust control-plane rewrite and authority migration master plan
 
-Status: **plan v4.0 — invariant-first, evidence-derived, single-RC**
+Status: **plan v4.1 — producer-authenticated, capability-specific, live-revalidated**
 Canonical static status: [`CURRENT_STATUS.md`](CURRENT_STATUS.md)
 Machine truth: [`current-status.v1.json`](current-status.v1.json)
 Qualification rules: [`QUALIFICATION_STATE_MACHINE.md`](QUALIFICATION_STATE_MACHINE.md)
@@ -64,14 +64,18 @@ commit
 tree
 static machine-truth digest
 required check contexts
-latest successful check-run identities
-workflow/run/attempt
-artifact digests
+producer workflow IDs, paths, Git blobs and SHA-256 digests
+pull-request event/base/head binding
+latest workflow run/attempt, check-suite, job and non-empty step identities
+capability-to-context evidence mapping
+normalized check snapshot identity and artifact digests
 non-authority statement
 ```
 
-A head change, missing job, skipped job, dirty postflight, failed rerun, stale
-review or newly accepted P0 defect invalidates the result.
+A head change, producer-definition drift, missing or colliding job, skipped job,
+dirty postflight, newer workflow run/attempt, stale review or newly accepted P0
+defect invalidates the retained result. A newer successful producer run requires
+a fresh derivation; a newer non-successful producer run demotes immediately.
 
 ## 4. Release-blocking invariants
 
@@ -100,6 +104,9 @@ review or newly accepted P0 defect invalidates the result.
 | INV-021 | Qualification automatically demotes when its exact-head or evidence preconditions cease to hold. |
 | INV-022 | A writer-cutover permit binds exact runtime subject, database preimage and first writer lease. |
 | INV-023 | Confidential legacy replay evidence cannot be replaced by the public minimal fixture. |
+| INV-024 | A required check is accepted only from its manifest-bound workflow definition and exact PR run. |
+| INV-025 | No capability is promoted without a non-empty capability-specific evidence mapping. |
+| INV-026 | Any producer-run mutation invalidates a retained effective artifact until live revalidation succeeds. |
 
 ## 5. Target topology
 
@@ -145,8 +152,13 @@ Repository-local exit:
 - exact-head format, lint, tests and rustdoc pass;
 - dependency policy and SBOM are retained;
 - human status/backlog/parity projections match machine truth;
-- the `effective-status.v1.json` derivation rejects missing, zero-job, skipped and stale
-  check sets.
+- the `effective-status.v1.json` derivation authenticates workflow producers and
+  rejects missing, colliding, zero-job, zero-step, skipped and stale check sets;
+- every promotable row has a non-empty capability-specific context mapping;
+- the complete normalized check evidence and effective artifact pass their
+  committed JSON Schemas;
+- `source-qualification-current` rejects any producer-run mutation until a fresh
+  artifact is derived.
 
 ### BRK — broker, runtime and durable launch
 
@@ -279,14 +291,18 @@ Dates are forecasts, never gate substitutes.
    convergence.
 2. Integrate the descriptor-bound workspace and signed writer-cutover P0 patch.
 3. Replace self-asserted qualification with static/effective machine truth.
-4. Run the complete required context set on the exact unchanged RC head.
-5. Retain effective status, exact-head/tree and supply-chain artifacts.
-6. Obtain independent latest-push review.
-7. Integrate the RC into the sole product branch and close duplicate P0 PRs.
-8. Refresh the product integration PR and repeat its entire exact-head matrix.
-9. Complete governance issue #25 and legacy replay issue #28.
-10. Execute issues #17, #12, #14, #21 and #22 in dependency order.
-11. Perform production shadow, canary, rollback, writer cutover and Node
+4. Run the complete producer-authenticated context set on the exact unchanged RC
+   head.
+5. Derive the capability-specific artifact, validate it against the complete
+   committed schema, and pass live currentness revalidation.
+6. Retain producer definitions, run/job/step snapshot identity, exact-head/tree
+   and supply-chain artifacts.
+7. Obtain independent latest-push review.
+8. Integrate the RC into the sole product branch and close duplicate P0 PRs.
+9. Refresh the product integration PR and repeat its entire exact-head matrix.
+10. Complete governance issue #25 and legacy replay issue #28.
+11. Execute issues #17, #12, #14, #21 and #22 in dependency order.
+12. Perform production shadow, canary, rollback, writer cutover and Node
     retirement only after every prerequisite is accepted.
 
 No branch, package or issue may bypass a dependency by relabelling a fixture,

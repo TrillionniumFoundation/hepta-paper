@@ -51,9 +51,18 @@ promoted when any dependency is `not_started`, `design_ready`,
 `source_implemented` without a successful exact-head result, or
 `blocked_external` unless the parity row itself is explicitly external.
 
-Rows with no implementation dependency are authority-bound ports or retired
-behaviors. Their closure evidence is supplied by the external-package or
-retirement contract, never by a self-signed source fixture.
+Every `source_implemented` parity row has at least one implementation
+dependency. In particular, release-receipt verification (`PAR-DET-010`) is bound
+to receipt contracts, historical vectors and read-only verification, while
+submission idempotency (`PAR-DET-011`) is bound to operation-state, status/error
+and exactly-once writer contracts. Empty dependencies are permitted only for a
+retired row; external/evaluation rows remain governed by their external
+prerequisites.
+
+A second mapping in
+`qualification/source-capability-evidence.v1.json` associates each promotable
+parity row with the exact CI context sets that exercise it. Global CI success
+without this row-specific mapping cannot promote parity.
 
 ## Behavior record required before porting or correction
 

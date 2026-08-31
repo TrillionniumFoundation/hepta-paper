@@ -12,8 +12,12 @@ Plan v4 separates two facts that earlier documents conflated:
    CI after all required jobs complete successfully on that unchanged head.
 
 Source files never self-assert `source_qualified`. The exact-head workflow emits
-`effective-status.v1.json`; a head change, zero-job run, skipped required job,
-failed job, dirty postflight or stale review invalidates that effective result.
+`effective-status.v1.json` only after producer-authenticated checks are bound to
+workflow ID, path, Git blob, SHA-256, pull-request event, run attempt, job and
+non-empty successful steps. The separate `source-qualification-current`
+revalidation context treats any newer producer run or attempt as an invalidation:
+a newer success requires artifact regeneration, while a newer failure demotes the
+effective result. Zero-job, skipped, dirty or stale evidence remains fail-closed.
 
 ## Bound baseline and current candidate
 
@@ -29,15 +33,17 @@ tree        cee44bee7bf42f5a7287de14700b83985f5e3557
 The single repository-local convergence branch is:
 
 ```text
-branch      codex/rust-plan-v4-rc1-20260831
-base        600b1c7a6b0525f088dede62f52e67b7c98eb26a
-base tree   81aa411fc5f63b7c9949ee8b52f3b94d91cc87d7
-stage       release-candidate source requalification
+branch            codex/rust-plan-v4-rc1-20260831
+integration base  codex/rust-plan-v3-final-product-20260830
+stage             release-candidate source requalification
+exact head/tree   read live from GitHub; never committed into static truth
 ```
 
-The base includes descriptor-bound workspace traversal and signed campaign-writer
-cutover hardening. Those changes are not treated as qualified until the new
-branch receives a non-empty exact-head workflow matrix.
+Its lineage contains the descriptor-bound workspace traversal and signed
+campaign-writer cutover hardening. Those changes are not treated as qualified
+until the current branch head receives a producer-authenticated non-empty matrix,
+a freshly generated full-schema-valid artifact, and a successful currentness
+revalidation.
 
 ## Static source state
 
@@ -63,6 +69,26 @@ The static table deliberately uses `source_implemented`. A successful,
 artifact-retained exact-head run may derive `source_qualified` for eligible
 repository-local rows without editing this file. External rows never
 auto-promote.
+
+## Plan v4.1 qualification hardening
+
+The current candidate closes the previously identified qualification-trust
+implementation defects with four machine-readable contracts:
+
+- `qualification/source-check-producers.v1.json` binds every required context to
+  one exact workflow ID, path, candidate-tree Git blob and SHA-256;
+- `qualification/source-capability-evidence.v1.json` gives every promotable
+  product, workstream, backlog, parity and gap projection a non-empty
+  capability-specific context set;
+- `qualification/required-check-evidence-v2.schema.json` validates normalized
+  producer/run/job/step evidence;
+- `qualification/effective-status-v1.schema.json` validates the complete derived
+  artifact before publication.
+
+`.github/workflows/rust-source-qualification-revalidation.yml` is deliberately
+outside the source matrix to avoid recursion. It reruns after every producer
+workflow completion and proves that the retained artifact still matches the
+newest producer snapshot. It grants no production or external authority.
 
 ## Repository-local closure represented in this candidate
 
@@ -149,20 +175,23 @@ authority.
 ## Closure order
 
 1. Run every required Rust, Node, workflow, supply-chain, program-truth,
-   qualification and impacted-test job on the exact RC head.
-2. Retain `effective-status.v1.json`, exact-head/tree evidence and artifact
-   digests; reject zero-job or `action_required` runs.
-3. Obtain an independent latest-push review and integrate the RC into the sole
+   qualification and impacted-test producer on the exact RC head.
+2. Authenticate each result against the producer manifest, derive and fully
+   schema-validate `effective-status.v1.json`, then pass
+   `source-qualification-current` against the newest producer snapshot.
+3. Retain exact-head/tree, workflow-definition, run/job/step and artifact
+   digests; reject collisions, zero-job, skipped, stale or failed reruns.
+4. Obtain an independent latest-push review and integrate the RC into the sole
    product branch; close duplicate P0 PRs.
-4. Complete issue #25 denial evidence and exact policy export.
-5. Complete issue #28 hosted private legacy replay and acknowledgement.
-6. Execute target-host listener/systemd/cgroup qualification in issue #17.
-7. Execute destructive storage, reboot, corruption and 72-hour soak in issue #12.
-8. Execute independent key lifecycle and compromise drills in issue #14.
-9. Execute separated authenticated Codex author/reviewer canaries in issue #21.
-10. Execute real KMS/HSM, WORM, release, portal and submission drills in issue
+5. Complete issue #25 denial evidence and exact policy export.
+6. Complete issue #28 hosted private legacy replay and acknowledgement.
+7. Execute target-host listener/systemd/cgroup qualification in issue #17.
+8. Execute destructive storage, reboot, corruption and 72-hour soak in issue #12.
+9. Execute independent key lifecycle and compromise drills in issue #14.
+10. Execute separated authenticated Codex author/reviewer canaries in issue #21.
+11. Execute real KMS/HSM, WORM, release, portal and submission drills in issue
     #22.
-11. Only after every prerequisite is accepted, perform shadow, canary, rollback,
+12. Only after every prerequisite is accepted, perform shadow, canary, rollback,
     writer cutover and Node-authority retirement.
 
 ## Canonical document set

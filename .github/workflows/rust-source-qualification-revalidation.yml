@@ -1,29 +1,20 @@
-name: rust-effective-source-qualification
+name: rust-source-qualification-revalidation
 
 on:
-  pull_request:
-  workflow_call:
-    inputs:
-      candidate_sha:
-        description: Exact candidate commit
-        required: true
-        type: string
-      candidate_tree:
-        description: Optional expected candidate tree
-        required: false
-        type: string
-      pull_request_number:
-        description: Pull request containing the exact candidate
-        required: true
-        type: number
-      head_branch:
-        description: Exact pull-request head branch
-        required: true
-        type: string
-      base_ref:
-        description: Exact pull-request base ref
-        required: true
-        type: string
+  workflow_run:
+    workflows:
+      - exact-head-source-validation
+      - hepta-paper-ci
+      - rust-broker-installed-qualification
+      - rust-broker-installed-qualification-v2
+      - rust-foundation
+      - rust-plan-v3-external-contracts
+      - rust-program-truth
+      - rust-qualification-artifacts
+      - rust-source-snapshot
+      - rust-supply-chain
+      - workflow-lint
+    types: [completed]
   workflow_dispatch:
     inputs:
       candidate_sha:
@@ -35,7 +26,7 @@ on:
         required: false
         type: string
       pull_request_number:
-        description: Pull request containing the exact candidate
+        description: Pull request containing the candidate
         required: true
         type: number
       head_branch:
@@ -53,21 +44,29 @@ permissions:
   checks: read
   pull-requests: read
 
+concurrency:
+  group: rust-source-qualification-current-${{ github.event.workflow_run.head_sha || inputs.candidate_sha }}
+  cancel-in-progress: true
+
 jobs:
-  derive-effective-source-status:
-    name: derive-effective-source-status
+  source-qualification-current:
+    name: source-qualification-current
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.pull_requests[0].number > 0)
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
-      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+      EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.candidate_sha }}
       EXPECTED_TREE_SHA: ${{ inputs.candidate_tree || '' }}
-      EXPECTED_PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request_number }}
-      EXPECTED_HEAD_BRANCH: ${{ github.event.pull_request.head.ref || inputs.head_branch }}
-      EXPECTED_BASE_REF: ${{ github.event.pull_request.base.ref || inputs.base_ref }}
+      EXPECTED_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || inputs.pull_request_number }}
+      EXPECTED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.head_branch }}
+      EXPECTED_BASE_REF: ${{ github.event.workflow_run.pull_requests[0].base.ref || inputs.base_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.candidate_sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -75,11 +74,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          evidence_root="$RUNNER_TEMP/rust-effective-source"
+          evidence_root="$RUNNER_TEMP/rust-source-qualification-current"
           install -d -m 0700 "$evidence_root/raw"
-          observed_head="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
           observed_tree="$(git rev-parse HEAD^{tree})"
-          test "$observed_head" = "$EXPECTED_HEAD_SHA"
           if [ -n "$EXPECTED_TREE_SHA" ]; then
             test "$observed_tree" = "$EXPECTED_TREE_SHA"
           fi
@@ -88,30 +86,15 @@ jobs:
           EVIDENCE_OUTPUT="$evidence_root/preflight.json" \
             python3 docs/rust/tools/write-exact-head-evidence.py
 
-      - name: Validate static Plan v4 truth and qualification code
-        shell: bash
-        run: |
-          set -euo pipefail
-          evidence_root="$RUNNER_TEMP/rust-effective-source"
-          PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile \
-            docs/rust/tools/validate-program-truth.py \
-            docs/rust/tools/strict_json_schema.py \
-            docs/rust/tools/collect-required-checks.py \
-            docs/rust/tools/derive-effective-status.py \
-            docs/rust/tools/verify-effective-status-current.py \
-            docs/rust/tools/test-plan-v4-qualification.py
-          python3 docs/rust/tools/validate-program-truth.py \
-            | tee "$evidence_root/static-validation.json"
-          python3 docs/rust/tools/test-plan-v4-qualification.py \
-            2>&1 | tee "$evidence_root/qualification-selftest.log"
-
-      - name: Await producer-authenticated required check matrix
+      - name: Recompute producer-authenticated current source status
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          evidence_root="$RUNNER_TEMP/rust-effective-source"
+          evidence_root="$RUNNER_TEMP/rust-source-qualification-current"
+          python3 docs/rust/tools/validate-program-truth.py \
+            | tee "$evidence_root/static-validation.json"
           python3 docs/rust/tools/collect-required-checks.py \
             --repository "$GITHUB_REPOSITORY" \
             --commit "$EXPECTED_HEAD_SHA" \
@@ -123,12 +106,6 @@ jobs:
             --api-url "$GITHUB_API_URL" \
             --raw-output-dir "$evidence_root/raw" \
             --output "$evidence_root/check-evidence.v2.json"
-
-      - name: Derive and fully validate exact-head effective source status
-        shell: bash
-        run: |
-          set -euo pipefail
-          evidence_root="$RUNNER_TEMP/rust-effective-source"
           python3 docs/rust/tools/derive-effective-status.py \
             --check-runs "$evidence_root/check-evidence.v2.json" \
             --repository "$GITHUB_REPOSITORY" \
@@ -139,10 +116,6 @@ jobs:
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --output "$evidence_root/effective-status.v1.json" \
             | tee "$evidence_root/derivation.json"
-          python3 docs/rust/tools/strict_json_schema.py \
-            --schema docs/rust/qualification/effective-status-v1.schema.json \
-            --instance "$evidence_root/effective-status.v1.json" \
-            | tee "$evidence_root/schema-validation.json"
           python3 docs/rust/tools/verify-effective-status-current.py \
             --artifact "$evidence_root/effective-status.v1.json" \
             --current-check-runs "$evidence_root/check-evidence.v2.json" \
@@ -150,12 +123,12 @@ jobs:
           sha256sum "$evidence_root/effective-status.v1.json" \
             > "$evidence_root/effective-status.v1.json.sha256"
 
-      - name: Prove exact source identity after qualification
+      - name: Prove exact source identity after live revalidation
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          evidence_root="$RUNNER_TEMP/rust-effective-source"
+          evidence_root="$RUNNER_TEMP/rust-source-qualification-current"
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
           test "$(git rev-parse HEAD^{tree})" = "$(cat "$evidence_root/tree.txt")"
           EVIDENCE_OUTPUT="$evidence_root/postflight.json" \
@@ -167,8 +140,8 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: rust-effective-source-${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
-          path: ${{ runner.temp }}/rust-effective-source
+          name: rust-source-qualification-current-${{ github.event.workflow_run.head_sha || inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/rust-source-qualification-current
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

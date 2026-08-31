@@ -11,6 +11,11 @@
 | Executable work | `RUST_REWRITE_BACKLOG.md` |
 | Compatibility and migration | `RUST_PARITY_MATRIX.md` |
 | Required source checks | `qualification/source-required-checks.v1.json` |
+| Exact check producers | `qualification/source-check-producers.v1.json` |
+| Capability-specific source evidence | `qualification/source-capability-evidence.v1.json` |
+| Normalized check evidence schema | `qualification/required-check-evidence-v2.schema.json` |
+| Effective artifact schema | `qualification/effective-status-v1.schema.json` |
+| Live source-evidence revalidation | `.github/workflows/rust-source-qualification-revalidation.yml` |
 | Risk ownership | `RUST_RISK_REGISTER.md` |
 | Trusted computing base | `RUST_TCB_BOUNDARY.md` |
 | UID/GID/path authority | `PRINCIPAL_AND_FILESYSTEM_MATRIX.md` |
@@ -34,11 +39,13 @@
 
 Committed source records implementation state only. They do not contain a
 self-staling qualification commit and do not self-assert `source_qualified`.
-The always-on exact-head workflow
-`.github/workflows/rust-effective-source-qualification.yml` collects the
-required GitHub Actions check runs and emits `effective-status.v1.json` only
-when every required context exists, completes and succeeds on one exact
-commit/tree.
+The derivation workflow `.github/workflows/rust-effective-source-qualification.yml`
+collects producer-authenticated results and emits `effective-status.v1.json` only
+when each capability-specific prerequisite succeeds on one exact commit/tree.
+The independent currentness workflow
+`.github/workflows/rust-source-qualification-revalidation.yml` runs after
+producer completion and invalidates any artifact whose producer snapshot has
+changed.
 
 The derived artifact is repository-local evidence. It cannot activate a writer,
 load credentials, sign a release or satisfy an external authority package.
@@ -78,9 +85,10 @@ checkout the pull-request head. A workflow run with zero jobs,
 `action_required`, a missing required context or a skipped required job is not
 qualification evidence.
 
-The canonical required context set is
-`qualification/source-required-checks.v1.json`. Its app binding prevents a
-different check provider from impersonating a GitHub Actions source gate.
+The canonical context set is `qualification/source-required-checks.v1.json`;
+`qualification/source-check-producers.v1.json` authenticates each context to an
+exact candidate-tree workflow definition and PR run/job/step identity. App ID or
+context name alone is insufficient.
 
 ## External and supplemental blockers
 
@@ -108,7 +116,9 @@ explicitly state no delta to:
 7. operator impact;
 8. external package mapping and schemas;
 9. required source-check context set;
-10. qualification invalidation implications.
+10. qualification invalidation implications;
+11. producer and capability-evidence manifests;
+12. check/effective schema and live-revalidation behavior.
 
 CI validates the complete projection, exact source identity, dependency policy,
 supply-chain evidence and non-empty check-run matrix. A prior head's artifacts

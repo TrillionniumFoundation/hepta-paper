@@ -46,6 +46,10 @@ not prose.
 | RR-037 | Signed cutover permit is reused outside its exact subject | 2 | 5 | mitigating | Database/Security | subject, preimage, expiry and first-lease binding; production replay drill |
 | RR-038 | Required path-filtered workflow never reports a protected context | 4 | 4 | open | CI/Governance | always-reporting required contexts or verified relevance router |
 | RR-039 | Effective source artifact is treated as production activation | 3 | 5 | mitigating | Program/Security | artifact authority fields fixed false and separate external gates |
+| RR-040 | A PR-controlled workflow impersonates a required context under the shared Actions App | 5 | 5 | mitigating | CI/Security | exact workflow ID/path/blob/digest plus PR/run/job/step binding and collision tests |
+| RR-041 | A later rerun leaves an older successful effective artifact apparently current | 5 | 5 | mitigating | CI/Program | newest-run snapshot identity and workflow-run-triggered live revalidation |
+| RR-042 | Global CI success blanket-promotes an untested capability | 4 | 5 | mitigating | Program/Capability owners | complete non-empty capability-to-context mapping and dependency closure |
+| RR-043 | Selected constant checks accept a malformed effective evidence object | 4 | 5 | mitigating | Evidence/CI | complete committed JSON Schema validation plus unsupported-keyword rejection |
 
 ## Automatic P0 incidents
 
@@ -62,6 +66,9 @@ Regardless of score, the following are P0:
 - a production-relevant `main` update bypassing current-head checks or
   independent review;
 - a zero-job or skipped-required-job run being accepted as qualification;
+- a same-App workflow or colliding producer impersonating a required context;
+- a stale artifact remaining valid after a newer producer run or attempt;
+- a capability being promoted without capability-specific evidence;
 - a source document granting itself effective or production authority;
 - a second active release-candidate or writer authority;
 - confidential legacy replay being claimed from the public minimal fixture.

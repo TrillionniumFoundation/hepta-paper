@@ -1,0 +1,89 @@
+name: temporary-rust-authority-closure-publisher
+
+on:
+  push:
+    branches:
+      - codex/rust-plan-v3-authority-closure-helper-20260831
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temporary-rust-authority-closure-publisher
+  cancel-in-progress: false
+
+jobs:
+  apply-format-validate-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out isolated helper payload
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-plan-v3-authority-closure-helper-20260831
+          path: helper
+          persist-credentials: false
+
+      - name: Check out exact target branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/rust-plan-v3-authority-gap-closure-20260831
+          fetch-depth: 0
+          path: target
+          persist-credentials: true
+
+      - name: Apply content-bound patch and validate
+        working-directory: target
+        env:
+          EXPECTED_TARGET_HEAD: 30c7f89264b1e76367f5f0c3d3a028c3486c431a
+          PATCH_SHA256: f4e07136b8248a02e197d16d0acd9e14e12051afa99ce8d9842a2f140e1e1d1c
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_TARGET_HEAD"
+          cat ../helper/.github/patch-chunks/chunk-* \
+            | base64 --decode \
+            | gzip --decompress \
+            > "$RUNNER_TEMP/authority-closure.patch"
+          echo "$PATCH_SHA256  $RUNNER_TEMP/authority-closure.patch" | sha256sum -c -
+          git apply --check "$RUNNER_TEMP/authority-closure.patch"
+          git apply "$RUNNER_TEMP/authority-closure.patch"
+          git diff --check
+          python3 docs/rust/tools/validate-program-truth.py
+
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo check --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            -p hepta-workspace-authority \
+            -p hepta-campaign-writer \
+            -p hepta-local-vertical \
+            --all-targets --all-features --locked -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-workspace-authority \
+            -p hepta-campaign-writer \
+            -p hepta-local-vertical \
+            --all-features --locked
+          git diff --check
+          python3 docs/rust/tools/validate-program-truth.py
+
+      - name: Publish validated target commit
+        working-directory: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$(git status --porcelain)"
+          git config user.name "hepta-plan-v3-closure"
+          git config user.email "hepta-plan-v3-closure@users.noreply.github.com"
+          git add \
+            docs/rust/current-status.v1.json \
+            rust/crates/hepta-campaign-writer/src/cutover.rs \
+            rust/crates/hepta-campaign-writer/src/lib.rs \
+            rust/crates/hepta-campaign-writer/tests/writer_turnover.rs \
+            rust/crates/hepta-local-vertical/tests/local_slice.rs \
+            rust/crates/hepta-workspace-authority/src/bound.rs \
+            rust/crates/hepta-workspace-authority/src/lib.rs
+          git commit -m "fix(rust): bind workspace traversal and writer activation"
+          git push origin HEAD:refs/heads/codex/rust-plan-v3-authority-gap-closure-20260831

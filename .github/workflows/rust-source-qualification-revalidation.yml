@@ -63,6 +63,7 @@ jobs:
       EXPECTED_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || inputs.pull_request_number }}
       EXPECTED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.head_branch }}
       EXPECTED_BASE_REF: ${{ github.event.workflow_run.pull_requests[0].base.ref || inputs.base_ref }}
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:

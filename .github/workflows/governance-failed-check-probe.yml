@@ -1,0 +1,15 @@
+name: governance-failed-check-probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    env:
+      INTENTIONALLY_INVALID_CONTEXT: ${{ runner.temp }}/must-fail-actionlint
+    steps:
+      - run: 'true'

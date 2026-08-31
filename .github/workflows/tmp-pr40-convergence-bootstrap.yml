@@ -1,0 +1,63 @@
+name: temporary-pr40-convergence-bootstrap
+
+on:
+  push:
+    branches:
+      - codex/tmp-pr40-convergence-bootstrap-20260831
+
+permissions:
+  contents: write
+
+jobs:
+  combine:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out helper branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Assemble formatted convergence tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_branch='codex/rust-plan-v3-p0-authority-closure-20260831'
+          writer_branch='codex/rust-plan-v3-authority-gap-closure-20260831'
+          output_branch='codex/tmp-pr40-combined-generated-20260831'
+
+          git fetch --no-tags origin \
+            "+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}" \
+            "+refs/heads/${writer_branch}:refs/remotes/origin/${writer_branch}"
+          git checkout --detach "refs/remotes/origin/${target_branch}"
+
+          for path in \
+            rust/Cargo.lock \
+            rust/crates/hepta-campaign-writer/Cargo.toml \
+            rust/crates/hepta-campaign-writer/src/cutover.rs \
+            rust/crates/hepta-campaign-writer/src/lib.rs \
+            rust/crates/hepta-campaign-writer/tests/writer_turnover.rs \
+            rust/crates/hepta-local-vertical/Cargo.toml \
+            rust/crates/hepta-local-vertical/tests/local_slice.rs
+          do
+            git show "refs/remotes/origin/${writer_branch}:${path}" > "${path}"
+          done
+
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+
+          git config user.name 'hepta-paper convergence bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            rust/Cargo.lock \
+            rust/crates/hepta-campaign-writer \
+            rust/crates/hepta-local-vertical/Cargo.toml \
+            rust/crates/hepta-local-vertical/tests/local_slice.rs \
+            rust/crates/hepta-workspace-authority/src/bound.rs \
+            rust/crates/hepta-workspace-authority/src/lib.rs
+          git diff --cached --exit-code && {
+            echo 'expected convergence changes were absent' >&2
+            exit 1
+          }
+          git commit -m 'fix(rust): converge formatted workspace and writer authority hardening'
+          git push --force origin "HEAD:refs/heads/${output_branch}"

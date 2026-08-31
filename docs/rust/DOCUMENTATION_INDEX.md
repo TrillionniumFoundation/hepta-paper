@@ -4,10 +4,13 @@
 
 | Subject | Canonical file |
 |---|---|
-| Current status | `CURRENT_STATUS.md` + `current-status.v1.json` |
+| Static current status | `CURRENT_STATUS.md` + `current-status.v1.json` |
+| Effective exact-head status | workflow artifact `effective-status.v1.json` validated by `qualification/effective-status-v1.schema.json` |
 | Program plan and gates | `RUST_REWRITE_MASTER_PLAN.md` |
+| Qualification promotion/demotion | `QUALIFICATION_STATE_MACHINE.md` |
 | Executable work | `RUST_REWRITE_BACKLOG.md` |
 | Compatibility and migration | `RUST_PARITY_MATRIX.md` |
+| Required source checks | `qualification/source-required-checks.v1.json` |
 | Risk ownership | `RUST_RISK_REGISTER.md` |
 | Trusted computing base | `RUST_TCB_BOUNDARY.md` |
 | UID/GID/path authority | `PRINCIPAL_AND_FILESYSTEM_MATRIX.md` |
@@ -18,15 +21,35 @@
 | External package reviewer index | `qualification/PLAN_V3_EXTERNAL_PACKAGE_INDEX.md` |
 | External execution and ingestion protocol | `qualification/PLAN_V3_EXTERNAL_GAP_EXECUTION.md` |
 | Protected-main acceptance schema | `qualification/protected-main-ruleset-evidence-v1.schema.json` |
+| Confidential legacy replay | `LEGACY_MATRIX_REFERENCE_PUBLICATION.md`, `qualification/legacy-matrix-replay-closure-v1.schema.json`, and issue #28 |
 | Supply-chain policy | `security/SUPPLY_CHAIN_POLICY.md` |
 | Codex protocol details | `../codex/*.md` |
 | Architecture decisions | `../adr/*.md` |
 
+## Source of truth rule
+
+`current-status.v1.json` is the only committed status authority. Human tables in
+`CURRENT_STATUS.md`, `RUST_REWRITE_BACKLOG.md` and
+`RUST_PARITY_MATRIX.md` are projections and are machine-compared.
+
+Committed source records implementation state only. They do not contain a
+self-staling qualification commit and do not self-assert `source_qualified`.
+The always-on exact-head workflow
+`.github/workflows/rust-effective-source-qualification.yml` collects the
+required GitHub Actions check runs and emits `effective-status.v1.json` only
+when every required context exists, completes and succeeds on one exact
+commit/tree.
+
+The derived artifact is repository-local evidence. It cannot activate a writer,
+load credentials, sign a release or satisfy an external authority package.
+
 ## Historical records
 
-The following are slice records, not current status:
+The following are slice or checkpoint records, not current status:
 
 ```text
+ALL_GAP_CLOSURE_WORKING_STATUS.md
+PLAN_V3_SOURCE_CLOSURE_ACCEPTANCE.md
 RUST_FOUNDATION_STATUS.md
 RUST_FOUNDATION_VALIDATION.md
 RUST_BROKER_FOUNDATION_STATUS.md
@@ -41,37 +64,52 @@ qualification/PR16_*_TRIGGER_*.md
 
 Historical files may bind the exact commit they observed. They must not use an
 unqualified present-tense statement such as “the current head is ready”. New
-status changes go only to `CURRENT_STATUS.md`, `current-status.v1.json` and the
-machine-compared backlog table.
+static status changes go only to machine truth and its canonical projections.
+New effective qualification is recorded only as a workflow artifact.
 
 ## Workflow discipline
 
 Persistent workflows are read-only validators or explicitly scoped evidence
-collectors. Historical one-shot workflows that modified source, pushed directly,
-self-dispatched or self-deleted are retired after their source changes are
-absorbed. They are not part of the current control plane.
+collectors. Historical one-shot workflows that modified source, pushed
+directly, self-dispatched or self-deleted remain retired.
 
-Every retained workflow must pass the pinned `workflow-lint` actionlint gate.
-Custom self-hosted labels are declared in `.github/actionlint.yaml`; syntax or
-Actions-expression failures cannot remain as silent runs with no jobs.
+Every retained workflow must pass the pinned actionlint gate and explicitly
+checkout the pull-request head. A workflow run with zero jobs,
+`action_required`, a missing required context or a skipped required job is not
+qualification evidence.
+
+The canonical required context set is
+`qualification/source-required-checks.v1.json`. Its app binding prevents a
+different check provider from impersonating a GitHub Actions source gate.
+
+## External and supplemental blockers
+
+The canonical external authority gaps remain mapped by
+`qualification/external-package-map.v1.json` and are accepted only by the Rust
+qualification-ingestion boundary.
+
+`LEGACY-REPLAY-001` / issue #28 is a supplemental confidential migration
+blocker. It is deliberately not added to the authority package map: the private
+263-file archive verifies historical parity but grants no production authority.
+Its closure still requires a retained secret-gated hosted replay receipt/index
+and independent acknowledgement.
 
 ## Change discipline
 
-A pull request changing any production-relevant Rust source must update, or
+A pull request changing production-relevant Rust source must update, or
 explicitly state no delta to:
 
-1. current status/gaps;
-2. backlog item status and evidence;
-3. TCB/principal matrix;
-4. risk register;
-5. crash/rollback behavior;
-6. operator impact;
-7. external gap-to-package mapping and schemas.
+1. static current status and gaps;
+2. backlog implementation state;
+3. parity state and dependencies;
+4. TCB/principal matrix;
+5. risk register;
+6. crash/rollback behavior;
+7. operator impact;
+8. external package mapping and schemas;
+9. required source-check context set;
+10. qualification invalidation implications.
 
-CI machine-compares all stable backlog IDs and statuses, product-status rows and
-external issue ledgers across `current-status.v1.json`, `CURRENT_STATUS.md` and
-`RUST_REWRITE_BACKLOG.md`. It also verifies that every external gap has a mapped,
-non-activating qualification package with existing schemas, and validates every
-workflow, exact head/tree identity, dependency policy and reproducible SBOM
-evidence. Exact run evidence remains a workflow artifact rather than being
-copied into self-staling prose.
+CI validates the complete projection, exact source identity, dependency policy,
+supply-chain evidence and non-empty check-run matrix. A prior head's artifacts
+or review decisions cannot be inherited.

@@ -19,6 +19,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod cutover;
+
+pub use cutover::{
+    VerifiedWriterCutoverV1, WriterCutoverAuthorizationV1, WriterCutoverPolicyV1,
+    WriterCutoverSubjectV1, WriterCutoverTrustStoreV1, WriterDatabasePreimageV1,
+    WriterDatabaseStateV1, inspect_writer_database_preimage_v1,
+    verify_writer_cutover_authorization_v1, writer_cutover_signing_bytes_v1,
+    writer_database_preimage_hash_v1, writer_lease_activation_hash_v1,
+};
+
 const APPLICATION_ID: i64 = 0x4850_4357;
 const SCHEMA_VERSION: i64 = 1;
 const MAXIMUM_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -231,65 +241,42 @@ pub struct NodeSnapshotV1 {
     pub provider_action_may_have_started: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WriterCutoverAuthorizationV1 {
-    pub version: u16,
-    pub node_writer_disabled: bool,
-    pub source_database_hash: Sha256Digest,
-    pub authorization_hash: Sha256Digest,
-}
-
-impl WriterCutoverAuthorizationV1 {
-    pub fn validate(&self) -> Result<(), CampaignWriterError> {
-        if self.version != 1 || !self.node_writer_disabled {
-            return Err(CampaignWriterError::CutoverNotAuthorized);
-        }
-        let expected = hash_serialized(
-            "HeptaWriterCutoverAuthorizationV1",
-            &CutoverHashView {
-                version: self.version,
-                node_writer_disabled: self.node_writer_disabled,
-                source_database_hash: &self.source_database_hash,
-            },
-        )?;
-        if expected != self.authorization_hash {
-            return Err(CampaignWriterError::CutoverNotAuthorized);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CutoverHashView<'a> {
-    version: u16,
-    node_writer_disabled: bool,
-    source_database_hash: &'a Sha256Digest,
-}
-
 /// Single SQLite connection. It is `Send` but intentionally not `Sync`.
 pub struct CampaignWriterStoreV1 {
     path: PathBuf,
     connection: Connection,
     policy: CampaignWriterPolicyV1,
+    activation: Option<VerifiedWriterCutoverV1>,
+    initial_writer_acquired: bool,
 }
 
 impl CampaignWriterStoreV1 {
-    pub fn open(
+    fn open_internal(
         path: impl AsRef<Path>,
         policy: CampaignWriterPolicyV1,
+        activation: Option<VerifiedWriterCutoverV1>,
     ) -> Result<Self, CampaignWriterError> {
         let policy = policy.validate()?;
         let path = prepare_database(path.as_ref(), policy)?;
+        let before_open = fs::symlink_metadata(&path)
+            .map_err(|error| CampaignWriterError::Filesystem("database_open", error.kind()))?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
         let connection = Connection::open_with_flags(&path, flags)?;
+        let after_open = fs::symlink_metadata(&path)
+            .map_err(|error| CampaignWriterError::Filesystem("database_open", error.kind()))?;
+        if before_open.file_type().is_symlink()
+            || after_open.file_type().is_symlink()
+            || !same_database_identity(&before_open, &after_open)
+        {
+            return Err(CampaignWriterError::DatabasePreimageChanged);
+        }
         connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;
         connection.execute_batch(
             "PRAGMA foreign_keys = ON;
              PRAGMA trusted_schema = OFF;
+             PRAGMA locking_mode = EXCLUSIVE;
              PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;
              PRAGMA temp_store = MEMORY;",
@@ -300,23 +287,32 @@ impl CampaignWriterStoreV1 {
             connection.execute_batch(SCHEMA)?;
         }
         verify_schema(&connection)?;
+        connection.execute_batch("BEGIN EXCLUSIVE; COMMIT;")?;
         let store = Self {
             path,
             connection,
             policy,
+            activation,
+            initial_writer_acquired: false,
         };
         store.validate_integrity()?;
         Ok(store)
     }
 
-    /// Requires a separately supplied, hash-valid record that Node writer authority is disabled.
+    /// Opens the only public read-write store path after exact signed cutover verification.
     pub fn open_for_cutover(
         path: impl AsRef<Path>,
         policy: CampaignWriterPolicyV1,
-        authorization: &WriterCutoverAuthorizationV1,
+        verified: &VerifiedWriterCutoverV1,
+        now_unix_ms: u64,
     ) -> Result<Self, CampaignWriterError> {
-        authorization.validate()?;
-        Self::open(path, policy)
+        verified.assert_current(now_unix_ms)?;
+        let observed = inspect_writer_database_preimage_v1(path.as_ref(), policy)?;
+        let observed_hash = writer_database_preimage_hash_v1(&observed)?;
+        if &observed_hash != verified.database_preimage_hash() {
+            return Err(CampaignWriterError::DatabasePreimageChanged);
+        }
+        Self::open_internal(path, policy, Some(verified.clone()))
     }
 
     #[must_use]
@@ -329,7 +325,17 @@ impl CampaignWriterStoreV1 {
         requested: WriterLeaseV1,
         now_unix_ms: u64,
     ) -> Result<WriterLeaseV1, CampaignWriterError> {
+        let activation = self
+            .activation
+            .as_ref()
+            .ok_or(CampaignWriterError::ActiveWriterAuthorizationRequired)?;
         requested.validate(now_unix_ms)?;
+        if !self.initial_writer_acquired
+            && &writer_lease_activation_hash_v1(&requested)?
+                != activation.initial_writer_lease_hash()
+        {
+            return Err(CampaignWriterError::CutoverWriterBindingMismatch);
+        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -347,6 +353,7 @@ impl CampaignWriterStoreV1 {
                     [to_i64(requested.expires_at_unix_ms)?],
                 )?;
                 transaction.commit()?;
+                self.initial_writer_acquired = true;
                 return Ok(requested);
             }
         }
@@ -364,6 +371,7 @@ impl CampaignWriterStoreV1 {
             ],
         )?;
         transaction.commit()?;
+        self.initial_writer_acquired = true;
         self.inspect_envelope()?;
         Ok(requested)
     }
@@ -968,7 +976,7 @@ pub fn restore_backup(
     fs::rename(&temporary, destination)
         .map_err(|error| CampaignWriterError::Filesystem("restore_publish", error.kind()))?;
     sync_parent(destination)?;
-    let store = CampaignWriterStoreV1::open(destination, policy)?;
+    let store = CampaignWriterStoreV1::open_internal(destination, policy, None)?;
     store.validate_integrity()?;
     let (content_hash, byte_count) = hash_file(destination, MAXIMUM_BACKUP_BYTES)?;
     Ok(CampaignBackupReceiptV1 {
@@ -1366,6 +1374,15 @@ fn inspect_parent(parent: &Path, owner_uid: u32) -> Result<(), CampaignWriterErr
     Ok(())
 }
 
+fn same_database_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.mode() == right.mode()
+        && left.uid() == right.uid()
+        && left.gid() == right.gid()
+        && left.nlink() == right.nlink()
+}
+
 fn inspect_database_file(
     path: &Path,
     policy: CampaignWriterPolicyV1,
@@ -1553,6 +1570,42 @@ pub enum CampaignWriterError {
     ProviderAmbiguityNotEstablished,
     #[error("actual cost exceeds the reserved maximum")]
     CostExceedsReservation,
+    #[error("cutover policy is invalid")]
+    InvalidCutoverPolicy,
+    #[error("cutover trust-store size is invalid")]
+    InvalidCutoverTrustStoreSize,
+    #[error("cutover signer key id is invalid")]
+    InvalidCutoverSignerKeyId,
+    #[error("cutover signer key id is duplicated: {0}")]
+    DuplicateCutoverSignerKeyId(String),
+    #[error("cutover verification key is weak: {0}")]
+    WeakCutoverVerificationKey(String),
+    #[error("cutover signer key is unknown: {0}")]
+    UnknownCutoverSignerKey(String),
+    #[error("cutover subject is invalid")]
+    InvalidCutoverSubject,
+    #[error("cutover subject does not match the expected runtime")]
+    CutoverSubjectMismatch,
+    #[error("cutover authorization is not yet valid")]
+    CutoverNotYetValid,
+    #[error("cutover authorization has expired")]
+    CutoverExpired,
+    #[error("cutover signature encoding is invalid")]
+    InvalidCutoverSignatureEncoding,
+    #[error("cutover signature was rejected")]
+    CutoverSignatureRejected,
+    #[error("cutover signing message is too large")]
+    CutoverSigningMessageTooLarge,
+    #[error("writer database preimage is invalid")]
+    InvalidDatabasePreimage,
+    #[error("writer database preimage changed before activation")]
+    DatabasePreimageChanged,
+    #[error("writer database has an unresolved SQLite sidecar")]
+    DatabaseSidecarPresent,
+    #[error("active writer authorization is required")]
+    ActiveWriterAuthorizationRequired,
+    #[error("initial writer lease does not match the signed cutover permit")]
+    CutoverWriterBindingMismatch,
     #[error("cutover authorization is absent or invalid")]
     CutoverNotAuthorized,
     #[error("event hash chain is invalid")]
@@ -1585,6 +1638,9 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
+    use base64ct::{Base64UrlUnpadded, Encoding};
+    use ed25519_dalek::{Signer, SigningKey};
+
     use super::*;
 
     static NEXT_TEST: AtomicU64 = AtomicU64::new(0);
@@ -1613,8 +1669,11 @@ mod tests {
         }
 
         fn store(&self) -> CampaignWriterStoreV1 {
-            CampaignWriterStoreV1::open(&self.database, CampaignWriterPolicyV1::strict(self.uid))
-                .expect("writer store")
+            self.store_at(&self.database)
+        }
+
+        fn store_at(&self, database: &Path) -> CampaignWriterStoreV1 {
+            activated_store(database, self.uid)
         }
     }
 
@@ -1628,12 +1687,132 @@ mod tests {
         Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64))).expect("digest")
     }
 
+    fn cutover_subject() -> WriterCutoverSubjectV1 {
+        WriterCutoverSubjectV1 {
+            repository: "TrillionniumFoundation/hepta-paper".to_owned(),
+            commit_sha: "1".repeat(40),
+            tree_sha: "2".repeat(40),
+            binary_hash: digest('3'),
+            configuration_hash: digest('4'),
+            host_identity_hash: digest('5'),
+            service_identity_hash: digest('6'),
+        }
+    }
+
+    fn verified_cutover(
+        database: &Path,
+        uid: u32,
+    ) -> (CampaignWriterPolicyV1, VerifiedWriterCutoverV1) {
+        let policy = CampaignWriterPolicyV1::strict(uid);
+        let preimage =
+            inspect_writer_database_preimage_v1(database, policy).expect("database preimage");
+        let signing_key = SigningKey::from_bytes(&[41_u8; 32]);
+        let mut authorization = WriterCutoverAuthorizationV1 {
+            version: 1,
+            cutover_id: "unit-cutover".to_owned(),
+            subject: cutover_subject(),
+            database_preimage_hash: writer_database_preimage_hash_v1(&preimage)
+                .expect("preimage hash"),
+            initial_writer_lease_hash: writer_lease_activation_hash_v1(&lease(1))
+                .expect("writer lease hash"),
+            node_writer_disabled: true,
+            issued_at_unix_ms: 1,
+            expires_at_unix_ms: 100_000,
+            nonce: "unit-cutover-nonce".to_owned(),
+            signer_key_id: "unit-cutover-key".to_owned(),
+            signature_base64: "AA".to_owned(),
+        };
+        let message = writer_cutover_signing_bytes_v1(&authorization).expect("signing bytes");
+        authorization.signature_base64 =
+            Base64UrlUnpadded::encode_string(&signing_key.sign(&message).to_bytes());
+        let trust = WriterCutoverTrustStoreV1::new([(
+            "unit-cutover-key".to_owned(),
+            signing_key.verifying_key(),
+        )])
+        .expect("cutover trust");
+        let verified = verify_writer_cutover_authorization_v1(
+            &authorization,
+            &cutover_subject(),
+            10,
+            WriterCutoverPolicyV1::default(),
+            &trust,
+        )
+        .expect("verified cutover");
+        (policy, verified)
+    }
+
+    fn activated_store(database: &Path, uid: u32) -> CampaignWriterStoreV1 {
+        let (policy, verified) = verified_cutover(database, uid);
+        CampaignWriterStoreV1::open_for_cutover(database, policy, &verified, 10)
+            .expect("writer store")
+    }
+
     fn lease(generation: u64) -> WriterLeaseV1 {
         WriterLeaseV1 {
             generation,
             token: format!("writer-{generation}"),
             expires_at_unix_ms: 1_000_000,
         }
+    }
+
+    #[test]
+    fn database_preimage_change_blocks_activation_before_sqlite_open() {
+        let fixture = Fixture::new();
+        let (policy, verified) = verified_cutover(&fixture.database, fixture.uid);
+        fs::write(&fixture.database, b"replaced preimage").expect("replacement");
+        fs::set_permissions(&fixture.database, fs::Permissions::from_mode(0o600))
+            .expect("replacement mode");
+        assert!(matches!(
+            CampaignWriterStoreV1::open_for_cutover(
+                &fixture.database,
+                policy,
+                &verified,
+                10,
+            ),
+            Err(CampaignWriterError::DatabasePreimageChanged)
+        ));
+    }
+
+    #[test]
+    fn one_verified_preimage_cannot_open_two_concurrent_writer_stores() {
+        let fixture = Fixture::new();
+        let (policy, verified) = verified_cutover(&fixture.database, fixture.uid);
+        let first = CampaignWriterStoreV1::open_for_cutover(
+            &fixture.database,
+            policy,
+            &verified,
+            10,
+        )
+        .expect("first store");
+        let second = CampaignWriterStoreV1::open_for_cutover(
+            &fixture.database,
+            policy,
+            &verified,
+            10,
+        );
+        assert!(matches!(
+            second,
+            Err(CampaignWriterError::DatabasePreimageChanged)
+                | Err(CampaignWriterError::DatabaseSidecarPresent)
+                | Err(CampaignWriterError::Sqlite(_))
+        ));
+        drop(first);
+    }
+
+    #[test]
+    fn first_writer_lease_must_match_the_signed_cutover_binding() {
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        assert!(matches!(
+            store.acquire_writer(lease(2), 1),
+            Err(CampaignWriterError::CutoverWriterBindingMismatch)
+        ));
+        store
+            .acquire_writer(lease(1), 1)
+            .expect("signed initial writer");
+        store
+            .acquire_writer(lease(2), 2)
+            .expect("later generation is internally fenced");
     }
 
     #[test]
@@ -1837,9 +2016,7 @@ mod tests {
             CampaignWriterPolicyV1::strict(fixture.uid),
         )
         .expect("restore");
-        let restored_store =
-            CampaignWriterStoreV1::open(&restored, CampaignWriterPolicyV1::strict(fixture.uid))
-                .expect("restored store");
+        let restored_store = fixture.store_at(&restored);
         restored_store
             .validate_integrity()
             .expect("restored integrity");

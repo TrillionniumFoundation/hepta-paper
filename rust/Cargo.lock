@@ -243,8 +243,11 @@ dependencies = [
 name = "hepta-campaign-writer"
 version = "0.1.0"
 dependencies = [
+ "base64ct",
+ "ed25519-dalek",
  "hepta-codex-protocol",
  "hex",
+ "nix",
  "rusqlite",
  "serde",
  "serde_json",
@@ -373,6 +376,8 @@ dependencies = [
 name = "hepta-local-vertical"
 version = "0.1.0"
 dependencies = [
+ "base64ct",
+ "ed25519-dalek",
  "hepta-campaign-writer",
  "hepta-legacy-compatibility",
  "hepta-readonly-control",

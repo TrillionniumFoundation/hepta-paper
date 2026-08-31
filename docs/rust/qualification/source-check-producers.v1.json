@@ -53,8 +53,8 @@
       "context": "exact-program-truth",
       "workflowId": 345494676,
       "workflowPath": ".github/workflows/rust-program-truth.yml",
-      "workflowGitBlobSha": "76e0218338db7bda0b36bd3d3aa26f3b4ac691eb",
-      "workflowSha256": "sha256:493e4fa456942597169bb40a9704b070e3a5f11bfc12d9bcbab3f4e20bd2c338"
+      "workflowGitBlobSha": "378750cd7843bb39e057c9a264c89207c5046d0b",
+      "workflowSha256": "sha256:1572e9fde92b400721ce647491d8c881bb1ab25520f895ab2de78d021ee94e31"
     },
     {
       "context": "validate-qualification-artifacts",

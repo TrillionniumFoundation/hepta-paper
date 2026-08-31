@@ -30,20 +30,21 @@ jobs:
           PATCH_SHA256: cdcb238e248d04c75a8b3d79be98c81d3fb6821dfd1fdb32e7a308ad8c6371cb
         run: |
           set -euo pipefail
-          payload=.github/one-shot/rust-gap-closure.patch.gz.b64
           trigger=.github/one-shot/rust-gap-closure.trigger
-          test -f "$payload"
+          parts_dir=.github/one-shot/rust-gap-closure.parts
           test -f "$trigger"
+          test -d "$parts_dir"
+          test "$(find "$parts_dir" -maxdepth 1 -type f -name '*.b64' | wc -l)" = 10
           test "$(tr -d '\r\n' < "$trigger")" = "$PATCH_SHA256"
-          echo "$PAYLOAD_SHA256  $payload" | sha256sum -c -
-          base64 -d "$payload" > /tmp/rust-gap-closure.patch.gz
+          cat "$parts_dir"/*.b64 > /tmp/rust-gap-closure.patch.gz.b64
+          echo "$PAYLOAD_SHA256  /tmp/rust-gap-closure.patch.gz.b64" | sha256sum -c -
+          base64 -d /tmp/rust-gap-closure.patch.gz.b64 > /tmp/rust-gap-closure.patch.gz
           echo "$PATCH_GZIP_SHA256  /tmp/rust-gap-closure.patch.gz" | sha256sum -c -
           gzip -dc /tmp/rust-gap-closure.patch.gz > /tmp/rust-gap-closure.patch
           echo "$PATCH_SHA256  /tmp/rust-gap-closure.patch" | sha256sum -c -
 
           git fetch --no-tags origin "$BASE_SHA"
-          test "$(git rev-parse "$TARGET_BRANCH")" = "$BASE_SHA" || \
-            test "$(git rev-parse "origin/$TARGET_BRANCH")" = "$BASE_SHA"
+          test "$(git rev-parse "origin/$TARGET_BRANCH")" = "$BASE_SHA"
           git checkout --detach "$BASE_SHA"
           git apply --index --whitespace=error-all /tmp/rust-gap-closure.patch
           test ! -e .github/one-shot

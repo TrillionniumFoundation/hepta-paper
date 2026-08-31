@@ -1,0 +1,68 @@
+name: temporary-pr40-ci-converge-r3
+
+on:
+  push:
+    branches:
+      - codex/tmp-pr40-convergence-bootstrap-20260831
+
+permissions:
+  contents: write
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+      RUSTFLAGS: -Dunsafe-code
+    steps:
+      - name: Check out helper branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Converge exact PR40 source and publish only when green
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_branch='codex/rust-plan-v3-p0-authority-closure-20260831'
+          output_branch='codex/tmp-pr40-ci-converged-20260831-r3'
+
+          git fetch --no-tags origin "+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}"
+          git checkout --detach "refs/remotes/origin/${target_branch}"
+          original_head=$(git rev-parse HEAD)
+
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo fix --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features \
+            --allow-dirty --allow-staged --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked \
+            --fix --allow-dirty --allow-staged -- -D warnings
+          cargo fmt --manifest-path rust/Cargo.toml --all
+
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo check --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked
+          cargo test --manifest-path rust/Cargo.toml \
+            --workspace --all-features --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            --workspace --all-targets --all-features --locked -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml \
+            --workspace --all-features --no-deps --locked
+          git diff --check
+
+          git config user.name 'hepta-paper convergence bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m 'ci(rust): attest exact P0 candidate gate convergence'
+          else
+            git commit -m 'fix(rust): apply compiler-verified P0 convergence fixes'
+          fi
+          test "$(git rev-parse HEAD^)" = "$original_head"
+          git push origin "HEAD:refs/heads/${output_branch}"

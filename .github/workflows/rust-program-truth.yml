@@ -8,6 +8,9 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  checks: read
+  pull-requests: read
 
 concurrency:
   group: rust-program-truth-${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
@@ -91,3 +94,16 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
+
+  effective-source-qualification:
+    name: effective-source-qualification
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    needs: exact-program-truth
+    uses: ./.github/workflows/rust-effective-source-qualification.yml
+    with:
+      candidate_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read

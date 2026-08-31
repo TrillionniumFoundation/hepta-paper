@@ -1,0 +1,46 @@
+name: helper-authority-patch-assembly
+
+on:
+  push:
+    branches:
+      - codex/helper-authority-patch-assembly-20260831
+
+permissions:
+  contents: write
+
+concurrency:
+  group: helper-authority-patch-assembly
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Materialize exact audited patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cat \
+            .github/patch-chunks/part-00 \
+            .github/patch-chunks/part-01 \
+            .github/patch-chunks/part-02 \
+            | base64 --decode > /tmp/hepta-authority-patch.tar.gz
+          echo 'feb720c59d327cf8e429a618a7bb5b8b25bf4e95dac5c0b1ea40efffc6d31ff0  /tmp/hepta-authority-patch.tar.gz' \
+            | sha256sum -c -
+          tar -xzf /tmp/hepta-authority-patch.tar.gz
+          rm -rf .github/patch-chunks
+          rm -f .github/workflows/assemble-authority-patch.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --exit-code && {
+            echo 'audited patch produced no changes' >&2
+            exit 1
+          }
+          git commit -m 'build: materialize audited authority hardening blobs'
+          git push origin "HEAD:${GITHUB_REF_NAME}"

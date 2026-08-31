@@ -2,45 +2,92 @@ name: rust-program-truth
 
 on:
   pull_request:
-    paths:
-      - 'rust/**'
-      - 'docs/rust/**'
-      - '.github/CODEOWNERS'
-      - '.github/workflows/rust-*.yml'
   push:
     branches: [main]
-    paths:
-      - 'rust/**'
-      - 'docs/rust/**'
-      - '.github/CODEOWNERS'
-      - '.github/workflows/rust-*.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: rust-program-truth-${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   exact-program-truth:
+    name: exact-program-truth
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - name: Validate canonical program truth
-        run: python3 docs/rust/tools/validate-program-truth.py
-      - name: Emit exact-head and exact-tree evidence
-        env:
-          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
-          EVIDENCE_OUTPUT: /tmp/hepta-exact-head-evidence.json
-        run: python3 docs/rust/tools/write-exact-head-evidence.py
+
+      - name: Prove exact source identity before validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          mkdir -p "$RUNNER_TEMP/rust-program-truth"
+          EVIDENCE_OUTPUT="$RUNNER_TEMP/rust-program-truth/preflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+
+      - name: Validate Plan v4 canonical program truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile \
+            docs/rust/tools/validate-program-truth.py \
+            docs/rust/tools/derive-effective-status.py \
+            docs/rust/tools/test-plan-v4-qualification.py
+          python3 docs/rust/tools/validate-program-truth.py \
+            | tee "$RUNNER_TEMP/rust-program-truth/validation.json"
+          python3 docs/rust/tools/test-plan-v4-qualification.py \
+            2>&1 | tee "$RUNNER_TEMP/rust-program-truth/qualification-selftest.log"
+
+      - name: Prove effective-status derivation fails closed on an empty job set
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '{"total_count":0,"check_runs":[]}\n' \
+            > "$RUNNER_TEMP/rust-program-truth/empty-check-runs.json"
+          if python3 docs/rust/tools/derive-effective-status.py \
+              --check-runs "$RUNNER_TEMP/rust-program-truth/empty-check-runs.json" \
+              --repository "$GITHUB_REPOSITORY" \
+              --commit "$EXPECTED_HEAD_SHA" \
+              --tree "$(git rev-parse HEAD^{tree})" \
+              --workflow "$GITHUB_WORKFLOW" \
+              --run-id "$GITHUB_RUN_ID" \
+              --run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --output "$RUNNER_TEMP/rust-program-truth/forbidden-effective-status.json"; then
+            echo "empty check-run set unexpectedly qualified the source" >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/rust-program-truth/forbidden-effective-status.json"
+
+      - name: Prove exact source identity after validation
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          EVIDENCE_OUTPUT="$RUNNER_TEMP/rust-program-truth/postflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
           name: rust-program-truth-${{ github.event.pull_request.head.sha || github.sha }}
-          path: /tmp/hepta-exact-head-evidence.json
+          path: ${{ runner.temp }}/rust-program-truth
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

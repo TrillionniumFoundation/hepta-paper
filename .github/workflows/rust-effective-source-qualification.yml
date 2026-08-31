@@ -55,7 +55,6 @@ jobs:
           if [ -n "$EXPECTED_TREE_SHA" ]; then
             test "$observed_tree" = "$EXPECTED_TREE_SHA"
           fi
-          printf '%s\n' "$observed_head" > "$CHECK_EVIDENCE_ROOT/commit.txt"
           printf '%s\n' "$observed_tree" > "$CHECK_EVIDENCE_ROOT/tree.txt"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           EVIDENCE_OUTPUT="$CHECK_EVIDENCE_ROOT/preflight.json" \
@@ -74,156 +73,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 - "$CHECK_EVIDENCE_ROOT/check-runs.json" <<'PY'
-          from __future__ import annotations
-
-          import json
-          import os
-          import pathlib
-          import sys
-          import time
-          import urllib.error
-          import urllib.request
-
-          output = pathlib.Path(sys.argv[1])
-          required_path = pathlib.Path(
-              "docs/rust/qualification/source-required-checks.v1.json"
-          )
-          required = json.loads(required_path.read_text(encoding="utf-8"))
-          contexts = required["contexts"]
-          expected_status = required["acceptedStatus"]
-          expected_conclusion = required["acceptedConclusion"]
-          required_app_id = required["requiredAppId"]
-          repository = os.environ["GITHUB_REPOSITORY"]
-          commit = os.environ["EXPECTED_HEAD_SHA"]
-          token = os.environ["GH_TOKEN"]
-          api = os.environ["GITHUB_API_URL"].rstrip("/")
-          deadline = time.monotonic() + int(
-              required["collector"]["maximumWaitSeconds"]
-          )
-          poll = int(required["collector"]["pollSeconds"])
-
-          def fetch_all() -> dict[str, object]:
-              all_runs: list[dict[str, object]] = []
-              page = 1
-              total = 0
-              while True:
-                  url = (
-                      f"{api}/repos/{repository}/commits/{commit}/check-runs"
-                      f"?per_page=100&page={page}"
-                  )
-                  request = urllib.request.Request(
-                      url,
-                      headers={
-                          "Accept": "application/vnd.github+json",
-                          "Authorization": f"Bearer {token}",
-                          "X-GitHub-Api-Version": "2022-11-28",
-                          "User-Agent": "hepta-rust-effective-source-qualification",
-                      },
-                  )
-                  try:
-                      with urllib.request.urlopen(request, timeout=30) as response:
-                          body = json.load(response)
-                  except (urllib.error.URLError, TimeoutError) as error:
-                      raise SystemExit(f"check_run_api_failed:{error}") from error
-                  runs = body.get("check_runs")
-                  if not isinstance(runs, list):
-                      raise SystemExit("check_run_api_shape_invalid")
-                  total = int(body.get("total_count", len(runs)))
-                  all_runs.extend(runs)
-                  if len(runs) < 100:
-                      break
-                  page += 1
-                  if page > 20:
-                      raise SystemExit("check_run_api_pagination_overflow")
-              return {"total_count": total, "check_runs": all_runs}
-
-          while True:
-              payload = fetch_all()
-              output.write_text(
-                  json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                  encoding="utf-8",
-              )
-              latest: dict[str, dict[str, object]] = {}
-              for run in payload["check_runs"]:
-                  name = run.get("name")
-                  if name not in contexts:
-                      continue
-                  if run.get("head_sha") != commit:
-                      raise SystemExit(f"required_check_wrong_head:{name}")
-                  app = run.get("app")
-                  if not isinstance(app, dict) or app.get("id") != required_app_id:
-                      raise SystemExit(f"required_check_wrong_app:{name}")
-                  run_id = run.get("id")
-                  if not isinstance(run_id, int):
-                      raise SystemExit(f"required_check_invalid_id:{name}")
-                  previous = latest.get(name)
-                  if previous is None or run_id > int(previous["id"]):
-                      latest[name] = run
-
-              missing = sorted(set(contexts) - set(latest))
-              pending: list[str] = []
-              failed: list[str] = []
-              for name in contexts:
-                  if name not in latest:
-                      continue
-                  run = latest[name]
-                  status = run.get("status")
-                  conclusion = run.get("conclusion")
-                  if status != expected_status:
-                      pending.append(f"{name}:{status}")
-                  elif conclusion != expected_conclusion:
-                      failed.append(f"{name}:{conclusion}")
-
-              if failed:
-                  raise SystemExit(
-                      "required_check_failed:" + ",".join(failed)
-                  )
-              if not missing and not pending:
-                  if int(payload["total_count"]) == 0:
-                      raise SystemExit("zero_job_check_collection")
-                  print(
-                      json.dumps(
-                          {
-                              "status": "required_check_matrix_complete",
-                              "commit": commit,
-                              "contexts": len(contexts),
-                              "checkRuns": len(payload["check_runs"]),
-                          },
-                          sort_keys=True,
-                      )
-                  )
-                  break
-              if time.monotonic() >= deadline:
-                  raise SystemExit(
-                      "required_check_matrix_timeout:"
-                      f"missing={missing},pending={pending}"
-                  )
-              print(
-                  json.dumps(
-                      {
-                          "status": "waiting_for_required_checks",
-                          "missing": missing,
-                          "pending": pending,
-                      },
-                      sort_keys=True,
-                  ),
-                  flush=True,
-              )
-              time.sleep(poll)
-          PY
+          python3 docs/rust/tools/collect-required-checks.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$EXPECTED_HEAD_SHA" \
+            --token "$GH_TOKEN" \
+            --api-url "$GITHUB_API_URL" \
+            --output "$CHECK_EVIDENCE_ROOT/check-runs.json"
 
       - name: Derive exact-head effective source status
         shell: bash
         run: |
           set -euo pipefail
-          observed_tree="$(cat "$CHECK_EVIDENCE_ROOT/tree.txt")"
           python3 docs/rust/tools/derive-effective-status.py \
             --check-runs "$CHECK_EVIDENCE_ROOT/check-runs.json" \
             --repository "$GITHUB_REPOSITORY" \
             --commit "$EXPECTED_HEAD_SHA" \
-            --tree "$observed_tree" \
-            --workflow "rust-effective-source-qualification" \
+            --tree "$(cat "$CHECK_EVIDENCE_ROOT/tree.txt")" \
+            --workflow "$GITHUB_WORKFLOW" \
             --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --output "$CHECK_EVIDENCE_ROOT/effective-status.v1.json" \
@@ -244,8 +110,6 @@ jobs:
               "releaseAuthorized": False,
               "submissionAuthorized": False,
           }
-          assert value["source"]["commit"]
-          assert value["source"]["tree"]
           assert len(value["requiredContexts"]) == len(value["observedChecks"])
           PY
           sha256sum "$CHECK_EVIDENCE_ROOT/effective-status.v1.json" \

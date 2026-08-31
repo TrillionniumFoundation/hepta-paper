@@ -7,7 +7,7 @@
     "baselineBranch": "codex/rust-broker-service-20260828",
     "baselineCommit": "80223a2531de32ceeeab7d5d4e6c9b36a605716f",
     "baselineTree": "cee44bee7bf42f5a7287de14700b83985f5e3557",
-    "planVersion": "3.0"
+    "planVersion": "4.0"
   },
   "statusVocabulary": [
     "not_started",
@@ -29,7 +29,9 @@
     "external_authority"
   ],
   "current": {
-    "productStage": "repository_local_source_candidate",
+    "productStage": "release_candidate_source_requalification",
+    "staticTruthMode": "implementation_only",
+    "effectiveQualificationSource": "exact_head_workflow_artifact",
     "productionActivation": "disabled",
     "realCodexCredentials": "forbidden",
     "liveProviderCalls": "forbidden",
@@ -38,187 +40,246 @@
     "submissionAuthority": "absent",
     "canonicalStatusDocument": "docs/rust/CURRENT_STATUS.md",
     "canonicalPlanDocument": "docs/rust/RUST_REWRITE_MASTER_PLAN.md",
-    "canonicalBacklogDocument": "docs/rust/RUST_REWRITE_BACKLOG.md"
+    "canonicalBacklogDocument": "docs/rust/RUST_REWRITE_BACKLOG.md",
+    "canonicalParityDocument": "docs/rust/RUST_PARITY_MATRIX.md"
+  },
+  "qualificationPolicy": {
+    "version": 1,
+    "staticSourceMaySelfAssertQualified": false,
+    "headChangeInvalidatesEffectiveQualification": true,
+    "zeroJobRunIsFailure": true,
+    "skippedRequiredJobIsFailure": true,
+    "requiredResult": "completed_success",
+    "derivedArtifact": "effective-status.v1.json",
+    "promotion": "source_implemented_to_source_qualified",
+    "externalGapsNeverAutoPromote": true,
+    "supplementalBlockersNeverAutoPromote": true,
+    "schema": "qualification/effective-status-v1.schema.json"
   },
   "currentStatusRows": {
-    "Foundation contracts": "source_qualified",
-    "Broker protocol/journal": "source_qualified",
-    "Durable pre-exec gate": "source_qualified",
-    "Workspace mutation authority": "source_qualified",
-    "Compatibility kernel": "source_qualified",
-    "Read-only Rust campaign plane": "source_qualified",
-    "Local author/reviewer slice": "source_qualified",
-    "Rust campaign writer": "source_qualified",
-    "Scientific evidence orchestration": "source_qualified",
-    "Cutover/retirement contracts": "source_qualified",
+    "Foundation contracts": "source_implemented",
+    "Broker protocol/journal": "source_implemented",
+    "Durable pre-exec gate": "source_implemented",
+    "Workspace mutation authority": "source_implemented",
+    "Compatibility kernel": "source_implemented",
+    "Read-only Rust campaign plane": "source_implemented",
+    "Local author/reviewer slice": "source_implemented",
+    "Rust campaign writer": "source_implemented",
+    "Scientific evidence orchestration": "source_implemented",
+    "Cutover/retirement contracts": "source_implemented",
+    "Protected main merge boundary": "blocked_external",
+    "Trusted legacy matrix replay": "blocked_external",
     "Production target host": "blocked_external",
     "Real Codex credentials/provider": "blocked_external",
-    "Release/KMS/WORM/submission": "blocked_external",
-    "Protected main merge boundary": "blocked_external"
+    "Release/KMS/WORM/submission": "blocked_external"
   },
   "workstreams": [
     {
       "id": "FND",
       "name": "Foundation contracts and protocol",
-      "status": "source_qualified",
-      "evidenceTier": "source"
+      "status": "source_implemented",
+      "evidenceTier": "design"
     },
     {
       "id": "BRK",
       "name": "Codex broker and durable launch",
-      "status": "source_qualified",
-      "evidenceTier": "hosted_installed"
+      "status": "source_implemented",
+      "evidenceTier": "source"
     },
     {
       "id": "WS",
       "name": "Workspace and mutation authority",
-      "status": "source_qualified",
-      "evidenceTier": "source"
+      "status": "source_implemented",
+      "evidenceTier": "design"
     },
     {
       "id": "CMP",
       "name": "Compatibility and canonicalization",
-      "status": "source_qualified",
-      "evidenceTier": "source"
+      "status": "source_implemented",
+      "evidenceTier": "design"
     },
     {
       "id": "RO",
       "name": "Read-only Rust control plane",
-      "status": "source_qualified",
-      "evidenceTier": "source"
+      "status": "source_implemented",
+      "evidenceTier": "design"
     },
     {
       "id": "MVP",
       "name": "Local author-reviewer vertical slice",
-      "status": "source_qualified",
-      "evidenceTier": "source"
+      "status": "source_implemented",
+      "evidenceTier": "design"
     },
     {
       "id": "DB",
       "name": "Persistent Rust campaign writer",
-      "status": "source_qualified",
-      "evidenceTier": "source"
+      "status": "source_implemented",
+      "evidenceTier": "design"
     },
     {
       "id": "EVD",
       "name": "Scientific evidence orchestration",
-      "status": "source_qualified",
-      "evidenceTier": "source"
+      "status": "source_implemented",
+      "evidenceTier": "design"
     },
     {
       "id": "REL",
       "name": "Release and external authority",
       "status": "blocked_external",
       "evidenceTier": "none",
-      "repositoryLocalStatus": "source_qualified"
+      "repositoryLocalStatus": "source_implemented"
     },
     {
       "id": "CUT",
       "name": "Shadow, cutover and retirement",
-      "status": "source_qualified",
-      "evidenceTier": "source"
+      "status": "source_implemented",
+      "evidenceTier": "design"
     }
   ],
   "backlogItemStatus": {
-    "RUST-FND-001": "source_qualified",
-    "RUST-FND-002": "source_qualified",
-    "RUST-FND-003": "source_qualified",
-    "RUST-FND-004": "source_qualified",
-    "RUST-FND-005": "source_qualified",
-    "RUST-FND-006": "source_qualified",
-    "RUST-FND-007": "source_qualified",
-    "RUST-FND-008": "source_qualified",
-    "RUST-FND-009": "source_qualified",
-    "RUST-FND-010": "source_qualified",
-    "RUST-FND-011": "source_qualified",
-    "RUST-FND-012": "source_qualified",
-    "RUST-FND-013": "source_qualified",
-    "RUST-BRK-001": "source_qualified",
-    "RUST-BRK-002": "source_qualified",
-    "RUST-BRK-003": "source_qualified",
+    "RUST-FND-001": "source_implemented",
+    "RUST-FND-002": "source_implemented",
+    "RUST-FND-003": "source_implemented",
+    "RUST-FND-004": "source_implemented",
+    "RUST-FND-005": "source_implemented",
+    "RUST-FND-006": "source_implemented",
+    "RUST-FND-007": "source_implemented",
+    "RUST-FND-008": "source_implemented",
+    "RUST-FND-009": "source_implemented",
+    "RUST-FND-010": "source_implemented",
+    "RUST-FND-011": "source_implemented",
+    "RUST-FND-012": "source_implemented",
+    "RUST-FND-013": "source_implemented",
+    "RUST-BRK-001": "source_implemented",
+    "RUST-BRK-002": "source_implemented",
+    "RUST-BRK-003": "source_implemented",
     "RUST-BRK-004": "blocked_external",
-    "RUST-BRK-005": "source_qualified",
-    "RUST-BRK-006": "source_qualified",
-    "RUST-BRK-007": "source_qualified",
-    "RUST-BRK-008": "source_qualified",
-    "RUST-BRK-009": "source_qualified",
-    "RUST-BRK-010": "source_qualified",
-    "RUST-BRK-011": "source_qualified",
-    "RUST-BRK-012": "source_qualified",
-    "RUST-BRK-013": "source_qualified",
-    "RUST-BRK-014": "source_qualified",
+    "RUST-BRK-005": "source_implemented",
+    "RUST-BRK-006": "source_implemented",
+    "RUST-BRK-007": "source_implemented",
+    "RUST-BRK-008": "source_implemented",
+    "RUST-BRK-009": "source_implemented",
+    "RUST-BRK-010": "source_implemented",
+    "RUST-BRK-011": "source_implemented",
+    "RUST-BRK-012": "source_implemented",
+    "RUST-BRK-013": "source_implemented",
+    "RUST-BRK-014": "source_implemented",
     "RUST-BRK-015": "blocked_external",
-    "RUST-BRK-016": "source_qualified",
+    "RUST-BRK-016": "source_implemented",
     "RUST-BRK-017": "blocked_external",
-    "RUST-BRK-018": "source_qualified",
-    "RUST-BRK-019": "source_qualified",
-    "RUST-BRK-020": "source_qualified",
-    "RUST-BRK-021": "source_qualified",
-    "RUST-WS-001": "source_qualified",
-    "RUST-WS-002": "source_qualified",
-    "RUST-WS-003": "source_qualified",
-    "RUST-WS-004": "source_qualified",
-    "RUST-WS-005": "source_qualified",
-    "RUST-WS-006": "source_qualified",
-    "RUST-WS-007": "source_qualified",
-    "RUST-WS-008": "source_qualified",
-    "RUST-WS-009": "source_qualified",
-    "RUST-CMP-001": "source_qualified",
-    "RUST-CMP-002": "source_qualified",
-    "RUST-CMP-003": "source_qualified",
-    "RUST-CMP-004": "source_qualified",
-    "RUST-CMP-005": "source_qualified",
-    "RUST-CMP-006": "source_qualified",
-    "RUST-CMP-007": "source_qualified",
-    "RUST-CMP-008": "source_qualified",
-    "RUST-RO-001": "source_qualified",
-    "RUST-RO-002": "source_qualified",
-    "RUST-RO-003": "source_qualified",
-    "RUST-RO-004": "source_qualified",
-    "RUST-RO-005": "source_qualified",
-    "RUST-RO-006": "source_qualified",
-    "RUST-MVP-001": "source_qualified",
-    "RUST-MVP-002": "source_qualified",
-    "RUST-MVP-003": "source_qualified",
-    "RUST-MVP-004": "source_qualified",
-    "RUST-MVP-005": "source_qualified",
-    "RUST-MVP-006": "source_qualified",
-    "RUST-MVP-007": "source_qualified",
-    "RUST-MVP-008": "source_qualified",
-    "RUST-MVP-009": "source_qualified",
-    "RUST-DB-001": "source_qualified",
-    "RUST-DB-002": "source_qualified",
-    "RUST-DB-003": "source_qualified",
-    "RUST-DB-004": "source_qualified",
-    "RUST-DB-005": "source_qualified",
-    "RUST-DB-006": "source_qualified",
-    "RUST-DB-007": "source_qualified",
-    "RUST-DB-008": "source_qualified",
-    "RUST-DB-009": "source_qualified"
+    "RUST-BRK-018": "source_implemented",
+    "RUST-BRK-019": "source_implemented",
+    "RUST-BRK-020": "source_implemented",
+    "RUST-BRK-021": "source_implemented",
+    "RUST-WS-001": "source_implemented",
+    "RUST-WS-002": "source_implemented",
+    "RUST-WS-003": "source_implemented",
+    "RUST-WS-004": "source_implemented",
+    "RUST-WS-005": "source_implemented",
+    "RUST-WS-006": "source_implemented",
+    "RUST-WS-007": "source_implemented",
+    "RUST-WS-008": "source_implemented",
+    "RUST-WS-009": "source_implemented",
+    "RUST-CMP-001": "source_implemented",
+    "RUST-CMP-002": "source_implemented",
+    "RUST-CMP-003": "source_implemented",
+    "RUST-CMP-004": "source_implemented",
+    "RUST-CMP-005": "source_implemented",
+    "RUST-CMP-006": "source_implemented",
+    "RUST-CMP-007": "source_implemented",
+    "RUST-CMP-008": "source_implemented",
+    "RUST-RO-001": "source_implemented",
+    "RUST-RO-002": "source_implemented",
+    "RUST-RO-003": "source_implemented",
+    "RUST-RO-004": "source_implemented",
+    "RUST-RO-005": "source_implemented",
+    "RUST-RO-006": "source_implemented",
+    "RUST-MVP-001": "source_implemented",
+    "RUST-MVP-002": "source_implemented",
+    "RUST-MVP-003": "source_implemented",
+    "RUST-MVP-004": "source_implemented",
+    "RUST-MVP-005": "source_implemented",
+    "RUST-MVP-006": "source_implemented",
+    "RUST-MVP-007": "source_implemented",
+    "RUST-MVP-008": "source_implemented",
+    "RUST-MVP-009": "source_implemented",
+    "RUST-DB-001": "source_implemented",
+    "RUST-DB-002": "source_implemented",
+    "RUST-DB-003": "source_implemented",
+    "RUST-DB-004": "source_implemented",
+    "RUST-DB-005": "source_implemented",
+    "RUST-DB-006": "source_implemented",
+    "RUST-DB-007": "source_implemented",
+    "RUST-DB-008": "source_implemented",
+    "RUST-DB-009": "source_implemented"
+  },
+  "parityItemStatus": {
+    "PAR-DET-001": "source_implemented",
+    "PAR-DET-002": "source_implemented",
+    "PAR-DET-003": "source_implemented",
+    "PAR-DET-004": "source_implemented",
+    "PAR-DET-005": "source_implemented",
+    "PAR-DET-006": "source_implemented",
+    "PAR-DET-007": "source_implemented",
+    "PAR-DET-008": "source_implemented",
+    "PAR-DET-009": "source_implemented",
+    "PAR-DET-010": "source_implemented",
+    "PAR-DET-011": "source_implemented",
+    "PAR-CODEX-001": "source_implemented",
+    "PAR-CODEX-002": "source_implemented",
+    "PAR-CODEX-003": "source_implemented",
+    "PAR-CODEX-004": "source_implemented",
+    "PAR-CODEX-005": "source_implemented",
+    "PAR-CODEX-006": "source_implemented",
+    "PAR-CODEX-007": "retired",
+    "PAR-CODEX-008": "blocked_external",
+    "PAR-CODEX-009": "blocked_external"
+  },
+  "parityDependencies": {
+    "PAR-DET-001": ["RUST-CMP-001", "RUST-CMP-004"],
+    "PAR-DET-002": ["RUST-CMP-002", "RUST-CMP-004"],
+    "PAR-DET-003": ["RUST-FND-002", "RUST-FND-003"],
+    "PAR-DET-004": ["RUST-CMP-007"],
+    "PAR-DET-005": ["RUST-RO-002", "RUST-DB-008"],
+    "PAR-DET-006": ["RUST-DB-002", "RUST-DB-005"],
+    "PAR-DET-007": ["RUST-DB-001", "RUST-DB-003"],
+    "PAR-DET-008": ["RUST-BRK-013", "RUST-DB-004"],
+    "PAR-DET-009": ["RUST-WS-003", "RUST-WS-004"],
+    "PAR-DET-010": [],
+    "PAR-DET-011": [],
+    "PAR-CODEX-001": ["RUST-BRK-001", "RUST-BRK-002", "RUST-BRK-003", "RUST-BRK-012"],
+    "PAR-CODEX-002": ["RUST-FND-002", "RUST-BRK-012"],
+    "PAR-CODEX-003": ["RUST-BRK-011", "RUST-BRK-018"],
+    "PAR-CODEX-004": ["RUST-BRK-006", "RUST-BRK-016", "RUST-BRK-020"],
+    "PAR-CODEX-005": ["RUST-WS-003", "RUST-WS-004", "RUST-WS-005"],
+    "PAR-CODEX-006": ["RUST-FND-005", "RUST-FND-006", "RUST-BRK-007"],
+    "PAR-CODEX-007": [],
+    "PAR-CODEX-008": ["RUST-BRK-004", "RUST-BRK-015"],
+    "PAR-CODEX-009": ["RUST-BRK-004", "RUST-BRK-015"]
   },
   "gaps": [
     {
       "id": "GAP-GOV-001",
       "title": "Single machine-readable program truth and stale-document controls",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
-        "program-truth validator runs on the exact head",
-        "CURRENT_STATUS and RUST_REWRITE_BACKLOG are machine-compared with this file",
+        "current status, backlog, parity and external package maps are machine-compared",
+        "exact-head workflow derives effective qualification without source self-attestation",
         "historical status files cannot override the canonical set"
       ]
     },
     {
       "id": "GAP-GOV-002",
       "title": "Exact-head and exact-tree qualification evidence",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
         "workflows explicitly checkout the pull-request head SHA",
         "artifacts record head/base/tested commit and tree",
-        "mismatch and dirty postflight fail closed"
+        "mismatch, skipped jobs, zero-job runs and dirty postflight fail closed"
       ]
     },
     {
@@ -228,17 +289,18 @@
       "evidenceTier": "none",
       "external": true,
       "issue": 25,
-      "repositoryLocalStatus": "source_qualified",
+      "repositoryLocalStatus": "source_implemented",
       "closesWhen": [
-        "an active main ruleset requires pull requests, current-head checks and independent CODEOWNER approval",
-        "force push, deletion, stale approval, missing checks and administrator bypass are denied and evidenced"
+        "the active protected-main policy is exported and content-hashed for the current candidate",
+        "all seven denial probes are retained",
+        "an independent reviewer signs the exact-candidate decision"
       ]
     },
     {
       "id": "GAP-BRK-001",
       "title": "Authorized multi-principal Unix listener accessibility",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
         "shared-group listener mode is explicit",
@@ -249,8 +311,8 @@
     {
       "id": "GAP-BRK-002",
       "title": "Production containment source contract beyond process-group-only supervision",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
         "cgroup-v2 process-set authority is implemented",
@@ -261,8 +323,8 @@
     {
       "id": "GAP-BRK-003",
       "title": "Stable worker and lifecycle telemetry contract",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
         "machine error registry is versioned",
@@ -276,7 +338,7 @@
       "evidenceTier": "none",
       "external": true,
       "issue": 17,
-      "repositoryLocalStatus": "hosted_installed_qualified",
+      "repositoryLocalStatus": "source_implemented",
       "closesWhen": [
         "separately controlled target-host evidence exists",
         "independent Linux reviewer signs approval"
@@ -289,7 +351,7 @@
       "evidenceTier": "none",
       "external": true,
       "issue": 12,
-      "repositoryLocalStatus": "hosted_installed_qualified",
+      "repositoryLocalStatus": "source_implemented",
       "closesWhen": [
         "destructive qualification completes on a dedicated target-host mount",
         "72-hour production-topology soak and recovery evidence are independently reviewed"
@@ -302,9 +364,9 @@
       "evidenceTier": "none",
       "external": true,
       "issue": 14,
-      "repositoryLocalStatus": "hosted_installed_qualified",
+      "repositoryLocalStatus": "source_implemented",
       "closesWhen": [
-        "independent key owner performs rotation revocation rollback and compromise drills",
+        "independent key owner performs rotation, revocation, rollback and compromise drills",
         "signed target-host evidence is accepted"
       ]
     },
@@ -315,7 +377,7 @@
       "evidenceTier": "none",
       "external": true,
       "issue": 21,
-      "repositoryLocalStatus": "source_qualified",
+      "repositoryLocalStatus": "source_implemented",
       "closesWhen": [
         "qualified Codex executable and CLI surface are pinned",
         "separate homes authenticate under independent credential custody",
@@ -325,30 +387,31 @@
     {
       "id": "GAP-WS-001",
       "title": "Descriptor-relative COW workspace and mutation verifier",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
-        "workspace packages cover root identity COW inventory mutation policy prepared results and incomplete-attempt recovery",
-        "path-race fault and read-only mutation suites pass"
+        "workspace packages cover root identity, descriptor-bound COW, inventory, mutation policy, prepared results and orphan recovery",
+        "replacement, hard-link, cross-device, in-place mutation and partial-copy suites pass on the exact head"
       ]
     },
     {
       "id": "GAP-CMP-001",
       "title": "Historical canonicalization and Node-to-Rust parity kernel",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
         "LegacyStableJsonV1 corpus is frozen",
-        "Node oracle and Rust verifier achieve zero unexplained drift"
+        "Node oracle and Rust verifier achieve zero unexplained drift",
+        "the hosted 263-file replay remains separately bound to LEGACY-REPLAY-001"
       ]
     },
     {
       "id": "GAP-RO-001",
       "title": "Schema-25 read-only Rust control plane",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
         "immutable SQLite readers and normalized state projections are complete",
@@ -358,24 +421,24 @@
     {
       "id": "GAP-MVP-001",
       "title": "One-paper fake-provider author/reviewer local vertical slice",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
         "fake-provider prepared results traverse workspace and read-only campaign projection",
-        "crash cancel replay and duplicate-integration source tests pass",
+        "crash, cancel, replay and duplicate-integration source tests pass",
         "real-provider qualification remains separately bound to GAP-CODEX-001"
       ]
     },
     {
       "id": "GAP-DB-001",
       "title": "Single-writer Rust campaign persistence and cutover fencing",
-      "status": "source_qualified",
-      "evidenceTier": "source",
+      "status": "source_implemented",
+      "evidenceTier": "design",
       "external": false,
       "closesWhen": [
         "DB-001 through DB-009 source contracts and deterministic simulations pass",
-        "Node/Rust dual writer is mechanically fenced",
+        "raw read-write open paths remain unreachable and signed cutover binding is enforced",
         "real 72-hour target-host soak remains separately bound to GAP-HOST-002"
       ]
     },
@@ -386,18 +449,34 @@
       "evidenceTier": "none",
       "external": true,
       "issue": 22,
-      "repositoryLocalStatus": "source_qualified",
+      "repositoryLocalStatus": "source_implemented",
       "closesWhen": [
-        "narrow receipt-verifying ports remain source-qualified",
+        "narrow receipt-verifying ports remain source-implemented and exact-head qualified by workflow evidence",
         "real external authorities issue independently verifiable receipts",
-        "model principals retain zero key custody portal or submission access"
+        "model principals retain zero key-custody, portal or submission access"
       ]
     }
   ],
   "qualificationCandidate": {
-    "branch": "codex/rust-plan-v3-main-integration-20260830",
+    "branch": "codex/rust-plan-v4-rc1-20260831",
     "binding": "exact_head_workflow_evidence",
     "evidenceTier": "source",
     "productionAuthority": false
-  }
+  },
+  "supplementalBlockers": [
+    {
+      "id": "LEGACY-REPLAY-001",
+      "title": "Trusted 263-file legacy control-plane hosted replay",
+      "status": "blocked_external",
+      "issue": 28,
+      "external": true,
+      "evidenceTier": "none",
+      "repositoryLocalStatus": "source_implemented",
+      "closesWhen": [
+        "the private companion workflow runs against the exact public candidate and exact archive/matrix digests",
+        "the retained receipt and artifact index prove 263/263 replay, network isolation and cleanup",
+        "an independent archive/replay reviewer acknowledges the exact evidence"
+      ]
+    }
+  ]
 }

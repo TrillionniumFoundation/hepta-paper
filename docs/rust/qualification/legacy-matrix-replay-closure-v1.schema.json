@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/hepta-paper/legacy-matrix-replay-closure-v1.schema.json",
+  "title": "Hepta legacy matrix replay closure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "blockerId",
+    "issue",
+    "decision",
+    "repository",
+    "candidate",
+    "verifier",
+    "archive",
+    "results",
+    "artifacts",
+    "review",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "HeptaLegacyMatrixReplayClosureV1"
+    },
+    "blockerId": {
+      "const": "LEGACY-REPLAY-001"
+    },
+    "issue": {
+      "const": 28
+    },
+    "decision": {
+      "const": "approved"
+    },
+    "repository": {
+      "const": "TrillionniumFoundation/hepta-paper"
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "tree",
+        "sourceSnapshotSha256"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "tree": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "sourceSnapshotSha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "commit",
+        "tree",
+        "workflowPath",
+        "workflowSha256",
+        "policySha256",
+        "runId",
+        "runAttempt"
+      ],
+      "properties": {
+        "repository": {
+          "const": "TrillionniumFoundation/hepta-paper-legacy-reference"
+        },
+        "commit": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "tree": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "workflowPath": {
+          "const": ".github/workflows/legacy-matrix-reference-verification.yml"
+        },
+        "workflowSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "policySha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "runId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runAttempt": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "archive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "byteCount",
+        "matrixSha256",
+        "matrixEntries",
+        "releaseId",
+        "assetId"
+      ],
+      "properties": {
+        "sha256": {
+          "const": "sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d"
+        },
+        "byteCount": {
+          "const": 22506525
+        },
+        "matrixSha256": {
+          "const": "sha256:59446f5e96cc5f086b27266f0fb0604d4f7f0e5bf1f62cb1a90933208a0f162a"
+        },
+        "matrixEntries": {
+          "const": 263
+        },
+        "releaseId": {
+          "const": 379268751
+        },
+        "assetId": {
+          "const": 536563599
+        }
+      }
+    },
+    "results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verificationExit",
+        "matrixMatched",
+        "matrixExpected",
+        "p0Findings",
+        "differentialParity",
+        "networkIsolation",
+        "archiveDestroyedBeforeTargetExecution",
+        "cleanupCompleted",
+        "sourceWorktreeClean"
+      ],
+      "properties": {
+        "verificationExit": {
+          "const": 0
+        },
+        "matrixMatched": {
+          "const": 263
+        },
+        "matrixExpected": {
+          "const": 263
+        },
+        "p0Findings": {
+          "const": 0
+        },
+        "differentialParity": {
+          "const": true
+        },
+        "networkIsolation": {
+          "const": true
+        },
+        "archiveDestroyedBeforeTargetExecution": {
+          "const": true
+        },
+        "cleanupCompleted": {
+          "const": true
+        },
+        "sourceWorktreeClean": {
+          "const": true
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receiptSha256",
+        "artifactIndexSha256"
+      ],
+      "properties": {
+        "receiptSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "artifactIndexSha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operatorDomain",
+        "reviewerDomain",
+        "distinct",
+        "reviewerKeyId",
+        "reviewedAt",
+        "signatureBase64"
+      ],
+      "properties": {
+        "operatorDomain": {
+          "$ref": "#/$defs/domain"
+        },
+        "reviewerDomain": {
+          "$ref": "#/$defs/domain"
+        },
+        "distinct": {
+          "const": true
+        },
+        "reviewerKeyId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "reviewedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "signatureBase64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized",
+        "externalAuthorityClaimed",
+        "releaseAuthorized",
+        "submissionAuthorized"
+      ],
+      "properties": {
+        "productionAuthorized": {
+          "const": false
+        },
+        "externalAuthorityClaimed": {
+          "const": false
+        },
+        "releaseAuthorized": {
+          "const": false
+        },
+        "submissionAuthorized": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{2,255}$"
+    }
+  }
+}

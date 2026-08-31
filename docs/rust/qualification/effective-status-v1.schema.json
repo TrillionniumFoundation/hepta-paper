@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/hepta-paper/rust-effective-status-v1.schema.json",
+  "title": "Hepta Rust exact-head effective source status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "repository",
+    "source",
+    "workflow",
+    "requiredContexts",
+    "observedChecks",
+    "effective",
+    "invalidation",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "HeptaRustEffectiveSourceStatusV1"
+    },
+    "status": {
+      "const": "exact_head_source_qualified"
+    },
+    "repository": {
+      "const": "TrillionniumFoundation/hepta-paper"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "tree",
+        "staticTruthSha256",
+        "requiredChecksSha256",
+        "boundFiles"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "tree": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "staticTruthSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "requiredChecksSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "boundFiles": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/digest"
+          }
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "runId",
+        "runAttempt"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "runId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runAttempt": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "requiredContexts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "observedChecks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "id",
+          "status",
+          "conclusion",
+          "headSha",
+          "startedAt",
+          "completedAt",
+          "detailsUrl",
+          "appId"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "const": "completed"
+          },
+          "conclusion": {
+            "const": "success"
+          },
+          "headSha": {
+            "$ref": "#/$defs/gitSha"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "detailsUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "appId": {
+            "const": 15368
+          }
+        }
+      }
+    },
+    "effective": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currentStatusRows",
+        "workstreams",
+        "backlogItemStatus",
+        "parityItemStatus",
+        "gaps",
+        "supplementalBlockers"
+      ],
+      "properties": {
+        "currentStatusRows": {
+          "$ref": "#/$defs/statusMap"
+        },
+        "workstreams": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object"
+          }
+        },
+        "backlogItemStatus": {
+          "$ref": "#/$defs/statusMap"
+        },
+        "parityItemStatus": {
+          "$ref": "#/$defs/statusMap"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "supplementalBlockers": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "invalidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "headChangeInvalidates",
+        "requiredCheckRerunInvalidatesOnNonSuccess",
+        "missingOrSkippedJobInvalidates",
+        "dirtyWorktreeInvalidates",
+        "staticTruthDigestChangeInvalidates"
+      ],
+      "properties": {
+        "headChangeInvalidates": {
+          "const": true
+        },
+        "requiredCheckRerunInvalidatesOnNonSuccess": {
+          "const": true
+        },
+        "missingOrSkippedJobInvalidates": {
+          "const": true
+        },
+        "dirtyWorktreeInvalidates": {
+          "const": true
+        },
+        "staticTruthDigestChangeInvalidates": {
+          "const": true
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized",
+        "campaignWriterActivated",
+        "liveProviderAuthorized",
+        "releaseAuthorized",
+        "submissionAuthorized",
+        "externalAuthorityClaimed",
+        "classification"
+      ],
+      "properties": {
+        "productionAuthorized": {
+          "const": false
+        },
+        "campaignWriterActivated": {
+          "const": false
+        },
+        "liveProviderAuthorized": {
+          "const": false
+        },
+        "releaseAuthorized": {
+          "const": false
+        },
+        "submissionAuthorized": {
+          "const": false
+        },
+        "externalAuthorityClaimed": {
+          "const": false
+        },
+        "classification": {
+          "const": "exact_head_repository_source_evidence_only"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "statusMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "enum": [
+          "not_started",
+          "design_ready",
+          "source_implemented",
+          "source_qualified",
+          "hosted_installed_qualified",
+          "target_host_qualified",
+          "external_authority_qualified",
+          "blocked_external",
+          "retired"
+        ]
+      }
+    }
+  }
+}

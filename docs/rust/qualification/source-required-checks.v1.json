@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "program": "hepta-paper-rust-rewrite",
+  "status": "canonical_required_source_checks",
+  "contexts": [
+    "exact-head-static-gates",
+    "pull-request-static-gates",
+    "installed-principal-negative-tests",
+    "installed-authority-boundaries",
+    "format, lint, test, docs",
+    "validate-contracts",
+    "exact-program-truth",
+    "validate-qualification-artifacts",
+    "exact-head-source-snapshot",
+    "policy-and-sbom",
+    "validate",
+    "exact-head-impacted-tests (0)",
+    "exact-head-impacted-tests (1)",
+    "exact-head-impacted-tests (2)",
+    "exact-head-impacted-tests (3)",
+    "pull-request-impacted-tests (0)",
+    "pull-request-impacted-tests (1)",
+    "pull-request-impacted-tests (2)",
+    "pull-request-impacted-tests (3)",
+    "legacy-differential-policy"
+  ],
+  "acceptedStatus": "completed",
+  "acceptedConclusion": "success",
+  "forbiddenConclusions": [
+    "action_required",
+    "cancelled",
+    "failure",
+    "neutral",
+    "skipped",
+    "stale",
+    "startup_failure",
+    "timed_out"
+  ],
+  "collector": {
+    "workflow": ".github/workflows/rust-effective-source-qualification.yml",
+    "context": "derive-effective-source-status",
+    "maximumWaitSeconds": 2700,
+    "pollSeconds": 20
+  },
+  "authority": {
+    "productionAuthorized": false,
+    "externalAuthorityClaimed": false
+  },
+  "requiredAppId": 15368
+}

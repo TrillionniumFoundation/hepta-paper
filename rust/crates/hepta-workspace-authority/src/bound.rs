@@ -73,10 +73,7 @@ pub(crate) fn descriptor_path(file: &File) -> PathBuf {
     PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()))
 }
 
-pub(crate) fn verify_path_binding(
-    path: &Path,
-    descriptor: &File,
-) -> Result<(), WorkspaceError> {
+pub(crate) fn verify_path_binding(path: &Path, descriptor: &File) -> Result<(), WorkspaceError> {
     let path_metadata = fs::symlink_metadata(path).map_err(|_| WorkspaceError::EntryChanged)?;
     if path_metadata.file_type().is_symlink() {
         return Err(WorkspaceError::SymlinkForbidden);

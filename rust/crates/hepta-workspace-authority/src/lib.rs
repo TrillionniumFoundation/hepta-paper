@@ -361,12 +361,7 @@ fn copy_tree(
                 if target.kind != BoundKind::Directory {
                     return Err(WorkspaceError::EntryChanged);
                 }
-                copy_tree(
-                    &opened.file,
-                    source_device,
-                    &target.file,
-                    copied_entries,
-                )?;
+                copy_tree(&opened.file, source_device, &target.file, copied_entries)?;
                 target.file.sync_all()?;
                 verify_path_binding(&destination_path, &target.file)?;
             }
@@ -411,8 +406,7 @@ fn copy_bound_file_with_hook(
         let (copied_hash, copied_bytes) = copy_and_hash(&mut source.file, &mut output)?;
         output.sync_all()?;
         let after_copy = source.file.metadata()?;
-        if !same_snapshot(&source_before, &after_copy) || copied_bytes != source_before.size()
-        {
+        if !same_snapshot(&source_before, &after_copy) || copied_bytes != source_before.size() {
             return Err(WorkspaceError::EntryChanged);
         }
         between_copy_and_verify();

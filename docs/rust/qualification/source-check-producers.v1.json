@@ -46,8 +46,8 @@
       "context": "validate-contracts",
       "workflowId": 345551038,
       "workflowPath": ".github/workflows/rust-plan-v3-external-contracts.yml",
-      "workflowGitBlobSha": "1b8677aec21df839873f08daf3a097e254fc63d3",
-      "workflowSha256": "sha256:6e36bb80edb784097c0addd73e9e293ddd9af7b903666b9f04a7e7039d56dc16"
+      "workflowGitBlobSha": "bac02855f9848cd9ef18e32a75adb229a7ea9a1a",
+      "workflowSha256": "sha256:092ec137c8f7e2af049acd96b24a994fbcd1f87ff259f42a075b24efe5eacc35"
     },
     {
       "context": "exact-program-truth",

@@ -9,16 +9,33 @@ release, portal, or submission facts.
 
 ## 2. Required packages
 
-| Package | Authority |
-|---|---|
-| EXT-GOV-MAIN-001 | repository governance administrator plus independent reviewer |
-| EXT-HOST-CGROUP-001 | target-host operator plus independent Linux reviewer |
-| EXT-HOST-STORAGE-001 | destructive storage/host operator plus independent reviewer |
-| EXT-KEY-OWNER-001 | capability key owner plus independent reviewer |
-| EXT-CODEX-ROLE-001 | credential owner, target-host operator, and role reviewer |
-| EXT-CUTOVER-SOAK-001 | production writer/operator and independent reviewer |
-| EXT-AUTHORITY-SET-001 | release/KMS/HSM/WORM/portal/submission authorities and set reviewer |
-| LEGACY-REPLAY-001 | private archive/replay operator plus independent reviewer; no production authority |
+| Package | Gap | Active schema | Authority |
+|---|---|---|---|
+| EXT-GOV-MAIN-001 | GAP-GOV-003 | `protected-main-ruleset-evidence-v1.schema.json` | repository governance administrator plus independent reviewer |
+| EXT-HOST-CGROUP-001 | GAP-HOST-001 | `independent-linux-review-v1.schema.json` | target-host operator plus independent Linux reviewer |
+| EXT-HOST-STORAGE-001 | GAP-HOST-002 | `external-host-storage-package-v1.schema.json` | destructive storage/host operator plus independent reviewer |
+| EXT-KEY-OWNER-001 | GAP-KEY-001 | `external-key-owner-drill-v1.schema.json` | capability key owner plus independent reviewer |
+| EXT-CODEX-ROLE-001 | GAP-CODEX-001 | `authenticated-codex-role-canary-v1.schema.json` | credential owner, target-host operator, and role reviewer |
+| EXT-CUTOVER-SOAK-001 | GAP-HOST-002 | `production-cutover-soak-v1.schema.json` | production writer/operator plus independent reviewer |
+| EXT-AUTHORITY-SET-001 | GAP-REL-001 | `external-authority-set-v1.schema.json` | release/KMS/HSM/WORM/portal/submission authorities and set reviewer |
+| LEGACY-REPLAY-001 | LEGACY-REPLAY-001 | `legacy-matrix-replay-closure-v1.schema.json` | private archive/replay operator plus independent reviewer; no production authority |
+
+## 2.1 Active ingestion semantics
+
+The active Rust closure contract uses:
+
+```text
+payload semantics          strict_package_v1
+replay protection          durable_sqlite_v2
+automaticActivation        false
+productionActivation       false
+source status mutation     false
+```
+
+The package map remains machine-owned at
+`docs/rust/qualification/external-package-map.v1.json`; this document is its
+current human protocol/index projection. A schema or map change updates both in
+the same review.
 
 ## 3. Common envelope
 

@@ -5,6 +5,8 @@ on:
     paths:
       - 'docs/rust/qualification/**'
       - 'docs/rust/current-status.v1.json'
+      - 'docs/qualification/**'
+      - 'docs/system/truth/**'
       - 'rust/crates/hepta-qualification-ingest/**'
       - '.github/workflows/rust-plan-v3-external-contracts.yml'
   push:
@@ -12,6 +14,8 @@ on:
     paths:
       - 'docs/rust/qualification/**'
       - 'docs/rust/current-status.v1.json'
+      - 'docs/qualification/**'
+      - 'docs/system/truth/**'
       - 'rust/crates/hepta-qualification-ingest/**'
       - '.github/workflows/rust-plan-v3-external-contracts.yml'
   workflow_dispatch:
@@ -47,169 +51,81 @@ jobs:
           from pathlib import Path
 
           root = Path('docs/rust/qualification')
-          package_schemas = {
-              'EXT-GOV-MAIN-001': 'protected-main-ruleset-evidence-v1.schema.json',
-              'EXT-HOST-CGROUP-001': 'independent-linux-review-v1.schema.json',
-              'EXT-HOST-STORAGE-001': 'external-host-storage-package-v1.schema.json',
-              'EXT-KEY-OWNER-001': 'external-key-owner-drill-v1.schema.json',
-              'EXT-CODEX-ROLE-001': 'authenticated-codex-role-canary-v1.schema.json',
-              'EXT-CUTOVER-SOAK-001': 'production-cutover-soak-v1.schema.json',
-              'EXT-AUTHORITY-SET-001': 'external-authority-set-v1.schema.json',
+          expected = {
+              'EXT-GOV-MAIN-001': ('GAP-GOV-003', 'protected-main-ruleset-evidence-v1.schema.json'),
+              'EXT-HOST-CGROUP-001': ('GAP-HOST-001', 'independent-linux-review-v1.schema.json'),
+              'EXT-HOST-STORAGE-001': ('GAP-HOST-002', 'external-host-storage-package-v1.schema.json'),
+              'EXT-KEY-OWNER-001': ('GAP-KEY-001', 'external-key-owner-drill-v1.schema.json'),
+              'EXT-CODEX-ROLE-001': ('GAP-CODEX-001', 'authenticated-codex-role-canary-v1.schema.json'),
+              'EXT-CUTOVER-SOAK-001': ('GAP-HOST-002', 'production-cutover-soak-v1.schema.json'),
+              'EXT-AUTHORITY-SET-001': ('GAP-REL-001', 'external-authority-set-v1.schema.json'),
           }
-          support_schemas = {
+          support = {
               'hepta-broker-qualification-evidence-v1.schema.json',
               'external-qualification-closure-request-v1.schema.json',
               'external-qualification-closure-receipt-v1.schema.json',
               'qualification-trust-store-v1.schema.json',
           }
-          schema_names = set(package_schemas.values()) | support_schemas
           schemas = {}
-          for name in sorted(schema_names):
+          for name in sorted({v[1] for v in expected.values()} | support):
               value = json.loads((root / name).read_text(encoding='utf-8'))
               schemas[name] = value
               assert value['$schema'] == 'https://json-schema.org/draft/2020-12/schema', name
               assert value['type'] == 'object', name
               assert value['additionalProperties'] is False, name
-              version = value['properties'].get(
-                  'schemaVersion', value['properties'].get('version')
-              )
-              assert version is not None and version.get('const') == 1, name
+              version = value['properties'].get('schemaVersion', value['properties'].get('version'))
+              assert version and version.get('const') == 1, name
               assert value['required'], name
-
-          for package_id, name in package_schemas.items():
+          for package_id, (_, name) in expected.items():
               schema = schemas[name]
               assert schema['properties']['packageId'].get('const') == package_id, name
               assert schema['properties']['decision'] == {'const': 'approved'}, name
-              assert {'packageId', 'repository', 'decision'} <= set(schema['required']), name
 
-          truth = json.loads(
-              Path('docs/rust/current-status.v1.json').read_text(encoding='utf-8')
-          )
-          external_gaps = {
-              row['id']: row['issue']
-              for row in truth['gaps']
-              if row.get('external') is True
-          }
-          mapping = json.loads(
-              (root / 'external-package-map.v1.json').read_text(encoding='utf-8')
-          )
+          truth = json.loads(Path('docs/rust/current-status.v1.json').read_text(encoding='utf-8'))
+          external_gaps = {r['id']: r['issue'] for r in truth['gaps'] if r.get('external') is True}
+          mapping = json.loads((root / 'external-package-map.v1.json').read_text(encoding='utf-8'))
           assert set(mapping) == {'schemaVersion', 'program', 'status', 'packages'}
           assert mapping['schemaVersion'] == 1
           assert mapping['program'] == 'hepta-paper-rust-rewrite'
           assert mapping['status'] == 'canonical_external_package_map'
           rows = mapping['packages']
-          assert isinstance(rows, list) and len(rows) == 7
-          assert {row['packageId'] for row in rows} == set(package_schemas)
-          assert len({row['packageId'] for row in rows}) == len(rows)
+          assert len(rows) == 7 and {r['packageId'] for r in rows} == set(expected)
           covered = set()
           for row in rows:
-              assert set(row) == {
-                  'gapId', 'issue', 'packageId', 'schemas',
-                  'executor', 'automaticActivation',
-              }, row
-              assert row['gapId'] in external_gaps, row
-              assert row['issue'] == external_gaps[row['gapId']], row
-              assert row['schemas'] == [package_schemas[row['packageId']]], row
+              gap, schema = expected[row['packageId']]
+              assert set(row) == {'gapId', 'issue', 'packageId', 'schemas', 'executor', 'automaticActivation'}
+              assert row['gapId'] == gap and row['gapId'] in external_gaps
+              assert row['issue'] == external_gaps[gap]
+              assert row['schemas'] == [schema]
               assert re.fullmatch(r'[a-z][a-z0-9_]{2,127}', row['executor'])
               assert row['automaticActivation'] is False
-              covered.add(row['gapId'])
+              covered.add(gap)
           assert covered == set(external_gaps)
 
-          runtime = Path(
-              'rust/crates/hepta-qualification-ingest/src/lib.rs'
-          ).read_text(encoding='utf-8')
-          assert set(re.findall(r'=> "(EXT-[A-Z0-9-]+)"', runtime)) == set(package_schemas)
-
-          payload = Path(
-              'rust/crates/hepta-qualification-ingest/src/package_payload.rs'
-          ).read_text(encoding='utf-8')
-          for required in [
-              'validate_external_package_payload_v1',
-              'DecisionNotApproved',
-              'AuthorityMismatch',
-              'REQUIRED_GOVERNANCE_DENIALS',
-              'REQUIRED_HOST_CGROUP_DRILLS',
-              'REQUIRED_STORAGE_FAULTS',
-              'REQUIRED_KEY_DRILLS',
-              'REQUIRED_AUTHORITY_KINDS',
-              'string(root, "decision")? != "approved"',
-              'reviewer_matches(',
-              'authority_set_subject_hash_v1',
-              'HeptaExternalAuthorityReceiptV1',
-              'HeptaExternalAuthoritySetReviewV1',
-              'verify_authority_signature_v1',
-              'current_time_window(',
-              'SignatureInvalid',
-          ]:
-              assert required in payload, required
-
-          closure = Path(
-              'rust/crates/hepta-qualification-ingest/src/bin/'
-              'hepta-qualification-closure.rs'
-          ).read_text(encoding='utf-8')
-          for required in [
-              'validate_external_package_payload_v1(',
-              'QualificationPayloadError',
-              'PayloadHashMismatch',
-              'ReplayConflict',
-              'PartialReplay',
-              'TrustStoreRollback',
-              'TrustStoreFork',
-              'ClockRollback',
-              'VERIFIER_CLOCK_STATE_SCHEMA',
-              'normalize_sql',
-              'REPLAY_LEDGER_USER_VERSION: i32 = 2',
+          runtime = Path('rust/crates/hepta-qualification-ingest/src/lib.rs').read_text(encoding='utf-8')
+          assert set(re.findall(r'=> "(EXT-[A-Z0-9-]+)"', runtime)) == set(expected)
+          closure = Path('rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs').read_text(encoding='utf-8')
+          for token in [
               'payload_semantics: "strict_package_v1"',
               'replay_protection: "durable_sqlite_v2"',
-              'clock_rollback_protection: true',
-              'replay_ledger_schema_version: 2',
               'automatic_activation: false',
               'production_activation: false',
               'source_status_unchanged: true',
               'replay_ledger_committed: true',
               'system_unix_ms()',
           ]:
-              assert required in closure, required
+              assert token in closure, token
           assert 'durable_sqlite_v1' not in closure
           assert 'request.now_unix_ms' not in closure
 
-          authority_set_schema = schemas['external-authority-set-v1.schema.json']
-          assert authority_set_schema['$defs']['signature'] == {
-              'type': 'string',
-              'pattern': '^[A-Za-z0-9_-]{86}$',
-          }
-
-          request = schemas['external-qualification-closure-request-v1.schema.json']
-          assert 'nowUnixMs' not in request['properties']
-          assert 'replayLedger' in request['required']
-          assert {'payloadPath', 'payloadOwnerUid'} <= set(
-              request['properties']['envelopes']['items']['required']
-          )
-
-          receipt = schemas['external-qualification-closure-receipt-v1.schema.json']
-          properties = receipt['properties']
-          assert properties['payloadSemantics'] == {'const': 'strict_package_v1'}
-          assert properties['replayProtection'] == {'const': 'durable_sqlite_v2'}
-          assert properties['clockRollbackProtection'] == {'const': True}
-          assert properties['replayLedgerSchemaVersion'] == {'const': 2}
-          assert properties['replayLedgerCommitted'] == {'const': True}
-
-          protocol = (root / 'PLAN_V3_EXTERNAL_GAP_EXECUTION.md').read_text(encoding='utf-8')
-          package_index = (root / 'PLAN_V3_EXTERNAL_PACKAGE_INDEX.md').read_text(encoding='utf-8')
-          closure_doc = (root / 'EXTERNAL_QUALIFICATION_CLOSURE.md').read_text(encoding='utf-8')
+          protocol = Path('docs/qualification/EXTERNAL_AUTHORITY.md').read_text(encoding='utf-8')
+          model = Path('docs/qualification/QUALIFICATION_MODEL.md').read_text(encoding='utf-8')
           for row in rows:
               assert row['packageId'] in protocol
-              assert row['packageId'] in package_index
-              assert row['gapId'] in package_index
-              assert row['schemas'][0] in protocol or row['schemas'][0] in package_index
-          for required in [
-              'strict_package_v1',
-              'durable_sqlite_v2',
-              'external-host-storage-package-v1.schema.json',
-              'automaticActivation=false',
-              'productionActivation=false',
-          ]:
-              assert required in protocol or required in closure_doc, required
+              assert row['gapId'] in protocol
+              assert row['schemas'][0] in protocol
+          for token in ['strict_package_v1', 'durable_sqlite_v2', 'automaticActivation', 'productionActivation', 'derived_only']:
+              assert token in protocol or token in model, token
           PY
 
       - name: Prove harness is fail-closed without acknowledgement

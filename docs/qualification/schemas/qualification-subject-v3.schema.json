@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.org/schemas/qualification-subject-v3.schema.json",
+  "title": "QualificationSubjectV3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "repository",
+    "pullRequestNumber",
+    "base",
+    "head",
+    "testedMerge",
+    "definitionSetSha256",
+    "eligibleRunSetSha256",
+    "producerHistoryWatermark",
+    "selectedRunSetSha256",
+    "artifactSetSha256",
+    "snapshotIdentity"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 3 },
+    "kind": { "const": "QualificationSubjectV3" },
+    "repository": { "$ref": "#/$defs/repository" },
+    "pullRequestNumber": { "type": "integer", "minimum": 1 },
+    "base": { "$ref": "#/$defs/refSubject" },
+    "head": { "$ref": "#/$defs/refSubject" },
+    "testedMerge": { "$ref": "#/$defs/gitObject" },
+    "definitionSetSha256": { "$ref": "#/$defs/sha256" },
+    "eligibleRunSetSha256": { "$ref": "#/$defs/sha256" },
+    "producerHistoryWatermark": { "type": "string", "format": "date-time" },
+    "selectedRunSetSha256": { "$ref": "#/$defs/sha256" },
+    "artifactSetSha256": { "$ref": "#/$defs/sha256" },
+    "snapshotIdentity": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fullName"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "fullName": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }
+      }
+    },
+    "gitObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree"],
+      "properties": {
+        "commit": { "$ref": "#/$defs/gitSha" },
+        "tree": { "$ref": "#/$defs/gitSha" }
+      }
+    },
+    "refSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryId", "repository", "ref", "commit", "tree"],
+      "properties": {
+        "repositoryId": { "type": "integer", "minimum": 1 },
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "commit": { "$ref": "#/$defs/gitSha" },
+        "tree": { "$ref": "#/$defs/gitSha" }
+      }
+    }
+  }
+}

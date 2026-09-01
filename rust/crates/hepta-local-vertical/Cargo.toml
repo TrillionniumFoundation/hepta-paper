@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64ct.workspace = true
+ed25519-dalek.workspace = true
 hepta-campaign-writer = { version = "=0.1.0", path = "../hepta-campaign-writer" }
 hepta-legacy-compatibility = { version = "=0.1.0", path = "../hepta-legacy-compatibility" }
 hepta-readonly-control = { version = "=0.1.0", path = "../hepta-readonly-control" }

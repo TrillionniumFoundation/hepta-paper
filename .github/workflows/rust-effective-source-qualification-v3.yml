@@ -1,0 +1,189 @@
+name: rust-effective-source-qualification-v3
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit
+        required: true
+        type: string
+      candidate_tree:
+        description: Optional expected candidate tree
+        required: false
+        type: string
+      pull_request_number:
+        description: Pull request containing the exact candidate
+        required: true
+        type: number
+      head_branch:
+        description: Exact pull-request head branch
+        required: true
+        type: string
+      base_ref:
+        description: Exact pull-request base ref
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+
+concurrency:
+  group: rust-effective-source-v3-${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+  cancel-in-progress: true
+
+jobs:
+  derive-effective-source-status:
+    name: derive-effective-source-status-v3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+      EXPECTED_TREE_SHA: ${{ inputs.candidate_tree || '' }}
+      EXPECTED_PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request_number }}
+      EXPECTED_HEAD_BRANCH: ${{ github.event.pull_request.head.ref || inputs.head_branch }}
+      EXPECTED_BASE_REF: ${{ github.event.pull_request.base.ref || inputs.base_ref }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Establish exact immutable candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-effective-source-v3"
+          install -d -m 0700 "$evidence_root/raw"
+          observed_head="$(git rev-parse HEAD)"
+          observed_tree="$(git rev-parse HEAD^{tree})"
+          test "$observed_head" = "$EXPECTED_HEAD_SHA"
+          if [ -n "$EXPECTED_TREE_SHA" ]; then
+            test "$observed_tree" = "$EXPECTED_TREE_SHA"
+          fi
+          printf '%s\n' "$observed_tree" > "$evidence_root/tree.txt"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          EVIDENCE_OUTPUT="$evidence_root/preflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+
+      - name: Validate V3 source qualification implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-effective-source-v3"
+          PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile \
+            docs/rust/tools/validate-program-truth.py \
+            docs/rust/tools/strict_json_schema.py \
+            docs/rust/tools/collect-required-checks-v3.py \
+            docs/rust/tools/derive-effective-status-v2.py \
+            docs/rust/tools/verify-effective-status-current-v2.py \
+            docs/rust/tools/test-plan-v4-qualification.py \
+            docs/rust/tools/test-qualification-subject-v3.py
+          python3 docs/rust/tools/validate-program-truth.py \
+            | tee "$evidence_root/static-validation.json"
+          python3 docs/rust/tools/test-plan-v4-qualification.py \
+            2>&1 | tee "$evidence_root/qualification-v1-selftest.log"
+          python3 docs/rust/tools/test-qualification-subject-v3.py \
+            2>&1 | tee "$evidence_root/qualification-v3-selftest.log"
+
+      - name: Await producer-authenticated Qualification Subject V3 matrix
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-effective-source-v3"
+          deadline=$((SECONDS + 2700))
+          while true; do
+            rm -f "$evidence_root/collector.stderr"
+            if python3 docs/rust/tools/collect-required-checks-v3.py \
+                --repository "$GITHUB_REPOSITORY" \
+                --commit "$EXPECTED_HEAD_SHA" \
+                --tree "$(cat "$evidence_root/tree.txt")" \
+                --head-branch "$EXPECTED_HEAD_BRANCH" \
+                --base-ref "$EXPECTED_BASE_REF" \
+                --pull-request "$EXPECTED_PR_NUMBER" \
+                --token "$GH_TOKEN" \
+                --api-url "$GITHUB_API_URL" \
+                --raw-output-dir "$evidence_root/raw" \
+                --output "$evidence_root/check-evidence.v3.json" \
+                2> >(tee "$evidence_root/collector.stderr" >&2); then
+              break
+            fi
+            if grep -Eq \
+                'eligible_producer_attempt_failed|required_context_.*collision|subject_mismatch|definition_drift|not accepted: .*invalid' \
+                "$evidence_root/collector.stderr"; then
+              exit 1
+            fi
+            if (( SECONDS >= deadline )); then
+              echo 'Qualification Subject V3 producer matrix timed out' >&2
+              exit 1
+            fi
+            sleep 20
+          done
+
+      - name: Derive and fully validate exact-subject effective source status
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-effective-source-v3"
+          python3 docs/rust/tools/derive-effective-status-v2.py \
+            --check-runs "$evidence_root/check-evidence.v3.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$EXPECTED_HEAD_SHA" \
+            --tree "$(cat "$evidence_root/tree.txt")" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$evidence_root/effective-status.v2.json" \
+            | tee "$evidence_root/derivation.json"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/qualification/schemas/qualification-subject-v3.schema.json \
+            --instance <(python3 -c \
+              'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["qualificationSubject"]))' \
+              "$evidence_root/check-evidence.v3.json") \
+            | tee "$evidence_root/subject-schema-validation.json"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/rust/qualification/required-check-evidence-v3.schema.json \
+            --instance "$evidence_root/check-evidence.v3.json" \
+            | tee "$evidence_root/check-schema-validation.json"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/rust/qualification/effective-status-v2.schema.json \
+            --instance "$evidence_root/effective-status.v2.json" \
+            | tee "$evidence_root/effective-schema-validation.json"
+          python3 docs/rust/tools/verify-effective-status-current-v2.py \
+            --artifact "$evidence_root/effective-status.v2.json" \
+            --current-check-runs "$evidence_root/check-evidence.v3.json" \
+            | tee "$evidence_root/live-revalidation.json"
+          sha256sum \
+            "$evidence_root/check-evidence.v3.json" \
+            "$evidence_root/effective-status.v2.json" \
+            > "$evidence_root/sha256sums.txt"
+
+      - name: Prove exact source identity after qualification
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-effective-source-v3"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$(cat "$evidence_root/tree.txt")"
+          EVIDENCE_OUTPUT="$evidence_root/postflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: rust-effective-source-v3-${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+          path: ${{ runner.temp }}/rust-effective-source-v3
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

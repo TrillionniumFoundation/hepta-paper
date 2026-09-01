@@ -1,0 +1,204 @@
+name: rust-source-qualification-revalidation-v3
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit
+        required: true
+        type: string
+      pull_request_number:
+        description: Pull request containing the candidate
+        required: true
+        type: number
+      head_branch:
+        description: Exact pull-request head branch
+        required: true
+        type: string
+      base_ref:
+        description: Exact pull-request base ref
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+
+concurrency:
+  group: rust-source-current-v3-${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+  cancel-in-progress: true
+
+jobs:
+  source-qualification-current:
+    name: source-qualification-current-v3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+      EXPECTED_PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request_number }}
+      EXPECTED_HEAD_BRANCH: ${{ github.event.pull_request.head.ref || inputs.head_branch }}
+      EXPECTED_BASE_REF: ${{ github.event.pull_request.base.ref || inputs.base_ref }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Establish exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-source-current-v3"
+          install -d -m 0700 "$evidence_root/raw" "$evidence_root/artifact"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git rev-parse HEAD^{tree} > "$evidence_root/tree.txt"
+          EVIDENCE_OUTPUT="$evidence_root/preflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Await and download the exact V3 effective artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-source-current-v3"
+          python3 - "$GITHUB_API_URL" "$GITHUB_REPOSITORY" "$EXPECTED_HEAD_SHA" \
+            "$GH_TOKEN" "$evidence_root/artifact.zip" <<'PY'
+          import json
+          import pathlib
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          api, repository, head, token, output = sys.argv[1:]
+          output_path = pathlib.Path(output)
+          deadline = time.monotonic() + 3300
+
+          def get(url, accept='application/vnd.github+json'):
+              request = urllib.request.Request(url, headers={
+                  'Accept': accept,
+                  'Authorization': f'Bearer {token}',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'User-Agent': 'hepta-source-current-v3',
+              })
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return response.read(), response.headers.get_content_type()
+
+          while True:
+              body, _ = get(f'{api}/repos/{repository}/actions/runs?head_sha={head}&event=pull_request&per_page=100')
+              runs = json.loads(body).get('workflow_runs', [])
+              candidates = [row for row in runs if row.get('path') == '.github/workflows/rust-effective-source-qualification-v3.yml']
+              if candidates:
+                  selected = max(candidates, key=lambda row: (row.get('run_attempt', 1), row.get('id', 0)))
+                  if selected.get('status') == 'completed' and selected.get('conclusion') != 'success':
+                      raise SystemExit(f"effective_v3_workflow_failed:{selected.get('id')}:{selected.get('conclusion')}")
+                  if selected.get('status') == 'completed':
+                      run_id = selected['id']
+                      artifact_body, _ = get(f'{api}/repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100')
+                      artifacts = json.loads(artifact_body).get('artifacts', [])
+                      named = [row for row in artifacts if row.get('name') == f'rust-effective-source-v3-{head}' and not row.get('expired')]
+                      if named:
+                          archive, _ = get(named[0]['archive_download_url'], 'application/vnd.github+json')
+                          output_path.write_bytes(archive)
+                          print(json.dumps({'status': 'effective_v3_artifact_downloaded', 'runId': run_id, 'artifactId': named[0]['id']}))
+                          break
+              if time.monotonic() >= deadline:
+                  raise SystemExit('effective_v3_artifact_timeout')
+              time.sleep(20)
+          PY
+          unzip -q "$evidence_root/artifact.zip" -d "$evidence_root/artifact"
+          artifact="$(find "$evidence_root/artifact" -type f -name effective-status.v2.json -print -quit)"
+          bound_checks="$(find "$evidence_root/artifact" -type f -name check-evidence.v3.json -print -quit)"
+          test -n "$artifact"
+          test -n "$bound_checks"
+          printf '%s\n' "$artifact" > "$evidence_root/artifact-path.txt"
+          printf '%s\n' "$bound_checks" > "$evidence_root/bound-check-path.txt"
+
+      - name: Reconstruct the current Qualification Subject V3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-source-current-v3"
+          deadline=$((SECONDS + 2700))
+          while true; do
+            rm -f "$evidence_root/collector.stderr"
+            if python3 docs/rust/tools/collect-required-checks-v3.py \
+                --repository "$GITHUB_REPOSITORY" \
+                --commit "$EXPECTED_HEAD_SHA" \
+                --tree "$(cat "$evidence_root/tree.txt")" \
+                --head-branch "$EXPECTED_HEAD_BRANCH" \
+                --base-ref "$EXPECTED_BASE_REF" \
+                --pull-request "$EXPECTED_PR_NUMBER" \
+                --token "$GH_TOKEN" \
+                --api-url "$GITHUB_API_URL" \
+                --raw-output-dir "$evidence_root/raw" \
+                --output "$evidence_root/current-check-evidence.v3.json" \
+                2> >(tee "$evidence_root/collector.stderr" >&2); then
+              break
+            fi
+            if grep -Eq \
+                'eligible_producer_attempt_failed|required_context_.*collision|subject_mismatch|definition_drift|not accepted: .*invalid' \
+                "$evidence_root/collector.stderr"; then
+              exit 1
+            fi
+            if (( SECONDS >= deadline )); then
+              echo 'current Qualification Subject V3 timed out' >&2
+              exit 1
+            fi
+            sleep 20
+          done
+
+      - name: Verify artifact currentness against the complete live subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-source-current-v3"
+          artifact="$(cat "$evidence_root/artifact-path.txt")"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/rust/qualification/effective-status-v2.schema.json \
+            --instance "$artifact" \
+            | tee "$evidence_root/effective-schema-validation.json"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/rust/qualification/required-check-evidence-v3.schema.json \
+            --instance "$evidence_root/current-check-evidence.v3.json" \
+            | tee "$evidence_root/current-check-schema-validation.json"
+          python3 docs/rust/tools/verify-effective-status-current-v2.py \
+            --artifact "$artifact" \
+            --current-check-runs "$evidence_root/current-check-evidence.v3.json" \
+            | tee "$evidence_root/live-revalidation.json"
+          sha256sum \
+            "$artifact" \
+            "$evidence_root/current-check-evidence.v3.json" \
+            > "$evidence_root/sha256sums.txt"
+
+      - name: Prove exact source identity after revalidation
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rust-source-current-v3"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$(cat "$evidence_root/tree.txt")"
+          EVIDENCE_OUTPUT="$evidence_root/postflight.json" \
+            python3 docs/rust/tools/write-exact-head-evidence.py
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: rust-source-current-v3-${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+          path: ${{ runner.temp }}/rust-source-current-v3
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

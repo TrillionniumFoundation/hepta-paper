@@ -1,18 +1,23 @@
-# hepta-paper Rust control-plane rewrite master plan
+# hepta-paper Rust control-plane rewrite and authority migration master plan
 
-Status: **plan v3.0 — invariant-first, evidence-tiered, Codex-first**
-Canonical status: [`CURRENT_STATUS.md`](CURRENT_STATUS.md)
+Status: **plan v4.1 — producer-authenticated, capability-specific, live-revalidated**
+Canonical static status: [`CURRENT_STATUS.md`](CURRENT_STATUS.md)
 Machine truth: [`current-status.v1.json`](current-status.v1.json)
+Qualification rules: [`QUALIFICATION_STATE_MACHINE.md`](QUALIFICATION_STATE_MACHINE.md)
 
 ## 1. Mission
 
 Replace first-party production control-plane authority with Rust without
 changing historical meaning, adding a second writer, or transferring campaign,
 scientific, release or submission authority into the model-execution domain.
-The rewrite is complete only after capability-by-capability cutover evidence is
-accepted. Source availability alone is never a production activation event.
 
-Codex is the only first-party model backend in the target architecture.
+This is a control-plane and authority migration, not a blanket rewrite of every
+scientific/data-plane implementation. The migration is complete only after
+capability-by-capability cutover evidence is accepted. Source availability,
+successful unit tests or entry into `main` is never a production activation
+event.
+
+Codex is the only first-party model backend in the target Rust architecture.
 OpenClaw remains historical Node behavior and is not a Rust dependency, feature,
 profile or compatibility target.
 
@@ -27,29 +32,50 @@ profile or compatibility target.
    principals; campaign authority is absent from the Codex broker.
 5. Author, reviewer, formal reviewer and repairer are separated by role,
    principal, home, workspace, socket, journal and capability audience.
-6. Actual filesystem change, not agent self-report, is the mutation truth.
+6. Actual filesystem change, not agent self-report, is mutation truth.
 7. Language migration never upgrades evidence or scientific assurance.
 8. Every cutover has a tested rollback and a named owning authority.
-9. Production claims are tied to exact commit, tree, binary, configuration,
-   host and external-authority evidence.
-10. No missing external authority is replaced by a local fixture or self-signed
-    record.
+9. Production claims bind exact commit, tree, binary, configuration, host and
+   external-authority evidence.
+10. No missing external authority is replaced by a local fixture, repository
+    administrator or self-signed record.
+11. A committed source document never self-promotes its own qualification.
+12. One immutable release-candidate branch and one integration PR are the only
+    accepted convergence surface.
 
-## 3. Status and evidence model
+## 3. Static and effective status
 
-Capability status and evidence tier are independent dimensions. The allowed
-status vocabulary is defined in `CURRENT_STATUS.md`. Evidence tiers are:
+Plan v4 separates implementation from qualification.
 
-| Tier | What it proves | What it never proves |
-|---|---|---|
-| design | reviewed contract and acceptance criteria | executable behavior |
-| source | exact source passed deterministic gates | installed host or real credential facts |
-| hosted installed | disposable hosted runner exercised real UIDs/files | production host ownership/custody |
-| target host | named target host passed destructive drills | external key/provider authority |
-| external authority | separately controlled owner issued evidence | unrelated capabilities |
+- `source_implemented` is committed static truth.
+- `source_qualified` is an exact-head result derived from a non-empty complete
+  workflow matrix.
+- `blocked_external` means the repository cannot manufacture the required fact.
 
-A milestone gate is green only when every required item has the minimum status
-and evidence tier specified by that gate.
+The exact promotion, invalidation and demotion rules are normative in
+`QUALIFICATION_STATE_MACHINE.md`.
+
+Every effective source result must bind:
+
+```text
+repository
+pull request
+commit
+tree
+static machine-truth digest
+required check contexts
+producer workflow IDs, paths, Git blobs and SHA-256 digests
+pull-request event/base/head binding
+latest workflow run/attempt, check-suite, job and non-empty step identities
+capability-to-context evidence mapping
+normalized check snapshot identity and artifact digests
+non-authority statement
+```
+
+A head change, producer-definition drift, missing or colliding job, skipped job,
+dirty postflight, newer workflow run/attempt, stale review or newly accepted P0
+defect invalidates the retained result. A newer successful producer run requires
+a fresh derivation; a newer non-successful producer run demotes immediately.
 
 ## 4. Release-blocking invariants
 
@@ -71,9 +97,16 @@ and evidence tier specified by that gate.
 | INV-014 | Rust/OpenClaw runtime dependency count remains zero. |
 | INV-015 | Every external effect has durable intent, outcome and reconciliation. |
 | INV-016 | Production child containment survives `setsid`, double fork and descendant escape attempts. |
-| INV-017 | A listener configuration has at least one proven authorized principal and rejects every non-authorized principal. |
-| INV-018 | Exact-head evidence binds source commit, tree, tested ref, workflow and produced binaries. |
+| INV-017 | A listener configuration proves an intended authorized principal and rejects non-authorized principals. |
+| INV-018 | Exact-head evidence binds source commit, tree, tested ref, workflows and produced artifacts. |
 | INV-019 | `main` admits changes only through a no-bypass protected merge boundary with current-head checks and independent review. |
+| INV-020 | Zero-job, skipped-required-job and `action_required` runs never count as qualification. |
+| INV-021 | Qualification automatically demotes when its exact-head or evidence preconditions cease to hold. |
+| INV-022 | A writer-cutover permit binds exact runtime subject, database preimage and first writer lease. |
+| INV-023 | Confidential legacy replay evidence cannot be replaced by the public minimal fixture. |
+| INV-024 | A required check is accepted only from its manifest-bound workflow definition and exact PR run. |
+| INV-025 | No capability is promoted without a non-empty capability-specific evidence mapping. |
+| INV-026 | Any producer-run mutation invalidates a retained effective artifact until live revalidation succeeds. |
 
 ## 5. Target topology
 
@@ -103,16 +136,29 @@ campaign integration fenced by revision + lease generation
 release/submission ports owned by separate external authorities
 ```
 
+The broker and model domains never acquire campaign writer, release, KMS/HSM,
+WORM or submission credentials.
+
 ## 6. Workstreams
 
-### FND — contracts and protocol
+### FND — contracts and program truth
 
 Versioned request/receipt types, canonical digests, strict JSONL, operation
-state machine, fake executor, pinned toolchain, supply-chain policy and
-machine-compared program truth.
+state machine, fake executor, pinned toolchain, supply-chain policy, static
+machine truth and effective exact-head qualification.
 
-Repository-local exit: exact-head format, lint, tests, rustdoc, workflow syntax,
-dependency policy and SBOM gates are green with a committed lock.
+Repository-local exit:
+
+- exact-head format, lint, tests and rustdoc pass;
+- dependency policy and SBOM are retained;
+- human status/backlog/parity projections match machine truth;
+- the `effective-status.v1.json` derivation authenticates workflow producers and
+  rejects missing, colliding, zero-job, zero-step, skipped and stale check sets;
+- every promotable row has a non-empty capability-specific context mapping;
+- the complete normalized check evidence and effective artifact pass their
+  committed JSON Schemas;
+- `source-qualification-current` rejects any producer-run mutation until a fresh
+  artifact is derived.
 
 ### BRK — broker, runtime and durable launch
 
@@ -121,17 +167,26 @@ admission, broker SQLite, durable pre-exec gate, containment, recovery and
 prepared acknowledgement.
 
 Repository-local exit: source and hosted-installed fixtures prove the protocol,
-listener admission, durable gate and cgroup-v2 source contract. Production exit:
-issue #17 supplies independent target-host/service evidence, issue #14 supplies
-key-owner evidence and issue #21 supplies authenticated Codex canaries.
+listener admission, durable gate and cgroup-v2 source contract.
+
+Production exit: issue #17 supplies independent target-host/service evidence,
+issue #14 supplies key-owner evidence and issue #21 supplies authenticated
+Codex canaries.
 
 ### WS — workspace and mutation authority
 
-Descriptor-relative root opening, COW attempts, deterministic inventory,
-versioned role mutation policy, prepared workspace results and orphan recovery.
+Descriptor-bound root opening, COW attempts, deterministic inventory, versioned
+role mutation policy, prepared workspace results and orphan recovery.
 
-Repository-local exit: canonical source remains untouched before fenced
-integration and injected source-level crashes yield a classified workspace.
+Repository-local exit:
+
+- every traversed object remains descriptor bound;
+- symbolic links, regular-file hard links, special nodes, nested devices and
+  over-cap trees fail closed;
+- regular files are hashed twice and copied bytes are reverified;
+- canonical source remains untouched before fenced integration;
+- injected races/crashes yield a classified residue.
+
 Target-host filesystem and storage behavior remains part of issues #17 and #12.
 
 ### CMP — compatibility kernel
@@ -139,8 +194,11 @@ Target-host filesystem and storage behavior remains part of issues #17 and #12.
 Legacy stable JSON, historical hash corpus, Node oracle, Rust verifier,
 status/error registry and deterministic differentials.
 
-Repository-local exit: zero unexplained byte/hash/authority drift in the frozen
-source corpus.
+Repository-local exit: zero unexplained byte/hash/authority drift in the public
+frozen corpus.
+
+Full migration exit: issue #28 supplies the retained secret-gated 263-file
+hosted replay receipt and independent acknowledgement.
 
 ### RO — read-only control plane
 
@@ -148,7 +206,7 @@ Immutable schema-1..25 SQLite inspection, campaign/artifact/ledger decoding and
 normalized parity bundles.
 
 Repository-local exit: no write flags, WAL creation or sidecar mutation in the
-supported source fixture matrix.
+supported fixture matrix.
 
 ### MVP — local research vertical slice
 
@@ -156,20 +214,25 @@ One fake-provider author/reviewer loop, prepared results, COW workspaces,
 read-only review and replay-safe integration.
 
 Repository-local exit: crash/cancel/retry does not duplicate fake-provider work
-or pollute canonical source. Production/provider exit: issue #21 proves separate
-authenticated author and reviewer principals against the qualified Codex
-executable; a fake provider can never satisfy that gate.
+or pollute canonical source. A fake provider can never satisfy issue #21.
 
 ### DB — persistent Rust writer
 
 Writer ownership, claims, leases, generation fencing, prepared integration,
 budgets, resource reservations, backup/restore and deterministic simulation.
 
-Repository-local exit: Node/Rust dual write is mechanically fenced, prepared
-integration is replay-idempotent, backup/restore source drills pass and the 10k
-simulation has zero stale or duplicate commit. Production exit: issue #12 runs
-the real 72-hour topology soak, reboot, disk-full and corruption drills on the
-separately controlled target storage.
+Repository-local exit:
+
+- public raw writer-open authority is absent;
+- cutover requires exact-subject Ed25519 verification;
+- database preimage and first writer lease are bound;
+- Node/Rust dual write is mechanically fenced;
+- prepared integration is replay-idempotent;
+- backup/restore source drills pass;
+- the 10k deterministic simulation has zero stale or duplicate commit.
+
+Production exit: issue #12 supplies the real 72-hour topology soak, reboot,
+disk-full and corruption drills.
 
 ### EVD — scientific evidence
 
@@ -186,26 +249,30 @@ KMS/HSM command ports, immutable deployment, WORM custody, backup authority,
 release packages, submission permits and dispatch.
 
 Repository-local exit: narrow receipt-verifying ports and denial boundaries pass
-source tests. Production exit: issue #22 supplies real KMS/HSM, WORM, release,
-portal and submission receipts while model principals retain zero external
-authority secret.
+source tests.
+
+Production exit: issue #22 supplies real KMS/HSM, WORM, release, portal and
+submission receipts while model principals retain zero external-authority
+secret.
 
 ### CUT — shadow, cutover and retirement
 
 Read-only shadow, isolated dual execution, capability writer cutover, rollback,
-canary and Node authority retirement.
+canary and Node-authority retirement.
 
 Repository-local exit: phase transitions, writer fencing, receipt verification
-and rollback contracts pass. Production exit: all prerequisite target-host and
-external-authority issues are accepted, followed by the required 30-day shadow,
-14-day canary and final retirement evidence.
+and rollback contracts pass.
+
+Production exit: all prerequisite target-host and external-authority issues are
+accepted, followed by the required shadow, canary and final retirement evidence.
 
 ## 7. Milestone gates
 
 | Milestone | Required outcome | Minimum evidence |
 |---|---|---|
-| M0 Program truth | baseline, entrypoints, defects, TCB, plan and protected checks classified | source |
-| M1 Compatibility kernel | historical byte/hash/authority parity | source |
+| M0 Program truth | static/effective truth, baseline, entrypoints, defects and TCB classified | source |
+| M1 Compatibility kernel | public historical byte/hash/authority parity | source |
+| M1X Full legacy replay | 263-file confidential replay and independent acknowledgement | hosted installed + independent review |
 | M2 Broker foundation | strict protocol, journal, launch, access and containment | target host for production use |
 | M3 Read-only control plane | schema-25 and artifact/ledger parity, no writes | source |
 | M4 Local research MVP | author/build/reviewer/revise package, no release | hosted installed + qualified provider |
@@ -216,54 +283,58 @@ external-authority issues are accepted, followed by the required 30-day shadow,
 | M9 Cutover | shadow, canary, rollback and ownership migration | target host + external authority |
 | M10 Retirement | no active first-party Node writer | release evidence |
 
-Dates are forecasts, never gate substitutes. A milestone does not pass because
-its calendar window elapsed.
+Dates are forecasts, never gate substitutes.
 
-## 8. Current closure sequence
+## 8. Single-RC convergence sequence
 
-The repository-local source packages formerly listed as the next sequence are
-implemented and represented in the canonical backlog as `source_qualified`:
-program truth, listener access, exact-head evidence, cgroup-v2 containment,
-descriptor-bound workspaces, legacy compatibility, schema-25 read-only
-inspection, the fake-provider local loop and the fenced campaign writer.
+1. Use only `codex/rust-plan-v4-rc1-20260831` for remaining repository-local
+   convergence.
+2. Integrate the descriptor-bound workspace and signed writer-cutover P0 patch.
+3. Replace self-asserted qualification with static/effective machine truth.
+4. Run the complete producer-authenticated context set on the exact unchanged RC
+   head.
+5. Derive the capability-specific artifact, validate it against the complete
+   committed schema, and pass live currentness revalidation.
+6. Retain producer definitions, run/job/step snapshot identity, exact-head/tree
+   and supply-chain artifacts.
+7. Obtain independent latest-push review.
+8. Integrate the RC into the sole product branch and close duplicate P0 PRs.
+9. Refresh the product integration PR and repeat its entire exact-head matrix.
+10. Complete governance issue #25 and legacy replay issue #28.
+11. Execute issues #17, #12, #14, #21 and #22 in dependency order.
+12. Perform production shadow, canary, rollback, writer cutover and Node
+    retirement only after every prerequisite is accepted.
 
-The remaining dependency order is now external and operational:
-
-1. Keep the exact-head Rust, Node, workflow-lint, supply-chain and canonical-truth matrix green.
-2. `GAP-GOV-003` / issue #25 — activate and independently verify the no-bypass protected-`main` ruleset.
-3. `GAP-HOST-001` / issue #17 — independent target-host listener, gate, schema, cgroup and service-manager qualification.
-4. `GAP-HOST-002` / issue #12 — destructive WAL, reboot, disk-full, corruption and 72-hour topology soak.
-5. `GAP-KEY-001` / issue #14 — independently owned key rotation, revocation, rollback and compromise drills.
-6. `GAP-CODEX-001` / issue #21 — separate authenticated author/reviewer homes and live Codex canaries.
-7. `GAP-REL-001` / issue #22 — real KMS/HSM, WORM, release, portal and submission receipts.
-8. After all prerequisite evidence is accepted, execute production shadow, canary, rollback, writer cutover and Node-authority retirement.
-
-No package or issue may bypass an unmet dependency by relabeling a fixture,
+No branch, package or issue may bypass a dependency by relabelling a fixture,
 GitHub-hosted runner, self-signed record or implementation-author approval as
-independent target-host or external-authority evidence.
+target-host or external-authority evidence.
 
 ## 9. Merge contract
 
 Every PR must state:
 
-- exact base/head commit and tree;
-- stable backlog and gap IDs;
-- invariants implemented;
-- authority gained and authority explicitly retained elsewhere;
-- deterministic, adversarial, crash and differential tests;
-- status/evidence tier changes;
-- rollback and recovery behavior;
-- documentation and operator impact;
-- remaining blockers and their true owner.
+```text
+exact base/head commit and tree
+stable backlog, parity, invariant and blocker IDs
+authority gained and authority explicitly retained elsewhere
+deterministic, adversarial, crash and differential tests
+static-status and effective-evidence impact
+rollback and recovery behavior
+documentation and operator impact
+remaining blockers and their true owner
+```
 
-Required checks must run on the exact head tree. Before integration, `main` must
-have the active no-bypass ruleset and denial evidence required by issue #25. The
-implementation author does not independently approve repository-governance,
-target-host or external-authority evidence.
+Required checks run on the exact head. A previous head's result is never reused.
+A PR with zero jobs, a missing context, an unsigned direct update to protected
+`main`, unresolved conversations or an active request-changes decision remains
+blocked.
+
+The implementation author does not independently approve repository governance,
+target-host, credential, key-custody, release or submission evidence.
 
 ## 10. Quality system
 
-Mandatory source layers:
+Mandatory repository-local layers:
 
 ```text
 actionlint over every GitHub Actions workflow
@@ -272,29 +343,48 @@ clippy --all-targets --all-features -D warnings
 workspace tests
 rustdoc -D warnings
 protocol golden vectors
-property tests
-fuzz corpus
-SQLite transaction/SIGKILL tests
+property/adversarial corpora
+SQLite transaction and recovery tests
 filesystem race and crash tests
 Node/Rust deterministic differentials
 secret/redaction scans
 cargo-deny advisory/license/source/version policy
-CycloneDX 1.5 all-feature/all-target SBOM with clean postflight
-exact-head/tree and canonical-document parity evidence
+CycloneDX 1.5 all-feature/all-target SBOM
+exact-head/tree and clean-worktree evidence
+static/backlog/parity/package semantic validation
+non-empty required check-run aggregation
 ```
 
-Production layers additionally require real principal topology, cgroup/service
-containment, reboot and storage drills, independently controlled credentials,
-long-lived signed evidence and an accepted rollback exercise.
+Production layers additionally require real principal topology,
+cgroup/service containment, reboot and storage drills, independently controlled
+credentials, long-lived signed evidence and an accepted rollback exercise.
 
-## 11. Stop conditions
+## 11. External blockers
 
-Development stops and the package remains blocked when any of these occurs:
+The repository may finish the schemas, collectors, verifiers and fail-closed
+activation boundaries, but it cannot self-create:
 
-- base or canonical truth changes during implementation;
-- a required external authority is unavailable;
-- an identity mismatch would require signaling an unproven PID/process group;
-- evidence cannot bind the exact source/tree/binary/configuration;
+- the issue #25 independent governance denial package;
+- the issue #28 private secret-bearing hosted legacy replay receipt;
+- issue #17 target-host ownership and Linux review;
+- issue #12 destructive storage/reboot/corruption/72-hour evidence;
+- issue #14 independently owned key lifecycle evidence;
+- issue #21 real credential custody and authenticated Codex canaries;
+- issue #22 KMS/HSM, WORM, release, portal and submission authority receipts.
+
+These remain blocked until their real owners execute and independently attest
+the defined packages.
+
+## 12. Stop conditions
+
+Development or promotion stops when:
+
+- the candidate head or canonical machine truth changes during qualification;
+- a required context is absent, skipped or non-successful;
+- source/tree/binary/configuration evidence cannot be bound;
+- an identity mismatch would require signaling an unproven process;
 - a proposed change creates Node/Rust dual-write authority;
-- a failure residue cannot be classified into one recovery state;
-- a test or document would overstate the evidence tier.
+- a failure residue has no deterministic recovery state;
+- a required external authority is unavailable;
+- a test or document would overstate the evidence tier;
+- an external fact would have to be fabricated to claim closure.

@@ -2,12 +2,19 @@ use std::{
     collections::BTreeSet,
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
+    path::Path,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::{Signer, SigningKey};
 use hepta_campaign_writer::{
-    CampaignWriterPolicyV1, CampaignWriterStoreV1, NodeStatusV1, WriterLeaseV1,
+    CampaignWriterPolicyV1, CampaignWriterStoreV1, NodeStatusV1, WriterCutoverAuthorizationV1,
+    WriterCutoverPolicyV1, WriterCutoverSubjectV1, WriterCutoverTrustStoreV1, WriterLeaseV1,
+    inspect_writer_database_preimage_v1, verify_writer_cutover_authorization_v1,
+    writer_cutover_signing_bytes_v1, writer_database_preimage_hash_v1,
+    writer_lease_activation_hash_v1,
 };
 use hepta_legacy_compatibility::hash_legacy_record_v1;
 use hepta_readonly_control::inspect_read_only_store;
@@ -18,6 +25,67 @@ use hepta_workspace_authority::{
 use serde_json::json;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
+fn cutover_subject() -> WriterCutoverSubjectV1 {
+    WriterCutoverSubjectV1 {
+        repository: "TrillionniumFoundation/hepta-paper".to_owned(),
+        commit_sha: "1".repeat(40),
+        tree_sha: "2".repeat(40),
+        binary_hash: format!("sha256:{}", "3".repeat(64))
+            .parse()
+            .expect("binary hash"),
+        configuration_hash: format!("sha256:{}", "4".repeat(64))
+            .parse()
+            .expect("configuration hash"),
+        host_identity_hash: format!("sha256:{}", "5".repeat(64))
+            .parse()
+            .expect("host hash"),
+        service_identity_hash: format!("sha256:{}", "6".repeat(64))
+            .parse()
+            .expect("service hash"),
+    }
+}
+
+fn open_activated(
+    database: &Path,
+    policy: CampaignWriterPolicyV1,
+    initial_lease: &WriterLeaseV1,
+) -> CampaignWriterStoreV1 {
+    let preimage = inspect_writer_database_preimage_v1(database, policy).expect("preimage");
+    let signing_key = SigningKey::from_bytes(&[61_u8; 32]);
+    let mut authorization = WriterCutoverAuthorizationV1 {
+        version: 1,
+        cutover_id: "local-slice-cutover".to_owned(),
+        subject: cutover_subject(),
+        database_preimage_hash: writer_database_preimage_hash_v1(&preimage).expect("preimage hash"),
+        initial_writer_lease_hash: writer_lease_activation_hash_v1(initial_lease)
+            .expect("writer lease hash"),
+        node_writer_disabled: true,
+        issued_at_unix_ms: 1,
+        expires_at_unix_ms: 100_000,
+        nonce: "local-slice-cutover-nonce".to_owned(),
+        signer_key_id: "local-slice-cutover-key".to_owned(),
+        signature_base64: "AA".to_owned(),
+    };
+    let message = writer_cutover_signing_bytes_v1(&authorization).expect("message");
+    authorization.signature_base64 =
+        Base64UrlUnpadded::encode_string(&signing_key.sign(&message).to_bytes());
+    let trust = WriterCutoverTrustStoreV1::new([(
+        "local-slice-cutover-key".to_owned(),
+        signing_key.verifying_key(),
+    )])
+    .expect("trust");
+    let verified = verify_writer_cutover_authorization_v1(
+        &authorization,
+        &cutover_subject(),
+        10,
+        WriterCutoverPolicyV1::default(),
+        &trust,
+    )
+    .expect("verified");
+    CampaignWriterStoreV1::open_for_cutover(database, policy, &verified, 10)
+        .expect("activated store")
+}
 
 #[test]
 fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() {
@@ -82,17 +150,13 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
     let database = runtime.join("campaign.sqlite");
     let uid = fs::metadata(&runtime).expect("runtime metadata").uid();
     let writer_policy = CampaignWriterPolicyV1::strict(uid);
-    let mut writer = CampaignWriterStoreV1::open(&database, writer_policy).expect("writer");
-    let lease = writer
-        .acquire_writer(
-            WriterLeaseV1 {
-                generation: 1,
-                token: "writer-1".to_owned(),
-                expires_at_unix_ms: 1_000,
-            },
-            10,
-        )
-        .expect("lease");
+    let lease_request = WriterLeaseV1 {
+        generation: 1,
+        token: "writer-1".to_owned(),
+        expires_at_unix_ms: 1_000,
+    };
+    let mut writer = open_activated(&database, writer_policy, &lease_request);
+    let lease = writer.acquire_writer(lease_request, 10).expect("lease");
     writer
         .create_campaign(&lease, "campaign-1", 1_000, 4, 0, 10)
         .expect("campaign");
@@ -119,16 +183,14 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
     writer.checkpoint().expect("prepared checkpoint");
     drop(writer);
 
-    let mut writer = CampaignWriterStoreV1::open(&database, writer_policy).expect("reopen writer");
+    let replacement_request = WriterLeaseV1 {
+        generation: 2,
+        token: "writer-2".to_owned(),
+        expires_at_unix_ms: 1_000,
+    };
+    let mut writer = open_activated(&database, writer_policy, &replacement_request);
     let replacement = writer
-        .acquire_writer(
-            WriterLeaseV1 {
-                generation: 2,
-                token: "writer-2".to_owned(),
-                expires_at_unix_ms: 1_000,
-            },
-            20,
-        )
+        .acquire_writer(replacement_request, 20)
         .expect("replacement lease");
     let integrated = writer
         .integrate_prepared_result(

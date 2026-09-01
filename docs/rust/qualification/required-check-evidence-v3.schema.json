@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.org/schemas/required-check-evidence-v3.schema.json",
+  "title": "HeptaRequiredCheckEvidenceV3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "kind", "status", "repository", "qualificationSubject",
+    "source", "pullRequest", "requiredContexts", "observedChecks",
+    "eligibleRuns", "snapshotIdentity", "authority"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 3 },
+    "kind": { "const": "HeptaRequiredCheckEvidenceV3" },
+    "status": { "const": "complete_success_snapshot" },
+    "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+    "qualificationSubject": { "$ref": "#/$defs/subject" },
+    "source": { "$ref": "#/$defs/source" },
+    "pullRequest": { "$ref": "#/$defs/pullRequest" },
+    "requiredContexts": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
+    "observedChecks": {
+      "type": "array", "minItems": 1,
+      "items": { "$ref": "#/$defs/observedCheck" }
+    },
+    "eligibleRuns": {
+      "type": "array", "minItems": 1,
+      "items": { "$ref": "#/$defs/eligibleRun" }
+    },
+    "snapshotIdentity": { "$ref": "#/$defs/sha256" },
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["productionAuthorized", "externalAuthorityClaimed"],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "nullableString": { "type": ["string", "null"] },
+    "repository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "fullName"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "fullName": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }
+      }
+    },
+    "gitObject": {
+      "type": "object", "additionalProperties": false,
+      "required": ["commit", "tree"],
+      "properties": { "commit": { "$ref": "#/$defs/gitSha" }, "tree": { "$ref": "#/$defs/gitSha" } }
+    },
+    "refSubject": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repositoryId", "repository", "ref", "commit", "tree"],
+      "properties": {
+        "repositoryId": { "type": "integer", "minimum": 1 },
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "commit": { "$ref": "#/$defs/gitSha" },
+        "tree": { "$ref": "#/$defs/gitSha" }
+      }
+    },
+    "subject": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "schemaVersion", "kind", "repository", "pullRequestNumber", "base",
+        "head", "testedMerge", "definitionSetSha256", "eligibleRunSetSha256",
+        "producerHistoryWatermark", "selectedRunSetSha256", "artifactSetSha256",
+        "snapshotIdentity"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 3 },
+        "kind": { "const": "QualificationSubjectV3" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "pullRequestNumber": { "type": "integer", "minimum": 1 },
+        "base": { "$ref": "#/$defs/refSubject" },
+        "head": { "$ref": "#/$defs/refSubject" },
+        "testedMerge": { "$ref": "#/$defs/gitObject" },
+        "definitionSetSha256": { "$ref": "#/$defs/sha256" },
+        "eligibleRunSetSha256": { "$ref": "#/$defs/sha256" },
+        "producerHistoryWatermark": { "type": "string", "format": "date-time" },
+        "selectedRunSetSha256": { "$ref": "#/$defs/sha256" },
+        "artifactSetSha256": { "$ref": "#/$defs/sha256" },
+        "snapshotIdentity": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "commit", "tree", "requiredChecksSha256", "producerManifestSha256",
+        "definitionSetSha256", "eligibleRunSetSha256"
+      ],
+      "properties": {
+        "commit": { "$ref": "#/$defs/gitSha" },
+        "tree": { "$ref": "#/$defs/gitSha" },
+        "requiredChecksSha256": { "$ref": "#/$defs/sha256" },
+        "producerManifestSha256": { "$ref": "#/$defs/sha256" },
+        "definitionSetSha256": { "$ref": "#/$defs/sha256" },
+        "eligibleRunSetSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "pullRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["number", "baseRef", "headBranch", "base", "head", "testedMerge"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "baseRef": { "type": "string", "minLength": 1 },
+        "headBranch": { "type": "string", "minLength": 1 },
+        "base": { "$ref": "#/$defs/refSubject" },
+        "head": { "$ref": "#/$defs/refSubject" },
+        "testedMerge": { "$ref": "#/$defs/gitObject" }
+      }
+    },
+    "step": {
+      "type": "object", "additionalProperties": false,
+      "required": ["number", "name", "status", "conclusion"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 },
+        "conclusion": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "job": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "status", "conclusion", "startedAt", "completedAt", "steps"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 },
+        "conclusion": { "$ref": "#/$defs/nullableString" },
+        "startedAt": { "$ref": "#/$defs/nullableString" },
+        "completedAt": { "$ref": "#/$defs/nullableString" },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } }
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "sizeInBytes", "digest", "expired", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "sizeInBytes": { "type": ["integer", "null"], "minimum": 0 },
+        "digest": { "type": ["string", "null"] },
+        "expired": { "type": ["boolean", "null"] },
+        "createdAt": { "$ref": "#/$defs/nullableString" },
+        "updatedAt": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "eligibleRun": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "workflowId", "workflowPath", "workflowGitBlobSha", "workflowSha256",
+        "runId", "runNumber", "runAttempt", "event", "status", "conclusion",
+        "createdAt", "updatedAt", "runStartedAt", "checkSuiteId", "jobSetSha256",
+        "stepSetSha256", "artifactSetSha256", "jobs", "artifacts"
+      ],
+      "properties": {
+        "workflowId": { "type": "integer", "minimum": 1 },
+        "workflowPath": { "type": "string", "pattern": "^\\.github/workflows/.+\\.ya?ml$" },
+        "workflowGitBlobSha": { "$ref": "#/$defs/gitSha" },
+        "workflowSha256": { "$ref": "#/$defs/sha256" },
+        "runId": { "type": "integer", "minimum": 1 },
+        "runNumber": { "type": ["integer", "null"], "minimum": 1 },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "event": { "const": "pull_request" },
+        "status": { "const": "completed" },
+        "conclusion": { "const": "success" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "runStartedAt": { "$ref": "#/$defs/nullableString" },
+        "checkSuiteId": { "type": ["integer", "null"], "minimum": 1 },
+        "jobSetSha256": { "$ref": "#/$defs/sha256" },
+        "stepSetSha256": { "$ref": "#/$defs/sha256" },
+        "artifactSetSha256": { "$ref": "#/$defs/sha256" },
+        "jobs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/job" } },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } }
+      }
+    },
+    "observedCheck": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "context", "workflowId", "workflowPath", "workflowGitBlobSha", "workflowSha256",
+        "event", "runId", "runAttempt", "runNumber", "checkSuiteId", "jobId",
+        "jobName", "headSha", "headBranch", "baseRef", "pullRequestNumber",
+        "status", "conclusion", "startedAt", "completedAt", "detailsUrl", "steps"
+      ],
+      "properties": {
+        "context": { "type": "string", "minLength": 1 },
+        "workflowId": { "type": "integer", "minimum": 1 },
+        "workflowPath": { "type": "string", "pattern": "^\\.github/workflows/.+\\.ya?ml$" },
+        "workflowGitBlobSha": { "$ref": "#/$defs/gitSha" },
+        "workflowSha256": { "$ref": "#/$defs/sha256" },
+        "event": { "const": "pull_request" },
+        "runId": { "type": "integer", "minimum": 1 },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "runNumber": { "type": ["integer", "null"], "minimum": 1 },
+        "checkSuiteId": { "type": "integer", "minimum": 1 },
+        "jobId": { "type": "integer", "minimum": 1 },
+        "jobName": { "type": "string", "minLength": 1 },
+        "headSha": { "$ref": "#/$defs/gitSha" },
+        "headBranch": { "type": "string", "minLength": 1 },
+        "baseRef": { "type": "string", "minLength": 1 },
+        "pullRequestNumber": { "type": "integer", "minimum": 1 },
+        "status": { "const": "completed" },
+        "conclusion": { "const": "success" },
+        "startedAt": { "$ref": "#/$defs/nullableString" },
+        "completedAt": { "$ref": "#/$defs/nullableString" },
+        "detailsUrl": { "$ref": "#/$defs/nullableString" },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } }
+      }
+    }
+  }
+}

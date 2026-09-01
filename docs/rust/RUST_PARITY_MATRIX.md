@@ -1,46 +1,73 @@
 # Node-to-Rust parity and cutover matrix
 
-Parity is assigned before implementation. It is not a generic claim that Rust
-“behaves the same”.
+This file is the canonical human parity projection of `current-status.v1.json`.
+Every row has a stable `PAR-*` ID and its status is machine-compared with
+`parityItemStatus`. Repository-authored source may declare
+`source_implemented`; only exact-head retained evidence may derive
+`source_qualified`. External/live-evaluation rows remain `blocked_external`.
 
-- `exact` — bytes, hashes, rows, statuses and acceptance/rejection match;
-- `semantic` — invariant/outcome class match under a versioned representation;
-- `evaluation` — non-deterministic output is judged by metrics, never text equality;
-- `retire` — behavior has no Rust target and has migration evidence.
+Parity classifications:
+
+- `exact` — bytes, hashes, rows, statuses and accept/reject decisions match;
+- `semantic` — the versioned representation may differ but the invariant and effect class match;
+- `evaluation` — non-deterministic model output is assessed with bound metrics, not text equality;
+- `retire` — the behavior has no Rust target and requires retirement evidence.
 
 ## Deterministic capabilities
 
-| Capability | Node anchor | Rust target | Strategy | State | Cutover evidence |
-|---|---|---|---|---|---|
-| Record hashing | `workflow-kernel/record-hash.mjs` + callsites | compatibility kernel | exact | not_started | byte corpus + dual verifier |
-| Stable JSON | historical serializers | `LegacyStableJsonV1` | exact | not_started | adversarial number/string/object corpus |
-| Contract decode | `paper-domain`, `paper-ports` | domain crates | exact V1 / semantic V2 | partial | round-trip + unknown-field matrix |
-| Error/status values | distributed constants | registry crate | exact | design_ready | generated inventory diff |
-| SQLite schema 1–25 | store/migration modules | read-only then writer store | exact logical state | not_started | normalized production-shaped DB diff |
-| Campaign transitions | application/composition | campaign engine | semantic + exact effects | not_started | transition table + simulation |
-| Lease/generation fencing | campaign repositories | writer store | exact invariant | not_started | stale-generation stress |
-| Prepared results | attempt journals | campaign integration | semantic | broker_partial | crash recovery + exactly-once integration |
-| Workspace inventory | attempts/snapshots | workspace/CAS crates | exact | not_started | cross-language tree corpus |
-| Release receipt verification | release/authority modules | release verifier | exact | not_started | old/new accept/reject matrix |
-| Submission idempotency | outbox/dispatcher | dispatcher port | exact identity | not_started | replay/ambiguity matrix |
+| ID | Capability | Node anchor | Rust target | Strategy | Static status | Effective cutover evidence |
+|---|---|---|---|---|---|---|
+| PAR-DET-001 | Record hashing | `workflow-kernel/record-hash.mjs` + call sites | compatibility kernel | exact | `source_implemented` | byte corpus + dual verifier |
+| PAR-DET-002 | Stable JSON | historical serializers | `LegacyStableJsonV1` | exact | `source_implemented` | adversarial number/string/object corpus |
+| PAR-DET-003 | Contract decode | `paper-domain`, `paper-ports` | protocol/domain contracts | exact V1 / semantic V2 | `source_implemented` | round-trip + unknown-field matrix |
+| PAR-DET-004 | Error/status values | distributed constants | versioned registry | exact | `source_implemented` | generated inventory diff |
+| PAR-DET-005 | SQLite schema 1–25 | store/migration modules | read-only projection + writer compatibility | exact logical state | `source_implemented` | normalized production-shaped DB diff |
+| PAR-DET-006 | Campaign transitions | application/composition | campaign writer | semantic + exact effects | `source_implemented` | transition table + simulation |
+| PAR-DET-007 | Lease/generation fencing | campaign repositories | writer store | exact invariant | `source_implemented` | stale-generation stress |
+| PAR-DET-008 | Prepared results | attempt journals | broker/writer integration | semantic | `source_implemented` | crash recovery + exactly-once integration |
+| PAR-DET-009 | Workspace inventory | attempts/snapshots | workspace authority | exact | `source_implemented` | cross-language tree corpus |
+| PAR-DET-010 | Release receipt verification | release/authority modules | external-authority verifier | exact | `source_implemented` | old/new accept/reject matrix |
+| PAR-DET-011 | Submission idempotency | outbox/dispatcher | submission authority port | exact identity | `source_implemented` | replay/ambiguity matrix |
 
 ## Codex execution behavior
 
-| Behavior | Node anchor | Rust strategy | Classification | State |
-|---|---|---|---|---|
-| Executable/config/auth-root identity | runtime preflight | filesystem/content identity pre/postflight | semantic, stricter V2 | source_qualified |
-| Fresh sessions | capability/executor args | mandatory ephemeral new thread | exact invariant | source_qualified |
-| Author/reviewer separation | principal pool | separate principals/sockets/homes | semantic, stronger | source_partial |
-| Bounded execution | bounded child process | gate + containment + supervisor | semantic | process-group source_qualified; cgroup open |
-| Mutation detection | workspace tracker | exact before/after inventory | semantic, stronger | not_started |
-| Structured final output | permissive scans | terminal JSONL + output schema | fix-v2 | source_qualified |
-| OpenClaw runtime | managed OpenClaw paths | no target | retire | design_ready |
-| Model prose/code | model dependent | live evaluation | evaluation | not_started |
-| Reviewer narrative | model dependent | structured verdict + evaluation | evaluation | not_started |
+| ID | Behavior | Node anchor | Rust strategy | Classification | Static status |
+|---|---|---|---|---|---|
+| PAR-CODEX-001 | Executable/config/auth-root identity | Node runtime preflight | filesystem/content identity pre/postflight | semantic, stricter V2 | `source_implemented` |
+| PAR-CODEX-002 | Fresh sessions | Node capability/executor args | mandatory ephemeral new thread | exact invariant | `source_implemented` |
+| PAR-CODEX-003 | Author/reviewer separation | Node principal pool | separate principals/sockets/homes | semantic, stronger | `source_implemented` |
+| PAR-CODEX-004 | Bounded execution | Node bounded child process | durable gate + cgroup containment + supervisor | semantic | `source_implemented` |
+| PAR-CODEX-005 | Mutation detection | Node workspace tracker | descriptor-bound before/after inventory | semantic, stronger | `source_implemented` |
+| PAR-CODEX-006 | Structured final output | Node permissive result scans | bounded JSONL + output schema | fix-v2 | `source_implemented` |
+| PAR-CODEX-007 | OpenClaw runtime | Managed OpenClaw paths | no Rust target | retire | `retired` |
+| PAR-CODEX-008 | Model prose/code | Model-dependent output | live evaluation | evaluation | `blocked_external` |
+| PAR-CODEX-009 | Reviewer narrative | Model-dependent output | structured verdict + live evaluation | evaluation | `blocked_external` |
 
-## Behavior record required before porting
+## Dependency binding
+
+Each parity row is bound to implementation backlog IDs in
+`current-status.v1.json.parityDependencies`. A parity row cannot be effectively
+promoted when any dependency is `not_started`, `design_ready`,
+`source_implemented` without a successful exact-head result, or
+`blocked_external` unless the parity row itself is explicitly external.
+
+Every `source_implemented` parity row has at least one implementation
+dependency. In particular, release-receipt verification (`PAR-DET-010`) is bound
+to receipt contracts, historical vectors and read-only verification, while
+submission idempotency (`PAR-DET-011`) is bound to operation-state, status/error
+and exactly-once writer contracts. Empty dependencies are permitted only for a
+retired row; external/evaluation rows remain governed by their external
+prerequisites.
+
+A second mapping in
+`qualification/source-capability-evidence.v1.json` associates each promotable
+parity row with the exact CI context sets that exercise it. Global CI success
+without this row-specific mapping cannot promote parity.
+
+## Behavior record required before porting or correction
 
 ```text
+parity_id
 behavior_id
 source_entrypoints
 source_tests
@@ -69,20 +96,32 @@ last_verified_commit/tree
 | `model_nondeterminism` | generated content differs | evaluation, not byte blocker |
 | `legacy_retirement` | behavior intentionally absent | retirement evidence required |
 
+## Legacy full-matrix rule
+
+The public deterministic corpus is sufficient only for repository-local source
+checks. Full historical migration acceptance additionally requires issue #28:
+the secret-gated private companion must replay the exact 263-file archive
+against the exact public candidate, retain its receipt and artifact index, prove
+network isolation and cleanup, and receive independent acknowledgement.
+
 ## Never byte-difference
 
-Manuscript prose, generated code, reviewer narrative, provider timing, reasoning
-traces and token counts across different model/runtime versions are evaluated by
-bound inputs, permissions, schema validity, deterministic downstream checks and
-quality metrics.
+Manuscript prose, generated code, reviewer narrative, provider timing,
+reasoning traces and token counts across model/runtime versions are evaluated
+by bound inputs, permissions, schema validity, deterministic downstream checks
+and quality metrics. They are never promoted by textual equality.
 
 ## Cutover rule
 
 A Rust capability becomes authoritative only after:
 
-1. parity strategy and defects are classified;
-2. the source gate passes;
-3. production-shaped shadow evidence is accepted;
-4. writer ownership is transferred atomically where applicable;
-5. rollback has been exercised;
-6. the Node authority path is disabled, not merely unused.
+1. its parity strategy and known defects are classified;
+2. the exact source head passes the complete non-empty source matrix;
+3. required full-matrix or live evaluation evidence is accepted;
+4. production-shaped shadow evidence is accepted;
+5. writer ownership is transferred atomically where applicable;
+6. rollback has been exercised;
+7. the Node authority path is disabled, not merely unused.
+
+A source commit, GitHub-hosted fixture or implementation-author review cannot
+cross an external authority boundary.

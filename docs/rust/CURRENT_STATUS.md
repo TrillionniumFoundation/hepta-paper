@@ -1,14 +1,27 @@
 # hepta-paper Rust rewrite current status
 
-This is the **single canonical human-readable status** for the Rust rewrite. The
-machine source is [`current-status.v1.json`](current-status.v1.json). The
-validator compares this file and the executable backlog against machine truth;
-historical slice, checkpoint and trigger documents cannot override the canonical
-set.
+This is the single canonical human-readable **static source declaration** for the
+Rust control-plane rewrite. The machine source is
+[`current-status.v1.json`](current-status.v1.json).
 
-## Bound baseline
+Plan v4 separates two facts that earlier documents conflated:
 
-The plan-v3 rebaseline starts from:
+1. `source_implemented` is a source-tree fact that may be committed by the
+   implementation branch.
+2. `source_qualified` is an **effective, exact-head evidence result** derived by
+   CI after all required jobs complete successfully on that unchanged head.
+
+Source files never self-assert `source_qualified`. The exact-head workflow emits
+`effective-status.v1.json` only after producer-authenticated checks are bound to
+workflow ID, path, Git blob, SHA-256, pull-request event, run attempt, job and
+non-empty successful steps. The separate `source-qualification-current`
+revalidation context treats any newer producer run or attempt as an invalidation:
+a newer success requires artifact regeneration, while a newer failure demotes the
+effective result. Zero-job, skipped, dirty or stale evidence remains fail-closed.
+
+## Bound baseline and current candidate
+
+The historical Plan v3 rebaseline remains:
 
 ```text
 repository  TrillionniumFoundation/hepta-paper
@@ -17,112 +30,176 @@ commit      80223a2531de32ceeeab7d5d4e6c9b36a605716f
 tree        cee44bee7bf42f5a7287de14700b83985f5e3557
 ```
 
-Every later claim is valid only for the exact commit and tree named by retained
-workflow evidence. A green historical SHA, local-only run, merge-ref result or
-dirty checkout is never evidence for a different head.
-
-## Product status
-
-The Rust work is a **repository-local source candidate**, not a production
-activation. Source-qualified code may exist while every production authority
-remains absent.
-
-| Plane | Current status | Strongest evidence | Authority granted |
-|---|---|---|---|
-| Foundation contracts | `source_qualified` | exact-head locked Rust and supply-chain gates | none |
-| Broker protocol/journal | `source_qualified` | source plus hosted-installed fixtures | broker-local test state only |
-| Durable pre-exec gate | `source_qualified` | source plus hosted-installed fixtures | fake/local executable only |
-| Workspace mutation authority | `source_qualified` | descriptor/COW/mutation source suites | attempt fixtures only |
-| Compatibility kernel | `source_qualified` | frozen corpus and differential source suites | verification only |
-| Read-only Rust campaign plane | `source_qualified` | immutable schema-1..25 source suites | read-only inspection only |
-| Local author/reviewer slice | `source_qualified` | fake-provider local vertical slice | no live provider authority |
-| Rust campaign writer | `source_qualified` | fenced persistence/recovery source suites | no production writer activation |
-| Scientific evidence orchestration | `source_qualified` | deterministic evidence contract suites | no assurance elevation |
-| Cutover/retirement contracts | `source_qualified` | cutover fencing and rollback contract suites | no cutover authorization |
-| Protected main merge boundary | `blocked_external` | CODEOWNERS and exact-head workflows exist; pre-receive ruleset is absent | none |
-| Production target host | `blocked_external` | repository/hosted evidence is insufficient | none |
-| Real Codex credentials/provider | `blocked_external` | repository/hosted evidence is insufficient | none |
-| Release/KMS/WORM/submission | `blocked_external` | repository/hosted evidence is insufficient | none |
-
-The following remain forbidden until separately controlled evidence is accepted:
+The single repository-local convergence branch is:
 
 ```text
-real Codex credentials
-live provider calls
-production campaign database writes
-production writer cutover
-release signing or promotion
-KMS/HSM/WORM access
-portal credentials
-submission actions
+branch            codex/rust-plan-v4-rc1-20260831
+integration base  codex/rust-plan-v3-final-product-20260830
+stage             release-candidate source requalification
+exact head/tree   read live from GitHub; never committed into static truth
 ```
 
-## Repository-local closure
+Its lineage contains the descriptor-bound workspace traversal and signed
+campaign-writer cutover hardening. Those changes are not treated as qualified
+until the current branch head receives a producer-authenticated non-empty matrix,
+a freshly generated full-schema-valid artifact, and a successful currentness
+revalidation.
 
-The exact candidate graph contains source-qualified contracts and tests for
-program truth, exact-head evidence, listener access, cgroup-v2 containment,
-telemetry, descriptor-bound workspaces, historical compatibility, immutable
-read-only SQLite projection, the fake-provider local vertical slice, the fenced
-campaign writer, scientific-evidence ports and cutover fencing.
+## Static source state
 
-`source_qualified` means only that the exact head passed its applicable source
-gates. It does not imply target-host installation, credential custody, provider
-authentication, production writer authority, external key ownership or release
-and submission authority.
+| Plane | Current status | Effective evidence rule | Authority granted |
+|---|---|---|---|
+| Foundation contracts | `source_implemented` | eligible for exact-head workflow promotion | none |
+| Broker protocol/journal | `source_implemented` | eligible for exact-head workflow promotion | broker-local fixture state only |
+| Durable pre-exec gate | `source_implemented` | eligible for exact-head workflow promotion | fake/local executable only |
+| Workspace mutation authority | `source_implemented` | latest descriptor-bound P0 patch awaits exact-head execution | attempt fixtures only |
+| Compatibility kernel | `source_implemented` | public source corpus present; hosted 263-file replay remains external | verification only |
+| Read-only Rust campaign plane | `source_implemented` | eligible for exact-head workflow promotion | read-only inspection only |
+| Local author/reviewer slice | `source_implemented` | latest writer/workspace integration awaits exact-head execution | no live provider authority |
+| Rust campaign writer | `source_implemented` | signed cutover P0 patch awaits exact-head execution | no production writer activation |
+| Scientific evidence orchestration | `source_implemented` | eligible for exact-head workflow promotion | no assurance elevation |
+| Cutover/retirement contracts | `source_implemented` | eligible for exact-head workflow promotion | no cutover authorization |
+| Protected main merge boundary | `blocked_external` | policy is configured; seven denial probes and independent signed decision remain | none |
+| Trusted legacy matrix replay | `blocked_external` | private archive exists; retained hosted replay receipt/index remains absent | verification only |
+| Production target host | `blocked_external` | repository and hosted runners cannot establish target-host facts | none |
+| Real Codex credentials/provider | `blocked_external` | real credential custody and live role canaries remain absent | none |
+| Release/KMS/WORM/submission | `blocked_external` | real external authority receipts remain absent | none |
+
+The static table deliberately uses `source_implemented`. A successful,
+artifact-retained exact-head run may derive `source_qualified` for eligible
+repository-local rows without editing this file. External rows never
+auto-promote.
+
+## Plan v4.1 qualification hardening
+
+The current candidate closes the previously identified qualification-trust
+implementation defects with four machine-readable contracts:
+
+- `qualification/source-check-producers.v1.json` binds every required context to
+  one exact workflow ID, path, candidate-tree Git blob and SHA-256;
+- `qualification/source-capability-evidence.v1.json` gives every promotable
+  product, workstream, backlog, parity and gap projection a non-empty
+  capability-specific context set;
+- `qualification/required-check-evidence-v2.schema.json` validates normalized
+  producer/run/job/step evidence;
+- `qualification/effective-status-v1.schema.json` validates the complete derived
+  artifact before publication.
+
+`.github/workflows/rust-source-qualification-revalidation.yml` is deliberately
+outside the source matrix to avoid recursion. It reruns after every producer
+workflow completion and proves that the retained artifact still matches the
+newest producer snapshot. It grants no production or external authority.
+
+## Repository-local closure represented in this candidate
+
+The source candidate contains contracts and tests for:
+
+- strict request/receipt and JSONL protocols;
+- exact executable, configuration, schema and principal identities;
+- durable pre-exec gating and conservative ambiguity recovery;
+- descriptor-bound COW workspaces, hard-link/symlink/cross-device rejection,
+  two-pass hashing and partial-copy cleanup;
+- immutable schema-1..25 inspection and Node/Rust compatibility vectors;
+- generation-fenced campaign persistence, prepared-result recovery, backup and
+  deterministic 10k simulation;
+- exact-subject Ed25519 writer cutover authorization binding repository, commit,
+  tree, binary, configuration, host, service, database preimage and first lease;
+- non-activating external evidence ingestion and cutover fencing.
+
+None of these source contracts grants target-host, credential, key-custody,
+release, portal or submission authority.
 
 ## Remaining external blockers
 
 | Gap | Status | Evidence collector | Required real owner |
 |---|---|---|---|
 | `GAP-GOV-003` | `blocked_external` | issue #25 | repository administrator distinct from the implementation author plus independent reviewer |
-| `GAP-HOST-001` | `blocked_external` | issue #17 | target-host operator and independent Linux reviewer |
-| `GAP-HOST-002` | `blocked_external` | issue #12 | target storage/host operator and independent reviewer |
-| `GAP-KEY-001` | `blocked_external` | issue #14 | external capability-key owner |
+| `GAP-HOST-001` | `blocked_external` | issue #17 | target-host operator plus independent Linux reviewer |
+| `GAP-HOST-002` | `blocked_external` | issue #12 | destructive storage/host operator plus independent reviewer |
+| `GAP-KEY-001` | `blocked_external` | issue #14 | external capability-key owner plus independent reviewer |
 | `GAP-CODEX-001` | `blocked_external` | issue #21 | Codex credential owner, target-host operator and reviewer |
 | `GAP-REL-001` | `blocked_external` | issue #22 | KMS/HSM, WORM, release, portal and submission owners |
 
-Repository or GitHub-hosted workflows cannot honestly self-create these facts.
-The issues above specify exact inputs, drills, receipt fields, denial proofs and
-independent acceptance required for closure.
+### Supplemental migration blocker
+
+| Blocker | Status | Evidence collector | Required real owner |
+|---|---|---|---|
+| `LEGACY-REPLAY-001` | `blocked_external` | issue #28 | private companion operator plus independent archive/replay reviewer |
+
+`main` is currently protected and requires the configured status contexts, but
+`GAP-GOV-003` remains open until the active policy export, all seven denial
+outcomes and an independent signed exact-candidate decision are retained.
+
+The 263-file legacy archive has been recovered in the private companion and its
+digest/matrix can be checked locally. `LEGACY-REPLAY-001` remains open until the
+secret-bearing hosted workflow produces a retained exact-candidate replay
+receipt and artifact index with independent acknowledgement.
+
+## Forbidden authority
+
+Until the relevant external evidence is accepted, all of the following remain
+forbidden:
+
+```text
+real Codex credential loading
+live provider calls
+production campaign database writes
+production writer cutover
+release signing or promotion
+KMS/HSM/WORM mutation
+portal credentials
+submission actions
+```
+
+A repository administrator, implementation author, model, fixture key or
+GitHub-hosted source test cannot substitute for a separately controlled external
+authority.
 
 ## Status vocabulary
 
-Only these terms may be used for current capability status:
-
 - `not_started` — no accepted source implementation;
 - `design_ready` — normative design and acceptance criteria exist;
-- `source_implemented` — source exists but the complete exact-head source gate has not passed;
-- `source_qualified` — the exact source passed deterministic source gates;
-- `hosted_installed_qualified` — installed tests passed on a hosted disposable runner;
+- `source_implemented` — source exists but effective qualification must come from
+  exact-head workflow evidence;
+- `source_qualified` — derived effective status for one exact commit/tree whose
+  complete required workflow matrix succeeded;
+- `hosted_installed_qualified` — installed tests passed on a hosted disposable
+  runner;
 - `target_host_qualified` — a separately controlled target host passed its drill;
 - `external_authority_qualified` — a separate authority issued accepted evidence;
-- `blocked_external` — repository work cannot manufacture the required evidence;
+- `blocked_external` — the repository cannot manufacture the required fact;
 - `retired` — behavior is intentionally absent with migration evidence.
 
-“Done”, “closed”, “production ready”, and “qualified” without a tier are
-prohibited in status documents and PR descriptions.
+“Done”, “production ready”, or unqualified “qualified” are prohibited.
 
-## Remaining closure order
+## Closure order
 
-1. Maintain a green exact-head source, supply-chain and canonical-truth matrix.
-2. Activate and independently verify the no-bypass protected-`main` ruleset in
-   issue #25.
-3. Execute the independent Linux install, service-manager, PID/session and
-   durable-gate review in issue #17.
-4. Execute the destructive WAL/reboot/disk-full/corruption and 72-hour topology
-   drill in issue #12.
-5. Execute independent key-owner rotation, revocation and compromise drills in
-   issue #14.
-6. Execute authenticated, separated author/reviewer Codex canaries in issue #21.
-7. Execute real release, KMS/HSM, WORM, portal and submission authority drills
-   in issue #22.
-8. Only then authorize production cutover and later retirement evidence.
+1. Run every required Rust, Node, workflow, supply-chain, program-truth,
+   qualification and impacted-test producer on the exact RC head.
+2. Authenticate each result against the producer manifest, derive and fully
+   schema-validate `effective-status.v1.json`, then pass
+   `source-qualification-current` against the newest producer snapshot.
+3. Retain exact-head/tree, workflow-definition, run/job/step and artifact
+   digests; reject collisions, zero-job, skipped, stale or failed reruns.
+4. Obtain an independent latest-push review and integrate the RC into the sole
+   product branch; close duplicate P0 PRs.
+5. Complete issue #25 denial evidence and exact policy export.
+6. Complete issue #28 hosted private legacy replay and acknowledgement.
+7. Execute target-host listener/systemd/cgroup qualification in issue #17.
+8. Execute destructive storage, reboot, corruption and 72-hour soak in issue #12.
+9. Execute independent key lifecycle and compromise drills in issue #14.
+10. Execute separated authenticated Codex author/reviewer canaries in issue #21.
+11. Execute real KMS/HSM, WORM, release, portal and submission drills in issue
+    #22.
+12. Only after every prerequisite is accepted, perform shadow, canary, rollback,
+    writer cutover and Node-authority retirement.
 
 ## Canonical document set
 
 - [`RUST_REWRITE_MASTER_PLAN.md`](RUST_REWRITE_MASTER_PLAN.md)
 - [`RUST_REWRITE_BACKLOG.md`](RUST_REWRITE_BACKLOG.md)
 - [`RUST_PARITY_MATRIX.md`](RUST_PARITY_MATRIX.md)
+- [`QUALIFICATION_STATE_MACHINE.md`](QUALIFICATION_STATE_MACHINE.md)
 - [`RUST_RISK_REGISTER.md`](RUST_RISK_REGISTER.md)
 - [`RUST_TCB_BOUNDARY.md`](RUST_TCB_BOUNDARY.md)
 - [`PRINCIPAL_AND_FILESYSTEM_MATRIX.md`](PRINCIPAL_AND_FILESYSTEM_MATRIX.md)
@@ -130,5 +207,5 @@ prohibited in status documents and PR descriptions.
 - [`CRASH_AND_RECOVERY_MATRIX.md`](CRASH_AND_RECOVERY_MATRIX.md)
 - [`OPERATIONS_RUNBOOK.md`](OPERATIONS_RUNBOOK.md)
 
-The mapping of canonical and historical documents is maintained in
+The canonical/historical mapping is maintained in
 [`DOCUMENTATION_INDEX.md`](DOCUMENTATION_INDEX.md).

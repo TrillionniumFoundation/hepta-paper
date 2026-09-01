@@ -6,11 +6,8 @@ compile_error!("hepta-workspace-authority requires Linux /proc descriptor paths"
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
-    io::Read,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-    },
+    io::{Read, Seek, SeekFrom, Write},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
 };
 
@@ -18,7 +15,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod bound;
+
+use bound::{
+    BoundEntry, BoundKind, descriptor_path, open_bound_entry, same_object, same_snapshot,
+    verify_path_binding,
+};
+
 const MAXIMUM_FILE_BYTES: u64 = 1024 * 1024 * 1024;
+const MAXIMUM_TREE_ENTRIES: usize = 100_000;
 
 /// Stable root identity retained with an open directory descriptor.
 pub struct WorkspaceRootV1 {
@@ -26,7 +31,9 @@ pub struct WorkspaceRootV1 {
     descriptor: File,
     device: u64,
     inode: u64,
+    mode: u32,
     uid: u32,
+    gid: u32,
 }
 
 impl WorkspaceRootV1 {
@@ -39,25 +46,24 @@ impl WorkspaceRootV1 {
         if canonical != path {
             return Err(WorkspaceError::InvalidRoot);
         }
-        let path_metadata = fs::symlink_metadata(path).map_err(|_| WorkspaceError::InvalidRoot)?;
-        if path_metadata.file_type().is_symlink()
-            || !path_metadata.is_dir()
-            || path_metadata.mode() & 0o022 != 0
-            || expected_uid.is_some_and(|uid| path_metadata.uid() != uid)
+        let opened = open_bound_entry(path).map_err(|error| match error {
+            WorkspaceError::Io(_) => WorkspaceError::InvalidRoot,
+            other => other,
+        })?;
+        if opened.kind != BoundKind::Directory
+            || opened.metadata.mode() & 0o022 != 0
+            || expected_uid.is_some_and(|uid| opened.metadata.uid() != uid)
         {
             return Err(WorkspaceError::InvalidRoot);
         }
-        let descriptor = File::open(path)?;
-        let opened = descriptor.metadata()?;
-        if opened.dev() != path_metadata.dev() || opened.ino() != path_metadata.ino() {
-            return Err(WorkspaceError::RootChanged);
-        }
         Ok(Self {
             path: path.to_path_buf(),
-            descriptor,
-            device: opened.dev(),
-            inode: opened.ino(),
-            uid: opened.uid(),
+            device: opened.metadata.dev(),
+            inode: opened.metadata.ino(),
+            mode: opened.metadata.mode(),
+            uid: opened.metadata.uid(),
+            gid: opened.metadata.gid(),
+            descriptor: opened.file,
         })
     }
 
@@ -65,15 +71,14 @@ impl WorkspaceRootV1 {
     pub fn anchored_path(&self, relative: &Path) -> Result<PathBuf, WorkspaceError> {
         validate_relative(relative)?;
         self.verify_identity()?;
-        Ok(PathBuf::from(format!("/proc/self/fd/{}", self.descriptor.as_raw_fd())).join(relative))
+        Ok(descriptor_path(&self.descriptor).join(relative))
     }
 
-    /// Produces a deterministic inventory without following links.
+    /// Produces a deterministic inventory from descriptor-opened child objects.
     pub fn inventory(&self) -> Result<WorkspaceInventoryV1, WorkspaceError> {
         self.verify_identity()?;
-        let anchor = self.anchored_path(Path::new(""))?;
         let mut entries = Vec::new();
-        walk_inventory(&anchor, Path::new(""), &mut entries)?;
+        walk_inventory(&self.descriptor, self.device, Path::new(""), &mut entries)?;
         entries.sort_by(|left, right| left.path.cmp(&right.path));
         let hash = hash_entries(&entries)?;
         self.verify_identity()?;
@@ -84,13 +89,15 @@ impl WorkspaceRootV1 {
         let descriptor = self.descriptor.metadata()?;
         if descriptor.dev() != self.device
             || descriptor.ino() != self.inode
+            || descriptor.mode() != self.mode
             || descriptor.uid() != self.uid
+            || descriptor.gid() != self.gid
             || !descriptor.is_dir()
         {
             return Err(WorkspaceError::RootChanged);
         }
         let path = fs::symlink_metadata(&self.path).map_err(|_| WorkspaceError::RootChanged)?;
-        if path.dev() != self.device || path.ino() != self.inode {
+        if path.file_type().is_symlink() || !same_object(&descriptor, &path) {
             return Err(WorkspaceError::RootChanged);
         }
         Ok(())
@@ -176,18 +183,29 @@ pub fn materialize_attempt_v1(
     if !valid_identifier(attempt_id) {
         return Err(WorkspaceError::InvalidAttemptId);
     }
-    let parent = fs::canonicalize(attempt_parent).map_err(|_| WorkspaceError::InvalidRoot)?;
-    if parent != attempt_parent {
-        return Err(WorkspaceError::InvalidRoot);
+    source.verify_identity()?;
+    let parent = WorkspaceRootV1::open(attempt_parent, Some(source.uid))?;
+    let public_destination = attempt_parent.join(attempt_id);
+    let anchored_destination = parent.anchored_path(Path::new(attempt_id))?;
+    fs::create_dir(&anchored_destination)?;
+    fs::set_permissions(&anchored_destination, fs::Permissions::from_mode(0o700))?;
+    let destination = open_bound_entry(&anchored_destination)?;
+    if destination.kind != BoundKind::Directory {
+        return Err(WorkspaceError::EntryChanged);
     }
-    let destination = parent.join(attempt_id);
-    fs::create_dir(&destination)?;
-    fs::set_permissions(&destination, fs::Permissions::from_mode(0o700))?;
-    let anchor = source.anchored_path(Path::new(""))?;
-    copy_tree(&anchor, &destination)?;
-    File::open(&destination)?.sync_all()?;
-    File::open(&parent)?.sync_all()?;
-    Ok(destination)
+    let mut copied_entries = 0_usize;
+    copy_tree(
+        &source.descriptor,
+        source.device,
+        &destination.file,
+        &mut copied_entries,
+    )?;
+    destination.file.sync_all()?;
+    parent.descriptor.sync_all()?;
+    source.verify_identity()?;
+    parent.verify_identity()?;
+    verify_path_binding(&public_destination, &destination.file)?;
+    Ok(public_destination)
 }
 
 /// Computes the exact mutation between two inventories.
@@ -309,90 +327,255 @@ pub fn prepare_workspace_result_v1(
     })
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), WorkspaceError> {
-    let mut entries = fs::read_dir(source)?.collect::<Result<Vec<_>, _>>()?;
+fn copy_tree(
+    source: &File,
+    source_device: u64,
+    destination: &File,
+    copied_entries: &mut usize,
+) -> Result<(), WorkspaceError> {
+    let source_before = source.metadata()?;
+    let source_anchor = descriptor_path(source);
+    let destination_anchor = descriptor_path(destination);
+    let mut entries = fs::read_dir(&source_anchor)?.collect::<Result<Vec<_>, _>>()?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
+        if *copied_entries >= MAXIMUM_TREE_ENTRIES {
+            return Err(WorkspaceError::TreeTooLarge);
+        }
+        *copied_entries = (*copied_entries)
+            .checked_add(1)
+            .ok_or(WorkspaceError::NumericOverflow)?;
         let name = entry.file_name();
         validate_relative(Path::new(name.as_os_str()))?;
-        let source_path = entry.path();
-        let destination_path = destination.join(name);
-        let metadata = fs::symlink_metadata(&source_path)?;
-        if metadata.file_type().is_symlink() {
-            return Err(WorkspaceError::SymlinkForbidden);
+        let source_path = source_anchor.join(&name);
+        let destination_path = destination_anchor.join(&name);
+        let mut opened = open_bound_entry(&source_path)?;
+        if opened.metadata.dev() != source_device {
+            return Err(WorkspaceError::CrossDeviceForbidden);
         }
-        if metadata.is_dir() {
-            fs::create_dir(&destination_path)?;
-            fs::set_permissions(&destination_path, fs::Permissions::from_mode(0o700))?;
-            copy_tree(&source_path, &destination_path)?;
-            File::open(&destination_path)?.sync_all()?;
-        } else if metadata.is_file() {
-            if metadata.size() > MAXIMUM_FILE_BYTES {
-                return Err(WorkspaceError::FileTooLarge);
+        match opened.kind {
+            BoundKind::Directory => {
+                fs::create_dir(&destination_path)?;
+                fs::set_permissions(&destination_path, fs::Permissions::from_mode(0o700))?;
+                let target = open_bound_entry(&destination_path)?;
+                if target.kind != BoundKind::Directory {
+                    return Err(WorkspaceError::EntryChanged);
+                }
+                copy_tree(&opened.file, source_device, &target.file, copied_entries)?;
+                target.file.sync_all()?;
+                verify_path_binding(&destination_path, &target.file)?;
             }
-            let mut input = File::open(&source_path)?;
-            let mut output = OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .mode(metadata.mode() & 0o777)
-                .open(&destination_path)?;
-            std::io::copy(&mut input, &mut output)?;
-            output.sync_all()?;
-        } else {
-            return Err(WorkspaceError::SpecialNodeForbidden);
+            BoundKind::File => {
+                copy_bound_file(&mut opened, &destination_path)?;
+            }
         }
+        verify_path_binding(&source_path, &opened.file)?;
+    }
+    let source_after = source.metadata()?;
+    if !same_snapshot(&source_before, &source_after) {
+        return Err(WorkspaceError::EntryChanged);
+    }
+    destination.sync_all()?;
+    Ok(())
+}
+
+fn copy_bound_file(source: &mut BoundEntry, destination: &Path) -> Result<(), WorkspaceError> {
+    copy_bound_file_with_hook(source, destination, || {})
+}
+
+fn copy_bound_file_with_hook(
+    source: &mut BoundEntry,
+    destination: &Path,
+    between_copy_and_verify: impl FnOnce(),
+) -> Result<(), WorkspaceError> {
+    if source.kind != BoundKind::File || source.metadata.size() > MAXIMUM_FILE_BYTES {
+        return Err(WorkspaceError::FileTooLarge);
+    }
+    let source_before = source.file.metadata()?;
+    if !same_snapshot(&source.metadata, &source_before) {
+        return Err(WorkspaceError::EntryChanged);
+    }
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .mode(source_before.mode() & 0o777)
+        .open(destination)?;
+    let result = (|| {
+        source.file.seek(SeekFrom::Start(0))?;
+        let (copied_hash, copied_bytes) = copy_and_hash(&mut source.file, &mut output)?;
+        output.sync_all()?;
+        let after_copy = source.file.metadata()?;
+        if !same_snapshot(&source_before, &after_copy) || copied_bytes != source_before.size() {
+            return Err(WorkspaceError::EntryChanged);
+        }
+        between_copy_and_verify();
+        source.file.seek(SeekFrom::Start(0))?;
+        let (verified_hash, verified_bytes) = hash_open_file(&mut source.file)?;
+        let after_verify = source.file.metadata()?;
+        if !same_snapshot(&source_before, &after_verify)
+            || copied_hash != verified_hash
+            || copied_bytes != verified_bytes
+        {
+            return Err(WorkspaceError::EntryChanged);
+        }
+        output.seek(SeekFrom::Start(0))?;
+        let (destination_hash, destination_bytes) = hash_open_file(&mut output)?;
+        if destination_hash != copied_hash || destination_bytes != copied_bytes {
+            return Err(WorkspaceError::EntryChanged);
+        }
+        verify_path_binding(destination, &output)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let remove_output = verify_path_binding(destination, &output).is_ok();
+        drop(output);
+        if remove_output {
+            let _ = fs::remove_file(destination);
+        }
+        return Err(error);
     }
     Ok(())
 }
 
 fn walk_inventory(
-    anchor: &Path,
+    directory: &File,
+    root_device: u64,
     relative: &Path,
     output: &mut Vec<WorkspaceEntryV1>,
 ) -> Result<(), WorkspaceError> {
-    let selected = anchor.join(relative);
-    let mut entries = fs::read_dir(&selected)?.collect::<Result<Vec<_>, _>>()?;
+    let directory_before = directory.metadata()?;
+    let anchor = descriptor_path(directory);
+    let mut entries = fs::read_dir(&anchor)?.collect::<Result<Vec<_>, _>>()?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
+        if output.len() >= MAXIMUM_TREE_ENTRIES {
+            return Err(WorkspaceError::TreeTooLarge);
+        }
         let name = entry
             .file_name()
             .into_string()
             .map_err(|_| WorkspaceError::NonUtf8Path)?;
-        let child_relative = relative.join(name);
+        let child_relative = relative.join(&name);
         validate_relative(&child_relative)?;
-        let metadata = fs::symlink_metadata(entry.path())?;
+        let child_path = anchor.join(&name);
+        let mut opened = open_bound_entry(&child_path)?;
+        if opened.metadata.dev() != root_device {
+            return Err(WorkspaceError::CrossDeviceForbidden);
+        }
         let path = child_relative
             .to_str()
             .ok_or(WorkspaceError::NonUtf8Path)?
             .replace('\\', "/");
-        if metadata.file_type().is_symlink() {
-            return Err(WorkspaceError::SymlinkForbidden);
-        }
-        if metadata.is_dir() {
-            output.push(WorkspaceEntryV1 {
-                path,
-                kind: "directory".to_owned(),
-                mode: metadata.mode() & 0o7777,
-                size: 0,
-                content_hash: None,
-            });
-            walk_inventory(anchor, &child_relative, output)?;
-        } else if metadata.is_file() {
-            if metadata.size() > MAXIMUM_FILE_BYTES {
-                return Err(WorkspaceError::FileTooLarge);
+        match opened.kind {
+            BoundKind::Directory => {
+                output.push(WorkspaceEntryV1 {
+                    path,
+                    kind: "directory".to_owned(),
+                    mode: opened.metadata.mode() & 0o7777,
+                    size: 0,
+                    content_hash: None,
+                });
+                walk_inventory(&opened.file, root_device, &child_relative, output)?;
             }
-            output.push(WorkspaceEntryV1 {
-                path,
-                kind: "file".to_owned(),
-                mode: metadata.mode() & 0o7777,
-                size: metadata.size(),
-                content_hash: Some(hash_file(&entry.path())?),
-            });
-        } else {
-            return Err(WorkspaceError::SpecialNodeForbidden);
+            BoundKind::File => {
+                if opened.metadata.size() > MAXIMUM_FILE_BYTES {
+                    return Err(WorkspaceError::FileTooLarge);
+                }
+                output.push(WorkspaceEntryV1 {
+                    path,
+                    kind: "file".to_owned(),
+                    mode: opened.metadata.mode() & 0o7777,
+                    size: opened.metadata.size(),
+                    content_hash: Some(hash_bound_file(&mut opened)?),
+                });
+            }
         }
+        verify_path_binding(&child_path, &opened.file)?;
+    }
+    let directory_after = directory.metadata()?;
+    if !same_snapshot(&directory_before, &directory_after) {
+        return Err(WorkspaceError::EntryChanged);
     }
     Ok(())
+}
+
+fn hash_bound_file(entry: &mut BoundEntry) -> Result<String, WorkspaceError> {
+    hash_bound_file_with_hook(entry, || {})
+}
+
+fn hash_bound_file_with_hook(
+    entry: &mut BoundEntry,
+    between_passes: impl FnOnce(),
+) -> Result<String, WorkspaceError> {
+    if entry.kind != BoundKind::File || entry.metadata.size() > MAXIMUM_FILE_BYTES {
+        return Err(WorkspaceError::FileTooLarge);
+    }
+    let before = entry.file.metadata()?;
+    if !same_snapshot(&entry.metadata, &before) {
+        return Err(WorkspaceError::EntryChanged);
+    }
+    entry.file.seek(SeekFrom::Start(0))?;
+    let (first_hash, first_bytes) = hash_open_file(&mut entry.file)?;
+    let after_first = entry.file.metadata()?;
+    if !same_snapshot(&before, &after_first) || first_bytes != before.size() {
+        return Err(WorkspaceError::EntryChanged);
+    }
+    between_passes();
+    entry.file.seek(SeekFrom::Start(0))?;
+    let (second_hash, second_bytes) = hash_open_file(&mut entry.file)?;
+    let after_second = entry.file.metadata()?;
+    if !same_snapshot(&before, &after_second)
+        || first_hash != second_hash
+        || first_bytes != second_bytes
+    {
+        return Err(WorkspaceError::EntryChanged);
+    }
+    Ok(first_hash)
+}
+
+fn copy_and_hash(
+    source: &mut File,
+    destination: &mut File,
+) -> Result<(String, u64), WorkspaceError> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut total = 0_u64;
+    loop {
+        let count = source.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total = total
+            .checked_add(u64::try_from(count).map_err(|_| WorkspaceError::NumericOverflow)?)
+            .ok_or(WorkspaceError::NumericOverflow)?;
+        if total > MAXIMUM_FILE_BYTES {
+            return Err(WorkspaceError::FileTooLarge);
+        }
+        destination.write_all(&buffer[..count])?;
+        hasher.update(&buffer[..count]);
+    }
+    Ok((format!("sha256:{}", hex::encode(hasher.finalize())), total))
+}
+
+fn hash_open_file(file: &mut File) -> Result<(String, u64), WorkspaceError> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut total = 0_u64;
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total = total
+            .checked_add(u64::try_from(count).map_err(|_| WorkspaceError::NumericOverflow)?)
+            .ok_or(WorkspaceError::NumericOverflow)?;
+        if total > MAXIMUM_FILE_BYTES {
+            return Err(WorkspaceError::FileTooLarge);
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok((format!("sha256:{}", hex::encode(hasher.finalize())), total))
 }
 
 fn hash_entries(entries: &[WorkspaceEntryV1]) -> Result<String, WorkspaceError> {
@@ -411,20 +594,6 @@ fn hash_strings(values: &[&str]) -> String {
         hasher.update(value.as_bytes());
     }
     format!("sha256:{}", hex::encode(hasher.finalize()))
-}
-
-fn hash_file(path: &Path) -> Result<String, WorkspaceError> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
 fn validate_relative(path: &Path) -> Result<(), WorkspaceError> {
@@ -456,6 +625,18 @@ pub enum WorkspaceError {
     /// Root object changed after opening.
     #[error("workspace root identity changed")]
     RootChanged,
+    /// A child object changed while it was opened, hashed, copied, or rebound.
+    #[error("workspace entry changed during a bound operation")]
+    EntryChanged,
+    /// Regular-file hard links can be mutated through an alias outside the root.
+    #[error("workspace hard link is forbidden")]
+    HardLinkForbidden,
+    /// A nested mount would escape the root filesystem authority.
+    #[error("workspace cross-device entry is forbidden")]
+    CrossDeviceForbidden,
+    /// The deterministic inventory exceeded its hard entry bound.
+    #[error("workspace tree contains too many entries")]
+    TreeTooLarge,
     /// Relative path traversal was attempted.
     #[error("workspace relative path is invalid")]
     InvalidRelativePath,
@@ -563,6 +744,45 @@ mod tests {
             fs::read(source.join("paper/main.tex")).expect("source"),
             b"v1\n"
         );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn hard_linked_source_file_is_rejected() {
+        let (root, source, _attempts) = roots();
+        let alias = root.join("outside-alias.tex");
+        fs::hard_link(source.join("paper/main.tex"), &alias).expect("hard link");
+        let source_root = WorkspaceRootV1::open(&source, None).expect("source root");
+        assert!(matches!(
+            source_root.inventory(),
+            Err(WorkspaceError::HardLinkForbidden)
+        ));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn in_place_mutation_between_hash_passes_is_rejected() {
+        let (root, source, _attempts) = roots();
+        let path = source.join("paper/main.tex");
+        let mut opened = open_bound_entry(&path).expect("bound source");
+        let result = hash_bound_file_with_hook(&mut opened, || {
+            fs::write(&path, b"changed while hashing\n").expect("mutate source");
+        });
+        assert!(matches!(result, Err(WorkspaceError::EntryChanged)));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn in_place_mutation_between_copy_and_verify_removes_partial_copy() {
+        let (root, source, attempts) = roots();
+        let source_path = source.join("paper/main.tex");
+        let destination_path = attempts.join("copied.tex");
+        let mut opened = open_bound_entry(&source_path).expect("bound source");
+        let result = copy_bound_file_with_hook(&mut opened, &destination_path, || {
+            fs::write(&source_path, b"changed while copying\n").expect("mutate source");
+        });
+        assert!(matches!(result, Err(WorkspaceError::EntryChanged)));
+        assert!(!destination_path.exists());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

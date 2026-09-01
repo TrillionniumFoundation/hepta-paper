@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.org/schemas/effective-status-v2.schema.json",
+  "title": "HeptaEffectiveSourceStatusV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "kind", "status", "repository", "qualificationSubject",
+    "source", "pullRequest", "checkEvidenceSha256", "legacyCheckEvidenceSha256",
+    "legacyEffectiveStatusSha256", "legacyEffectiveStatusSchemaSha256",
+    "legacyEffectiveStatus", "generatedBy", "authority"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": { "const": "HeptaEffectiveSourceStatusV2" },
+    "status": { "const": "exact_subject_source_qualified" },
+    "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+    "qualificationSubject": { "type": "object", "minProperties": 10 },
+    "source": { "type": "object", "minProperties": 6 },
+    "pullRequest": { "type": "object", "minProperties": 6 },
+    "checkEvidenceSha256": { "$ref": "#/$defs/sha256" },
+    "legacyCheckEvidenceSha256": { "$ref": "#/$defs/sha256" },
+    "legacyEffectiveStatusSha256": { "$ref": "#/$defs/sha256" },
+    "legacyEffectiveStatusSchemaSha256": { "$ref": "#/$defs/sha256" },
+    "legacyEffectiveStatus": { "type": "object", "minProperties": 1 },
+    "generatedBy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["workflow", "runId", "runAttempt"],
+      "properties": {
+        "workflow": { "type": "string", "minLength": 1 },
+        "runId": { "type": "string", "pattern": "^[0-9]+$" },
+        "runAttempt": { "type": "string", "pattern": "^[0-9]+$" }
+      }
+    },
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "productionAuthorized", "externalAuthorityClaimed", "providerAuthorized",
+        "campaignWriterActivated", "releaseAuthorized", "submissionAuthorized"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "externalAuthorityClaimed": { "const": false },
+        "providerAuthorized": { "const": false },
+        "campaignWriterActivated": { "const": false },
+        "releaseAuthorized": { "const": false },
+        "submissionAuthorized": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  }
+}

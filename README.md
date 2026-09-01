@@ -40,6 +40,14 @@ portal credentials or submission actions
 Those effects remain behind separately controlled target-host and external-
 authority evidence.
 
+## Capability coverage boundary
+
+The current operator-facing Node capability catalog has source-bound conformance
+coverage of **16/16**. Independently controlled production operational proof
+remains **0/16** until the mapped external capability owners and operational
+observers provide accepted evidence. These counts describe capability coverage,
+not production activation.
+
 ## Target architecture
 
 The target is a modular monorepo with explicit authority/process boundaries:

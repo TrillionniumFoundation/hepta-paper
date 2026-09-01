@@ -78,6 +78,13 @@ function requireTokens(source, tokens) {
   for (const token of tokens) assert.ok(source.includes(token), `missing contract token ${token}`);
 }
 
+function removeAllOccurrences(source, token) {
+  assert.ok(source.includes(token), `cannot mutate absent contract token ${token}`);
+  const hostile = source.split(token).join(`removed_${token.length}`);
+  assert.ok(!hostile.includes(token), `contract token survived hostile mutation ${token}`);
+  return hostile;
+}
+
 function assertStrictSchema(name, schema) {
   assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema', name);
   assert.equal(schema.type, 'object', name);
@@ -149,7 +156,7 @@ test('external qualification payload anti-forgery surface is complete and every 
   const source = read('rust/crates/hepta-qualification-ingest/src/package_payload.rs');
   requireTokens(source, payloadTokens);
   for (const token of payloadTokens) {
-    const hostile = source.replace(token, `removed_${token.length}`);
+    const hostile = removeAllOccurrences(source, token);
     assert.throws(() => requireTokens(hostile, payloadTokens), /missing contract token/);
   }
 });
@@ -160,7 +167,7 @@ test('external qualification closure replay clock ledger and non-activation surf
   assert.ok(!source.includes('durable_sqlite_v1'));
   assert.ok(!source.includes('request.now_unix_ms'));
   for (const token of closureTokens) {
-    const hostile = source.replace(token, `removed_${token.length}`);
+    const hostile = removeAllOccurrences(source, token);
     assert.throws(() => requireTokens(hostile, closureTokens), /missing contract token/);
   }
 });

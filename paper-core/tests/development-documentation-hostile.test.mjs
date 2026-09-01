@@ -58,7 +58,7 @@ test('development documentation validator fails closed under hostile graph, link
     const brokenLink = path.join(worktree, 'docs/system/HOSTILE_LINK.md');
     fs.writeFileSync(brokenLink, '# Hostile link\n\n[missing](./DOES_NOT_EXIST.md)\n');
     try {
-      expectFailure(worktree, /missing local link DOES_NOT_EXIST\.md/);
+      expectFailure(worktree, /missing local link (?:\.\/)?DOES_NOT_EXIST\.md/);
     } finally {
       fs.rmSync(brokenLink, { force: true });
     }

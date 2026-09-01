@@ -1,0 +1,255 @@
+name: rust-qualification-subject-v3
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit
+        required: true
+        type: string
+      candidate_tree:
+        description: Exact candidate tree
+        required: true
+        type: string
+      pull_request_number:
+        description: Pull request containing the candidate
+        required: true
+        type: number
+      head_branch:
+        description: Exact pull-request head branch
+        required: true
+        type: string
+      base_ref:
+        description: Exact pull-request base ref
+        required: true
+        type: string
+      base_sha:
+        description: Exact pull-request base commit
+        required: true
+        type: string
+      merge_commit:
+        description: Exact prospective merge commit
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: rust-qualification-subject-v3-${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+  cancel-in-progress: true
+
+env:
+  EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+  EXPECTED_HEAD_TREE: ${{ inputs.candidate_tree || '' }}
+  EXPECTED_PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request_number }}
+  EXPECTED_HEAD_BRANCH: ${{ github.event.pull_request.head.ref || inputs.head_branch }}
+  EXPECTED_BASE_REF: ${{ github.event.pull_request.base.ref || inputs.base_ref }}
+  EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha }}
+  EXPECTED_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha || inputs.merge_commit }}
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  derive-effective-source-status-v3:
+    name: derive-effective-source-status-v3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Establish exact base head and prospective merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/qualification-subject-v3"
+          install -d -m 0700 "$evidence_root/raw/required" "$evidence_root/raw/subject"
+          observed_head="$(git rev-parse HEAD)"
+          observed_tree="$(git rev-parse HEAD^{tree})"
+          test "$observed_head" = "$EXPECTED_HEAD_SHA"
+          if [ -n "$EXPECTED_HEAD_TREE" ]; then
+            test "$observed_tree" = "$EXPECTED_HEAD_TREE"
+          fi
+          git fetch --no-tags --depth=1 origin "$EXPECTED_BASE_SHA"
+          base_tree="$(git rev-parse FETCH_HEAD^{tree})"
+          git fetch --no-tags --depth=1 origin "refs/pull/$EXPECTED_PR_NUMBER/merge"
+          observed_merge="$(git rev-parse FETCH_HEAD)"
+          observed_merge_tree="$(git rev-parse FETCH_HEAD^{tree})"
+          test "$observed_merge" = "$EXPECTED_MERGE_SHA"
+          {
+            printf 'HEAD_TREE=%s\n' "$observed_tree"
+            printf 'BASE_TREE=%s\n' "$base_tree"
+            printf 'MERGE_TREE=%s\n' "$observed_merge_tree"
+            printf 'EVIDENCE_ROOT=%s\n' "$evidence_root"
+          } >> "$GITHUB_ENV"
+          printf '%s\n' "$observed_head" > "$evidence_root/head.txt"
+          printf '%s\n' "$observed_tree" > "$evidence_root/head-tree.txt"
+          printf '%s\n' "$EXPECTED_BASE_SHA" > "$evidence_root/base.txt"
+          printf '%s\n' "$base_tree" > "$evidence_root/base-tree.txt"
+          printf '%s\n' "$observed_merge" > "$evidence_root/merge.txt"
+          printf '%s\n' "$observed_merge_tree" > "$evidence_root/merge-tree.txt"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Validate qualification code and hostile state-machine cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile \
+            docs/rust/tools/collect-required-checks.py \
+            docs/rust/tools/derive-effective-status.py \
+            docs/rust/tools/verify-effective-status-current.py \
+            docs/rust/tools/qualification_subject_v3.py \
+            docs/rust/tools/derive_effective_status_v2.py \
+            docs/rust/tools/verify_effective_status_v2_current.py \
+            docs/rust/tools/test-plan-v4-qualification.py \
+            docs/rust/tools/test_qualification_subject_v3.py
+          python3 docs/rust/tools/validate-program-truth.py \
+            | tee "$EVIDENCE_ROOT/program-truth.json"
+          python3 docs/rust/tools/test-plan-v4-qualification.py \
+            2>&1 | tee "$EVIDENCE_ROOT/plan-v4-tests.log"
+          python3 docs/rust/tools/test_qualification_subject_v3.py \
+            2>&1 | tee "$EVIDENCE_ROOT/subject-v3-tests.log"
+
+      - name: Await producer-authenticated required check matrix
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/collect-required-checks.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$EXPECTED_HEAD_SHA" \
+            --tree "$HEAD_TREE" \
+            --head-branch "$EXPECTED_HEAD_BRANCH" \
+            --base-ref "$EXPECTED_BASE_REF" \
+            --pull-request "$EXPECTED_PR_NUMBER" \
+            --token "$GH_TOKEN" \
+            --api-url "$GITHUB_API_URL" \
+            --raw-output-dir "$EVIDENCE_ROOT/raw/required" \
+            --output "$EVIDENCE_ROOT/check-evidence.v2.json"
+
+      - name: Derive existing capability-specific nonactivating status
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/derive-effective-status.py \
+            --check-runs "$EVIDENCE_ROOT/check-evidence.v2.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$EXPECTED_HEAD_SHA" \
+            --tree "$HEAD_TREE" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$EVIDENCE_ROOT/effective-status.v1.json" \
+            | tee "$EVIDENCE_ROOT/legacy-derivation.json"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/rust/qualification/effective-status-v1.schema.json \
+            --instance "$EVIDENCE_ROOT/effective-status.v1.json" \
+            | tee "$EVIDENCE_ROOT/legacy-schema-validation.json"
+
+      - name: Collect and validate Qualification Subject V3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/qualification_subject_v3.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --pull-request "$EXPECTED_PR_NUMBER" \
+            --head-commit "$EXPECTED_HEAD_SHA" \
+            --head-tree "$HEAD_TREE" \
+            --head-branch "$EXPECTED_HEAD_BRANCH" \
+            --base-ref "$EXPECTED_BASE_REF" \
+            --token "$GH_TOKEN" \
+            --api-url "$GITHUB_API_URL" \
+            --check-evidence "$EVIDENCE_ROOT/check-evidence.v2.json" \
+            --raw-output-dir "$EVIDENCE_ROOT/raw/subject" \
+            --output "$EVIDENCE_ROOT/qualification-subject.v3.json" \
+            | tee "$EVIDENCE_ROOT/subject-collection.json"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/qualification/schemas/qualification-subject-runtime-v3.schema.json \
+            --instance "$EVIDENCE_ROOT/qualification-subject.v3.json" \
+            | tee "$EVIDENCE_ROOT/subject-schema-validation.json"
+
+      - name: Derive and validate effective source status V2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/derive_effective_status_v2.py \
+            --legacy-effective "$EVIDENCE_ROOT/effective-status.v1.json" \
+            --qualification-subject "$EVIDENCE_ROOT/qualification-subject.v3.json" \
+            --output "$EVIDENCE_ROOT/effective-status.v2.json" \
+            | tee "$EVIDENCE_ROOT/v2-derivation.json"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/rust/qualification/effective-status-runtime-v2-standalone.schema.json \
+            --instance "$EVIDENCE_ROOT/effective-status.v2.json" \
+            | tee "$EVIDENCE_ROOT/v2-schema-validation.json"
+
+      - name: Recollect live state and reject any stale subject
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$EVIDENCE_ROOT/raw/current-required" "$EVIDENCE_ROOT/raw/current-subject"
+          python3 docs/rust/tools/collect-required-checks.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$EXPECTED_HEAD_SHA" \
+            --tree "$HEAD_TREE" \
+            --head-branch "$EXPECTED_HEAD_BRANCH" \
+            --base-ref "$EXPECTED_BASE_REF" \
+            --pull-request "$EXPECTED_PR_NUMBER" \
+            --token "$GH_TOKEN" \
+            --api-url "$GITHUB_API_URL" \
+            --raw-output-dir "$EVIDENCE_ROOT/raw/current-required" \
+            --output "$EVIDENCE_ROOT/current-check-evidence.v2.json"
+          python3 docs/rust/tools/qualification_subject_v3.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --pull-request "$EXPECTED_PR_NUMBER" \
+            --head-commit "$EXPECTED_HEAD_SHA" \
+            --head-tree "$HEAD_TREE" \
+            --head-branch "$EXPECTED_HEAD_BRANCH" \
+            --base-ref "$EXPECTED_BASE_REF" \
+            --token "$GH_TOKEN" \
+            --api-url "$GITHUB_API_URL" \
+            --check-evidence "$EVIDENCE_ROOT/current-check-evidence.v2.json" \
+            --raw-output-dir "$EVIDENCE_ROOT/raw/current-subject" \
+            --output "$EVIDENCE_ROOT/current-qualification-subject.v3.json"
+          python3 docs/rust/tools/verify_effective_status_v2_current.py \
+            --artifact "$EVIDENCE_ROOT/effective-status.v2.json" \
+            --current-subject "$EVIDENCE_ROOT/current-qualification-subject.v3.json" \
+            --current-check-runs "$EVIDENCE_ROOT/current-check-evidence.v2.json" \
+            | tee "$EVIDENCE_ROOT/live-revalidation.json"
+          sha256sum \
+            "$EVIDENCE_ROOT/qualification-subject.v3.json" \
+            "$EVIDENCE_ROOT/effective-status.v2.json" \
+            > "$EVIDENCE_ROOT/canonical-artifacts.sha256"
+
+      - name: Prove exact source identity after qualification
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$HEAD_TREE"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: rust-qualification-subject-v3-${{ github.event.pull_request.head.sha || inputs.candidate_sha }}
+          path: ${{ runner.temp }}/qualification-subject-v3
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

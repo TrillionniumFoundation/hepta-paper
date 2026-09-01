@@ -37,15 +37,15 @@
     "timed_out"
   ],
   "collector": {
-    "workflow": ".github/workflows/rust-effective-source-qualification.yml",
+    "workflow": ".github/workflows/rust-effective-source-qualification-v3.yml",
     "context": "derive-effective-source-status",
     "maximumWaitSeconds": 2700,
     "pollSeconds": 20,
     "producerManifest": "docs/rust/qualification/source-check-producers.v1.json",
     "capabilityEvidence": "docs/rust/qualification/source-capability-evidence.v1.json",
-    "checkEvidenceSchema": "docs/rust/qualification/required-check-evidence-v2.schema.json",
-    "effectiveSchema": "docs/rust/qualification/effective-status-v1.schema.json",
-    "revalidationWorkflow": ".github/workflows/rust-source-qualification-revalidation.yml",
+    "checkEvidenceSchema": "docs/rust/qualification/required-check-evidence-v3.schema.json",
+    "effectiveSchema": "docs/rust/qualification/effective-status-v2.schema.json",
+    "revalidationWorkflow": ".github/workflows/rust-source-qualification-revalidation-v3.yml",
     "revalidationContext": "source-qualification-current",
     "artifactValidity": "live_revalidation_required"
   },

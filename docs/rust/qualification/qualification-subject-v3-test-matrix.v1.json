@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "QualificationSubjectV3HostileMatrix",
+  "status": "mandatory",
+  "cases": [
+    "base_commit_movement",
+    "base_tree_movement",
+    "base_repository_or_ref_substitution",
+    "prospective_merge_commit_movement",
+    "prospective_merge_tree_movement",
+    "prospective_merge_parent_substitution",
+    "canonical_run_non_success",
+    "canonical_context_empty_or_missing",
+    "older_run_late_successful_rerun",
+    "older_run_late_failed_rerun",
+    "job_or_step_set_mutation",
+    "artifact_set_mutation",
+    "required_check_snapshot_mutation",
+    "legacy_effective_head_mismatch",
+    "authority_escalation"
+  ]
+}

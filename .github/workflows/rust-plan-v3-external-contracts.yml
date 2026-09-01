@@ -57,7 +57,7 @@ jobs:
               'EXT-HOST-STORAGE-001': ('GAP-HOST-002', 'external-host-storage-package-v1.schema.json'),
               'EXT-KEY-OWNER-001': ('GAP-KEY-001', 'external-key-owner-drill-v1.schema.json'),
               'EXT-CODEX-ROLE-001': ('GAP-CODEX-001', 'authenticated-codex-role-canary-v1.schema.json'),
-              'EXT-CUTOVER-SOAK-001': ('GAP-HOST-002', 'production-cutover-soak-v1.schema.json'),
+              'EXT-CUTOVER-SOAK-001': ('GAP-REL-001', 'production-cutover-soak-v1.schema.json'),
               'EXT-AUTHORITY-SET-001': ('GAP-REL-001', 'external-authority-set-v1.schema.json'),
           }
           support = {

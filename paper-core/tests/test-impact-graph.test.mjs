@@ -27,8 +27,11 @@ function fixtureGraph() {
     'paper-domain/unmapped.mjs': 'export const unmapped = true;\n',
     'paper-core/tests/claim.test.mjs':
       "import '../../paper-application/use-claim.mjs';\n",
-    'paper-core/tests/other.test.mjs':
-      "import '../../paper-domain/other.mjs';\n",
+    'paper-core/tests/other.test.mjs': [
+      "import '../../paper-domain/other.mjs';",
+      "const currentStatus = '../docs/CURRENT_STATUS.md';",
+      '',
+    ].join('\n'),
     'paper-core/tests/spawn.test.mjs':
       "const executable = 'paper-core/bin/tool.mjs';\n",
     'paper-core/tests/repository-control-plane.test.mjs': [
@@ -51,6 +54,7 @@ function fixtureGraph() {
     files: [
       ...Object.keys(sources),
       'paper-core/config/policy.json',
+      'paper-core/docs/CURRENT_STATUS.md',
       'README.md',
       '.github/CODEOWNERS',
       '.github/actionlint.yaml',
@@ -101,12 +105,37 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
     assert.deepEqual(selection.selectedTests, graph.tests, changedFile);
     assert.ok(selection.fallbackFiles.includes(changedFile), changedFile);
   }
-  const documentation = selectImpactedTests({
-    graph,
-    changedFiles: ['README.md'],
-  });
-  assert.equal(documentation.status, 'test_impact_selection_no_tests_required');
-  assert.deepEqual(documentation.selectedTests, []);
+  for (const changedFile of ['README.md', 'paper-core/docs/CURRENT_STATUS.md']) {
+    const documentation = selectImpactedTests({
+      graph,
+      changedFiles: [changedFile],
+    });
+    assert.equal(
+      documentation.status,
+      'test_impact_selection_no_tests_required',
+      changedFile,
+    );
+    assert.deepEqual(documentation.selectedTests, [], changedFile);
+    assert.deepEqual(documentation.fallbackFiles, [], changedFile);
+  }
+
+  for (const changedFile of [
+    'docs/system/truth/program.v2.json',
+    'docs/modules/schemas/module-manifest-v1.schema.json',
+    'paper-core/docs/history/architecture-p1p2-review-groups-2026-07-14.json',
+  ]) {
+    const documentationArtifact = selectImpactedTests({
+      graph,
+      changedFiles: [changedFile],
+    });
+    assert.equal(
+      documentationArtifact.status,
+      'test_impact_selection_no_tests_required',
+      changedFile,
+    );
+    assert.deepEqual(documentationArtifact.selectedTests, [], changedFile);
+    assert.deepEqual(documentationArtifact.fallbackFiles, [], changedFile);
+  }
 
   for (const changedFile of [
     '.github/actionlint.yaml',
@@ -128,6 +157,68 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
     assert.deepEqual(isolated.selectedTests, [], changedFile);
     assert.deepEqual(isolated.fallbackFiles, [], changedFile);
   }
+});
+
+test('the development-documentation validator is narrow only when contract-tested', () => {
+  const mapped = buildTestImpactGraph({
+    files: [
+      'docs/tools/validate-development-docs.mjs',
+      'paper-core/tests/development-documentation-governance.test.mjs',
+    ],
+    readSource(file) {
+      if (file === 'paper-core/tests/development-documentation-governance.test.mjs') {
+        return "const validator = '../../docs/tools/validate-development-docs.mjs';\n";
+      }
+      return '';
+    },
+  });
+  const selection = selectImpactedTests({
+    graph: mapped,
+    changedFiles: ['docs/tools/validate-development-docs.mjs'],
+  });
+  assert.equal(selection.status, 'test_impact_selection_ready');
+  assert.deepEqual(selection.fallbackFiles, []);
+  assert.deepEqual(selection.selectedTests, [
+    'paper-core/tests/development-documentation-governance.test.mjs',
+  ]);
+
+  const unmapped = buildTestImpactGraph({
+    files: [
+      'docs/tools/validate-development-docs.mjs',
+      'paper-core/tests/other.test.mjs',
+    ],
+    readSource: () => '',
+  });
+  const fallback = selectImpactedTests({
+    graph: unmapped,
+    changedFiles: ['docs/tools/validate-development-docs.mjs'],
+  });
+  assert.equal(fallback.status, 'test_impact_selection_full_fallback');
+  assert.deepEqual(fallback.fallbackFiles, [
+    'docs/tools/validate-development-docs.mjs',
+  ]);
+  assert.deepEqual(fallback.selectedTests, ['paper-core/tests/other.test.mjs']);
+});
+
+test('mixed current documentation and CODEOWNERS changes remain narrowly contract-tested', () => {
+  const graph = fixtureGraph();
+  const selection = selectImpactedTests({
+    graph,
+    changedFiles: [
+      '.github/CODEOWNERS',
+      'README.md',
+      'docs/system/truth/program.v2.json',
+      'docs/modules/schemas/module-manifest-v1.schema.json',
+      'paper-core/docs/history/architecture-p1p2-review-groups-2026-07-14.json',
+    ],
+  });
+  assert.equal(selection.status, 'test_impact_selection_ready');
+  assert.equal(selection.fullFallback, false);
+  assert.deepEqual(selection.fallbackFiles, []);
+  assert.deepEqual(
+    selection.selectedTests,
+    ['paper-core/tests/repository-control-plane.test.mjs'],
+  );
 });
 
 test('repository control-plane changes are narrow only when contract-tested', () => {

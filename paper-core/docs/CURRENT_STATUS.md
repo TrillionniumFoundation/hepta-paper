@@ -1,4 +1,6 @@
-# hepta-paper Node implementation status
+# hepta-paper current status
+
+This is the normative status for the unreleased v0.21.0 development candidate.
 
 This is the current scoped status for the Node implementation. Whole-system
 status is [`../../docs/system/CURRENT_STATUS.md`](../../docs/system/CURRENT_STATUS.md).
@@ -69,6 +71,15 @@ generated claim
 
 A model narrative, local fixture, self-signed record, or repository-admin prose
 cannot replace an independent verifier or authority.
+
+## Capability coverage boundary
+
+The current 16-capability implementation catalog can produce a
+production-source-bound conformance replay of **16/16** after the required
+release-bound replay is executed. Independently controlled production
+operational proof remains **0/16** until distinct external capability owners and
+operational observers provide accepted evidence. These counts describe
+capability coverage, not production activation.
 
 ## Release and submission boundary
 

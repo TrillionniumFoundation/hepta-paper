@@ -4,7 +4,7 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const PORTABLE_TEST = /^(?:paper-core|migration)\/tests\/.*\.test\.mjs$/;
-const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:docs|paper-core\/docs|paper-adapters)\/.*\.md$/;
+const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:docs|paper-core\/docs)\/.*\.(?:md|json)$|^paper-adapters\/.*\.md$/;
 const RUST_ISOLATED = /^(?:rust\/|docs\/rust\/|\.github\/actionlint\.ya?ml$|\.github\/workflows\/(?:rust-[^/]+|exact-head-source-validation|workflow-lint)\.ya?ml$)/;
 const REPOSITORY_CONTROL_PLANE = /^(?:\.gitignore|\.github\/CODEOWNERS|\.github\/runner-groups\.ya?ml|\.github\/workflows\/(?:ci|legacy-matrix-reference-verification)\.ya?ml|migration\/bin\/verify-legacy-matrix-reference-publication\.mjs|migration\/fixtures\/legacy-matrix-reference-publication-v1\.json)$/;
 const GLOBAL_IMPACT = Object.freeze([
@@ -52,7 +52,9 @@ function sourceReferences(importer, source, fileSet) {
     } else if (/^(?:paper-[^/]+|workflow-kernel|migration|runtime-images|core)\//.test(value)) {
       candidate = path.posix.normalize(value);
     }
-    if (candidate && fileSet.has(candidate)) references.add(candidate);
+    if (candidate && fileSet.has(candidate) && !DOCUMENTATION.test(candidate)) {
+      references.add(candidate);
+    }
   }
   return [...references].sort();
 }

@@ -75,13 +75,37 @@ projection rather than being duplicated as a second global status source.
 | current Node campaign and automation control | source implemented | existing scoped gates | authoritative |
 | Rust broker/runtime/workspace/writer components | source implemented | fresh exact-subject requalification required | disabled |
 | global machine truth and documentation controls | source implemented | fresh exact-subject qualification required | disabled as governance authority |
-| module protocol, registry, SDK and conformance | design ready | none | disabled |
-| Rust central composition root | design ready | none | absent |
-| global scheduler/optimizer | design ready | none | disabled |
-| hierarchical DRF/aging/reservation model | design ready; current Node capacity governor is partial | none | disabled |
+| module protocol, registry, SDK and conformance | typed policy-owned registry and prepared-effect source slice implemented; full SDK/conformance pending | fresh exact-subject qualification required | disabled |
+| Rust central composition root | generic non-production plan-to-commit vertical source implemented; production service root absent | fresh exact-subject qualification required | absent |
+| global scheduler/optimizer | bounded exact selection, deterministic fallback and replayable certificate source implemented; full optimizer port/calibration pending | fresh exact-subject qualification required | disabled |
+| hierarchical DRF/aging/reservation model | current Node governor plus Rust weighted dominant-share, aging and exact reservation/accounting source slice | full canonical workload qualification pending | disabled for Rust control |
 | performance qualification | design ready | no exact-host baseline | disabled |
 | team-scale ownership | design ready | real GitHub teams not provisioned | current single-reviewer policy retained |
 | release/submission verification ports | source implemented | external packages absent | external actions disabled |
+
+## Global Plan 1.1 executable vertical candidate
+
+The current stacked source candidate adds two non-production Rust crates:
+
+```text
+hepta-module-platform
+hepta-control-plane
+```
+
+They implement a policy-owned module registry, canonical candidate and prepared
+result values, immutable planning snapshots, hard policy, bounded exact/fallback
+selection, hierarchical resource admission, dependency-wave execution,
+independent prepared-result verification, a typed single-writer sequencer port,
+and preflighted privacy-bounded events. The integration test executes:
+
+```text
+snapshot -> plan -> reserve -> execute waves -> verify -> commit -> release
+```
+
+This is static source implementation only. It is not the production composition
+root, does not load real credentials, cannot authorize external actions, and keeps
+`automatic_activation=false` and `production_activation=false`. G2 through G6
+remain open for their unimplemented work items and exact-subject qualification.
 
 ## External blockers
 
@@ -123,8 +147,8 @@ passes its required workflows and independent review.
    producer/effective/currentness matrix.
 4. Integrate the qualified documentation tree into the single product
    convergence surface without reusing predecessor artifacts.
-5. Implement G2 module protocol/registry/conformance and G3 Rust composition.
-6. Implement G4 resource fairness, G5 capability migration, and G6 optimizer.
+5. Complete the remaining G2 command/SDK/conformance work and turn the current G3 source vertical into a production composition root.
+6. Complete G4 hierarchy/starvation qualification, G5 capability migration, and the remaining G6 Pareto/optimizer/calibration work.
 7. Provision G7 team ownership and exact-host performance evidence.
 8. Complete G8 external packages, then G9 shadow/canary/rollback and G10 atomic
    authority transfer/Node retirement.

@@ -20,6 +20,8 @@ members = [
   "crates/hepta-external-authority",
   "crates/hepta-cutover",
   "crates/hepta-qualification-ingest",
+  "crates/hepta-module-platform",
+  "crates/hepta-control-plane",
 ]
 
 [workspace.package]

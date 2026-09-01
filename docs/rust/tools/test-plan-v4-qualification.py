@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "docs/rust/tools"
@@ -217,6 +218,86 @@ class PlanV4QualificationTests(unittest.TestCase):
         self.fixture.workflow_runs[0]["path"] = ".github/workflows/attacker.yml"
         with self.assertRaises(RuntimeError):
             self.fixture.snapshot()
+
+    def test_attempt_jobs_permission_denied_uses_revalidated_latest_endpoint(self) -> None:
+        run = copy.deepcopy(self.fixture.workflow_runs[0])
+        run_id, attempt = COLLECT.run_key(run)
+        jobs = copy.deepcopy(self.fixture.jobs_by_attempt[(run_id, attempt)])
+
+        def fake_fetch_pages(url: str, list_key: str, token: str):
+            self.assertEqual(list_key, "jobs")
+            self.assertEqual(token, "token")
+            if "/attempts/" in url:
+                raise COLLECT.GitHubApiError(403, url)
+            self.assertIn("/jobs?filter=latest", url)
+            return jobs, [{"jobs": jobs}]
+
+        with (
+            mock.patch.object(COLLECT, "fetch_pages", side_effect=fake_fetch_pages),
+            mock.patch.object(COLLECT, "fetch_json", return_value=copy.deepcopy(run)),
+        ):
+            observed, access = COLLECT.fetch_jobs_for_attempt(
+                api="https://api.github.test",
+                repository="TrillionniumFoundation/hepta-paper",
+                run=run,
+                token="token",
+            )
+
+        self.assertEqual(observed, jobs)
+        self.assertEqual(
+            access["accessMode"],
+            "latest_endpoint_after_attempt_permission_denied",
+        )
+        self.assertEqual(access["attemptEndpointStatus"], 403)
+        self.assertEqual(access["runId"], run_id)
+        self.assertEqual(access["runAttempt"], attempt)
+
+    def test_missing_jobs_read_permission_is_explicitly_classified(self) -> None:
+        run = copy.deepcopy(self.fixture.workflow_runs[0])
+
+        def denied(url: str, list_key: str, token: str):
+            del list_key, token
+            raise COLLECT.GitHubApiError(403, url)
+
+        with mock.patch.object(COLLECT, "fetch_pages", side_effect=denied):
+            with self.assertRaisesRegex(
+                ValueError,
+                "github_api_permission_denied:actions_jobs_read",
+            ):
+                COLLECT.fetch_jobs_for_attempt(
+                    api="https://api.github.test",
+                    repository="TrillionniumFoundation/hepta-paper",
+                    run=run,
+                    token="token",
+                )
+
+    def test_latest_jobs_fallback_rejects_attempt_change(self) -> None:
+        run = copy.deepcopy(self.fixture.workflow_runs[0])
+        run_id, attempt = COLLECT.run_key(run)
+        jobs = copy.deepcopy(self.fixture.jobs_by_attempt[(run_id, attempt)])
+        changed = copy.deepcopy(run)
+        changed["run_attempt"] = attempt + 1
+
+        def fake_fetch_pages(url: str, list_key: str, token: str):
+            del list_key, token
+            if "/attempts/" in url:
+                raise COLLECT.GitHubApiError(403, url)
+            return jobs, [{"jobs": jobs}]
+
+        with (
+            mock.patch.object(COLLECT, "fetch_pages", side_effect=fake_fetch_pages),
+            mock.patch.object(COLLECT, "fetch_json", return_value=changed),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "workflow_run_mutated_during_jobs_fallback",
+            ):
+                COLLECT.fetch_jobs_for_attempt(
+                    api="https://api.github.test",
+                    repository="TrillionniumFoundation/hepta-paper",
+                    run=run,
+                    token="token",
+                )
 
     def test_colliding_context_from_other_workflow_is_rejected(self) -> None:
         collision = copy.deepcopy(self.fixture.check_runs[0])

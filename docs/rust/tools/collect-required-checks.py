@@ -30,6 +30,15 @@ BAD_CONCLUSIONS = {
 }
 
 
+class GitHubApiError(ValueError):
+    """Structured GitHub REST error retained for fail-closed fallback policy."""
+
+    def __init__(self, status: int, url: str) -> None:
+        self.status = status
+        self.url = url
+        super().__init__(f"github_api_http_error:{status}:{url}")
+
+
 def fail(message: str) -> None:
     raise ValueError(message)
 
@@ -99,7 +108,7 @@ def fetch_json(url: str, token: str) -> dict[str, Any]:
         with urllib.request.urlopen(request, timeout=30) as response:
             value = json.load(response)
     except urllib.error.HTTPError as error:
-        fail(f"github_api_http_error:{error.code}:{url}")
+        raise GitHubApiError(error.code, url) from error
     except (urllib.error.URLError, TimeoutError) as error:
         fail(f"github_api_failed:{error}:{url}")
     if not isinstance(value, dict):
@@ -125,6 +134,112 @@ def fetch_pages(base_url: str, list_key: str, token: str) -> tuple[list[dict[str
         if page > 20:
             fail(f"github_api_pagination_overflow:{list_key}")
     return rows, pages
+
+
+def fetch_jobs_for_attempt(
+    *,
+    api: str,
+    repository: str,
+    run: dict[str, Any],
+    token: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Fetch one exact run attempt, with a permission-safe latest-attempt fallback.
+
+    GitHub's attempt-specific jobs endpoint can return 403 to a workflow token
+    even when the token has ``actions: read`` and the non-attempt jobs endpoint
+    is readable. The fallback remains exact only after the live run identity and
+    every returned job attempt are revalidated. If neither endpoint is readable,
+    the collector emits an explicit permission classification rather than a
+    generic HTTP failure.
+    """
+
+    run_id, attempt = run_key(run)
+    attempt_url = (
+        f"{api}/repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs"
+    )
+    try:
+        jobs, pages = fetch_pages(attempt_url, "jobs", token)
+        return jobs, {
+            "accessMode": "attempt_endpoint",
+            "runId": run_id,
+            "runAttempt": attempt,
+            "pages": pages,
+        }
+    except GitHubApiError as error:
+        if error.status not in {403, 404}:
+            raise
+        attempt_status = error.status
+
+    latest_url = f"{api}/repos/{repository}/actions/runs/{run_id}/jobs?filter=latest"
+    try:
+        jobs, pages = fetch_pages(latest_url, "jobs", token)
+    except GitHubApiError as error:
+        if error.status == 403:
+            fail(
+                "github_api_permission_denied:actions_jobs_read:"
+                f"run={run_id}:attempt={attempt}"
+            )
+        raise
+
+    try:
+        live_run = fetch_json(
+            f"{api}/repos/{repository}/actions/runs/{run_id}", token
+        )
+    except GitHubApiError as error:
+        if error.status == 403:
+            fail(
+                "github_api_permission_denied:actions_run_read:"
+                f"run={run_id}:attempt={attempt}"
+            )
+        raise
+
+    live_id, live_attempt = run_key(live_run)
+    if live_id != run_id or live_attempt != attempt:
+        fail(
+            "workflow_run_mutated_during_jobs_fallback:"
+            f"run={run_id}:expected_attempt={attempt}:observed_attempt={live_attempt}"
+        )
+    identity_fields = (
+        "workflow_id",
+        "path",
+        "event",
+        "head_sha",
+        "head_branch",
+        "status",
+        "conclusion",
+        "check_suite_id",
+        "updated_at",
+    )
+    changed = [
+        field
+        for field in identity_fields
+        if run.get(field) != live_run.get(field)
+    ]
+    if changed:
+        fail(
+            "workflow_run_mutated_during_jobs_fallback:"
+            f"run={run_id}:fields={','.join(changed)}"
+        )
+    for job in jobs:
+        observed_attempt = job.get("run_attempt")
+        if observed_attempt not in (None, attempt):
+            fail(
+                "workflow_job_attempt_mismatch:"
+                f"run={run_id}:expected={attempt}:observed={observed_attempt}"
+            )
+
+    return jobs, {
+        "accessMode": (
+            "latest_endpoint_after_attempt_permission_denied"
+            if attempt_status == 403
+            else "latest_endpoint_after_attempt_not_found"
+        ),
+        "attemptEndpointStatus": attempt_status,
+        "runId": run_id,
+        "runAttempt": attempt,
+        "liveRunIdentity": {field: live_run.get(field) for field in identity_fields},
+        "pages": pages,
+    }
 
 
 def load_policy(required_path: Path, producer_path: Path, repository: str) -> tuple[dict[str, Any], dict[str, Any], list[str], dict[str, dict[str, Any]]]:
@@ -475,22 +590,14 @@ def main() -> int:
             if run.get("head_sha") != args.commit or run.get("event") != "pull_request":
                 continue
             run_id, attempt = run_key(run)
-            try:
-                jobs, pages = fetch_pages(
-                    f"{api}/repos/{args.repository}/actions/runs/{run_id}/attempts/{attempt}/jobs",
-                    "jobs",
-                    args.token,
-                )
-            except ValueError as error:
-                if "github_api_http_error:404" not in str(error):
-                    raise
-                jobs, pages = fetch_pages(
-                    f"{api}/repos/{args.repository}/actions/runs/{run_id}/jobs?filter=latest",
-                    "jobs",
-                    args.token,
-                )
+            jobs, access = fetch_jobs_for_attempt(
+                api=api,
+                repository=args.repository,
+                run=run,
+                token=args.token,
+            )
             jobs_by_attempt[(run_id, attempt)] = jobs
-            job_pages[f"{run_id}-{attempt}"] = pages
+            job_pages[f"{run_id}-{attempt}"] = access
 
         write_raw(args.raw_output_dir, "workflow-runs.json", workflow_pages)
         write_raw(args.raw_output_dir, "check-runs.json", check_pages)

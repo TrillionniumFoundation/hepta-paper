@@ -17,6 +17,41 @@ function read(relative) {
   return fs.readFileSync(path.join(root, relative), 'utf8');
 }
 
+function yamlChildBlock(source, indent, key) {
+  const lines = source.split(/\r?\n/u);
+  const prefix = `${' '.repeat(indent)}${key}:`;
+  const start = lines.findIndex((line) => line.startsWith(prefix));
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    const leading = line.length - line.trimStart().length;
+    if (leading <= indent) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+function pushBranches(pushBlock) {
+  const inline = pushBlock.match(/^    branches:\s*\[([^\]]*)\]\s*$/mu);
+  if (inline) {
+    return inline[1].split(',').map((value) => value.trim()).filter(Boolean);
+  }
+  const lines = pushBlock.split(/\r?\n/u);
+  const header = lines.findIndex((line) => /^    branches:\s*$/u.test(line));
+  if (header < 0) return [];
+  const branches = [];
+  for (let index = header + 1; index < lines.length; index += 1) {
+    const match = lines[index].match(/^      -\s+(.+?)\s*$/u);
+    if (!match) break;
+    branches.push(match[1].replace(/^['"]|['"]$/gu, ''));
+  }
+  return branches;
+}
+
 test('development documentation validator executes the canonical fail-closed contract', () => {
   const result = spawnSync(process.execPath, [validatorPath], {
     cwd: root,
@@ -70,20 +105,19 @@ test('every required qualification producer always reports on pull requests', ()
 
   for (const workflowPath of [...workflowPaths].sort()) {
     const workflow = read(workflowPath);
-    const triggerMatch = workflow.match(/^on:\n([\s\S]*?)(?=^(?:permissions|concurrency|env|jobs):)/mu);
-    assert.ok(triggerMatch, `${workflowPath}: missing bounded on block`);
-    const triggerBlock = triggerMatch[0];
-    assert.match(triggerBlock, /^  pull_request:\s*$/mu, workflowPath);
-    assert.doesNotMatch(
-      triggerBlock,
-      /^  pull_request:\s*\n    (?:paths|paths-ignore|types|branches|branches-ignore):/mu,
-      `${workflowPath}: required producer pull_request trigger must always report`,
-    );
+    const triggerBlock = yamlChildBlock(workflow, 0, 'on');
+    assert.ok(triggerBlock, `${workflowPath}: missing bounded on block`);
+    const pullRequestBlock = yamlChildBlock(triggerBlock, 2, 'pull_request');
+    assert.equal(pullRequestBlock, '  pull_request:', `${workflowPath}: required producer pull_request trigger must always report`);
 
-    const pushMatch = triggerBlock.match(/^  push:\s*\n([\s\S]*?)(?=^  [A-Za-z_][A-Za-z0-9_-]*:|$)/mu);
-    if (pushMatch) {
-      assert.match(pushMatch[0], /^    branches:\s*(?:\[main\]|\n      - main\s*)$/mu, `${workflowPath}: required producer push trigger must be main-only`);
-      assert.doesNotMatch(pushMatch[0], /codex\/\*\*|branches-ignore|paths|paths-ignore/mu);
+    const pushBlock = yamlChildBlock(triggerBlock, 2, 'push');
+    if (pushBlock) {
+      assert.deepEqual(
+        pushBranches(pushBlock),
+        ['main'],
+        `${workflowPath}: required producer push trigger must be main-only`,
+      );
+      assert.doesNotMatch(pushBlock, /codex\/\*\*|branches-ignore|paths|paths-ignore/mu);
     }
   }
 });

@@ -2,16 +2,8 @@ name: rust-qualification-artifacts
 
 on:
   pull_request:
-    paths:
-      - rust/**
-      - docs/rust/qualification/**
-      - .github/workflows/rust-qualification-artifacts.yml
   push:
     branches: [main]
-    paths:
-      - rust/**
-      - docs/rust/qualification/**
-      - .github/workflows/rust-qualification-artifacts.yml
   workflow_dispatch:
 
 permissions:

@@ -2,16 +2,8 @@ name: rust-supply-chain
 
 on:
   pull_request:
-    paths:
-      - rust/**
-      - docs/rust/security/SUPPLY_CHAIN_POLICY.md
-      - .github/workflows/rust-supply-chain.yml
   push:
     branches: [main]
-    paths:
-      - rust/**
-      - docs/rust/security/SUPPLY_CHAIN_POLICY.md
-      - .github/workflows/rust-supply-chain.yml
   workflow_dispatch:
 
 permissions:

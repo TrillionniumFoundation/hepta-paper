@@ -2,9 +2,6 @@ name: rust-broker-installed-qualification-v2
 
 on:
   pull_request:
-    paths:
-      - rust/**
-      - .github/workflows/rust-broker-installed-qualification-v2.yml
   workflow_dispatch:
 
 permissions:

@@ -62,6 +62,26 @@ test('development documentation validator retains independent governance guards'
   assert.match(codeowners, /^\/docs\/\s+@/mu);
 });
 
+
+test('every required qualification producer always reports on pull requests', () => {
+  const manifest = JSON.parse(read('docs/rust/qualification/source-check-producers.v1.json'));
+  const workflowPaths = new Set(manifest.producers.map((producer) => producer.workflowPath));
+  assert.ok(workflowPaths.size > 0);
+
+  for (const workflowPath of [...workflowPaths].sort()) {
+    const workflow = read(workflowPath);
+    const triggerMatch = workflow.match(/^on:\n([\s\S]*?)(?=^(?:permissions|concurrency|env|jobs):)/mu);
+    assert.ok(triggerMatch, `${workflowPath}: missing bounded on block`);
+    const triggerBlock = triggerMatch[0];
+    assert.match(triggerBlock, /^  pull_request:\s*$/mu, workflowPath);
+    assert.doesNotMatch(
+      triggerBlock,
+      /^  pull_request:\s*\n    (?:paths|paths-ignore|types|branches|branches-ignore):/mu,
+      `${workflowPath}: required producer pull_request trigger must always report`,
+    );
+  }
+});
+
 test('current Node status keeps the exact release-state marker and no legacy tree survives', () => {
   const version = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version;
   const marker = `This is the normative status for the unreleased v${version} development candidate.`;

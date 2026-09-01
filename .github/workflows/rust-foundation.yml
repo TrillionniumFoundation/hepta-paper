@@ -2,25 +2,9 @@ name: rust-foundation
 
 on:
   pull_request:
-    paths:
-      - '.github/workflows/rust-foundation.yml'
-      - '.github/workflows/ci.yml'
-      - '.gitignore'
-      - 'rust/**'
-      - 'docs/rust/**'
-      - 'docs/codex/**'
-      - 'docs/adr/**'
   push:
     branches:
       - main
-    paths:
-      - '.github/workflows/rust-foundation.yml'
-      - '.github/workflows/ci.yml'
-      - '.gitignore'
-      - 'rust/**'
-      - 'docs/rust/**'
-      - 'docs/codex/**'
-      - 'docs/adr/**'
   workflow_dispatch:
 
 permissions:

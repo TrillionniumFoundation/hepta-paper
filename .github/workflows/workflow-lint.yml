@@ -2,14 +2,10 @@ name: workflow-lint
 
 on:
   pull_request:
-    paths:
-      - '.github/workflows/**'
   push:
     branches:
       - main
       - 'codex/**'
-    paths:
-      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:

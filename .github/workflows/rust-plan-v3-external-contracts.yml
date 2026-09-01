@@ -2,22 +2,8 @@ name: rust-plan-v3-external-contracts
 
 on:
   pull_request:
-    paths:
-      - 'docs/rust/qualification/**'
-      - 'docs/rust/current-status.v1.json'
-      - 'docs/qualification/**'
-      - 'docs/system/truth/**'
-      - 'rust/crates/hepta-qualification-ingest/**'
-      - '.github/workflows/rust-plan-v3-external-contracts.yml'
   push:
     branches: [main]
-    paths:
-      - 'docs/rust/qualification/**'
-      - 'docs/rust/current-status.v1.json'
-      - 'docs/qualification/**'
-      - 'docs/system/truth/**'
-      - 'rust/crates/hepta-qualification-ingest/**'
-      - '.github/workflows/rust-plan-v3-external-contracts.yml'
   workflow_dispatch:
 
 permissions:

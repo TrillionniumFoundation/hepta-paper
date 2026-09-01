@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "QualificationSubjectV3NonAuthority",
+  "status": "non_authorizing_source_evidence",
+  "productionAuthorized": false,
+  "providerAuthorized": false,
+  "campaignWriterActivated": false,
+  "releaseAuthorized": false,
+  "submissionAuthorized": false,
+  "externalAuthorityClaimed": false
+}

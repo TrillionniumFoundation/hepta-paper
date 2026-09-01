@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "QualificationSubjectV3SurfaceManifest",
+  "status": "source_implemented_nonactivating",
+  "documents": [
+    "docs/qualification/QUALIFICATION_SUBJECT_V3_RUNTIME.md",
+    "docs/rust/qualification/QUALIFICATION_SUBJECT_V3_CLOSURE.md"
+  ],
+  "schemas": [
+    "docs/qualification/schemas/qualification-subject-runtime-v3.schema.json",
+    "docs/rust/qualification/effective-status-runtime-v2-standalone.schema.json"
+  ],
+  "tools": [
+    "docs/rust/tools/qualification_subject_v3.py",
+    "docs/rust/tools/derive_effective_status_v2.py",
+    "docs/rust/tools/verify_effective_status_v2_current.py",
+    "docs/rust/tools/test_qualification_subject_v3.py"
+  ],
+  "workflows": [
+    ".github/workflows/rust-qualification-subject-v3.yml",
+    ".github/workflows/rust-qualification-subject-v3-revalidation.yml"
+  ],
+  "authority": {
+    "productionAuthorized": false,
+    "providerAuthorized": false,
+    "campaignWriterActivated": false,
+    "releaseAuthorized": false,
+    "submissionAuthorized": false,
+    "externalAuthorityClaimed": false
+  }
+}

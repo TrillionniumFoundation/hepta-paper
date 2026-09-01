@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "QualificationSubjectV3ExecutionOrder",
+  "status": "fail_closed",
+  "steps": [
+    "validate_static_program_truth",
+    "run_plan_v4_hostile_tests",
+    "run_subject_v3_hostile_tests",
+    "await_manifest_authenticated_required_checks",
+    "derive_capability_specific_legacy_effective_status",
+    "collect_exact_base_head_merge_and_complete_history",
+    "validate_strict_subject_schema",
+    "derive_nonactivating_effective_status_v2",
+    "recollect_live_state",
+    "verify_byte_identical_current_subject",
+    "upload_retained_evidence"
+  ]
+}

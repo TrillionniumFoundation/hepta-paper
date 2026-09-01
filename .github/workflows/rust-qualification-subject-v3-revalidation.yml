@@ -1,0 +1,298 @@
+name: rust-qualification-subject-v3-revalidation
+
+on:
+  workflow_run:
+    workflows:
+      - hepta-paper-ci
+      - exact-head-source-validation
+      - rust-broker-installed-qualification
+      - rust-broker-installed-qualification-v2
+      - rust-effective-source-qualification
+      - rust-foundation
+      - rust-plan-v3-external-contracts
+      - rust-program-truth
+      - rust-qualification-artifacts
+      - rust-source-snapshot
+      - rust-supply-chain
+      - workflow-lint
+      - rust-qualification-subject-v3
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit
+        required: true
+        type: string
+      pull_request_number:
+        description: Pull request containing the candidate
+        required: true
+        type: number
+      head_branch:
+        description: Exact pull-request head branch
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: rust-qualification-subject-v3-current-${{ github.event.workflow_run.head_sha || inputs.candidate_sha }}
+  cancel-in-progress: true
+
+jobs:
+  source-qualification-v3-current:
+    name: source-qualification-v3-current
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.candidate_sha }}
+      EXPECTED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.head_branch }}
+      EXPECTED_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || inputs.pull_request_number }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve exact current pull-request subject
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/qualification-subject-v3-revalidation"
+          install -d -m 0700 \
+            "$evidence_root/artifact" \
+            "$evidence_root/raw/required" \
+            "$evidence_root/raw/subject"
+          printf 'EVIDENCE_ROOT=%s\n' "$evidence_root" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          printf 'HEAD_TREE=%s\n' "$(git rev-parse HEAD^{tree})" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          api = os.environ['GITHUB_API_URL'].rstrip('/')
+          repository = os.environ['GITHUB_REPOSITORY']
+          token = os.environ['GH_TOKEN']
+          head_sha = os.environ['EXPECTED_HEAD_SHA']
+          head_branch = os.environ['EXPECTED_HEAD_BRANCH']
+          number_text = os.environ.get('EXPECTED_PR_NUMBER', '').strip()
+
+          def get(url):
+              request = urllib.request.Request(url, headers={
+                  'Accept': 'application/vnd.github+json',
+                  'Authorization': f'Bearer {token}',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'User-Agent': 'hepta-v3-current-subject-resolver',
+              })
+              with urllib.request.urlopen(request, timeout=45) as response:
+                  return json.load(response)
+
+          if number_text:
+              number = int(number_text)
+              pr = get(f'{api}/repos/{repository}/pulls/{number}')
+          else:
+              owner = repository.split('/', 1)[0]
+              query = urllib.parse.urlencode({
+                  'state': 'open',
+                  'head': f'{owner}:{head_branch}',
+                  'per_page': 100,
+              })
+              rows = get(f'{api}/repos/{repository}/pulls?{query}')
+              matches = [row for row in rows if row.get('head', {}).get('sha') == head_sha]
+              if len(matches) != 1:
+                  raise SystemExit(f'exact_pull_request_not_unique:{len(matches)}')
+              pr = matches[0]
+              number = int(pr['number'])
+          if pr.get('state') != 'open' or pr.get('head', {}).get('sha') != head_sha:
+              raise SystemExit('pull_request_head_not_current')
+          merge_sha = pr.get('merge_commit_sha')
+          if not isinstance(merge_sha, str) or len(merge_sha) != 40:
+              raise SystemExit('prospective_merge_missing')
+          values = {
+              'EXPECTED_PR_NUMBER': str(number),
+              'EXPECTED_BASE_REF': pr['base']['ref'],
+              'EXPECTED_BASE_SHA': pr['base']['sha'],
+              'EXPECTED_MERGE_SHA': merge_sha,
+          }
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as handle:
+              for key, value in values.items():
+                  handle.write(f'{key}={value}\n')
+          with open(os.path.join(os.environ['EVIDENCE_ROOT'], 'pull-request.json'), 'w', encoding='utf-8') as handle:
+              json.dump(pr, handle, indent=2, sort_keys=True)
+              handle.write('\n')
+          PY
+
+      - name: Await and download newest exact-head V3 artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import time
+          import urllib.request
+          import zipfile
+
+          api = os.environ['GITHUB_API_URL'].rstrip('/')
+          repository = os.environ['GITHUB_REPOSITORY']
+          token = os.environ['GH_TOKEN']
+          head = os.environ['EXPECTED_HEAD_SHA']
+          pull_request = int(os.environ['EXPECTED_PR_NUMBER'])
+          base_ref = os.environ['EXPECTED_BASE_REF']
+          base_sha = os.environ['EXPECTED_BASE_SHA']
+          root = Path(os.environ['EVIDENCE_ROOT'])
+
+          def request(url):
+              return urllib.request.Request(url, headers={
+                  'Accept': 'application/vnd.github+json',
+                  'Authorization': f'Bearer {token}',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'User-Agent': 'hepta-v3-artifact-revalidator',
+              })
+
+          def get(url):
+              with urllib.request.urlopen(request(url), timeout=60) as response:
+                  return json.load(response)
+
+          deadline = time.monotonic() + 2700
+          selected = None
+          artifact = None
+          while time.monotonic() < deadline:
+              value = get(
+                  f'{api}/repos/{repository}/actions/runs?'
+                  f'head_sha={head}&event=pull_request&per_page=100'
+              )
+              candidates = []
+              for run in value.get('workflow_runs', []):
+                  if run.get('name') != 'rust-qualification-subject-v3':
+                      continue
+                  if run.get('status') != 'completed' or run.get('conclusion') != 'success':
+                      continue
+                  bound = False
+                  for row in run.get('pull_requests', []):
+                      if (
+                          row.get('number') == pull_request
+                          and row.get('base', {}).get('ref') == base_ref
+                          and row.get('base', {}).get('sha') == base_sha
+                          and row.get('head', {}).get('sha') == head
+                      ):
+                          bound = True
+                  if bound:
+                      candidates.append(run)
+              if candidates:
+                  selected = max(
+                      candidates,
+                      key=lambda row: (int(row['id']), int(row.get('run_attempt', 1))),
+                  )
+                  artifacts = get(
+                      f"{api}/repos/{repository}/actions/runs/{selected['id']}/artifacts?per_page=100"
+                  ).get('artifacts', [])
+                  matches = [
+                      row for row in artifacts
+                      if row.get('name') == f'rust-qualification-subject-v3-{head}'
+                      and not row.get('expired')
+                  ]
+                  if len(matches) == 1:
+                      artifact = matches[0]
+                      break
+              time.sleep(20)
+          if selected is None or artifact is None:
+              raise SystemExit('current_v3_artifact_not_available')
+          with urllib.request.urlopen(request(artifact['archive_download_url']), timeout=120) as response:
+              archive = response.read()
+          with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+              bundle.extractall(root / 'artifact')
+          (root / 'selected-run.json').write_text(
+              json.dumps(selected, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          (root / 'selected-artifact.json').write_text(
+              json.dumps(artifact, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          artifact_path="$(find "$EVIDENCE_ROOT/artifact" -type f -name effective-status.v2.json -print -quit)"
+          test -n "$artifact_path"
+          printf 'V2_ARTIFACT=%s\n' "$artifact_path" >> "$GITHUB_ENV"
+
+      - name: Recollect current required checks and complete producer history
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/collect-required-checks.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$EXPECTED_HEAD_SHA" \
+            --tree "$HEAD_TREE" \
+            --head-branch "$EXPECTED_HEAD_BRANCH" \
+            --base-ref "$EXPECTED_BASE_REF" \
+            --pull-request "$EXPECTED_PR_NUMBER" \
+            --token "$GH_TOKEN" \
+            --api-url "$GITHUB_API_URL" \
+            --raw-output-dir "$EVIDENCE_ROOT/raw/required" \
+            --output "$EVIDENCE_ROOT/current-check-evidence.v2.json"
+          python3 docs/rust/tools/qualification_subject_v3.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --pull-request "$EXPECTED_PR_NUMBER" \
+            --head-commit "$EXPECTED_HEAD_SHA" \
+            --head-tree "$HEAD_TREE" \
+            --head-branch "$EXPECTED_HEAD_BRANCH" \
+            --base-ref "$EXPECTED_BASE_REF" \
+            --token "$GH_TOKEN" \
+            --api-url "$GITHUB_API_URL" \
+            --check-evidence "$EVIDENCE_ROOT/current-check-evidence.v2.json" \
+            --raw-output-dir "$EVIDENCE_ROOT/raw/subject" \
+            --output "$EVIDENCE_ROOT/current-qualification-subject.v3.json"
+
+      - name: Verify downloaded V2 artifact is current
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/qualification/schemas/qualification-subject-runtime-v3.schema.json \
+            --instance "$EVIDENCE_ROOT/current-qualification-subject.v3.json" \
+            | tee "$EVIDENCE_ROOT/current-subject-schema.json"
+          python3 docs/rust/tools/strict_json_schema.py \
+            --schema docs/rust/qualification/effective-status-runtime-v2-standalone.schema.json \
+            --instance "$V2_ARTIFACT" \
+            | tee "$EVIDENCE_ROOT/artifact-schema.json"
+          python3 docs/rust/tools/verify_effective_status_v2_current.py \
+            --artifact "$V2_ARTIFACT" \
+            --current-subject "$EVIDENCE_ROOT/current-qualification-subject.v3.json" \
+            --current-check-runs "$EVIDENCE_ROOT/current-check-evidence.v2.json" \
+            | tee "$EVIDENCE_ROOT/live-revalidation.json"
+
+      - name: Prove exact source identity after live revalidation
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$HEAD_TREE"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: rust-qualification-subject-v3-current-${{ github.event.workflow_run.head_sha || inputs.candidate_sha }}
+          path: ${{ runner.temp }}/qualification-subject-v3-revalidation
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

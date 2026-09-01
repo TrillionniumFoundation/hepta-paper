@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TrillionniumFoundation/hepta-paper/docs/rust/qualification/effective-status-runtime-v2-standalone.schema.json",
+  "title": "HeptaEffectiveSourceStatusV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "repository",
+    "source",
+    "qualificationSubject",
+    "qualificationSubjectSha256",
+    "legacyEffectiveStatus",
+    "legacyEffectiveStatusSha256",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": { "const": "HeptaEffectiveSourceStatusV2" },
+    "status": { "const": "source_qualified_nonactivating" },
+    "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree", "baseCommit", "baseTree", "mergeCommit", "mergeTree"],
+      "properties": {
+        "commit": { "$ref": "#/$defs/gitSha" },
+        "tree": { "$ref": "#/$defs/gitSha" },
+        "baseCommit": { "$ref": "#/$defs/gitSha" },
+        "baseTree": { "$ref": "#/$defs/gitSha" },
+        "mergeCommit": { "$ref": "#/$defs/gitSha" },
+        "mergeTree": { "$ref": "#/$defs/gitSha" }
+      }
+    },
+    "qualificationSubject": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "status",
+        "repository",
+        "pullRequest",
+        "eligibleRunSetSha256",
+        "producerHistories",
+        "authority",
+        "snapshotIdentity"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 3 },
+        "kind": { "const": "QualificationSubjectV3" },
+        "status": { "const": "exact_subject_complete" },
+        "snapshotIdentity": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "qualificationSubjectSha256": { "$ref": "#/$defs/sha256" },
+    "legacyEffectiveStatus": { "type": "object" },
+    "legacyEffectiveStatusSha256": { "$ref": "#/$defs/sha256" },
+    "authority": { "$ref": "#/$defs/authority" }
+  },
+  "$defs": {
+    "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized",
+        "providerAuthorized",
+        "campaignWriterActivated",
+        "releaseAuthorized",
+        "submissionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "providerAuthorized": { "const": false },
+        "campaignWriterActivated": { "const": false },
+        "releaseAuthorized": { "const": false },
+        "submissionAuthorized": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    }
+  }
+}

@@ -79,6 +79,12 @@ test('every required qualification producer always reports on pull requests', ()
       /^  pull_request:\s*\n    (?:paths|paths-ignore|types|branches|branches-ignore):/mu,
       `${workflowPath}: required producer pull_request trigger must always report`,
     );
+
+    const pushMatch = triggerBlock.match(/^  push:\s*\n([\s\S]*?)(?=^  [A-Za-z_][A-Za-z0-9_-]*:|$)/mu);
+    if (pushMatch) {
+      assert.match(pushMatch[0], /^    branches:\s*(?:\[main\]|\n      - main\s*)$/mu, `${workflowPath}: required producer push trigger must be main-only`);
+      assert.doesNotMatch(pushMatch[0], /codex\/\*\*|branches-ignore|paths|paths-ignore/mu);
+    }
   }
 });
 

@@ -1,8 +1,12 @@
 # hepta-paper Rust rewrite current status
 
-This is the single canonical human-readable **static source declaration** for the
-Rust control-plane rewrite. The machine source is
-[`current-status.v1.json`](current-status.v1.json).
+This is the scoped human-readable **static source declaration** for the Rust
+control-plane migration. Global development truth is owned by
+[`../system/CURRENT_STATUS.md`](../system/CURRENT_STATUS.md) and
+[`../system/truth/program.v2.json`](../system/truth/program.v2.json). Within the
+Rust migration scope, the machine source remains
+[`current-status.v1.json`](current-status.v1.json) until its projections are
+fully generated from global truth.
 
 Plan v4 separates two facts that earlier documents conflated:
 
@@ -11,13 +15,16 @@ Plan v4 separates two facts that earlier documents conflated:
 2. `source_qualified` is an **effective, exact-head evidence result** derived by
    CI after all required jobs complete successfully on that unchanged head.
 
-Source files never self-assert `source_qualified`. The exact-head workflow emits
-`effective-status.v1.json` only after producer-authenticated checks are bound to
-workflow ID, path, Git blob, SHA-256, pull-request event, run attempt, job and
-non-empty successful steps. The separate `source-qualification-current`
-revalidation context treats any newer producer run or attempt as an invalidation:
-a newer success requires artifact regeneration, while a newer failure demotes the
-effective result. Zero-job, skipped, dirty or stale evidence remains fail-closed.
+Source files never self-assert `source_qualified`. The current V2 pipeline binds
+workflow ID, path, Git blob, SHA-256, pull-request event, selected run attempt,
+job, and non-empty successful steps. It is **not currently sufficient for an
+accepted latest-RC qualification**: independent review found that exact base
+repository/commit/tree and tested merge commit/tree are not completely part of
+the subject, and a later rerun of an older eligible run can be ignored after a
+newer run ID exists. `QUAL-001` through `QUAL-004` and Qualification Subject V3
+must close these gaps before a retained artifact is accepted. Zero-job, skipped,
+dirty, stale, base-moved, merge-moved, or run-history-mutated evidence is intended
+to fail closed.
 
 ## Bound baseline and current candidate
 
@@ -70,10 +77,10 @@ artifact-retained exact-head run may derive `source_qualified` for eligible
 repository-local rows without editing this file. External rows never
 auto-promote.
 
-## Plan v4.1 qualification hardening
+## Plan v4.1 qualification hardening and open G0 defects
 
-The current candidate closes the previously identified qualification-trust
-implementation defects with four machine-readable contracts:
+The current candidate materially closes earlier producer-origin, schema, and
+capability-mapping defects with four machine-readable contracts:
 
 - `qualification/source-check-producers.v1.json` binds every required context to
   one exact workflow ID, path, candidate-tree Git blob and SHA-256;
@@ -86,9 +93,12 @@ implementation defects with four machine-readable contracts:
   artifact before publication.
 
 `.github/workflows/rust-source-qualification-revalidation.yml` is deliberately
-outside the source matrix to avoid recursion. It reruns after every producer
-workflow completion and proves that the retained artifact still matches the
-newest producer snapshot. It grants no production or external authority.
+outside the source matrix to avoid recursion. Its current selected-run snapshot
+logic is retained as partial protection, but it does not yet prove the complete
+V3 subject. Until exact base/merge identity and the complete eligible run-history
+hash are implemented, the latest RC remains `source_implemented` with an active
+request-changes decision. No current artifact grants production or external
+authority.
 
 ## Repository-local closure represented in this candidate
 

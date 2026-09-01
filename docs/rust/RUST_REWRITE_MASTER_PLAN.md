@@ -1,9 +1,16 @@
 # hepta-paper Rust control-plane rewrite and authority migration master plan
 
-Status: **plan v4.1 — producer-authenticated, capability-specific, live-revalidated**
-Canonical static status: [`CURRENT_STATUS.md`](CURRENT_STATUS.md)
-Machine truth: [`current-status.v1.json`](current-status.v1.json)
+Status: **plan v4.1 — active scoped migration subplan**
+Global plan: [`../system/MASTER_PLAN.md`](../system/MASTER_PLAN.md)
+Global architecture: [`../system/ARCHITECTURE.md`](../system/ARCHITECTURE.md)
+Scoped static status: [`CURRENT_STATUS.md`](CURRENT_STATUS.md)
+Scoped machine projection: [`current-status.v1.json`](current-status.v1.json)
 Qualification rules: [`QUALIFICATION_STATE_MACHINE.md`](QUALIFICATION_STATE_MACHINE.md)
+
+This document governs Rust source and authority migration only. It cannot define
+a competing whole-system architecture, module ownership model, scheduler
+objective, or global status. Those subjects are canonical under `docs/system`,
+`docs/modules`, and `docs/control-plane`.
 
 ## 1. Mission
 
@@ -58,24 +65,31 @@ The exact promotion, invalidation and demotion rules are normative in
 Every effective source result must bind:
 
 ```text
-repository
-pull request
-commit
-tree
+repository ID and full name
+pull request number
+exact base repository/ref/commit/tree
+exact head repository/ref/commit/tree
+tested synthetic merge commit/tree
 static machine-truth digest
 required check contexts
 producer workflow IDs, paths, Git blobs and SHA-256 digests
-pull-request event/base/head binding
-latest workflow run/attempt, check-suite, job and non-empty step identities
+complete eligible workflow run/attempt history and its canonical set hash
+selected run/attempt, check-suite, job and non-empty step identities
 capability-to-context evidence mapping
-normalized check snapshot identity and artifact digests
+normalized check, artifact, review and policy snapshot identities
 non-authority statement
 ```
 
-A head change, producer-definition drift, missing or colliding job, skipped job,
-dirty postflight, newer workflow run/attempt, stale review or newly accepted P0
-defect invalidates the retained result. A newer successful producer run requires
-a fresh derivation; a newer non-successful producer run demotes immediately.
+A base, head, tested-merge, producer-definition, eligible-run-history, artifact,
+or review change invalidates the retained result. Missing or colliding jobs,
+skipped jobs, dirty postflight, stale review, or a newly accepted P0 defect also
+invalidate it. Any mutation of an eligible old or new run/attempt changes the
+complete run-set identity. A new success requires fresh derivation; a new
+non-success demotes immediately.
+
+The current RC implements most producer-origin and schema protections but does
+not yet satisfy this complete subject. G0 and
+`docs/qualification/QUALIFICATION_SUBJECT_V3.md` are the mandatory first gate.
 
 ## 4. Release-blocking invariants
 

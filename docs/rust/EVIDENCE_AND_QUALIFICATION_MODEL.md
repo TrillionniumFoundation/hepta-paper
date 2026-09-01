@@ -16,6 +16,13 @@ external qualification -> independently signed package
 
 Static source never self-asserts `source_qualified`.
 
+The latest RC remains unaccepted at the source-qualified tier. The active V2
+implementation authenticates producers and selected runs but does not yet bind
+the complete exact base/merge subject or all mutations of older eligible runs.
+The required replacement is Qualification Subject V3 under
+`docs/qualification/QUALIFICATION_SUBJECT_V3.md`; until G0 closes, successful
+historical V2 artifacts are implementation evidence only.
+
 ## Evidence tiers
 
 ### Design
@@ -30,11 +37,13 @@ workflow definitions, required check-run identities, commands and test results.
 It establishes implementation behavior in the workflow environment only.
 
 A source qualification is valid only when every required context comes from its
-manifest-bound workflow ID/path/blob/digest, the exact pull-request event and
-subject, and the newest run/attempt contains one exact non-empty successful job
-with non-empty successful execution steps. Context-name/App-ID matching alone is
-not authentication. Zero-job, collision, `action_required`, skipped, missing,
-stale or dirty-postflight runs are invalid.
+manifest-bound workflow ID/path/blob/digest; the exact base, head, and tested
+merge subject matches; the complete eligible run/attempt set is bound; and the
+selected run contains one exact non-empty successful job with non-empty
+successful execution steps. Context-name/App-ID matching or a largest-run-ID
+heuristic alone is not authentication. Zero-job, collision, `action_required`,
+skipped, missing, stale, dirty-postflight, base-moved, merge-moved, or
+run-history-mutated evidence is invalid.
 
 ### Hosted installed
 
@@ -118,11 +127,11 @@ are qualified in the same normalized producer snapshot. It leaves
 and the final artifact undergo complete committed-schema validation before
 publication.
 
-The artifact is deliberately ephemeral evidence. A newer run or rerun from any
-bound producer changes the current snapshot identity. Even a newer success
-requires regeneration; a newer non-success immediately demotes. The
-`source-qualification-current` workflow performs this live check and is excluded
-from the matrix it observes.
+The artifact is deliberately ephemeral evidence. In the required V3 model, any
+mutation of any eligible selected or non-selected run changes the complete
+run-set identity. Even a success requires regeneration; a non-success immediately
+demotes. The current `source-qualification-current` workflow is excluded from the
+matrix it observes but remains only partial protection until V3 is implemented.
 
 ## Mandatory external evidence envelope
 

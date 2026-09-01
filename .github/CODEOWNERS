@@ -5,11 +5,9 @@
 /.gitmodules @ProfHepta
 /core @ProfHepta
 /runtime-images/ @ProfHepta
+/docs/ @ProfHepta
 
 /rust/ @ProfHepta
-/docs/rust/ @ProfHepta
-/docs/codex/ @ProfHepta
-/docs/adr/ @ProfHepta
 
 /workflow-kernel/ @ProfHepta
 /paper-domain/ @ProfHepta

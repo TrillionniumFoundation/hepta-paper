@@ -47,7 +47,7 @@ not prose.
 | RR-038 | Required path-filtered workflow never reports a protected context | 4 | 4 | open | CI/Governance | always-reporting required contexts or verified relevance router |
 | RR-039 | Effective source artifact is treated as production activation | 3 | 5 | mitigating | Program/Security | artifact authority fields fixed false and separate external gates |
 | RR-040 | A PR-controlled workflow impersonates a required context under the shared Actions App | 5 | 5 | mitigating | CI/Security | exact workflow ID/path/blob/digest plus PR/run/job/step binding and collision tests |
-| RR-041 | A later rerun leaves an older successful effective artifact apparently current | 5 | 5 | mitigating | CI/Program | newest-run snapshot identity and workflow-run-triggered live revalidation |
+| RR-041 | Base/merge movement or an older-run rerun leaves a successful effective artifact apparently current | 5 | 5 | open | CI/Program | exact base/head/merge subject, complete eligible-run-set hash, V3 live revalidation and adversarial tests |
 | RR-042 | Global CI success blanket-promotes an untested capability | 4 | 5 | mitigating | Program/Capability owners | complete non-empty capability-to-context mapping and dependency closure |
 | RR-043 | Selected constant checks accept a malformed effective evidence object | 4 | 5 | mitigating | Evidence/CI | complete committed JSON Schema validation plus unsupported-keyword rejection |
 

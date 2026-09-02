@@ -95,7 +95,12 @@ jobs:
           docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
             | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
           if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
-            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
+            formal_sandbox_cache_image="${FORMAL_SANDBOX_IMAGE%@*}"
+            docker image tag \
+              "$(docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{.Id}}')" \
+              "$formal_sandbox_cache_image"
+            docker save "$formal_sandbox_cache_image" \
+              --output .ci-cache/formal-sandbox-alpine.tar
           fi
       - name: Install selected test dependencies
         if: steps.impact.outputs.count != '0'
@@ -152,7 +157,12 @@ jobs:
           docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
             | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
           if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
-            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
+            formal_sandbox_cache_image="${FORMAL_SANDBOX_IMAGE%@*}"
+            docker image tag \
+              "$(docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{.Id}}')" \
+              "$formal_sandbox_cache_image"
+            docker save "$formal_sandbox_cache_image" \
+              --output .ci-cache/formal-sandbox-alpine.tar
           fi
       - name: Install portable-gate dependencies
         run: |
@@ -309,7 +319,12 @@ jobs:
           docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
             | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
           if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
-            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
+            formal_sandbox_cache_image="${FORMAL_SANDBOX_IMAGE%@*}"
+            docker image tag \
+              "$(docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{.Id}}')" \
+              "$formal_sandbox_cache_image"
+            docker save "$formal_sandbox_cache_image" \
+              --output .ci-cache/formal-sandbox-alpine.tar
           fi
       - name: Install nightly dependencies
         run: |

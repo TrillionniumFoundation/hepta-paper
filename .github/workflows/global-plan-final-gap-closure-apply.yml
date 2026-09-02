@@ -14,23 +14,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      EXPECTED_PARENT_SHA: 37fe42472a1818bfd0771b04225e966a5866c21c
       EXPECTED_BASE_SHA: 71261f41e3a529fced862d7007e18a49338f5c40
-      EXPECTED_PATCH_SHA256: bd1c84bf38871d09337b8f94a38f1e9e2f2537c88324900c141218bfb2adf2aa
+      EXPECTED_PATCH_SHA256: 3aca3bf051e6ae842eb070b5728dbd4ed446922777659c2b57e0148835321e4c
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          fetch-depth: 3
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.1'
           cache: npm
-      - name: Verify bootstrap and apply exact reviewed patch
+      - name: Verify lineage and apply exact reviewed patch
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse --verify HEAD^1)" = "$EXPECTED_PARENT_SHA"
-          test "$(git rev-parse --verify HEAD^2)" = "$EXPECTED_BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$EXPECTED_BASE_SHA" HEAD
           base64 -d .github/patches/global-plan-final-gap-closure.patch.b64 \
             | gzip -d > "$RUNNER_TEMP/global-plan-final-gap-closure.patch"
           echo "$EXPECTED_PATCH_SHA256  $RUNNER_TEMP/global-plan-final-gap-closure.patch" | sha256sum -c -

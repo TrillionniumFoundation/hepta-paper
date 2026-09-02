@@ -1,0 +1,55 @@
+name: module-documentation-integrity
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'rust/**'
+      - 'workflow-kernel/**'
+      - 'paper-domain/**'
+      - 'paper-ports/**'
+      - 'paper-application/**'
+      - 'paper-adapters/**'
+      - 'paper-composition/**'
+      - 'paper-core/**'
+      - 'numerical-plugins/**'
+      - '.github/workflows/module-documentation-integrity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'rust/**'
+      - 'workflow-kernel/**'
+      - 'paper-domain/**'
+      - 'paper-ports/**'
+      - 'paper-application/**'
+      - 'paper-adapters/**'
+      - 'paper-composition/**'
+      - 'paper-core/**'
+      - 'numerical-plugins/**'
+      - '.github/workflows/module-documentation-integrity.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: module-documentation-integrity-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-module-documentation:
+    name: module-documentation-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact subject
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Validate global development graph
+        run: node docs/tools/validate-development-docs.mjs
+      - name: Validate one-to-one module specifications
+        run: node docs/tools/validate-module-documentation.mjs
+      - name: Run hostile module-documentation tests
+        run: node --test --test-concurrency=1 paper-core/tests/module-documentation-integrity.test.mjs

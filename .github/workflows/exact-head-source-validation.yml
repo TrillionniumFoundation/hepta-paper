@@ -111,7 +111,7 @@ jobs:
             --shard-index "${{ matrix.shard }}" \
             --dry-run --json > "$RUNNER_TEMP/exact-head-plan-${{ matrix.shard }}.json"
           cat "$RUNNER_TEMP/exact-head-plan-${{ matrix.shard }}.json"
-          node -e "const p=require(process.argv[1]);if(!p.fullFallback||p.selectedTestCount!==p.totalTestCount)process.exit(1);process.stdout.write('count='+p.shardTestCount+'\\n')" \
+          node -e "const p=require(process.argv[1]);if(p.selectionStatus!=='test_impact_selection_full_fallback'||p.selectedTestCount!==p.totalTestCount)process.exit(1);process.stdout.write('count='+p.shardTestCount+'\\n')" \
             "$RUNNER_TEMP/exact-head-plan-${{ matrix.shard }}.json" >> "$GITHUB_OUTPUT"
       - name: Restore pinned Lean and formal runtime image cache
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4

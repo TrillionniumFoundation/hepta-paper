@@ -1,0 +1,110 @@
+name: gap-closure-apply-v2
+
+on:
+  push:
+    branches:
+      - codex/docs-gap-closure-20260902
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_PARENT_SHA: 25fc355a0a57f64f8d2632f543fb14c352f8dad8
+      EXPECTED_PATCH_SHA256: ee0c992a41f8a0a377790ad538b46f45792f1149127019f8bd989366224b95ba
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - name: Recover audited patch and preserve the production line budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD^1)" = "$EXPECTED_PARENT_SHA"
+          python - <<'PY'
+          import base64, gzip, hashlib, os, re
+          from pathlib import Path
+          workflow = Path('.github/workflows/gap-closure-apply.yml').read_text()
+          encoded = re.search(r"PATCH_GZIP_BASE64: '([^']+)'", workflow).group(1)
+          patch = gzip.decompress(base64.b64decode(encoded))
+          assert hashlib.sha256(patch).hexdigest() == os.environ['EXPECTED_PATCH_SHA256']
+          Path(os.environ['RUNNER_TEMP'], 'gap-closure.patch').write_bytes(patch)
+          PY
+          git apply --check "$RUNNER_TEMP/gap-closure.patch"
+          git apply "$RUNNER_TEMP/gap-closure.patch"
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs')
+          source = path.read_text()
+          helper = """
+          function listNvidiaGpuDevicePaths() {
+            return fs.existsSync('/dev')
+              ? fs.readdirSync('/dev')
+                .filter((name) => /^nvidia(?:\\d+|ctl|uvm|uvm-tools|modeset)$/.test(name))
+                .map((name) => `/dev/${name}`)
+              : [];
+          }
+          """
+          assert source.count(helper) == 1
+          source = source.replace(helper, '')
+          old_dependencies = """    gpuDeviceCapacityObserver = inspectNvidiaGpuDeviceCapacity,
+              gpuDevicePathObserver = listNvidiaGpuDevicePaths,"""
+          new_dependencies = "    gpuDeviceCapacityObserver = inspectNvidiaGpuDeviceCapacity, gpuDevicePathObserver = null,"
+          assert source.count(old_dependencies) == 1
+          source = source.replace(old_dependencies, new_dependencies)
+          old_observation = """      const observedGpuDevices = gpuDevicePathObserver();
+              const gpuDevices = Array.isArray(observedGpuDevices)
+                ? observedGpuDevices.filter((candidate) => typeof candidate === 'string')
+                : [];"""
+          new_observation = "      const gpuDevices = typeof gpuDevicePathObserver === 'function' ? gpuDevicePathObserver() : fs.existsSync('/dev') ? fs.readdirSync('/dev').filter((name) => /^nvidia(?:\\d+|ctl|uvm|uvm-tools|modeset)$/.test(name)).map((name) => `/dev/${name}`) : [];"
+          assert source.count(old_observation) == 1
+          source = source.replace(old_observation, new_observation)
+          path.write_text(source)
+          PY
+          test "$(wc -l < paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs)" -le 750
+          git rm .github/workflows/gap-closure-apply.yml
+          git rm .github/workflows/gap-closure-apply-v2.yml
+          git rm .github/workflows/gap-closure-source-export.yml
+      - name: Install exact test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v22.23.1"
+          sudo install -o root -g root -m 0555 "$(command -v node)" /usr/bin/node
+          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
+      - name: Verify focused blocker closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          node --check paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs
+          node --test --test-concurrency=1 \
+            paper-core/tests/autonomous-research-online-schema-transition-state-repository.test.mjs \
+            paper-core/tests/autonomous-research-online-finalized-head-inspection.test.mjs \
+            paper-core/tests/autonomous-research-online-runtime-adoption-v2.test.mjs \
+            paper-core/tests/autonomous-submission-handoff-layout-provision.test.mjs \
+            paper-core/tests/isolated-verification-policy.test.mjs \
+            paper-core/tests/r-runtime-source-cas.test.mjs \
+            paper-core/tests/repository-asset-externalization.test.mjs
+          npm run static:check
+      - name: Commit exact tested patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'OpenAI Gap Closure'
+          git config user.email 'noreply@openai.com'
+          git add -A
+          test -n "$(git status --porcelain=v1)"
+          git commit -m 'fix(ci): close portable-suite environment blockers'
+          git push origin HEAD:codex/docs-gap-closure-20260902

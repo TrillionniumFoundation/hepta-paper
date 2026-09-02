@@ -556,3 +556,257 @@ fn manifests_candidates_and_results_require_canonical_order() {
         Err(ModulePlatformError::PreparedResultInvalid)
     );
 }
+
+fn lifecycle_profile(manifest: &ModuleManifestV1) -> ModuleLifecycleProfileV1 {
+    ModuleLifecycleProfileV1 {
+        version: 1,
+        module_id: manifest.module_id.clone(),
+        module_version: manifest.module_version.clone(),
+        manifest_hash: module_protocol_hash_v1(manifest).expect("manifest hash"),
+        side_effect_classes: BTreeSet::from([SideEffectClassV1::NoSideEffect]),
+        determinism_class: DeterminismClassV1::Deterministic,
+        maximum_inflight: 4,
+        maximum_queue_depth: 16,
+        resource_ceiling: ResourceVectorV1 {
+            cpu_millis: 100,
+            memory_bytes: 1_024,
+            ..ResourceVectorV1::default()
+        },
+        maximum_latency_ms: 5_000,
+        maximum_result_bytes: 65_536,
+        readable_protocol_min: 1,
+        readable_protocol_max: 1,
+        readable_state_min: 1,
+        writable_state_version: 1,
+        rollout_channel: RolloutChannelV1::Authoritative,
+        mutual_exclusion_group: None,
+        rollback_version: manifest.rollback_version.clone(),
+        canonical_workload_ids: vec!["WORKLOAD-MODULE-SMOKE".to_owned()],
+    }
+}
+
+fn envelope(kind: ProtocolObjectKindV1, payload_hash: Sha256Digest) -> ProtocolEnvelopeV1 {
+    ProtocolEnvelopeV1 {
+        version: 1,
+        kind,
+        request_id: format!("request-{kind:?}"),
+        created_at_unix_ms: 1_000,
+        expires_at_unix_ms: 10_000,
+        module_id: "module.planner".to_owned(),
+        module_version: "1.0.0".to_owned(),
+        protocol_version: 1,
+        trace_id: "trace-1".to_owned(),
+        payload_hash,
+    }
+}
+
+fn planning_request() -> PlanningRequestV1 {
+    PlanningRequestV1 {
+        envelope: envelope(ProtocolObjectKindV1::PlanningRequest, digest('1')),
+        planning_request_id: "planning-1".to_owned(),
+        state_snapshot_hash: digest('2'),
+        capability_id: "CAP-SCH-PLAN".to_owned(),
+        hard_constraint_set_hash: digest('3'),
+        objective_version: "objective-v1".to_owned(),
+        resource_price_snapshot_hash: digest('4'),
+        candidate_limit: 4,
+        deadline_unix_ms: 9_000,
+        allowed_side_effect_classes: BTreeSet::from([SideEffectClassV1::NoSideEffect]),
+        input_artifact_hashes: vec![digest('5')],
+    }
+}
+
+fn protocol_candidate(id: &str, utility: i64, cost: u64, cpu: u64) -> ActionCandidateV1 {
+    ActionCandidateV1 {
+        version: 1,
+        candidate_id: id.to_owned(),
+        decision_group: "planner-choice".to_owned(),
+        module_id: "module.planner".to_owned(),
+        module_version: "1.0.0".to_owned(),
+        capability_id: "CAP-SCH-PLAN".to_owned(),
+        snapshot_hash: digest('2'),
+        dependency_candidate_ids: Vec::new(),
+        resources: ResourceVectorV1 {
+            cpu_millis: cpu,
+            memory_bytes: cpu.saturating_mul(10),
+            ..ResourceVectorV1::default()
+        },
+        utility_micros: utility,
+        cost_microusd: cost,
+        uncertainty_ppm: 1_000,
+        evidence_tier: QualificationTierV1::Source,
+        payload_hash: digest('6'),
+    }
+}
+
+#[test]
+fn protocol_objects_are_canonical_bounded_and_time_scoped() {
+    let request = planning_request();
+    request.validate(2_000).expect("request");
+    let bytes = to_canonical_protocol_json_v1(&request).expect("canonical request");
+    let decoded: PlanningRequestV1 =
+        decode_canonical_protocol_json_v1(&bytes).expect("decode exact request");
+    assert_eq!(decoded, request);
+
+    let pretty = serde_json::to_vec_pretty(&request).expect("pretty");
+    assert_eq!(
+        decode_canonical_protocol_json_v1::<PlanningRequestV1>(&pretty),
+        Err(ModulePlatformError::ProtocolInvalid)
+    );
+
+    let mut expired = request;
+    expired.envelope.expires_at_unix_ms = 1_500;
+    assert_eq!(
+        expired.validate(2_000),
+        Err(ModulePlatformError::ProtocolInvalid)
+    );
+}
+
+#[test]
+fn planning_response_and_collection_bind_registry_request_and_singleton_reason() {
+    let registry = one_module_registry();
+    let request = planning_request();
+    let response = PlanningResponseV1 {
+        envelope: envelope(ProtocolObjectKindV1::PlanningResponse, digest('7')),
+        planning_request_hash: request.request_hash().expect("request hash"),
+        candidates: vec![protocol_candidate("candidate-a", 100, 10, 10)],
+        singleton_reason: Some("only_feasible_candidate".to_owned()),
+    };
+    response
+        .validate(&request, &registry, 2_000)
+        .expect("response");
+    let collection = CandidateCollectionV1::collect(&request, &registry, vec![response], 2_000)
+        .expect("collection");
+    assert_eq!(collection.candidates.len(), 1);
+    assert!(collection.dominated_candidate_ids.is_empty());
+    assert_eq!(collection.response_hashes.len(), 1);
+}
+
+#[test]
+fn pareto_reducer_preserves_dependencies_and_removes_only_strict_dominance() {
+    let dominant = protocol_candidate("candidate-a", 200, 5, 5);
+    let dominated = protocol_candidate("candidate-b", 100, 10, 10);
+    let mut referenced = protocol_candidate("candidate-c", 50, 20, 20);
+    referenced.dependency_candidate_ids = vec!["candidate-b".to_owned()];
+    let (retained, removed) =
+        pareto_reduce_candidates_v1(vec![referenced, dominated.clone(), dominant])
+            .expect("reduction");
+    assert!(
+        removed.is_empty(),
+        "referenced candidates cannot be removed"
+    );
+    assert_eq!(retained.len(), 3);
+
+    let (retained, removed) = pareto_reduce_candidates_v1(vec![
+        dominated,
+        protocol_candidate("candidate-a", 200, 5, 5),
+    ])
+    .expect("unreferenced reduction");
+    assert_eq!(removed, vec!["candidate-b".to_owned()]);
+    assert_eq!(retained[0].candidate_id, "candidate-a");
+}
+
+#[test]
+fn lifecycle_health_and_conformance_are_bounded_and_non_authorizing() {
+    let registry = one_module_registry();
+    let manifest = &registry.module("module.planner").expect("module").manifest;
+    let profile = lifecycle_profile(manifest);
+    profile.validate(manifest).expect("profile");
+    let health = ModuleHealthReportV1::new(
+        manifest,
+        &profile,
+        2_000,
+        10_000,
+        CircuitBreakerStateV1::Closed,
+        1,
+        2,
+        Vec::new(),
+    )
+    .expect("health");
+    assert!(
+        health
+            .admission_available(manifest, &profile, 3_000)
+            .expect("available")
+    );
+    let report = module_contract_conformance_report_v1(manifest, &profile).expect("report");
+    assert!(report.conformant);
+    assert!(!report.grants_authority);
+    assert_eq!(report.checks.len(), 10);
+}
+
+#[test]
+fn lifecycle_rejects_owner_or_side_effect_escalation_and_classifies_changes() {
+    let registry = one_module_registry();
+    let manifest = &registry.module("module.planner").expect("module").manifest;
+    let profile = lifecycle_profile(manifest);
+    let mut hostile = profile.clone();
+    hostile
+        .side_effect_classes
+        .insert(SideEffectClassV1::CentralStateCommit);
+    assert_eq!(
+        hostile.validate(manifest),
+        Err(ModulePlatformError::LifecycleInvalid)
+    );
+
+    let mut next = profile.clone();
+    next.maximum_latency_ms = 6_000;
+    let decision =
+        classify_registry_change_v1(manifest, &profile, manifest, &next).expect("classification");
+    assert_eq!(decision.change_class, RegistryChangeClassV1::ResourceOrSlo);
+    assert!(decision.requires_fresh_conformance);
+    assert!(!decision.requires_cross_team_review);
+}
+
+#[test]
+fn execution_and_cancellation_contracts_fail_closed_on_identity_drift() {
+    let candidate = protocol_candidate("candidate-a", 100, 10, 10);
+    let plan_hash = digest('8');
+    let command = ExecutionCommandV1 {
+        envelope: envelope(ProtocolObjectKindV1::ExecutionCommand, digest('9')),
+        execution_id: "execution-1".to_owned(),
+        plan_hash: plan_hash.clone(),
+        selected_candidate_hash: candidate.candidate_hash().expect("candidate hash"),
+        state_snapshot_hash: candidate.snapshot_hash.clone(),
+        campaign_id: "campaign-1".to_owned(),
+        node_id: "node-1".to_owned(),
+        attempt_id: "attempt-1".to_owned(),
+        lease_generation: 1,
+        writer_generation: 1,
+        resource_reservation_id: "reservation-1".to_owned(),
+        resource_reservation_hash: digest('a'),
+        resource_envelope: candidate.resources,
+        deadline_unix_ms: 9_000,
+        cancellation_id: "cancel-1".to_owned(),
+        authority_audience: candidate.capability_id.clone(),
+        idempotency_key: "idempotency-1".to_owned(),
+        input_artifact_hashes: vec![digest('b')],
+    };
+    command
+        .validate(&candidate, &plan_hash, 2_000)
+        .expect("command");
+
+    let cancel = CancellationRequestV1 {
+        envelope: envelope(ProtocolObjectKindV1::CancellationRequest, digest('c')),
+        execution_id: command.execution_id.clone(),
+        execution_command_hash: command.command_hash().expect("command hash"),
+        idempotency_key: "cancel-idempotency-1".to_owned(),
+    };
+    let ack = CancellationAcknowledgementV1 {
+        envelope: envelope(
+            ProtocolObjectKindV1::CancellationAcknowledgement,
+            digest('d'),
+        ),
+        cancellation_request_hash: cancel.request_hash().expect("cancel hash"),
+        execution_id: command.execution_id,
+        disposition: CancellationDispositionV1::CancelledBeforeExternalEffect,
+        prepared_result: None,
+    };
+    ack.validate(&cancel, 2_000).expect("ack");
+
+    let mut hostile = ack;
+    hostile.disposition = CancellationDispositionV1::PreparedResultAlreadyExists;
+    assert_eq!(
+        hostile.validate(&cancel, 2_000),
+        Err(ModulePlatformError::CancellationInvalid)
+    );
+}

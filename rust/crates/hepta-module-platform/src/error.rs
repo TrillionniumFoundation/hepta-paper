@@ -57,6 +57,21 @@ pub enum ModulePlatformError {
     /// Prepared result binding or ceiling is invalid.
     #[error("prepared result is invalid")]
     PreparedResultInvalid,
+    /// A bounded protocol object, identity, or time window is invalid.
+    #[error("module protocol object is invalid")]
+    ProtocolInvalid,
+    /// A protocol object exceeded its hard wire-size ceiling.
+    #[error("module protocol object exceeds size limit")]
+    ProtocolSizeExceeded,
+    /// Cancellation request or acknowledgement is invalid.
+    #[error("module cancellation contract is invalid")]
+    CancellationInvalid,
+    /// Lifecycle, compatibility, rollout, resource, or SLO profile is invalid.
+    #[error("module lifecycle profile is invalid")]
+    LifecycleInvalid,
+    /// Module health observation is stale, malformed, or exceeds its profile.
+    #[error("module health report is invalid")]
+    HealthInvalid,
     /// Resource arithmetic overflowed.
     #[error("resource arithmetic overflow")]
     ResourceOverflow,

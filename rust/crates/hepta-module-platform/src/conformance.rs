@@ -107,3 +107,130 @@ pub fn node_legacy_adapter_manifest_v1(
         },
     }
 }
+
+/// Detailed source-contract conformance report for one module version.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModuleContractConformanceReportV1 {
+    /// Contract version.
+    pub version: u16,
+    /// Exact module identity.
+    pub module_id: String,
+    /// Exact module version.
+    pub module_version: String,
+    /// Canonical manifest hash.
+    pub manifest_hash: Sha256Digest,
+    /// Canonical lifecycle-profile hash.
+    pub lifecycle_profile_hash: Sha256Digest,
+    /// Individually recomputable checks.
+    pub checks: BTreeMap<String, bool>,
+    /// True only when every check passes.
+    pub conformant: bool,
+    /// Conformance never grants runtime or production authority.
+    pub grants_authority: bool,
+    /// Canonical report hash.
+    pub report_hash: Sha256Digest,
+}
+
+/// Computes source-level manifest, protocol, lifecycle, ownership, and authority checks.
+pub fn module_contract_conformance_report_v1(
+    manifest: &ModuleManifestV1,
+    profile: &crate::ModuleLifecycleProfileV1,
+) -> Result<ModuleContractConformanceReportV1, ModulePlatformError> {
+    profile.validate(manifest)?;
+    let manifest_hash = canonical_hash(manifest)?;
+    let lifecycle_profile_hash = profile.profile_hash()?;
+    let execution_ceiling_valid = matches!(
+        (&manifest.module_kind, &manifest.execution),
+        (
+            ModuleKindV1::PureLibrary,
+            ModuleExecutionV1::InProcess { .. }
+        ) | (
+            ModuleKindV1::TrustedInProcess,
+            ModuleExecutionV1::InProcess { .. }
+        ) | (
+            ModuleKindV1::IsolatedProcess,
+            ModuleExecutionV1::IsolatedProcess { .. }
+        ) | (
+            ModuleKindV1::HostService,
+            ModuleExecutionV1::IsolatedProcess { .. }
+        ) | (
+            ModuleKindV1::LegacyNodeAdapter,
+            ModuleExecutionV1::LegacyNodeAdapter { .. }
+        )
+    );
+    let owner_separation = manifest.primary_owner != manifest.secondary_owner
+        && manifest.primary_owner != manifest.independent_reviewer
+        && manifest.secondary_owner != manifest.independent_reviewer;
+    let checks = BTreeMap::from([
+        ("activation_profile_consistent".to_owned(), true),
+        ("authority_side_effect_ceiling".to_owned(), true),
+        ("canonical_manifest_hash".to_owned(), true),
+        ("canonical_profile_hash".to_owned(), true),
+        (
+            "execution_boundary_matches_kind".to_owned(),
+            execution_ceiling_valid,
+        ),
+        (
+            "owner_domains_pairwise_distinct".to_owned(),
+            owner_separation,
+        ),
+        (
+            "protocol_range_includes_v1".to_owned(),
+            manifest.protocol_min <= MODULE_PROTOCOL_VERSION_V1
+                && manifest.protocol_max >= MODULE_PROTOCOL_VERSION_V1,
+        ),
+        (
+            "resource_and_queue_bounds_nonzero".to_owned(),
+            profile.maximum_inflight > 0
+                && profile.maximum_queue_depth > 0
+                && profile.maximum_latency_ms > 0
+                && profile.maximum_result_bytes > 0,
+        ),
+        (
+            "rollback_version_distinct".to_owned(),
+            manifest.rollback_version != manifest.module_version,
+        ),
+        (
+            "state_compatibility_bounded".to_owned(),
+            profile.readable_state_min > 0
+                && profile.readable_state_min <= profile.writable_state_version,
+        ),
+    ]);
+    let conformant = checks.values().all(|passed| *passed);
+    let body = ContractReportBodyV1 {
+        version: 1,
+        module_id: manifest.module_id.clone(),
+        module_version: manifest.module_version.clone(),
+        manifest_hash: manifest_hash.clone(),
+        lifecycle_profile_hash: lifecycle_profile_hash.clone(),
+        checks: checks.clone(),
+        conformant,
+        grants_authority: false,
+    };
+    let report_hash = canonical_hash(&body)?;
+    Ok(ModuleContractConformanceReportV1 {
+        version: body.version,
+        module_id: body.module_id,
+        module_version: body.module_version,
+        manifest_hash: body.manifest_hash,
+        lifecycle_profile_hash: body.lifecycle_profile_hash,
+        checks: body.checks,
+        conformant: body.conformant,
+        grants_authority: body.grants_authority,
+        report_hash,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContractReportBodyV1 {
+    version: u16,
+    module_id: String,
+    module_version: String,
+    manifest_hash: Sha256Digest,
+    lifecycle_profile_hash: Sha256Digest,
+    checks: BTreeMap<String, bool>,
+    conformant: bool,
+    grants_authority: bool,
+}

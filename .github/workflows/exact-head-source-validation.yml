@@ -1,0 +1,245 @@
+name: exact-head-source-validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+  FORMAL_SANDBOX_IMAGE: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+
+jobs:
+  exact-head-static-gates:
+    name: exact-head-static-gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove exact source identity before validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD^{commit})" = "$EXPECTED_HEAD_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - name: Install exact-head static dependencies and seal audit runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v22.23.1"
+          test "$(npm --version)" = "10.9.8"
+          strict_node_source="$(command -v node)"
+          strict_npm_source="$(npm root -g)/npm"
+          test -f "$strict_node_source"
+          test -f "$strict_npm_source/bin/npm-cli.js"
+          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
+          sudo rm -rf -- /usr/lib/node_modules/npm
+          sudo install -d -o root -g root -m 0755 /usr/lib/node_modules
+          sudo cp -a -- "$strict_npm_source" /usr/lib/node_modules/npm
+          sudo chown -hR root:root /usr/lib/node_modules/npm
+          sudo find /usr/lib/node_modules/npm -xdev -type f -perm /111 -exec chmod 0555 {} +
+          sudo find /usr/lib/node_modules/npm -xdev -type f ! -perm /111 -exec chmod 0444 {} +
+          sudo find /usr/lib/node_modules/npm -xdev -type d -exec chmod 0555 {} +
+          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
+          sudo test "$(readlink -f /usr/lib/node_modules/npm/bin/npm-cli.js)" = /usr/lib/node_modules/npm/bin/npm-cli.js
+      - name: Run exact-head static, architecture, dependency, documentation, and selector gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run static:check
+          npm_execpath=/usr/lib/node_modules/npm/bin/npm-cli.js \
+            /usr/bin/node paper-core/bin/strict-npm-audit.mjs
+          node paper-core/verification/documentation-integrity.mjs
+          node --test --test-concurrency=1 \
+            paper-core/tests/documentation-integrity.test.mjs \
+            paper-core/tests/test-impact-graph.test.mjs
+      - name: Prove exact source identity after validation
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD^{commit})" = "$EXPECTED_HEAD_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+  exact-head-impacted-tests:
+    name: exact-head-impacted-tests (${{ matrix.shard }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - name: Prove exact head and force a complete portable-suite shard
+        id: impact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD^{commit})" = "$EXPECTED_HEAD_SHA"
+          node paper-core/bin/run-impacted-tests.mjs \
+            --changed-file package.json \
+            --shard-count 4 \
+            --shard-index "${{ matrix.shard }}" \
+            --dry-run --json > "$RUNNER_TEMP/exact-head-plan-${{ matrix.shard }}.json"
+          cat "$RUNNER_TEMP/exact-head-plan-${{ matrix.shard }}.json"
+          node -e "const p=require(process.argv[1]);if(!p.fullFallback||p.selectedTestCount!==p.totalTestCount)process.exit(1);process.stdout.write('count='+p.shardTestCount+'\\n')" \
+            "$RUNNER_TEMP/exact-head-plan-${{ matrix.shard }}.json" >> "$GITHUB_OUTPUT"
+      - name: Restore pinned Lean and formal runtime image cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4
+        with:
+          path: |
+            ~/.elan
+            .ci-cache/formal-sandbox-alpine.tar
+          key: ${{ runner.os }}-exact-head-formal-v4.30.0-d9e853e-${{ hashFiles('paper-domain/research/formal-verifier-policy.mjs', 'paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs') }}
+      - name: Materialize pinned Lean and formal runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
+            echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
+            tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
+            /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          ELAN_TOOLCHAIN="$ELAN_TOOLCHAIN" "$HOME/.elan/bin/elan" which lake
+          mkdir -p .ci-cache
+          if [ -s .ci-cache/formal-sandbox-alpine.tar ]; then
+            docker load --input .ci-cache/formal-sandbox-alpine.tar
+          fi
+          if ! docker image inspect "$FORMAL_SANDBOX_IMAGE" >/dev/null 2>&1; then
+            docker pull "$FORMAL_SANDBOX_IMAGE"
+          fi
+          docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
+            | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
+          if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
+            formal_sandbox_cache_image="${FORMAL_SANDBOX_IMAGE%@*}"
+            docker image tag \
+              "$(docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{.Id}}')" \
+              "$formal_sandbox_cache_image"
+            docker save "$formal_sandbox_cache_image" \
+              --output .ci-cache/formal-sandbox-alpine.tar
+          fi
+      - name: Install complete-suite dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run complete exact-head shard
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test:impacted -- \
+            --changed-file package.json \
+            --shard-count 4 \
+            --shard-index "${{ matrix.shard }}"
+      - name: Prove exact source identity after shard
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD^{commit})" = "$EXPECTED_HEAD_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+  installed_principal_negative_tests:
+    name: installed-principal-negative-tests
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success
+
+  installed_authority_boundaries:
+    name: installed-authority-boundaries
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success
+
+  format_lint_test_docs:
+    name: format, lint, test, docs
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success
+
+  validate_contracts:
+    name: validate-contracts
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success
+
+  exact_program_truth:
+    name: exact-program-truth
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success
+
+  validate_qualification_artifacts:
+    name: validate-qualification-artifacts
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success
+
+  exact_head_source_snapshot:
+    name: exact-head-source-snapshot
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success
+
+  policy_and_sbom:
+    name: policy-and-sbom
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success
+
+  validate:
+    name: validate
+    if: github.event_name == 'pull_request' && always()
+    needs: [exact-head-static-gates, exact-head-impacted-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.exact-head-static-gates.result }}" = success && test "${{ needs.exact-head-impacted-tests.result }}" = success

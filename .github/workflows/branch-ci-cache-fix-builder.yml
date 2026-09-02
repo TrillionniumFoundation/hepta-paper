@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  build-cache-fix:
+  build-cache-target:
     if: github.repository == 'TrillionniumFoundation/hepta-paper'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -20,14 +20,16 @@ jobs:
         with:
           ref: codex/docs-gap-closure-20260902
           fetch-depth: 0
-      - name: Apply exact digest-only cache fix and remove builder
+      - name: Publish the exact cache-correct workflow as a regular blob
         shell: bash
         run: |
           set -euo pipefail
+          test ! -e ci-cache-target.yml
+          cp .github/workflows/ci.yml ci-cache-target.yml
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('.github/workflows/ci.yml')
+          path = Path('ci-cache-target.yml')
           text = path.read_text(encoding='utf-8')
           old = """          if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
                       docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
@@ -51,11 +53,10 @@ jobs:
           with path.open('w', encoding='utf-8', newline='\n') as stream:
               stream.write(text)
           PY
-          rm .github/workflows/branch-ci-cache-fix-builder.yml
-          git diff --check
-          test "$(git diff --name-only | sort)" = $'.github/workflows/branch-ci-cache-fix-builder.yml\n.github/workflows/ci.yml'
+          git diff --check -- ci-cache-target.yml
+          test "$(git status --short)" = '?? ci-cache-target.yml'
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/workflows/ci.yml .github/workflows/branch-ci-cache-fix-builder.yml
-          git commit -m 'fix(ci): cache digest-only formal sandbox image'
+          git add ci-cache-target.yml
+          git commit -m 'chore(ci): publish cache-correct workflow target blob'
           git push origin HEAD:refs/heads/codex/docs-gap-closure-20260902

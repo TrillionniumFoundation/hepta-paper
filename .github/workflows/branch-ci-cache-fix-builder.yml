@@ -1,0 +1,61 @@
+name: branch-ci-cache-fix-builder
+
+on:
+  push:
+    branches:
+      - codex/docs-gap-closure-20260902
+    paths:
+      - .github/workflows/branch-ci-cache-fix-builder.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-cache-fix:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: codex/docs-gap-closure-20260902
+          fetch-depth: 0
+      - name: Apply exact digest-only cache fix and remove builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/ci.yml')
+          text = path.read_text(encoding='utf-8')
+          old = """          if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
+                      docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
+                    fi
+          """
+          new = """          if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
+                      formal_sandbox_cache_image=\"${FORMAL_SANDBOX_IMAGE%@*}\"
+                      docker image tag \\
+                        \"$(docker image inspect \"$FORMAL_SANDBOX_IMAGE\" --format '{{.Id}}')\" \\
+                        \"$formal_sandbox_cache_image\"
+                      docker save \"$formal_sandbox_cache_image\" \\
+                        --output .ci-cache/formal-sandbox-alpine.tar
+                    fi
+          """
+          count = text.count(old)
+          if count != 3:
+              raise SystemExit(f'formal_cache_block_count:{count}')
+          if 'strict_node_source=' in text or '/usr/lib/node_modules/npm/bin/npm-cli.js' in text:
+              raise SystemExit('unrelated_strict_audit_patch_present')
+          text = text.replace(old, new)
+          with path.open('w', encoding='utf-8', newline='\n') as stream:
+              stream.write(text)
+          PY
+          rm .github/workflows/branch-ci-cache-fix-builder.yml
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'.github/workflows/branch-ci-cache-fix-builder.yml\n.github/workflows/ci.yml'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/ci.yml .github/workflows/branch-ci-cache-fix-builder.yml
+          git commit -m 'fix(ci): cache digest-only formal sandbox image'
+          git push origin HEAD:refs/heads/codex/docs-gap-closure-20260902

@@ -1,0 +1,109 @@
+name: branch-exact-head-diagnostics-builder
+
+on:
+  push:
+    branches:
+      - codex/docs-gap-closure-20260902
+    paths:
+      - .github/workflows/branch-exact-head-diagnostics-builder.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish-target:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: codex/docs-gap-closure-20260902
+          fetch-depth: 0
+      - name: Publish bounded-diagnostics workflow as a regular blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e exact-head-diagnostics-target.yml
+          cp .github/workflows/exact-head-source-validation.yml exact-head-diagnostics-target.yml
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('exact-head-diagnostics-target.yml')
+          text = path.read_text(encoding='utf-8')
+          start_marker = '      - name: Run complete exact-head shard\n'
+          end_marker = '      - name: Prove exact source identity after shard\n'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          shard = '${' + '{ matrix.shard }}'
+          replacement = '''      - name: Run complete exact-head shard with bounded failure diagnostics
+                shell: bash
+                run: |
+                  set -uo pipefail
+                  log="$RUNNER_TEMP/exact-head-shard-__SHARD__.tap"
+                  set +e
+                  npm run test:impacted -- \\
+                    --changed-file package.json \\
+                    --shard-count 4 \\
+                    --shard-index "__SHARD__" >"$log" 2>&1
+                  status=$?
+                  set -e
+                  if [ "$status" -eq 0 ]; then
+                    tail -n 40 "$log"
+                  else
+                    python3 - "$log" <<'PY_SUMMARY'
+                  import re
+                  import sys
+                  from pathlib import Path
+
+                  lines = Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace').splitlines()
+                  failures = [index for index, line in enumerate(lines) if re.search(r'(^|\\s)not ok\\b', line)]
+                  print(f'exact_head_failure_count={len(failures)}')
+                  for ordinal, index in enumerate(failures[:120], 1):
+                      print(f'--- failure {ordinal} ---')
+                      print(lines[index].strip())
+                      stop = min(len(lines), index + 45)
+                      emitted = 0
+                      cursor = index + 1
+                      while cursor < stop and emitted < 14:
+                          line = lines[cursor]
+                          stripped = line.strip()
+                          if cursor > index + 2 and re.search(r'(^|\\s)(?:not )?ok\\s+\\d+\\s+-', line):
+                              break
+                          interesting = (
+                              re.search(r'^(?:location|failureType|error|code|expected|actual|operator):', stripped)
+                              or '.mjs:' in stripped
+                              or 'MODULE_NOT_FOUND' in stripped
+                              or 'ENOENT' in stripped
+                              or 'workspace_layout_' in stripped
+                              or 'runtime_reproducibility_' in stripped
+                              or 'worker_runtime_' in stripped
+                          )
+                          if interesting:
+                              print(stripped)
+                              emitted += 1
+                              if stripped == 'error: |-':
+                                  for extra in lines[cursor + 1:min(stop, cursor + 5)]:
+                                      if extra.strip():
+                                          print(extra.strip())
+                                          emitted += 1
+                          cursor += 1
+                  print('--- terminal summary ---')
+                  for line in lines[-100:]:
+                      if re.search(r'# (?:tests|pass|fail|cancelled|skipped|todo|duration_ms)\\b', line):
+                          print(line.strip())
+                  if len(failures) > 120:
+                      print(f'failure_output_truncated={len(failures) - 120}')
+                  PY_SUMMARY
+                  fi
+                  exit "$status"
+          '''.replace('__SHARD__', shard)
+          path.write_text(text[:start] + replacement + text[end:], encoding='utf-8', newline='\n')
+          PY
+          git diff --check -- exact-head-diagnostics-target.yml
+          test "$(git status --short)" = '?? exact-head-diagnostics-target.yml'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add exact-head-diagnostics-target.yml
+          git commit -m 'chore(ci): publish bounded exact-head diagnostics target'
+          git push origin HEAD:refs/heads/codex/docs-gap-closure-20260902

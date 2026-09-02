@@ -1,0 +1,34 @@
+name: branch-ci-sha256-builder
+
+on:
+  push:
+    branches:
+      - codex/docs-gap-closure-20260902
+    paths:
+      - .github/workflows/branch-ci-sha256-builder.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish-sha256:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: codex/docs-gap-closure-20260902
+          fetch-depth: 0
+      - name: Publish the exact workflow SHA-256 as a regular file
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e ci-workflow.sha256
+          sha256sum .github/workflows/ci.yml | awk '{print $1}' > ci-workflow.sha256
+          test "$(wc -c < ci-workflow.sha256)" -eq 65
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci-workflow.sha256
+          git commit -m 'chore(ci): publish exact workflow sha256 identity'
+          git push origin HEAD:refs/heads/codex/docs-gap-closure-20260902

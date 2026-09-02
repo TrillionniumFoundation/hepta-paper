@@ -1,0 +1,75 @@
+name: gap-closure-apply
+
+on:
+  push:
+    branches:
+      - codex/docs-gap-closure-20260902
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_PARENT_SHA: 6f3d4dfd154f519a2e0d96d30a6c53b564312a8a
+      EXPECTED_PATCH_SHA256: ee0c992a41f8a0a377790ad538b46f45792f1149127019f8bd989366224b95ba
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - name: Verify bootstrap and apply audited patch
+        shell: bash
+        env:
+          PATCH_GZIP_BASE64: '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'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD^1)" = "$EXPECTED_PARENT_SHA"
+          printf '%s' "$PATCH_GZIP_BASE64" | base64 -d | gzip -d > "$RUNNER_TEMP/gap-closure.patch"
+          echo "$EXPECTED_PATCH_SHA256  $RUNNER_TEMP/gap-closure.patch" | sha256sum -c -
+          git apply --check "$RUNNER_TEMP/gap-closure.patch"
+          git apply "$RUNNER_TEMP/gap-closure.patch"
+          git rm .github/workflows/gap-closure-apply.yml
+          git rm .github/workflows/gap-closure-source-export.yml
+      - name: Install exact test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v22.23.1"
+          sudo install -o root -g root -m 0555 "$(command -v node)" /usr/bin/node
+          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
+      - name: Verify focused blocker closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          node --check paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs
+          node --check paper-core/tests/repository-asset-externalization.test.mjs
+          node --test --test-concurrency=1 \
+            paper-core/tests/autonomous-research-online-schema-transition-state-repository.test.mjs \
+            paper-core/tests/autonomous-research-online-finalized-head-inspection.test.mjs \
+            paper-core/tests/autonomous-research-online-runtime-adoption-v2.test.mjs \
+            paper-core/tests/autonomous-submission-handoff-layout-provision.test.mjs \
+            paper-core/tests/isolated-verification-policy.test.mjs \
+            paper-core/tests/r-runtime-source-cas.test.mjs \
+            paper-core/tests/repository-asset-externalization.test.mjs
+          npm run static:check
+      - name: Commit exact tested patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'OpenAI Gap Closure'
+          git config user.email 'noreply@openai.com'
+          git add -A
+          test -n "$(git status --porcelain=v1)"
+          git commit -m 'fix(ci): close portable-suite environment blockers'
+          git push origin HEAD:codex/docs-gap-closure-20260902

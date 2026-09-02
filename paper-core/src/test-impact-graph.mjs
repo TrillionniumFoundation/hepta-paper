@@ -4,7 +4,8 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const PORTABLE_TEST = /^(?:paper-core|migration)\/tests\/.*\.test\.mjs$/;
-const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:paper-core\/docs|paper-adapters)\/.*\.md$/;
+const DOCUMENTATION = /\.md$|^\.github\/workflows\/documentation-integrity\.yml$/;
+const GLOBAL_IMPACT_EXEMPT = /^paper-core\/verification\/documentation-integrity\.mjs$/;
 const GLOBAL_IMPACT = Object.freeze([
   /^\.github\//,
   /^package(?:-lock)?\.json$/,
@@ -105,10 +106,15 @@ export function buildTestImpactGraph({ files, readSource }) {
 }
 
 function fullFallbackRequired(changedFiles) {
-  return changedFiles.filter((file) => (
-    GLOBAL_IMPACT.some((pattern) => pattern.test(file))
-      || (!file.endsWith('.mjs') && !DOCUMENTATION.test(file))
-  ));
+  return changedFiles.filter((file) => {
+    const documentation = DOCUMENTATION.test(file);
+    return (
+      (!documentation
+        && !GLOBAL_IMPACT_EXEMPT.test(file)
+        && GLOBAL_IMPACT.some((pattern) => pattern.test(file)))
+      || (!file.endsWith('.mjs') && !documentation)
+    );
+  });
 }
 
 export function selectImpactedTests({ graph, changedFiles }) {

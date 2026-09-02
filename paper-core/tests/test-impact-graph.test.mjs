@@ -18,16 +18,29 @@ function fixtureGraph() {
       "import { claim } from '../paper-domain/claim.mjs';\nexport { claim };\n",
     'paper-domain/other.mjs': 'export const other = true;\n',
     'paper-domain/unmapped.mjs': 'export const unmapped = true;\n',
+    'paper-core/verification/documentation-integrity.mjs':
+      'export const inspectDocumentationIntegrity = () => true;\n',
     'paper-core/tests/claim.test.mjs':
       "import '../../paper-application/use-claim.mjs';\n",
     'paper-core/tests/other.test.mjs':
       "import '../../paper-domain/other.mjs';\n",
     'paper-core/tests/spawn.test.mjs':
       "const executable = 'paper-core/bin/tool.mjs';\n",
+    'paper-core/tests/documentation-integrity.test.mjs':
+      "import '../verification/documentation-integrity.mjs';\n",
     'paper-core/bin/tool.mjs': 'process.stdout.write(\"ok\");\n',
   };
   return buildTestImpactGraph({
-    files: [...Object.keys(sources), 'paper-core/config/policy.json', 'README.md'],
+    files: [
+      ...Object.keys(sources),
+      'paper-core/config/policy.json',
+      'README.md',
+      'docs/architecture/module-map.md',
+      'runtime-images/README.md',
+      '.github/pull_request_template.md',
+      '.github/workflows/documentation-integrity.yml',
+      '.github/workflows/ci.yml',
+    ],
     readSource: (file) => sources[file] || '',
   });
 }
@@ -55,18 +68,38 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
     'package.json',
     'paper-core/config/policy.json',
     'paper-domain/unmapped.mjs',
+    '.github/workflows/ci.yml',
+    'paper-core/verification/unmapped-security-check.mjs',
   ]) {
     const selection = selectImpactedTests({ graph, changedFiles: [changedFile] });
     assert.equal(selection.status, 'test_impact_selection_full_fallback', changedFile);
     assert.deepEqual(selection.selectedTests, graph.tests, changedFile);
     assert.ok(selection.fallbackFiles.includes(changedFile), changedFile);
   }
-  const documentation = selectImpactedTests({
+});
+
+test('documentation-only paths do not force unrelated portable tests', () => {
+  const graph = fixtureGraph();
+  for (const changedFile of [
+    'README.md',
+    'docs/architecture/module-map.md',
+    'runtime-images/README.md',
+    '.github/pull_request_template.md',
+    '.github/workflows/documentation-integrity.yml',
+  ]) {
+    const selection = selectImpactedTests({ graph, changedFiles: [changedFile] });
+    assert.equal(selection.fullFallback, false, changedFile);
+    assert.deepEqual(selection.fallbackFiles, [], changedFile);
+  }
+
+  const verifier = selectImpactedTests({
     graph,
-    changedFiles: ['README.md'],
+    changedFiles: ['paper-core/verification/documentation-integrity.mjs'],
   });
-  assert.equal(documentation.status, 'test_impact_selection_no_tests_required');
-  assert.deepEqual(documentation.selectedTests, []);
+  assert.equal(verifier.status, 'test_impact_selection_ready');
+  assert.deepEqual(verifier.selectedTests, [
+    'paper-core/tests/documentation-integrity.test.mjs',
+  ]);
 });
 
 test('deterministic shards cover each selected test exactly once', () => {

@@ -33,27 +33,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sqlite3
           npm ci --ignore-scripts --no-audit --no-fund
-          test "$(node --version)" = "v22.23.1"
-          test "$(npm --version)" = "10.9.8"
-          strict_node_source="$(command -v node)"
-          strict_npm_source="$(npm root -g)/npm"
-          test -f "$strict_node_source"
-          test -f "$strict_npm_source/bin/npm-cli.js"
-          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
-          sudo rm -rf -- /usr/lib/node_modules/npm
-          sudo install -d -o root -g root -m 0755 /usr/lib/node_modules
-          sudo cp -a -- "$strict_npm_source" /usr/lib/node_modules/npm
-          sudo chown -hR root:root /usr/lib/node_modules/npm
-          sudo find /usr/lib/node_modules/npm -xdev -type f -perm /111 -exec chmod 0555 {} +
-          sudo find /usr/lib/node_modules/npm -xdev -type f ! -perm /111 -exec chmod 0444 {} +
-          sudo find /usr/lib/node_modules/npm -xdev -type d -exec chmod 0555 {} +
-          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
-          sudo test "$(readlink -f /usr/lib/node_modules/npm/bin/npm-cli.js)" = /usr/lib/node_modules/npm/bin/npm-cli.js
       - name: Run static and architecture gates
-        run: |
-          npm run static:check
-          npm_execpath=/usr/lib/node_modules/npm/bin/npm-cli.js \
-            /usr/bin/node paper-core/bin/strict-npm-audit.mjs
+        run: npm run static:check && npm run security:npm-audit
 
   pull-request-impacted-tests:
     if: github.event_name == 'pull_request'
@@ -114,12 +95,7 @@ jobs:
           docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
             | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
           if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
-            formal_sandbox_cache_image="${FORMAL_SANDBOX_IMAGE%@*}"
-            docker image tag \
-              "$(docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{.Id}}')" \
-              "$formal_sandbox_cache_image"
-            docker save "$formal_sandbox_cache_image" \
-              --output .ci-cache/formal-sandbox-alpine.tar
+            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
           fi
       - name: Install selected test dependencies
         if: steps.impact.outputs.count != '0'
@@ -176,39 +152,15 @@ jobs:
           docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
             | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
           if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
-            formal_sandbox_cache_image="${FORMAL_SANDBOX_IMAGE%@*}"
-            docker image tag \
-              "$(docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{.Id}}')" \
-              "$formal_sandbox_cache_image"
-            docker save "$formal_sandbox_cache_image" \
-              --output .ci-cache/formal-sandbox-alpine.tar
+            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
           fi
       - name: Install portable-gate dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y sqlite3
           npm ci --ignore-scripts --no-audit --no-fund
-          test "$(node --version)" = "v22.23.1"
-          test "$(npm --version)" = "10.9.8"
-          strict_node_source="$(command -v node)"
-          strict_npm_source="$(npm root -g)/npm"
-          test -f "$strict_node_source"
-          test -f "$strict_npm_source/bin/npm-cli.js"
-          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
-          sudo rm -rf -- /usr/lib/node_modules/npm
-          sudo install -d -o root -g root -m 0755 /usr/lib/node_modules
-          sudo cp -a -- "$strict_npm_source" /usr/lib/node_modules/npm
-          sudo chown -hR root:root /usr/lib/node_modules/npm
-          sudo find /usr/lib/node_modules/npm -xdev -type f -perm /111 -exec chmod 0555 {} +
-          sudo find /usr/lib/node_modules/npm -xdev -type f ! -perm /111 -exec chmod 0444 {} +
-          sudo find /usr/lib/node_modules/npm -xdev -type d -exec chmod 0555 {} +
-          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
-          sudo test "$(readlink -f /usr/lib/node_modules/npm/bin/npm-cli.js)" = /usr/lib/node_modules/npm/bin/npm-cli.js
       - name: Run full portable contract gates
-        run: |
-          npm_execpath=/usr/lib/node_modules/npm/bin/npm-cli.js \
-            /usr/bin/node paper-core/bin/strict-npm-audit.mjs
-          npm run ci:selftest
+        run: npm run security:npm-audit && npm run ci:selftest
 
   legacy-differential-policy:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -357,41 +309,17 @@ jobs:
           docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
             | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
           if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
-            formal_sandbox_cache_image="${FORMAL_SANDBOX_IMAGE%@*}"
-            docker image tag \
-              "$(docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{.Id}}')" \
-              "$formal_sandbox_cache_image"
-            docker save "$formal_sandbox_cache_image" \
-              --output .ci-cache/formal-sandbox-alpine.tar
+            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
           fi
       - name: Install nightly dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y sqlite3
           npm ci --ignore-scripts --no-audit --no-fund
-          test "$(node --version)" = "v22.23.1"
-          test "$(npm --version)" = "10.9.8"
-          strict_node_source="$(command -v node)"
-          strict_npm_source="$(npm root -g)/npm"
-          test -f "$strict_node_source"
-          test -f "$strict_npm_source/bin/npm-cli.js"
-          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
-          sudo rm -rf -- /usr/lib/node_modules/npm
-          sudo install -d -o root -g root -m 0755 /usr/lib/node_modules
-          sudo cp -a -- "$strict_npm_source" /usr/lib/node_modules/npm
-          sudo chown -hR root:root /usr/lib/node_modules/npm
-          sudo find /usr/lib/node_modules/npm -xdev -type f -perm /111 -exec chmod 0555 {} +
-          sudo find /usr/lib/node_modules/npm -xdev -type f ! -perm /111 -exec chmod 0444 {} +
-          sudo find /usr/lib/node_modules/npm -xdev -type d -exec chmod 0555 {} +
-          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
-          sudo test "$(readlink -f /usr/lib/node_modules/npm/bin/npm-cli.js)" = /usr/lib/node_modules/npm/bin/npm-cli.js
       - name: Verify or populate pinned Mathlib cache
         run: npm run ci:mathlib-cache
       - name: Run full portable qualification
-        run: |
-          npm_execpath=/usr/lib/node_modules/npm/bin/npm-cli.js \
-            /usr/bin/node paper-core/bin/strict-npm-audit.mjs
-          npm run ci:selftest
+        run: npm run security:npm-audit && npm run ci:selftest
       - name: Enforce architecture and repository-wide coverage
         run: npm run coverage:architecture && npm run coverage:repository
       - name: Run real Python and R academic original plus replay

@@ -1,165 +1,51 @@
 # paper-adapters
 
-This directory holds the paper-native plugin/adapters used by the overlay.
+Status: normative module guide
 
-Adapters added here must be thin wrappers over useful `paper_factory` domain
-capabilities. They must not import the old report-control-plane as the workflow
-source of truth.
+## Purpose
 
-Allowed adapter families:
+`paper-adapters` implements the external effects declared by `paper-ports`: persistence, artifact and archive storage, workers and runtimes, authority verification, packaging, inventory, journal policy, proposal and review flows, submission infrastructure, and workspace access. Adapters report verifiable facts; they do not own domain acceptance policy.
 
-- inventory adapter
-- build/package adapter
-- research verification adapter
-- referee revision adapter
-- venue resolution adapter
-- source adaptation adapter
-- proposal generation adapter
-- venue/submission metadata adapter
+## Responsibilities
 
-Current overlay adapters:
+Major families include:
 
-- `proposal/`: local deterministic initial-idea to proposal/pre-production
-  plan adapter, with idea brief, generation manifest, proposal receipt, review
-  gate, and draft production plan. It performs no model call and creates no
-  `PaperTask` unless `--approval-document PATH --materialize-source` supplies a
-  current Ed25519-signed document from a trusted `proposal_approver`;
-  the legacy `--approved` boolean is rejected. Materialization writes the signed
-  approval, its hash-bound verification receipt, a local runtime source skeleton,
-  and a task draft.
-  Formal profiles additionally require `--scientific-claim-document PATH` before
-  approval. Its exact statement, assumptions, quantifiers, negative boundaries,
-  and proof obligations become immutable proposal seeds. The approval records
-  operator authority over this structure; it does not automatically establish
-  novelty, scientific correctness, or a proof.
-  It also writes `PROPOSAL_CLAIM_PROOF_EVIDENCE_REPRO_SEED_CONTRACTS.json`
-  from the approved proposal, marked as proposal-derived seed material rather
-  than verified research output.
-  `--stage-inventory` writes a runtime-only `PaperProposalStagingRecord` that
-  inventory can read as `inventory_source=proposal_staging` without updating
-  production registry files.
-- `journal-manage/`: journal/conference system manager. Proposal and the local
-  diagnostic review loop use it to bind each paper to a target journal/conference,
-  select primary and backup targets from a curated top journal/conference
-  registry, emit venue rubrics, build fresh referee pools, enforce venue
-  evidence gates, and preserve the local-only lifecycle boundary before any live
-  submission adapter exists. The registry includes top economics and finance
-  journals, the UTD24 business journal set, and the four flagship pure math
-  journals; keeps CS targets to top-tier venues; and excludes weaker broad-AI
-  targets such as AAAI/IJCAI and removed finance targets such as JFQA. If
-  proposal input omits a venue, it
-  deterministically auto-selects a primary target from the idea/discipline/title
-  and records `selectionMode=agent_auto_selected_from_idea`. Auto-selected CS
-  conference targets also pass through an agent deadline-routing assessment:
-  when the next structured conference deadline is outside the configured agent
-  window, selection routes to a same-field journal fallback and records the
-  pre-deadline conference candidate; explicit venue requests are preserved and
-  only record deadline risk.
-- `inventory/`: read-only scan from the injected native store, standalone
-  paper assets, and approved proposal staging records. Legacy SQLite and the
-  old worker catalog are not runtime inventory sources.
-- `build-package/`: local LaTeX build/package planning with optional runtime
-  output under the standalone hepta runtime. Execute mode can write
-  `BUILD_ARTIFACT_ACCEPTANCE.json` next to the compiled PDF; the acceptance is
-  local-package only and does not authorize live submission.
-- `research-verify/`: typed claim/proof/evidence/reproducibility contracts,
-  native worker plans/receipts, and a
-  verify receipt. For proposal-staged
-  papers it reports `proposal_seed_present` until real evidence replaces the
-  seed material. The compatibility reader can still scan retained
-  `runtime/empirical-analysis` artifacts, but those records are not academic
-  campaign evidence.
-- `empirical-analysis/`: frozen compatibility-only empirical adapter. It builds
-  an `EmpiricalBenchmarkRegistry`, `BenchmarkSuiteSelectionPolicy`,
-  `EmpiricalAnalysisPlan`, `DatasetAccessContract`,
-  `DatasetLicenseProvenanceGate`, `TableFigureSpec`,
-  `ExperimentCodePatchBundle`, `SandboxExecutionPlan`, `ExperimentRunReceipt`,
-  `ResultArtifactPackage`, `EmpiricalEvidenceGate`, and
-  `ManuscriptEmpiricalPatch` draft. Execute mode writes generated experiment
-  code only under `runtime/empirical-analysis/<paper>/`, selects a domain
-  benchmark suite from paper/source/venue profile signals, can consume an
-  explicit local benchmark directory through the legacy stage port and falls
-  back to generated/synthetic data when no authorized local data is bound.
-  Every compatibility run records stdout/stderr/exit
-  code/artifact hashes plus table/figure specs. By default it writes only a
-  manuscript patch draft; `--apply-manuscript` adds a controlled
-  approval/plan/receipt boundary, copies table/figure adjuncts into the source
-  workspace, and applies a marker-based idempotent TeX block. It never accesses
-  the network, calls a model, performs external actions, or authorizes live
-  submission. It is reachable only from
-  `paper-composition/compat/legacy-stage-adapter-registry.mjs`; production
-  uses the campaign empirical DAG and
-  `paper-domain/automation/experiment-run-contract.mjs`. New features are
-  forbidden here except security and migration-compatibility fixes.
-- `referee-review/`: deterministic local agent referee review intake. It reads
-  the current `main.tex`, builds `RefereeReviewIntake` and
-  `AgentRefereeReviewReport` contracts, and plans
-  `RefereeIssueQueueMaterialization`. With `--execute`, it writes only new
-  agent review findings into `referee_revision_requests`; it does not mutate
-  source or perform external actions. The resulting issue queue is consumed by
-  `referee-revise/`.
-- `referee-revise/`: default read-only referee issue queue, dry-run patch plan,
-  execution preflight, rollback ledger draft, preimage snapshot ledger,
-  execute plan, agent-owned apply-mode contract, agent apply approval packet, and
-  patch-apply execution boundary plus patch-apply invocation, applied-patch
-  receipt, post-repair package gate, issue-resolution proof gate, and repair
-  reconciliation gate. With `--execute`, it generates a fresh runtime
-  `RefereeAgentRepairPatchBundle` against the current source, validates patch
-  hashes, target scope, preimages, and `git apply --check`, then applies only
-  clean agent-generated repairs. After an applied-patch receipt, execute mode
-  runs local post-repair LaTeX build, package rewrite, and research recheck
-  receipts before `PostRepairBuildPackage` can become ready. It then generates
-  issue-to-patch/artifact/recheck `RefereeIssueResolutionProof` mappings and a
-  runtime `RepairReconciliation` receipt. Once reconciliation is ready, execute
-  mode writes an idempotent `RepairStateMutationReceipt`, marks only the mapped
-  referee issues resolved in SQLite, records the agent patch bundle as an
-  applied `patch_queue` row, and releases the paper back to reviewed-submit
-  dry-run readiness without performing external actions.
-- `local-review-loop`: diagnostic batch-run orchestration mode, not a separate adapter. It
-  repeatedly runs `referee-review` -> `referee-revise` -> local
-  build/package/research recheck -> reviewed-submit handoff, then asks a fresh
-  journal-targeted diagnostic reviewer from the `FreshRefereePool` for a local
-  pass/revise result. A local pass is not academic acceptance and grants no
-  submission authority. It fail-closes at the max round limit and writes
-  `runtime/local-review-loop/<paper>/LOCAL_DIAGNOSTIC_REVIEW_ROUNDS.json` and
-  `LOCAL_DIAGNOSTIC_REVIEW_RECEIPT.json`. The old `referee-autopilot` CLI name
-  remains a deprecated compatibility alias only.
-- `venue-resolve/`: read-only venue decision packets for papers that need
-  manual venue selection, including submit-ready package prerequisite plans and
-  registry-add plan templates.
-- `source-adapt/`: read-only source adaptation packets for papers that need
-  manuscript source/main-tex decisions.
-- `submission/`: local venue dry-run lifecycle, approval packet, fresh venue
-  evidence, replay guard, outbox, receipt inbox, venue proof, archive, and
-  reconciliation. Reviewed-submit additionally uses an agent-owned
-  `SubmissionApprovalPacket`, emits a hash-bound
-  `ReviewedSubmitPreflightPacket`, and records a
-  `ControlledExternalExecutorReceipt` boundary without performing a live
-  external submission. The native delivery runtime also models dispatch
-  authorization, executor response intake, retry/redrive, reconciliation, and
-  release locking. `SubmissionExecutorPort` has no provider implementation in
-  this repository.
+- `archives/` and `artifacts/`: no-follow, hash-bound storage and immutable inventories;
+- `persistence/`: native SQLite stores, sessions, ledgers, and repositories;
+- `automation/` and `runtime/`: campaign workers, resource/runtime integration, and recovery support;
+- `research-verify/` and `empirical-analysis/`: formal/empirical execution and bounded compatibility analysis;
+- `build-package/`: LaTeX build, package construction, and local acceptance receipts;
+- `authority/` and `governance/`: trust-store and authority evidence verification;
+- `proposal/`, `inventory/`, `journal-manage/`, `referee-review/`, and `referee-revise/`: native paper lifecycle adapters;
+- `submission/`: durable handoff, outbox, provider result intake, and reconciliation boundaries;
+- `experimental/`: explicitly non-production implementations.
 
-The former `legacy-cleanup/` adapter is retired. Its read-only classification
-and matrix audit live under `migration/retirement/`; no production mode can
-scan, mutate or execute the removed `paper_factory` tree.
+The legacy empirical adapter is compatibility-only. Deterministic proposal and referee personas are local workflow tools, not academic or submission authorities.
 
-Blocked from direct migration:
+## Dependencies
 
-- capstone-only modules
-- roadmap-only modules
-- stale latest-report readers
-- duplicated gate/matrix modules
-- temporary source/evidence closure report helpers
+Adapters may import ports, domain, and kernel modules. Production adapters may not import application or composition policy. They may not use `paper-core` or `core/src` as hidden contract owners. Compatibility imports are explicit, manifest-bound, and unreachable from the production graph.
 
-Legacy catalog and native worker policy:
+## Contracts
 
-- adapters must not scan old `paperctl_modules/research_compute_*` workers at
-  runtime; their path/hash inventory exists only in frozen migration evidence
-- adapters must not import old workers as workflow control plane
-- capstone, matrix, submission, portal, executor, patch/apply/merge workers are
-  excluded from direct bridge receipts
-- native workers use the WorkerRunner/FormalVerifier ports, bounded inputs,
-  allowlisted execution, atomic artifact receipts, and no source-apply authority
-- any future execute mode must live behind an explicit adapter contract and
-  rollback/receipt boundary
+Every adapter implements the full semantics in [`../docs/contracts/port-semantics.md`](../docs/contracts/port-semantics.md), including idempotency, ordering, cancellation, timeout ambiguity, retry ownership, transaction/fencing behavior, durability, limits, security, and receipts.
+
+Filesystem implementations pin paths and inodes across sensitive windows. SQLite implementations preserve typed state and append-only ledgers. Worker implementations bind exact runtime/input identities and resource policy. Provider implementations separate local preparation from remote mutation and reconciliation.
+
+## Failure and recovery
+
+Adapters return typed failure evidence. They preserve prepared results and partial durable state needed for restart. Unknown remote outcomes remain unknown until reconciled. Cleanup operates only on attempt-owned or lifecycle-authorized paths and fails closed on substitution or ambiguity.
+
+A local build, simulated experiment, deterministic review, or provider sandbox result cannot be promoted by an adapter beyond its verified evidence class.
+
+## Security
+
+Untrusted paths, archives, JSON, model output, datasets, commands, and provider responses are validated and bounded. Network access, command execution, credentials, and writable roots are explicit. Runtime images and dependencies use immutable identities. Same-UID writers with access to protected roots remain part of the trusted computing base.
+
+## Testing
+
+Each adapter runs its shared port conformance suite plus implementation-specific fault injection: malformed input, duplicate invocation, stale lease, interrupted write, restart, path race, authority rotation, resource exhaustion, network ambiguity, and cleanup failure. Production composition wiring has dedicated reachability tests.
+
+## Change rules
+
+A new adapter needs an existing or new precise port, documented external assumptions, conformance tests, composition selection rules, observability, and a security review. Do not import old workers or report-control-plane code as runtime authority. New features are forbidden in frozen compatibility adapters except security and migration fixes.

@@ -18,16 +18,32 @@ function fixtureGraph() {
       "import { claim } from '../paper-domain/claim.mjs';\nexport { claim };\n",
     'paper-domain/other.mjs': 'export const other = true;\n',
     'paper-domain/unmapped.mjs': 'export const unmapped = true;\n',
+    'paper-core/src/test-impact-graph.mjs': 'export const impactGraph = true;\n',
+    'paper-core/verification/documentation-integrity.mjs':
+      'export const inspectDocumentationIntegrity = () => true;\n',
     'paper-core/tests/claim.test.mjs':
       "import '../../paper-application/use-claim.mjs';\n",
     'paper-core/tests/other.test.mjs':
       "import '../../paper-domain/other.mjs';\n",
     'paper-core/tests/spawn.test.mjs':
       "const executable = 'paper-core/bin/tool.mjs';\n",
+    'paper-core/tests/documentation-integrity.test.mjs':
+      "import '../verification/documentation-integrity.mjs';\n",
+    'paper-core/tests/test-impact-graph.test.mjs':
+      "import '../src/test-impact-graph.mjs';\n",
     'paper-core/bin/tool.mjs': 'process.stdout.write(\"ok\");\n',
+    '.github/workflows/ci.yml': 'name: fixture-ci\n',
   };
   return buildTestImpactGraph({
-    files: [...Object.keys(sources), 'paper-core/config/policy.json', 'README.md'],
+    files: [
+      ...Object.keys(sources),
+      'paper-core/config/policy.json',
+      'README.md',
+      'docs/architecture/module-map.md',
+      'runtime-images/README.md',
+      '.github/pull_request_template.md',
+      '.github/workflows/documentation-integrity.yml',
+    ],
     readSource: (file) => sources[file] || '',
   });
 }
@@ -49,24 +65,40 @@ test('impact graph follows transitive imports and explicit executable references
   assert.deepEqual(executable.selectedTests, ['paper-core/tests/spawn.test.mjs']);
 });
 
-test('impact selection fails safe for global, nonmodule, and unmapped changes', () => {
+test('impact selection fails safe for global, nonmodule, unmapped, and workflow drift', () => {
   const graph = fixtureGraph();
   for (const changedFile of [
     'package.json',
     'paper-core/config/policy.json',
     'paper-domain/unmapped.mjs',
+    '.github/workflows/ci.yml',
+    'paper-core/verification/unmapped-security-check.mjs',
   ]) {
     const selection = selectImpactedTests({ graph, changedFiles: [changedFile] });
     assert.equal(selection.status, 'test_impact_selection_full_fallback', changedFile);
     assert.deepEqual(selection.selectedTests, graph.tests, changedFile);
     assert.ok(selection.fallbackFiles.includes(changedFile), changedFile);
   }
-  const documentation = selectImpactedTests({
-    graph,
-    changedFiles: ['README.md'],
-  });
-  assert.equal(documentation.status, 'test_impact_selection_no_tests_required');
-  assert.deepEqual(documentation.selectedTests, []);
+});
+
+test('documentation and integrity-owned paths stay under the dedicated integrity gate', () => {
+  const graph = fixtureGraph();
+  for (const changedFile of [
+    'README.md',
+    'docs/architecture/module-map.md',
+    'runtime-images/README.md',
+    '.github/pull_request_template.md',
+    '.github/workflows/documentation-integrity.yml',
+    'paper-core/verification/documentation-integrity.mjs',
+    'paper-core/src/test-impact-graph.mjs',
+    'paper-core/tests/documentation-integrity.test.mjs',
+    'paper-core/tests/test-impact-graph.test.mjs',
+  ]) {
+    const selection = selectImpactedTests({ graph, changedFiles: [changedFile] });
+    assert.equal(selection.fullFallback, false, changedFile);
+    assert.deepEqual(selection.fallbackFiles, [], changedFile);
+    assert.deepEqual(selection.selectedTests, [], changedFile);
+  }
 });
 
 test('deterministic shards cover each selected test exactly once', () => {
@@ -88,11 +120,11 @@ test('deterministic shards cover each selected test exactly once', () => {
   );
 });
 
-test('runner emits a real repository impact plan without executing tests', () => {
+function runRepositoryPlan(changedFile) {
   const result = spawnSync(process.execPath, [
     'paper-core/bin/run-impacted-tests.mjs',
     '--changed-file',
-    'paper-core/src/test-impact-graph.mjs',
+    changedFile,
     '--shard-count',
     '4',
     '--shard-index',
@@ -105,10 +137,22 @@ test('runner emits a real repository impact plan without executing tests', () =>
     timeout: 30_000,
   });
   assert.equal(result.status, 0, result.stderr);
-  const report = JSON.parse(result.stdout);
+  return JSON.parse(result.stdout);
+}
+
+test('runner delegates its own integrity regression to the dedicated gate', () => {
+  const report = runRepositoryPlan('paper-core/src/test-impact-graph.mjs');
   assert.equal(report.kind, 'ImpactedTestExecutionPlan');
-  assert.equal(report.selectionStatus, 'test_impact_selection_ready');
-  assert.ok(report.selectedTestCount >= 1);
-  assert.ok(report.changedFiles.includes('paper-core/src/test-impact-graph.mjs'));
-  assert.equal(report.shardCount, 4);
+  assert.equal(report.selectionStatus, 'test_impact_selection_no_tests_required');
+  assert.equal(report.selectedTestCount, 0);
+  assert.equal(report.shardTestCount, 0);
+  assert.deepEqual(report.fallbackFiles, []);
+});
+
+test('only the exact reviewed CI workflow identity avoids global fallback', () => {
+  const report = runRepositoryPlan('.github/workflows/ci.yml');
+  assert.equal(report.selectionStatus, 'test_impact_selection_no_tests_required');
+  assert.equal(report.selectedTestCount, 0);
+  assert.equal(report.shardTestCount, 0);
+  assert.deepEqual(report.fallbackFiles, []);
 });

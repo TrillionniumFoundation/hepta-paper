@@ -1,10 +1,16 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const PORTABLE_TEST = /^(?:paper-core|migration)\/tests\/.*\.test\.mjs$/;
-const DOCUMENTATION = /^(?:README|RELEASE|CHANGELOG)\.md$|^(?:paper-core\/docs|paper-adapters)\/.*\.md$/;
+const DEDICATED_INTEGRITY_TEST = /^paper-core\/tests\/(?:documentation-integrity|test-impact-graph)\.test\.mjs$/;
+const DOCUMENTATION = /\.md$|^\.github\/workflows\/documentation-integrity\.yml$/;
+const INTEGRITY_DELEGATED = /^(?:paper-core\/src\/test-impact-graph\.mjs|paper-core\/verification\/documentation-integrity\.mjs|paper-core\/tests\/(?:documentation-integrity|test-impact-graph)\.test\.mjs)$/;
+const EXACT_GLOBAL_IMPACT_EXEMPTIONS = Object.freeze({
+  '.github/workflows/ci.yml': 'aec4ae892652acab76003033afb13c0cc857cce6306c5bac43491743758858d2',
+});
 const GLOBAL_IMPACT = Object.freeze([
   /^\.github\//,
   /^package(?:-lock)?\.json$/,
@@ -24,6 +30,12 @@ function repositoryPath(value) {
     throw new Error(`test_impact_repository_path_invalid:${value || '<empty>'}`);
   }
   return normalized;
+}
+
+function sourceSha256(source) {
+  return createHash('sha256')
+    .update(String(source || ''), 'utf8')
+    .digest('hex');
 }
 
 function resolveModule(importer, specifier, moduleSet) {
@@ -56,7 +68,8 @@ function sourceReferences(importer, source, fileSet) {
 }
 
 export function isPortableTestFile(file) {
-  return PORTABLE_TEST.test(repositoryPath(file));
+  const selected = repositoryPath(file);
+  return PORTABLE_TEST.test(selected) && !DEDICATED_INTEGRITY_TEST.test(selected);
 }
 
 export function buildTestImpactGraph({ files, readSource }) {
@@ -68,6 +81,11 @@ export function buildTestImpactGraph({ files, readSource }) {
   const modules = repositoryFiles.filter((file) => file.endsWith('.mjs'));
   const moduleSet = new Set(modules);
   const tests = Object.freeze(repositoryFiles.filter(isPortableTestFile));
+  const exactGlobalContentHashes = Object.freeze(Object.fromEntries(
+    Object.keys(EXACT_GLOBAL_IMPACT_EXEMPTIONS)
+      .filter((file) => fileSet.has(file))
+      .map((file) => [file, sourceSha256(readSource(file))]),
+  ));
   const edges = [];
   const testReferences = [];
   for (const importer of modules) {
@@ -95,6 +113,7 @@ export function buildTestImpactGraph({ files, readSource }) {
     testCount: tests.length,
     repositoryFiles,
     tests,
+    exactGlobalContentHashes,
     edges: Object.freeze(edges),
     testReferences: Object.freeze(testReferences),
   };
@@ -104,11 +123,22 @@ export function buildTestImpactGraph({ files, readSource }) {
   });
 }
 
-function fullFallbackRequired(changedFiles) {
-  return changedFiles.filter((file) => (
-    GLOBAL_IMPACT.some((pattern) => pattern.test(file))
-      || (!file.endsWith('.mjs') && !DOCUMENTATION.test(file))
-  ));
+function exactGlobalImpactExemptionReady(file, graph) {
+  const expected = EXACT_GLOBAL_IMPACT_EXEMPTIONS[file];
+  return Boolean(expected && graph.exactGlobalContentHashes?.[file] === expected);
+}
+
+function fullFallbackRequired(changedFiles, graph) {
+  return changedFiles.filter((file) => {
+    const documentation = DOCUMENTATION.test(file);
+    const delegated = INTEGRITY_DELEGATED.test(file);
+    const exactExemption = exactGlobalImpactExemptionReady(file, graph);
+    return (
+      (!documentation && !delegated && !exactExemption
+        && GLOBAL_IMPACT.some((pattern) => pattern.test(file)))
+      || (!file.endsWith('.mjs') && !documentation && !delegated && !exactExemption)
+    );
+  });
 }
 
 export function selectImpactedTests({ graph, changedFiles }) {
@@ -116,7 +146,7 @@ export function selectImpactedTests({ graph, changedFiles }) {
     throw new Error('test_impact_selection_input_invalid');
   }
   const changed = Object.freeze([...new Set(changedFiles.map(repositoryPath))].sort());
-  const globalFallbackFiles = fullFallbackRequired(changed);
+  const globalFallbackFiles = fullFallbackRequired(changed, graph);
   const reverse = new Map();
   for (const { importer, dependency } of graph.edges) {
     const importers = reverse.get(dependency) || [];
@@ -167,6 +197,7 @@ export function selectImpactedTests({ graph, changedFiles }) {
     file.endsWith('.mjs')
       && !testSet.has(file)
       && !DOCUMENTATION.test(file)
+      && !INTEGRITY_DELEGATED.test(file)
       && !moduleMapsToTest(file)
   ));
   const fallbackFiles = Object.freeze([

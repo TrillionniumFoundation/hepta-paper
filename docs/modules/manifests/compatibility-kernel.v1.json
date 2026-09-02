@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "kind": "ModuleDocumentationManifestV1",
+  "moduleId": "module.compatibility-kernel",
+  "registryRef": "docs/system/truth/modules.v1.json#/modules/module.compatibility-kernel",
+  "specPath": "docs/modules/specs/compatibility-kernel.md",
+  "runbookPath": "docs/modules/specs/compatibility-kernel.md#operational-runbook",
+  "implementationPaths": ["rust/crates/hepta-compatibility","rust/crates/hepta-legacy-compatibility"],
+  "capabilityIds": ["CAP-CMP-LEGACY"],
+  "authorityClass": "read_only",
+  "ownerTeams": ["TEAM-PROTOCOL","TEAM-STATE","TEAM-EVIDENCE"],
+  "dependencyModuleIds": ["module.protocol-kernel"],
+  "workItemIds": ["LEGACY-REPLAY-001","MIG-003"],
+  "qualificationRequirement": "source",
+  "protocolRange": {"minimum":1,"maximum":1},
+  "sideEffectClasses": ["none"],
+  "determinismClass": "deterministic",
+  "resourceProfile": {"sourceContract":"bounded","deploymentProfileRequired":true,"implicitCapacityAllowed":false,"unboundedChildConcurrencyAllowed":false},
+  "sloProfile": {"status":"source_contract_defined","canonicalWorkloadsRequired":true,"zeroToleranceSafetyCountersRequired":true},
+  "rollout": {"currentStaticActivation":"disabled","automaticActivation":false,"productionActivation":false,"rollbackTargetRequired":true,"mutualExclusionRequired":false},
+  "documentationStatus": "complete",
+  "effectiveQualification": "derived_only"
+}

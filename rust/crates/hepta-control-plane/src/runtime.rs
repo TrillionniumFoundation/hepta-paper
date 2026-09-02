@@ -155,17 +155,14 @@ where
             plan.plan_hash.clone(),
         )?;
 
-        let (requests, reservation_ids) = match self.reserve_selected(
+        let (requests, reservation_ids) = self.reserve_selected(
             snapshot,
             &snapshot_hash,
             &plan,
             &ordered,
             tenant_id,
             now_unix_ms,
-        ) {
-            Ok(value) => value,
-            Err(error) => return Err(error),
-        };
+        )?;
         let verified = match self.process_admitted(&snapshot_hash, &plan, &waves, &requests) {
             Ok(value) => value,
             Err(error) => {

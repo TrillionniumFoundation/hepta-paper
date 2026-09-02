@@ -21,6 +21,6 @@ jobs:
         with:
           node-version: '22.23.1'
       - name: Verify documentation structure, coverage, and links
-        run: node paper-core/bin/documentation-integrity.mjs
+        run: node paper-core/verification/documentation-integrity.mjs
       - name: Run documentation integrity negative and repository tests
         run: node --test --test-concurrency=1 paper-core/tests/documentation-integrity.test.mjs

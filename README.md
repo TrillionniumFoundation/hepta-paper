@@ -6,6 +6,8 @@ This repository is the workspace for the unreleased `v0.21.0` development candid
 
 The system separates local automation from academic and submission authority. A successful local run does not establish scientific truth, novelty, venue acceptance, production qualification, or permission to perform a live submission. Missing external trust is reported as a blocker and must never be fabricated locally.
 
+The live capability catalog currently has source implementation and source-bound conformance coverage for **16/16** capabilities. Independently rooted operational proof remains **0/16** until the required external owner and observer evidence is ingested. These counts describe distinct evidence layers; `16/16` local coverage does not upgrade `0/16` external operational proof. The authoritative, changing status remains in [`paper-core/docs/CURRENT_STATUS.md`](paper-core/docs/CURRENT_STATUS.md).
+
 ## Canonical architecture
 
 The active production graph is layered in one direction:
@@ -85,7 +87,7 @@ Operational, external-trust, GPU, formal-runtime, cold-volume, provider, and rel
 Documentation is executable repository policy. The independent documentation workflow runs:
 
 ```bash
-node paper-core/bin/documentation-integrity.mjs
+node paper-core/verification/documentation-integrity.mjs
 node --test paper-core/tests/documentation-integrity.test.mjs
 ```
 

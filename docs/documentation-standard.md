@@ -25,7 +25,7 @@ A module README must name its important submodule families or entrypoints. Sourc
 
 Each normative guide begins with `Status: normative` and contains `## Scope`. It must distinguish verified behavior from goals, local evidence from external authority, and current policy from historical rationale.
 
-Numbers that change during operation belong in `paper-core/docs/CURRENT_STATUS.md` or a machine-generated report. Other guides link to that source rather than copying counts that will drift.
+Numbers that change during operation belong in `paper-core/docs/CURRENT_STATUS.md` or a machine-generated report. Operator-facing summaries may repeat machine-derived counts only when the repository release-state contract verifies them and they retain the explicit evidence boundary.
 
 ## Links and examples
 
@@ -37,6 +37,6 @@ The pull-request template records documentation impact. Reviewers must reject ch
 
 ## Machine enforcement
 
-`paper-core/bin/documentation-integrity.mjs` verifies required files, headings, minimum substantive size, active-root coverage, documentation-matrix coverage, local links, submodule URL policy, the pull-request checklist, and the documentation CI workflow. Its own tests exercise both negative fixtures and the live repository.
+`paper-core/verification/documentation-integrity.mjs` verifies required files, headings, minimum substantive size, active-root coverage, documentation-matrix coverage, local links, submodule URL policy, the pull-request checklist, and the documentation CI workflow. Its own tests exercise both negative fixtures and the live repository.
 
 The checker is deliberately bounded: it proves repository documentation structure and link integrity, not prose correctness. Contract reviews and tests remain responsible for semantic accuracy.

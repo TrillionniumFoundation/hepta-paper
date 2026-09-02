@@ -10,7 +10,7 @@ import {
   inspectDocumentationIntegrity,
   inspectLocalMarkdownTarget,
   inspectMarkdownDocument,
-} from '../bin/documentation-integrity.mjs';
+} from '../verification/documentation-integrity.mjs';
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

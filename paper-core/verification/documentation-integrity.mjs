@@ -226,7 +226,7 @@ function inspectReviewAndWorkflow(workspaceRoot) {
     '.github/workflows/documentation-integrity.yml',
   );
   for (const command of [
-    'node paper-core/bin/documentation-integrity.mjs',
+    'node paper-core/verification/documentation-integrity.mjs',
     'node --test --test-concurrency=1 paper-core/tests/documentation-integrity.test.mjs',
   ]) {
     if (!workflow.includes(command)) {

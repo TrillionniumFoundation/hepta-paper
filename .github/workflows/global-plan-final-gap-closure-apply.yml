@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 30
     env:
       EXPECTED_BASE_SHA: 71261f41e3a529fced862d7007e18a49338f5c40
-      EXPECTED_PATCH_SHA256: 3aca3bf051e6ae842eb070b5728dbd4ed446922777659c2b57e0148835321e4c
+      EXPECTED_PATCH_SHA256: fa7bc675cef50e775b494bea59599e7b94033c24b4f75660d547e0265f65c89e
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:

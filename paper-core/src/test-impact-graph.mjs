@@ -9,7 +9,7 @@ const DEDICATED_INTEGRITY_TEST = /^paper-core\/tests\/(?:documentation-integrity
 const DOCUMENTATION = /\.md$|^\.github\/workflows\/documentation-integrity\.yml$/;
 const INTEGRITY_DELEGATED = /^(?:paper-core\/src\/test-impact-graph\.mjs|paper-core\/verification\/documentation-integrity\.mjs|paper-core\/tests\/(?:documentation-integrity|test-impact-graph)\.test\.mjs)$/;
 const EXACT_GLOBAL_IMPACT_EXEMPTIONS = Object.freeze({
-  '.github/workflows/ci.yml': 'd1f7c5c358ab463fd5a459fa6a3ecc09032b6574',
+  '.github/workflows/ci.yml': 'aec4ae892652acab76003033afb13c0cc857cce6306c5bac43491743758858d2',
 });
 const GLOBAL_IMPACT = Object.freeze([
   /^\.github\//,
@@ -32,11 +32,9 @@ function repositoryPath(value) {
   return normalized;
 }
 
-function gitBlobSha1(source) {
-  const bytes = Buffer.from(String(source || ''), 'utf8');
-  return createHash('sha1')
-    .update(`blob ${bytes.length}\0`, 'utf8')
-    .update(bytes)
+function sourceSha256(source) {
+  return createHash('sha256')
+    .update(String(source || ''), 'utf8')
     .digest('hex');
 }
 
@@ -86,7 +84,7 @@ export function buildTestImpactGraph({ files, readSource }) {
   const exactGlobalContentHashes = Object.freeze(Object.fromEntries(
     Object.keys(EXACT_GLOBAL_IMPACT_EXEMPTIONS)
       .filter((file) => fileSet.has(file))
-      .map((file) => [file, gitBlobSha1(readSource(file))]),
+      .map((file) => [file, sourceSha256(readSource(file))]),
   ));
   const edges = [];
   const testReferences = [];

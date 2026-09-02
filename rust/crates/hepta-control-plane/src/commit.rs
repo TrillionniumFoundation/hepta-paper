@@ -4,8 +4,7 @@ use hepta_codex_protocol::Sha256Digest;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ControlPlaneError, VerifiedPreparedResultV1, canonical_hash_v1,
-    verification_receipt_hash_v1,
+    ControlPlaneError, VerifiedPreparedResultV1, canonical_hash_v1, verification_receipt_hash_v1,
 };
 
 /// Serialized integration request for the single commit sequencer.
@@ -100,10 +99,7 @@ pub trait CommitSequencerV1: sealed::Sealed {
     ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError>;
 
     /// Atomically integrates one verified prepared result.
-    fn commit(
-        &mut self,
-        request: CommitRequestV1,
-    ) -> Result<CommitReceiptV1, ControlPlaneError> {
+    fn commit(&mut self, request: CommitRequestV1) -> Result<CommitReceiptV1, ControlPlaneError> {
         let mut receipts = self.commit_batch(std::slice::from_ref(&request))?;
         receipts.pop().ok_or(ControlPlaneError::CommitInvalid)
     }
@@ -123,10 +119,7 @@ pub struct FixtureCommitSequencerV1 {
 impl FixtureCommitSequencerV1 {
     /// Creates a non-production sequencer over an immutable starting state hash.
     #[must_use]
-    pub fn new(
-        initial_state_hash: Sha256Digest,
-        authorized_verifier_hash: Sha256Digest,
-    ) -> Self {
+    pub fn new(initial_state_hash: Sha256Digest, authorized_verifier_hash: Sha256Digest) -> Self {
         Self {
             current_state_hash: initial_state_hash.clone(),
             initial_state_hash,
@@ -205,8 +198,7 @@ impl FixtureCommitSequencerV1 {
         if let Some(receipt) = self.receipts_by_result.get(&request.verified.result_hash) {
             if receipt.plan_hash == request.plan_hash
                 && receipt.verifier_hash == request.verified.verifier_hash
-                && receipt.verification_receipt_hash
-                    == request.verified.verification_receipt_hash
+                && receipt.verification_receipt_hash == request.verified.verification_receipt_hash
             {
                 let mut replay = receipt.clone();
                 replay.newly_committed = false;

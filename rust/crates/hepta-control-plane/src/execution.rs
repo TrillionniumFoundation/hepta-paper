@@ -125,10 +125,8 @@ impl PreparedResultVerifierV1 for DeterministicPreparedResultVerifierV1 {
         let result_hash = result
             .result_hash()
             .map_err(|_| ControlPlaneError::VerificationInvalid)?;
-        let verification_receipt_hash = verification_receipt_hash_v1(
-            &result_hash,
-            &self.verifier_hash,
-        )?;
+        let verification_receipt_hash =
+            verification_receipt_hash_v1(&result_hash, &self.verifier_hash)?;
         Ok(VerifiedPreparedResultV1 {
             result,
             result_hash,

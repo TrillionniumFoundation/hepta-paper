@@ -178,10 +178,10 @@ fn registry_artifact_and_conformance_are_deterministic() {
     let left = build();
     let right = build();
     assert_eq!(left, right);
-    left.validate(left.policy_hash()).expect("registry validates");
+    left.validate(left.policy_hash())
+        .expect("registry validates");
     let expected_policy_hash = left.policy_hash().clone();
-    let report = module_conformance_report_v1(&left, &expected_policy_hash)
-        .expect("conformance");
+    let report = module_conformance_report_v1(&left, &expected_policy_hash).expect("conformance");
     assert_eq!(report.policy_hash, expected_policy_hash);
     assert!(report.conformant);
     assert_eq!(report.module_count, 1);

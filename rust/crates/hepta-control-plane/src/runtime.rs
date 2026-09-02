@@ -5,12 +5,11 @@ use hepta_module_platform::{ActionCandidateV1, ModuleRegistryArtifactV1};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AdmissionRequestV1, BoundedEventLogV1, CommitReceiptV1, CommitRequestV1,
-    CommitSequencerV1, ControlPlaneError, ControlPlaneEventKindV1, ControlPlaneEventV1,
-    ControlPlaneSnapshotV1, ExecutionRequestV1, HardPolicyV1, ModuleExecutorV1,
-    PlanCertificateV1, PlannerPolicyV1, PlanningFrontierV1, PreparedResultVerifierV1,
-    ResourceAccountingReportV1, ResourceAllocatorV1, VerifiedPreparedResultV1,
-    canonical_hash_v1, select_plan_v1,
+    AdmissionRequestV1, BoundedEventLogV1, CommitReceiptV1, CommitRequestV1, CommitSequencerV1,
+    ControlPlaneError, ControlPlaneEventKindV1, ControlPlaneEventV1, ControlPlaneSnapshotV1,
+    ExecutionRequestV1, HardPolicyV1, ModuleExecutorV1, PlanCertificateV1, PlannerPolicyV1,
+    PlanningFrontierV1, PreparedResultVerifierV1, ResourceAccountingReportV1, ResourceAllocatorV1,
+    VerifiedPreparedResultV1, canonical_hash_v1, select_plan_v1,
 };
 
 /// Complete non-activating receipt for one source-qualified vertical slice.
@@ -117,12 +116,7 @@ where
         }
         frontier.validate(snapshot, &self.registry, &self.hard_policy)?;
         let snapshot_hash = snapshot.snapshot_hash()?;
-        let plan = select_plan_v1(
-            snapshot,
-            frontier,
-            &self.hard_policy,
-            &self.planner_policy,
-        )?;
+        let plan = select_plan_v1(snapshot, frontier, &self.hard_policy, &self.planner_policy)?;
         let waves = dependency_waves(frontier, &plan)?;
         let ordered = waves.iter().flatten().copied().collect::<Vec<_>>();
         let additional_events = ordered
@@ -179,13 +173,7 @@ where
                 return Err(error);
             }
         };
-        match self.finalize_atomic(
-            &snapshot_hash,
-            &plan,
-            &requests,
-            verified,
-            event_start,
-        ) {
+        match self.finalize_atomic(&snapshot_hash, &plan, &requests, verified, event_start) {
             Ok(receipt) => Ok(receipt),
             Err(error) => {
                 self.release_without_events(&reservation_ids)?;
@@ -381,10 +369,7 @@ where
             )?;
             let released = staged_allocator.release(&request.reservation.reservation_id)?;
             released_reservations.push(released);
-            commit_requests.push(CommitRequestV1::new(
-                plan.plan_hash.clone(),
-                verified,
-            )?);
+            commit_requests.push(CommitRequestV1::new(plan.plan_hash.clone(), verified)?);
         }
         let commit_receipts = staged_sequencer.commit_batch(&commit_requests)?;
         if commit_receipts.len() != requests.len() {
@@ -578,14 +563,12 @@ fn dependency_waves<'a>(
         let ready_ids = remaining
             .iter()
             .filter(|candidate_id| {
-                by_id
-                    .get(candidate_id.as_str())
-                    .is_some_and(|candidate| {
-                        candidate
-                            .dependency_candidate_ids
-                            .iter()
-                            .all(|dependency| completed.contains(dependency))
-                    })
+                by_id.get(candidate_id.as_str()).is_some_and(|candidate| {
+                    candidate
+                        .dependency_candidate_ids
+                        .iter()
+                        .all(|dependency| completed.contains(dependency))
+                })
             })
             .cloned()
             .collect::<Vec<_>>();

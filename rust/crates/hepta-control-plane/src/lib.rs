@@ -18,11 +18,11 @@ mod runtime;
 
 pub use commit::{CommitReceiptV1, CommitRequestV1, CommitSequencerV1, FixtureCommitSequencerV1};
 pub use events::{BoundedEventLogV1, ControlPlaneEventKindV1, ControlPlaneEventV1};
+pub(crate) use execution::verification_receipt_hash_v1;
 pub use execution::{
     DeterministicPreparedResultVerifierV1, ExecutionRequestV1, ModuleExecutorV1,
     PreparedResultVerifierV1, VerifiedPreparedResultV1,
 };
-pub(crate) use execution::verification_receipt_hash_v1;
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
 pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1};
 pub use resource::{

@@ -197,8 +197,8 @@ impl ModuleRegistryArtifactV1 {
     ) -> Result<Self, ModulePlatformError> {
         let wire: ModuleRegistryArtifactWireV1 = serde_json::from_slice(bytes)
             .map_err(|_| ModulePlatformError::RegistryDecodeInvalid)?;
-        let canonical = serde_json::to_vec(&wire)
-            .map_err(|_| ModulePlatformError::RegistryDecodeInvalid)?;
+        let canonical =
+            serde_json::to_vec(&wire).map_err(|_| ModulePlatformError::RegistryDecodeInvalid)?;
         if canonical.as_slice() != bytes {
             return Err(ModulePlatformError::RegistryDecodeInvalid);
         }
@@ -257,10 +257,7 @@ impl ModuleRegistryArtifactV1 {
     }
 
     /// Revalidates policy identity, grants, manifests, graph, and all hashes.
-    pub fn validate(
-        &self,
-        expected_policy_hash: &Sha256Digest,
-    ) -> Result<(), ModulePlatformError> {
+    pub fn validate(&self, expected_policy_hash: &Sha256Digest) -> Result<(), ModulePlatformError> {
         if self.version != MODULE_PROTOCOL_VERSION_V1
             || self.protocol_version != MODULE_PROTOCOL_VERSION_V1
             || self.protocol_version != self.policy.protocol_version
@@ -271,9 +268,7 @@ impl ModuleRegistryArtifactV1 {
         }
         validate_policy(&self.policy)?;
         let recomputed_policy_hash = canonical_hash(&self.policy)?;
-        if self.policy_hash != recomputed_policy_hash
-            || self.policy_hash != *expected_policy_hash
-        {
+        if self.policy_hash != recomputed_policy_hash || self.policy_hash != *expected_policy_hash {
             return Err(ModulePlatformError::RegistryPolicyIdentityMismatch);
         }
         validate_policy_coverage(&self.policy, &self.modules)?;
@@ -371,9 +366,7 @@ fn validate_policy_coverage(
     policy: &RegistryPolicyV1,
     modules: &BTreeMap<String, RegisteredModuleV1>,
 ) -> Result<(), ModulePlatformError> {
-    if policy.grants.len() != modules.len()
-        || !policy.grants.keys().eq(modules.keys())
-    {
+    if policy.grants.len() != modules.len() || !policy.grants.keys().eq(modules.keys()) {
         return Err(ModulePlatformError::RegistryInvalid);
     }
     Ok(())
@@ -694,11 +687,8 @@ mod hostile_decode_tests {
         );
 
         let canonical_text = String::from_utf8(canonical).expect("utf8 json");
-        let duplicate = canonical_text.replacen(
-            "{\"version\":1,",
-            "{\"version\":1,\"version\":1,",
-            1,
-        );
+        let duplicate =
+            canonical_text.replacen("{\"version\":1,", "{\"version\":1,\"version\":1,", 1);
         assert_eq!(
             ModuleRegistryArtifactV1::decode_json(duplicate.as_bytes(), &expected),
             Err(ModulePlatformError::RegistryDecodeInvalid)

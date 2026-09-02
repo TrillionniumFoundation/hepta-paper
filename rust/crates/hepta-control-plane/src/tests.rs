@@ -74,10 +74,7 @@ fn digest(marker: char) -> Sha256Digest {
 }
 
 fn registry() -> ModuleRegistryArtifactV1 {
-    let capabilities = BTreeSet::from([
-        "CAP-MOD-EXECUTION".to_owned(),
-        "CAP-SCH-PLAN".to_owned(),
-    ]);
+    let capabilities = BTreeSet::from(["CAP-MOD-EXECUTION".to_owned(), "CAP-SCH-PLAN".to_owned()]);
     let policy = RegistryPolicyV1 {
         version: 1,
         protocol_version: 1,
@@ -241,11 +238,7 @@ fn control_plane(
     event_limit: usize,
     sequencer: FixtureCommitSequencerV1,
 ) -> (
-    ControlPlaneV1<
-        FakeExecutorV1,
-        DeterministicPreparedResultVerifierV1,
-        FixtureCommitSequencerV1,
-    >,
+    ControlPlaneV1<FakeExecutorV1, DeterministicPreparedResultVerifierV1, FixtureCommitSequencerV1>,
     ControlPlaneSnapshotV1,
     PlanningFrontierV1,
 ) {
@@ -395,9 +388,7 @@ fn commit_sequencer_authenticates_result_hash_verifier_and_receipt() {
     wrong_result_hash.result_hash = digest('8');
     let mut rejected = FixtureCommitSequencerV1::new(initial.clone(), verifier_hash.clone());
     assert_eq!(
-        rejected.commit(
-            CommitRequestV1::new(digest('2'), wrong_result_hash).expect("request")
-        ),
+        rejected.commit(CommitRequestV1::new(digest('2'), wrong_result_hash).expect("request")),
         Err(ControlPlaneError::CommitInvalid)
     );
     assert_eq!(rejected.current_state_hash(), &initial);
@@ -405,23 +396,17 @@ fn commit_sequencer_authenticates_result_hash_verifier_and_receipt() {
     let mut modified_result = verified.clone();
     modified_result.result.module_version = "9.9.9".to_owned();
     assert_eq!(
-        rejected.commit(
-            CommitRequestV1::new(digest('2'), modified_result).expect("request")
-        ),
+        rejected.commit(CommitRequestV1::new(digest('2'), modified_result).expect("request")),
         Err(ControlPlaneError::CommitInvalid)
     );
 
     let mut wrong_verifier = verified.clone();
     wrong_verifier.verifier_hash = digest('9');
-    wrong_verifier.verification_receipt_hash = verification_receipt_hash_v1(
-        &wrong_verifier.result_hash,
-        &wrong_verifier.verifier_hash,
-    )
-    .expect("receipt hash");
+    wrong_verifier.verification_receipt_hash =
+        verification_receipt_hash_v1(&wrong_verifier.result_hash, &wrong_verifier.verifier_hash)
+            .expect("receipt hash");
     assert_eq!(
-        rejected.commit(
-            CommitRequestV1::new(digest('2'), wrong_verifier).expect("request")
-        ),
+        rejected.commit(CommitRequestV1::new(digest('2'), wrong_verifier).expect("request")),
         Err(ControlPlaneError::CommitInvalid)
     );
     assert_eq!(rejected.receipt_count(), 0);
@@ -489,10 +474,8 @@ fn commit_batch_rejects_duplicate_results_and_mixed_plans_atomically() {
 fn commit_batch_retry_and_mixed_replay_are_idempotent() {
     let verifier_hash = digest('7');
     let plan_hash = digest('2');
-    let first_verified =
-        standalone_verified(verifier_hash.clone(), plan_hash.clone(), '6');
-    let second_verified =
-        standalone_verified(verifier_hash.clone(), plan_hash.clone(), '8');
+    let first_verified = standalone_verified(verifier_hash.clone(), plan_hash.clone(), '6');
+    let second_verified = standalone_verified(verifier_hash.clone(), plan_hash.clone(), '8');
     let first_request =
         CommitRequestV1::new(plan_hash.clone(), first_verified).expect("first request");
     let second_request =
@@ -607,8 +590,7 @@ fn dependent_candidates_execute_in_deterministic_topological_waves() {
 fn commit_failure_at_second_result_cannot_partially_mutate_state() {
     let verifier_hash = digest('c');
     let initial = digest('0');
-    let sequencer =
-        FixtureCommitSequencerV1::with_failure_at(initial.clone(), verifier_hash, 2);
+    let sequencer = FixtureCommitSequencerV1::with_failure_at(initial.clone(), verifier_hash, 2);
     let (mut control, snapshot, frontier) = control_plane(64, sequencer);
     assert_eq!(
         control.run(&snapshot, &frontier, "tenant-1", 1_000),

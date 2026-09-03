@@ -33,6 +33,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sqlite3
           npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v22.23.1"
+          strict_node_source="$(command -v node)"
+          test -f "$strict_node_source"
+          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
+          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
       - name: Validate development documentation
         run: node docs/tools/validate-development-docs.mjs
       - name: Run static and architecture gates
@@ -96,6 +101,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sqlite3
           npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v22.23.1"
+          strict_node_source="$(command -v node)"
+          test -f "$strict_node_source"
+          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
+          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
       - name: Run impacted shard
         if: steps.impact.outputs.count != '0'
         env:
@@ -143,6 +153,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sqlite3
           npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v22.23.1"
+          strict_node_source="$(command -v node)"
+          test -f "$strict_node_source"
+          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
+          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
       - name: Validate development documentation
         run: node docs/tools/validate-development-docs.mjs
       - name: Run full portable contract gates
@@ -294,6 +309,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sqlite3
           npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v22.23.1"
+          strict_node_source="$(command -v node)"
+          test -f "$strict_node_source"
+          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
+          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
       - name: Verify or populate pinned Mathlib cache
         run: npm run ci:mathlib-cache
       - name: Run full portable qualification

@@ -44,6 +44,7 @@ impl TempTree {
         let mut file = File::create(&path).expect("create script");
         file.write_all(source.as_bytes()).expect("write script");
         file.sync_all().expect("sync script");
+        drop(file);
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
             .expect("make script executable");
         path

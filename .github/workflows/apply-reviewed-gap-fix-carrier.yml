@@ -105,13 +105,32 @@ jobs:
             paper-core/tests/automation-readiness-policy.test.mjs \
             paper-core/tests/autonomous-submission-request-verifier-composition.test.mjs
 
-      - name: Commit exact reviewed patch and remove carrier
+      - name: Commit reviewed non-workflow changes and stage workflow handoff
         shell: bash
         run: |
           set -euo pipefail
-          git add -- \
+          mkdir -p .ci/reviewed-patched-workflows
+          cp -- .github/workflows/ci.yml .ci/reviewed-patched-workflows/ci.yml
+          cp -- .github/workflows/exact-head-source-validation.yml .ci/reviewed-patched-workflows/exact-head-source-validation.yml
+          (
+            cd .ci/reviewed-patched-workflows
+            sha256sum ci.yml exact-head-source-validation.yml > manifest.sha256
+          )
+
+          # GITHUB_TOKEN cannot safely publish workflow mutations. Restore the
+          # live workflow paths and hand their reviewed bytes to the external
+          # GitHub writer for one final atomic Git-data commit.
+          git restore --worktree -- \
             .github/workflows/ci.yml \
-            .github/workflows/exact-head-source-validation.yml \
+            .github/workflows/exact-head-source-validation.yml
+          git diff --exit-code -- \
+            .github/workflows/ci.yml \
+            .github/workflows/exact-head-source-validation.yml
+
+          git add -- \
+            .ci/reviewed-patched-workflows/ci.yml \
+            .ci/reviewed-patched-workflows/exact-head-source-validation.yml \
+            .ci/reviewed-patched-workflows/manifest.sha256 \
             docs/rust/qualification/source-check-producers.v1.json \
             paper-adapters/automation/repository-asset-externalization.mjs \
             paper-adapters/automation/repository-asset-submodule-binding.mjs \
@@ -125,15 +144,12 @@ jobs:
             paper-core/tests/support/pde-poisson-2d-cpu-oracle-fixture-runner.mjs \
             paper-core/tests/support/process-isolated-pde-poisson-2d-independent-cpu-oracle-test-seam.mjs \
             paper-core/tests/test-doubles/pde-poisson-2d-cpu-oracle-sandbox-runner-factory.mjs
-          git rm -- \
-            .ci/hepta-gap-fix.patch.gz.b64 \
-            .github/workflows/apply-reviewed-gap-fix-carrier.yml
+
           actual_paths="$(git diff --cached --name-only | LC_ALL=C sort)"
           expected_paths="$(printf '%s\n' \
-            '.ci/hepta-gap-fix.patch.gz.b64' \
-            '.github/workflows/apply-reviewed-gap-fix-carrier.yml' \
-            '.github/workflows/ci.yml' \
-            '.github/workflows/exact-head-source-validation.yml' \
+            '.ci/reviewed-patched-workflows/ci.yml' \
+            '.ci/reviewed-patched-workflows/exact-head-source-validation.yml' \
+            '.ci/reviewed-patched-workflows/manifest.sha256' \
             'docs/rust/qualification/source-check-producers.v1.json' \
             'paper-adapters/automation/repository-asset-externalization.mjs' \
             'paper-adapters/automation/repository-asset-submodule-binding.mjs' \
@@ -152,5 +168,5 @@ jobs:
           git diff --cached --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(ci): close portable exact-head repository gaps'
+          git commit -m 'fix(core): land reviewed portable gap closure'
           git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"

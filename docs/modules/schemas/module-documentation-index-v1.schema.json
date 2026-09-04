@@ -3,25 +3,79 @@
   "title": "ModuleDocumentationIndexV1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion","kind","registryPath","specificationTemplate","requiredSections","modules"],
+  "required": [
+    "schemaVersion",
+    "kind",
+    "registryPath",
+    "specificationTemplate",
+    "requiredSections",
+    "modules"
+  ],
   "properties": {
-    "schemaVersion": {"const": 1},
-    "kind": {"const": "ModuleDocumentationIndexV1"},
-    "registryPath": {"const": "docs/system/truth/modules.v1.json"},
-    "specificationTemplate": {"const": "docs/modules/MODULE_TEMPLATE.md"},
-    "requiredSections": {"type":"array","minItems":15,"uniqueItems":true,"items":{"type":"string","minLength":1}},
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ModuleDocumentationIndexV1"
+    },
+    "registryPath": {
+      "const": "docs/system/truth/modules.v1.json"
+    },
+    "specificationTemplate": {
+      "const": "docs/modules/MODULE_TEMPLATE.md"
+    },
+    "requiredSections": {
+      "type": "array",
+      "minItems": 15,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "const": [
+        "Identity",
+        "Mission and non-goals",
+        "Inputs and outputs",
+        "State and authority",
+        "Dependencies",
+        "Concurrency and resources",
+        "Determinism and optimization contract",
+        "Failure, recovery, and idempotency",
+        "Security and privacy",
+        "Compatibility and migration",
+        "SLO, capacity, and observability",
+        "Operational runbook",
+        "Verification and evidence",
+        "Rollout and rollback",
+        "Open blockers"
+      ]
+    },
     "modules": {
-      "type":"object",
-      "minProperties":1,
-      "propertyNames":{"pattern":"^module\\.[a-z0-9-]+$"},
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^module\\.[a-z0-9-]+$"
+      },
       "additionalProperties": {
-        "type":"object",
-        "additionalProperties":false,
-        "required":["specPath","manifestPath","documentationStatus"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "specPath",
+          "manifestPath",
+          "documentationStatus"
+        ],
         "properties": {
-          "specPath":{"type":"string","pattern":"^docs/modules/specs/[a-z0-9-]+\\.md$"},
-          "manifestPath":{"type":"string","pattern":"^docs/modules/manifests/[a-z0-9-]+\\.v1\\.json$"},
-          "documentationStatus":{"const":"complete"}
+          "specPath": {
+            "type": "string",
+            "pattern": "^docs/modules/specs/[a-z0-9-]+\\.md$"
+          },
+          "manifestPath": {
+            "type": "string",
+            "pattern": "^docs/modules/manifests/[a-z0-9-]+\\.v1\\.json$"
+          },
+          "documentationStatus": {
+            "const": "complete"
+          }
         }
       }
     }

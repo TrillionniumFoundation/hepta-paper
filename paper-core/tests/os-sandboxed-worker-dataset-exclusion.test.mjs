@@ -23,7 +23,8 @@ test('sandbox excludes an in-workspace dataset from the execution snapshot and m
     allowedExecutables: ['python3'],
     allowedRoots: [source],
     allowedDatasetRoots: [source],
-    probe: { available: true, backend: 'bubblewrap', status: 'os_sandbox_available' },
+    probe: { available: true, backend: 'bubblewrap', status: 'os_sandbox_available',
+      processLimit: { available: true, mechanism: 'fixture' } },
     executor(_launcher, args, options) {
       executions += 1;
       assert.equal(options.input.toString('utf8'), 'sealed-request\n');

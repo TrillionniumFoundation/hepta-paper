@@ -73,6 +73,7 @@ import { bindOsSandboxWorkerGpuSelectorLeaseAtLaunch, blockedOsSandboxWorkerGpuS
 import {
   inspectOsSandboxWorkerGpuPreflight,
   observeNvidiaGpuDevicePaths,
+  observeVerifiedGpuDeviceCapacity,
 } from './os-sandbox-worker-gpu-preflight.mjs';
 
 function normalizeSynchronousLauncherResult(result) {
@@ -578,7 +579,7 @@ export function createOsSandboxedWorkerRunnerEngine({
         };
       }
       const gpuDeviceCapacityObservation = requiresGpu
-        ? gpuDeviceCapacityObserver(normalizedGpuDeviceSelector) : null;
+        ? observeVerifiedGpuDeviceCapacity(gpuDeviceCapacityObserver, normalizedGpuDeviceSelector) : null;
       const gpuDispatchSelectorObserved =
         gpuDeviceCapacityObservation?.gpuDeviceSelector === normalizedGpuDeviceSelector;
       if (requiresGpu && (!gpuDispatchSelectorObserved

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 
 import {
   verifyGpuDispatchMemoryAdmissionRequirement,
+  verifyNvidiaGpuDeviceCapacityObservation,
 } from '../../paper-domain/automation/nvidia-gpu-device-capacity-contract.mjs';
 import {
   normalizeNvidiaGpuDeviceSelector,
@@ -15,12 +16,25 @@ export function observeNvidiaGpuDevicePaths() {
 }
 
 function normalizeObservedNvidiaGpuDevicePaths(observed) {
-  if (!Array.isArray(observed)) return [];
-  const normalized = observed.map((candidate) => String(candidate));
+  if (!Array.isArray(observed) || observed.length > 1024
+    || observed.some((candidate) => typeof candidate !== 'string' || candidate.length > 80)) return [];
+  const normalized = observed;
   if (normalized.some((candidate) => (
     !/^\/dev\/nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(candidate)
   ))) return [];
   return [...new Set(normalized)].sort();
+}
+
+// Both preflight and the last dispatch check use the same closed observation contract.
+// A failed probe is a typed denial, not an exception that skips sandbox cleanup.
+export function observeVerifiedGpuDeviceCapacity(observer, selector) {
+  try {
+    const observation = observer(selector);
+    return verifyNvidiaGpuDeviceCapacityObservation(observation)
+      && observation.gpuDeviceSelector === selector ? observation : null;
+  } catch {
+    return null;
+  }
 }
 
 export function inspectOsSandboxWorkerGpuPreflight({
@@ -28,28 +42,17 @@ export function inspectOsSandboxWorkerGpuPreflight({
   allowGpu,
   executionBackend,
   gpuDeviceSelector,
-  gpuDispatchMemoryAdmission,
+  gpuDispatchMemoryAdmission = null,
   gpuDeviceCapacityObserver,
   gpuDevicePathObserver,
   gpuSelectorExecutionLease,
   absoluteDeadlineEpochMs,
-  environment,
+  environment = {},
   now = Date.now(),
 }) {
   const blockers = [];
-  let gpuDevices = [];
-  try {
-    gpuDevices = normalizeObservedNvidiaGpuDevicePaths(gpuDevicePathObserver());
-  } catch {
-    gpuDevices = [];
-  }
   const normalizedGpuDeviceSelector = normalizeNvidiaGpuDeviceSelector(gpuDeviceSelector);
-  const gpuPreflightCapacityObservation = requiresGpu
-    ? gpuDeviceCapacityObserver(normalizedGpuDeviceSelector) : null;
-  const gpuDeviceSelectorObserved =
-    gpuPreflightCapacityObservation?.gpuDeviceSelector === normalizedGpuDeviceSelector;
-
-  if (requiresGpu && (!allowGpu || gpuDevices.length === 0)) blockers.push('worker_gpu_not_available_or_not_allowed');
+  if (requiresGpu && !allowGpu) blockers.push('worker_gpu_not_available_or_not_allowed');
   if (requiresGpu && executionBackend !== 'docker') blockers.push('worker_gpu_requires_docker_device_isolation');
   if (requiresGpu && !normalizedGpuDeviceSelector) blockers.push('worker_gpu_device_selector_invalid');
   if (requiresGpu && (!gpuSelectorExecutionLease
@@ -59,9 +62,6 @@ export function inspectOsSandboxWorkerGpuPreflight({
   if (requiresGpu && (!Number.isSafeInteger(Number(absoluteDeadlineEpochMs))
     || Number(absoluteDeadlineEpochMs) <= now)) {
     blockers.push('worker_gpu_absolute_deadline_invalid_or_exhausted');
-  }
-  if (requiresGpu && normalizedGpuDeviceSelector && !gpuDeviceSelectorObserved) {
-    blockers.push('worker_gpu_device_capacity_observation_invalid');
   }
   if (!requiresGpu && gpuDeviceSelector !== null && gpuDeviceSelector !== undefined) {
     blockers.push('worker_gpu_device_selector_without_gpu_request');
@@ -78,8 +78,19 @@ export function inspectOsSandboxWorkerGpuPreflight({
     && gpuDispatchMemoryAdmission?.gpuDeviceSelector !== normalizedGpuDeviceSelector) {
     blockers.push('worker_gpu_dispatch_memory_admission_selector_mismatch');
   }
-  if (requiresGpu && Object.prototype.hasOwnProperty.call(environment, 'CUDA_VISIBLE_DEVICES')) {
+  if (requiresGpu && Object.prototype.hasOwnProperty.call(environment || {}, 'CUDA_VISIBLE_DEVICES')) {
     blockers.push('worker_gpu_visibility_environment_override_forbidden');
+  }
+
+  // CPU work and already-invalid GPU requests must never probe a GPU or driver.
+  if (requiresGpu && blockers.length === 0) {
+    let devices = [];
+    try { devices = normalizeObservedNvidiaGpuDevicePaths(gpuDevicePathObserver()); }
+    catch { /* unavailable devices stay a fail-closed denial */ }
+    if (devices.length === 0) blockers.push('worker_gpu_not_available_or_not_allowed');
+    else if (!observeVerifiedGpuDeviceCapacity(gpuDeviceCapacityObserver, normalizedGpuDeviceSelector)) {
+      blockers.push('worker_gpu_device_capacity_observation_invalid');
+    }
   }
 
   return Object.freeze({

@@ -53,6 +53,11 @@ jobs:
           test -f "$strict_node_source"
           sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
           sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
+          # setup-node prepends hostedtoolcache; the worker accepts system runtime roots only.
+          # Prepend only Node, preserving setup-node's pinned npm and other tools.
+          strict_node_path="$(mktemp -d "$RUNNER_TEMP/hepta-pinned-node.XXXXXX")"
+          ln -s /usr/bin/node "$strict_node_path/node"
+          echo "$strict_node_path" >> "$GITHUB_PATH"
 
       - name: Run exact-head static, architecture, and dependency gates
         run: |
@@ -158,6 +163,11 @@ jobs:
           test -f "$strict_node_source"
           sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
           sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
+          # setup-node prepends hostedtoolcache; the worker accepts system runtime roots only.
+          # Prepend only Node, preserving setup-node's pinned npm and other tools.
+          strict_node_path="$(mktemp -d "$RUNNER_TEMP/hepta-pinned-node.XXXXXX")"
+          ln -s /usr/bin/node "$strict_node_path/node"
+          echo "$strict_node_path" >> "$GITHUB_PATH"
 
       - name: Run exact-head impacted shard
         if: steps.impact.outputs.count != '0'

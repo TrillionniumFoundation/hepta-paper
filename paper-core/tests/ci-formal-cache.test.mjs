@@ -49,3 +49,20 @@ test('CI Mathlib cache refuses deletion targets outside the workspace cache root
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /ci_mathlib_cache_root_outside_workspace_cache/);
 });
+
+
+test('CI selects the installed canonical Node without replacing the pinned npm path', () => {
+  for (const relative of ['.github/workflows/ci.yml', '.github/workflows/exact-head-source-validation.yml']) {
+    const source = fs.readFileSync(path.join(root, relative), 'utf8');
+    const installs = [...source.matchAll(/sudo install -o root -g root -m 0555 "\$strict_node_source" \/usr\/bin\/node/g)];
+    assert.ok(installs.length > 0, relative);
+    for (const install of installs) {
+      const nextStep = source.indexOf('\n      - ', install.index);
+      const block = source.slice(install.index, nextStep === -1 ? source.length : nextStep);
+      assert.ok(block.includes('strict_node_path="$(mktemp -d "$RUNNER_TEMP/hepta-pinned-node.XXXXXX")"'));
+      assert.ok(block.includes('ln -s /usr/bin/node "$strict_node_path/node"'));
+      assert.ok(block.includes('echo "$strict_node_path" >> "$GITHUB_PATH"'));
+      assert.equal(block.includes('echo /usr/bin >> "$GITHUB_PATH"'), false);
+    }
+  }
+});

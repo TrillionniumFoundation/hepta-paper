@@ -415,5 +415,51 @@ class PlanV4QualificationTests(unittest.TestCase):
             COLLECT.load_policy(REQUIRED, path, "TrillionniumFoundation/hepta-paper")
 
 
+class StrictSchemaBoundaryTests(unittest.TestCase):
+    def test_boolean_cannot_satisfy_number_const_or_enum(self) -> None:
+        for value, schema in [(True, {"const": 1}), (False, {"enum": [0]}),
+                              (1, {"const": True}), ([True], {"const": [1]}),
+                              ({"activation": 0}, {"const": {"activation": False}})]:
+            with self.subTest(value=value, schema=schema):
+                with self.assertRaises(SCHEMA.SchemaValidationError):
+                    SCHEMA.validate(value, schema)
+
+    def test_numeric_equality_and_object_order_are_json_semantic(self) -> None:
+        SCHEMA.validate(1.0, {"const": 1})
+        SCHEMA.validate({"a": 1, "b": False}, {"const": {"b": False, "a": 1.0}})
+        SCHEMA.validate([True, 1, False, 0], {"uniqueItems": True})
+        for value in [[1, 1.0], [{"a": 1, "b": 2}, {"b": 2, "a": 1.0}]]:
+            with self.assertRaises(SCHEMA.SchemaValidationError):
+                SCHEMA.validate(value, {"uniqueItems": True})
+
+    def test_property_names_are_validated(self) -> None:
+        schema = {"type": "object", "propertyNames": {"pattern": "^module\\.[a-z-]+$"}}
+        SCHEMA.validate({"module.writer": {}}, schema)
+        with self.assertRaises(SCHEMA.SchemaValidationError):
+            SCHEMA.validate({"../writer": {}}, schema)
+
+    def test_ambiguous_json_bytes_are_rejected(self) -> None:
+        for source in ['{"a":1,"a":2}', '{"a":{"b":1,"b":1}}',
+                       'NaN', 'Infinity', '-Infinity', '1e999']:
+            with self.subTest(source=source):
+                with self.assertRaises(SCHEMA.SchemaValidationError):
+                    SCHEMA.strict_json_loads(source)
+        self.assertEqual(SCHEMA.strict_json_loads('{"number":1.5}'), {"number": 1.5})
+
+    def test_batch_cli_checks_captured_schema_and_instance(self) -> None:
+        rows = [{"name": "module.json", "schema": '{"const":false}', "instance": '0'}]
+        result = subprocess.run([sys.executable, str(TOOLS / "strict_json_schema.py"),
+                                 "--batch-stdin"], input=json.dumps(rows),
+                                text=True, capture_output=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout)["failures"][0]["name"], "module.json")
+        rows[0]["instance"] = 'false'
+        result = subprocess.run([sys.executable, str(TOOLS / "strict_json_schema.py"),
+                                 "--batch-stdin"], input=json.dumps(rows),
+                                text=True, capture_output=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"ok": True, "failures": []})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

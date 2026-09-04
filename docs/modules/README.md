@@ -24,3 +24,33 @@ node --test --test-concurrency=1 paper-core/tests/module-documentation-integrity
 ```
 
 The validator rejects registry/spec/manifest drift, missing sections, placeholders, missing implementation roots, duplicate or orphan files, inconsistent authority/ownership/capability/work mappings, and missing authority-specific safety contracts.
+
+## Structural coverage and implementation scope
+
+The validator executes the committed registry, work-item, index and manifest
+schemas against captured JSON bytes. It rejects duplicate keys, numeric values
+masquerading as booleans, non-finite numbers, unknown properties, missing safety
+limits, owner-role order changes, side effects beyond the authority ceiling,
+and static activation inconsistent with the module registry. Required headings
+must occur exactly once outside code fences and contain a body. Canonical input
+paths cannot traverse symbolic links; individual documents are limited to 1 MiB.
+
+For a deterministic, non-authorizing implementation-scope projection, run:
+
+```bash
+node docs/tools/validate-module-documentation.mjs --json
+```
+
+The report separates `codeRoots` from `contractRefs`, records every referenced
+work item's current state, and explicitly retains pending source and external
+work for all registered modules. The inputs are bound by byte digests. A code
+root is a location, not proof that every declared operation is implemented; a
+source-implemented module may still have design-ready work. A successful report
+means structural documentation coverage, not semantic engineering acceptance,
+source qualification, target-host qualification, or production activation.
+
+Python 3 is required by both development-document validators. A missing,
+malformed, timed-out or unsupported schema validator is a failure, never a skip.
+The gate executes its own checked-in verifier, not a script supplied by a
+candidate `--root`. This static source gate does not replace runtime filesystem
+or external-authority verification.

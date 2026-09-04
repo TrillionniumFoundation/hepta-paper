@@ -10,12 +10,12 @@ permissions:
 
 concurrency:
   group: apply-reviewed-gap-fix-carrier-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   apply-reviewed-patch:
     if: "${{ github.event.head_commit.message == 'chore-carrier-apply-reviewed-gap-fix' }}"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
       EXPECTED_BASE_SHA: 1e480b9103491afa49fbd528744d79c0f97d4d63

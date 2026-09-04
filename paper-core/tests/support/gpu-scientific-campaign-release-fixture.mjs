@@ -84,9 +84,9 @@ import {
   createPdePoisson2dCpuOracleFixtureRunner,
 } from './pde-poisson-2d-cpu-oracle-fixture-runner.mjs';
 import {
+  buildDeterministicPdfFixture,
   createTrustedIndependentPdfRebuildVerifierFixture,
 } from '../fixtures/trusted-independent-pdf-rebuild-verifier.mjs';
-import { buildDeterministicPdfFixture } from './deterministic-pdf-fixture.mjs';
 
 const canonicalPdeExecutorModule =
   await importCanonicalCupyPdePoisson2dExecutorForTest();

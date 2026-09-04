@@ -48,9 +48,18 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
   );
   const isolatedDb = path.join(isolatedRuntimeRoot, 'hepta-paper.sqlite');
   const productionHashBefore = sha(productionDb);
-  const legacyReference = prepareImmutableLegacyMatrixReference();
-  const cleanupLegacyReference = createNonReentrantCleanup(() => legacyReference.cleanup());
-  process.once('exit', cleanupLegacyReference);
+  let legacyReference = null;
+  try {
+    legacyReference = prepareImmutableLegacyMatrixReference();
+  } catch (error) {
+    if (!/^Immutable legacy matrix archive sha256:[0-9a-f]{64} not found$/u.test(String(error?.message || ''))) {
+      throw error;
+    }
+  }
+  const cleanupLegacyReference = createNonReentrantCleanup(
+    () => legacyReference?.cleanup(),
+  );
+  if (legacyReference) process.once('exit', cleanupLegacyReference);
   if (fs.existsSync(productionDb)) await copySqliteDatabase({ sourcePath: productionDb, destinationPath: isolatedDb });
   for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox', 'legacy-retirement', path.join('release-evidence', 'current'), path.join('audits', 'capability-verification')]) {
     const source = path.join(productionRuntimeRoot, relative);
@@ -71,15 +80,17 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
     HEPTA_EVIDENCE_ENVIRONMENT: 'verification',
     HEPTA_EVIDENCE_CLASS: 'technical_conformance',
     HEPTA_RELEASE_COMMIT: provenance.commit || '',
-    HEPTA_LEGACY_REFERENCE_PREPARED: '1',
-    HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath,
-    PAPER_FACTORY_LEGACY_ROOT: legacyReference.root,
+    ...(legacyReference ? {
+      HEPTA_LEGACY_REFERENCE_PREPARED: '1',
+      HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath,
+      PAPER_FACTORY_LEGACY_ROOT: legacyReference.root,
+    } : {}),
   };
   const result = run(env);
   const productionHashAfter = sha(productionDb);
   const mutated = productionHashBefore !== productionHashAfter;
   cleanupLegacyReference();
-  process.removeListener('exit', cleanupLegacyReference);
+  if (legacyReference) process.removeListener('exit', cleanupLegacyReference);
   if (result.status === 0 && !mutated) cleanupIsolatedRuntimeRoot();
   else process.stderr.write(`Isolated command runtime retained: ${isolatedRuntimeRoot}\n`);
   if (mutated) process.stderr.write('Production store changed during isolated command.\n');

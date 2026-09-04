@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   drain:
-    runs-on: macos-14
+    runs-on: windows-2022
     timeout-minutes: 10
     env:
       TARGET_PR: '52'
@@ -25,73 +25,92 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Prove immutable cleanup scope
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          actual_pr_head="$(gh api "/repos/${GITHUB_REPOSITORY}/pulls/${TARGET_PR}" --jq '.head.sha')"
-          actual_branch_head="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/${TARGET_BRANCH}" --jq '.object.sha')"
-          test "$actual_pr_head" = "$KEEP_SHA"
-          test "$actual_branch_head" = "$KEEP_SHA"
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $actualPrHead = gh api "/repos/$env:GITHUB_REPOSITORY/pulls/$env:TARGET_PR" --jq '.head.sha'
+          if ($LASTEXITCODE -ne 0) { throw 'failed to read PR head' }
+          $actualBranchHead = gh api "/repos/$env:GITHUB_REPOSITORY/git/ref/heads/$env:TARGET_BRANCH" --jq '.object.sha'
+          if ($LASTEXITCODE -ne 0) { throw 'failed to read branch head' }
+          if ($actualPrHead.Trim() -ne $env:KEEP_SHA) { throw "PR head moved: $actualPrHead" }
+          if ($actualBranchHead.Trim() -ne $env:KEEP_SHA) { throw "branch head moved: $actualBranchHead" }
 
       - name: Cancel only stale non-terminal runs
         id: cancel
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          runs_file="$RUNNER_TEMP/target-runs.jsons"
-          stale_ids_file="$RUNNER_TEMP/stale-run-ids.txt"
-          gh api --paginate \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "/repos/${GITHUB_REPOSITORY}/actions/runs?branch=${TARGET_BRANCH}&per_page=100" \
-            > "$runs_file"
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
 
-          jq -r --arg keep "$KEEP_SHA" '
-            .workflow_runs[]
-            | select(.head_sha != $keep and .status != "completed")
-            | .id
-          ' "$runs_file" | sort -nu > "$stale_ids_file"
+          function Get-Run([long]$RunId) {
+            $raw = gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs/$RunId"
+            if ($LASTEXITCODE -ne 0) { throw "failed to read run $RunId" }
+            return $raw | ConvertFrom-Json
+          }
 
-          cancelled=0
-          already_terminal=0
-          while IFS= read -r run_id; do
-            test -n "$run_id" || continue
-            run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")"
-            run_head="$(jq -r '.head_sha' <<<"$run_json")"
-            run_status="$(jq -r '.status' <<<"$run_json")"
-            test "$run_head" != "$KEEP_SHA"
-            if [ "$run_status" = completed ]; then
-              already_terminal=$((already_terminal + 1))
+          $allRuns = @()
+          $page = 1
+          do {
+            $raw = gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs?branch=$env:TARGET_BRANCH&per_page=100&page=$page"
+            if ($LASTEXITCODE -ne 0) { throw "failed to list page $page" }
+            $pageData = $raw | ConvertFrom-Json
+            $batch = @($pageData.workflow_runs)
+            $allRuns += $batch
+            $page += 1
+          } while ($batch.Count -eq 100)
+
+          $stale = @(
+            $allRuns |
+              Where-Object { $_.head_sha -ne $env:KEEP_SHA -and $_.status -ne 'completed' } |
+              Sort-Object id -Unique
+          )
+
+          $cancelled = 0
+          $alreadyTerminal = 0
+          foreach ($candidate in $stale) {
+            $fresh = Get-Run -RunId ([long]$candidate.id)
+            if ($fresh.head_sha -eq $env:KEEP_SHA) { throw "refusing to cancel preserved run $($fresh.id)" }
+            if ($fresh.status -eq 'completed') {
+              $alreadyTerminal += 1
               continue
-            fi
-            if gh api --method POST \
+            }
+
+            gh api --method POST \
               -H 'Accept: application/vnd.github+json' \
               -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" \
-              >/dev/null; then
-              cancelled=$((cancelled + 1))
-            else
-              post_status="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status')"
-              test "$post_status" = completed
-              already_terminal=$((already_terminal + 1))
-            fi
-          done < "$stale_ids_file"
+              "/repos/$env:GITHUB_REPOSITORY/actions/runs/$($fresh.id)/cancel" | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+              $cancelled += 1
+            } else {
+              $post = Get-Run -RunId ([long]$fresh.id)
+              if ($post.status -ne 'completed') { throw "failed to cancel run $($fresh.id)" }
+              $alreadyTerminal += 1
+            }
+          }
 
-          {
-            echo "cancelled=$cancelled"
-            echo "already_terminal=$already_terminal"
-            echo "preserved_head=$KEEP_SHA"
-          } | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+          "cancelled=$cancelled" | Tee-Object -FilePath $env:GITHUB_OUTPUT -Append
+          "already_terminal=$alreadyTerminal" | Tee-Object -FilePath $env:GITHUB_OUTPUT -Append
+          "preserved_head=$env:KEEP_SHA" | Tee-Object -FilePath $env:GITHUB_OUTPUT -Append
+          "cancelled=$cancelled`nalready_terminal=$alreadyTerminal`npreserved_head=$env:KEEP_SHA" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: Verify current-head runs were preserved
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          current_count="$(
-            gh api --paginate \
-              "/repos/${GITHUB_REPOSITORY}/actions/runs?branch=${TARGET_BRANCH}&per_page=100" \
-              --jq ".workflow_runs[] | select(.head_sha == \"${KEEP_SHA}\") | .id" \
-              | sort -nu | wc -l
-          )"
-          test "$current_count" -ge 15
-          echo "preserved current-head workflow runs: $current_count" | tee -a "$GITHUB_STEP_SUMMARY"
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $currentIds = @()
+          $page = 1
+          do {
+            $raw = gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs?branch=$env:TARGET_BRANCH&per_page=100&page=$page"
+            if ($LASTEXITCODE -ne 0) { throw "failed to verify page $page" }
+            $pageData = $raw | ConvertFrom-Json
+            $batch = @($pageData.workflow_runs)
+            $currentIds += @($batch | Where-Object { $_.head_sha -eq $env:KEEP_SHA } | ForEach-Object { $_.id })
+            $page += 1
+          } while ($batch.Count -eq 100)
+          $currentCount = @($currentIds | Sort-Object -Unique).Count
+          if ($currentCount -lt 15) { throw "only $currentCount current-head runs remain" }
+          "preserved current-head workflow runs: $currentCount" |
+            Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append

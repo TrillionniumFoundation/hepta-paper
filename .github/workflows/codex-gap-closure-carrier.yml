@@ -1,0 +1,46 @@
+name: codex-gap-closure-carrier
+
+on:
+  push:
+    branches:
+      - codex/global-plan-final-gap-closure-20260902
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codex-gap-closure-carrier
+  cancel-in-progress: false
+
+jobs:
+  apply-gap-closure:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/global-plan-final-gap-closure-20260902
+          fetch-depth: 0
+      - name: Apply and validate deterministic patch
+        run: |
+          set -euo pipefail
+          test -f .hepta-gap-closure.patch
+          git apply --check .hepta-gap-closure.patch
+          git apply .hepta-gap-closure.patch
+          rm .hepta-gap-closure.patch .github/workflows/codex-gap-closure-carrier.yml
+          node --check paper-adapters/runtime/os-sandbox-worker-gpu-preflight.mjs
+          node --check paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs
+          node --check paper-core/bin/run-isolated-command.mjs
+          node --check paper-core/tests/fixtures/trusted-independent-pdf-rebuild-verifier.mjs
+          node --check paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs
+          test "$(wc -l < paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs)" -le 750
+          git diff --check
+      - name: Publish exact patch result
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix(ci): close deterministic Node qualification blockers'
+          git push origin HEAD:codex/global-plan-final-gap-closure-20260902

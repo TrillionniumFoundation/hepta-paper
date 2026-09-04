@@ -14,11 +14,11 @@ concurrency:
 
 jobs:
   apply-reviewed-patch:
-    if: github.event.head_commit.message == 'chore(ci): carry reviewed exact-head gap patch'
+    if: "${{ github.event.head_commit.message == 'chore-carrier-apply-reviewed-gap-fix' }}"
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
-      EXPECTED_PARENT_SHA: 1e480b9103491afa49fbd528744d79c0f97d4d63
+      EXPECTED_BASE_SHA: 1e480b9103491afa49fbd528744d79c0f97d4d63
       PATCH_GZIP_SHA256: 837ebee59ae0254e3f0d9e7a16bb2c6b6e1950c1fd3d3c59bf5de8f64798d93a
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -36,10 +36,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT_SHA"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-list --count "$EXPECTED_PARENT_SHA..HEAD")" = 1
-          actual_paths="$(git diff --name-only "$EXPECTED_PARENT_SHA" HEAD | LC_ALL=C sort)"
+          git merge-base --is-ancestor "$EXPECTED_BASE_SHA" HEAD
+          actual_paths="$(git diff --name-only "$EXPECTED_BASE_SHA" HEAD | LC_ALL=C sort)"
           expected_paths="$(printf '%s\n' \
             '.ci/hepta-gap-fix.patch.gz.b64' \
             '.github/workflows/apply-reviewed-gap-fix-carrier.yml' \

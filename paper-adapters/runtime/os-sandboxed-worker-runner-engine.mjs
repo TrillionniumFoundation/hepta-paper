@@ -78,6 +78,22 @@ function normalizeSynchronousLauncherResult(result) {
   return { ...result, timedOut: true };
 }
 
+function observeNvidiaGpuDevicePaths() {
+  if (!fs.existsSync('/dev')) return [];
+  return fs.readdirSync('/dev')
+    .filter((name) => /^nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(name))
+    .map((name) => `/dev/${name}`);
+}
+
+function normalizeObservedNvidiaGpuDevicePaths(observed) {
+  if (!Array.isArray(observed)) return [];
+  const normalized = observed.map((candidate) => String(candidate));
+  if (normalized.some((candidate) => (
+    !/^\/dev\/nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(candidate)
+  ))) return [];
+  return [...new Set(normalized)].sort();
+}
+
 export function createOsSandboxedWorkerRunnerEngine({
   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
   runtimeRoot = null,
@@ -93,7 +109,9 @@ export function createOsSandboxedWorkerRunnerEngine({
     runtimeExecutableSnapshotObserver = null,
     workspaceSnapshotObserver = null,
     dockerContainerRecoveryExecutor = spawnSync,
+    environmentBomSpawnSync = undefined,
     gpuDeviceCapacityObserver = inspectNvidiaGpuDeviceCapacity,
+    gpuDevicePathObserver = observeNvidiaGpuDevicePaths,
   } = testDependencies || {};
   const productionEvidenceEligible = testDependencies === null;
   const resolveAllowedExecutable = prepareWorkerExecutableIdentityAllowlist({
@@ -139,7 +157,15 @@ export function createOsSandboxedWorkerRunnerEngine({
     receiptKinds: ['OsSandboxWorkerReceipt'],
     provider: backend,
   });
-  const prepareEnvironmentBom = createWorkerEnvironmentBomPreparer({ maximumTimeoutMs, maximumMemoryBytes, maximumCpuSeconds, maximumPids, maximumOutputBytes, maximumCapturedBytes });
+  const prepareEnvironmentBom = createWorkerEnvironmentBomPreparer({
+    maximumTimeoutMs,
+    maximumMemoryBytes,
+    maximumCpuSeconds,
+    maximumPids,
+    maximumOutputBytes,
+    maximumCapturedBytes,
+    ...(environmentBomSpawnSync ? { spawnSyncImpl: environmentBomSpawnSync } : {}),
+  });
   const gpuSelectorExecutionLeaseCoordinator =
     createOsSandboxWorkerGpuSelectorLeaseCoordinator({
       allowGpu, runtimeRoot, availability, docker, dockerContainerRecoveryExecutor,
@@ -251,7 +277,12 @@ export function createOsSandboxedWorkerRunnerEngine({
       const resolvedOutputDirectory = outputDirectory ? path.resolve(outputDirectory) : null;
       const allowedOutputRoot = resolvedOutputDirectory ? outputRoots.find((root) => isPathWithin(root, resolvedOutputDirectory)) : null;
       if (outputPaths.length && (!resolvedOutputDirectory || !allowedOutputRoot)) blockers.push('worker_output_directory_not_allowlisted');
-      const gpuDevices = fs.existsSync('/dev') ? fs.readdirSync('/dev').filter((name) => /^nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(name)).map((name) => `/dev/${name}`) : [];
+      let gpuDevices = [];
+      try {
+        gpuDevices = normalizeObservedNvidiaGpuDevicePaths(gpuDevicePathObserver());
+      } catch {
+        gpuDevices = [];
+      }
       const normalizedGpuDeviceSelector = normalizeNvidiaGpuDeviceSelector(gpuDeviceSelector);
       const gpuPreflightCapacityObservation = requiresGpu
         ? gpuDeviceCapacityObserver(normalizedGpuDeviceSelector) : null;

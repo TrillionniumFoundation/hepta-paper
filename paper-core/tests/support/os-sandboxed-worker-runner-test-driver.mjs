@@ -28,6 +28,13 @@ export function createOsSandboxedWorkerRunnerForTest(options = {}) {
       delete productionOptions[key];
     }
   }
+  if (productionOptions.allowGpu
+    && !Object.prototype.hasOwnProperty.call(testDependencies, 'gpuDevicePathObserver')) {
+    testDependencies.gpuDevicePathObserver = () => [
+      '/dev/nvidia0',
+      '/dev/nvidiactl',
+    ];
+  }
   return createOsSandboxedWorkerRunnerEngine(productionOptions, testDependencies);
 }
 

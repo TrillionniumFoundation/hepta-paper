@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   drain:
-    runs-on: ubuntu-22.04
+    runs-on: macos-14
     timeout-minutes: 10
     env:
       TARGET_PR: '52'
@@ -39,23 +39,23 @@ jobs:
         run: |
           set -euo pipefail
           runs_file="$RUNNER_TEMP/target-runs.jsons"
+          stale_ids_file="$RUNNER_TEMP/stale-run-ids.txt"
           gh api --paginate \
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             "/repos/${GITHUB_REPOSITORY}/actions/runs?branch=${TARGET_BRANCH}&per_page=100" \
             > "$runs_file"
 
-          mapfile -t stale_ids < <(
-            jq -r --arg keep "$KEEP_SHA" '
-              .workflow_runs[]
-              | select(.head_sha != $keep and .status != "completed")
-              | .id
-            ' "$runs_file" | sort -nu
-          )
+          jq -r --arg keep "$KEEP_SHA" '
+            .workflow_runs[]
+            | select(.head_sha != $keep and .status != "completed")
+            | .id
+          ' "$runs_file" | sort -nu > "$stale_ids_file"
 
           cancelled=0
           already_terminal=0
-          for run_id in "${stale_ids[@]}"; do
+          while IFS= read -r run_id; do
+            test -n "$run_id" || continue
             run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")"
             run_head="$(jq -r '.head_sha' <<<"$run_json")"
             run_status="$(jq -r '.status' <<<"$run_json")"
@@ -75,7 +75,7 @@ jobs:
               test "$post_status" = completed
               already_terminal=$((already_terminal + 1))
             fi
-          done
+          done < "$stale_ids_file"
 
           {
             echo "cancelled=$cancelled"

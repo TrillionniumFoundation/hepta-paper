@@ -56,12 +56,12 @@ jobs:
           git apply --whitespace=error-all "$RUNNER_TEMP/hepta-gap-fix.patch"
           git diff --check
 
-      - name: Run static and focused regression gates
+      - name: Run commit admission gates
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y sqlite3 texlive-latex-base
+          sudo apt-get install -y sqlite3 texlive-latex-base poppler-utils
           npm ci --ignore-scripts --no-audit --no-fund
           test "$(node --version)" = "v22.23.1"
           node --check paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs
@@ -75,10 +75,7 @@ jobs:
           python3 docs/rust/tools/validate-program-truth.py
           node --test --test-concurrency=1 \
             paper-core/tests/r-runtime-source-cas.test.mjs \
-            paper-core/tests/repository-asset-externalization.test.mjs \
-            paper-core/tests/automation-readiness-policy.test.mjs \
-            paper-core/tests/autonomous-submission-request-verifier-composition.test.mjs \
-            paper-core/tests/gpu-scientific-campaign-execution-lease-binding.test.mjs
+            paper-core/tests/repository-asset-externalization.test.mjs
 
       - name: Commit exact reviewed patch
         shell: bash
@@ -100,3 +97,12 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'fix(ci): close portable exact-head repository gaps'
           git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+
+      - name: Run post-push focused diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=1 \
+            paper-core/tests/automation-readiness-policy.test.mjs \
+            paper-core/tests/autonomous-submission-request-verifier-composition.test.mjs \
+            paper-core/tests/gpu-scientific-campaign-execution-lease-binding.test.mjs

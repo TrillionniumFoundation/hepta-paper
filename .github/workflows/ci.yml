@@ -31,7 +31,7 @@ jobs:
       - name: Install static-gate dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y sqlite3
+          sudo apt-get install -y sqlite3 texlive-latex-base poppler-utils
           npm ci --ignore-scripts --no-audit --no-fund
           test "$(node --version)" = "v22.23.1"
           strict_node_source="$(command -v node)"
@@ -99,7 +99,7 @@ jobs:
         if: steps.impact.outputs.count != '0'
         run: |
           sudo apt-get update
-          sudo apt-get install -y sqlite3
+          sudo apt-get install -y sqlite3 texlive-latex-base poppler-utils
           npm ci --ignore-scripts --no-audit --no-fund
           test "$(node --version)" = "v22.23.1"
           strict_node_source="$(command -v node)"
@@ -151,7 +151,7 @@ jobs:
       - name: Install portable-gate dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y sqlite3
+          sudo apt-get install -y sqlite3 texlive-latex-base poppler-utils
           npm ci --ignore-scripts --no-audit --no-fund
           test "$(node --version)" = "v22.23.1"
           strict_node_source="$(command -v node)"
@@ -307,7 +307,7 @@ jobs:
       - name: Install nightly dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y sqlite3
+          sudo apt-get install -y sqlite3 texlive-latex-base poppler-utils
           npm ci --ignore-scripts --no-audit --no-fund
           test "$(node --version)" = "v22.23.1"
           strict_node_source="$(command -v node)"

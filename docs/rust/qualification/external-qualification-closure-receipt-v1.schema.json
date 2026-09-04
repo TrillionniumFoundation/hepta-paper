@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/external-qualification-closure-receipt-v1.schema.json",
+  "title": "External Qualification Closure Receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "kind",
+    "status",
+    "repository",
+    "commit",
+    "tree",
+    "packages",
+    "authorityGroups",
+    "allPackagesVerified",
+    "automaticActivation",
+    "productionActivation",
+    "sourceStatusUnchanged",
+    "payloadSemantics",
+    "clockRollbackProtection",
+    "replayLedgerSchemaVersion",
+    "trustStoreGeneration",
+    "trustStoreHash",
+    "replayProtection",
+    "replayLedgerCommitted",
+    "receiptHash"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ExternalQualificationClosureReceiptV1"
+    },
+    "status": {
+      "const": "external_qualification_set_verified"
+    },
+    "repository": {
+      "const": "TrillionniumFoundation/hepta-paper"
+    },
+    "commit": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "tree": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "packages": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "packageId",
+          "payloadHash",
+          "authorityDomainId",
+          "signerKeyId",
+          "nonce",
+          "signingMessageHash"
+        ],
+        "properties": {
+          "packageId": {
+            "$ref": "#/$defs/packageId"
+          },
+          "payloadHash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "authorityDomainId": {
+            "$ref": "#/$defs/id"
+          },
+          "signerKeyId": {
+            "$ref": "#/$defs/id"
+          },
+          "nonce": {
+            "$ref": "#/$defs/id"
+          },
+          "signingMessageHash": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    },
+    "authorityGroups": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "governance",
+        "target_host",
+        "key_owner",
+        "codex_account",
+        "release_and_cutover"
+      ],
+      "properties": {
+        "governance": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "target_host": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "key_owner": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "codex_account": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "release_and_cutover": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "allPackagesVerified": {
+      "const": true
+    },
+    "automaticActivation": {
+      "const": false
+    },
+    "productionActivation": {
+      "const": false
+    },
+    "sourceStatusUnchanged": {
+      "const": true
+    },
+    "receiptHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "trustStoreGeneration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "trustStoreHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "replayProtection": {
+      "const": "durable_sqlite_v2"
+    },
+    "replayLedgerCommitted": {
+      "const": true
+    },
+    "payloadSemantics": {
+      "const": "strict_package_v1"
+    },
+    "clockRollbackProtection": {
+      "const": true
+    },
+    "replayLedgerSchemaVersion": {
+      "const": 2
+    }
+  },
+  "$defs": {
+    "gitHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "packageId": {
+      "enum": [
+        "EXT-GOV-MAIN-001",
+        "EXT-HOST-CGROUP-001",
+        "EXT-HOST-STORAGE-001",
+        "EXT-KEY-OWNER-001",
+        "EXT-CODEX-ROLE-001",
+        "EXT-CUTOVER-SOAK-001",
+        "EXT-AUTHORITY-SET-001"
+      ]
+    }
+  }
+}

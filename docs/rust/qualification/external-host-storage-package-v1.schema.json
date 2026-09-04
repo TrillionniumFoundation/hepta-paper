@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/external-host-storage-package-v1.schema.json",
+  "title": "External Host Storage Qualification Package V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageId",
+    "repository",
+    "commit",
+    "tree",
+    "hostIdentityHash",
+    "bootSequenceHash",
+    "filesystemIdentityHash",
+    "mountIdentityHash",
+    "blockDeviceIdentityHash",
+    "databaseIdentityHash",
+    "walIdentityHash",
+    "shmIdentityHash",
+    "artifactManifestHash",
+    "serviceUnitHash",
+    "rawEvidenceManifestHash",
+    "faultMatrix",
+    "operationCount",
+    "continuousSoakSeconds",
+    "staleCommitCount",
+    "duplicateProviderCallCount",
+    "duplicateIntegrationCount",
+    "unclassifiedRecoveryCount",
+    "operatorAuthorityDomain",
+    "reviewerAuthorityDomain",
+    "reviewerKeyId",
+    "findings",
+    "decision",
+    "issuedAt",
+    "expiresAt",
+    "signatureBase64"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "packageId": {
+      "const": "EXT-HOST-STORAGE-001"
+    },
+    "repository": {
+      "const": "TrillionniumFoundation/hepta-paper"
+    },
+    "commit": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "tree": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "hostIdentityHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "bootSequenceHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "filesystemIdentityHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "mountIdentityHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "blockDeviceIdentityHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "databaseIdentityHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "walIdentityHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "shmIdentityHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "artifactManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "serviceUnitHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "rawEvidenceManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "faultMatrix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sigkillBoundaries",
+        "serviceRestart",
+        "hostReboot",
+        "diskFull",
+        "quotaExhaustion",
+        "writeFsyncFailure",
+        "readOnlyRemount",
+        "walTruncation",
+        "shmTruncation",
+        "mainPageCorruption",
+        "staleSidecar",
+        "backupRestore",
+        "foreignBackupRejection",
+        "clockRegression"
+      ],
+      "properties": {
+        "sigkillBoundaries": {
+          "const": "passed"
+        },
+        "serviceRestart": {
+          "const": "passed"
+        },
+        "hostReboot": {
+          "const": "passed"
+        },
+        "diskFull": {
+          "const": "passed"
+        },
+        "quotaExhaustion": {
+          "const": "passed"
+        },
+        "writeFsyncFailure": {
+          "const": "passed"
+        },
+        "readOnlyRemount": {
+          "const": "passed"
+        },
+        "walTruncation": {
+          "const": "passed"
+        },
+        "shmTruncation": {
+          "const": "passed"
+        },
+        "mainPageCorruption": {
+          "const": "passed"
+        },
+        "staleSidecar": {
+          "const": "passed"
+        },
+        "backupRestore": {
+          "const": "passed"
+        },
+        "foreignBackupRejection": {
+          "const": "passed"
+        },
+        "clockRegression": {
+          "const": "passed"
+        }
+      }
+    },
+    "operationCount": {
+      "type": "integer",
+      "minimum": 10000
+    },
+    "continuousSoakSeconds": {
+      "type": "integer",
+      "minimum": 259200
+    },
+    "staleCommitCount": {
+      "const": 0
+    },
+    "duplicateProviderCallCount": {
+      "const": 0
+    },
+    "duplicateIntegrationCount": {
+      "const": 0
+    },
+    "unclassifiedRecoveryCount": {
+      "const": 0
+    },
+    "operatorAuthorityDomain": {
+      "$ref": "#/$defs/id"
+    },
+    "reviewerAuthorityDomain": {
+      "$ref": "#/$defs/id"
+    },
+    "reviewerKeyId": {
+      "$ref": "#/$defs/id"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "disposition",
+          "evidenceHash"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "informational"
+            ]
+          },
+          "disposition": {
+            "enum": [
+              "fixed_and_reverified",
+              "accepted_by_external_authority"
+            ]
+          },
+          "evidenceHash": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    },
+    "decision": {
+      "const": "approved"
+    },
+    "issuedAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "expiresAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "signatureBase64": {
+      "$ref": "#/$defs/signature"
+    }
+  },
+  "$defs": {
+    "gitHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 512
+    }
+  }
+}

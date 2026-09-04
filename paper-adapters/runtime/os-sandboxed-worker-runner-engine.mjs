@@ -13,7 +13,6 @@ import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { runBoundedChildProcess } from '../automation/bounded-child-process.mjs';
 import {
   buildGpuDispatchMemoryAdmissionEvaluation,
-  verifyGpuDispatchMemoryAdmissionRequirement,
   verifyNvidiaGpuDeviceCapacityObservation,
 } from '../../paper-domain/automation/nvidia-gpu-device-capacity-contract.mjs';
 import {
@@ -55,7 +54,6 @@ import {
   datasetRuntimePreflightBlockers,
   dockerSystemMounts,
   executableRuntimePathSupported,
-  normalizeNvidiaGpuDeviceSelector,
   normalizeTrustedDatasetSupervisorImage,
   prepareUnprivilegedDatasetWorkspace,
 } from './os-sandbox-worker-runtime-support.mjs';
@@ -72,6 +70,10 @@ import {
   prepareWorkerExecutableIdentityAllowlist,
 } from './os-sandbox-worker-execution-identity.mjs';
 import { bindOsSandboxWorkerGpuSelectorLeaseAtLaunch, blockedOsSandboxWorkerGpuSelectorLease, createOsSandboxWorkerGpuSelectorLeaseCoordinator, recoverDockerWorkerContainerAndFenceGpuSelectorLease } from './os-sandbox-worker-gpu-selector-lease.mjs';
+import {
+  inspectOsSandboxWorkerGpuPreflight,
+  observeNvidiaGpuDevicePaths,
+} from './os-sandbox-worker-gpu-preflight.mjs';
 
 function normalizeSynchronousLauncherResult(result) {
   if (result?.error?.code !== 'ETIMEDOUT' || result.timedOut === true) return result;
@@ -93,7 +95,9 @@ export function createOsSandboxedWorkerRunnerEngine({
     runtimeExecutableSnapshotObserver = null,
     workspaceSnapshotObserver = null,
     dockerContainerRecoveryExecutor = spawnSync,
+    environmentBomSpawnSync = undefined,
     gpuDeviceCapacityObserver = inspectNvidiaGpuDeviceCapacity,
+    gpuDevicePathObserver = observeNvidiaGpuDevicePaths,
   } = testDependencies || {};
   const productionEvidenceEligible = testDependencies === null;
   const resolveAllowedExecutable = prepareWorkerExecutableIdentityAllowlist({
@@ -139,7 +143,15 @@ export function createOsSandboxedWorkerRunnerEngine({
     receiptKinds: ['OsSandboxWorkerReceipt'],
     provider: backend,
   });
-  const prepareEnvironmentBom = createWorkerEnvironmentBomPreparer({ maximumTimeoutMs, maximumMemoryBytes, maximumCpuSeconds, maximumPids, maximumOutputBytes, maximumCapturedBytes });
+  const prepareEnvironmentBom = createWorkerEnvironmentBomPreparer({
+    maximumTimeoutMs,
+    maximumMemoryBytes,
+    maximumCpuSeconds,
+    maximumPids,
+    maximumOutputBytes,
+    maximumCapturedBytes,
+    ...(environmentBomSpawnSync ? { spawnSyncImpl: environmentBomSpawnSync } : {}),
+  });
   const gpuSelectorExecutionLeaseCoordinator =
     createOsSandboxWorkerGpuSelectorLeaseCoordinator({
       allowGpu, runtimeRoot, availability, docker, dockerContainerRecoveryExecutor,
@@ -251,42 +263,20 @@ export function createOsSandboxedWorkerRunnerEngine({
       const resolvedOutputDirectory = outputDirectory ? path.resolve(outputDirectory) : null;
       const allowedOutputRoot = resolvedOutputDirectory ? outputRoots.find((root) => isPathWithin(root, resolvedOutputDirectory)) : null;
       if (outputPaths.length && (!resolvedOutputDirectory || !allowedOutputRoot)) blockers.push('worker_output_directory_not_allowlisted');
-      const gpuDevices = fs.existsSync('/dev') ? fs.readdirSync('/dev').filter((name) => /^nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(name)).map((name) => `/dev/${name}`) : [];
-      const normalizedGpuDeviceSelector = normalizeNvidiaGpuDeviceSelector(gpuDeviceSelector);
-      const gpuPreflightCapacityObservation = requiresGpu
-        ? gpuDeviceCapacityObserver(normalizedGpuDeviceSelector) : null;
-      const gpuDeviceSelectorObserved =
-        gpuPreflightCapacityObservation?.gpuDeviceSelector
-        === normalizedGpuDeviceSelector;
-      if (requiresGpu && (!allowGpu || gpuDevices.length === 0)) blockers.push('worker_gpu_not_available_or_not_allowed');
-      if (requiresGpu && executionBackend !== 'docker') blockers.push('worker_gpu_requires_docker_device_isolation');
-      if (requiresGpu && !normalizedGpuDeviceSelector) blockers.push('worker_gpu_device_selector_invalid');
-      if (requiresGpu && (!injectedGpuSelectorExecutionLease
-        || injectedGpuSelectorExecutionLease.gpuDeviceSelector
-          !== normalizedGpuDeviceSelector)) {
-        blockers.push('worker_gpu_selector_execution_lease_invalid');
-      }
-      if (requiresGpu && (!Number.isSafeInteger(Number(absoluteDeadlineEpochMs))
-        || Number(absoluteDeadlineEpochMs) <= Date.now())) {
-        blockers.push('worker_gpu_absolute_deadline_invalid_or_exhausted');
-      }
-      if (requiresGpu && normalizedGpuDeviceSelector && !gpuDeviceSelectorObserved) {
-        blockers.push('worker_gpu_device_capacity_observation_invalid');
-      }
-      if (!requiresGpu && gpuDeviceSelector !== null && gpuDeviceSelector !== undefined) blockers.push('worker_gpu_device_selector_without_gpu_request');
-      if (!requiresGpu && gpuDispatchMemoryAdmission !== null
-        && gpuDispatchMemoryAdmission !== undefined) {
-        blockers.push('worker_gpu_dispatch_memory_admission_without_gpu_request');
-      }
-      if (requiresGpu && gpuDispatchMemoryAdmission !== null
-        && !verifyGpuDispatchMemoryAdmissionRequirement(gpuDispatchMemoryAdmission)) {
-        blockers.push('worker_gpu_dispatch_memory_admission_invalid');
-      }
-      if (requiresGpu && gpuDispatchMemoryAdmission !== null
-        && gpuDispatchMemoryAdmission?.gpuDeviceSelector !== normalizedGpuDeviceSelector) {
-        blockers.push('worker_gpu_dispatch_memory_admission_selector_mismatch');
-      }
-      if (requiresGpu && Object.prototype.hasOwnProperty.call(env, 'CUDA_VISIBLE_DEVICES')) blockers.push('worker_gpu_visibility_environment_override_forbidden');
+      const gpuPreflight = inspectOsSandboxWorkerGpuPreflight({
+        requiresGpu,
+        allowGpu,
+        executionBackend,
+        gpuDeviceSelector,
+        gpuDispatchMemoryAdmission,
+        gpuDeviceCapacityObserver,
+        gpuDevicePathObserver,
+        gpuSelectorExecutionLease: injectedGpuSelectorExecutionLease,
+        absoluteDeadlineEpochMs,
+        environment: env,
+      });
+      const { normalizedGpuDeviceSelector } = gpuPreflight;
+      blockers.push(...gpuPreflight.blockers);
       const normalizedDatasets = datasetMounts.map((mount, index) => {
         const source = path.resolve(String(mount?.source || ''));
         const name = String(mount?.name || `dataset-${index + 1}`).replace(/[^A-Za-z0-9_.-]/g, '_');

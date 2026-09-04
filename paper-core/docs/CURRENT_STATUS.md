@@ -1,675 +1,132 @@
 # hepta-paper current status
 
 This is the normative status for the unreleased v0.21.0 development candidate.
-Older remediation, phase and retirement documents are archived under `docs/history/`;
-they are historical records and do not override this document.
 
-## Architecture
+This is the current scoped status for the Node implementation. Whole-system
+status is [`../../docs/system/CURRENT_STATUS.md`](../../docs/system/CURRENT_STATUS.md).
+Historical remediation notes and dated snapshots are available through Git
+history and are not current development authority.
 
-- `paper-domain` owns contracts and workflow vocabulary.
-- `paper-application` owns execution context, workflow orchestration, use cases
-  and pure report projections; it does not import concrete adapters.
-- `paper-composition` owns concrete bootstrap, batch, report-persistence and
-  pilot wiring.
-- `paper-ports` owns infrastructure boundaries.
-- `paper-adapters` owns persistence, providers, automation executors and other
-  infrastructure implementations.
-- `workflow-kernel` owns domain-neutral transition, hashing and runtime
-  utilities.
-- `paper-core` owns CLI composition, verification entrypoints and compatibility
-  re-exports. Adapter and application production modules may not import it.
-- `core/` is a baseline-bound vendored reference package; the production graph
-  may not import `core/src`.
+## Current role
 
-The supported command surface is `npm run hepta-paper -- <operator|verify|maintenance|retirement> <command>`.
-Remaining npm scripts are classified verification, maintenance, retirement,
-compatibility, experimental or internal plumbing rather than a second
-production operator API.
-The declarative command registry drives both routing and classification;
-unregistered scripts default to internal/blocked rather than operator. Forwarded
-arguments require an explicit `--` separator.
+The Node control plane remains the active campaign and automation authority under
+its existing repository, runtime, evidence, and external-action gates. The Rust
+work is additive and disabled for production authority until capability-specific
+cutover is accepted.
 
-For local use, `operator autonomous-research` now defaults to `local-run`, an
-alias of the existing bounded local execution path. Local runs keep lifecycle
-budgets, isolated author/reviewer processes and local release signing, but do
-not wait for external author identity, KMS/HSM, off-host replay, portal or
-production qualification. They do not claim public production readiness or
-enable unattended submission.
+## Current architecture
 
-The canonical final deployment gate for an explicitly requested external
-production deployment is `operator strict-full-auto-acceptance`.
-It exposes `plan|status|execute|converge`; the unattended `converge` action
-binds the fresh immutable plan hash internally and converges the closed
-fifteen-step dependency order with content-addressed crash checkpoints.
-The split execute action still requires the immutable plan hash explicitly.
-A complete local checkpoint cannot make this gate green;
-every accepted status is derived from a fresh live verification pass. Code
-availability does not make this gate green: independent
-author/reviewer/qualifier identities, KMS/HSM and plugin signer references,
-runtime reproducibility, machine intake, resident supervisor, restore evidence,
-golden qualification, a paper-bound production campaign, generic-domain evidence
-convergence, and the isolated submission dispatcher must all be
-provided by their real external authorities.
-
-The universal submission registry now covers all 98 stable target identities
-without a silent fallback. All 60 journal targets and 38 conference targets
-have at least one candidate family backed by a local OpenReview, HotCRP, OJS or
-Playwright-assisted prototype. Four targets have a target-specific OpenReview
-seed. COLT and ALT are independent `colt` and `alt` targets; the retired
-ambiguous `colt_alt` identifier fails closed. Current
-verified portal bindings, sandbox qualifications, production qualifications and
-live-commit authorizations remain 0/98; local prototype availability is not
-reported as live readiness. The dispatcher now requires a v3 private/public
-portal binding with two out-of-band hashes, single-link immutable files,
-platform identity separation, a canary authority distinct from its cycle
-signer, and a fresh pending challenge before any network action. No real portal
-configuration, descriptor pin, or signed live canary has been supplied. See
-[`universal-submission-system.md`](universal-submission-system.md).
-
-`operator submission-handoff-export` is a separate local-filesystem handoff
-surface. It snapshots the current reviewed submission authority from a
-read-only handoff-store transaction, revalidates the effective trusted provider
-capability receipt and its current signature through the configured verifier,
-and consumes only the independently verified current campaign release. The
-operator-supplied request must bind those persisted identities exactly. A
-successful export writes a sealed, detached-verifiable bundle through a durable
-publication journal, but grants no execution permission and performs no
-provider, portal, upload, email or other network action. Any later live action
-must revalidate authority at provider-action time through the separately
-provisioned dispatcher.
-
-Contract implementations live only in `paper-domain/contracts`. One hash-bound
-`paper-core/src/contracts/workflow-contracts.mjs` retirement facade remains for
-the frozen migration manifest; the other obsolete contract re-exports are gone.
-Historical legacy-cleanup code lives only in the read-only
-`migration/retirement` namespace; it is not a production batch mode.
-Hash-bound compatibility exceptions are explicitly classified in
-`migration/compatibility-support.v1.json` and cannot be moved by cleanup.
-
-## Trust and evidence
-
-Trusted ledger writers are minted by the private issuer-policy registry. A
-caller cannot become trusted by supplying a boolean or its own kind/stream
-allowlist. Original receipt rows are append-only; corrections use replacement
-receipts and qualification/supersession records.
-Only the composition broker may import the mint function; architecture tests
-enforce that boundary. Formal and experiment evidence is promotion-eligible
-only when its execution, artifact and reproducibility receipts resolve through
-the trusted effective-ledger projection; unsafe or incomplete execution stays
-blocked.
-
-This mint/broker boundary is an in-process integrity convention, not a security
-boundary against arbitrary code already executing inside the trusted Node.js
-process or another process with direct write access to the production SQLite
-file. Production composition therefore admits only repository-owned, reviewed
-modules; untrusted plugins must run out of process, and every OS principal that
-can write the database is part of the trusted computing base. Canonical issuer
-policy verification detects self-declared or drifted issuer metadata, but is
-not described as cryptographic issuer authentication. The verifier exposes
-this distinction and offers a fail-closed external-attestation requirement. If
-the threat model includes a same-UID direct database writer, deployment must
-move trusted receipt issuance behind a separately authenticated process or
-signature service whose signing key is unavailable to the application and
-database-writer principal; the current in-process mode must not be used as that
-security boundary.
-
-Runtime hygiene is idempotent for already-qualified receipts, and store status
-reports raw historical classifications separately from unresolved current
-classification debt.
-
-- Local-admin-delegated owner acceptance: 249/249 across 19 families.
-- Independent external-owner acceptance: 0/249.
-- Production-source-bound conformance replay: 16/16 after a release-bound
-  replay is run.
-- Independent production operational proof: 0/16 until distinct external
-  owner and observer signatures are ingested.
-
-The 16-capability catalog now includes the bounded single-GPU CuPy PDE and
-deep-learning paths. Their raw receipts remain deliberately non-promotable.
-Both tasks in one campaign attempt must bind the same attempt-owned,
-cross-process UUID lease, including its selector, deadline, owner authority,
-lease id, fencing token and lock identities. The release package archives the
-eleven exact scientific bodies needed for replay and verifies the archive after
-the producer workspace is gone. Offline semantic replay independently
-recomputes the PDE metrics from the archived `f64le` solutions and performs
-CPU inference from the archived deep-learning dataset, model IR and tensor
-bundle; producer diagnostics remain non-authoritative. This local verifier is
-still non-promotable: same-device GPU retraining, independently qualified PDE
-CPU replay, external production qualification, and release-manifest authority
-remain separately required. Cooperative local serialization is not a claim of
-physical multi-tenant GPU isolation or independent hardware replication.
-
-The lease, archive rollback, and authorized package-retention implementations
-provide concurrency integrity and fail-closed recovery only among
-repository-owned cooperating processes sharing one trusted Unix principal.
-Any non-cooperating process that can mutate the runtime, package, archive, or
-lease roots as that same UID is part of the trusted computing base. These
-mechanisms do not claim hostile same-UID isolation. Deployments requiring that
-threat model must place the operation behind a separate UID, an inaccessible
-mount namespace, or a separately authorized broker. Archive rollback may
-retain the exact owned inode in a sibling quarantine rather than perform an
-unsafe path-based unlink after a controlled integrity failure. That stable,
-per-package lane requires operator reconciliation: automatic package retention
-intentionally treats a quarantine without a lifecycle receipt as
-recovery-protected and does not reclaim it. The quarantine is not evidence of
-offline scientific replay.
-
-Campaign release package publication now has a durable build transaction and a
-separate prepared-publication transaction under a per-generation lock. Partial
-builds, marker-write interruption, prepared packages and a package renamed
-before its final bundle can be recovered after process death; a higher lease
-generation durably fences the stale attempt. Publication uses an exact,
-no-clobber move, rechecks pinned inode/tree identities, seals the final tree and
-fsyncs the affected directories. One opaque lease remains held across the
-asynchronous build-through-publication window. Contention uses bounded lock
-probes, exponential backoff, AbortSignal cancellation and hard pre/post-acquire
-deadlines. A pre-action timeout or abort, including pause/immediate-resume,
-refunds only the exact persisted attempt and CPU reservation when no external
-action or prepared result exists. A raced or noncanonical target fails closed.
-Retention may reclaim only staging owned by an inventoried, durably fenced
-stale transaction after active-node, release and CAS references are rechecked.
-A published predecessor is different: supersession records lineage but never
-acts as recovery evidence for a different package body. Deletion requires one
-unique version-2 recovery receipt that binds the exact predecessor lifecycle,
-release identity, path and exact package-tree inventory to a signed and
-ledger-bound immutable storage object, its exact bytes, object version, active
-retention-lock version, ledger receipt and trust epoch. The canonical inventory
-binds every path, kind, byte count, byte hash, POSIX mode, uid and gid. A
-separate restore execution extracts into an exclusively created, descriptor-
-pinned temporary directory on a disjoint real path, verifies the same complete
-inventory, and persists an independently verifiable restore attestation before
-cleaning the temporary tree. Expected lifecycle, production-before, archive,
-restored and production-after inventory hashes must all be identical. The
-storage signature also covers its verification time, so changing `verifiedAt`
-or replaying otherwise identical bytes across lifecycle, release, path or
-campaign identities fails closed. The live object version, ledger receipt,
-trust epoch and lock are queried from their authorities rather than accepted as
-self-reported proof fields. Missing, changed, expired, duplicated, legacy or
-ambiguous evidence keeps the predecessor recovery-protected.
-
-Provisioning is serialized across cooperating processes by a secure
-per-lifecycle flock whose runtime root, lock directory, lock file, ownership and
-inode are rechecked throughout the operation. The absence scan, external
-recovery action, receipt append and persisted reread occur inside that one
-critical section. If authority changes after a package is isolated but before
-the first irreversible removal, rollback moves the exact tree back first,
-restores its sealed modes, removes the empty deletion lane and emits no trusted
-tombstone. Live inspection independently pins the storage object's physical
-realpath, inode, link count, mode and bytes and binds the trust-store, issuer
-policy and external ledger receipt identities.
-
-Published deletion is a two-authority transaction. A crash-stable local fence
-records generation, opaque token and prepare/deleting/deleted/aborted state,
-while an external deletion lease freezes the exact storage object, lock,
-ledger and trust snapshot. Acquire, assert, renew, commit and abort are hash-
-bound and idempotent; recovery replays the same terminal command after an
-ambiguous response. After process restart or lease expiry, a separately sealed
-terminal-resume request performs an authority lookup by the original acquire
-request and exact commit/abort command; it may return only the already-issued
-terminal receipt. A mismatched terminal, expired nonterminal commit, or
-replacement lease fails closed. The package tree is restored with its exact
-inventory when the filesystem changed before the durable deleted state,
-whereas a durable deleted fence resumes only the external commit and never
-resurrects the package. Every unlink and rmdir rechecks both live authority and
-the lease.
-Repository-owned StorePort, receipt, CAS and release-package writers enter one
-reentrant writer-only boundary, so cooperative writes cannot race a prepared
-deletion or attach a stale reference to a terminally deleted package.
-
-`operator campaign --action retention-recovery-readiness` uses a fresh
-challenge and accepts only a short-lived signed inspection verified by an
-independent readiness trust store. It verifies storage and persisted-restore
-canaries, executes a real external deletion-lease acquire/assert/abort canary,
-and probes the pre-provisioned lifecycle lock through the same inode, ownership,
-mode and flock path used by provisioning. The final clock check occurs after
-those probes. Provisioning requires
-`--action provision-retention-recovery --apply` plus an exact lifecycle receipt
-hash. The stock command composition intentionally contains no synthetic WORM,
-KMS, storage-ledger, restore-attestor, deletion-lease or storage-issuer
-implementation, so it reports unavailable and package GC fails closed unless a
-separately qualified import-safe launcher injects the complete external
-authority set through the version-1 `PackageRecoveryAuthorityFactory`, raw
-deletion-lease authority, readiness verifier, and a pre-provisioned disjoint
-restore root. The repository supplies the validating lease client and local
-descriptor-pinned exact-restore factory; it does not supply the external
-authorities or their evidence. This is a safe operational boundary, not
-evidence that the external recovery service has been deployed or independently
-qualified.
-
-Local conformance is intentionally not labeled production operational history.
-The code-release gate has three explicit layers: implementation verification
-and release-bound conformance are blocking; independent production operational
-proof is reported separately and cannot be synthesized by, or substituted
-with, a local replay. Disaster-recovery readiness and external trust readiness
-are likewise separate from `code_release_evidence_ready`.
-
-## Legacy retirement
-
-`/data/home-data/paper_factory` has been physically removed. The permanent
-recovery/audit set is `/data/home-data/hepta-paper-legacy-reference`, including
-the immutable source snapshot
-`retirement-source-snapshot-2026-07-13`. Regeneration commands cannot overwrite
-the frozen salvage manifest, and the old online legacy-cleanup/archive write
-entrypoints are retired.
-
-## Runtime
-
-The default native store is
-`/data/home-data/hepta-paper-runtime/native-runtime/hepta-paper.sqlite` at
-schema 25. The asset workspace and every mutable runtime/report/store root are
-required to remain physically disjoint after symlink resolution; mutating
-bootstraps reject an overlapping layout before the first write. Receipt rows and
-qualification rows are protected by update/delete-deny triggers. Startup
-reconciliation is explicit, idempotent and transactional. Migration 021 adds
-job lease generations; 022 adds campaign attempt/generation/revision fencing
-and recoverable prepared results; 023 makes workspace retention qualification
-depend on persisted restore proof and commits workflow projection with its
-ledger receipt.
-
-Workspace retention requires registered lineage, a hash-bound snapshot and a
-successful restore verification before deletion. Backup retention also
-requires trusted backup/restore-drill ledger evidence, keeps at least two
-recoverable generations, rechecks content hashes at apply time and converges
-through durable intent/tombstone records.
-
-The default ledger read path is the fail-closed `effective_receipt_ledger`
-projection. Qualified invalid/tombstoned receipts are never returned as usable;
-raw receipt access is explicitly audit-only.
-
-The 2026-07-13 reconciliation requeued 12 expired nodes, removed 4 expired
-resource leases and 8 expired waiters. Workspace backfill registered 11
-workspaces, restore-verified 7 snapshots, protected 4 incomplete workspaces and
-released about 1.64 GB through the receipt-backed retention path.
-The liveness reconciliation introduced by migration 020 additionally pauses no-progress campaigns
-and transactionally closes queued children of terminal campaigns without
-starting workers or discarding recoverable workspace state.
-Migration 024 classifies submission-outbox delivery kinds; migration 025 moves
-autonomous submission delivery into its dedicated handoff database while
-preserving an atomic, inspectable cutover receipt.
-Batch reports are campaign-first: they record plans, queued/replayed state,
-plan hashes and node kinds, and do not manufacture retired stage results.
-Legacy stage metrics exist only on the explicit non-authoritative compatibility
-projection. Reports store a bounded summary plus a content-hash-bound detail
-object, instead of embedding full results repeatedly. SQLite backup databases and their
-receipt companions are retained and removed as one verified unit; protected
-latest artifacts are never selected by the size/age retention policy.
-
-Campaign DAG state is the sole automation authority. Every running attempt is
-fenced, prepared results survive recovery, and a stale or cancelled worker
-cannot commit. A formal package node emits a typed campaign release bundle;
-submission consumes it only after independently verifying campaign, source,
-package and immutable-output lineage. Automation and submission use separate
-capability-scoped bootstrap roots.
-Package generation extends the same rule through filesystem publication: the
-campaign/package node attempt and lease generation are persisted before the
-tree is built, and only the current generation may prepare or publish the
-immutable release directory and bundle. Recovery reconciles one exact prepared
-or already-published generation instead of reconstructing authority from a
-directory name.
-The obsolete direct workflow executor, typed stage pipeline, stage handlers and
-local diagnostic loop have been removed. The explicit compatibility projection
-projects campaign authority into legacy `workflow_states`; it does not revive or
-execute the retired stage workflow.
-
-Dry-run/planning opens no writable store, creates no database and performs no
-migration unless the caller explicitly requests a report-writing surface.
-Cancellation reaches the complete child
-process group through `AbortSignal`, with fenced integration rejecting late
-results. TaskFlow remains experimental and absent from production roots.
-
-## Research automation closure
-
-The v0.21 candidate implements a bounded, unattended end-to-end research path
-rather than a claim of universal autonomous science. Once independent runtime
-principals, a dataset authority and an external qualification service are
-provisioned, the research campaign itself has no human checkpoint:
-
-- Scientific input has two explicit authority modes: operator-signed proposal
-  claims and machine-proposed claims authorized only by the bounded autonomous
-  policy. The latter never claims operator approval. Both modes bind the exact
-  claim text, scientific claim key, assumptions, quantifiers, negative
-  boundaries and proof obligations into the theorem specification. A field
-  change is lineage drift and fails closed. Empirical-protocol claims are never
-  projected into Lean; only `formal_kernel` support claims enter the formal
-  path.
-- Natural-language proof obligations receive stable hash-derived obligation
-  ids and an explicit obligation-to-Lean-declaration mapping. Lake verification
-  generates system-owned `#check` and `#print axioms` probes for every mapped
-  declaration and replay verifies the same mapping. Display text or a theorem
-  name alone cannot satisfy obligation coverage.
-- Formal candidates are authored, semantically reviewed and checked in an
-  isolated candidate workspace. Lean/Lake verification, system-generated axiom
-  inspection and fresh replay must all pass before the candidate is integrated.
-  Failed candidates can enter a bounded diagnostics-driven repair round without
-  first contaminating the source workspace.
-- The typed theorem DSL covers Nat, Int, Bool, Fin, additive identity laws for
-  fixed Vector/Matrix/finite-measure/stochastic-process domains, universal-set
-  intersection for real feasible sets, and a no-division Real ordered-ring
-  polynomial fragment. The five generic-domain qualification profiles are
-  non-reflexive Mathlib goals closed through pinned proof-state search and fresh
-  replay; they remain capability diagnostics, not theorem discovery or
-  domain-completeness claims. The bounded tactic portfolio includes direct
-  elaboration, simplification, library-guided automation, Presburger arithmetic,
-  polynomial normalization, linear/nonlinear arithmetic, numeric normalization
-  and positivity before it emits an exhaustion certificate. Each machine-search
-  attempt now binds a syntactic goal decomposition, pinned local lemma-index
-  results, a fixed proof-term synthesis plan and any bounded counterexample to a
-  canonical strategy-preparation receipt. A counterexample may only propose
-  rejection or re-formalization by an independent semantic authority; it cannot
-  mutate the claim. The backend contract exposes Lean, Coq and Isabelle, but only
-  pinned Lean/Lake execution is active. Coq and Isabelle remain unavailable until
-  separate out-of-process adapters are qualified. None of these receipts proves
-  natural-language-to-formal equivalence or scientific correctness. Real and
-  structured obligations require a pinned Mathlib
-  project closure. The production source anchor is the official Mathlib
-  `v4.30.0` tag, commit `c5ea00351c28e24afc9f0f84379aa41082b1188f`
-  and tree `1fe688f4d9e84fb268a300f8ac33cbca883fbd28`; the exact Lake
-  manifest provenance fields and a clean materialized Git worktree are checked.
-  Generic and production readiness also require the complete source,
-  dependency, `.lake/build` and Lake-metadata closure to be authorized by a
-  code-reviewed build allowlist or an independently signed, separately
-  configuration-hash-pinned Ed25519 authority that binds the exact closure,
-  official Mathlib release identity, Lean toolchain and toolchain Merkle root.
-  The code allowlist contains one independently reviewed immutable Mathlib 4.30
-  closure, `sha256:64b07e1b11ec2f87168612b964d84e350ab9e6e88129397a21694689b24f8412`,
-  bound to the canonical `/srv/hepta-paper/formal/mathlib-project` materialization.
-  A different closure still requires a separately signed build authority. This
-  review establishes the exact source/build byte closure and executable identity;
-  it does not claim two independent bit-for-bit builds. If a closure is authorized,
-  readiness additionally requires the production Lean
-  toolchain Merkle identity and a closure-bound `import Mathlib` probe in the
-  same digest-pinned Docker sandbox from a sealed read-only `/work` snapshot.
-  Closure files, probe bytes, source provenance, build authority and toolchain
-  content identity are remeasured after execution, so in-probe mutation or
-  mutate-and-restore drift fails closed; the default Alpine/Init-only runtime
-  cannot satisfy this gate. Its bounded
-  integer-embedding search may produce a counterexample witness, but absence of
-  a witness is always inconclusive and never promoted as a proof.
-- Academic empirical runs use an externally authorized dataset/harness and
-  signed `AnalysisProtocol`. Each scheduled cell is bound to exactly one
-  approved Python or R runtime profile, runs in a supervised container process,
-  and receives an isolated deterministic rerun. All
-  original and replay cells share one absolute campaign deadline; CPU/GPU jobs,
-  process count, CPU seconds, memory and PID limits are charged per process, so
-  a multi-cell run cannot hide behind one node-level budget. Dataset access
-  requires a positive-byte read observation; zero-byte, EOF and resealed trace
-  forgeries fail closed.
-- Repository-owned evaluators compute paired bootstrap intervals, sign-flip
-  tests, Holm-Bonferroni multiplicity, power and sensitivity checks. Agent
-  aggregates are never statistical authority. A separately implemented
-  verification TCB reads the raw artifacts and recomputes every cell fixture,
-  response, metric, event count and aggregate residual for all five built-in
-  analysis families and all three arms. It does not import the producer-side
-  challenge builder, arm evaluator, statistical evaluator or aggregator; its
-  implementation hash and independence contract are carried through registry,
-  capsule and qualification. Manuscript tables, figures, captions and result
-  markers are accepted only when a typed presentation authority binds them to
-  the accepted experiment registry, trusted ledger, assertion universe and
-  matching original plus replay lineage. Agents cannot write the system-owned
-  `automation-results/` tree. Each signed production profile is also compiled
-  into a hash-bound Experiment IR covering design, estimator, metrics, stopping
-  rule, dataset contract, execution binding and typed numeric-oracle ABI.
-  Readiness selects the exact replay node from the current production plan and
-  its single canonical original dependency; it does not scan backward for an
-  older valid receipt. Both persisted nodes must match the plan kind, complete
-  dependency/specification body, round, attempt, lease generation, revision,
-  completion status and result hash, and their attempt identities must match the
-  original/replay receipts.
-  Convergence, condition-number, error-bound and optimality-gap claims require
-  a separately signed advanced profile plus process-isolated recomputation;
-  the built-in property/residual profiles cannot authorize those claims.
-  The evaluator ABI also contains an externally activatable, data-only
-  `registered_scalar_response_benchmark` for arbitrary operator-authorized JSON
-  inputs with scalar responses and host-held interval/target oracles. Producer
-  and independently implemented recomputation paths agree on challenge,
-  response-event and metric semantics; no executable plugin payload is loaded.
-  This broadens experiment onboarding but does not claim that one scalar loss
-  captures every scientific domain or that empirical success proves causality.
-- Original and replay receipts bind source, dataset, runtime, resource limits,
-  hardware, package closure, determinism policy and a normalized Environment
-  BOM. Academic, GPU, nondeterministic and unknown modes bypass the generic
-  cache. A same-host independent-process replay is not described as independent
-  hardware or independent-implementation replication.
-- Provider call count, configured maximum cost per call, total cost ceiling and
-  wall time form the production hard-stop envelope. Codex/OpenClaw token counts
-  are recorded after a response and the prompt carries a remaining-token hint,
-  but those backends do not expose a hard per-turn token meter; `maxTokenCount`
-  is therefore reported as advisory for them and is never represented as the
-  independent safety boundary.
-- The immutable release includes a self-contained evidence capsule with raw
-  events, JSON/CSV results, Environment BOMs, public authority material and
-  original/replay lineage. Academic capsules require an Ed25519 signature over
-  the capsule manifest and execution lineage from an operator-provisioned
-  `research_execution_release_attestor`; offline verification requires a caller
-  supplied release trust root that is not carried inside the package. Private
-  signing material and host paths are forbidden from status, receipts and the
-  capsule. This attests the manifest and recorded lineage only; it is not an
-  independent execution witness, trusted timestamp or proof of execution
-  authenticity.
-- Production release signing no longer requires the main process to load a
-  private-key file. Version-3 attestor configuration pins an active plus
-  retiring Ed25519 public-key trust set and delegates digest signing to an
-  external KMS/HSM command port. Production readiness requires a fresh,
-  separately pinned, short-lived control-plane signature over the provider,
-  account, hardware key resource, credential generation and backend descriptor;
-  an independently signed backend challenge proving the exact backend/key tuple
-  is reachable; plus a fresh domain-separated
-  signature challenge executed by the active release key and verified against
-  its configured public key. The resolved configuration pin also binds referenced
-  keys, executables, credential roots, restricted environment, and the stable
-  KMS control-plane trust policy rather than only the JSON file. Short-lived
-  signed hardware bundles rotate beneath that stable policy without an
-  operator re-pin. Version 2 self-declared KMS profiles remain bounded and
-  execute no live KMS action. The version-1 file signer
-  is retained as an explicit Golden/test/local degradation and is blocked by
-  the `production-run` gate.
-- The bundled dedicated-UID signer is a bounded fallback for the
-  `research-runtime-uid` threat boundary. It may pass its own live probe and
-  active-key challenge, but it is not `fullProductionReady`; that stronger
-  state remains reserved for a hardware-protected, non-exportable external
-  KMS/HSM backend.
-- Prior-art and external-replay service configurations require independent
-  `*_CONFIG_HASH` deployment pins for full production. External replay also
-  requires version-4 signed lookup/resume recovery; version 3 can verify
-  off-host identity and receipts but remains bounded-only after a crash.
-- Runtime-image reproducibility now requires an out-of-band pin over the full
-  resolved process/trust identity, including both verifier executables,
-  credential roots, backends, and Ed25519 signers. An unpinned configuration is
-  bounded-only and cannot read a receipt, invoke a verifier, refresh, or publish.
-- Release packaging independently rebuilds the manuscript PDF from the bound
-  read-only LaTeX source in a fresh supervised sandbox. The typed receipt binds
-  both source manifests, command/tool identity, worker/process evidence,
-  resource budget and authoritative/rebuilt PDF hashes. This establishes a
-  source-level rebuild, not byte-for-byte PDF reproducibility; release fails
-  closed when the typed rebuild verifier is absent or inconsistent.
-- `hepta-paper operator autonomous-research` can machine-select a versioned
-  bounded agenda, materialize a conflict-detecting source workspace, launch a
-  persisted full campaign, report status and resume paused/stopped work. Its DAG
-  includes hypothesis/proposal, writer, kernel formalization, empirical original
-  and replay, initial review, revision, revalidation, fresh post-revision
-  referees, convergence, research verification and packaging. Repeated launch is
-  idempotent, completed external actions are not replayed, and qualification is
-  requested from an injected external signer/verifier and cached by release
-  hash. The application never self-signs qualification.
-  Readiness takes the current non-superseded production campaign as the agenda
-  authority head and binds its campaign status, revision, plan, preparation,
-  capability scope and producer-receipt hashes. An invalid current head blocks;
-  an older valid campaign is never used as fallback, and a bootstrap snapshot
-  cannot switch campaigns between capability inspections.
-- The canonical foreground `autonomous-supervisor` adds durable cold-start
-  autonomy around that campaign path. A version-2 machine-intake configuration
-  binds a repository-owned topic-producer implementation, exact provider
-  configuration, registered research profiles, immutable dataset sources and
-  per-day topic, canary and cost ceilings. Generation, admission, campaign
-  enqueue, lifecycle attempts/cost and resident ownership all use SQLite
-  transactions and generation fences. A crash can be taken over after lease
-  expiry without refunding cost or resetting a high-water mark. Replacing the
-  configuration, producer profile, implementation or dataset path withdraws
-  readiness before another dispatch; none of those authorities is inferred or
-  downloaded by the resident process. Machine dispatch authorization is
-  one-shot across production readiness and Golden KMS verification, and failed
-  readiness/provider attempts retain hash-verified partial side-effect receipts.
-  Explicit operator pauses remain stopped; only an execution-admitted initial
-  pause or a supervisor-owned recovery reason is resumed automatically.
-
-The dedicated fixed one-shot attempt CLI now exposes `plan`/`preflight` as a
-write-free local inspection. It never reserves an attempt, mutates the journal
-or native store, invokes a provider/gateway/network, or launches a campaign.
-It may open an existing append-only journal in immutable read-only mode to find
-a prior target campaign. Native campaign state is read only from a sidecar-free
-immutable SQLite image whose file identity must remain unchanged. Provider
-configuration is checked statically; runtime readiness is deliberately reported
-as `not_proven`. Independent reviewer principal/service/organization/credential
-roots are likewise `not_proven`, so this path can establish only
-`candidate_only`, never golden qualification.
-
-The historical Campaign 57 target remains terminal in both native state and
-the append-only journal and pins the old v2 dataset-mount array. A valid v4
-local-golden authority necessarily changes that array, so the current plan
-reports both dataset-binding and prior-journal blockers. Execution must not
-reuse or rewrite Campaign 57; it requires a new reviewed campaign ordinal, a
-target definition pinned to the real v4 mount, and independent reviewer
-authority.
-
-Runtime availability and scientific validity remain separate. The status probe
-reports ordinary automation, academic empirical readiness, provider
-configuration preflight, live selected-model canaries and release-attestor
-readiness independently. `fullAutomaticResearchWritingReady` is true only when
-the store is healthy, the registered runtimes are ready, a research-author
-provider and a distinct formal-review provider pass live canaries, and the
-release attestor is currently valid. It additionally requires
-`HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT` to name a fresh (at most 24 hours),
-hash-bound golden micro-campaign qualification. The receipt is verified against
-the exact current worktree, author/reviewer capability receipts, schema gate,
-runtime image digests, both live canaries and a current completed formal plus
-academic-empirical release from the trusted store. Its release and qualification
-signatures use the configured research-execution release attestor. The signed
-qualification also binds an externally attested bounded prior-art review
-reference. The repository does not validate search completeness, and this
-evidence does not prove universal scientific novelty. Author and reviewer may
-share provider authentication. Review independence is enforced by a fresh
-ephemeral reviewer session that cannot inherit author context, a distinct
-reviewer role ID, read-only execution, and exact frozen artifact bindings.
-Externally provisioned qualification and release receipts may be supplied by
-machine-operated KMS/attestation services, so no research-time human action is
-required, but they are never fabricated or self-signed by this process.
-
-`fullyAutonomousResearchSystemReady` is the stricter deployment claim. It
-requires `fullAutomaticResearchWritingReady`, a current machine-intake authority
-that can produce and enqueue a registered topic from an empty campaign queue,
-and a healthy fenced resident whose startup and intake reconciliation receipts
-match that current authority. `automation-status --require-fully-autonomous`
-returns exit code 4 when the lower runtime, store, operational, and full-research
-layers are ready but the autonomous layer is not; an earlier failed layer keeps
-its lower exit code. Live production attestor verification is explicit through
-`--live-release-attestor`; `automation:research-status` supplies it together
-with the live author/reviewer canary flag. This is a bounded unattended
-execution claim for registered profiles, not a claim of universal scientific
-validity, exhaustive prior-art search, or self-created independent trust.
-
-The outer research-assurance inspection is likewise plan-canonical. It binds
-the current agenda and Experiment-IR snapshots to the exact persisted formal,
-empirical original/replay, GPU-scientific and research-verification nodes,
-including campaign revision, node attempt/generation/revision/status,
-dependencies, specifications and result hashes. A second read must reproduce
-the same snapshots, so a concurrent generation change cannot splice evidence
-from two authorities. Hash-valid but noncanonical later rows, legacy fallback
-rows and self-shaped result payloads remain blocked. These checks establish
-local integrity only; the dynamic-formal authority, reviewer independence,
-external replay, GPU qualification and other independent assurances must still
-be supplied and verified by their actual authorities.
-
-The autonomous layer also requires the fail-closed state-safety gate documented
-in [`autonomous-research-state-safety-readiness.md`](autonomous-research-state-safety-readiness.md):
-closed database inventory and latest valid restore coverage must both be 10/10,
-and online writer coverage must be 10/10 with matching static AST and broker-
-signed scope evidence bound to a current signed authority head and recent
-active challenge. Ordinary status is read-only and non-authorizing, but it
-does perform local runtime and daemon observation probes; those observations
-are reported as effects and never grant execution authority. The production operation
-manifest now covers all ten roles through sixteen writer entries and classifies
-204 statically discovered mutation operations: 132 coordinator-integrated
-online DML operations are bound to factory-pinned typed plans, while 72
-schema/genesis or cross-database maintenance operations remain explicitly
-offline. The code-level writer coverage contract therefore reports `10/10`
-(100%).
-Constructor/schema DDL remains an offline provisioning operation. Startup can
-verify signed per-database unresolved reservations and idempotently finalize a
-trusted local committed marker. A marker-absent reservation is automatically
-aborted only under a database write lock when its exact local
-sequence/hash/schema/state still equals the signed pre-commit head; otherwise
-it is preserved as possible commit or rollback evidence and blocks startup. A
-deployment remains blocked until its databases are
-provisioned to the declared schemas, final-head reconciliation and production
-runtime activation succeed for all roles, and live external authority and
-restore evidence are present; backup or restore receipts cannot bypass those
-checks.
-
-Supervisor startup always performs a fresh no-write authority challenge after
-all ten databases reconcile, validates state safety, and only then persists a
-short-lived signed JSON evidence cache at
-`automation-cache/online-authority-evidence-v1/current.json`. This derived
-passive-status cache is outside the canonical ten-database inventory, is bound
-to the database scope, writer manifest and active-refresh receipt, and can never
-authorize a mutation. Cache write failure or any post-write inventory drift
-prevents the ready coordinator from being exposed.
-
-Store readiness is schema-authoritative rather than query-based: status verifies
-the exact migration identities for versions 21--25. A readable older database
-is reported as `automation_plane_store_blocked` until an offline migration is
-completed.
-
-Lean proves the generated Lean statement. Natural-language-to-Lean equivalence
-remains a separated semantic-review attestation, not a kernel theorem. Runtime
-image identities and transitive source/artifact closures are digest pinned, but
-bitwise image rebuild reproducibility remains false until an out-of-band-pinned
-dual-verifier configuration produces a fresh matching signed OCI receipt.
-
-Accordingly, this unreleased source remains a hardened candidate, not an
-assertion that an external production deployment is ready. No repository-local
-test, offline replay, handoff export or sealed package substitutes for a real
-KMS/HSM, independent author/reviewer/qualifier and replay authorities, runtime
-qualification, generic-domain evidence convergence, an isolated live dispatcher
-or its portal bindings and canaries. No live upload, portal mutation or email
-delivery is performed by the new handoff/export path.
-
-## Verification surface
-
-Use these commands for current status and release verification:
-
-`npm run static:check` includes syntax, lint, release-state consistency, and the
-architecture/import conformance suites. A green static result therefore cannot
-mask a red architecture gate.
-
-Pull requests run that static gate once and distribute the transitive
-changed-module test set across four deterministic shards. `test:impacted`
-selects tests through relative-import and explicit executable-path reachability;
-global configuration changes or an unmapped production module fail safe to the
-complete portable test set. Nightly CI retains full portable qualification,
-repository coverage and operational empirical/numerical/formal checks. Its
-Mathlib cache is accepted only after the pinned official commit and tree are
-remeasured, and it never grants production formal authority.
-
-```bash
-npm test
-npm run test:impacted:plan -- --base-ref <base>
-npm run test:impacted -- --base-ref <base> --shard-count 4 --shard-index 0
-npm run reference:integrity
-npm run safety:all
-npm run hepta-paper -- verify architecture
-npm run coverage:architecture
-npm run coverage:critical-modules
-npm run coverage:repository
-npm run coverage:system
-npm run migration:retirement-status
-npm run hepta-paper -- verify owner
-npm run hepta-paper -- verify operational
-npm run hepta-paper -- operator automation
-npm run hepta-paper -- operator research-readiness
-npm run store:logical-integrity
+```text
+workflow-kernel -> paper-domain -> paper-ports -> paper-application
+                                      -> paper-adapters
+                                      -> paper-composition
+                                      -> paper-core entrypoints
 ```
 
-The critical-module coverage gate reports and enforces line/function coverage
-plus a bounded uncovered-branch-block budget for each contracts, issuer/ledger,
-recovery and executor-boundary module rather than relying only on a
-repository-wide aggregate.
+`paper-composition` selects concrete adapters. Application/domain modules do not
+import adapter or CLI policy. The vendored `core/` reference package is not a
+production dependency.
+
+## Campaign and concurrency state
+
+- Campaign DAG state is the sole automation authority.
+- Running work is fenced by campaign revision, attempt ID, lease generation, and
+  worker identity.
+- Ready nodes may execute concurrently through bounded claims and global
+  agent/CPU/GPU/memory capacity.
+- Provider, empirical, formal, numerical, build, and review work returns
+  prepared results before authoritative integration.
+- Pause, cancel, lease loss, process death, and stale completion prevent late
+  integration.
+- Startup reconciliation handles expired leases, outstanding reservations,
+  prepared results, and known durable external-action states.
+
+The current resource governor is intentionally described as capacity control,
+not a proof of global optimization or starvation-free multi-resource fairness.
+Those upgrades are tracked by the global RES/SCH/PERF workstreams.
+
+## Workspace and artifact state
+
+Mutable work uses private attempt workspaces and bounded runtime roots. Source,
+dataset, image, executable, configuration, and artifact identities are checked
+before trusted use. Actual filesystem inventories—not agent self-report—define
+mutation. Publication and deletion paths use generation fencing, no-clobber
+moves, durable intent, exact inventory, and recovery protection.
+
+## Research and evidence state
+
+The current system supports bounded research planning, authoring, code work,
+formal and empirical orchestration, numerical/GPU execution, manuscript build,
+independent review rounds, revision, and evidence/package validation.
+
+Evidence promotion remains tiered:
+
+```text
+generated claim
+-> deterministic/local verification
+-> source or hosted qualification
+-> target-host evidence where required
+-> independently controlled external authority where required
+```
+
+A model narrative, local fixture, self-signed record, or repository-admin prose
+cannot replace an independent verifier or authority.
+
+## Capability coverage boundary
+
+The current 16-capability implementation catalog can produce a
+production-source-bound conformance replay of **16/16** after the required
+release-bound replay is executed. Independently controlled production
+operational proof remains **0/16** until distinct external capability owners and
+operational observers provide accepted evidence. These counts describe
+capability coverage, not production activation.
+
+## Release and submission boundary
+
+Local package construction and a sealed submission handoff do not perform a live
+submission. Live release signing, immutable-storage mutation, portal access, and
+submission require separately provisioned and current external capabilities,
+durable action journals, exact idempotency identity, and reconciliation after
+uncertain outcomes.
+
+No repository document or hosted CI result activates those effects.
+
+## Migration status
+
+The target migration is capability-based rather than a single rewrite
+percentage. Current next steps are:
+
+1. close exact qualification-subject defects for the Rust RC;
+2. qualify the global documentation and machine-truth tree;
+3. implement the module registry/protocol and Node legacy adapter;
+4. assemble the Rust central control-plane vertical slice;
+5. add hierarchical resource fairness and canonical performance workloads;
+6. shadow and canary one capability at a time;
+7. transfer writer/external authority atomically and retire the matching Node
+   path only after rollback and independent evidence.
+
+## External blockers
+
+The following remain outside repository-local proof:
+
+- protected-main policy export, denial probes, and independent decision;
+- private 263-file legacy replay and acknowledgement;
+- target-host listener, systemd, cgroup, storage, reboot, corruption, and soak;
+- independent capability-key lifecycle;
+- real separated Codex author/reviewer credential canaries;
+- KMS/HSM, immutable-storage, release, portal, and submission receipts.
+
+## Current validation surface
+
+```bash
+node docs/tools/validate-development-docs.mjs
+npm run scripts:check
+npm run security:source-gate
+npm run release:state-check
+npm run static:check
+npm run safety:all
+```
+
+Local command success does not replace the full locked CI matrix, exact source
+subject, latest-push review, target-host operation, or external-authority
+evidence.

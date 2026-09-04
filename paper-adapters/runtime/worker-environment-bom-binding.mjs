@@ -13,6 +13,7 @@ export function prepareWorkerEnvironmentBom({
   env,
   runtimePackageClosure = null,
   runtimeBuildReproducibility = null,
+  spawnSyncImpl = undefined,
 } = {}) {
   let environmentBom = null;
   try {
@@ -27,6 +28,7 @@ export function prepareWorkerEnvironmentBom({
       env,
       runtimePackageClosure,
       buildReproducibility: environmentBomBuildAssessment(runtimeBuildReproducibility),
+      ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
     });
   } catch { /* fail closed below */ }
   const verification = verifyEmpiricalEnvironmentBom(environmentBom);
@@ -44,6 +46,7 @@ export function createWorkerEnvironmentBomPreparer({
   maximumPids,
   maximumOutputBytes,
   maximumCapturedBytes,
+  spawnSyncImpl = undefined,
 } = {}) {
   return (input = {}) => {
     const limits = Object.freeze({
@@ -54,7 +57,7 @@ export function createWorkerEnvironmentBomPreparer({
       maximumOutputBytes: Math.min(Number(input.requestedMaximumOutputBytes ?? maximumOutputBytes), maximumOutputBytes),
       maximumCapturedBytes,
     });
-    const binding = prepareWorkerEnvironmentBom({ ...input, limits });
+    const binding = prepareWorkerEnvironmentBom({ ...input, limits, spawnSyncImpl });
     return Object.freeze({ ...binding, limits });
   };
 }

@@ -10,7 +10,9 @@ const TEST_DEPENDENCY_KEYS = Object.freeze([
   'datasetSnapshotObserver',
   'dockerContainerRecoveryExecutor',
   'executor',
+  'environmentBomSpawnSync',
   'gpuDeviceCapacityObserver',
+  'gpuDevicePathObserver',
   'imageDigestResolver',
   'probe',
   'runtimeExecutableSnapshotObserver',
@@ -25,6 +27,13 @@ export function createOsSandboxedWorkerRunnerForTest(options = {}) {
       testDependencies[key] = productionOptions[key];
       delete productionOptions[key];
     }
+  }
+  if (productionOptions.allowGpu
+    && !Object.prototype.hasOwnProperty.call(testDependencies, 'gpuDevicePathObserver')) {
+    testDependencies.gpuDevicePathObserver = () => [
+      '/dev/nvidia0',
+      '/dev/nvidiactl',
+    ];
   }
   return createOsSandboxedWorkerRunnerEngine(productionOptions, testDependencies);
 }

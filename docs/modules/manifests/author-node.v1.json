@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "kind": "ModuleDocumentationManifestV1",
+  "moduleId": "module.author-node",
+  "registryRef": "docs/system/truth/modules.v1.json#/modules/module.author-node",
+  "specPath": "docs/modules/specs/author-node.md",
+  "runbookPath": "docs/modules/specs/author-node.md#operational-runbook",
+  "implementationPaths": ["paper-application/automation","paper-adapters/automation"],
+  "capabilityIds": ["CAP-AUTHOR"],
+  "authorityClass": "prepared_result_only",
+  "ownerTeams": ["TEAM-AUTHOR","TEAM-WORKSPACE","TEAM-REVIEW"],
+  "dependencyModuleIds": ["module.node-control-plane"],
+  "workItemIds": ["AUTH-001"],
+  "qualificationRequirement": "source",
+  "protocolRange": {"minimum":1,"maximum":1},
+  "sideEffectClasses": ["local_ephemeral","workspace_mutation","prepared_result"],
+  "determinismClass": "bounded_nondeterministic",
+  "resourceProfile": {"sourceContract":"bounded","deploymentProfileRequired":true,"implicitCapacityAllowed":false,"unboundedChildConcurrencyAllowed":false},
+  "sloProfile": {"status":"source_contract_defined","canonicalWorkloadsRequired":true,"zeroToleranceSafetyCountersRequired":true},
+  "rollout": {"currentStaticActivation":"authoritative","automaticActivation":false,"productionActivation":false,"rollbackTargetRequired":true,"mutualExclusionRequired":false},
+  "documentationStatus": "complete",
+  "effectiveQualification": "derived_only"
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "kind": "ModuleDocumentationManifestV1",
+  "moduleId": "module.codex-broker",
+  "registryRef": "docs/system/truth/modules.v1.json#/modules/module.codex-broker",
+  "specPath": "docs/modules/specs/codex-broker.md",
+  "runbookPath": "docs/modules/specs/codex-broker.md#operational-runbook",
+  "implementationPaths": ["rust/crates/hepta-codex-broker","rust/crates/hepta-codex-journal"],
+  "capabilityIds": ["CAP-EXE-BROKER"],
+  "authorityClass": "prepared_result_only",
+  "ownerTeams": ["TEAM-RUNTIME","TEAM-SRE","TEAM-EVIDENCE"],
+  "dependencyModuleIds": ["module.protocol-kernel"],
+  "workItemIds": ["GAP-CODEX-001","GAP-HOST-001","GAP-KEY-001"],
+  "qualificationRequirement": "target_host",
+  "protocolRange": {"minimum":1,"maximum":1},
+  "sideEffectClasses": ["local_ephemeral","workspace_mutation","prepared_result"],
+  "determinismClass": "deterministic",
+  "resourceProfile": {"sourceContract":"bounded","deploymentProfileRequired":true,"implicitCapacityAllowed":false,"unboundedChildConcurrencyAllowed":false},
+  "sloProfile": {"status":"baseline_pending","canonicalWorkloadsRequired":true,"zeroToleranceSafetyCountersRequired":true},
+  "rollout": {"currentStaticActivation":"disabled","automaticActivation":false,"productionActivation":false,"rollbackTargetRequired":true,"mutualExclusionRequired":false},
+  "documentationStatus": "complete",
+  "effectiveQualification": "derived_only"
+}

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import { createPositSnapshotRSourceArchiveTransport } from '../../paper-adapters/automation/r-runtime-source-archive-transport.mjs';
@@ -34,19 +35,46 @@ function onePackageFixture(t) {
       },
     },
   }, null, 2)}\n`);
-  fs.copyFileSync(
-    path.join(SOURCE_CONTEXT, 'source-cas', 'src', 'contrib', 'askpass_1.2.1.tar.gz'),
-    path.join(seed, 'askpass_1.2.1.tar.gz'),
+  const packageParent = path.join(root, 'package');
+  const packageRoot = path.join(packageParent, 'askpass');
+  fs.mkdirSync(path.join(packageRoot, 'R'), { recursive: true });
+  fs.writeFileSync(path.join(packageRoot, 'DESCRIPTION'), [
+    'Package: askpass',
+    'Version: 1.2.1',
+    'Title: Portable Source CAS Fixture',
+    'Description: A self-contained package archive used to test offline acquisition.',
+    'License: MIT',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(packageRoot, 'NAMESPACE'), 'export(askpass_fixture)\n');
+  fs.writeFileSync(
+    path.join(packageRoot, 'R', 'askpass.R'),
+    "askpass_fixture <- function() 'portable-source-cas-fixture'\n",
   );
+  const archive = path.join(seed, 'askpass_1.2.1.tar.gz');
+  const packed = spawnSync('tar', ['-czf', archive, '-C', packageParent, 'askpass'], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  assert.equal(packed.status, 0, String(packed.stderr || packed.error || 'tar_failed'));
+  assert.ok(fs.statSync(archive).size >= 100);
   return { contextPath, seed };
 }
 
-test('checked-in R source CAS is the exact 104-package lock closure', () => {
+test('externalized R source CAS is exact when materialized and fail-closed otherwise', () => {
   const current = verifyRRuntimeSourceCas({ contextPath: SOURCE_CONTEXT });
-  assert.equal(current.ready, true, JSON.stringify(current.blockers));
-  assert.equal(current.packageCount, 104);
-  assert.equal(current.manifestHash, R_RUNTIME_SOURCE_CAS.manifestHash);
-  assert.equal(current.definitionPaths.length, 107);
+  const materialized = fs.existsSync(path.join(SOURCE_CONTEXT, 'source-cas', 'manifest.json'));
+  if (materialized) {
+    assert.equal(current.ready, true, JSON.stringify(current.blockers));
+    assert.equal(current.packageCount, 104);
+    assert.equal(current.manifestHash, R_RUNTIME_SOURCE_CAS.manifestHash);
+    assert.equal(current.definitionPaths.length, 107);
+    return;
+  }
+  assert.equal(current.ready, false);
+  assert.equal(R_RUNTIME_SOURCE_CAS.ready, false);
+  assert.match(current.blockers[0], /^r_runtime_source_cas_unavailable:/);
 });
 
 test('seed acquisition is atomic, offline, content-hashed and fail-closed on manifest tamper', async (t) => {

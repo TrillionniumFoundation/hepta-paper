@@ -1,0 +1,52 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/hepta-codex-broker",
+  "crates/hepta-codex-protocol",
+  "crates/hepta-codex-event-stream",
+  "crates/hepta-codex-journal",
+  "crates/hepta-codex-runtime",
+  "crates/hepta-codex-testkit",
+  "crates/hepta-compatibility",
+  "crates/hepta-workspace",
+  "crates/hepta-readonly-store",
+  "crates/hepta-campaign-writer",
+  "crates/hepta-cgroup-containment",
+  "crates/hepta-legacy-compatibility",
+  "crates/hepta-readonly-control",
+  "crates/hepta-workspace-authority",
+  "crates/hepta-local-vertical",
+  "crates/hepta-scientific-evidence",
+  "crates/hepta-external-authority",
+  "crates/hepta-cutover",
+  "crates/hepta-qualification-ingest",
+  "crates/hepta-module-platform",
+  "crates/hepta-control-plane",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+base64ct = { version = "=1.8.3", features = ["alloc"] }
+ed25519-dalek = "=3.0.0"
+hex = "=0.4.3"
+nix = { version = "=0.31.3", features = ["fs", "process", "signal", "socket"] }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_derive = "=1.0.219"
+serde_json = "=1.0.140"
+sha2 = "=0.10.8"
+thiserror = "=2.0.12"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

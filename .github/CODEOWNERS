@@ -1,0 +1,29 @@
+# High-risk authority and release surfaces require review by an explicit
+# repository writer. Keep this file synchronized with the protected-main ruleset.
+
+/.github/ @ProfHepta
+/.gitmodules @ProfHepta
+/core @ProfHepta
+/runtime-images/ @ProfHepta
+/docs/ @ProfHepta
+
+/rust/ @ProfHepta
+
+/workflow-kernel/ @ProfHepta
+/paper-domain/ @ProfHepta
+/paper-ports/ @ProfHepta
+/paper-application/ @ProfHepta
+/paper-adapters/ @ProfHepta
+/paper-composition/ @ProfHepta
+/paper-core/bin/ @ProfHepta
+/paper-core/src/ @ProfHepta
+/paper-core/config/ @ProfHepta
+/paper-core/docs/ @ProfHepta
+
+/migration/ @ProfHepta
+/store/migrations/ @ProfHepta
+
+/package.json @ProfHepta
+/package-lock.json @ProfHepta
+/RELEASE.md @ProfHepta
+/CHANGELOG.md @ProfHepta

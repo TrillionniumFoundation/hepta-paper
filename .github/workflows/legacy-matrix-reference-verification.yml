@@ -1,0 +1,104 @@
+name: legacy-matrix-reference-verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: Exact commit, tag, or branch to qualify with the 263-file reference
+        required: true
+        default: codex/rust-plan-v3-final-product-20260830
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CANDIDATE_REF: ${{ inputs.candidate_ref }}
+      COMPANION_REPOSITORY: TrillionniumFoundation/hepta-paper-legacy-reference
+      COMPANION_RELEASE: legacy-reference-v0.6.0-e431c4c7
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ inputs.candidate_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+
+      - name: Install migration verification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Require trusted private-reference credential
+        shell: bash
+        env:
+          LEGACY_REFERENCE_TOKEN: ${{ secrets.HEPTA_LEGACY_REFERENCE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$LEGACY_REFERENCE_TOKEN"
+
+      - name: Materialize private exact archive
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.HEPTA_LEGACY_REFERENCE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          reference_dir="$RUNNER_TEMP/hepta-legacy-reference"
+          mkdir -p "$reference_dir"
+          gh release download "$COMPANION_RELEASE" \
+            --repo "$COMPANION_REPOSITORY" \
+            --pattern 'paper-factory-control-plane-reference.tar.gz' \
+            --dir "$reference_dir" \
+            --clobber
+          gh release download "$COMPANION_RELEASE" \
+            --repo "$COMPANION_REPOSITORY" \
+            --pattern 'PUBLICATION_MANIFEST.v1.json' \
+            --dir "$reference_dir" \
+            --clobber
+          test -f "$reference_dir/paper-factory-control-plane-reference.tar.gz"
+          test -f "$reference_dir/PUBLICATION_MANIFEST.v1.json"
+          printf 'candidate_sha=%s\n' "$(git rev-parse HEAD)"
+          printf 'candidate_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+
+      - name: Verify archive, matrix, and every source hash
+        shell: bash
+        env:
+          ARCHIVE: ${{ runner.temp }}/hepta-legacy-reference/paper-factory-control-plane-reference.tar.gz
+          COMPANION_MANIFEST: ${{ runner.temp }}/hepta-legacy-reference/PUBLICATION_MANIFEST.v1.json
+        run: |
+          set -euo pipefail
+          node migration/bin/verify-legacy-matrix-reference-publication.mjs \
+            --archive "$ARCHIVE" \
+            --companion-manifest "$COMPANION_MANIFEST" \
+            > "$RUNNER_TEMP/legacy-matrix-reference-verification.json"
+          cat "$RUNNER_TEMP/legacy-matrix-reference-verification.json"
+
+      - name: Replay migration gates on the same candidate
+        shell: bash
+        env:
+          HEPTA_LEGACY_REFERENCE_ARCHIVE: ${{ runner.temp }}/hepta-legacy-reference/paper-factory-control-plane-reference.tar.gz
+        run: |
+          set -euo pipefail
+          npm run migration:matrix-integrity
+          npm run test:migration-differential
+
+      - name: Upload verification record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: legacy-matrix-reference-verification-${{ github.run_id }}
+          path: ${{ runner.temp }}/legacy-matrix-reference-verification.json
+          if-no-files-found: ignore
+          retention-days: 90

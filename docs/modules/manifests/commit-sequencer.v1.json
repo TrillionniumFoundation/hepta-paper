@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "kind": "ModuleDocumentationManifestV1",
+  "moduleId": "module.commit-sequencer",
+  "registryRef": "docs/system/truth/modules.v1.json#/modules/module.commit-sequencer",
+  "specPath": "docs/modules/specs/commit-sequencer.md",
+  "runbookPath": "docs/modules/specs/commit-sequencer.md#operational-runbook",
+  "implementationPaths": ["rust/crates/hepta-campaign-writer","docs/control-plane/COMMIT_SEQUENCER.md"],
+  "capabilityIds": ["CAP-STATE-COMMIT"],
+  "authorityClass": "central_state_write",
+  "ownerTeams": ["TEAM-STATE","TEAM-KERNEL","TEAM-EVIDENCE"],
+  "dependencyModuleIds": ["module.policy-engine"],
+  "workItemIds": ["CTL-007","GAP-HOST-002"],
+  "qualificationRequirement": "target_host",
+  "protocolRange": {"minimum":1,"maximum":1},
+  "sideEffectClasses": ["central_commit"],
+  "determinismClass": "deterministic",
+  "resourceProfile": {"sourceContract":"bounded","deploymentProfileRequired":true,"implicitCapacityAllowed":false,"unboundedChildConcurrencyAllowed":false},
+  "sloProfile": {"status":"baseline_pending","canonicalWorkloadsRequired":true,"zeroToleranceSafetyCountersRequired":true},
+  "rollout": {"currentStaticActivation":"disabled","automaticActivation":false,"productionActivation":false,"rollbackTargetRequired":true,"mutualExclusionRequired":true},
+  "documentationStatus": "complete",
+  "effectiveQualification": "derived_only"
+}

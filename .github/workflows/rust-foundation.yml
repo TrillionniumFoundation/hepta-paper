@@ -1,0 +1,178 @@
+name: rust-foundation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  RUSTFLAGS: '-Dunsafe-code'
+
+jobs:
+  validate:
+    name: format, lint, test, docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Reject Rust OpenClaw dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RniE 'openclaw' \
+            --include='*.rs' \
+            --include='Cargo.toml' \
+            --include='*.toml' \
+            rust/crates rust/Cargo.toml rust/rust-toolchain.toml; then
+            echo 'OpenClaw is forbidden in the Rust source and manifest graph.' >&2
+            exit 1
+          fi
+
+      - name: Require committed dependency lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f rust/Cargo.lock
+          sha256sum rust/Cargo.lock
+
+      - name: Validate locked dependency metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata \
+            --manifest-path rust/Cargo.toml \
+            --format-version 1 \
+            --locked \
+            --no-deps \
+            > /tmp/hepta-rust-metadata.json
+          sha256sum rust/Cargo.lock /tmp/hepta-rust-metadata.json
+
+      - name: Prepare validation log directory
+        shell: bash
+        run: mkdir -p /tmp/hepta-rust-validation
+
+      - name: Check formatting
+        id: rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo fmt --manifest-path rust/Cargo.toml --all -- --check; then
+            echo 'failed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'failed=true' >> "$GITHUB_OUTPUT"
+            cargo fmt --manifest-path rust/Cargo.toml --all
+            git diff --binary -- rust > /tmp/hepta-rust-validation/rustfmt.patch
+            test -s /tmp/hepta-rust-validation/rustfmt.patch
+          fi
+
+      - name: Upload rustfmt patch
+        if: steps.rustfmt.outputs.failed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rustfmt-patch
+          path: /tmp/hepta-rust-validation/rustfmt.patch
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Fail on formatting drift
+        if: steps.rustfmt.outputs.failed == 'true'
+        shell: bash
+        run: |
+          echo '::error::rustfmt drift detected; apply the rustfmt-patch artifact.'
+          exit 1
+
+      - name: Run Clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-targets \
+            --all-features \
+            --locked \
+            -- \
+            -D warnings \
+            -D unsafe-code \
+            -D clippy::todo \
+            -D clippy::unimplemented \
+            2>&1 | tee /tmp/hepta-rust-validation/clippy-all-targets.log
+
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --lib \
+            --bins \
+            --all-features \
+            --locked \
+            -- \
+            -D warnings \
+            -D unsafe-code \
+            -D clippy::todo \
+            -D clippy::unimplemented \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -D clippy::panic \
+            2>&1 | tee /tmp/hepta-rust-validation/clippy-production.log
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            2>&1 | tee /tmp/hepta-rust-validation/test.log
+
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo doc \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            --no-deps \
+            2>&1 | tee /tmp/hepta-rust-validation/rustdoc.log
+
+      - name: Upload Rust validation logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-validation-logs
+          path: /tmp/hepta-rust-validation
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0

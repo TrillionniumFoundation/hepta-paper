@@ -1,0 +1,285 @@
+diff --git a/paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs b/paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs
+index fb18e40..2c3279d 100644
+--- a/paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs
++++ b/paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs
+@@ -13,7 +13,6 @@ import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
+ import { runBoundedChildProcess } from '../automation/bounded-child-process.mjs';
+ import {
+   buildGpuDispatchMemoryAdmissionEvaluation,
+-  verifyGpuDispatchMemoryAdmissionRequirement,
+   verifyNvidiaGpuDeviceCapacityObservation,
+ } from '../../paper-domain/automation/nvidia-gpu-device-capacity-contract.mjs';
+ import {
+@@ -55,7 +54,6 @@ import {
+   datasetRuntimePreflightBlockers,
+   dockerSystemMounts,
+   executableRuntimePathSupported,
+-  normalizeNvidiaGpuDeviceSelector,
+   normalizeTrustedDatasetSupervisorImage,
+   prepareUnprivilegedDatasetWorkspace,
+ } from './os-sandbox-worker-runtime-support.mjs';
+@@ -72,28 +70,16 @@ import {
+   prepareWorkerExecutableIdentityAllowlist,
+ } from './os-sandbox-worker-execution-identity.mjs';
+ import { bindOsSandboxWorkerGpuSelectorLeaseAtLaunch, blockedOsSandboxWorkerGpuSelectorLease, createOsSandboxWorkerGpuSelectorLeaseCoordinator, recoverDockerWorkerContainerAndFenceGpuSelectorLease } from './os-sandbox-worker-gpu-selector-lease.mjs';
++import {
++  inspectOsSandboxWorkerGpuPreflight,
++  observeNvidiaGpuDevicePaths,
++} from './os-sandbox-worker-gpu-preflight.mjs';
+ 
+ function normalizeSynchronousLauncherResult(result) {
+   if (result?.error?.code !== 'ETIMEDOUT' || result.timedOut === true) return result;
+   return { ...result, timedOut: true };
+ }
+ 
+-function observeNvidiaGpuDevicePaths() {
+-  if (!fs.existsSync('/dev')) return [];
+-  return fs.readdirSync('/dev')
+-    .filter((name) => /^nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(name))
+-    .map((name) => `/dev/${name}`);
+-}
+-
+-function normalizeObservedNvidiaGpuDevicePaths(observed) {
+-  if (!Array.isArray(observed)) return [];
+-  const normalized = observed.map((candidate) => String(candidate));
+-  if (normalized.some((candidate) => (
+-    !/^\/dev\/nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(candidate)
+-  ))) return [];
+-  return [...new Set(normalized)].sort();
+-}
+-
+ export function createOsSandboxedWorkerRunnerEngine({
+   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
+   runtimeRoot = null,
+@@ -277,47 +263,20 @@ export function createOsSandboxedWorkerRunnerEngine({
+       const resolvedOutputDirectory = outputDirectory ? path.resolve(outputDirectory) : null;
+       const allowedOutputRoot = resolvedOutputDirectory ? outputRoots.find((root) => isPathWithin(root, resolvedOutputDirectory)) : null;
+       if (outputPaths.length && (!resolvedOutputDirectory || !allowedOutputRoot)) blockers.push('worker_output_directory_not_allowlisted');
+-      let gpuDevices = [];
+-      try {
+-        gpuDevices = normalizeObservedNvidiaGpuDevicePaths(gpuDevicePathObserver());
+-      } catch {
+-        gpuDevices = [];
+-      }
+-      const normalizedGpuDeviceSelector = normalizeNvidiaGpuDeviceSelector(gpuDeviceSelector);
+-      const gpuPreflightCapacityObservation = requiresGpu
+-        ? gpuDeviceCapacityObserver(normalizedGpuDeviceSelector) : null;
+-      const gpuDeviceSelectorObserved =
+-        gpuPreflightCapacityObservation?.gpuDeviceSelector
+-        === normalizedGpuDeviceSelector;
+-      if (requiresGpu && (!allowGpu || gpuDevices.length === 0)) blockers.push('worker_gpu_not_available_or_not_allowed');
+-      if (requiresGpu && executionBackend !== 'docker') blockers.push('worker_gpu_requires_docker_device_isolation');
+-      if (requiresGpu && !normalizedGpuDeviceSelector) blockers.push('worker_gpu_device_selector_invalid');
+-      if (requiresGpu && (!injectedGpuSelectorExecutionLease
+-        || injectedGpuSelectorExecutionLease.gpuDeviceSelector
+-          !== normalizedGpuDeviceSelector)) {
+-        blockers.push('worker_gpu_selector_execution_lease_invalid');
+-      }
+-      if (requiresGpu && (!Number.isSafeInteger(Number(absoluteDeadlineEpochMs))
+-        || Number(absoluteDeadlineEpochMs) <= Date.now())) {
+-        blockers.push('worker_gpu_absolute_deadline_invalid_or_exhausted');
+-      }
+-      if (requiresGpu && normalizedGpuDeviceSelector && !gpuDeviceSelectorObserved) {
+-        blockers.push('worker_gpu_device_capacity_observation_invalid');
+-      }
+-      if (!requiresGpu && gpuDeviceSelector !== null && gpuDeviceSelector !== undefined) blockers.push('worker_gpu_device_selector_without_gpu_request');
+-      if (!requiresGpu && gpuDispatchMemoryAdmission !== null
+-        && gpuDispatchMemoryAdmission !== undefined) {
+-        blockers.push('worker_gpu_dispatch_memory_admission_without_gpu_request');
+-      }
+-      if (requiresGpu && gpuDispatchMemoryAdmission !== null
+-        && !verifyGpuDispatchMemoryAdmissionRequirement(gpuDispatchMemoryAdmission)) {
+-        blockers.push('worker_gpu_dispatch_memory_admission_invalid');
+-      }
+-      if (requiresGpu && gpuDispatchMemoryAdmission !== null
+-        && gpuDispatchMemoryAdmission?.gpuDeviceSelector !== normalizedGpuDeviceSelector) {
+-        blockers.push('worker_gpu_dispatch_memory_admission_selector_mismatch');
+-      }
+-      if (requiresGpu && Object.prototype.hasOwnProperty.call(env, 'CUDA_VISIBLE_DEVICES')) blockers.push('worker_gpu_visibility_environment_override_forbidden');
++      const gpuPreflight = inspectOsSandboxWorkerGpuPreflight({
++        requiresGpu,
++        allowGpu,
++        executionBackend,
++        gpuDeviceSelector,
++        gpuDispatchMemoryAdmission,
++        gpuDeviceCapacityObserver,
++        gpuDevicePathObserver,
++        gpuSelectorExecutionLease: injectedGpuSelectorExecutionLease,
++        absoluteDeadlineEpochMs,
++        environment: env,
++      });
++      const { normalizedGpuDeviceSelector } = gpuPreflight;
++      blockers.push(...gpuPreflight.blockers);
+       const normalizedDatasets = datasetMounts.map((mount, index) => {
+         const source = path.resolve(String(mount?.source || ''));
+         const name = String(mount?.name || `dataset-${index + 1}`).replace(/[^A-Za-z0-9_.-]/g, '_');
+diff --git a/paper-core/bin/run-isolated-command.mjs b/paper-core/bin/run-isolated-command.mjs
+index a037f58..1a90849 100644
+--- a/paper-core/bin/run-isolated-command.mjs
++++ b/paper-core/bin/run-isolated-command.mjs
+@@ -48,9 +48,18 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
+   );
+   const isolatedDb = path.join(isolatedRuntimeRoot, 'hepta-paper.sqlite');
+   const productionHashBefore = sha(productionDb);
+-  const legacyReference = prepareImmutableLegacyMatrixReference();
+-  const cleanupLegacyReference = createNonReentrantCleanup(() => legacyReference.cleanup());
+-  process.once('exit', cleanupLegacyReference);
++  let legacyReference = null;
++  try {
++    legacyReference = prepareImmutableLegacyMatrixReference();
++  } catch (error) {
++    if (!/^Immutable legacy matrix archive sha256:[0-9a-f]{64} not found$/u.test(String(error?.message || ''))) {
++      throw error;
++    }
++  }
++  const cleanupLegacyReference = createNonReentrantCleanup(
++    () => legacyReference?.cleanup(),
++  );
++  if (legacyReference) process.once('exit', cleanupLegacyReference);
+   if (fs.existsSync(productionDb)) await copySqliteDatabase({ sourcePath: productionDb, destinationPath: isolatedDb });
+   for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox', 'legacy-retirement', path.join('release-evidence', 'current'), path.join('audits', 'capability-verification')]) {
+     const source = path.join(productionRuntimeRoot, relative);
+@@ -71,15 +80,17 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
+     HEPTA_EVIDENCE_ENVIRONMENT: 'verification',
+     HEPTA_EVIDENCE_CLASS: 'technical_conformance',
+     HEPTA_RELEASE_COMMIT: provenance.commit || '',
+-    HEPTA_LEGACY_REFERENCE_PREPARED: '1',
+-    HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath,
+-    PAPER_FACTORY_LEGACY_ROOT: legacyReference.root,
++    ...(legacyReference ? {
++      HEPTA_LEGACY_REFERENCE_PREPARED: '1',
++      HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath,
++      PAPER_FACTORY_LEGACY_ROOT: legacyReference.root,
++    } : {}),
+   };
+   const result = run(env);
+   const productionHashAfter = sha(productionDb);
+   const mutated = productionHashBefore !== productionHashAfter;
+   cleanupLegacyReference();
+-  process.removeListener('exit', cleanupLegacyReference);
++  if (legacyReference) process.removeListener('exit', cleanupLegacyReference);
+   if (result.status === 0 && !mutated) cleanupIsolatedRuntimeRoot();
+   else process.stderr.write(`Isolated command runtime retained: ${isolatedRuntimeRoot}\n`);
+   if (mutated) process.stderr.write('Production store changed during isolated command.\n');
+diff --git a/paper-core/tests/fixtures/trusted-independent-pdf-rebuild-verifier.mjs b/paper-core/tests/fixtures/trusted-independent-pdf-rebuild-verifier.mjs
+index ace5cca..56f31a4 100644
+--- a/paper-core/tests/fixtures/trusted-independent-pdf-rebuild-verifier.mjs
++++ b/paper-core/tests/fixtures/trusted-independent-pdf-rebuild-verifier.mjs
+@@ -16,6 +16,7 @@ import {
+ import {
+   buildDeterministicPdfFixture,
+ } from '../support/deterministic-pdf-fixture.mjs';
++export { buildDeterministicPdfFixture };
+ 
+ function contentHash(content) {
+   return `sha256:${createHash('sha256').update(content).digest('hex')}`;
+diff --git a/paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs b/paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs
+index d981313..9efd7e0 100644
+--- a/paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs
++++ b/paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs
+@@ -84,9 +84,9 @@ import {
+   createPdePoisson2dCpuOracleFixtureRunner,
+ } from './pde-poisson-2d-cpu-oracle-fixture-runner.mjs';
+ import {
++  buildDeterministicPdfFixture,
+   createTrustedIndependentPdfRebuildVerifierFixture,
+ } from '../fixtures/trusted-independent-pdf-rebuild-verifier.mjs';
+-import { buildDeterministicPdfFixture } from './deterministic-pdf-fixture.mjs';
+ 
+ const canonicalPdeExecutorModule =
+   await importCanonicalCupyPdePoisson2dExecutorForTest();
+diff --git a/paper-adapters/runtime/os-sandbox-worker-gpu-preflight.mjs b/paper-adapters/runtime/os-sandbox-worker-gpu-preflight.mjs
+new file mode 100644
+index 0000000..4a9a09b
+--- /dev/null
++++ b/paper-adapters/runtime/os-sandbox-worker-gpu-preflight.mjs
+@@ -0,0 +1,89 @@
++import fs from 'node:fs';
++
++import {
++  verifyGpuDispatchMemoryAdmissionRequirement,
++} from '../../paper-domain/automation/nvidia-gpu-device-capacity-contract.mjs';
++import {
++  normalizeNvidiaGpuDeviceSelector,
++} from './os-sandbox-worker-runtime-support.mjs';
++
++export function observeNvidiaGpuDevicePaths() {
++  if (!fs.existsSync('/dev')) return [];
++  return fs.readdirSync('/dev')
++    .filter((name) => /^nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(name))
++    .map((name) => `/dev/${name}`);
++}
++
++function normalizeObservedNvidiaGpuDevicePaths(observed) {
++  if (!Array.isArray(observed)) return [];
++  const normalized = observed.map((candidate) => String(candidate));
++  if (normalized.some((candidate) => (
++    !/^\/dev\/nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(candidate)
++  ))) return [];
++  return [...new Set(normalized)].sort();
++}
++
++export function inspectOsSandboxWorkerGpuPreflight({
++  requiresGpu,
++  allowGpu,
++  executionBackend,
++  gpuDeviceSelector,
++  gpuDispatchMemoryAdmission,
++  gpuDeviceCapacityObserver,
++  gpuDevicePathObserver,
++  gpuSelectorExecutionLease,
++  absoluteDeadlineEpochMs,
++  environment,
++  now = Date.now(),
++}) {
++  const blockers = [];
++  let gpuDevices = [];
++  try {
++    gpuDevices = normalizeObservedNvidiaGpuDevicePaths(gpuDevicePathObserver());
++  } catch {
++    gpuDevices = [];
++  }
++  const normalizedGpuDeviceSelector = normalizeNvidiaGpuDeviceSelector(gpuDeviceSelector);
++  const gpuPreflightCapacityObservation = requiresGpu
++    ? gpuDeviceCapacityObserver(normalizedGpuDeviceSelector) : null;
++  const gpuDeviceSelectorObserved =
++    gpuPreflightCapacityObservation?.gpuDeviceSelector === normalizedGpuDeviceSelector;
++
++  if (requiresGpu && (!allowGpu || gpuDevices.length === 0)) blockers.push('worker_gpu_not_available_or_not_allowed');
++  if (requiresGpu && executionBackend !== 'docker') blockers.push('worker_gpu_requires_docker_device_isolation');
++  if (requiresGpu && !normalizedGpuDeviceSelector) blockers.push('worker_gpu_device_selector_invalid');
++  if (requiresGpu && (!gpuSelectorExecutionLease
++    || gpuSelectorExecutionLease.gpuDeviceSelector !== normalizedGpuDeviceSelector)) {
++    blockers.push('worker_gpu_selector_execution_lease_invalid');
++  }
++  if (requiresGpu && (!Number.isSafeInteger(Number(absoluteDeadlineEpochMs))
++    || Number(absoluteDeadlineEpochMs) <= now)) {
++    blockers.push('worker_gpu_absolute_deadline_invalid_or_exhausted');
++  }
++  if (requiresGpu && normalizedGpuDeviceSelector && !gpuDeviceSelectorObserved) {
++    blockers.push('worker_gpu_device_capacity_observation_invalid');
++  }
++  if (!requiresGpu && gpuDeviceSelector !== null && gpuDeviceSelector !== undefined) {
++    blockers.push('worker_gpu_device_selector_without_gpu_request');
++  }
++  if (!requiresGpu && gpuDispatchMemoryAdmission !== null
++    && gpuDispatchMemoryAdmission !== undefined) {
++    blockers.push('worker_gpu_dispatch_memory_admission_without_gpu_request');
++  }
++  if (requiresGpu && gpuDispatchMemoryAdmission !== null
++    && !verifyGpuDispatchMemoryAdmissionRequirement(gpuDispatchMemoryAdmission)) {
++    blockers.push('worker_gpu_dispatch_memory_admission_invalid');
++  }
++  if (requiresGpu && gpuDispatchMemoryAdmission !== null
++    && gpuDispatchMemoryAdmission?.gpuDeviceSelector !== normalizedGpuDeviceSelector) {
++    blockers.push('worker_gpu_dispatch_memory_admission_selector_mismatch');
++  }
++  if (requiresGpu && Object.prototype.hasOwnProperty.call(environment, 'CUDA_VISIBLE_DEVICES')) {
++    blockers.push('worker_gpu_visibility_environment_override_forbidden');
++  }
++
++  return Object.freeze({
++    blockers: Object.freeze(blockers),
++    normalizedGpuDeviceSelector,
++  });
++}

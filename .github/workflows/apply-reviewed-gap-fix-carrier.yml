@@ -1,0 +1,103 @@
+name: apply-reviewed-gap-fix-carrier
+
+on:
+  push:
+    branches:
+      - codex/global-plan-final-gap-closure-20260902
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-reviewed-gap-fix-carrier-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply-reviewed-patch:
+    if: github.event.head_commit.message == 'chore(ci): carry reviewed exact-head gap patch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      EXPECTED_PARENT_SHA: 1e480b9103491afa49fbd528744d79c0f97d4d63
+      PATCH_GZIP_SHA256: 837ebee59ae0254e3f0d9e7a16bb2c6b6e1950c1fd3d3c59bf5de8f64798d93a
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+
+      - name: Verify exact carrier subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-list --count "$EXPECTED_PARENT_SHA..HEAD")" = 1
+          actual_paths="$(git diff --name-only "$EXPECTED_PARENT_SHA" HEAD | LC_ALL=C sort)"
+          expected_paths="$(printf '%s\n' \
+            '.ci/hepta-gap-fix.patch.gz.b64' \
+            '.github/workflows/apply-reviewed-gap-fix-carrier.yml' \
+            | LC_ALL=C sort)"
+          test "$actual_paths" = "$expected_paths"
+
+      - name: Decode and apply reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .ci/hepta-gap-fix.patch.gz.b64 > "$RUNNER_TEMP/hepta-gap-fix.patch.gz"
+          echo "$PATCH_GZIP_SHA256  $RUNNER_TEMP/hepta-gap-fix.patch.gz" | sha256sum -c -
+          gzip --decompress --stdout "$RUNNER_TEMP/hepta-gap-fix.patch.gz" > "$RUNNER_TEMP/hepta-gap-fix.patch"
+          git apply --check --whitespace=error-all "$RUNNER_TEMP/hepta-gap-fix.patch"
+          git apply --whitespace=error-all "$RUNNER_TEMP/hepta-gap-fix.patch"
+          git diff --check
+
+      - name: Run static and focused regression gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3 texlive-latex-base
+          npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v22.23.1"
+          node --check paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs
+          node --check paper-adapters/automation/repository-asset-externalization.mjs
+          node --check paper-adapters/automation/repository-asset-submodule-binding.mjs
+          node --check paper-core/tests/r-runtime-source-cas.test.mjs
+          node --check paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs
+          node --check paper-core/tests/support/os-sandboxed-worker-runner-test-driver.mjs
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          node --test --test-concurrency=1 \
+            paper-core/tests/r-runtime-source-cas.test.mjs \
+            paper-core/tests/repository-asset-externalization.test.mjs \
+            paper-core/tests/automation-readiness-policy.test.mjs \
+            paper-core/tests/autonomous-submission-request-verifier-composition.test.mjs \
+            paper-core/tests/gpu-scientific-campaign-execution-lease-binding.test.mjs
+
+      - name: Commit exact reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- \
+            .github/workflows/ci.yml \
+            .github/workflows/exact-head-source-validation.yml \
+            docs/rust/qualification/source-check-producers.v1.json \
+            paper-adapters/automation/repository-asset-externalization.mjs \
+            paper-adapters/automation/repository-asset-submodule-binding.mjs \
+            paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs \
+            paper-core/tests/r-runtime-source-cas.test.mjs \
+            paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs \
+            paper-core/tests/support/os-sandboxed-worker-runner-test-driver.mjs
+          test "$(git diff --cached --name-only | wc -l)" = 9
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(ci): close portable exact-head repository gaps'
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"

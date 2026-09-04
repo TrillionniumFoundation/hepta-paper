@@ -1,0 +1,199 @@
+name: pr52-remediation-diagnostics
+
+on:
+  push:
+    branches:
+      - ops/pr52-remediation-diagnostics-20260904-v2
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: pr52-remediation-diagnostics
+  cancel-in-progress: true
+
+env:
+  TARGET_SHA: 99ac57e2982afab20e9fa939b842776aefc922eb
+  BASE_SHA: 7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2
+  ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+  FORMAL_SANDBOX_IMAGE: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout diagnostic branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          path: ops
+          fetch-depth: 0
+
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: target
+          fetch-depth: 0
+
+      - name: Install pinned runtime dependencies
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+          cache-dependency-path: target/package-lock.json
+
+      - name: Materialize test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sqlite3 texlive-latex-base poppler-utils
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
+            echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
+            tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
+            /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          ELAN_TOOLCHAIN="$ELAN_TOOLCHAIN" "$HOME/.elan/bin/elan" which lake
+          if ! docker image inspect "$FORMAL_SANDBOX_IMAGE" >/dev/null 2>&1; then
+            docker pull "$FORMAL_SANDBOX_IMAGE"
+          fi
+          cd target
+          npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = 'v22.23.1'
+          strict_node_source="$(command -v node)"
+          sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
+          sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
+
+      - name: Reproduce and capture exact failures
+        shell: bash
+        run: |
+          set -u
+          mkdir -p ops/ops-report/source
+          cd target
+          set +e
+          npm run static:check > ../ops/ops-report/static.log 2>&1
+          printf '%s\n' "$?" > ../ops/ops-report/static.rc
+          for shard in 1 2 3; do
+            (
+              npm run test:impacted -- \
+                --base-ref "$BASE_SHA" \
+                --head-ref "$TARGET_SHA" \
+                --shard-count 4 \
+                --shard-index "$shard" \
+                > "../ops/ops-report/shard-${shard}.log" 2>&1
+              printf '%s\n' "$?" > "../ops/ops-report/shard-${shard}.rc"
+            ) &
+          done
+          wait
+          set -e
+
+          cp paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs \
+            ../ops/ops-report/source/gpu-scientific-campaign-release-fixture.mjs
+          cp paper-core/tests/gpu-scientific-campaign-execution-lease-binding.test.mjs \
+            ../ops/ops-report/source/gpu-scientific-campaign-execution-lease-binding.test.mjs
+          cp paper-core/tests/support/pde-poisson-2d-cpu-oracle-fixture-runner.mjs \
+            ../ops/ops-report/source/pde-poisson-2d-cpu-oracle-fixture-runner.mjs
+          cp paper-core/tests/support/process-isolated-pde-poisson-2d-independent-cpu-oracle-test-seam.mjs \
+            ../ops/ops-report/source/process-isolated-pde-poisson-2d-independent-cpu-oracle-test-seam.mjs
+          cp paper-core/tests/test-doubles/pde-poisson-2d-cpu-oracle-sandbox-runner-factory.mjs \
+            ../ops/ops-report/source/pde-poisson-2d-cpu-oracle-sandbox-runner-factory.mjs
+          cp package.json ../ops/ops-report/source/package.json
+
+          grep -Rni --exclude-dir=node_modules \
+            'imports production modules outside allowlisted test infrastructure' . \
+            > ../ops/ops-report/boundary-checker-locations.txt || true
+          grep -Rni --exclude-dir=node_modules \
+            -E 'verify_checked_in_v3_effective_status|Verify checked-in effective status|derive-effective-status|effective-status' \
+            .github docs package.json paper-core migration \
+            > ../ops/ops-report/effective-status-locations.txt || true
+
+      - name: Build concise diagnostic index
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('ops/ops-report')
+          target = Path('target')
+          lines = [
+              '# PR 52 exact-head diagnostic report',
+              '',
+              '- target: `99ac57e2982afab20e9fa939b842776aefc922eb`',
+              '- base: `7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2`',
+              '',
+          ]
+
+          def rc(name):
+              p = root / f'{name}.rc'
+              return p.read_text().strip() if p.exists() else 'missing'
+
+          lines += [
+              '## Reproduction return codes', '',
+              f'- static: `{rc("static")}`',
+              f'- shard 1: `{rc("shard-1")}`',
+              f'- shard 2: `{rc("shard-2")}`',
+              f'- shard 3: `{rc("shard-3")}`',
+              '',
+          ]
+
+          for name in ['static', 'shard-1', 'shard-2', 'shard-3']:
+              p = root / f'{name}.log'
+              text = p.read_text(errors='replace') if p.exists() else ''
+              src = text.splitlines()
+              picks = []
+              for i, line in enumerate(src):
+                  if ('not ok ' in line or '##[error]' in line or
+                      re.search(r'\b(error|Error):', line) or
+                      'exceeds max lines' in line or
+                      'imports production modules outside' in line or
+                      '# fail ' in line or 'Process completed with exit code' in line):
+                      start = max(0, i - 2)
+                      end = min(len(src), i + 14)
+                      block = '\n'.join(src[start:end])
+                      if block not in picks:
+                          picks.append(block)
+                  if len(picks) >= 12:
+                      break
+              lines += [f'## {name}', '', '```text']
+              lines += picks or ['No matching failure excerpt.']
+              lines += ['```', '']
+
+          for rel in [
+              'paper-core/tests/support/gpu-scientific-campaign-release-fixture.mjs',
+              'paper-core/tests/gpu-scientific-campaign-execution-lease-binding.test.mjs',
+          ]:
+              p = target / rel
+              src = p.read_text().splitlines()
+              decl = []
+              for i, line in enumerate(src, 1):
+                  if re.match(r'^\s*(import\b|export\b|async function\b|function\b|class\b|const [A-Za-z0-9_$]+\s*=)', line):
+                      decl.append(f'{i:4d}: {line}')
+              lines += [f'## Declaration map: `{rel}`', '', '```text']
+              lines += decl
+              lines += ['```', '']
+
+          for name in ['boundary-checker-locations.txt', 'effective-status-locations.txt']:
+              p = root / name
+              value = p.read_text(errors='replace') if p.exists() else ''
+              lines += [f'## {name}', '', '```text', value[:30000] or 'No matches.', '```', '']
+
+          (root / 'pr52-diagnostics.md').write_text('\n'.join(lines))
+          PY
+
+      - name: Publish diagnostic snapshot to isolated branch
+        shell: bash
+        working-directory: ops
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops-report
+          git commit -m 'chore(ops): publish PR 52 exact-head diagnostics [skip ci]'
+          git push origin HEAD:ops/pr52-remediation-diagnostics-20260904-v2

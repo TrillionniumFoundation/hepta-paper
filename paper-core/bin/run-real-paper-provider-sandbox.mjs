@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import {
+  inspectProviderSandboxCompanion, runProviderSandboxProcess, assertProviderSandboxResponseClaims,
+} from '../../paper-composition/bootstrap/provider-sandbox-process-composition.mjs';
 import { bootstrapSubmissionContext } from '../../paper-composition/bootstrap/capability-scoped-bootstrap.mjs';
 import { createDefaultPaperStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
@@ -21,16 +23,7 @@ const prior = JSON.parse(fs.readFileSync(priorPath, 'utf8'));
 const sandboxEntry = fileURLToPath(new URL(
   '../../../hepta-paper-provider-sandbox/provider-sandbox.mjs', import.meta.url,
 ));
-let companionStat;
-try { companionStat = fs.lstatSync(sandboxEntry); }
-catch (error) {
-  throw new Error(error.code === 'ENOENT' ? 'provider_sandbox_companion_missing'
-    : 'provider_sandbox_companion_unreadable', { cause: error });
-}
-if (!companionStat.isFile() || companionStat.nlink !== 1
-  || fs.realpathSync(sandboxEntry) !== sandboxEntry) {
-  throw new Error('provider_sandbox_companion_unsafe');
-}
+inspectProviderSandboxCompanion(sandboxEntry);
 const verificationRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'real-paper-provider-sandbox-'));
 let context;
 let receipt;
@@ -49,12 +42,15 @@ try {
   const dispatchPayload = { version: 1, kind: 'SubmissionDispatchAuthorization', status: 'submission_dispatch_authorization_ready', paperId, provider: 'sandbox-provider', accountId: 'sandbox-account', nonce: `sandbox-${prior.realPaperEndToEndPilotReceiptHash}` };
   const dispatchAuthorization = { ...dispatchPayload, submissionDispatchAuthorizationHash: hashRecord('SubmissionDispatchAuthorization', dispatchPayload) };
   const outbox = delivery.enqueue({ paperId, dispatchAuthorization, payload: { packageHash: prior.mainTexHash, realPilotReceiptHash: prior.realPaperEndToEndPilotReceiptHash } });
-  const input = path.join(verificationRuntimeRoot, 'provider-request.json');
-  const output = path.join(verificationRuntimeRoot, 'provider-response.json');
-  fs.writeFileSync(input, JSON.stringify({ environment: 'provider_sandbox', liveActionAllowed: false, provider: dispatchAuthorization.provider, accountId: dispatchAuthorization.accountId, paperId, dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash, packageHash: prior.mainTexHash }));
-  const result = spawnSync(process.execPath, [sandboxEntry, input, output], { encoding: 'utf8' });
-  if (result.status !== 0) throw new Error(result.stderr || 'provider_sandbox_failed');
-  const response = JSON.parse(fs.readFileSync(output, 'utf8'));
+  const response = runProviderSandboxProcess({
+    companionEntry: sandboxEntry,
+    runtimeRoot: verificationRuntimeRoot,
+    request: { environment: 'provider_sandbox', liveActionAllowed: false,
+      provider: dispatchAuthorization.provider, accountId: dispatchAuthorization.accountId,
+      paperId, dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash,
+      packageHash: prior.mainTexHash },
+  });
+  assertProviderSandboxResponseClaims(response, dispatchAuthorization.submissionDispatchAuthorizationHash);
   delivery.recordResponse({ messageId: outbox.message_id, response });
   const lock = delivery.acquireReleaseLock({ paperId, messageId: outbox.message_id, lockToken: `sandbox-lock-${process.pid}` });
   const reconciliationHash = hashRecord('SandboxSubmissionReconciliation', { paperId, providerReceiptHash: response.providerReceiptHash, productionEligible: false });

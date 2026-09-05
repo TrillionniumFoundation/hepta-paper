@@ -46,7 +46,11 @@ jobs:
       - name: Validate development documentation
         run: node docs/tools/validate-development-docs.mjs
       - name: Run static and architecture gates
-        run: npm run static:check && npm run security:npm-audit
+        run: |
+          python3 docs/rust/tools/test_strict_json_schema_contract.py
+          npm run static:check
+          # Workers need the canonical system Node; audit requires a same-installation pair.
+          PATH="$(dirname "$(command -v npm)"):$PATH" npm run security:npm-audit
 
   pull-request-impacted-tests:
     if: github.event_name == 'pull_request'
@@ -176,7 +180,10 @@ jobs:
       - name: Validate development documentation
         run: node docs/tools/validate-development-docs.mjs
       - name: Run full portable contract gates
-        run: npm run security:npm-audit && npm run ci:selftest
+        run: |
+          PATH="$(dirname "$(command -v npm)"):$PATH" npm run security:npm-audit
+          python3 docs/rust/tools/test_strict_json_schema_contract.py
+          npm run ci:selftest
 
   legacy-differential-policy:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -337,7 +344,10 @@ jobs:
       - name: Verify or populate pinned Mathlib cache
         run: npm run ci:mathlib-cache
       - name: Run full portable qualification
-        run: npm run security:npm-audit && npm run ci:selftest
+        run: |
+          PATH="$(dirname "$(command -v npm)"):$PATH" npm run security:npm-audit
+          python3 docs/rust/tools/test_strict_json_schema_contract.py
+          npm run ci:selftest
       - name: Enforce architecture and repository-wide coverage
         run: npm run coverage:architecture && npm run coverage:repository
       - name: Run real Python and R academic original plus replay

@@ -54,3 +54,26 @@ malformed, timed-out or unsupported schema validator is a failure, never a skip.
 The gate executes its own checked-in verifier, not a script supplied by a
 candidate `--root`. This static source gate does not replace runtime filesystem
 or external-authority verification.
+
+
+## Schema-definition failure boundary
+
+Schema definition validity is checked before instance branch selection. Unknown
+assertions, malformed keyword values, invalid local references and unsupported
+formats remain errors even in unused definitions, absent properties, and inactive
+`anyOf`/`not`/`if` branches. A schema error is not an ordinary instance mismatch
+and cannot be inverted into acceptance. The verifier limits schema traversal and
+instance evaluation; exhausted budgets and recursive-reference failures deny.
+
+The supported subset also accepts boolean schemas and treats an integral JSON
+number such as `1.0` as an integer, never as a boolean. All direct Python API
+instances must be finite JSON values, including values accepted by empty schemas.
+Qualification `date-time` assertions require full calendar-valid timestamps with
+seconds and an explicit UTC offset; leap-second values are not supported. This
+is a bounded repository contract validator, not a claim of full Draft 2020-12
+vocabulary support. Run the adversarial suite with:
+
+```bash
+python3 docs/rust/tools/test-plan-v4-qualification.py
+python3 docs/rust/tools/test_strict_json_schema_contract.py
+```

@@ -62,8 +62,10 @@ jobs:
       - name: Run exact-head static, architecture, and dependency gates
         run: |
           set -euo pipefail
+          python3 docs/rust/tools/test_strict_json_schema_contract.py
           npm run static:check
-          npm run security:npm-audit
+          # Restrict the PATH override to audit; do not change worker runtime selection.
+          PATH="$(dirname "$(command -v npm)"):$PATH" npm run security:npm-audit
 
       - name: Prove exact source identity after validation
         if: always()

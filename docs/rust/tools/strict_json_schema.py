@@ -35,6 +35,14 @@ class SchemaValidationError(ValueError):
     """Raised when a schema or instance is invalid."""
 
 
+class SchemaDefinitionError(SchemaValidationError):
+    """An invalid contract or exhausted evaluation must not become a branch mismatch."""
+
+
+def fail_definition(path: str, message: str) -> None:
+    raise SchemaDefinitionError(f"{path}: {message}")
+
+
 def fail(path: str, message: str) -> None:
     raise SchemaValidationError(f"{path}: {message}")
 
@@ -91,12 +99,14 @@ def resolve_ref(root: dict[str, Any], reference: str, path: str) -> dict[str, An
         fail(path, f"only local JSON Pointer refs are supported: {reference}")
     value: Any = root
     for raw in reference[2:].split("/"):
+        if re.search(r"~(?![01])", raw):
+            fail_definition(path, "invalid JSON Pointer escape")
         token = raw.replace("~1", "/").replace("~0", "~")
         if not isinstance(value, dict) or token not in value:
             fail(path, f"unresolved ref: {reference}")
         value = value[token]
-    if not isinstance(value, dict):
-        fail(path, f"ref does not resolve to a schema object: {reference}")
+    if not isinstance(value, (dict, bool)):
+        fail_definition(path, f"ref does not resolve to a schema: {reference}")
     return value
 
 
@@ -108,7 +118,8 @@ def type_matches(instance: Any, expected: str) -> bool:
     if expected == "string":
         return isinstance(instance, str)
     if expected == "integer":
-        return isinstance(instance, int) and not isinstance(instance, bool)
+        return (isinstance(instance, int) and not isinstance(instance, bool)) or (
+            isinstance(instance, float) and math.isfinite(instance) and instance.is_integer())
     if expected == "number":
         return (isinstance(instance, (int, float)) and not isinstance(instance, bool)
                 and (not isinstance(instance, float) or math.isfinite(instance)))
@@ -121,15 +132,128 @@ def type_matches(instance: Any, expected: str) -> bool:
 
 
 def valid_datetime(value: str) -> bool:
+    # Qualification times require a full timestamp and explicit UTC offset.
+    # Leap-second timestamps are outside this repository's supported profile.
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
+                    r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})", value) is None:
+        return False
     try:
-        parsed = value[:-1] + "+00:00" if value.endswith("Z") else value
-        datetime.fromisoformat(parsed)
-        return "T" in value
+        parsed = value[:-1] + "+00:00" if value[-1] in "Zz" else value
+        return datetime.fromisoformat(parsed).tzinfo is not None
     except ValueError:
         return False
 
 
-def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any] | None = None, path: str = "$") -> None:
+def validate_schema_definition(schema: Any, root: Any) -> None:
+    """Check every schema branch before evaluating any instance branch.
+
+    Unsupported keywords in absent properties, unused definitions or a failing
+    anyOf/not/if branch are contract errors, never evidence of a valid instance.
+    This deliberately remains the repository's bounded subset, not a general
+    implementation of every Draft 2020-12 vocabulary.
+    """
+    pending = [(schema, "$schema", 0)]
+    seen = set()
+    count = 0
+    while pending:
+        selected, location, depth = pending.pop()
+        count += 1
+        if count > 10000 or depth > 128:
+            fail_definition(location, "schema definition exceeds traversal limit")
+        if isinstance(selected, bool):
+            continue
+        if not isinstance(selected, dict):
+            fail_definition(location, "schema must be an object or boolean")
+        if id(selected) in seen:
+            continue
+        seen.add(id(selected))
+        unsupported = sorted(set(selected) - SUPPORTED)
+        if unsupported:
+            fail_definition(location, "unsupported schema keywords: " + ", ".join(unsupported))
+        if "type" in selected:
+            types = [selected["type"]] if isinstance(selected["type"], str) else selected["type"]
+            known = {"object", "array", "string", "number", "integer", "boolean", "null"}
+            if (not isinstance(types, list) or not types
+                    or any(not isinstance(value, str) or value not in known for value in types)
+                    or len(set(types)) != len(types)):
+                fail_definition(location, "invalid schema type declaration")
+        for key in ("minProperties", "maxProperties", "minItems", "maxItems", "minLength", "maxLength"):
+            if key in selected and (not type_matches(selected[key], "integer") or selected[key] < 0):
+                fail_definition(location, f"{key} must be a nonnegative integer")
+        for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
+            if key in selected and not type_matches(selected[key], "number"):
+                fail_definition(location, f"{key} must be a finite number")
+        for key in ("uniqueItems", "deprecated", "readOnly", "writeOnly"):
+            if key in selected and not isinstance(selected[key], bool):
+                fail_definition(location, f"{key} must be a boolean")
+        if "required" in selected:
+            required = selected["required"]
+            if (not isinstance(required, list) or any(not isinstance(item, str) for item in required)
+                    or len(set(required)) != len(required)):
+                fail_definition(location, "required must contain unique strings")
+        if "enum" in selected and (not isinstance(selected["enum"], list) or not selected["enum"]):
+            fail_definition(location, "enum must be a nonempty array")
+        if "pattern" in selected:
+            if not isinstance(selected["pattern"], str):
+                fail_definition(location, "pattern must be a string")
+            try:
+                re.compile(selected["pattern"])
+            except re.error as error:
+                fail_definition(location, f"invalid regular expression: {error}")
+        if "format" in selected and selected["format"] != "date-time":
+            fail_definition(location, "unsupported format")
+        for key in ("$schema", "$id", "$anchor", "$comment", "title", "description"):
+            if key in selected and not isinstance(selected[key], str):
+                fail_definition(location, f"{key} must be a string")
+        for key in ("properties", "$defs"):
+            if key in selected:
+                if not isinstance(selected[key], dict):
+                    fail_definition(location, f"{key} must be an object")
+                pending.extend((value, f"{location}.{key}.{name}", depth + 1)
+                               for name, value in selected[key].items())
+        for key in ("allOf", "anyOf", "oneOf"):
+            if key in selected:
+                if not isinstance(selected[key], list) or not selected[key]:
+                    fail_definition(location, f"{key} must be a nonempty array")
+                pending.extend((value, f"{location}.{key}[{index}]", depth + 1)
+                               for index, value in enumerate(selected[key]))
+        for key in ("items", "propertyNames", "additionalProperties", "not", "if", "then", "else"):
+            if key in selected:
+                pending.append((selected[key], f"{location}.{key}", depth + 1))
+        if "$ref" in selected:
+            if not isinstance(selected["$ref"], str):
+                fail_definition(location, "$ref must be a string")
+            try:
+                target = resolve_ref(root, selected["$ref"], location)
+            except SchemaValidationError as error:
+                fail_definition(location, str(error))
+            pending.append((target, f"{location}.$ref", depth + 1))
+
+
+def validate(instance: Any, schema: Any, root: Any = None, path: str = "$") -> None:
+    """Validate a JSON instance only after its entire contract is well formed."""
+    selected_root = schema if root is None else root
+    try:
+        # Reject non-JSON values even when an empty/negated schema could accept them.
+        json_equality_key(instance)
+        json_equality_key(selected_root)
+        json_equality_key(schema)
+        validate_schema_definition(selected_root, selected_root)
+        if schema is not selected_root:
+            validate_schema_definition(schema, selected_root)
+        _validate(instance, schema, selected_root, path, [100000])
+    except RecursionError as error:
+        raise SchemaDefinitionError(f"{path}: schema or instance recursion limit exceeded") from error
+
+
+def _validate(instance: Any, schema: Any, root: Any, path: str, budget: list[int]) -> None:
+    budget[0] -= 1
+    if budget[0] < 0:
+        fail_definition(path, "schema evaluation budget exhausted")
+    if isinstance(schema, bool):
+        if not schema:
+            fail(path, "false schema rejects instance")
+        return
     if not isinstance(schema, dict):
         fail(path, "schema must be an object")
     root = schema if root is None else root
@@ -141,7 +265,7 @@ def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any] | None 
     if reference is not None:
         if not isinstance(reference, str):
             fail(path, "$ref must be a string")
-        validate(instance, resolve_ref(root, reference, path), root, path)
+        _validate(instance, resolve_ref(root, reference, path), root, path, budget)
 
     for keyword in ("allOf", "anyOf", "oneOf"):
         if keyword not in schema:
@@ -153,9 +277,11 @@ def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any] | None 
         errors: list[str] = []
         for option in options:
             try:
-                validate(instance, option, root, path)
+                _validate(instance, option, root, path, budget)
                 successes += 1
             except SchemaValidationError as error:
+                if isinstance(error, SchemaDefinitionError):
+                    raise
                 errors.append(str(error))
         if keyword == "allOf" and successes != len(options):
             fail(path, f"allOf failed: {errors[0] if errors else 'unknown'}")
@@ -166,21 +292,25 @@ def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any] | None 
 
     if "not" in schema:
         try:
-            validate(instance, schema["not"], root, path)
-        except SchemaValidationError:
+            _validate(instance, schema["not"], root, path, budget)
+        except SchemaValidationError as error:
+            if isinstance(error, SchemaDefinitionError):
+                raise
             pass
         else:
             fail(path, "not schema matched")
 
     if "if" in schema:
         try:
-            validate(instance, schema["if"], root, path)
+            _validate(instance, schema["if"], root, path, budget)
             matched = True
-        except SchemaValidationError:
+        except SchemaValidationError as error:
+            if isinstance(error, SchemaDefinitionError):
+                raise
             matched = False
         branch = "then" if matched else "else"
         if branch in schema:
-            validate(instance, schema[branch], root, path)
+            _validate(instance, schema[branch], root, path, budget)
 
     expected_type = schema.get("type")
     if expected_type is not None:
@@ -202,7 +332,7 @@ def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any] | None 
     if isinstance(instance, dict):
         if "propertyNames" in schema:
             for key in instance:
-                validate(key, schema["propertyNames"], root, f"{path}.<property-name>")
+                _validate(key, schema["propertyNames"], root, f"{path}.<property-name>", budget)
         minimum = schema.get("minProperties")
         maximum = schema.get("maxProperties")
         if minimum is not None and len(instance) < minimum:
@@ -220,14 +350,14 @@ def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any] | None 
             fail(path, "properties must be an object")
         for key, subschema in properties.items():
             if key in instance:
-                validate(instance[key], subschema, root, f"{path}.{key}")
+                _validate(instance[key], subschema, root, f"{path}.{key}", budget)
         extras = set(instance) - set(properties)
         additional = schema.get("additionalProperties", True)
         if additional is False and extras:
             fail(path, "unexpected properties: " + ", ".join(sorted(extras)))
         if isinstance(additional, dict):
             for key in extras:
-                validate(instance[key], additional, root, f"{path}.{key}")
+                _validate(instance[key], additional, root, f"{path}.{key}", budget)
         elif not isinstance(additional, bool):
             fail(path, "additionalProperties must be boolean or schema")
 
@@ -244,10 +374,10 @@ def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any] | None 
                 fail(path, "array items are not unique")
         items = schema.get("items")
         if items is not None:
-            if not isinstance(items, dict):
+            if not isinstance(items, (dict, bool)):
                 fail(path, "items must be a schema object")
             for index, value in enumerate(instance):
-                validate(value, items, root, f"{path}[{index}]")
+                _validate(value, items, root, f"{path}[{index}]", budget)
 
     if isinstance(instance, str):
         minimum = schema.get("minLength")

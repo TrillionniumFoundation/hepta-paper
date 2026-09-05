@@ -1,3 +1,5 @@
+import { addAbortListener as subscribeAbort } from 'node:events';
+
 export function campaignInfrastructureControlError(error) {
   return error?.committed === true
     || error?.stateRecoverabilityFatal === true
@@ -152,3 +154,82 @@ export function createCampaignNodeExternalSideEffectGate({
 import {
   buildCampaignExternalActionDescriptor,
 } from '../../paper-domain/automation/campaign-external-action-journal-contract.mjs';
+
+export function boundedCampaignFailureDetail(error, { usageMetering = null } = {}) {
+  const receipt = error?.receipt || {};
+  return Object.freeze({
+    message: String(error?.message || 'campaign_executor_failed').slice(0, 1000),
+    receiptKind: receipt.kind || null,
+    receiptStatus: receipt.status || null,
+    receiptHash: receipt.agentExecutionReceiptHash
+      || receipt.multiLanguageEmpiricalReceiptHash
+      || receipt.formalProofSearchFailureCertificateHash
+      || receipt.receiptHash || null,
+    blockers: Array.isArray(receipt.blockers) ? receipt.blockers.slice(0, 20) : [],
+    exitCode: receipt.exitCode ?? null,
+    stderrTail: String(receipt.stderrTail || '').slice(-4000),
+    stdoutTail: String(receipt.stdoutTail || '').slice(-4000),
+    receiptDetails: receipt.details || null,
+    backendFailures: Array.isArray(error?.failures) ? error.failures.slice(0, 10) : [],
+    usageMetering,
+  });
+}
+
+// Own one monitor and its supervisor subscription; no resource or writer authority.
+export function createCampaignNodeControlMonitor({
+  campaignStore, campaignId, claimedNode, controller, signal, scheduler,
+}) {
+  const onSupervisorAbort = () => controller.abort(signal?.reason || 'supervisor_process_shutdown');
+  let subscription = null;
+  let monitor;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    subscription?.[Symbol.dispose]();
+    subscription = null;
+    if (monitor !== undefined) scheduler.clearInterval(monitor);
+  };
+  try {
+    if (signal?.aborted) onSupervisorAbort();
+    else if (signal) subscription = subscribeAbort(signal, onSupervisorAbort);
+    monitor = scheduler.setInterval(() => {
+      const status = campaignStore.getCampaign(campaignId)?.status;
+      if (['paused', 'cancelled', 'failed', 'stopped'].includes(status)) controller.abort(status);
+      const latestNode = campaignStore.listNodes(campaignId).find((item) => item.nodeId === claimedNode.nodeId);
+      if (latestNode && (!['leased', 'running'].includes(latestNode.status)
+        || latestNode.attemptId !== claimedNode.attemptId
+        || latestNode.leaseGeneration !== claimedNode.leaseGeneration)) {
+        controller.abort(latestNode.failureClass || latestNode.status || 'campaign_node_lease_lost');
+      }
+    }, 500);
+    scheduler.unref?.(monitor);
+    return close;
+  } catch (error) { close(); throw error; }
+}
+
+// Construct after admission inside the caller's execution try/finally. On failed
+// unref, dispose the newly created handle before propagating the setup error.
+export function createCampaignNodeHeartbeat({ campaignStore, scheduler, node, workerId, leaseSeconds, controller }) {
+  if (typeof campaignStore.renewNodeLease !== 'function') return null;
+  const heartbeat = scheduler.setInterval(() => {
+    try {
+      campaignStore.renewNodeLease({ nodeId: node.nodeId, workerId, attemptId: node.attemptId,
+        leaseGeneration: node.leaseGeneration, leaseSeconds });
+    } catch { controller.abort('campaign_node_lease_lost'); }
+  }, Math.max(1000, Math.floor(leaseSeconds * 1000 / 3)));
+  try { scheduler.unref?.(heartbeat); }
+  catch (error) { scheduler.clearInterval(heartbeat); throw error; }
+  return heartbeat;
+}
+
+// A broken monitor port must not prevent releasing the other owned handles.
+// Return the first cleanup error for propagation after all resource releases.
+export function closeCampaignNodeMonitors({ heartbeat, clearControl, detachLeaseLoss, scheduler }) {
+  let failure = null;
+  for (const close of [() => { if (heartbeat !== null) scheduler.clearInterval(heartbeat); },
+    detachLeaseLoss, clearControl]) {
+    try { close(); } catch (error) { failure ||= error; }
+  }
+  return failure;
+}

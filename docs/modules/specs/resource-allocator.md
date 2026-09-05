@@ -131,14 +131,27 @@ limits, conservation argument and supported dependency assumptions are recorded
 in [`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#14-opt-in-parent-and-child-resource-envelope).
 `paper-core/tests/resource-envelope.test.mjs` executes boundary and race cases,
 separate-ledger mixed workloads and the actual nested-agent runner with local
-campaign ports. These do not enable envelope routing by default or implement
-multiprocess/host recovery. Full production composition and independent host
-acceptance remain open.
+campaign ports. The policy-bound engine integration now routes explicitly declared node kinds
+through both global and local pools; see
+[`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#15-explicit-campaign-integration-and-joined-nested-execution).
+The persisted campaign-definition hash must match the runtime policy before
+claims. Nested operations are joined before parent result preparation; premature
+return, recursive same-scope calls and undeclared kinds fail closed.
+`paper-core/tests/campaign-resource-envelope.test.mjs` exercises the real engine
+and SQLite state, including no-early-commit and no-early-refund controls. Default
+routing, multiprocess/host recovery, physical quota enforcement and independent
+host acceptance remain outside this source increment.
 
 The legacy defaults are not qualified production capacity. Hierarchical DRF,
 durable fenced leases, host measurements and whole-work-item acceptance remain
 open; the local governor must not be presented as their implementation.
 
+
+Agent and empirical-cell calls share the engine settlement boundary; neither
+can outlive a prepared parent result through those managed ports. Heartbeat
+setup faults and resource-lease loss are covered by the engine lifecycle tests.
+This is logical cleanup and result-fencing, not distributed lease recovery or
+physical CPU/GPU enforcement.
 
 Capability bindings: `CAP-RES-ALLOCATE`. Related work identifiers: `RES-001`, `RES-002`, `RES-003`, `RES-004`, `RES-005`, `RES-006`, `RES-007`. Implementation/contract roots: `paper-application/automation/resource-governor.mjs`, `docs/control-plane/RESOURCE_MODEL.md`, `rust/crates/hepta-control-plane`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 

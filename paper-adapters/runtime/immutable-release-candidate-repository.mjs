@@ -42,7 +42,9 @@ function exactDirectory(candidate, {
   code = 'immutable_release_candidate_directory_invalid',
 } = {}) {
   const selected = path.resolve(candidate);
-  const stat = fs.lstatSync(selected, { bigint: true });
+  let stat;
+  try { stat = fs.lstatSync(selected, { bigint: true }); }
+  catch (error) { throw codedError(code, { cause: error }); }
   if (!inside(boundary, selected) || fs.realpathSync(selected) !== selected
     || stat.isSymbolicLink() || !stat.isDirectory()
     || (expectedUid !== null && Number(stat.uid) !== expectedUid)

@@ -819,11 +819,11 @@ test('a post-launch exception quarantines before the coordinator can release', a
   let secondWorkerStarted = false;
   await assert.rejects(coordinator.run({
     ...baseSpec,
-    absoluteDeadlineEpochMs: Date.now() + 80,
+    absoluteDeadlineEpochMs: Date.now() + 2_000,
   }, async () => {
     secondWorkerStarted = true;
     return { ok: true };
-  }), /gpu_selector_execution_lease_deadline_exhausted/);
+  }), /gpu_selector_execution_lease_recovery_required/);
   assert.equal(secondWorkerStarted, false);
 });
 

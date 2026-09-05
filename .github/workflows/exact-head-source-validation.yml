@@ -175,11 +175,21 @@ jobs:
         if: steps.impact.outputs.count != '0'
         run: |
           set -euo pipefail
+          evidence_root="$RUNNER_TEMP/exact-head-impact-${{ matrix.shard }}"
+          mkdir -p "$evidence_root"
+          set +e
           npm run test:impacted -- \
             --base-ref "$BASE_SHA" \
             --head-ref "$EXPECTED_HEAD_SHA" \
             --shard-count 4 \
-            --shard-index "${{ matrix.shard }}"
+            --shard-index "${{ matrix.shard }}" 2>&1 | tee "$evidence_root/tests.tap"
+          command_status=("${PIPESTATUS[@]}")
+          set -e
+          printf '%s\n' "${command_status[0]}" > "$evidence_root/tests.exit"
+          if [ "${command_status[1]}" -ne 0 ]; then
+            exit "${command_status[1]}"
+          fi
+          exit "${command_status[0]}"
 
       - name: Prove exact source identity after shard
         if: always()

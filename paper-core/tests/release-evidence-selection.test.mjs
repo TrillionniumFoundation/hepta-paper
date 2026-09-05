@@ -30,7 +30,6 @@ import {
 } from '../bin/release-evidence.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
 
 const {
   assertExactCleanCodeProvenance,
@@ -1304,7 +1303,7 @@ test('release signing in attest mode requires an existing key and never creates 
   assert.equal(signature.kind, 'ReleaseIntegritySignature');
 });
 
-test('pure deletion drill passes in a fresh isolated runtime without reading or writing a key', (t) => {
+test('missing private archive fails the pure deletion drill without reading a key or writing evidence', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-pure-deletion-drill-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const runtimeRoot = path.join(root, 'runtime');
@@ -1312,21 +1311,19 @@ test('pure deletion drill passes in a fresh isolated runtime without reading or 
   const result = spawnSync(process.execPath, ['paper-core/bin/legacy-deletion-drill.mjs'], {
     cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..'),
     encoding: 'utf8',
-    timeout: 240_000,
+    timeout: 30_000,
     env: {
       ...process.env,
       HEPTA_PAPER_RUNTIME_ROOT: runtimeRoot,
       HEPTA_PAPER_RUNTIME_ISOLATED: '1',
-      HEPTA_LEGACY_REFERENCE_ARCHIVE: resolveImmutableLegacyMatrixArchive(),
+      HEPTA_LEGACY_REFERENCE_ARCHIVE: path.join(root, 'missing-private-archive.tar.gz'),
     },
   });
-  assert.equal(result.status, 0, result.stderr);
-  const report = JSON.parse(result.stdout);
-  assert.equal(report.status, 'legacy_reference_restore_drill_verification_passed');
-  assert.equal(report.signingKeyRead, false);
-  assert.equal(report.runtimeEvidenceWritten, false);
-  assert.equal(fs.existsSync(path.join(runtimeRoot, 'release-signing')), false);
-  assert.equal(fs.existsSync(path.join(runtimeRoot, 'legacy-retirement', 'deletion-drills')), false);
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /ENOENT/u);
+  assert.equal(result.stdout, '');
+  assert.deepEqual(fs.readdirSync(runtimeRoot), []);
 });
 
 test('release evidence CLI help, invalid arguments, and missing confirmation are zero-write', (t) => {

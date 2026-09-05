@@ -47,6 +47,7 @@ jobs:
         run: node docs/tools/validate-development-docs.mjs
       - name: Run static and architecture gates
         run: |
+          set -euo pipefail
           python3 docs/rust/tools/test_strict_json_schema_contract.py
           npm run static:check
           # Workers need the canonical system Node; audit requires a same-installation pair.

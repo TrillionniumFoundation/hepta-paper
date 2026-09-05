@@ -313,10 +313,9 @@ test('checked-in repository control-plane contracts remain fail-closed', () => {
   assert.match(continuousIntegration, /^name: hepta-paper-ci$/mu);
   assert.match(continuousIntegration, /^  pull_request:$/mu);
   assert.match(continuousIntegration, /npm run test:impacted --/u);
-  assert.match(
-    continuousIntegration,
-    /npm run static:check && npm run security:npm-audit/u,
-  );
+  // Command failure propagation is executed in ci-static-command-failure.test.mjs.
+  assert.match(continuousIntegration, /npm run static:check/u);
+  assert.match(continuousIntegration, /npm run security:npm-audit/u);
   assert.doesNotMatch(continuousIntegration, /\bpull_request_target\s*:/u);
   assert.doesNotMatch(continuousIntegration, /\bcontinue-on-error\s*:\s*true\b/u);
 

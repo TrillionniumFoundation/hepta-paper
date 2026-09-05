@@ -439,9 +439,9 @@ test('one declarative registry owns supported routes and npm command classificat
     retiredAliases: [],
     blocked: [],
   });
-  // Keep the personal operational aliases explicit so an accidental
-  // script-surface expansion still fails this contract.
-  assert.equal(Object.keys(scripts).length, 120);
+  // Keep the personal and private-archive operational aliases explicit so an
+  // unregistered script-surface expansion still fails this exact contract.
+  assert.equal(Object.keys(scripts).length, 121);
   assert.deepEqual(heptaPaperCiCommandMatrix().nightly.map((entry) => entry.id), [
     'full-portable',
     'formal-cache',

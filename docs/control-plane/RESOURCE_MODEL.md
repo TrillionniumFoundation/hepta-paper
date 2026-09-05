@@ -328,7 +328,159 @@ control calls the unchanged `createCampaignNestedAgentRunner` forty times with
 the envelope child port while a conflicting root waiter remains blocked. It
 uses a local campaign-store port and explicitly non-model local receipts, not
 an external provider or a production campaign. The final close permits the
-root waiter to proceed. Complete engine wiring, persisted recovery, target-host
-fairness/performance and independent review remain required before widening
-rollout. This contributes to RES-001/003/004, without changing their global
+root waiter to proceed. The engine integration in section 15 is explicitly configured and source-tested;
+persisted resource recovery, target-host fairness/performance and independent
+review remain required before widening rollout. This contributes to RES-001/003/004, without changing their global
 work-item states or closing G4.
+
+
+## 15. Explicit campaign integration and joined nested execution
+
+`paper-application/automation/campaign-resource-envelope.mjs` captures a trusted
+`CampaignResourceEnvelopePolicyV1`; `runPaperCampaign` accepts it through the
+new optional `resourceEnvelopePolicy` argument. It is not derived from a node's
+candidate-reported resource wishes and is not a production authority grant.
+Existing callers without a declaration keep their legacy resource routing and
+result shape, but all callers now use the joined nested-execution boundary below.
+There is no automatic envelope command-line rollout or multiprocess fallback.
+
+The closed policy has `version: 1`, `kind: CampaignResourceEnvelopePolicyV1`, a
+nonempty `nestedAgentSlotsByKind` mapping of exact known campaign node kinds to
+1..64 agent slots, and optional `maximumChildren` / `maximumWaitingRequests`
+(default 1024, range 1..4096 each). Up to 64 kind bindings are accepted. Values
+are captured without numeric coercion or executing accessor properties. Keys
+are sorted before the existing canonical hash function computes the policy
+identity. Calling `captureCampaignResourceEnvelopePolicy` returns the frozen
+policy and its `policyHash`.
+
+Before creating the campaign, the trusted composition places that hash in the
+plan's `resourceEnvelopePolicyHash`. Existing campaign-definition identity and
+replay checks bind this field. Execution requires both the explicit runtime
+policy and the identical persisted hash: supplying a different policy, omitting
+the policy for a bound campaign, or adding a policy to an unbound campaign fails
+before node claims. This is a configuration identity check, not authorization
+of the configured source or a cryptographic signature by an external owner.
+
+Both the global and campaign-local governors must expose the current in-process
+`GlobalResourceGovernor` envelope interface. Unsupported distributed ports are
+rejected rather than replaced by new process-local capacity. Every configured
+node is checked against both governors' declared limits before `claimReady`;
+capacity is checked again for each actual admission. The full parent-plus-child
+reservation is acquired globally, then locally. Failed local acquisition
+returns the unused global reservation. Both child ports are then passed to the
+existing nested-agent runner, so it cannot accidentally re-enter the local
+parent queue while avoiding the global queue. The original execution budget's
+`acquiredResources` still describes retained parent work; the additional
+`resourceEnvelope` binding records policy hash, parent, child and total vectors.
+The final run result also records `resourceEnvelopePolicyHash`.
+
+When an explicit policy is active, unlisted node kinds cannot invoke nested
+agent work. Listed nodes use their declared pools. The wrapper bounds all
+outstanding nested promises before asynchronous resource acquisition, including
+calls that have not reached the pool yet. Same-scope recursive child entry is
+rejected using asynchronous context tracking: a child cannot hold a slot while
+recursively waiting for another from the same scope. Other locks, custom ports
+or cross-scope cycles are not thereby proven safe.
+
+For both legacy and declared-envelope callers, wrapped agent calls span the runner's resource acquisition,
+existing action gate, budget reservation, callback, usage metering and release.
+A parent must finish all its nested operations before returning its result.
+If any call remains outstanding when the parent returns, the engine closes
+nested admission, signals cancellation, awaits settlement of those operations
+and fails with `campaign_nested_work_unsettled`. It does not prepare/integrate/
+complete that parent result. The same drain occurs before processing a parent
+error or returning root resources. Handled and awaited nested errors may still
+be recovered by the executor; they are not retroactively treated as unhandled
+failure. Retained callbacks reject after scope closure. Every dispatch batch joins sibling operations before returning a dispatch
+rejection. Legacy calls also reject unresolved nested work rather than preserving
+the previous premature-publication behavior; that safety change is intentional.
+Legacy routing has a 1024-outstanding-call wrapper bound; explicit policies use
+their captured maximumChildren. Same-scope recursion is rejected only in declared
+independent-leaf envelope mode, not silently reinterpreted for legacy workloads.
+
+No arbitrary timeout produces a refund. A child that ignores cancellation and
+never settles keeps the relevant reservations and prevents that parent from
+committing. This is conservative safety, not a finite shutdown/host-recovery
+guarantee. The lifecycle covers both `runNestedAgent` and `runEmpiricalCell` through one
+shared bounded scope. It does not intercept arbitrary background tasks, direct
+provider calls, or asynchronous work that the executor never registers through
+those ports; new task families need an explicit settlement contract. Parent execution and finalization still use the existing state,
+workspace, usage, external-action and prepared-result gates. The new policy
+never makes a local receipt qualify as a real provider execution.
+
+The supervisor abort subscription now uses propagation-resistant disposable
+listeners, and early acquisition/start paths release their own listener and
+monitor. Parent and nested-agent resource-lease loss use the same propagation-resistant
+subscription and dispose it after use. Lease loss cannot be suppressed by a
+preceding ordinary abort listener or delayed until after parent completion.
+A caller must have reconciled its physical/external work before resolving the
+executor and release promises; the application cannot prove that fact solely
+from Promise settlement.
+
+`paper-core/tests/campaign-resource-envelope.test.mjs` executes the real engine,
+real SQLite campaign store and native resource governors. Local callbacks prove
+40 nested calls complete behind a blocked root competitor; policy drift,
+missing declaration, local/global overflow, unsupported distributed governors,
+undeclared/recursive nested work and action-gate denial fail closed. Deferred
+children prove parent success/failure/shutdown cannot commit or refund early;
+sibling joining and late callback rejection are checked. These are source
+integration controls, not real model, host, storage-custody or cutover evidence.
+Rollback must preserve the policy field's fail-closed handling: removing runtime
+support while continuing a declared campaign is not a safe implicit downgrade.
+This is a partial RES/NODE integration; no machine work-item or gate is closed
+by this document or by the local tests alone.
+
+### 15.1 Complete child lifetimes and monitor-failure cleanup
+
+The shared execution scope binds both engine-exposed child runner functions.
+Their calls count against one maximumOutstanding limit before either runner's
+first asynchronous step; moving work from an agent to an empirical call cannot
+bypass that bound. An empirical call includes its original budget reservation,
+external-action gate and journal, callback and result checks. The wrapper adds
+no provider permission, empirical concurrency capacity or scientific acceptance.
+Parent return/error/shutdown joins outstanding calls of both kinds before parent
+result preparation or resource release. A late retained empirical function is
+closed before additional metering, gates or callbacks. Completed and handled
+child failures remain recoverable by the parent; the scope is not a proof that
+arbitrary ignored, already-settled errors were correctly handled.
+
+The existing `campaign_nested_work_unsettled` disposition now covers outstanding
+calls of either kind, preserving the original error domain. Scope finish seals
+all ports before awaiting a snapshot of their pending operations. Their async
+context is disabled after draining; no new scoped operation is then accepted.
+Callbacks still have to settle honestly after actual execution/reconciliation.
+A never-settling empirical call intentionally blocks parent publication; a timer
+is not used to reinterpret ambiguous work as complete. Per-cell physical CPU/GPU
+admission and arbitrary spawned process trees are separate, unproven boundaries.
+
+Both original child runners recheck the execution signal at the final callback
+boundary, after awaiting budget/external gates. A supervisor cancellation arriving
+inside those gates cannot start the callback just because earlier checks passed.
+Any durable intent already recorded keeps its original reconciliation semantics;
+this guard never claims that previously started external work was undone.
+
+The synchronous admitted-node phase now transfers ownership to execution only
+once state queries, reservation checks, gate construction and start-node checks
+have succeeded. A null disposition or any exception releases unused local/global
+reservations and attempts every monitor/subscription cleanup, even if one cleanup
+port throws. Existing start-node classification and budget handling are preserved;
+query faults are errors, not permission to execute or commit.
+
+Heartbeat setup is inside the acquired-resource lifetime. A failing interval
+creation or unref prevents executor dispatch and uses the ordinary node failure
+path, which releases logical reservations and supervisor monitors. A monitor
+teardown exception does not skip the remaining cleanup attempts; it is propagated
+after resource release rather than converted to success. An already-lost lease
+at handoff raises a dispatch error while preserving the persisted lease for the
+existing recovery mechanism, instead of silently spinning on an abandoned node.
+These are application cleanup guarantees, not proof that a failing scheduler
+actually stopped a timer or that a remote lease was reclaimed.
+
+`paper-core/tests/campaign-child-lifetime.test.mjs` exercises both legacy and
+envelope engine paths against real SQLite with explicitly local operations. It
+covers empirical early return/failure/shutdown, mixed agent/cell draining, shared
+limits, late callbacks, awaited recovery, final-gate cancellation, existing gate
+denial, heartbeat construction/unref/teardown faults, suppressed parent/nested
+lease-loss propagation, successful unsubscription, already-lost handoff and early
+admitted-state query/release faults.
+No real provider, signed outcome or privileged host acceptance is asserted.

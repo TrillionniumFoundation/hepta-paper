@@ -1,3 +1,4 @@
+import { addAbortListener as subscribeAbort } from 'node:events';
 import {
   campaignEmpiricalNodeClassification,
   isCampaignAgentNode,
@@ -14,8 +15,6 @@ const DIMENSIONS = Object.freeze(Object.keys(DEFAULTS));
 const POLICY_DEFAULTS = Object.freeze({ maximumWaitingRequests: 1024, maximumConflictingBypasses: null });
 const abortedGetter = Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'aborted').get;
 const reasonGetter = Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'reason').get;
-const addAbortListener = AbortSignal.prototype.addEventListener;
-const removeAbortListener = AbortSignal.prototype.removeEventListener;
 
 function failure(code) {
   return Object.assign(new Error(code), { code });
@@ -107,7 +106,9 @@ export function createResourceGovernor(limits = {}, options = {}) {
   const fits = (request) => DIMENSIONS.every((key) => request[key] <= maximum[key] - used[key]);
   const conflicts = (left, right) => DIMENSIONS.some((key) => left[key] > 0 && right[key] > 0);
   const detach = (waiter) => {
-    if (waiter.signal) removeAbortListener.call(waiter.signal, 'abort', waiter.abort);
+    // Disposable unsubscription must run on grant and cancellation alike.
+    waiter.abortSubscription?.[Symbol.dispose]();
+    waiter.abortSubscription = null;
   };
   const drain = () => {
     const blocked = [];
@@ -164,7 +165,8 @@ export function createResourceGovernor(limits = {}, options = {}) {
         return Promise.reject(failure('resource_wait_queue_full'));
       }
       return new Promise((resolve, reject) => {
-        const waiter = { request: normalized, resolve, reject, signal, abort: null, bypasses: 0 };
+        const waiter = { request: normalized, resolve, reject, signal, abort: null,
+          abortSubscription: null, bypasses: 0 };
         waiter.abort = () => {
           const index = queue.indexOf(waiter);
           if (index < 0) return; // Granted work remains charged until explicit release.
@@ -173,7 +175,9 @@ export function createResourceGovernor(limits = {}, options = {}) {
           reject(abortFailure(signal));
           drain(); // Removing a fairness barrier may unblock eligible followers.
         };
-        if (signal) addAbortListener.call(signal, 'abort', waiter.abort, { once: true });
+        // Native abort listeners can stop propagation; this Node subscription
+        // preserves cancellation even when an earlier listener does so.
+        if (signal) waiter.abortSubscription = subscribeAbort(signal, waiter.abort);
         queue.push(waiter);
         drain();
       });

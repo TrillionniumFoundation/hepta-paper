@@ -116,7 +116,9 @@ invariant and non-claims are specified in
 vectors, bounded waiting and opt-in bounded conflicting overtaking. Legacy
 first-fit remains the default because nested acquisitions need a separate
 dependency-aware policy; finite barriers are only for independent work. Pending cancellation
-removes its listener and reconsiders queued work; granted work remains charged
+uses a propagation-resistant disposable subscription, removes its listener and
+reconsiders queued work even when an earlier native listener suppresses ordinary
+abort propagation; granted work remains charged
 until explicitly released. Tests in
 `paper-core/tests/resource-governor-invariants.test.mjs` bind these behaviors to
 executable positive, adversarial, capacity and deterministic-sequence checks.

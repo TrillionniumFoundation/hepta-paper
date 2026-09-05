@@ -227,7 +227,12 @@ by the policy; one drain has worst-case quadratic queue scans over four fixed
 dimensions. Target-host latency and throughput are not established by this bound.
 
 Native abort signals remove pending waiters and their listeners, and removing
-a barrier immediately reconsiders remaining requests. Abort after grant does
+a barrier immediately reconsiders remaining requests. Subscription uses Node's
+`events.addAbortListener` rather than an ordinary `addEventListener`: an earlier
+listener's `stopImmediatePropagation()` cannot suppress this cleanup. The returned
+disposable is released on both grant and cancellation, leaving unrelated
+listeners untouched. A cancelled waiter cannot retain the last waiting-queue
+slot merely because another listener stopped event propagation. Abort after grant does
 not release a charge: the caller must reconcile the operation and invoke its
 release handle. The same limitation applies after process death; the Node
 in-memory helper neither persists nor reconstructs authoritative leases.

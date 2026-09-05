@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -12,18 +11,10 @@ import sys
 import tempfile
 from typing import Any
 
-
-def canonical_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def sha256_value(value: Any) -> str:
-    return f"sha256:{hashlib.sha256(canonical_bytes(value)).hexdigest()}"
+from qualification_subject_integrity import (
+    canonical_bytes, sha256_value, read_json, validate_record,
+    validate_subject, validate_evidence_pair, WRAPPER_SCHEMA,
+)
 
 
 def fail(message: str) -> None:
@@ -43,33 +34,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def validate_subject(subject: dict[str, Any]) -> None:
-    if (
-        subject.get("schemaVersion") != 3
-        or subject.get("kind") != "QualificationSubjectV3"
-        or subject.get("status") != "exact_subject_complete"
-        or subject.get("reviewBoundary") != "separate_latest_head_merge_gate"
-    ):
-        fail("qualification_subject_identity_invalid")
-    body = dict(subject)
-    snapshot = body.pop("snapshotIdentity", None)
-    if snapshot != sha256_value(body):
-        fail("qualification_subject_snapshot_hash_invalid")
-    authority = subject.get("authority")
-    if (
-        not isinstance(authority, dict)
-        or not authority
-        or any(value is not False for value in authority.values())
-    ):
-        fail("qualification_subject_authority_invalid")
-
-
 def verify(
     artifact: dict[str, Any],
     current_subject: dict[str, Any],
     current_check_runs: Path,
     legacy_verifier: Path,
 ) -> dict[str, Any]:
+    validate_record(artifact, WRAPPER_SCHEMA)
     if (
         artifact.get("schemaVersion") != 2
         or artifact.get("kind") != "HeptaEffectiveSourceStatusV2"
@@ -81,7 +52,7 @@ def verify(
     legacy = artifact.get("legacyEffectiveStatus")
     if not isinstance(embedded, dict) or not isinstance(legacy, dict):
         fail("effective_v2_embedded_objects_invalid")
-    validate_subject(embedded)
+    validate_evidence_pair(legacy, embedded)
     validate_subject(current_subject)
     if artifact.get("qualificationSubjectSha256") != sha256_value(embedded):
         fail("effective_v2_subject_digest_invalid")
@@ -154,8 +125,8 @@ def verify(
 
 def main() -> int:
     args = parse_args()
-    artifact = json.loads(args.artifact.read_text(encoding="utf-8"))
-    current_subject = json.loads(args.current_subject.read_text(encoding="utf-8"))
+    artifact = read_json(args.artifact)
+    current_subject = read_json(args.current_subject)
     result = verify(
         artifact,
         current_subject,
@@ -169,6 +140,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, ValueError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         print(f"effective source status v2 not current: {error}", file=sys.stderr)
         raise SystemExit(1)

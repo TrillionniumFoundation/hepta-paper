@@ -21,6 +21,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from strict_json_schema import valid_datetime
+
 GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -57,9 +59,9 @@ def git_blob_sha(path: Path) -> str:
 
 
 def parse_timestamp(value: Any) -> datetime:
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not valid_datetime(value):
         fail("workflow_run_timestamp_invalid")
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    normalized = value[:-1] + "+00:00" if value[-1] in "Zz" else value
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError as error:
@@ -384,6 +386,9 @@ def normalize_artifacts(raw_artifacts: list[dict[str, Any]]) -> list[dict[str, A
 
 def successful_execution(job: dict[str, Any]) -> bool:
     if job.get("status") != "completed" or job.get("conclusion") != "success":
+        return False
+    if any(step.get("status") != "completed" or step.get("conclusion")
+           not in {"success", "skipped", "neutral"} for step in job.get("steps", [])):
         return False
     return any(
         step.get("status") == "completed"

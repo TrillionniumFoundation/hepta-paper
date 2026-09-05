@@ -224,3 +224,72 @@ test('default first-fit permits a held parent to finish more than 32 nested agen
   assert.equal(entered, false);
   parent(); (await waiting)(); empty(governor);
 });
+
+
+test('earlier abort propagation suppression cannot retain a cancelled queue slot', async () => {
+  const governor = createResourceGovernor({ cpu: 1 }, { maximumWaitingRequests: 1 });
+  const held = await governor.acquire({ cpu: 1 });
+  const controller = new AbortController();
+  const suppress = (event) => event.stopImmediatePropagation();
+  controller.signal.addEventListener('abort', suppress);
+  const pending = governor.acquire({ cpu: 1 }, { signal: controller.signal });
+  const rejected = assert.rejects(pending, { code: 'resource_acquire_aborted' });
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 2);
+  controller.abort('reviewer regression');
+  await rejected;
+  assert.equal(governor.snapshot().waiting, 0);
+  assert.equal(governor.snapshot().used.cpu, 1);
+  assert.deepEqual(getEventListeners(controller.signal, 'abort'), [suppress]);
+  // Capacity stays charged to the holder, but the bounded queue is reusable.
+  const next = governor.acquire({ cpu: 1 });
+  assert.equal(governor.snapshot().waiting, 1);
+  held(); (await next)(); empty(governor);
+});
+
+test('suppressed abort releases a fairness barrier and admits the eligible follower', async () => {
+  const governor = createResourceGovernor({ cpu: 2 }, { maximumConflictingBypasses: 0 });
+  const held = await governor.acquire({ cpu: 1 });
+  const controller = new AbortController();
+  controller.signal.addEventListener('abort', (event) => event.stopImmediatePropagation());
+  const barrier = governor.acquire({ cpu: 2 }, { signal: controller.signal });
+  const rejected = assert.rejects(barrier, { code: 'resource_acquire_aborted' });
+  let entered = false;
+  const follower = governor.acquire({ cpu: 1 }).then((release) => { entered = true; return release; });
+  await tick(); assert.equal(entered, false);
+  controller.abort(); await rejected;
+  const release = await follower;
+  assert.equal(entered, true); assert.equal(governor.snapshot().used.cpu, 2);
+  assert.equal(governor.snapshot().waiting, 0);
+  held(); release(); empty(governor);
+});
+
+test('protected cancellation subscription is disposed on grant without refunding active work', async () => {
+  const governor = createResourceGovernor({ cpu: 1 });
+  const controller = new AbortController();
+  const suppress = (event) => event.stopImmediatePropagation();
+  controller.signal.addEventListener('abort', suppress);
+  const held = await governor.acquire({ cpu: 1 });
+  const waiting = governor.acquire({ cpu: 1 }, { signal: controller.signal });
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 2);
+  held(); const release = await waiting;
+  assert.deepEqual(getEventListeners(controller.signal, 'abort'), [suppress]);
+  controller.abort(); assert.equal(governor.snapshot().used.cpu, 1);
+  release(); release(); empty(governor);
+});
+
+test('repeated suppressed cancellations do not saturate the queue or leak listeners', async () => {
+  const governor = createResourceGovernor({ cpu: 1 }, { maximumWaitingRequests: 1 });
+  const held = await governor.acquire({ cpu: 1 });
+  for (let index = 0; index < 64; index += 1) {
+    const controller = new AbortController();
+    const suppress = (event) => event.stopImmediatePropagation();
+    controller.signal.addEventListener('abort', suppress);
+    const rejected = assert.rejects(governor.acquire({ cpu: 1 }, { signal: controller.signal }),
+      { code: 'resource_acquire_aborted' });
+    controller.abort(); await rejected;
+    assert.equal(governor.snapshot().waiting, 0);
+    assert.equal(governor.snapshot().used.cpu, 1);
+    assert.deepEqual(getEventListeners(controller.signal, 'abort'), [suppress]);
+  }
+  held(); empty(governor);
+});

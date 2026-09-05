@@ -23,7 +23,7 @@ test('Qualification Subject V3 hostile state machine executes', () => {
     },
   );
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stderr, /Ran 19 tests/u);
+  assert.match(result.stderr, /Ran 37 tests/u);
   assert.match(result.stderr, /OK/u);
 });
 

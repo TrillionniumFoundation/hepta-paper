@@ -328,7 +328,101 @@ control calls the unchanged `createCampaignNestedAgentRunner` forty times with
 the envelope child port while a conflicting root waiter remains blocked. It
 uses a local campaign-store port and explicitly non-model local receipts, not
 an external provider or a production campaign. The final close permits the
-root waiter to proceed. Complete engine wiring, persisted recovery, target-host
-fairness/performance and independent review remain required before widening
-rollout. This contributes to RES-001/003/004, without changing their global
+root waiter to proceed. The engine integration in section 15 is explicitly configured and source-tested;
+persisted resource recovery, target-host fairness/performance and independent
+review remain required before widening rollout. This contributes to RES-001/003/004, without changing their global
 work-item states or closing G4.
+
+
+## 15. Explicit campaign integration and joined nested execution
+
+`paper-application/automation/campaign-resource-envelope.mjs` captures a trusted
+`CampaignResourceEnvelopePolicyV1`; `runPaperCampaign` accepts it through the
+new optional `resourceEnvelopePolicy` argument. It is not derived from a node's
+candidate-reported resource wishes and is not a production authority grant.
+Existing callers without a declaration keep their legacy resource routing and
+result shape, but all callers now use the joined nested-execution boundary below.
+There is no automatic envelope command-line rollout or multiprocess fallback.
+
+The closed policy has `version: 1`, `kind: CampaignResourceEnvelopePolicyV1`, a
+nonempty `nestedAgentSlotsByKind` mapping of exact known campaign node kinds to
+1..64 agent slots, and optional `maximumChildren` / `maximumWaitingRequests`
+(default 1024, range 1..4096 each). Up to 64 kind bindings are accepted. Values
+are captured without numeric coercion or executing accessor properties. Keys
+are sorted before the existing canonical hash function computes the policy
+identity. Calling `captureCampaignResourceEnvelopePolicy` returns the frozen
+policy and its `policyHash`.
+
+Before creating the campaign, the trusted composition places that hash in the
+plan's `resourceEnvelopePolicyHash`. Existing campaign-definition identity and
+replay checks bind this field. Execution requires both the explicit runtime
+policy and the identical persisted hash: supplying a different policy, omitting
+the policy for a bound campaign, or adding a policy to an unbound campaign fails
+before node claims. This is a configuration identity check, not authorization
+of the configured source or a cryptographic signature by an external owner.
+
+Both the global and campaign-local governors must expose the current in-process
+`GlobalResourceGovernor` envelope interface. Unsupported distributed ports are
+rejected rather than replaced by new process-local capacity. Every configured
+node is checked against both governors' declared limits before `claimReady`;
+capacity is checked again for each actual admission. The full parent-plus-child
+reservation is acquired globally, then locally. Failed local acquisition
+returns the unused global reservation. Both child ports are then passed to the
+unchanged nested-agent runner, so it cannot accidentally re-enter the local
+parent queue while avoiding the global queue. The original execution budget's
+`acquiredResources` still describes retained parent work; the additional
+`resourceEnvelope` binding records policy hash, parent, child and total vectors.
+The final run result also records `resourceEnvelopePolicyHash`.
+
+When an explicit policy is active, unlisted node kinds cannot invoke nested
+agent work. Listed nodes use their declared pools. The wrapper bounds all
+outstanding nested promises before asynchronous resource acquisition, including
+calls that have not reached the pool yet. Same-scope recursive child entry is
+rejected using asynchronous context tracking: a child cannot hold a slot while
+recursively waiting for another from the same scope. Other locks, custom ports
+or cross-scope cycles are not thereby proven safe.
+
+For both legacy and declared-envelope callers, each wrapped nested call spans the unchanged runner's resource acquisition,
+existing action gate, budget reservation, callback, usage metering and release.
+A parent must finish all its nested operations before returning its result.
+If any call remains outstanding when the parent returns, the engine closes
+nested admission, signals cancellation, awaits settlement of those operations
+and fails with `campaign_nested_work_unsettled`. It does not prepare/integrate/
+complete that parent result. The same drain occurs before processing a parent
+error or returning root resources. Handled and awaited nested errors may still
+be recovered by the executor; they are not retroactively treated as unhandled
+failure. Retained callbacks reject after scope closure. Every dispatch batch joins sibling operations before returning a dispatch
+rejection. Legacy calls also reject unresolved nested work rather than preserving
+the previous premature-publication behavior; that safety change is intentional.
+Legacy routing has a 1024-outstanding-call wrapper bound; explicit policies use
+their captured maximumChildren. Same-scope recursion is rejected only in declared
+independent-leaf envelope mode, not silently reinterpreted for legacy workloads.
+
+No arbitrary timeout produces a refund. A child that ignores cancellation and
+never settles keeps the relevant reservations and prevents that parent from
+committing. This is conservative safety, not a finite shutdown/host-recovery
+guarantee. The lifecycle covers `runNestedAgent`, not arbitrary background tasks
+or `runEmpiricalCell`; new task families need their own declared settlement
+contract. Parent execution and finalization still use the existing state,
+workspace, usage, external-action and prepared-result gates. The new policy
+never makes a local receipt qualify as a real provider execution.
+
+The supervisor abort subscription now uses propagation-resistant disposable
+listeners, and early acquisition/start paths release their own listener and
+monitor. This does not relax the separate multiprocess lease-loss semantics.
+A caller must have reconciled its physical/external work before resolving the
+executor and release promises; the application cannot prove that fact solely
+from Promise settlement.
+
+`paper-core/tests/campaign-resource-envelope.test.mjs` executes the real engine,
+real SQLite campaign store and native resource governors. Local callbacks prove
+40 nested calls complete behind a blocked root competitor; policy drift,
+missing declaration, local/global overflow, unsupported distributed governors,
+undeclared/recursive nested work and action-gate denial fail closed. Deferred
+children prove parent success/failure/shutdown cannot commit or refund early;
+sibling joining and late callback rejection are checked. These are source
+integration controls, not real model, host, storage-custody or cutover evidence.
+Rollback must preserve the policy field's fail-closed handling: removing runtime
+support while continuing a declared campaign is not a safe implicit downgrade.
+This is a partial RES/NODE integration; no machine work-item or gate is closed
+by this document or by the local tests alone.

@@ -131,9 +131,16 @@ limits, conservation argument and supported dependency assumptions are recorded
 in [`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#14-opt-in-parent-and-child-resource-envelope).
 `paper-core/tests/resource-envelope.test.mjs` executes boundary and race cases,
 separate-ledger mixed workloads and the actual nested-agent runner with local
-campaign ports. These do not enable envelope routing by default or implement
-multiprocess/host recovery. Full production composition and independent host
-acceptance remain open.
+campaign ports. The policy-bound engine integration now routes explicitly declared node kinds
+through both global and local pools; see
+[`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#15-explicit-campaign-integration-and-joined-nested-execution).
+The persisted campaign-definition hash must match the runtime policy before
+claims. Nested operations are joined before parent result preparation; premature
+return, recursive same-scope calls and undeclared kinds fail closed.
+`paper-core/tests/campaign-resource-envelope.test.mjs` exercises the real engine
+and SQLite state, including no-early-commit and no-early-refund controls. Default
+routing, multiprocess/host recovery, physical quota enforcement and independent
+host acceptance remain outside this source increment.
 
 The legacy defaults are not qualified production capacity. Hierarchical DRF,
 durable fenced leases, host measurements and whole-work-item acceptance remain

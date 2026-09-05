@@ -109,6 +109,26 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 Capability bindings: `CAP-STATE-COMMIT`, `CAP-STATE-READ`, `CAP-EXE-DISPATCH`, `CAP-AUTHOR`, `CAP-REVIEW`, `CAP-FORMAL`, `CAP-EMPIRICAL`, `CAP-NUMERICAL`, `CAP-BUILD`, `CAP-SUBMIT`. Related work identifiers: `NODE-001`. Implementation/contract roots: `workflow-kernel`, `paper-domain`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
+
+The current `runPaperCampaign` implementation accepts an explicit versioned
+resource-envelope policy captured by
+`paper-application/automation/campaign-resource-envelope.mjs`. It must match the
+hash in the stored campaign definition before any claims; declared nodes reserve
+parent and child capacity in both global and campaign-local governors. An active
+policy forbids undeclared and same-scope recursive nested-agent entry. For legacy as well as explicitly configured callers, the engine
+joins wrapped nested calls before preparing a successful parent result and drains
+them before handling parent failure or returning reservations. Escaped ongoing
+work causes a failed, unprepared parent rather than an early completed node.
+The original budget, side-effect, workspace and commit gates remain responsible
+for their own acceptance; the resource policy grants none of their authority.
+
+`paper-core/tests/campaign-resource-envelope.test.mjs` tests the actual engine
+with real SQLite campaign state and local, non-model callbacks. It covers
+policy identity, admission, gated nested execution, delayed-child settlement,
+shutdown and sibling joining. These are not production provider or target-host
+qualification. The exact configuration and non-claims are in
+[`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#15-explicit-campaign-integration-and-joined-nested-execution).
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback
@@ -119,4 +139,4 @@ Current channel is `authoritative`. Promotion follows disabled → shadow/read-o
 
 - `NODE-001` — `source_implemented`
 - Effective `target_host` evidence remains deployment/external-subject specific and cannot be committed as static success.
-- No additional repository-local implementation blocker is asserted by this specification; qualification, activation, and operation remain separate.
+- Explicit envelope routing is implemented for the in-process engine only; default operator rollout, persistent multiprocess envelopes, empirical/background task settlement and target-host evidence remain unclosed. Qualification, activation, and operation remain separate.

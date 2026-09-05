@@ -1,0 +1,78 @@
+name: pr53-wave3-diagnostics
+on:
+  push:
+    branches: [ops/pr53-wave3-diagnostics-20260905]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TARGET_SHA: 13dcac59c873ed5b888ff6895123d074ca5910ba
+      TARGET_TREE: 7342a829ce02eb3f8abfdae2efe893c9e3bb3126
+      BASE_SHA: fe866f814b85c10afe43e22561285d337ffbe797
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Verify exact source and materialize public dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$TARGET_TREE"
+          mkdir -p "$RUNNER_TEMP/pr53-diagnostics" "$RUNNER_TEMP/pr53-dependencies"
+          git ls-files -s > "$RUNNER_TEMP/pr53-diagnostics/source-index.txt"
+          printf '%s\n' "$TARGET_SHA" "$TARGET_TREE" > "$RUNNER_TEMP/pr53-diagnostics/subject.txt"
+          npm ci --ignore-scripts --no-audit --no-fund
+          cp package-lock.json "$RUNNER_TEMP/pr53-dependencies/"
+          tar -czf "$RUNNER_TEMP/pr53-dependencies/node_modules.tar.gz" node_modules
+          cp "$(command -v node)" "$RUNNER_TEMP/pr53-dependencies/node"
+          (cd "$RUNNER_TEMP/pr53-dependencies" && sha256sum package-lock.json node_modules.tar.gz node > SHA256SUMS)
+          sudo install -o root -g root -m 0555 "$(command -v node)" /usr/bin/node
+          sudo apt-get update
+          sudo apt-get install -y sqlite3 texlive-latex-base poppler-utils
+      - name: Export only public locked dependencies
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr53-public-dependencies
+          path: ${{ runner.temp }}/pr53-dependencies
+          if-no-files-found: error
+          retention-days: 7
+      - name: Reproduce all exact impacted shards without private credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for shard in 0 1 2 3; do
+            node paper-core/bin/run-impacted-tests.mjs --base-ref "$BASE_SHA" --head-ref "$TARGET_SHA" --shard-count 4 --shard-index "$shard" --dry-run --json > "$RUNNER_TEMP/pr53-diagnostics/plan-$shard.json"
+            set +e
+            /usr/bin/node paper-core/bin/run-impacted-tests.mjs --base-ref "$BASE_SHA" --head-ref "$TARGET_SHA" --shard-count 4 --shard-index "$shard" > "$RUNNER_TEMP/pr53-diagnostics/shard-$shard.tap" 2>&1
+            code=$?
+            set -e
+            printf '%s\n' "$code" > "$RUNNER_TEMP/pr53-diagnostics/shard-$shard.exit"
+          done
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD^{tree})" = "$TARGET_TREE"
+          (cd "$RUNNER_TEMP/pr53-diagnostics" && sha256sum subject.txt source-index.txt *.json *.tap *.exit > SHA256SUMS)
+      - name: Preserve raw diagnostics, never a qualification receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr53-wave3-raw-diagnostics
+          path: ${{ runner.temp }}/pr53-diagnostics
+          if-no-files-found: error
+          retention-days: 14
+      - name: Propagate failed test exits
+        shell: bash
+        run: |
+          set -euo pipefail
+          for shard in 0 1 2 3; do
+            test "$(cat "$RUNNER_TEMP/pr53-diagnostics/shard-$shard.exit")" = 0
+          done

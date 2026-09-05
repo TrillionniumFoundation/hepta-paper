@@ -1,3 +1,5 @@
+import { addAbortListener as subscribeAbort } from 'node:events';
+
 export function campaignInfrastructureControlError(error) {
   return error?.committed === true
     || error?.stateRecoverabilityFatal === true
@@ -152,3 +154,56 @@ export function createCampaignNodeExternalSideEffectGate({
 import {
   buildCampaignExternalActionDescriptor,
 } from '../../paper-domain/automation/campaign-external-action-journal-contract.mjs';
+
+export function boundedCampaignFailureDetail(error, { usageMetering = null } = {}) {
+  const receipt = error?.receipt || {};
+  return Object.freeze({
+    message: String(error?.message || 'campaign_executor_failed').slice(0, 1000),
+    receiptKind: receipt.kind || null,
+    receiptStatus: receipt.status || null,
+    receiptHash: receipt.agentExecutionReceiptHash
+      || receipt.multiLanguageEmpiricalReceiptHash
+      || receipt.formalProofSearchFailureCertificateHash
+      || receipt.receiptHash || null,
+    blockers: Array.isArray(receipt.blockers) ? receipt.blockers.slice(0, 20) : [],
+    exitCode: receipt.exitCode ?? null,
+    stderrTail: String(receipt.stderrTail || '').slice(-4000),
+    stdoutTail: String(receipt.stdoutTail || '').slice(-4000),
+    receiptDetails: receipt.details || null,
+    backendFailures: Array.isArray(error?.failures) ? error.failures.slice(0, 10) : [],
+    usageMetering,
+  });
+}
+
+// Own one monitor and its supervisor subscription; no resource or writer authority.
+export function createCampaignNodeControlMonitor({
+  campaignStore, campaignId, claimedNode, controller, signal, scheduler,
+}) {
+  const onSupervisorAbort = () => controller.abort(signal?.reason || 'supervisor_process_shutdown');
+  let subscription = null;
+  let monitor;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    subscription?.[Symbol.dispose]();
+    subscription = null;
+    if (monitor !== undefined) scheduler.clearInterval(monitor);
+  };
+  try {
+    if (signal?.aborted) onSupervisorAbort();
+    else if (signal) subscription = subscribeAbort(signal, onSupervisorAbort);
+    monitor = scheduler.setInterval(() => {
+      const status = campaignStore.getCampaign(campaignId)?.status;
+      if (['paused', 'cancelled', 'failed', 'stopped'].includes(status)) controller.abort(status);
+      const latestNode = campaignStore.listNodes(campaignId).find((item) => item.nodeId === claimedNode.nodeId);
+      if (latestNode && (!['leased', 'running'].includes(latestNode.status)
+        || latestNode.attemptId !== claimedNode.attemptId
+        || latestNode.leaseGeneration !== claimedNode.leaseGeneration)) {
+        controller.abort(latestNode.failureClass || latestNode.status || 'campaign_node_lease_lost');
+      }
+    }, 500);
+    scheduler.unref?.(monitor);
+    return close;
+  } catch (error) { close(); throw error; }
+}

@@ -1,0 +1,110 @@
+name: pr53-wave3-public-cas-recovery
+on:
+  push:
+    branches: [ops/pr53-wave3-public-cas-recovery-20260905]
+permissions:
+  contents: read
+jobs:
+  recover-public-historical-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 18b20af983e32575a2faab7dd8fa721a61d2e68c
+          sparse-checkout: runtime-images/r-scientific/source-cas
+          persist-credentials: false
+          lfs: false
+      - name: Verify the pinned historical subtree and every package without executing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, stat, subprocess, zipfile
+          base = '18b20af983e32575a2faab7dd8fa721a61d2e68c'
+          subtree = 'd6b31b7145b97ae01c71e76b34ef7c5cb1a3e082'
+          relative = 'runtime-images/r-scientific/source-cas'
+          def git(*args):
+              return subprocess.check_output(['/usr/bin/git', *args])
+          assert git('rev-parse', 'HEAD').decode().strip() == base
+          assert git('rev-parse', 'HEAD:' + relative).decode().strip() == subtree
+          root = pathlib.Path(relative)
+          expected = {}
+          for record in git('ls-tree', '-rz', base + ':' + relative).split(b'\0'):
+              if not record:
+                  continue
+              metadata, name = record.split(b'\t', 1)
+              mode, kind, digest = metadata.decode().split()
+              name = name.decode('ascii')
+              assert mode == '100644' and kind == 'blob'
+              assert re.fullmatch(r'[A-Za-z0-9_.\-/]+', name)
+              assert all(part not in ('', '.', '..') for part in name.split('/'))
+              assert name not in expected
+              expected[name] = digest
+          assert len(expected) == 107
+          assert expected['manifest.json'] == '0053ff8c14a375874bc5c0ea4f0f6071d648b1eb'
+          found = set()
+          hashes = {}
+          for file in root.rglob('*'):
+              info = file.lstat()
+              assert not stat.S_ISLNK(info.st_mode)
+              if stat.S_ISDIR(info.st_mode):
+                  continue
+              assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+              name = file.relative_to(root).as_posix()
+              assert name in expected and name not in found
+              found.add(name)
+              raw = file.read_bytes()
+              digest = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+              assert digest == expected[name]
+              hashes[name] = {'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(), 'gitBlobSha': digest}
+          assert found == set(expected)
+          manifest = json.loads((root / 'manifest.json').read_text())
+          assert manifest['kind'] == 'RRuntimeSourceCasManifest'
+          assert manifest['status'] == 'r_runtime_source_cas_complete'
+          assert manifest['packageCount'] == len(manifest['packages']) == 104
+          packages = set()
+          package_files = set()
+          for package in manifest['packages']:
+              assert package['package'] not in packages
+              packages.add(package['package'])
+              assert '/' not in package['file'] and '\\' not in package['file']
+              name = 'src/contrib/' + package['file']
+              assert name not in package_files
+              package_files.add(name)
+              assert hashes[name]['bytes'] == package['bytes']
+              assert 'sha256:' + hashes[name]['sha256'] == package['sha256']
+          assert package_files == found - {'manifest.json', 'PACKAGES.tsv', 'SHA256SUMS'}
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'public-r-cas-recovery'
+          out.mkdir(mode=0o700)
+          archive = out / 'source-cas.zip'
+          with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_STORED) as output:
+              for name in sorted(found):
+                  output.write(root / name, name)
+          record = {
+              'kind': 'HistoricalPublicSourceRecovery',
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'historicalCommit': base, 'historicalSubtree': subtree,
+              'subjectCommit': 'c5316ef0b30deec3f1783aaee86792d9ccfe2a37',
+              'subjectTree': '858feb5e8f3560222b717fb6f9b6dfbe359762d7',
+              'requestedGitlinkCommit': 'd13d857909525f4173063dbd6a7f1f48a089ae93',
+              'requestedGitlinkCommitVerified': False,
+              'currentDefinitionEquivalenceVerified': False,
+              'producerCommit': os.environ['GITHUB_SHA'],
+              'producerRunId': os.environ['GITHUB_RUN_ID'],
+              'sourceCodeExecuted': False, 'privateMaterialCaptured': False,
+              'qualificationClaimed': False, 'productionAuthorized': False,
+              'packageCount': 104, 'files': hashes,
+              'archiveSha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+          }
+          (out / 'recovery.json').write_text(json.dumps(record, indent=2) + '\n')
+          print(json.dumps({'historicalSubtree': subtree, 'files': len(hashes), 'packages': 104,
+              'requestedGitlinkCommitVerified': False, 'qualificationClaimed': False}))
+          PY
+      - name: Export only verified public package sources and the recovery record
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr53-wave3-historical-r-source-cas
+          path: ${{ runner.temp }}/public-r-cas-recovery
+          retention-days: 7
+          if-no-files-found: error

@@ -114,20 +114,58 @@ The canonical `provider:sandbox-selftest` command still requires the actual
 external `hepta-paper-provider-sandbox/provider-sandbox.mjs`. Missing or unsafe
 source is a nonzero preflight failure before temporary runtime, database, or
 outbox creation. There is no fixture fallback and no missing-dependency skip.
-The real-paper sandbox operator applies the same early missing-source rejection
-and closes its returned persistence context and owned temporary root in a
-`finally` path; signed positive execution is not established by that cleanup.
 
-`paper-core/tests/provider-sandbox-lifecycle.test.mjs` exercises the shared
-quarantine-probe helper through isolated test children with real SQLite stores.
-Local controls cover missing/linked companion, nonzero child exit, timeout,
-missing/malformed/linked/oversized response, assertion failure, initialization
-failure, and close failure, plus successful cleanup and environment isolation.
-Failures remain nonzero, stores returned to the caller are closed exactly once,
-and only the owned temporary root is removed. Children receive a minimal
-noncredential environment and bounded output/time limits; this is not an OS or
-network containment claim. These synthetic lifecycle controls never count as
-companion integration, provider identity, submission, or external qualification.
+Both the quarantine probe and `run-real-paper-provider-sandbox.mjs` now use
+`paper-adapters/submission/provider-sandbox-process.mjs` through the appropriate
+composition boundary. The operator performs source preflight before allocating
+its verification context, and closes its returned persistence context and owned
+temporary root in a `finally` path. Executable identity is checked for local
+byte drift only; an observed hash is not an authorized companion version or a
+proof of the transitive dependency graph. Issue #55 retains that requirement.
+
+The shared direct-child invocation has a 10,000 ms default/maximum timeout,
+SIGKILL timeout signal, no shell, 65,536-byte stdout/stderr capture bounds, and
+an explicit environment containing only PATH, private HOME/TMPDIR and locale.
+It does not inherit operator credentials, proxy variables, NODE_OPTIONS or the
+operator's runtime-root environment. Raw child diagnostics do not become error
+messages, causes or receipts. Timeout/nonzero exit/output overflow deny without
+consuming the response. These are direct-child controls, not process-tree,
+network, filesystem, disk-quota or privileged host isolation guarantees. A
+child's side effects cannot be undone by returning a denial.
+
+Only the seven existing request fields are accepted, with explicit
+`environment: provider_sandbox` and `liveActionAllowed: false`; textual fields
+are nonempty and limited to 2048 characters. Request creation is exclusive and
+private (0600) through `provider-sandbox-request-repository.mjs`; existing
+request/response paths are not reused. Successful child
+exit is followed by runtime-directory identity, companion-byte and input-byte
+checks. Response files must be bounded single-link regular files opened without
+following a symlink. The same captured response bytes must be valid UTF-8 and
+JSON; duplicate decoded keys, non-finite numbers, nesting above 32 levels and
+more than 8192 lexical tokens are rejected before downstream consumption.
+Checks before and after execution do not constitute a race-free OS execution
+identity or an externally verified trust statement.
+
+Before the real-paper operator offers a response to delivery verification, it
+requires an exact dispatch-authorization binding, `providerReceipt.sandbox:
+true` and `externalActionPerformed: false`. Missing, conflicting or coerced
+claims cannot be replaced by hardcoded false fields in a signed local report.
+These declarations are necessary consistency conditions, not proof of a real
+external outcome. The existing delivery/evidence verifier still runs and may
+reject incomplete or untrusted receipts. No positive signing or submission
+qualification is implied.
+
+`paper-core/tests/provider-sandbox-lifecycle.test.mjs` exercises thirteen
+failure/success lifecycle controls through isolated test children with real
+SQLite stores. `paper-core/tests/provider-sandbox-process.test.mjs` adds process,
+environment, byte/JSON and declaration controls. It also executes an unchanged
+copy of the actual operator entrypoint with explicitly local test composition
+ports: unsafe claims and inherited-environment canaries cannot reach signing,
+and a consistent declaration still reaches (and must pass) downstream delivery
+verification. The tests never install a substitute at the canonical companion
+path, never sign a real receipt, and never count as independent provider
+acceptance. Failures remain nonzero and the owned verification directory is
+removed; operator production credentials and positive execution remain untested.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 

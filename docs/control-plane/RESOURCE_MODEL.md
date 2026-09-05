@@ -245,3 +245,90 @@ ledger. Existing campaign and orchestration tests remain required. This source
 increment contributes to RES-001/003/004; it does not close those complete work
 items, G4, target-host acceptance or any activation gate. Changes to ordering
 and rejection behavior require fresh exact-source integration and review.
+
+
+## 14. Opt-in parent and child resource envelope
+
+The same Node governor now exposes
+`await governor.acquireEnvelope({ retained, childCapacity }, options)`. Both
+required records use the four exact legacy slot/MiB dimensions and the strict
+integer validation above; omitted dimensions inside each record mean zero.
+The complete reservation is their overflow-checked componentwise sum. An empty
+sum is rejected, and the entire sum is admitted once by the root governor.
+No child receives an extra default capacity and no dimension is partially
+admitted. This API does not change existing `acquire` call behavior or enable
+envelopes by default in the campaign engine or the multiprocess governor.
+
+`retained` includes the parent resources that remain occupied while it awaits
+children. `childCapacity` is a distinct budget for independent leaf operations.
+The owner returns only `childGovernor` to child consumers; its `acquire` and
+`snapshot` are compatible with the existing nested-agent runner's resource
+port. Children cannot close the root envelope, allocate a nested envelope or
+borrow from retained parent capacity. Child operations must not hold a lease
+while recursively acquiring more from that same pool. General dependency-aware
+resource planning and priority inheritance are still separate work.
+
+The owner methods are `seal()`, `close()` and `snapshot()`. The lifecycle is:
+
+```text
+open -> sealed -> closing -> released
+open ----------> closing -> released
+```
+
+`seal()` forbids new children and rejects queued or granted-but-not-handed-off
+child requests. Owner abort has the same effect; it does not prove parent work
+has stopped. `close()` additionally declares the retained parent work finished
+or reconciled. Root capacity is released only after this explicit declaration,
+all handed-off child handles are released, and all pending handoffs have settled.
+No timeout or cancellation automatically manufactures that completion evidence.
+If a child hangs or the parent cannot reconcile, the root charge remains held.
+The caller is responsible for cancelling actual execution and using the existing
+side-effect/reconciliation gates before invoking its release or close handle.
+
+Each child release and root settlement takes effect once. Late duplicates cannot
+refund a later unrelated root owner. Aborting after a child grant leaves its
+charge intact. Abort subscriptions use the same propagation-resistant native
+mechanism as the root governor and are disposed on handoff or failure. Initial
+owner construction failure before handoff releases the unconsumed root lease.
+
+Options are `signal`, `maximumChildren` (default 1024, range 1..4096) and
+`maximumWaitingRequests` (default 1024, range 1..4096). `maximumChildren` counts
+active, waiting and in-transit child requests, including zero-resource requests;
+this prevents zero-vector handles bypassing the metadata bound. Queue saturation
+and excessive child count remain typed failures. The child pool deliberately
+uses first-fit; the root governor retains its configured independent-work policy.
+Snapshots distinguish retained parent reservation, child capacity, child usage,
+active/pending handles, owner completion and whether the root charge remains.
+They report logical reservations, not observed CPU/device/memory usage.
+
+For resource dimension r, envelope j has retained reservation P_jr and child
+capacity K_jr. Let E_jr = P_jr + K_jr and A_jr be summed live child reservations.
+Root admission and child admission preserve sum_j E_jr <= C_r and
+0 <= A_jr <= K_jr. Until the parent has reconciled, its retained use is bounded
+by P_jr; hence sum_j (P_jr + A_jr) <= sum_j E_jr <= C_r. Explicit zero limits,
+overflow rejection, whole-vector admission and one effective release per handle
+are necessary to this source-level induction. This does not enforce physical
+resource use by an uncooperative worker.
+
+Because the child pool was reserved before the parent began, an unrelated large
+request waiting at a root fairness barrier cannot prevent a child from using its
+own pool. This removes that specific cross-level hold-and-wait cycle. It does
+not establish a universal starvation or deadlock bound: child calls must be
+independent leaves, other application locks/dependencies must not form cycles,
+and granted work must eventually release and owners must eventually close.
+Unused pre-reserved child capacity also reduces work conservation. Neither DRF,
+durable leases, host isolation, distributed fencing nor production activation
+is provided by this additive in-process feature.
+
+`paper-core/tests/resource-envelope.test.mjs` covers sum admission, malformed
+inputs, overflow, pool separation, bounded handles/queues, cancellation/handoff
+races, retained charges, idempotence, subscription failure and deterministic
+mixed workloads checked against a separate live-handle ledger. An integration
+control calls the unchanged `createCampaignNestedAgentRunner` forty times with
+the envelope child port while a conflicting root waiter remains blocked. It
+uses a local campaign-store port and explicitly non-model local receipts, not
+an external provider or a production campaign. The final close permits the
+root waiter to proceed. Complete engine wiring, persisted recovery, target-host
+fairness/performance and independent review remain required before widening
+rollout. This contributes to RES-001/003/004, without changing their global
+work-item states or closing G4.

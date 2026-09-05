@@ -122,6 +122,19 @@ abort propagation; granted work remains charged
 until explicitly released. Tests in
 `paper-core/tests/resource-governor-invariants.test.mjs` bind these behaviors to
 executable positive, adversarial, capacity and deterministic-sequence checks.
+The additive `acquireEnvelope` API reserves retained parent resources plus an
+independent child pool before parent execution. Child consumers receive only
+that pool's resource port; they cannot close the owner or borrow its retained
+quota. Owner cancellation seals admission but does not refund resources; explicit
+owner close plus settlement of every child is required. The exact lifecycle,
+limits, conservation argument and supported dependency assumptions are recorded
+in [`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#14-opt-in-parent-and-child-resource-envelope).
+`paper-core/tests/resource-envelope.test.mjs` executes boundary and race cases,
+separate-ledger mixed workloads and the actual nested-agent runner with local
+campaign ports. These do not enable envelope routing by default or implement
+multiprocess/host recovery. Full production composition and independent host
+acceptance remain open.
+
 The legacy defaults are not qualified production capacity. Hierarchical DRF,
 durable fenced leases, host measurements and whole-work-item acceptance remain
 open; the local governor must not be presented as their implementation.

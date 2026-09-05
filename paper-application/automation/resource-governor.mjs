@@ -148,13 +148,16 @@ export function createResourceGovernor(limits = {}, options = {}) {
       });
     }
   };
-  return Object.freeze({
+  const governor = Object.freeze({
     version: 1,
     kind: 'GlobalResourceGovernor',
     limits: maximum,
     admissionPolicy: policy,
     snapshot: () => Object.freeze({ limits: Object.freeze({ ...maximum }),
       used: Object.freeze({ ...used }), peak: Object.freeze({ ...peak }), waiting: queue.length }),
+    acquireEnvelope(definition, options = {}) {
+      return acquireResourceEnvelope(governor, definition, options);
+    },
     acquire(request = {}, { signal = null } = {}) {
       const normalized = normalize(request);
       for (const key of DIMENSIONS) {
@@ -181,6 +184,131 @@ export function createResourceGovernor(limits = {}, options = {}) {
         queue.push(waiter);
         drain();
       });
+    },
+  });
+  return governor;
+}
+
+// A root reservation includes retained parent resources AND a dedicated pool
+// for independent child operations. Children never enter the root wait queue.
+// This is an opt-in in-process API, not durable leases or OS enforcement.
+async function acquireResourceEnvelope(governor, definition, options) {
+  const declared = recordValues(definition, ['retained', 'childCapacity'],
+    'resource_envelope_definition_invalid');
+  if (!Object.hasOwn(declared, 'retained') || !Object.hasOwn(declared, 'childCapacity')
+    || declared.retained === undefined || declared.childCapacity === undefined) {
+    throw failure('resource_envelope_definition_invalid');
+  }
+  const retained = Object.freeze(normalize(declared.retained));
+  const childCapacity = Object.freeze(normalize(declared.childCapacity));
+  const selected = recordValues(options,
+    ['signal', 'maximumChildren', 'maximumWaitingRequests'], 'resource_envelope_options_invalid');
+  const signal = Object.hasOwn(selected, 'signal') ? selected.signal : null;
+  const maximumChildren = Object.hasOwn(selected, 'maximumChildren') ? selected.maximumChildren : 1024;
+  const maximumWaitingRequests = Object.hasOwn(selected, 'maximumWaitingRequests')
+    ? selected.maximumWaitingRequests : 1024;
+  if (!Number.isSafeInteger(maximumChildren) || maximumChildren < 1 || maximumChildren > 4096) {
+    throw failure('resource_envelope_child_limit_invalid');
+  }
+  if (aborted(signal)) throw abortFailure(signal);
+  const envelope = {};
+  for (const key of DIMENSIONS) {
+    if (retained[key] > Number.MAX_SAFE_INTEGER - childCapacity[key]) {
+      throw failure(`resource_envelope_overflow:${key}`);
+    }
+    envelope[key] = retained[key] + childCapacity[key];
+  }
+  if (!DIMENSIONS.some((key) => envelope[key] > 0)) throw failure('resource_envelope_empty');
+  Object.freeze(envelope);
+  // Explicit zeroes prevent the child's absent dimensions inheriting defaults.
+  // Child operations must be leaves/independent; local first-fit is deliberate.
+  const children = createResourceGovernor(childCapacity, { maximumWaitingRequests });
+  const releaseRoot = await governor.acquire(envelope, { signal });
+  // An abort between the root grant and handoff cannot expose a cancelled owner.
+  if (aborted(signal)) { releaseRoot(); throw abortFailure(signal); }
+  let phase = 'open';
+  let ownerFinished = false;
+  let activeChildren = 0;
+  let ownerSubscription = null;
+  const pending = new Set();
+  const detachOwner = () => {
+    ownerSubscription?.[Symbol.dispose]();
+    ownerSubscription = null;
+  };
+  const snapshot = () => Object.freeze({
+    version: 1, kind: 'ResourceEnvelopeV1', phase, retained, childCapacity,
+    envelope, maximumChildren, activeChildren, pendingChildren: pending.size,
+    ownerFinished, rootChargeRetained: phase !== 'released', children: children.snapshot(),
+  });
+  const settle = () => {
+    if (!ownerFinished || activeChildren !== 0 || pending.size !== 0 || phase === 'released') return;
+    releaseRoot();
+    phase = 'released';
+    detachOwner();
+  };
+  const seal = () => {
+    if (phase === 'released') return snapshot();
+    phase = ownerFinished ? 'closing' : 'sealed';
+    detachOwner();
+    for (const waiter of pending) waiter.controller.abort('resource_envelope_sealed');
+    settle();
+    return snapshot();
+  };
+  const childGovernor = Object.freeze({
+    version: 1, kind: 'ResourceEnvelopeChildGovernor', limits: childCapacity,
+    admissionPolicy: children.admissionPolicy, snapshot: children.snapshot,
+    async acquire(request = {}, { signal: childSignal = null } = {}) {
+      const vector = normalize(request);
+      if (phase !== 'open') throw failure('resource_envelope_not_open');
+      if (aborted(childSignal)) throw abortFailure(childSignal);
+      if (activeChildren + pending.size >= maximumChildren) {
+        throw failure('resource_envelope_child_limit');
+      }
+      const waiter = { controller: new AbortController() };
+      let subscription = null;
+      let releaseLocal = null;
+      pending.add(waiter);
+      try {
+        if (childSignal) subscription = subscribeAbort(childSignal,
+          () => waiter.controller.abort('resource_child_cancelled'));
+        releaseLocal = await children.acquire(vector, { signal: waiter.controller.signal });
+        if (phase !== 'open' || aborted(waiter.controller.signal)) {
+          throw failure('resource_envelope_handoff_cancelled');
+        }
+        activeChildren += 1;
+        const ownedRelease = releaseLocal;
+        releaseLocal = null;
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          ownedRelease();
+          activeChildren -= 1;
+          settle();
+        };
+      } finally {
+        releaseLocal?.();
+        subscription?.[Symbol.dispose]();
+        pending.delete(waiter);
+        settle();
+      }
+    },
+  });
+  try {
+    if (signal) ownerSubscription = subscribeAbort(signal, seal);
+  } catch {
+    // Construction failed before owner handoff; no retained work was started.
+    ownerFinished = true;
+    seal();
+    throw failure('resource_envelope_subscription_failed');
+  }
+  return Object.freeze({
+    version: 1, kind: 'ResourceEnvelopeOwner', childGovernor, snapshot, seal,
+    close() {
+      // This explicit call declares that retained parent work is reconciled.
+      // Abort alone MUST NOT make that declaration or refund any active work.
+      ownerFinished = true;
+      return seal();
     },
   });
 }

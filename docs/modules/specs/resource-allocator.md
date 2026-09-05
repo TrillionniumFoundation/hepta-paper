@@ -61,6 +61,7 @@ Hard registered module dependencies:
 
 Current implementation and contract roots:
 
+- `paper-application/automation/campaign-resource-envelope-scope.mjs`
 - `paper-application/automation/resource-governor.mjs`
 - `docs/control-plane/RESOURCE_MODEL.md`
 - `rust/crates/hepta-control-plane`
@@ -134,6 +135,18 @@ separate-ledger mixed workloads and the actual nested-agent runner with local
 campaign ports. These do not enable envelope routing by default or implement
 multiprocess/host recovery. Full production composition and independent host
 acceptance remain open.
+
+The explicit `runPaperCampaign.resourceEnvelopePolicy` path is implemented in
+`paper-application/automation/campaign-resource-envelope-scope.mjs` and documented
+in [`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#15-explicit-node-campaign-engine-integration-and-nested-result-barrier).
+It reserves both shared and campaign-local parent/child pools before execution,
+then joins registered nested-agent calls before allowing a parent result to be
+prepared. Caught or ignored child failure still denies this opt-in scope. Policy
+normalization and a correlation hash do not grant activation; campaign data
+cannot enable the mode, and unsupported governors fail rather than fall back.
+The actual-engine SQLite tests live in
+`paper-core/tests/campaign-resource-envelope-integration.test.mjs`. No deployment
+is automatically switched and no persistent/distributed lease is added.
 
 The legacy defaults are not qualified production capacity. Hierarchical DRF,
 durable fenced leases, host measurements and whole-work-item acceptance remain

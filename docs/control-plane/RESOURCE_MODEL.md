@@ -328,7 +328,97 @@ control calls the unchanged `createCampaignNestedAgentRunner` forty times with
 the envelope child port while a conflicting root waiter remains blocked. It
 uses a local campaign-store port and explicitly non-model local receipts, not
 an external provider or a production campaign. The final close permits the
-root waiter to proceed. Complete engine wiring, persisted recovery, target-host
-fairness/performance and independent review remain required before widening
-rollout. This contributes to RES-001/003/004, without changing their global
+root waiter to proceed. Explicit engine wiring is described in section 15. Deployment enabling,
+persisted recovery, target-host fairness/performance and independent review
+remain required before widening rollout. This contributes to RES-001/003/004, without changing their global
 work-item states or closing G4.
+
+## 15. Explicit Node campaign-engine integration and nested-result barrier
+
+`runPaperCampaign` in `paper-application/automation/campaign-engine.mjs` now
+accepts the trusted composition argument `resourceEnvelopePolicy`. The default
+is null: existing deployments and multiprocess governors do not change mode.
+Campaign and node data cannot opt themselves into this mode. An enabled policy
+requires an envelope-capable shared governor before any node is claimed; it does
+not silently fall back if a multiprocess/custom governor lacks that API.
+
+The normalized policy is a closed data record:
+
+```javascript
+{
+  version: 1,
+  nodeKinds: ['formal-verify'],
+  childAgentSlots: 1,
+  maximumChildren: 64,
+  maximumWaitingRequests: 64
+}
+```
+
+`nodeKinds` contains 1..64 unique exact kind strings and is canonically sorted.
+`childAgentSlots` is an explicit integer in 1..64; the two optional metadata
+limits default to 1024 and each allow 1..4096. Non-data properties, sparse arrays,
+duplicates, unknown keys and coerced values are rejected. The canonical policy
+hash is returned as `resourceEnvelopePolicyHash` on the run result and in
+`executionBudget.resourceEnvelope.policyHash` for selected executions. This is
+configuration correlation, not a signed policy approval or durable qualification.
+
+For a selected, non-replay node, its existing `resourcesForCampaignNode` vector
+is retained parent capacity; the child pool contains only the declared agent
+slots. Both the shared governor and campaign-local governor admit the complete
+parent-plus-child vector before `startNode` or executor invocation. Failure of
+the second admission releases the unused first reservation. The executor's
+existing `executionBudget.acquiredResources` remains the parent vector; it is
+not inflated into permission to borrow child capacity. Its nested-agent runner
+receives only the corresponding restricted shared/local child ports. Prepared
+result replay does not re-execute children or reserve a new child pool.
+
+A structured nested-call barrier registers every invocation before running it.
+The number of unsettled invocation promises is bounded before calling the
+nested runner, in addition to each underlying pool's handle/queue limits. Parent
+return seals the invocation interface against new calls, then joins all already
+registered children before result preparation, workspace integration or commit.
+Normal completion drains registered queued children; it does not cancel them.
+For this opt-in profile, any failed registered child (even one the caller catches
+or ignores) denies parent success. Recovery that deliberately tolerates such
+failures needs a separately versioned policy, not a catch-to-success shortcut.
+One retained first failure and a bounded pending set suffice; successful child
+history is not accumulated in an unbounded in-memory list.
+
+Parent executor failure aborts its controller, seals both pools, and waits for
+children to settle before releasing either parent reservation. The original
+parent error is preserved. Supervisor cancellation uses a propagation-resistant
+subscription. Cancellation alone does not finish the parent or refund an active
+child. If a child never settles, the engine remains pending with its reservation
+held; it cannot issue a completed receipt or silently reuse that capacity. A
+retained nested-call closure denies new work after the parent barrier closes.
+The enabled dispatch batch also joins all admitted peers before returning an
+admission/infrastructure exception to its caller.
+
+Status-query, reservation-check and start-node failures use the same guaranteed
+pre-execution cleanup path; supervisor subscriptions, resource-loss listeners
+and control timers are disposed on early exits as well as normal completion.
+The existing prepare/integrate fence was moved without relaxed conditions to
+`campaign-prepared-result-integration.mjs`, keeping the engine below its existing
+500-line architectural limit. Cancellation is rechecked on return from that
+await boundary before commit. Writer identity, attempt generation, budget
+metering, external-action gates and verification responsibilities are unchanged.
+
+`campaign-resource-envelope-integration.test.mjs` uses the real engine, SQLite
+campaign store, governors and nested runner. Local executor controls demonstrate
+forty nested calls across a blocked global waiter, no commit while a detached
+child remains active, denial of caught/ignored child failures, cancellation and
+handoff ordering, admission/start/query cleanup, batch settlement, metadata
+bounds, unchanged budget/action denial and the post-integration cancellation
+fence. Local callback receipts are not scientific or external provider evidence.
+
+This mode is implemented but not automatically enabled by a CLI or service
+bootstrap. It covers nested **agent** calls registered through the supplied port,
+not arbitrary detached work, empirical-cell concurrency, recursive acquisitions,
+rogue executors, network effects or physical usage. Executors must settle their
+promises only after their actual local work is cleaned up; an unresolved external
+effect still needs its original authoritative reconciliation. No new durable
+lease, process-death recovery, hierarchical DRF, distributed fencing, Rust writer
+or target-host qualification is implied. Per-deployment budgets, composition
+approval, migration/rollback evidence and independent exact-head review remain
+required. Global RES/NODE work states and G4 closure are not upgraded by these
+source tests.

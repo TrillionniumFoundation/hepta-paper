@@ -60,6 +60,8 @@ Hard registered module dependencies:
 
 Current implementation and contract roots:
 
+- `paper-application/automation/campaign-engine.mjs`
+- `paper-application/automation/campaign-prepared-result-integration.mjs`
 - `workflow-kernel`
 - `paper-domain`
 
@@ -108,6 +110,27 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 ## Verification and evidence
 
 Capability bindings: `CAP-STATE-COMMIT`, `CAP-STATE-READ`, `CAP-EXE-DISPATCH`, `CAP-AUTHOR`, `CAP-REVIEW`, `CAP-FORMAL`, `CAP-EMPIRICAL`, `CAP-NUMERICAL`, `CAP-BUILD`, `CAP-SUBMIT`. Related work identifiers: `NODE-001`. Implementation/contract roots: `workflow-kernel`, `paper-domain`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+
+The current engine's explicit `resourceEnvelopePolicy` integration reserves
+both global and campaign-local child capacity before a selected parent starts.
+`campaign-resource-envelope-scope.mjs` supplies restricted nested-agent ports and
+tracks outstanding calls; `campaign-prepared-result-integration.mjs` retains the
+existing prepare/integration fence. A parent cannot prepare or commit success
+until all registered children settle successfully, including calls the executor
+did not await. Parent failure or cancellation joins those calls before releasing
+its resource reservation, and a failed peer cannot make an enabled dispatch batch
+return while another admitted node is still executing. Supervisor and early-exit
+cleanup do not bypass the existing attempt, writer, budget or external-action
+checks. The policy hash is correlation data, not independent authority.
+
+The closed policy, compatibility impact, limits and opt-in semantics are specified
+in [`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#15-explicit-node-campaign-engine-integration-and-nested-result-barrier).
+`paper-core/tests/campaign-resource-envelope-integration.test.mjs` exercises the
+actual engine and SQLite state transitions with explicitly local executor
+operations. Null policy and unselected kinds retain legacy mode; no CLI/service
+default, multiprocess governor, scientific verifier or writer authority changes.
+Registration of these exact source paths updates ownership traceability only,
+not NODE-001 acceptance, target-host qualification or rollout state.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 

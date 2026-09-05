@@ -109,6 +109,22 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
+The current Node helper's exact interface, units, policy bounds, accounting
+invariant and non-claims are specified in
+[`RESOURCE_MODEL.md`](../../control-plane/RESOURCE_MODEL.md#13-current-node-governor-executable-bounded-admission).
+`createResourceGovernor` now provides idempotent release handles, strict integer
+vectors, bounded waiting and opt-in bounded conflicting overtaking. Legacy
+first-fit remains the default because nested acquisitions need a separate
+dependency-aware policy; finite barriers are only for independent work. Pending cancellation
+removes its listener and reconsiders queued work; granted work remains charged
+until explicitly released. Tests in
+`paper-core/tests/resource-governor-invariants.test.mjs` bind these behaviors to
+executable positive, adversarial, capacity and deterministic-sequence checks.
+The legacy defaults are not qualified production capacity. Hierarchical DRF,
+durable fenced leases, host measurements and whole-work-item acceptance remain
+open; the local governor must not be presented as their implementation.
+
+
 Capability bindings: `CAP-RES-ALLOCATE`. Related work identifiers: `RES-001`, `RES-002`, `RES-003`, `RES-004`, `RES-005`, `RES-006`, `RES-007`. Implementation/contract roots: `paper-application/automation/resource-governor.mjs`, `docs/control-plane/RESOURCE_MODEL.md`, `rust/crates/hepta-control-plane`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.

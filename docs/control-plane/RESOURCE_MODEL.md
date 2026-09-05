@@ -170,3 +170,73 @@ An admitted resource vector is not an execution result. A lease is not proof of
 kernel isolation. A scheduler fairness report is not a universal liveness proof.
 Capacity, priority, or low cost never grants provider, writer, release, storage,
 portal, submission, or external-authority permission.
+
+
+## 13. Current Node governor: executable bounded admission
+
+`paper-application/automation/resource-governor.mjs::createResourceGovernor`
+implements a local, trusted in-process admission subset. It is not the durable,
+hierarchical allocator described above. Its four legacy dimensions are `agent`,
+`cpu`, `gpu` (whole slots) and `memoryMiB` (whole MiB); these are not the Rust
+protocol's CPU millicores, memory bytes or GPU device identities. Callers must
+convert units explicitly. `resourcesForCampaignNode` rejects invalid empirical
+worker-byte declarations and rounds positive byte counts upward to whole MiB.
+
+The source API is `createResourceGovernor(limits, admissionPolicy)` followed by
+`await governor.acquire(vector, { signal })`. Vectors and limits are plain or
+null-prototype data records. Only the four named dimensions are accepted;
+values must be non-negative safe integers. Strings, booleans, non-finite or
+fractional values, negative values, accessor properties and unknown dimensions
+are rejected before accounting or queue mutation. Omitted request dimensions
+mean zero. Existing omitted-limit defaults (4 agent, 4 CPU, 1 GPU, 8192 MiB)
+remain solely for legacy compatibility and do not qualify production capacity.
+
+An acquisition resolves to its own release function. Calling that function
+more than once has no effect after its first call, including after other work
+has acquired the freed slots. Admission compares each request against
+`maximum - used`, then updates all dimensions synchronously; it cannot overflow
+an intermediate sum. By induction from zero usage, successful admissions and
+single effective releases keep every counter within `[0, maximum]`. This is a
+source-level accounting invariant, not proof that workers obey reservations.
+
+The immutable admission policy has two optional fields:
+
+| Field | Default | Permitted range | Effect |
+|---|---:|---:|---|
+| `maximumWaitingRequests` | 1024 | 1–4096 | Reject excess waiters with `resource_wait_queue_full` before attaching a listener |
+| `maximumConflictingBypasses` | `null` | `null` or 0–1024 | Opt-in maximum younger grants sharing any requested dimension while a waiter remains queued |
+
+The default `null` retains legacy work-conserving first-fit ordering. A caller
+may opt into a finite bypass limit only for independent work that does not hold
+a reservation while awaiting another acquisition. Otherwise a waiting large
+request could block a small nested child whose parent holds the resources the
+large request needs. Dependency-aware priority inheritance is not implemented.
+The default therefore does not claim a starvation bound. The nested-parent
+regression exercises 40 successive child calls while another job waits.
+
+With a finite policy, a blocked waiter's bypass count increases only when a younger conflicting
+request is granted, and never resets while that waiter remains queued. At its
+limit, it becomes a barrier to further conflicting younger grants. Disjoint
+resource requests can still proceed. A limit of zero gives FIFO ordering for
+conflicting requests. This trades some work conservation for bounded overtaking;
+it is not DRF, priority inheritance, preemption, a wall-time deadline, or a
+universal starvation guarantee. Progress requires finite earlier queued work
+and eventual explicit release by all granted owners. The source has no timer
+that invents capacity when an owner stops responding. Queue storage is bounded
+by the policy; one drain has worst-case quadratic queue scans over four fixed
+dimensions. Target-host latency and throughput are not established by this bound.
+
+Native abort signals remove pending waiters and their listeners, and removing
+a barrier immediately reconsiders remaining requests. Abort after grant does
+not release a charge: the caller must reconcile the operation and invoke its
+release handle. The same limitation applies after process death; the Node
+in-memory helper neither persists nor reconstructs authoritative leases.
+
+`paper-core/tests/resource-governor-invariants.test.mjs` tests duplicate and
+stale releases, invalid vectors, atomic multi-resource limits, integer overflow,
+queue saturation, cancellation, bounded overtaking, disjoint progress and a
+repeatable 500-operation workload checked against an independent active-handle
+ledger. Existing campaign and orchestration tests remain required. This source
+increment contributes to RES-001/003/004; it does not close those complete work
+items, G4, target-host acceptance or any activation gate. Changes to ordering
+and rejection behavior require fresh exact-source integration and review.

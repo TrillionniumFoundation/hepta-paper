@@ -135,7 +135,7 @@ def valid_datetime(value: str) -> bool:
     # Qualification times require a full timestamp and explicit UTC offset.
     # Leap-second timestamps are outside this repository's supported profile.
     if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
-                    r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})", value) is None:
+                    r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-5][0-9])", value) is None:
         return False
     try:
         parsed = value[:-1] + "+00:00" if value[-1] in "Zz" else value

@@ -76,7 +76,8 @@ class SchemaContractPreflightTests(unittest.TestCase):
             SCHEMA.validate(value, {"format": "date-time"})
         for value in ["2026-09-05T12:34:56", "2026-09-05T12", "2026-09-05 12:34:56Z",
                       "2026-02-29T00:00:00Z", "2026-09-05T24:00:00Z",
-                      "2026-09-05T12:34:56+24:00", "2026-09-05T12:34:56Z\n"]:
+                      "2026-09-05T12:34:56+24:00", "2026-09-05T12:34:56+00:60",
+                      "2026-09-05T12:34:56-01:99", "2026-09-05T12:34:56Z\n"]:
             with self.subTest(value=value):
                 with self.assertRaises(SCHEMA.SchemaValidationError):
                     SCHEMA.validate(value, {"format": "date-time"})

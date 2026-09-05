@@ -149,3 +149,22 @@ A feasible plan is not proof of global mathematical optimality. A local or
 hosted benchmark is not production qualification. An optimizer certificate is
 not a resource lease, commit decision, external-action permit, release receipt,
 or submission receipt.
+
+## 12. Current source mode-selection boundary
+
+The current non-production implementation is
+`rust/crates/hepta-control-plane/src/planner.rs`. `PlannerPolicyV1` bounds exact
+enumeration to at most 20 candidates and selection to at most 1024 candidates.
+The current exact/fallback choice is based on the candidate-count policy, not
+elapsed host wall time. `PlanCertificateV1::validate` recomputes the selected plan
+from the original snapshot, frontier, hard policy and planner policy. These are
+source behavior descriptions, not a production optimizer qualification.
+
+A future wall-time-bounded solver must not inherit the stronger byte-identical
+mode-selection claim without a protocol decision. A deterministic fallback
+algorithm does not make the *decision to enter fallback* deterministic. Such a
+solver must either use a reproducible work budget or explicitly bind the mode
+selection and accepted solver observation into a new replay contract. Changes
+must retain independent feasibility validation, label fallback, and never invent
+an optimum or a zero optimality gap for fallback results. The G6 optimizer-port
+and calibration work remains pending until its own evidence is accepted.

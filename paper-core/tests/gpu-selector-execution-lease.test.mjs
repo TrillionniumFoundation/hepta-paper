@@ -785,46 +785,74 @@ test('unresolved Docker recovery quarantines the selector before another launch'
   assert.equal(secondWorkerStarted, false);
 });
 
-test('a post-launch exception quarantines before the coordinator can release', async (t) => {
-  const { temporaryRoot } = fixture(t, 'gpu-selector-lease-finalizer-error');
-  const coordinator = createOsSandboxWorkerGpuSelectorLeaseCoordinator({
-    allowGpu: true,
-    runtimeRoot: temporaryRoot,
-    availability: { available: true, backend: 'docker' },
-  });
-  const baseSpec = {
-    requiresGpu: true,
-    gpuDeviceSelector: GPU_UUID,
-    executable: '/usr/bin/true',
-    args: [],
-    cwd: temporaryRoot,
-    sourceRoot: temporaryRoot,
-    containerImage: 'fixture@sha256:deadbeef',
-    executionIdentity: { runtimeIdentityHash: H('a') },
-  };
-  await assert.rejects(coordinator.run({
-    ...baseSpec,
-    absoluteDeadlineEpochMs: Date.now() + 2_000,
-  }, async (lease) => {
-    lease.bindWorkerInvocationAuthority(H('b'), {
-      dockerWorkerContainerOwnership: buildDockerWorkerContainerOwnership({
-        processInvocationId: H('d'),
-        containerIdPath: path.join(temporaryRoot, 'fixture.cid'),
-        gpuSelectorExecutionLease: lease,
-      }),
-    });
-    throw new Error('fixture_finalizer_failed_after_recovery');
-  }), /fixture_finalizer_failed_after_recovery/);
+test('a post-launch exception quarantines until Docker recovery is verified', async (t) => {
+  for (const recoveryState of ['unavailable', 'confirmed-absent']) {
+    await t.test(recoveryState, async (t) => {
+      const { temporaryRoot } = fixture(t, `gpu-selector-lease-finalizer-${recoveryState}`);
+      let inspectionCount = 0;
+      const coordinator = createOsSandboxWorkerGpuSelectorLeaseCoordinator({
+        allowGpu: true,
+        runtimeRoot: temporaryRoot,
+        availability: { available: true, backend: 'docker' },
+        environment: {},
+        // This contract test must not ask the developer/CI host's real daemon.
+        dockerContainerRecoveryExecutor() {
+          inspectionCount += 1;
+          return {
+            status: 1,
+            stdout: '',
+            stderr: recoveryState === 'confirmed-absent'
+              ? 'Error: No such object: fixture'
+              : 'fixture Docker inspection unavailable',
+            signal: null,
+            error: null,
+          };
+        },
+      });
+      const baseSpec = {
+        requiresGpu: true,
+        gpuDeviceSelector: GPU_UUID,
+        executable: '/usr/bin/true',
+        args: [],
+        cwd: temporaryRoot,
+        sourceRoot: temporaryRoot,
+        containerImage: 'fixture@sha256:deadbeef',
+        executionIdentity: { runtimeIdentityHash: H('a') },
+      };
+      await assert.rejects(coordinator.run({
+        ...baseSpec,
+        absoluteDeadlineEpochMs: Date.now() + 10_000,
+      }, async (lease) => {
+        lease.bindWorkerInvocationAuthority(H('b'), {
+          dockerWorkerContainerOwnership: buildDockerWorkerContainerOwnership({
+            processInvocationId: H('d'),
+            containerIdPath: path.join(temporaryRoot, 'fixture.cid'),
+            gpuSelectorExecutionLease: lease,
+          }),
+        });
+        throw new Error('fixture_finalizer_failed_after_recovery');
+      }), /fixture_finalizer_failed_after_recovery/);
+      assert.equal(inspectionCount, 0);
 
-  let secondWorkerStarted = false;
-  await assert.rejects(coordinator.run({
-    ...baseSpec,
-    absoluteDeadlineEpochMs: Date.now() + 80,
-  }, async () => {
-    secondWorkerStarted = true;
-    return { ok: true };
-  }), /gpu_selector_execution_lease_deadline_exhausted/);
-  assert.equal(secondWorkerStarted, false);
+      let secondWorkerStarted = false;
+      const retry = coordinator.run({
+        ...baseSpec,
+        absoluteDeadlineEpochMs: Date.now() + 10_000,
+      }, async () => {
+        secondWorkerStarted = true;
+        return { ok: true };
+      });
+      if (recoveryState === 'unavailable') {
+        await assert.rejects(retry, /gpu_selector_execution_lease_recovery_required/);
+        assert.equal(secondWorkerStarted, false);
+        assert.ok(inspectionCount > 0);
+      } else {
+        assert.equal((await retry).ok, true);
+        assert.equal(secondWorkerStarted, true);
+        assert.equal(inspectionCount, 5);
+      }
+    });
+  }
 });
 
 test('unsafe roots, symlink lock files, and hardlinked lock files fail closed', async (t) => {

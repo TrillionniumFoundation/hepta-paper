@@ -53,12 +53,19 @@ jobs:
           test -f "$strict_node_source"
           sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
           sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
+          # setup-node prepends hostedtoolcache; the worker accepts system runtime roots only.
+          # Prepend only Node, preserving setup-node's pinned npm and other tools.
+          strict_node_path="$(mktemp -d "$RUNNER_TEMP/hepta-pinned-node.XXXXXX")"
+          ln -s /usr/bin/node "$strict_node_path/node"
+          echo "$strict_node_path" >> "$GITHUB_PATH"
 
       - name: Run exact-head static, architecture, and dependency gates
         run: |
           set -euo pipefail
+          python3 docs/rust/tools/test_strict_json_schema_contract.py
           npm run static:check
-          npm run security:npm-audit
+          # Restrict the PATH override to audit; do not change worker runtime selection.
+          PATH="$(dirname "$(command -v npm)"):$PATH" npm run security:npm-audit
 
       - name: Prove exact source identity after validation
         if: always()
@@ -158,16 +165,53 @@ jobs:
           test -f "$strict_node_source"
           sudo install -o root -g root -m 0555 "$strict_node_source" /usr/bin/node
           sudo test "$(readlink -f /usr/bin/node)" = /usr/bin/node
+          # setup-node prepends hostedtoolcache; the worker accepts system runtime roots only.
+          # Prepend only Node, preserving setup-node's pinned npm and other tools.
+          strict_node_path="$(mktemp -d "$RUNNER_TEMP/hepta-pinned-node.XXXXXX")"
+          ln -s /usr/bin/node "$strict_node_path/node"
+          echo "$strict_node_path" >> "$GITHUB_PATH"
 
+      - name: Verify and materialize public R source closure
+        if: steps.impact.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/test_public_r_source_cas.py
+          python3 docs/rust/tools/materialize-public-r-source-cas.py
+          node --input-type=module - <<'NODE'
+          import { inspectRuntimeImageBuildInputClosure } from './paper-adapters/automation/runtime-image-build-input-closure.mjs';
+          import { AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS } from './paper-adapters/automation/runtime-image-registry.mjs';
+          import { RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD } from './paper-domain/automation/runtime-image-reproducibility-build-policy.mjs';
+          const closure = inspectRuntimeImageBuildInputClosure({
+            ...RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD,
+            definition: AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS.r,
+          });
+          console.log(JSON.stringify({
+            kind: 'CiPublicRSourceClosure',
+            closureHash: closure.runtimeImageCanonicalBuildInputClosureHash,
+            gitlinkCommitVerified: false,
+            productionAuthorized: false,
+            qualificationClaimed: false,
+          }));
+          NODE
       - name: Run exact-head impacted shard
         if: steps.impact.outputs.count != '0'
         run: |
           set -euo pipefail
+          evidence_root="$RUNNER_TEMP/exact-head-impact-${{ matrix.shard }}"
+          mkdir -p "$evidence_root"
+          set +e
           npm run test:impacted -- \
             --base-ref "$BASE_SHA" \
             --head-ref "$EXPECTED_HEAD_SHA" \
             --shard-count 4 \
-            --shard-index "${{ matrix.shard }}"
+            --shard-index "${{ matrix.shard }}" 2>&1 | tee "$evidence_root/tests.tap"
+          command_status=("${PIPESTATUS[@]}")
+          set -e
+          printf '%s\n' "${command_status[0]}" > "$evidence_root/tests.exit"
+          if [ "${command_status[1]}" -ne 0 ]; then
+            exit "${command_status[1]}"
+          fi
+          exit "${command_status[0]}"
 
       - name: Prove exact source identity after shard
         if: always()

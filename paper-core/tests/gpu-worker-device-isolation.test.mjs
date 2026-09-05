@@ -30,6 +30,7 @@ import {
   verifyProductionOsSandboxWorkerReceipt,
 } from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { inspectOsSandboxWorkerGpuPreflight } from '../../paper-adapters/runtime/os-sandbox-worker-gpu-preflight.mjs';
 
 const GPU_UUID = 'GPU-a33875b7-7eb7-679e-df08-19227d3decee';
 
@@ -105,10 +106,6 @@ test('Bubblewrap refuses GPU requests because device UUID isolation is not estab
 });
 
 test('GPU dispatch admission rechecks free VRAM immediately before execution', async (t) => {
-  if (!fs.existsSync('/dev/nvidia0')) {
-    t.skip('NVIDIA GPU device unavailable');
-    return;
-  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gpu-admission-'));
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gpu-admission-runtime-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -136,7 +133,7 @@ test('GPU dispatch admission rechecks free VRAM immediately before execution', a
     executable: 'python3', containerImage: image, containerExecutable: 'python3',
     args: ['run.py'], cwd: root, sourceRoot: root, requiresGpu: true,
     gpuDeviceSelector: GPU_UUID, gpuDispatchMemoryAdmission: admission,
-    absoluteDeadlineEpochMs: Date.now() + 5_000,
+    absoluteDeadlineEpochMs: Date.now() + 30_000,
   };
   const runnerFor = (dispatchFreeMiB, onExecute) => {
     let observations = 0;
@@ -146,8 +143,15 @@ test('GPU dispatch admission rechecks free VRAM immediately before execution', a
       runtimeRoot,
       probe: { available: true, backend: 'docker', status: 'os_sandbox_available', image },
       imageDigestResolver: (candidate) => candidate === image ? digest : null,
+      environmentBomSpawnSync(executable, args = []) {
+        if (executable !== 'nvidia-smi') return { status: 1, stdout: '', stderr: '' };
+        return { status: 0, stdout: args[0] === '--query-gpu=name,compute_cap,driver_version'
+          ? 'Fixture NVIDIA GPU, 8.9, fixture-driver\n'
+          : 'NVIDIA-SMI fixture CUDA Version: 12.6\n', stderr: '' };
+      },
       gpuDeviceCapacityObserver() {
         observations += 1;
+        if (observations > 1 && dispatchFreeMiB instanceof Error) throw dispatchFreeMiB;
         return buildNvidiaGpuDeviceCapacityObservation({
           gpuDeviceSelector: GPU_UUID,
           reportedTotalMemoryMiB: 8_188,
@@ -167,6 +171,15 @@ test('GPU dispatch admission rechecks free VRAM immediately before execution', a
   assert.equal(insufficient.gpuDispatchMemoryAdmissionEvaluation
     .freeMemoryRequirementSatisfied, false);
 
+  const failedProbe = await runnerFor(new Error('private-driver-diagnostic'), () => {
+    assert.fail('a failed dispatch probe must not execute');
+  }).run(runSpec);
+  assert.equal(failedProbe.ok, false);
+  assert.deepEqual(failedProbe.blockers, ['worker_gpu_dispatch_capacity_observation_invalid']);
+  assert.equal(failedProbe.gpuDeviceCapacityObservation, null);
+  assert.equal(JSON.stringify(failedProbe).includes('private-driver-diagnostic'), false);
+  // The following same-selector request also proves that denial released its lease.
+
   let sufficientExecutions = 0;
   const sufficientRunner = runnerFor(1_024, () => { sufficientExecutions += 1; });
   const sufficient = await sufficientRunner.run(runSpec);
@@ -178,8 +191,9 @@ test('GPU dispatch admission rechecks free VRAM immediately before execution', a
   assert.equal(sufficient.gpuDeviceRequest.dispatchMemoryAdmissionEvaluation
     .admissionSatisfied, true);
   assert.equal(verifyOsSandboxWorkerReceipt(sufficient), true);
+  assert.equal(verifyProductionOsSandboxWorkerReceipt(sufficient), false);
 
-  const cpu = sufficientRunner.run({
+  const cpu = await sufficientRunner.run({
     executable: 'python3', containerImage: image, containerExecutable: 'python3',
     args: ['run.py'], cwd: root, sourceRoot: root,
     gpuDispatchMemoryAdmission: admission,
@@ -354,4 +368,72 @@ test('production GPU runner facade rejects all dependency injection', () => {
     );
   }
   assert.equal(poisonCalls, 0);
+});
+
+function gpuPreflight(overrides = {}) {
+  return inspectOsSandboxWorkerGpuPreflight({
+    requiresGpu: true, allowGpu: true, executionBackend: 'docker',
+    gpuDeviceSelector: GPU_UUID, gpuDispatchMemoryAdmission: null,
+    gpuSelectorExecutionLease: { gpuDeviceSelector: GPU_UUID },
+    absoluteDeadlineEpochMs: 2000, now: 1000, environment: {},
+    gpuDevicePathObserver: () => ['/dev/nvidia0', '/dev/nvidiactl'],
+    gpuDeviceCapacityObserver: () => buildNvidiaGpuDeviceCapacityObservation({
+      gpuDeviceSelector: GPU_UUID, reportedTotalMemoryMiB: 8192, reportedFreeMemoryMiB: 2048,
+    }),
+    ...overrides,
+  });
+}
+
+test('CPU preflight performs zero GPU or driver observations', () => {
+  let calls = 0;
+  const observe = () => { calls += 1; throw new Error('must not observe GPU'); };
+  const result = gpuPreflight({ requiresGpu: false, gpuDeviceSelector: null,
+    gpuDevicePathObserver: observe, gpuDeviceCapacityObserver: observe });
+  assert.deepEqual(result.blockers, []);
+  assert.equal(result.normalizedGpuDeviceSelector, null);
+  assert.equal(calls, 0);
+});
+
+test('malformed GPU requests are denied before hardware observation', () => {
+  let calls = 0;
+  const observe = () => { calls += 1; throw new Error('must not observe GPU'); };
+  for (const overrides of [
+    { allowGpu: false }, { executionBackend: 'bubblewrap' }, { gpuDeviceSelector: 'all' },
+    { gpuSelectorExecutionLease: null }, { absoluteDeadlineEpochMs: 1000 },
+    { gpuDispatchMemoryAdmission: {} }, { environment: { CUDA_VISIBLE_DEVICES: 'all' } },
+  ]) {
+    const result = gpuPreflight({ ...overrides, gpuDevicePathObserver: observe,
+      gpuDeviceCapacityObserver: observe });
+    assert.ok(result.blockers.length > 0);
+  }
+  assert.equal(calls, 0);
+});
+
+test('GPU preflight checks complete canonical observation rather than UUID alone', () => {
+  const observation = buildNvidiaGpuDeviceCapacityObservation({ gpuDeviceSelector: GPU_UUID,
+    reportedTotalMemoryMiB: 8192, reportedFreeMemoryMiB: 2048 });
+  for (const value of [null, {}, { gpuDeviceSelector: GPU_UUID },
+    { ...observation, freeMemoryBytes: 1 },
+    { ...observation, nvidiaGpuDeviceCapacityObservationHash: `sha256:${'0'.repeat(64)}` },
+    { ...observation, gpuMemoryIsolationClaimed: true },
+    { ...observation, extra: true }, Promise.resolve(observation),
+  ]) {
+    assert.deepEqual(gpuPreflight({ gpuDeviceCapacityObserver: () => value }).blockers,
+      ['worker_gpu_device_capacity_observation_invalid']);
+  }
+  assert.deepEqual(gpuPreflight().blockers, []);
+  assert.deepEqual(gpuPreflight({ gpuDeviceCapacityObserver: () => {
+    throw new Error('private-driver-diagnostic');
+  } }).blockers, ['worker_gpu_device_capacity_observation_invalid']);
+});
+
+test('GPU path observations are bounded and do not coerce arbitrary objects', () => {
+  let capacityCalls = 0;
+  for (const paths of [null, ['/tmp/nvidia0'], [{ toString() { throw new Error('not a path'); } }],
+    Array(1025).fill('/dev/nvidia0')]) {
+    const result = gpuPreflight({ gpuDevicePathObserver: () => paths,
+      gpuDeviceCapacityObserver: () => { capacityCalls += 1; return null; } });
+    assert.deepEqual(result.blockers, ['worker_gpu_not_available_or_not_allowed']);
+  }
+  assert.equal(capacityCalls, 0);
 });

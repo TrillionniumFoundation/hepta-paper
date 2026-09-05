@@ -3,28 +3,233 @@
   "title": "ModuleDocumentationManifestV1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion","kind","moduleId","registryRef","specPath","runbookPath","implementationPaths","capabilityIds","authorityClass","ownerTeams","dependencyModuleIds","workItemIds","qualificationRequirement","protocolRange","sideEffectClasses","determinismClass","resourceProfile","sloProfile","rollout","documentationStatus","effectiveQualification"],
+  "required": [
+    "schemaVersion",
+    "kind",
+    "moduleId",
+    "registryRef",
+    "specPath",
+    "runbookPath",
+    "implementationPaths",
+    "capabilityIds",
+    "authorityClass",
+    "ownerTeams",
+    "dependencyModuleIds",
+    "workItemIds",
+    "qualificationRequirement",
+    "protocolRange",
+    "sideEffectClasses",
+    "determinismClass",
+    "resourceProfile",
+    "sloProfile",
+    "rollout",
+    "documentationStatus",
+    "effectiveQualification"
+  ],
   "properties": {
-    "schemaVersion":{"const":1},
-    "kind":{"const":"ModuleDocumentationManifestV1"},
-    "moduleId":{"type":"string","pattern":"^module\\.[a-z0-9-]+$"},
-    "registryRef":{"type":"string","minLength":1},
-    "specPath":{"type":"string","pattern":"^docs/modules/specs/[a-z0-9-]+\\.md$"},
-    "runbookPath":{"type":"string","minLength":1},
-    "implementationPaths":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}},
-    "capabilityIds":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}},
-    "authorityClass":{"enum":["pure","read_only","workspace_local_write","prepared_result_only","central_state_write","external_effect"]},
-    "ownerTeams":{"type":"array","minItems":3,"maxItems":3,"uniqueItems":true,"items":{"pattern":"^TEAM-[A-Z]+$"}},
-    "dependencyModuleIds":{"type":"array","uniqueItems":true,"items":{"pattern":"^module\\.[a-z0-9-]+$"}},
-    "workItemIds":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}},
-    "qualificationRequirement":{"enum":["design","source","hosted_installed","target_host","external_authority"]},
-    "protocolRange":{"type":"object","additionalProperties":false,"required":["minimum","maximum"],"properties":{"minimum":{"const":1},"maximum":{"const":1}}},
-    "sideEffectClasses":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}},
-    "determinismClass":{"enum":["deterministic","seeded","bounded_nondeterministic","external_observation"]},
-    "resourceProfile":{"type":"object"},
-    "sloProfile":{"type":"object"},
-    "rollout":{"type":"object"},
-    "documentationStatus":{"const":"complete"},
-    "effectiveQualification":{"const":"derived_only"}
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ModuleDocumentationManifestV1"
+    },
+    "moduleId": {
+      "type": "string",
+      "pattern": "^module\\.[a-z0-9-]+$"
+    },
+    "registryRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "specPath": {
+      "type": "string",
+      "pattern": "^docs/modules/specs/[a-z0-9-]+\\.md$"
+    },
+    "runbookPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "implementationPaths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "capabilityIds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "authorityClass": {
+      "enum": [
+        "pure",
+        "read_only",
+        "workspace_local_write",
+        "prepared_result_only",
+        "central_state_write",
+        "external_effect"
+      ]
+    },
+    "ownerTeams": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "pattern": "^TEAM-[A-Z]+$"
+      }
+    },
+    "dependencyModuleIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "pattern": "^module\\.[a-z0-9-]+$"
+      }
+    },
+    "workItemIds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "qualificationRequirement": {
+      "enum": [
+        "design",
+        "source",
+        "hosted_installed",
+        "target_host",
+        "external_authority"
+      ]
+    },
+    "protocolRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum",
+        "maximum"
+      ],
+      "properties": {
+        "minimum": {
+          "const": 1
+        },
+        "maximum": {
+          "const": 1
+        }
+      }
+    },
+    "sideEffectClasses": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "determinismClass": {
+      "enum": [
+        "deterministic",
+        "seeded",
+        "bounded_nondeterministic",
+        "external_observation"
+      ]
+    },
+    "resourceProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceContract",
+        "deploymentProfileRequired",
+        "implicitCapacityAllowed",
+        "unboundedChildConcurrencyAllowed"
+      ],
+      "properties": {
+        "sourceContract": {
+          "const": "bounded"
+        },
+        "deploymentProfileRequired": {
+          "const": true
+        },
+        "implicitCapacityAllowed": {
+          "const": false
+        },
+        "unboundedChildConcurrencyAllowed": {
+          "const": false
+        }
+      }
+    },
+    "sloProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "canonicalWorkloadsRequired",
+        "zeroToleranceSafetyCountersRequired"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "source_contract_defined",
+            "baseline_pending"
+          ]
+        },
+        "canonicalWorkloadsRequired": {
+          "const": true
+        },
+        "zeroToleranceSafetyCountersRequired": {
+          "const": true
+        }
+      }
+    },
+    "rollout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currentStaticActivation",
+        "automaticActivation",
+        "productionActivation",
+        "rollbackTargetRequired",
+        "mutualExclusionRequired"
+      ],
+      "properties": {
+        "currentStaticActivation": {
+          "enum": [
+            "disabled",
+            "shadow",
+            "canary",
+            "authoritative",
+            "retired"
+          ]
+        },
+        "automaticActivation": {
+          "const": false
+        },
+        "productionActivation": {
+          "const": false
+        },
+        "rollbackTargetRequired": {
+          "const": true
+        },
+        "mutualExclusionRequired": {
+          "type": "boolean"
+        }
+      }
+    },
+    "documentationStatus": {
+      "const": "complete"
+    },
+    "effectiveQualification": {
+      "const": "derived_only"
+    }
   }
 }

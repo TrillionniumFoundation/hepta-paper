@@ -111,3 +111,34 @@ Close `LEGACY-REPLAY-001` only after:
 Archive existence, local replay, mutable release metadata without per-run
 digest verification, repository-admin prose or implementation-author
 self-acceptance is insufficient.
+
+## Portable CI versus full private-archive verification
+
+Public pull-request jobs must not receive the private legacy reference archive
+or a credential capable of fetching it. Portable tests exercise explicit-input
+failure, bounded captured-byte extraction, source hashes, alias rejection and
+zero signing/evidence side effects with synthetic public files. They do not
+verify the private 263-file replay or authorize retirement.
+
+The original full-archive positive test is retained, without conditional skip,
+in `migration/tests/legacy-deletion-drill.operational.mjs`. Run it on the approved
+isolated release host with the pinned private archive and required immutable
+storage prerequisites:
+
+```sh
+npm run test:legacy-deletion-drill-operational
+```
+
+`release:inner` requires this command in addition to `legacy:deletion-drill`.
+An unavailable, invalid or mutable archive fails the operational gate. Passing
+portable CI is not a substitute. The protected private companion verifier,
+exact-candidate review, retained evidence and `LEGACY-REPLAY-001` remain separate
+requirements; no existing qualification or external-authority status is upgraded.
+
+Archive preparation captures bounded, non-aliased file bytes once. An explicitly
+selected archive that is missing or invalid cannot fall back to another path.
+Listing and extraction consume the same captured bytes, selected members must
+be unique regular files beneath safe archive parents, and every extracted source
+must match its matrix digest. Discovery and extracted byte counts are bounded.
+These checks establish source integrity, not a claim of target-host sandbox or
+immutable-storage qualification.

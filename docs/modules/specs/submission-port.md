@@ -110,6 +110,25 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 Capability bindings: `CAP-SUBMIT`, `CAP-REL-VERIFY`. Related work identifiers: `SUBMIT-001`. Implementation/contract roots: `paper-domain/submission`, `paper-adapters`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
+The canonical `provider:sandbox-selftest` command still requires the actual
+external `hepta-paper-provider-sandbox/provider-sandbox.mjs`. Missing or unsafe
+source is a nonzero preflight failure before temporary runtime, database, or
+outbox creation. There is no fixture fallback and no missing-dependency skip.
+The real-paper sandbox operator applies the same early missing-source rejection
+and closes its returned persistence context and owned temporary root in a
+`finally` path; signed positive execution is not established by that cleanup.
+
+`paper-core/tests/provider-sandbox-lifecycle.test.mjs` exercises the shared
+quarantine-probe helper through isolated test children with real SQLite stores.
+Local controls cover missing/linked companion, nonzero child exit, timeout,
+missing/malformed/linked/oversized response, assertion failure, initialization
+failure, and close failure, plus successful cleanup and environment isolation.
+Failures remain nonzero, stores returned to the caller are closed exactly once,
+and only the owned temporary root is removed. Children receive a minimal
+noncredential environment and bounded output/time limits; this is not an OS or
+network containment claim. These synthetic lifecycle controls never count as
+companion integration, provider identity, submission, or external qualification.
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback
@@ -120,4 +139,4 @@ Current channel is `disabled`. Promotion follows disabled → shadow/read-only c
 
 - `SUBMIT-001` — `source_implemented`
 - Effective `external_authority` evidence remains deployment/external-subject specific and cannot be committed as static success.
-- No additional repository-local implementation blocker is asserted by this specification; qualification, activation, and operation remain separate.
+- Provider sandbox dependency reproducibility remains open in issue #55: an accessible authoritative companion, immutable source/dependency identity, explicit provisioning, and current-head real integration evidence are still required. Lifecycle regression success does not close this blocker.

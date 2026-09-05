@@ -123,6 +123,9 @@ export function inspectImmutableReleaseDeploymentExecutorBoundary({
     path.dirname(selectedRoot) !== releaseStore
     || !/^[0-9a-f]{40}$/u.test(path.basename(selectedRoot))
   )) throw codedError('immutable_release_deployment_executor_root_invalid');
+  if (entrypointPath !== selectedEntrypoint) {
+    throw codedError('immutable_release_deployment_executor_not_sealed');
+  }
   let canonicalEntrypoint;
   let canonicalRoot;
   try {

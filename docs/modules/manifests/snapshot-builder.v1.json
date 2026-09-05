@@ -1,3 +1,41 @@
 {
-  "schemaVersion":1,"kind":"ModuleDocumentationManifestV1","moduleId":"module.snapshot-builder","registryRef":"docs/system/truth/modules.v1.json#/modules/module.snapshot-builder","specPath":"docs/modules/specs/snapshot-builder.md","runbookPath":"docs/modules/specs/snapshot-builder.md#operational-runbook","implementationPaths":["docs/control-plane/COMPOSITION_ROOT.md"],"capabilityIds":["CAP-CTL-SNAPSHOT"],"authorityClass":"read_only","ownerTeams":["TEAM-KERNEL","TEAM-STATE","TEAM-EVIDENCE"],"dependencyModuleIds":["module.module-registry","module.readonly-control"],"workItemIds":["CTL-002"],"qualificationRequirement":"source","protocolRange":{"minimum":1,"maximum":1},"sideEffectClasses":["none"],"determinismClass":"deterministic","resourceProfile":{"sourceContract":"bounded","deploymentProfileRequired":true,"implicitCapacityAllowed":false,"unboundedChildConcurrencyAllowed":false},"sloProfile":{"status":"source_contract_defined","canonicalWorkloadsRequired":true,"zeroToleranceSafetyCountersRequired":true},"rollout":{"currentStaticActivation":"disabled","automaticActivation":false,"productionActivation":false,"rollbackTargetRequired":true,"mutualExclusionRequired":false},"documentationStatus":"complete","effectiveQualification":"derived_only"
+  "schemaVersion": 1,
+  "kind": "ModuleDocumentationManifestV1",
+  "moduleId": "module.snapshot-builder",
+  "registryRef": "docs/system/truth/modules.v1.json#/modules/module.snapshot-builder",
+  "specPath": "docs/modules/specs/snapshot-builder.md",
+  "runbookPath": "docs/modules/specs/snapshot-builder.md#operational-runbook",
+  "implementationPaths": [
+    "docs/control-plane/COMPOSITION_ROOT.md",
+    "paper-application/orchestration/control-plane-snapshot-builder.mjs"
+  ],
+  "capabilityIds": ["CAP-CTL-SNAPSHOT"],
+  "authorityClass": "read_only",
+  "ownerTeams": ["TEAM-KERNEL", "TEAM-STATE", "TEAM-EVIDENCE"],
+  "dependencyModuleIds": ["module.module-registry", "module.readonly-control"],
+  "workItemIds": ["CTL-002"],
+  "qualificationRequirement": "source",
+  "protocolRange": {"minimum": 1, "maximum": 1},
+  "sideEffectClasses": ["none"],
+  "determinismClass": "deterministic",
+  "resourceProfile": {
+    "sourceContract": "bounded",
+    "deploymentProfileRequired": true,
+    "implicitCapacityAllowed": false,
+    "unboundedChildConcurrencyAllowed": false
+  },
+  "sloProfile": {
+    "status": "source_contract_defined",
+    "canonicalWorkloadsRequired": true,
+    "zeroToleranceSafetyCountersRequired": true
+  },
+  "rollout": {
+    "currentStaticActivation": "disabled",
+    "automaticActivation": false,
+    "productionActivation": false,
+    "rollbackTargetRequired": true,
+    "mutualExclusionRequired": false
+  },
+  "documentationStatus": "complete",
+  "effectiveQualification": "derived_only"
 }

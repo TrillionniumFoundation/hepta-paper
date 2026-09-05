@@ -4,24 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import sys
 from typing import Any
 
-
-def canonical_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def sha256_value(value: Any) -> str:
-    return f"sha256:{hashlib.sha256(canonical_bytes(value)).hexdigest()}"
+from qualification_subject_integrity import (
+    sha256_value, read_json, validate_evidence_pair,
+)
 
 
 def fail(message: str) -> None:
@@ -34,26 +24,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qualification-subject", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     return parser.parse_args()
-
-
-def source_identity(value: Any) -> tuple[str, str] | None:
-    if not isinstance(value, dict):
-        return None
-    source = value.get("source")
-    if isinstance(source, dict):
-        commit = source.get("commit") or source.get("headCommit")
-        tree = source.get("tree") or source.get("headTree")
-        if isinstance(commit, str) and isinstance(tree, str):
-            return commit, tree
-    commit = value.get("commit")
-    tree = value.get("tree")
-    if isinstance(commit, str) and isinstance(tree, str):
-        return commit, tree
-    for nested in value.values():
-        found = source_identity(nested)
-        if found is not None:
-            return found
-    return None
 
 
 def assert_non_authorizing(value: Any, path: str = "$") -> None:
@@ -84,40 +54,12 @@ def assert_non_authorizing(value: Any, path: str = "$") -> None:
             assert_non_authorizing(nested, f"{path}[{index}]")
 
 
-def validate_subject(subject: dict[str, Any]) -> None:
-    if (
-        subject.get("schemaVersion") != 3
-        or subject.get("kind") != "QualificationSubjectV3"
-        or subject.get("status") != "exact_subject_complete"
-        or subject.get("reviewBoundary") != "separate_latest_head_merge_gate"
-    ):
-        fail("qualification_subject_identity_invalid")
-    snapshot = subject.get("snapshotIdentity")
-    body = dict(subject)
-    body.pop("snapshotIdentity", None)
-    if snapshot != sha256_value(body):
-        fail("qualification_subject_snapshot_hash_invalid")
-    authority = subject.get("authority")
-    if (
-        not isinstance(authority, dict)
-        or not authority
-        or any(value is not False for value in authority.values())
-    ):
-        fail("qualification_subject_authority_invalid")
-
-
 def derive(legacy: dict[str, Any], subject: dict[str, Any]) -> dict[str, Any]:
-    validate_subject(subject)
     assert_non_authorizing(legacy)
-    identity = source_identity(legacy)
+    validate_evidence_pair(legacy, subject)
     head = subject["pullRequest"]["head"]
     base = subject["pullRequest"]["base"]
     merge = subject["pullRequest"]["testedMerge"]
-    expected = (head["commit"], head["tree"])
-    if identity != expected:
-        fail(f"legacy_effective_source_mismatch:{identity}:{expected}")
-    if merge.get("parents") != [base["commit"], head["commit"]]:
-        fail("qualification_subject_merge_parent_mismatch")
     authority = {
         "productionAuthorized": False,
         "providerAuthorized": False,
@@ -149,8 +91,8 @@ def derive(legacy: dict[str, Any], subject: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
-    legacy = json.loads(args.legacy_effective.read_text(encoding="utf-8"))
-    subject = json.loads(args.qualification_subject.read_text(encoding="utf-8"))
+    legacy = read_json(args.legacy_effective)
+    subject = read_json(args.qualification_subject)
     result = derive(legacy, subject)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
@@ -175,6 +117,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, ValueError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         print(f"effective source status v2 not derived: {error}", file=sys.stderr)
         raise SystemExit(1)

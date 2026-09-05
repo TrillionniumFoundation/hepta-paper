@@ -110,6 +110,41 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 Capability bindings: `CAP-QUAL-SOURCE`. Related work identifiers: `GAP-GOV-003`, `QUAL-001`, `QUAL-002`, `QUAL-003`, `QUAL-004`, `QUAL-005`. Implementation/contract roots: `docs/rust/tools`, `docs/rust/qualification`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
+The V2 derivation and currentness entrypoints share
+`docs/rust/tools/qualification_subject_integrity.py`. Each independently validates
+the strict V1 effective-record and V3 subject schemas; a matching source tuple
+found in an arbitrary nested object or a caller-supplied status word is not
+accepted evidence. CLI inputs are captured once, limited to 16 MiB, and reject
+duplicate keys, nonfinite numbers and invalid UTF-8. Existing encoding and hash
+domains remain unchanged; previously inconsistent records must be regenerated,
+not repaired or normalized into acceptance.
+
+The shared verifier recomputes job, flattened-step, artifact, attempt-history,
+selected-run and aggregate hashes. It checks repository/base/head/merge bindings,
+unique ordered identities, contiguous attempts for each observed run, canonical
+successful nonempty jobs, no failed/incomplete step, and history watermark.
+Queued/failed canonical runs, absent earlier attempts and later or same-second
+noncanonical updates deny even when an input author recomputes every self-hash.
+Maximum accepted collections are 128 producers and 4096 attempts overall; the
+strict schema evaluator also retains its own traversal/evaluation budgets.
+
+The V1/V3 pair must agree on pull request, required-check snapshot, required
+contexts, producer definitions, exact canonical run/attempt/check-suite/job,
+job steps and timestamps. V1 derivation now binds the shared verifier, both V2
+entrypoints, V3 collector/runner and schemas in its existing file-digest set.
+Those source changes invalidate previously derived evidence. The existing
+`test_qualification_subject_v3.py` suite runs these controls in the canonical
+qualification runner, including real CLI failure and round-trip checks using
+explicitly synthetic test observations.
+
+These are offline consistency checks, not authentication of uploaded records,
+proof that no GitHub run was omitted, reviewer approval, or a stable live-state
+snapshot. The live collector, exact checkout and byte checks in the V1 revalidator,
+fresh V3 comparison and separate independent review remain required. V2 live
+verification still invokes the existing V1 currentness verifier and cannot turn
+its failure into success. No module, milestone or production authority is promoted
+by these test fixtures. This contributes to QUAL-001..004 without closing G0.
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback

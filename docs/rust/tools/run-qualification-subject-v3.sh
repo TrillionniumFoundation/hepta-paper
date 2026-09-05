@@ -25,6 +25,7 @@ PYTHONPYCACHEPREFIX="${RUNNER_TEMP:-/tmp}/hepta-v3-pycache" python3 -m py_compil
   docs/rust/tools/derive-effective-status.py \
   docs/rust/tools/verify-effective-status-current.py \
   docs/rust/tools/qualification_subject_v3.py \
+  docs/rust/tools/qualification_subject_integrity.py \
   docs/rust/tools/derive_effective_status_v2.py \
   docs/rust/tools/verify_effective_status_v2_current.py \
   docs/rust/tools/test-plan-v4-qualification.py \

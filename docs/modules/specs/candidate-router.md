@@ -9,7 +9,7 @@ Registry: [`../../system/truth/modules.v1.json`](../../system/truth/modules.v1.j
 ```text
 moduleId: module.candidate-router
 implementationKind: trusted_in_process
-staticImplementationState: design_ready
+staticImplementationState: source_implemented
 staticActivation: disabled
 authorityClass: pure
 qualificationRequirement: source
@@ -20,38 +20,63 @@ secondaryOwnerTeam: TEAM-SCHEDULER
 independentReviewerTeam: TEAM-EVIDENCE
 ```
 
-The exact executable/image/source digest, configuration digest, deployment generation, host identity, active qualification evidence, and rollback version are supplied by the qualified deployment registry. This static document cannot grant them.
+The executable source digest, configuration, deployment generation, host identity,
+current qualification evidence, and rollback version belong to an exact deployment
+subject. This static document cannot grant qualification, activation, writer,
+provider, release, submission, or external authority.
 
 ## Mission and non-goals
 
-Request, bound, validate, canonicalize, and deduplicate module planning candidates against one immutable snapshot before global selection.
+Request, capture, validate, canonicalize, and deterministically deduplicate module
+planning candidates against one immutable planning request and one exact qualified
+module-registry snapshot before global selection.
 
-It does not hold credentials, execute external effects, or mutate authoritative state. A source implementation, fixture, model narrative, repository administrator statement, or this document is never sufficient production authority.
+It does not optimize the global plan, execute candidates, hold credentials, mutate
+state, perform external effects, or promote evidence. It owns no durable state and
+cannot grant authority. A locally preferred candidate is not global priority, and
+source tests are not production qualification.
 
 ## Inputs and outputs
 
-Inputs:
+The executable entrypoint is:
 
-- planning request bound to one snapshot
-- qualified module registry
-- hard policy
-- candidate byte/count budgets
+```text
+routeActionCandidates({ planningRequest, moduleRegistry, candidates, nowEpochMs })
+```
 
-Outputs:
+`PlanningRequestV1` binds the request ID, state-snapshot hash, qualified registry
+snapshot hash, capability, hard-constraint-set hash, objective version,
+resource-price snapshot hash, candidate count/byte limits, canonical deadline,
+allowed side-effect classes, and optional immutable goal, policy, and input-artifact
+references.
 
-- canonical candidate frontier
-- rejection and dominance reasons
-- candidate-set hash
+`QualifiedModuleRegistrySnapshotV1` contains at most 256 exact module bindings.
+Each binding carries module/version, protocol range, capability set, accepted
+qualification class, and qualification-evidence hash. Its snapshot hash is
+recomputed before candidates are inspected.
 
-Every request, result, event, health record, and receipt carries explicit schema/kind/version, canonical encoding, maximum bytes/counts, freshness and authority requirements, idempotency identity where applicable, unknown-field policy, and confidentiality classification. Large or confidential content moves by immutable artifact reference rather than unbounded protocol payload.
+Inputs contain no writer handle, provider credential, release credential, private
+key, unbounded manuscript, unrestricted prompt, or opaque executable payload.
+Accessor properties, sparse arrays, unknown fields, invalid prototypes, non-finite
+numbers, malformed canonical timestamps, and ambiguous hashes fail before routing.
+
+The output is one immutable `CandidateFrontierV1` containing the exact request and
+registry bindings, the qualified module bindings used, canonical candidates,
+deduplication receipts, submitted/canonical counts, byte accounting, and a
+`candidateSetHash`. Every authority field is explicitly false.
 
 ## State and authority
 
-Maximum authority class: `pure`. Current static activation: `disabled`. The registry declaration is a ceiling and request, not an authority grant. The module owns no durable state and returns values only.
+Maximum authority class: `pure`. Current static activation: `disabled`. The module
+has no durable state and returns values only. It cannot grant writer, provider,
+release, submission, activation, or external authority.
 
 Declared side-effect classes: `none`.
 
-Module-private journals may support idempotency and recovery but never become a second campaign-state authority. All durable or irreversible boundaries emit a typed receipt or conservative ambiguity disposition.
+The router accepts a candidate side-effect class only when the planning request
+explicitly permits that class; acceptance means only that the candidate may remain
+in the frontier. It is not execution authorization. Candidate IDs and hashes are
+correlation identities, not capabilities.
 
 ## Dependencies
 
@@ -63,60 +88,166 @@ Current implementation and contract roots:
 
 - `docs/modules/MODULE_PROTOCOL.md`
 - `docs/control-plane/COMPOSITION_ROOT.md`
+- `paper-application/orchestration/candidate-router.mjs`
 
-Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
+The runtime receives a frozen qualified-registry projection rather than importing
+another module's private implementation. Module source, qualification evidence,
+protocol range, capability, and version must match the projection exactly.
 
 ## Concurrency and resources
 
-Uses the caller's bounded executor and declares maximum inflight work, queue depth, result bytes, CPU/memory budget, blocking boundary, and cancellation point in the qualified deployment profile. It may not create an unbounded pool or consume undeclared provider, GPU, storage, or network capacity.
+The implementation is synchronous, side-effect free, and allocates only bounded
+in-memory canonical records. V1 hard ceilings are:
 
-The qualified profile records minimum/typical/hard maximum resources, startup and warm-cache cost, maximum inflight work and queue depth, preemption points, affinity/anti-affinity, expected duration/confidence, overload response, and settlement evidence.
+| Dimension | Maximum |
+|---|---:|
+| candidate submissions | 4,096 and no more than the request limit |
+| canonical submitted bytes | 4 MiB and no more than the request limit |
+| qualified registry modules | 256 |
+| strings in ordinary identity fields | 2,048 UTF-8 bytes |
+| one nested candidate string budget | 16 KiB |
+| nested collection entries | 1,024 |
+| nested depth | 16 |
+| nested visited values | 8,192 |
+
+Count and byte limits include retransmissions. The router creates no worker pool,
+timer, filesystem write, process, network request, GPU request, or provider call.
+A future asynchronous producer fan-out belongs to a separate bounded orchestration
+layer and must return a typed incomplete-frontier disposition on timeout.
 
 ## Determinism and optimization contract
 
-Declared class: `deterministic`. The same canonical input, module version, configuration, and explicit clock produce byte-identical canonical output. Map iteration, wall-clock observation order, process IDs, and ambient environment are not semantic inputs.
+Declared class: `deterministic`. For the same canonical request, qualified registry,
+candidate multiset, and explicit integer clock, the output is byte-stable under the
+repository canonical hash implementation. Candidate input order and unordered set
+order do not affect the frontier.
 
-A candidate-producing module must expose feasible alternatives or a justified singleton, finite resource/cost/latency/risk estimates, uncertainty, expiry, dependency effects, and a canonical payload hash. Local utility is advisory; global priority and integration remain control-plane decisions.
+Exact retransmissions collapse idempotently. Reuse of one candidate ID with
+different bytes is rejected. Semantically equal candidates that differ only in
+candidate identity/hash select the lexicographically smallest candidate ID and
+emit a deduplication receipt; conflicting singleton metadata fails instead of
+being chosen arbitrarily.
+
+V1 deliberately sets:
+
+```text
+dominanceReductionApplied: false
+dominanceReductionReason: context_substitutability_not_proven
+```
+
+Local cost/value/resource dominance is insufficient when candidates have different
+preconditions, dependency effects, output semantics, authority requirements, or
+future composition costs. Removing candidate `b` is safe only when every feasible
+global context containing `b` remains feasible after replacing it with `a`, with
+no worse global objective and identical required semantics. The current router
+does not receive or prove that universal replacement condition, so it preserves
+contextually distinct candidates for the central optimizer.
+
+A module that contributes exactly one canonical candidate must state either
+`only_feasible_candidate` or `protocol_does_not_support_alternatives`. Multiple
+canonical candidates from the same module must not carry a singleton reason.
 
 ## Failure, recovery, and idempotency
 
-Reject late, stale, duplicate, oversize, infeasible, unauthorized, non-finite, uncalibrated, or semantically conflicting candidates. A timeout yields a typed incomplete-frontier disposition and triggers replan rather than implicit acceptance.
+The router fails closed on malformed records, unknown fields, count or byte excess,
+expired requests/candidates, candidates outliving their request, registry drift,
+request/snapshot/capability mismatch, unqualified or wrong-version modules,
+undeclared side effects, conflicting IDs/hashes, and inconsistent singleton data.
 
-Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
+No partial frontier is returned after a failure. The router mutates no input and
+holds no recovery journal. Retrying the exact same captured inputs produces the
+same result. A changed clock, snapshot, registry, policy, objective, price, module
+qualification, or candidate set is a new subject and must not reuse an earlier
+frontier as current evidence.
 
 ## Security and privacy
 
-Candidate producers receive no writer, provider, release, or submission credentials. Payloads are bounded and secrets/prose are referenced by immutable artifact identity.
+All untrusted records are captured from own enumerable data descriptors. Getters,
+setters, class instances, symbols, sparse arrays, inherited properties, functions,
+BigInts, non-finite numbers, and unknown fields are rejected before hashing or
+module lookup. Nested records are bounded and copied into frozen plain values.
 
-Logs and telemetry use an allowlist of bounded machine fields. Credential bytes, private keys, unrestricted prompts/provider responses, confidential manuscript content, developer home paths, and environment dumps are prohibited unless an independently reviewed evidence contract explicitly requires a protected representation.
+Only immutable hashes or bounded references should identify confidential input.
+Credentials, private keys, unrestricted prompts/provider responses, developer home
+paths, and environment dumps are prohibited. Errors are bounded symbolic codes and
+do not echo candidate payloads.
 
 ## Compatibility and migration
 
-Candidate envelopes use explicit protocol/schema versions. Semantic changes to feasibility, units, dominance, or uncertainty require a new version.
+This implementation accepts only protocol V1 and exact V1 object kinds. Readers
+reject unknown required semantics. Changes to candidate feasibility, units,
+semantic-dedup identity, singleton rules, dominance policy, or hash domains require
+a new version and fresh downstream qualification.
 
-Compatibility is one of exact, semantic, evaluation-based, or retired. A breaking protocol, state, authority, resource-unit, side-effect, or rubric change requires a new module version, migration/rollback plan, fresh conformance, and downstream qualification invalidation.
+The executable module is additive while static activation remains disabled. Existing
+document-only callers are unaffected until composition explicitly invokes the
+router. Rollback is a reviewed source revert followed by re-derivation of any
+frontier whose source, registry, or policy binding changed.
 
 ## SLO, capacity, and observability
 
-Track bounded latency, result bytes, rejection classes, resource use, replay determinism, recovery disposition, and capability-specific zero-tolerance counters. Thresholds are attached to named canonical workloads and exact evidence subjects.
+Source evidence records deterministic replay, accepted/rejected candidate counts,
+canonical bytes, deduplication classes, rejection codes, and bound identities.
+Production p50/p95/p99 latency and memory thresholds require named canonical
+workloads and target-host evidence; this document does not invent values.
 
-Every signal binds module/version/configuration, campaign/plan/attempt/reservation identities as applicable, schema version, producer trust class, privacy class, and retention rule. A dashboard or healthy heartbeat is not qualification or authority.
+Zero-tolerance source counters include accepted unknown fields, accepted
+unqualified modules, accepted expired candidates, conflicting-ID acceptance,
+authority escalation, input mutation, and unproved dominance deletion.
 
 ## Operational runbook
 
-No long-lived service lifecycle is assumed. Callers validate module/version/configuration before use, record typed failures, invalidate cached results on any bound subject change, and rerun the module's conformance suite after protocol, policy, dependency, resource, ownership, or implementation changes.
+No long-lived service lifecycle is assumed. Before invocation, composition captures
+an exact state snapshot, qualified module registry, constraint/objective/price
+identities, candidate and byte limits, allowed side-effect classes, deadline, and
+explicit clock. It then calls the pure router once and passes only the returned
+immutable frontier to the central optimizer.
+
+On rejection, record the symbolic error and exact non-secret subject hashes, then
+fix or regenerate the offending producer data. Do not repair candidate semantics,
+change hashes, widen permissions, or drop candidates inside the router. Any source,
+schema, registry, qualification, objective, or policy change invalidates cached
+frontiers and requires fresh conformance.
 
 ## Verification and evidence
 
-Capability bindings: `CAP-MOD-CANDIDATES`. Related work identifiers: `CTL-004`, `MOD-002`. Implementation/contract roots: `docs/modules/MODULE_PROTOCOL.md`, `docs/control-plane/COMPOSITION_ROOT.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+`paper-core/tests/candidate-router.test.mjs` exercises deterministic order,
+context-safe candidate preservation, exact and semantic duplicate handling,
+conflicting identity rejection, strict descriptor capture, request/snapshot/
+capability/module bindings, expiry, side-effect policy, numeric and structural
+limits, singleton rules, immutable output, explicit-clock requirements, and
+planning identity changes.
 
-The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
+The tests include the critical counterexample in which one candidate is locally
+cheaper and higher value but introduces an unavailable dependency, while a locally
+weaker candidate is globally feasible. Both remain in the frontier. This is an
+executable non-deletion control, not a proof that the downstream optimizer is
+correct.
+
+Capability binding: `CAP-MOD-CANDIDATES`. Related work identifiers: `CTL-004` and
+`MOD-002`. This increment implements the bounded in-process routing kernel and
+updates module structural truth. It does not close those complete work items,
+G2/G3/G6, producer fan-out, global optimization, target-host performance, or
+independent qualification.
+
+The module documentation validator continues to prove registry/spec/manifest
+coverage, required sections, field parity, source-path existence, and authority
+language. Source conformance does not substitute for current exact-head/merge CI,
+independent review, deployment evidence, or production activation.
 
 ## Rollout and rollback
 
-Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.
+Current channel is `disabled`. An exact version progresses through registered,
+contract-ready, source-implemented, conformance-qualified, shadow, canary, and only
+then authoritative where applicable. Activation must bind the exact router source,
+request/frontier contract, qualified-registry producer, central optimizer consumer,
+configuration, workload evidence, and rollback version.
+
+Rollback must invalidate frontiers produced by the reverted hash or semantic rules.
+No rollback may widen accepted fields, restore unsafe local dominance deletion, or
+remove qualification and authority boundaries.
 
 ## Open blockers
 
-- `CTL-004` — `design_ready`
-- `MOD-002` — `design_ready`
+- `CTL-004` — `design_ready`: complete producer orchestration, incomplete-frontier/replan behavior, and central composition evidence remain open.
+- `MOD-002` — `design_ready`: full multi-module candidate protocol, cross-language conformance, version migration, and independent acceptance remain open.

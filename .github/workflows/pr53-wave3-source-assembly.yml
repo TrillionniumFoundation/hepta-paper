@@ -1,0 +1,107 @@
+name: pr53-wave3-source-assembly
+on:
+  push:
+    branches: [ops/pr53-wave3-assembly-20260905]
+permissions:
+  contents: read
+jobs:
+  assemble-exact-source-objects:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: operation
+          persist-credentials: false
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 13dcac59c873ed5b888ff6895123d074ca5910ba
+          path: candidate
+          persist-credentials: false
+      - name: Assemble only the exact frozen source tree, without executing candidate code or changing refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: '1'
+          GIT_OPTIONAL_LOCKS: '0'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, subprocess, urllib.request, zlib
+          base = '13dcac59c873ed5b888ff6895123d074ca5910ba'
+          base_tree = '7342a829ce02eb3f8abfdae2efe893c9e3bb3126'
+          expected_tree = '858feb5e8f3560222b717fb6f9b6dfbe359762d7'
+          expected_patch = '0f20acb3de0d0e3a7e881c167267ae67206dc96483fa6af8820425556d2caf37'
+          expected_bytes = 65464
+          expected_files = 23
+          repo = 'TrillionniumFoundation/hepta-paper'
+          assert os.environ['GITHUB_REPOSITORY'] == repo
+          assert os.environ['GITHUB_EVENT_NAME'] == 'push'
+          assert os.environ['GITHUB_REF'] == 'refs/heads/ops/pr53-wave3-assembly-20260905'
+          cwd = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'candidate'
+          def git(*args):
+              return subprocess.check_output(['/usr/bin/git', '-c', 'core.hooksPath=/dev/null',
+                  '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null', *args], cwd=cwd)
+          assert git('rev-parse', 'HEAD').decode().strip() == base
+          assert git('rev-parse', 'HEAD^{tree}').decode().strip() == base_tree
+          assert not git('status', '--porcelain=v1', '--untracked-files=all')
+          encoded = b''.join((cwd.parent / f'operation/.github/ops/pr53-wave3.patch.part-{index:02d}').read_bytes() for index in range(12))
+          assert len(encoded) <= 32768
+          compressed = base64.b64decode(encoded, validate=True)
+          decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+          patch = decoder.decompress(compressed, expected_bytes + 1)
+          assert decoder.eof and not decoder.unused_data and not decoder.unconsumed_tail
+          assert len(patch) == expected_bytes and hashlib.sha256(patch).hexdigest() == expected_patch
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP']) / 'source-assembly-evidence'
+          evidence.mkdir(mode=0o700)
+          patch_file = evidence / 'source.patch'
+          patch_file.write_bytes(patch)
+          git('apply', '--index', '--check', str(patch_file))
+          git('apply', '--index', str(patch_file))
+          assert git('write-tree').decode().strip() == expected_tree
+          paths = git('diff', '--cached', '--name-only', '-z', base).decode().split('\0')[:-1]
+          assert len(paths) == expected_files and len(set(paths)) == expected_files
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs):
+                  raise RuntimeError('github_api_redirect_forbidden')
+          opener = urllib.request.build_opener(NoRedirect())
+          def post(suffix, payload):
+              request = urllib.request.Request('https://api.github.com/repos/' + repo + '/git/' + suffix,
+                  data=json.dumps(payload).encode(), method='POST', headers={
+                    'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                    'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                    'X-GitHub-Api-Version': '2022-11-28'})
+              with opener.open(request, timeout=30) as response:
+                  return json.load(response)
+          tree = []
+          hashes = {}
+          for selected in paths:
+              raw = git('show', ':' + selected)
+              digest = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+              mode = git('ls-files', '-s', '--', selected).decode().split(' ', 1)[0]
+              assert mode in ('100644', '100755')
+              result = post('blobs', {'encoding': 'base64', 'content': base64.b64encode(raw).decode()})
+              assert result['sha'] == digest
+              tree.append({'path': selected, 'mode': mode, 'type': 'blob', 'sha': digest})
+              hashes[selected] = {'gitBlobSha': digest, 'sha256': hashlib.sha256(raw).hexdigest()}
+          result = post('trees', {'base_tree': base_tree, 'tree': tree})
+          assert result['sha'] == expected_tree
+          record = {'kind': 'NonAuthorizingSourceTreeAssembly', 'baseCommit': base,
+              'baseTree': base_tree, 'sourceTree': expected_tree, 'patchSha256': expected_patch,
+              'runId': os.environ['GITHUB_RUN_ID'], 'producerCommit': os.environ['GITHUB_SHA'],
+              'files': hashes, 'refsChanged': False, 'candidateCodeExecuted': False,
+              'productionAuthorized': False, 'qualificationClaimed': False}
+          (evidence / 'assembly.json').write_text(json.dumps(record, indent=2) + '\n')
+          print(json.dumps({'sourceTree': expected_tree, 'files': len(tree), 'refsChanged': False}))
+          PY
+      - name: Retain the source assembly record, not a qualification receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr53-wave3-source-assembly
+          path: ${{ runner.temp }}/source-assembly-evidence
+          retention-days: 7
+          if-no-files-found: error

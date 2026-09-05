@@ -1,0 +1,53 @@
+name: pr53-wave3-tracer-prerequisite
+on:
+  push:
+    branches: [ops/pr53-wave3-tracer-prerequisite-20260905]
+permissions:
+  contents: read
+jobs:
+  capture-public-tracer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Capture the installed distribution tracer without executing candidate code
+        shell: bash
+        env:
+          SUBJECT_SHA: c5316ef0b30deec3f1783aaee86792d9ccfe2a37
+          SUBJECT_TREE: 858feb5e8f3560222b717fb6f9b6dfbe359762d7
+        run: |
+          set -euo pipefail
+          if ! test -x /usr/bin/strace; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends strace
+          fi
+          root="$RUNNER_TEMP/pr53-tracer"
+          install -d -m 0700 "$root"
+          test ! -L /usr/bin/strace
+          test -f /usr/bin/strace
+          cp -- /usr/bin/strace "$root/strace"
+          /usr/bin/strace --version > "$root/version.txt"
+          dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' strace > "$root/package.txt"
+          ldd /usr/bin/strace > "$root/linkage.txt"
+          SUBJECT_FILE="$root/subject.json" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path(os.environ['SUBJECT_FILE']).write_text(json.dumps({
+              'kind': 'PublicHostPrerequisiteCapture',
+              'subjectCommit': os.environ['SUBJECT_SHA'],
+              'subjectTree': os.environ['SUBJECT_TREE'],
+              'producerCommit': os.environ['GITHUB_SHA'],
+              'producerRunId': os.environ['GITHUB_RUN_ID'],
+              'candidateCodeExecuted': False,
+              'privateMaterialCaptured': False,
+              'productionAuthorized': False,
+              'qualificationClaimed': False,
+          }, indent=2) + '\n')
+          PY
+          (cd "$root" && sha256sum strace version.txt package.txt linkage.txt subject.json > SHA256SUMS)
+      - name: Export the public binary and provenance, not a qualification receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr53-wave3-tracer-prerequisite
+          path: ${{ runner.temp }}/pr53-tracer
+          retention-days: 7
+          if-no-files-found: error

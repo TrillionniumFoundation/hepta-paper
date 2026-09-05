@@ -459,6 +459,13 @@ inside those gates cannot start the callback just because earlier checks passed.
 Any durable intent already recorded keeps its original reconciliation semantics;
 this guard never claims that previously started external work was undone.
 
+The synchronous admitted-node phase now transfers ownership to execution only
+once state queries, reservation checks, gate construction and start-node checks
+have succeeded. A null disposition or any exception releases unused local/global
+reservations and attempts every monitor/subscription cleanup, even if one cleanup
+port throws. Existing start-node classification and budget handling are preserved;
+query faults are errors, not permission to execute or commit.
+
 Heartbeat setup is inside the acquired-resource lifetime. A failing interval
 creation or unref prevents executor dispatch and uses the ordinary node failure
 path, which releases logical reservations and supervisor monitors. A monitor
@@ -474,5 +481,6 @@ envelope engine paths against real SQLite with explicitly local operations. It
 covers empirical early return/failure/shutdown, mixed agent/cell draining, shared
 limits, late callbacks, awaited recovery, final-gate cancellation, existing gate
 denial, heartbeat construction/unref/teardown faults, suppressed parent/nested
-lease-loss propagation, successful unsubscription and already-lost handoff.
+lease-loss propagation, successful unsubscription, already-lost handoff and early
+admitted-state query/release faults.
 No real provider, signed outcome or privileged host acceptance is asserted.

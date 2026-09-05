@@ -233,3 +233,65 @@ export function closeCampaignNodeMonitors({ heartbeat, clearControl, detachLease
   }
   return failure;
 }
+
+
+// This synchronous admission phase returns ownership only after all state/claim
+// checks succeed. The caller disposes its reservation on null or any exception.
+export function startAdmittedCampaignNode({ campaignStore, campaignId, claimedNode,
+  controller, dispatcherId, workerId, nowEpochMs, budgetBlocker, usageDelta,
+  assertExternalSideEffectReady }) {
+  const reservedCampaign = campaignStore.getCampaign(campaignId);
+  const reservedNode = campaignStore.listNodes(campaignId).find((item) => item.nodeId === claimedNode.nodeId);
+  if (controller.signal.aborted || reservedCampaign?.status !== 'running' || reservedNode?.status !== 'leased' || reservedNode?.leaseOwner !== dispatcherId) {
+    return null;
+  }
+  const reservationBlocker = budgetBlocker(reservedCampaign, claimedNode, nowEpochMs());
+  if (reservationBlocker) {
+    campaignStore.stopCampaign(campaignId, reservationBlocker);
+    return null;
+  }
+  const replayingPreparedResult = Boolean(claimedNode.preparedResultHash);
+  const nodeBudgetReservation = replayingPreparedResult
+    ? {} : usageDelta(reservedCampaign, claimedNode);
+  const {
+    gate: nodeSideEffectGate,
+    externalActionStarted: nodeExternalSideEffectStarted,
+  } = createCampaignNodeExternalSideEffectGate({
+    assertExternalSideEffectReady,
+    campaignStore,
+    node: claimedNode,
+    workerId,
+  });
+  let node;
+  try {
+    node = campaignStore.startNode({
+      nodeId: claimedNode.nodeId,
+      workerId,
+      attemptId: claimedNode.attemptId,
+      leaseGeneration: claimedNode.leaseGeneration,
+      usageDelta: nodeBudgetReservation,
+    });
+  } catch (error) {
+    const latestCampaign = campaignStore.getCampaign(campaignId);
+    const latestNode = campaignStore.listNodes(campaignId).find((item) => item.nodeId === claimedNode.nodeId);
+    if (error?.message === 'campaign_node_budget_reservation_failed') {
+      const blocker = budgetBlocker(latestCampaign, claimedNode, nowEpochMs())
+        || 'campaign_agent_call_budget_exhausted';
+      campaignStore.stopCampaign(campaignId, blocker);
+      return null;
+    }
+    if (latestCampaign?.status !== 'running' || latestNode?.attemptId !== claimedNode.attemptId || latestNode?.leaseGeneration !== claimedNode.leaseGeneration) return null;
+    throw error;
+  }
+  return { node, nodeSideEffectGate, nodeExternalSideEffectStarted };
+}
+
+// Unused admission owns no dispatched work. Attempt every cleanup even when a
+// resource port throws; never let its error strand the supervisor subscription.
+export function closeCampaignAdmission({ releaseLocalResources, releaseResources, detachLeaseLoss, clearControl }) {
+  let failure = null;
+  for (const close of [releaseLocalResources, releaseResources, detachLeaseLoss, clearControl]) {
+    try { close?.(); } catch (error) { failure ||= error; }
+  }
+  return failure;
+}

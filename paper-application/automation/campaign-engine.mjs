@@ -4,7 +4,7 @@ import { formatProcessIdentitySuffix } from '../../workflow-kernel/runtime/proce
 import { createCampaignEmpiricalCellRunner } from './campaign-empirical-cell-budget.mjs';
 import { buildCampaignConvergenceDecision } from './campaign-convergence-evaluator.mjs';
 import { recoverCampaignGenerationLockWaitAbort } from './campaign-generation-lock-wait-abort-recovery.mjs';
-import { boundedCampaignFailureDetail as boundedFailureDetail, createCampaignNodeControlMonitor, createCampaignNodeHeartbeat, closeCampaignNodeMonitors, campaignInfrastructureControlError, cancelCampaignNodeInfrastructureReservation, createCampaignNodeExternalSideEffectGate } from './campaign-node-infrastructure-control.mjs';
+import { boundedCampaignFailureDetail as boundedFailureDetail, createCampaignNodeControlMonitor, createCampaignNodeHeartbeat, closeCampaignNodeMonitors, startAdmittedCampaignNode, closeCampaignAdmission, campaignInfrastructureControlError, cancelCampaignNodeInfrastructureReservation } from './campaign-node-infrastructure-control.mjs';
 import {
   abortCampaignExecution,
   bindCampaignResourceLeaseLoss,
@@ -157,68 +157,25 @@ export async function runPaperCampaign({
         detachLeaseLoss = bindCampaignResourceLeaseLoss(releaseResources, controller);
         if (!envelope) releaseLocalResources = await localGovernor.acquire(requestedResources, { signal: controller.signal });
       } catch (error) {
-        releaseResources?.();
-        detachLeaseLoss();
-        clearControl();
+        const cleanupError = closeCampaignAdmission({ releaseLocalResources, releaseResources, detachLeaseLoss, clearControl });
+        if (cleanupError) throw cleanupError;
         if ((controller.signal.aborted || error?.code === 'resource_acquire_aborted')
           && (signal?.aborted || campaignStore.getCampaign(campaignId)?.status !== 'running')) return;
         throw error;
       }
-      const reservedCampaign = campaignStore.getCampaign(campaignId);
-      const reservedNode = campaignStore.listNodes(campaignId).find((item) => item.nodeId === claimedNode.nodeId);
-      if (controller.signal.aborted || reservedCampaign?.status !== 'running' || reservedNode?.status !== 'leased' || reservedNode?.leaseOwner !== dispatcherId) {
-        releaseLocalResources();
-        releaseResources();
-        detachLeaseLoss();
-        clearControl();
-        return;
-      }
-      const reservationBlocker = budgetBlocker(reservedCampaign, claimedNode, nowEpochMs());
-      if (reservationBlocker) {
-        campaignStore.stopCampaign(campaignId, reservationBlocker);
-        releaseLocalResources();
-        releaseResources();
-        detachLeaseLoss();
-        clearControl();
-        return;
-      }
-      const replayingPreparedResult = Boolean(claimedNode.preparedResultHash);
-      const nodeBudgetReservation = replayingPreparedResult
-        ? {} : usageDelta(reservedCampaign, claimedNode);
-      const {
-        gate: nodeSideEffectGate,
-        externalActionStarted: nodeExternalSideEffectStarted,
-      } = createCampaignNodeExternalSideEffectGate({
-        assertExternalSideEffectReady,
-        campaignStore,
-        node: claimedNode,
-        workerId,
-      });
-      let node;
+      let admitted = null;
       try {
-        node = campaignStore.startNode({
-          nodeId: claimedNode.nodeId,
-          workerId,
-          attemptId: claimedNode.attemptId,
-          leaseGeneration: claimedNode.leaseGeneration,
-          usageDelta: nodeBudgetReservation,
-        });
-      } catch (error) {
-        releaseLocalResources();
-        releaseResources();
-        detachLeaseLoss();
-        clearControl();
-        const latestCampaign = campaignStore.getCampaign(campaignId);
-        const latestNode = campaignStore.listNodes(campaignId).find((item) => item.nodeId === claimedNode.nodeId);
-        if (error?.message === 'campaign_node_budget_reservation_failed') {
-          const blocker = budgetBlocker(latestCampaign, claimedNode, nowEpochMs())
-            || 'campaign_agent_call_budget_exhausted';
-          campaignStore.stopCampaign(campaignId, blocker);
-          return;
+        admitted = startAdmittedCampaignNode({ campaignStore, campaignId, claimedNode,
+          controller, dispatcherId, workerId, nowEpochMs, budgetBlocker, usageDelta,
+          assertExternalSideEffectReady });
+      } finally {
+        if (!admitted) {
+          const cleanupError = closeCampaignAdmission({ releaseLocalResources, releaseResources, detachLeaseLoss, clearControl });
+          if (cleanupError) throw cleanupError;
         }
-        if (latestCampaign?.status !== 'running' || latestNode?.attemptId !== claimedNode.attemptId || latestNode?.leaseGeneration !== claimedNode.leaseGeneration) return;
-        throw error;
       }
+      if (!admitted) return;
+      const { node, nodeSideEffectGate, nodeExternalSideEffectStarted } = admitted;
       let heartbeat = null;
       active += 1;
       const commandStartedMs = nowEpochMs();

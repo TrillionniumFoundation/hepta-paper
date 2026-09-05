@@ -271,3 +271,58 @@ test('scope binding preserves independent runner interfaces but rejects work aft
   await assert.rejects(runOther(() => {}), code('campaign_nested_scope_closed'));
   assert.equal(calls, 1); assert.throws(() => scope.bind(null), code('campaign_child_runner_required'));
 });
+
+
+for (const query of ['getCampaign', 'listNodes']) {
+  test(`early ${query} fault after admission cleans resource and monitor ownership`, async (t) => {
+    const f = fixture(t, { config: null }); const supervisor = new AbortController();
+    let admitted = false; let injected = false; let calls = 0; const intervals = new Set();
+    const scheduler = { ...f.input.scheduler,
+      setInterval(callback, delay) { const handle = f.input.scheduler.setInterval(callback, delay); intervals.add(handle); return handle; },
+      clearInterval(handle) { intervals.delete(handle); f.input.scheduler.clearInterval(handle); },
+    };
+    t.after(() => { for (const handle of intervals) f.input.scheduler.clearInterval(handle); });
+    const resourceGovernor = { kind: 'LocalAdmissionFaultControl', snapshot: f.governor.snapshot,
+      async acquire(request, options) { const release = await f.governor.acquire(request, options); admitted = true; return release; } };
+    const campaignStore = { ...f.campaigns, [query](...args) {
+      if (admitted && !injected) { injected = true; throw new Error('local_admission_query_failed'); }
+      return f.campaigns[query](...args);
+    } };
+    await assert.rejects(f.run(async () => { calls += 1; return receipt(); },
+      { resourceGovernor, campaignStore, scheduler, signal: supervisor.signal }), /local_admission_query_failed/);
+    assert.equal(injected, true); assert.equal(calls, 0);
+    assert.deepEqual(f.governor.snapshot().used, v()); assert.equal(intervals.size, 0);
+    assert.deepEqual(getEventListeners(supervisor.signal, 'abort'), []);
+    assert.equal(f.campaigns.listNodes('envelope-campaign')[0].preparedResultHash, null);
+  });
+}
+
+for (const queryFails of [false, true]) {
+  test(`early admission release failure still attempts monitor cleanup; queryFault=${queryFails}`, async (t) => {
+    const f = fixture(t, { config: null }); const supervisor = new AbortController();
+    let admitted = false; let injected = false; let releases = 0; let calls = 0; const intervals = new Set();
+    const scheduler = { ...f.input.scheduler,
+      setInterval(callback, delay) { const handle = f.input.scheduler.setInterval(callback, delay); intervals.add(handle); return handle; },
+      clearInterval(handle) { intervals.delete(handle); f.input.scheduler.clearInterval(handle); },
+    };
+    t.after(() => { for (const handle of intervals) f.input.scheduler.clearInterval(handle); });
+    const resourceGovernor = { kind: 'LocalAdmissionReleaseControl', snapshot: f.governor.snapshot,
+      async acquire(request, options) {
+        const release = await f.governor.acquire(request, options); admitted = true;
+        return () => { releases += 1; release(); throw new Error('local_admission_release_failed'); };
+      } };
+    const campaignStore = { ...f.campaigns, getCampaign(...args) {
+      if (admitted && !injected) {
+        injected = true;
+        if (queryFails) throw new Error('local_admission_query_failed');
+        return { ...f.campaigns.getCampaign(...args), status: 'paused' };
+      }
+      return f.campaigns.getCampaign(...args);
+    } };
+    await assert.rejects(f.run(async () => { calls += 1; return receipt(); },
+      { resourceGovernor, campaignStore, scheduler, signal: supervisor.signal }), /local_admission_(release|query)_failed/);
+    assert.equal(calls, 0); assert.equal(releases, 1); assert.deepEqual(f.governor.snapshot().used, v());
+    assert.equal(intervals.size, 0); assert.deepEqual(getEventListeners(supervisor.signal, 'abort'), []);
+    assert.equal(f.campaigns.listNodes('envelope-campaign')[0].preparedResultHash, null);
+  });
+}

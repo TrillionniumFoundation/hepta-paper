@@ -5,19 +5,38 @@
   "registryRef": "docs/system/truth/modules.v1.json#/modules/module.candidate-router",
   "specPath": "docs/modules/specs/candidate-router.md",
   "runbookPath": "docs/modules/specs/candidate-router.md#operational-runbook",
-  "implementationPaths": ["docs/modules/MODULE_PROTOCOL.md","docs/control-plane/COMPOSITION_ROOT.md"],
+  "implementationPaths": [
+    "docs/modules/MODULE_PROTOCOL.md",
+    "docs/control-plane/COMPOSITION_ROOT.md",
+    "paper-application/orchestration/candidate-router.mjs"
+  ],
   "capabilityIds": ["CAP-MOD-CANDIDATES"],
   "authorityClass": "pure",
-  "ownerTeams": ["TEAM-KERNEL","TEAM-SCHEDULER","TEAM-EVIDENCE"],
+  "ownerTeams": ["TEAM-KERNEL", "TEAM-SCHEDULER", "TEAM-EVIDENCE"],
   "dependencyModuleIds": ["module.module-registry"],
-  "workItemIds": ["CTL-004","MOD-002"],
+  "workItemIds": ["CTL-004", "MOD-002"],
   "qualificationRequirement": "source",
-  "protocolRange": {"minimum":1,"maximum":1},
+  "protocolRange": {"minimum": 1, "maximum": 1},
   "sideEffectClasses": ["none"],
   "determinismClass": "deterministic",
-  "resourceProfile": {"sourceContract":"bounded","deploymentProfileRequired":true,"implicitCapacityAllowed":false,"unboundedChildConcurrencyAllowed":false},
-  "sloProfile": {"status":"source_contract_defined","canonicalWorkloadsRequired":true,"zeroToleranceSafetyCountersRequired":true},
-  "rollout": {"currentStaticActivation":"disabled","automaticActivation":false,"productionActivation":false,"rollbackTargetRequired":true,"mutualExclusionRequired":false},
+  "resourceProfile": {
+    "sourceContract": "bounded",
+    "deploymentProfileRequired": true,
+    "implicitCapacityAllowed": false,
+    "unboundedChildConcurrencyAllowed": false
+  },
+  "sloProfile": {
+    "status": "source_contract_defined",
+    "canonicalWorkloadsRequired": true,
+    "zeroToleranceSafetyCountersRequired": true
+  },
+  "rollout": {
+    "currentStaticActivation": "disabled",
+    "automaticActivation": false,
+    "productionActivation": false,
+    "rollbackTargetRequired": true,
+    "mutualExclusionRequired": false
+  },
   "documentationStatus": "complete",
   "effectiveQualification": "derived_only"
 }

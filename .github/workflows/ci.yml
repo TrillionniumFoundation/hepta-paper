@@ -121,6 +121,28 @@ jobs:
           strict_node_path="$(mktemp -d "$RUNNER_TEMP/hepta-pinned-node.XXXXXX")"
           ln -s /usr/bin/node "$strict_node_path/node"
           echo "$strict_node_path" >> "$GITHUB_PATH"
+      - name: Verify and materialize public R source closure
+        if: steps.impact.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/test_public_r_source_cas.py
+          python3 docs/rust/tools/materialize-public-r-source-cas.py
+          node --input-type=module - <<'NODE'
+          import { inspectRuntimeImageBuildInputClosure } from './paper-adapters/automation/runtime-image-build-input-closure.mjs';
+          import { AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS } from './paper-adapters/automation/runtime-image-registry.mjs';
+          import { RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD } from './paper-domain/automation/runtime-image-reproducibility-build-policy.mjs';
+          const closure = inspectRuntimeImageBuildInputClosure({
+            ...RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD,
+            definition: AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS.r,
+          });
+          console.log(JSON.stringify({
+            kind: 'CiPublicRSourceClosure',
+            closureHash: closure.runtimeImageCanonicalBuildInputClosureHash,
+            gitlinkCommitVerified: false,
+            productionAuthorized: false,
+            qualificationClaimed: false,
+          }));
+          NODE
       - name: Run impacted shard
         if: steps.impact.outputs.count != '0'
         env:
@@ -180,6 +202,27 @@ jobs:
           echo "$strict_node_path" >> "$GITHUB_PATH"
       - name: Validate development documentation
         run: node docs/tools/validate-development-docs.mjs
+      - name: Verify and materialize public R source closure
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/test_public_r_source_cas.py
+          python3 docs/rust/tools/materialize-public-r-source-cas.py
+          node --input-type=module - <<'NODE'
+          import { inspectRuntimeImageBuildInputClosure } from './paper-adapters/automation/runtime-image-build-input-closure.mjs';
+          import { AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS } from './paper-adapters/automation/runtime-image-registry.mjs';
+          import { RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD } from './paper-domain/automation/runtime-image-reproducibility-build-policy.mjs';
+          const closure = inspectRuntimeImageBuildInputClosure({
+            ...RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD,
+            definition: AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS.r,
+          });
+          console.log(JSON.stringify({
+            kind: 'CiPublicRSourceClosure',
+            closureHash: closure.runtimeImageCanonicalBuildInputClosureHash,
+            gitlinkCommitVerified: false,
+            productionAuthorized: false,
+            qualificationClaimed: false,
+          }));
+          NODE
       - name: Run full portable contract gates
         run: |
           PATH="$(dirname "$(command -v npm)"):$PATH" npm run security:npm-audit
@@ -344,6 +387,27 @@ jobs:
           echo "$strict_node_path" >> "$GITHUB_PATH"
       - name: Verify or populate pinned Mathlib cache
         run: npm run ci:mathlib-cache
+      - name: Verify and materialize public R source closure
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/test_public_r_source_cas.py
+          python3 docs/rust/tools/materialize-public-r-source-cas.py
+          node --input-type=module - <<'NODE'
+          import { inspectRuntimeImageBuildInputClosure } from './paper-adapters/automation/runtime-image-build-input-closure.mjs';
+          import { AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS } from './paper-adapters/automation/runtime-image-registry.mjs';
+          import { RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD } from './paper-domain/automation/runtime-image-reproducibility-build-policy.mjs';
+          const closure = inspectRuntimeImageBuildInputClosure({
+            ...RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD,
+            definition: AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS.r,
+          });
+          console.log(JSON.stringify({
+            kind: 'CiPublicRSourceClosure',
+            closureHash: closure.runtimeImageCanonicalBuildInputClosureHash,
+            gitlinkCommitVerified: false,
+            productionAuthorized: false,
+            qualificationClaimed: false,
+          }));
+          NODE
       - name: Run full portable qualification
         run: |
           PATH="$(dirname "$(command -v npm)"):$PATH" npm run security:npm-audit

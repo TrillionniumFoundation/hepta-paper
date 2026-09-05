@@ -41,6 +41,35 @@ For the exact candidate head:
 A source artifact is invalid when its head, tree, static-truth digest,
 required-check manifest or any bound file changes.
 
+### Public R source dependency in source CI
+
+Full-history source checkouts retain the public pre-externalization R source
+subtree `d6b31b7145b97ae01c71e76b34ef7c5cb1a3e082`, observed under commit
+`18b20af983e32575a2faab7dd8fa721a61d2e68c`. Source CI now runs:
+
+```bash
+python3 docs/rust/tools/test_public_r_source_cas.py
+python3 docs/rust/tools/materialize-public-r-source-cas.py
+```
+
+The materializer reads only that pinned local Git tree, verifies all 107 Git
+blobs and the manifest's 104 package sizes and SHA-256 values, and atomically
+publishes a new source directory. It performs no network request, package
+installation or source execution. An existing nonempty directory must match
+exactly; links, changed bytes, extra files and unsafe modes fail without being
+replaced. Missing historical objects fail; they are never fetched from a mutable
+branch or replaced with invented source bytes. A full-history checkout is a
+prerequisite, not a relaxation of the input check.
+
+Every consuming CI job additionally uses the **current** registered R build
+definition and canonical build policy to verify the complete materialized
+context. Historical bytes are only transport input, not historical authority
+for today's runtime. Any mismatch with the current definition remains a failure.
+The original companion gitlink is unchanged. This path does **not** prove that
+inaccessible commit `d13d857909525f4173063dbd6a7f1f48a089ae93` was checked out;
+receipts explicitly set `gitlinkCommitVerified` and `qualificationClaimed` false.
+It does not authorize an image build, private legacy replay, or production use.
+
 ## 3. Merge preparation
 
 Before integrating the RC into the product branch:

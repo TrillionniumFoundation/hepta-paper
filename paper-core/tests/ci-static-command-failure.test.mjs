@@ -86,3 +86,25 @@ test('exact-head impacted logs preserve the test exit and fail on log writer fai
     assert.equal(fs.readFileSync(path.join(evidence, 'tests.tap'), 'utf8'), 'fixture-test-output\n');
   }
 });
+
+test('every portable CI consumer verifies the current R closure after pinned public materialization', () => {
+  let consumers = 0;
+  for (const file of ['.github/workflows/ci.yml', '.github/workflows/exact-head-source-validation.yml']) {
+    const source = fs.readFileSync(path.join(root, file), 'utf8');
+    const blocks = source.split('      - name: Verify and materialize public R source closure\n').slice(1);
+    for (const fragment of blocks) {
+      const step = fragment.split('\n      - ')[0];
+      assert.ok(step.includes('set -euo pipefail'));
+      assert.ok(step.includes('python3 docs/rust/tools/test_public_r_source_cas.py'));
+      assert.ok(step.includes('python3 docs/rust/tools/materialize-public-r-source-cas.py'));
+      assert.ok(step.includes('inspectRuntimeImageBuildInputClosure({'));
+      assert.ok(step.includes('definition: AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS.r'));
+      assert.ok(step.includes('...RUNTIME_IMAGE_REPRODUCIBILITY_CANONICAL_BUILD'));
+      assert.ok(step.includes('gitlinkCommitVerified: false'));
+      assert.ok(step.includes('qualificationClaimed: false'));
+      assert.equal(step.includes('continue-on-error'), false);
+      consumers += 1;
+    }
+  }
+  assert.equal(consumers, 4);
+});

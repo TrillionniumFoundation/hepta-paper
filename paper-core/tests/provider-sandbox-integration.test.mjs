@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,24 +11,30 @@ import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const externalRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', '..', 'hepta-paper-provider-sandbox');
-const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-integration-'));
-const store = createDefaultPaperStore({ root: runtimeRoot, runtimeRoot });
-const clock = createSystemClock();
-const receiptLedger = createSqliteReceiptLedger({ store, clock });
-const delivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger, clock });
-const dispatchPayload = { version: 1, kind: 'SubmissionDispatchAuthorization', status: 'submission_dispatch_authorization_ready', paperId: 'real-paper-sandbox-fixture', provider: 'sandbox-provider', accountId: 'sandbox-account', nonce: `sandbox-${process.pid}` };
-const dispatchAuthorization = { ...dispatchPayload, submissionDispatchAuthorizationHash: hashRecord('SubmissionDispatchAuthorization', dispatchPayload) };
-const outbox = delivery.enqueue({ paperId: dispatchAuthorization.paperId, dispatchAuthorization, payload: { packageHash: 'sha256:sandbox-package' } });
-const requestPath = path.join(runtimeRoot, 'request.json');
-const responsePath = path.join(runtimeRoot, 'response.json');
-fs.writeFileSync(requestPath, JSON.stringify({ environment: 'provider_sandbox', liveActionAllowed: false, provider: dispatchAuthorization.provider, accountId: dispatchAuthorization.accountId, paperId: dispatchAuthorization.paperId, dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash, packageHash: 'sha256:sandbox-package' }));
-const result = spawnSync(process.execPath, [path.join(externalRoot, 'provider-sandbox.mjs'), requestPath, responsePath], { encoding: 'utf8' });
-assert.equal(result.status, 0, result.stderr);
-const response = JSON.parse(fs.readFileSync(responsePath, 'utf8'));
-assert.throws(() => delivery.recordResponse({ messageId: outbox.message_id, response }), /executor response rejected/);
-assert.equal(delivery.listQuarantine({ messageId: outbox.message_id }).length, 1);
-assert.equal(delivery.acquireReleaseLock({ paperId: dispatchAuthorization.paperId, messageId: outbox.message_id, lockToken: `lock-${process.pid}` })?.status, 'locked');
-assert.equal(response.providerReceipt.sandbox, true);
-assert.equal(response.externalActionPerformed, false);
-fs.rmSync(runtimeRoot, { recursive: true, force: true });
-process.stdout.write(`${JSON.stringify({ ok: true, status: 'provider_sandbox_incomplete_response_quarantined', outbox: 1, inbox: 0, quarantine: 1, reconciliation: 0, externalActionPerformed: false })}\n`);
+test('external provider sandbox incomplete response is quarantined', (t) => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-integration-'));
+  let store;
+  t.after(() => {
+    try { store?.close(); }
+    finally { fs.rmSync(runtimeRoot, { recursive: true, force: true }); }
+  });
+  store = createDefaultPaperStore({ root: runtimeRoot, runtimeRoot });
+  const clock = createSystemClock();
+  const receiptLedger = createSqliteReceiptLedger({ store, clock });
+  const delivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger, clock });
+  const dispatchPayload = { version: 1, kind: 'SubmissionDispatchAuthorization', status: 'submission_dispatch_authorization_ready', paperId: 'real-paper-sandbox-fixture', provider: 'sandbox-provider', accountId: 'sandbox-account', nonce: `sandbox-${process.pid}` };
+  const dispatchAuthorization = { ...dispatchPayload, submissionDispatchAuthorizationHash: hashRecord('SubmissionDispatchAuthorization', dispatchPayload) };
+  const outbox = delivery.enqueue({ paperId: dispatchAuthorization.paperId, dispatchAuthorization, payload: { packageHash: 'sha256:sandbox-package' } });
+  const requestPath = path.join(runtimeRoot, 'request.json');
+  const responsePath = path.join(runtimeRoot, 'response.json');
+  fs.writeFileSync(requestPath, JSON.stringify({ environment: 'provider_sandbox', liveActionAllowed: false, provider: dispatchAuthorization.provider, accountId: dispatchAuthorization.accountId, paperId: dispatchAuthorization.paperId, dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash, packageHash: 'sha256:sandbox-package' }));
+  const result = spawnSync(process.execPath, [path.join(externalRoot, 'provider-sandbox.mjs'), requestPath, responsePath], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const response = JSON.parse(fs.readFileSync(responsePath, 'utf8'));
+  assert.throws(() => delivery.recordResponse({ messageId: outbox.message_id, response }), /executor response rejected/);
+  assert.equal(delivery.listQuarantine({ messageId: outbox.message_id }).length, 1);
+  assert.equal(delivery.acquireReleaseLock({ paperId: dispatchAuthorization.paperId, messageId: outbox.message_id, lockToken: `lock-${process.pid}` })?.status, 'locked');
+  assert.equal(response.providerReceipt.sandbox, true);
+  assert.equal(response.externalActionPerformed, false);
+  process.stdout.write(`${JSON.stringify({ ok: true, status: 'provider_sandbox_incomplete_response_quarantined', outbox: 1, inbox: 0, quarantine: 1, reconciliation: 0, externalActionPerformed: false })}\n`);
+});

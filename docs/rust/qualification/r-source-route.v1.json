@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "HeptaRSourceRouteV1",
+  "status": "public_historical_source_route_candidate",
+  "repository": "TrillionniumFoundation/hepta-paper",
+  "targetPath": "runtime-images/r-scientific/source-cas",
+  "originalGitlink": {
+    "commit": "d13d857909525f4173063dbd6a7f1f48a089ae93",
+    "verified": false,
+    "equivalenceClaimed": false
+  },
+  "publicHistoricalRoute": {
+    "repository": "TrillionniumFoundation/hepta-paper",
+    "commit": "18b20af983e32575a2faab7dd8fa721a61d2e68c",
+    "path": "runtime-images/r-scientific/source-cas",
+    "subtree": "d6b31b7145b97ae01c71e76b34ef7c5cb1a3e082",
+    "manifestBlob": "0053ff8c14a375874bc5c0ea4f0f6071d648b1eb",
+    "fileCount": 107,
+    "packageCount": 104
+  },
+  "materializer": {
+    "path": "docs/rust/tools/materialize-public-r-source-cas.py",
+    "networkAllowed": false,
+    "packageExecutionAllowed": false,
+    "overwriteDriftAllowed": false
+  },
+  "acceptance": {
+    "currentBuildClosureVerificationRequired": true,
+    "exactHeadBaseMergeRequired": true,
+    "independentReviewRequired": true,
+    "targetHostQualificationRequired": true
+  },
+  "authority": {
+    "sourceContentVerified": false,
+    "originalGitlinkVerified": false,
+    "productionAuthorized": false,
+    "externalAuthorityClaimed": false
+  }
+}

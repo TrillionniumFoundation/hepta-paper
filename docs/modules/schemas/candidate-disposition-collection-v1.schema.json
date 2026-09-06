@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/hepta-paper/schemas/candidate-disposition-collection-v1.schema.json",
+  "title": "CandidateDispositionCollectionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "planningRequestId",
+    "planningRequestHash",
+    "stateSnapshotHash",
+    "capabilityId",
+    "moduleQualificationMetadataSetHash",
+    "observedAt",
+    "expectedProducerCount",
+    "receivedProducerCount",
+    "producerDispositions",
+    "incompleteReasons",
+    "candidates",
+    "candidateSetInputHash",
+    "candidateBatchSetHash",
+    "readyForRouting",
+    "externalCurrentnessGateRequired",
+    "executionEligible",
+    "authority",
+    "candidateDispositionCollectionHash"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "CandidateDispositionCollectionV1" },
+    "status": {
+      "enum": [
+        "candidate_dispositions_complete",
+        "candidate_dispositions_incomplete"
+      ]
+    },
+    "planningRequestId": { "$ref": "#/$defs/identifier" },
+    "planningRequestHash": { "$ref": "#/$defs/hash" },
+    "stateSnapshotHash": { "$ref": "#/$defs/hash" },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^CAP-[A-Z0-9][A-Z0-9-]{0,95}$"
+    },
+    "moduleQualificationMetadataSetHash": { "$ref": "#/$defs/hash" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "expectedProducerCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1024
+    },
+    "receivedProducerCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1024
+    },
+    "producerDispositions": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": { "$ref": "#/$defs/producerDisposition" }
+    },
+    "incompleteReasons": {
+      "type": "array",
+      "maxItems": 1024,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    "candidates": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "maxItems": 4096,
+          "items": { "type": "object" }
+        }
+      ]
+    },
+    "candidateSetInputHash": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/hash" }
+      ]
+    },
+    "candidateBatchSetHash": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/hash" }
+      ]
+    },
+    "readyForRouting": { "type": "boolean" },
+    "externalCurrentnessGateRequired": { "const": true },
+    "executionEligible": { "const": false },
+    "authority": { "$ref": "#/$defs/authority" },
+    "candidateDispositionCollectionHash": { "$ref": "#/$defs/hash" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "candidate_dispositions_complete" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "readyForRouting": { "const": true },
+          "incompleteReasons": { "maxItems": 0 },
+          "candidates": { "type": "array" },
+          "candidateSetInputHash": { "$ref": "#/$defs/hash" },
+          "candidateBatchSetHash": { "$ref": "#/$defs/hash" }
+        }
+      },
+      "else": {
+        "properties": {
+          "readyForRouting": { "const": false },
+          "incompleteReasons": { "minItems": 1 },
+          "candidates": { "type": "null" },
+          "candidateSetInputHash": { "type": "null" },
+          "candidateBatchSetHash": { "type": "null" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized",
+        "providerAuthorized",
+        "campaignWriterActivated",
+        "releaseAuthorized",
+        "submissionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "providerAuthorized": { "const": false },
+        "campaignWriterActivated": { "const": false },
+        "releaseAuthorized": { "const": false },
+        "submissionAuthorized": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    },
+    "producerDisposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "moduleId",
+        "moduleVersion",
+        "qualificationMetadataHash",
+        "status",
+        "completedAt",
+        "candidateCount",
+        "candidateBatchByteHash",
+        "candidateBytesValidated",
+        "failureCode"
+      ],
+      "properties": {
+        "moduleId": {
+          "type": "string",
+          "pattern": "^module\\.[a-z0-9][a-z0-9-]{0,95}$"
+        },
+        "moduleVersion": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$"
+        },
+        "qualificationMetadataHash": { "$ref": "#/$defs/hash" },
+        "status": {
+          "enum": [
+            "candidate_batch_complete",
+            "candidate_batch_missing",
+            "candidate_batch_failed",
+            "candidate_batch_cancelled",
+            "candidate_batch_timeout",
+            "candidate_batch_unavailable"
+          ]
+        },
+        "completedAt": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "format": "date-time" }
+          ]
+        },
+        "candidateCount": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 0, "maximum": 4096 }
+          ]
+        },
+        "candidateBatchByteHash": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/hash" }
+          ]
+        },
+        "candidateBytesValidated": { "type": "boolean" },
+        "failureCode": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

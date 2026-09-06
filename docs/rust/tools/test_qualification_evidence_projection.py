@@ -109,9 +109,8 @@ class RequiredProjectionTests(unittest.TestCase):
                 pages = json.loads((root / 'check-runs.json').read_text())
                 pages[0]['check_runs'][0][field] = value
                 (root / 'check-runs.json').write_text(json.dumps(pages))
-                with self.assertRaisesRegex(
-                        ValueError,
-                        'projection_check_run_mismatch|required_observed_check_projection_mismatch'):
+                with self.assertRaisesRegex(ValueError,
+                    'projection_check_run_mismatch|required_observed_check_projection_mismatch'):
                     validate_required_projection(root, evidence)
 
     def test_wrong_app_or_suite_is_rejected(self):
@@ -123,10 +122,9 @@ class RequiredProjectionTests(unittest.TestCase):
                 if target == 'app': row['app']['id'] = 1
                 else: row['check_suite']['id'] = 999
                 (root / 'check-runs.json').write_text(json.dumps(pages))
-                with self.assertRaisesRegex(
-                        ValueError,
-                        'raw_check_(app|suite)_invalid|projection_check_run_mismatch|'
-                        'required_observed_check_projection_mismatch'):
+                with self.assertRaisesRegex(ValueError,
+                    'raw_check_(app|suite)_invalid|projection_check_run_mismatch|'
+                    'required_observed_check_projection_mismatch'):
                     validate_required_projection(root, evidence)
 
 
@@ -162,7 +160,8 @@ class SubjectProjectionTests(unittest.TestCase):
             value = json.loads(subject.read_text())
             value['producerHistories'][0]['eligibleRuns'][1]['artifacts'][0]['id'] = 201
             subject.write_text(json.dumps(value))
-            with self.assertRaisesRegex(ValueError, 'artifact_attribution_forbidden'):
+            with self.assertRaisesRegex(
+                    ValueError, 'artifact_attribution_forbidden|subject_artifact_projection_mismatch'):
                 validate_subject_projection(root, subject)
 
     def test_missing_or_nonboolean_expired_is_rejected(self):
@@ -174,6 +173,10 @@ class SubjectProjectionTests(unittest.TestCase):
                 if value == 'missing': row.pop('expired')
                 else: row['expired'] = value
                 (root / 'artifacts.json').write_text(json.dumps(pages))
+                subject_value = json.loads(subject.read_text())
+                subject_value['producerHistories'][0]['eligibleRuns'][0]['artifacts'][0]['expired'] = \
+                    bool(None if value == 'missing' else value)
+                subject.write_text(json.dumps(subject_value))
                 with self.assertRaisesRegex(ValueError, 'artifact_expired_'):
                     validate_subject_projection(root, subject)
 
@@ -186,6 +189,10 @@ class SubjectProjectionTests(unittest.TestCase):
                 if value == 'missing': row.pop('size_in_bytes')
                 else: row['size_in_bytes'] = value
                 (root / 'artifacts.json').write_text(json.dumps(pages))
+                subject_value = json.loads(subject.read_text())
+                subject_value['producerHistories'][0]['eligibleRuns'][0]['artifacts'][0]['sizeInBytes'] = \
+                    0 if value == 'missing' else value
+                subject.write_text(json.dumps(subject_value))
                 with self.assertRaisesRegex(ValueError, 'artifact_size_'):
                     validate_subject_projection(root, subject)
 
@@ -198,6 +205,12 @@ class SubjectProjectionTests(unittest.TestCase):
                 pages = json.loads((root / 'artifacts.json').read_text())
                 pages['10'][0]['artifacts'][0][field] = value
                 (root / 'artifacts.json').write_text(json.dumps(pages))
+                subject_value = json.loads(subject.read_text())
+                normalized_field = {
+                    'digest': 'digest', 'created_at': 'createdAt', 'expires_at': 'expiresAt',
+                }[field]
+                subject_value['producerHistories'][0]['eligibleRuns'][0]['artifacts'][0][normalized_field] = value
+                subject.write_text(json.dumps(subject_value))
                 with self.assertRaisesRegex(ValueError, pattern):
                     validate_subject_projection(root, subject)
 

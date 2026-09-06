@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ModuleCandidateResponseV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "moduleId",
+    "moduleVersion",
+    "planningRequestHash",
+    "candidates",
+    "emptyReason",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ModuleCandidateResponseV1" },
+    "status": { "const": "complete" },
+    "moduleId": { "$ref": "#/$defs/identifier" },
+    "moduleVersion": { "$ref": "#/$defs/identifier" },
+    "planningRequestHash": { "$ref": "#/$defs/hash" },
+    "candidates": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "required": [
+          "schemaVersion", "kind", "candidateId", "planningRequestId",
+          "stateSnapshotHash", "moduleId", "moduleVersion", "capabilityId",
+          "candidatePayloadHash"
+        ],
+        "properties": {
+          "schemaVersion": { "const": 1 },
+          "kind": { "const": "ActionCandidateV1" },
+          "candidateId": { "$ref": "#/$defs/identifier" },
+          "planningRequestId": { "$ref": "#/$defs/identifier" },
+          "stateSnapshotHash": { "$ref": "#/$defs/hash" },
+          "moduleId": { "$ref": "#/$defs/identifier" },
+          "moduleVersion": { "$ref": "#/$defs/identifier" },
+          "capabilityId": { "$ref": "#/$defs/identifier" },
+          "candidatePayloadHash": { "$ref": "#/$defs/hash" }
+        }
+      }
+    },
+    "emptyReason": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1, "maxLength": 256 }
+      ]
+    },
+    "authority": { "$ref": "#/$defs/authority" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "candidates": { "maxItems": 0 } } },
+      "then": { "properties": { "emptyReason": { "type": "string" } } },
+      "else": { "properties": { "emptyReason": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized", "providerAuthorized",
+        "writerAuthorityGranted", "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "providerAuthorized": { "const": false },
+        "writerAuthorityGranted": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    }
+  }
+}

@@ -1,10 +1,12 @@
-import { hashRecord, stableStringify } from '../../workflow-kernel/record-hash.mjs';
+import crypto from 'node:crypto';
 
 const HASH = /^sha256:[0-9a-f]{64}$/u;
 const MODULE_ID = /^module\.[a-z0-9][a-z0-9-]{0,95}$/u;
 const CAPABILITY_ID = /^CAP-[A-Z0-9][A-Z0-9-]{0,95}$/u;
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$/u;
+export const CANDIDATE_ROUTER_INPUT_BOUNDARY = 'trusted_same_realm_plain_data';
+
 const QUALIFICATION_STATES = new Set([
   'source_qualified',
   'target_host_qualified',
@@ -24,13 +26,19 @@ const MAXIMUMS = Object.freeze({
 const REQUEST_FIELDS = Object.freeze([
   'schemaVersion', 'kind', 'planningRequestId', 'stateSnapshotHash',
   'capabilityId', 'goalReference', 'policyReference', 'hardConstraintSetHash',
-  'objectiveVersion', 'resourcePriceSnapshotHash', 'qualifiedModuleSetHash',
+  'objectiveVersion', 'resourcePriceSnapshotHash', 'moduleQualificationMetadataSetHash',
   'candidateLimit', 'maximumCandidateBytes', 'maximumTotalCandidateBytes',
   'deadline', 'allowedSideEffectClasses', 'inputArtifacts',
 ]);
+const MODULE_PAYLOAD_FIELDS = Object.freeze([
+  'schemaVersion', 'kind', 'moduleId', 'moduleVersion', 'capabilityIds',
+  'qualificationStatus', 'qualificationIdentity', 'qualificationGeneration',
+  'qualificationTrustClass', 'qualificationCurrentnessMode',
+  'qualificationObservedAt', 'qualificationExpiresAt',
+  'qualificationRevocationSetHash', 'qualificationCurrentnessReceiptHash',
+]);
 const MODULE_FIELDS = Object.freeze([
-  'moduleId', 'moduleVersion', 'capabilityIds', 'qualificationStatus',
-  'qualificationIdentity',
+  ...MODULE_PAYLOAD_FIELDS, 'qualificationMetadataHash',
 ]);
 const CANDIDATE_FIELDS = Object.freeze([
   'schemaVersion', 'kind', 'candidateId', 'planningRequestId',
@@ -49,39 +57,92 @@ function failure(code) {
   return Object.assign(new Error(code), { code, retryable: false });
 }
 
+function compareUtf8(left, right) {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
+}
+
+function canonicalStringify(value) {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw failure('candidate_canonical_number_invalid');
+    return JSON.stringify(Object.is(value, -0) ? 0 : value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalStringify(entry)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort(compareUtf8)
+      .map((key) => `${JSON.stringify(key)}:${canonicalStringify(value[key])}`).join(',')}}`;
+  }
+  throw failure('candidate_canonical_value_invalid');
+}
+
+function hashRecord(kind, value) {
+  const record = Object.create(null);
+  Object.defineProperties(record, {
+    kind: { value: kind, enumerable: true },
+    value: { value, enumerable: true },
+  });
+  return `sha256:${crypto.createHash('sha256')
+    .update(canonicalStringify(record), 'utf8').digest('hex')}`;
+}
+
 function dataValues(value, allowed, code) {
-  if (!value || typeof value !== 'object'
-    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+  if (!value || typeof value !== 'object') throw failure(code);
+  let prototype;
+  let descriptors;
+  let keys;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+    keys = Reflect.ownKeys(value);
+  } catch {
     throw failure(code);
   }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const keys = Reflect.ownKeys(value);
-  if (keys.length > MAXIMUMS.valueNodes || keys.some((key) => typeof key !== 'string'
-    || (allowed && !allowed.includes(key)))) throw failure(code);
+  if (![Object.prototype, null].includes(prototype)) throw failure(code);
+  const descriptorKeys = Reflect.ownKeys(descriptors);
+  if (keys.length !== descriptorKeys.length
+    || keys.some((key) => !descriptorKeys.includes(key))
+    || keys.length > MAXIMUMS.valueNodes
+    || keys.some((key) => typeof key !== 'string' || (allowed && !allowed.includes(key)))) {
+    throw failure(code);
+  }
   const output = Object.create(null);
   for (const key of keys) {
     const descriptor = descriptors[key];
-    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) {
-      throw failure(code);
-    }
-    output[key] = descriptor.value;
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) throw failure(code);
+    Object.defineProperty(output, key, {
+      value: descriptor.value, enumerable: true, writable: false, configurable: false,
+    });
   }
   return output;
 }
 
 function denseArrayValues(value, code, maximum = MAXIMUMS.setEntries) {
-  if (!Array.isArray(value) || value.length > maximum) throw failure(code);
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const keys = Reflect.ownKeys(value);
-  if (keys.length !== value.length + 1 || !keys.includes('length')) {
+  let array;
+  let descriptors;
+  let keys;
+  try {
+    array = Array.isArray(value);
+    descriptors = array ? Object.getOwnPropertyDescriptors(value) : null;
+    keys = array ? Reflect.ownKeys(value) : null;
+  } catch {
+    throw failure(code);
+  }
+  if (!array) throw failure(code);
+  const lengthDescriptor = descriptors.length;
+  const length = lengthDescriptor?.value;
+  if (!Object.hasOwn(lengthDescriptor || {}, 'value')
+    || !Number.isSafeInteger(length) || length < 0 || length > maximum
+    || keys.length !== length + 1 || !keys.includes('length')) {
     throw failure(code);
   }
   const output = [];
-  for (let index = 0; index < value.length; index += 1) {
+  for (let index = 0; index < length; index += 1) {
     const descriptor = descriptors[index];
-    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) {
-      throw failure(code);
-    }
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) throw failure(code);
     output.push(descriptor.value);
   }
   return output;
@@ -94,7 +155,7 @@ function captureJson(value, state, depth = 0) {
   }
   if (value === null || typeof value === 'boolean') return value;
   if (typeof value === 'string') {
-    if (value.length > MAXIMUMS.stringLength || value.includes('\0')) {
+    if (Buffer.byteLength(value, 'utf8') > MAXIMUMS.stringLength || value.includes('\0')) {
       throw failure('candidate_value_string_invalid');
     }
     return value;
@@ -104,20 +165,29 @@ function captureJson(value, state, depth = 0) {
     return Object.is(value, -0) ? 0 : value;
   }
   if (typeof value !== 'object') throw failure('candidate_value_type_invalid');
+  let array;
+  try {
+    array = Array.isArray(value);
+  } catch {
+    throw failure('candidate_value_record_invalid');
+  }
   if (state.stack.has(value)) throw failure('candidate_value_cycle');
   state.stack.add(value);
   try {
-    if (Array.isArray(value)) {
+    if (array) {
       return Object.freeze(denseArrayValues(value, 'candidate_value_array_invalid')
         .map((entry) => captureJson(entry, state, depth + 1)));
     }
     const values = dataValues(value, null, 'candidate_value_record_invalid');
-    const result = {};
-    for (const key of Object.keys(values).sort()) {
-      if (!key.length || key.length > 256 || key.includes('\0')) {
+    const result = Object.create(null);
+    for (const key of Object.keys(values).sort(compareUtf8)) {
+      if (!key.length || Buffer.byteLength(key, 'utf8') > 256 || key.includes('\0')) {
         throw failure('candidate_value_key_invalid');
       }
-      result[key] = captureJson(values[key], state, depth + 1);
+      Object.defineProperty(result, key, {
+        value: captureJson(values[key], state, depth + 1),
+        enumerable: true, writable: false, configurable: false,
+      });
     }
     return Object.freeze(result);
   } finally {
@@ -125,8 +195,8 @@ function captureJson(value, state, depth = 0) {
   }
 }
 
-function opaqueRecord(value, code) {
-  const captured = captureJson(value, { nodes: 0, stack: new WeakSet() });
+function opaqueRecord(value, code, state) {
+  const captured = captureJson(value, state);
   if (!captured || Array.isArray(captured) || typeof captured !== 'object') {
     throw failure(code);
   }
@@ -167,58 +237,115 @@ function stringSet(value, pattern, code, maximum = MAXIMUMS.setEntries) {
   const entries = denseArrayValues(value, code, maximum)
     .map((entry) => boundedString(entry, pattern, code));
   if (new Set(entries).size !== entries.length) throw failure(code);
-  return Object.freeze(entries.sort());
+  return Object.freeze(entries.sort(compareUtf8));
 }
 
 function hashSet(value, code) {
   return stringSet(value, HASH, code);
 }
 
-function normalizeQualifiedModules(value) {
-  const raw = denseArrayValues(value, 'candidate_module_set_invalid', MAXIMUMS.modules);
-  const normalized = raw.map((entry) => {
-    const data = dataValues(entry, MODULE_FIELDS, 'candidate_module_binding_invalid');
-    if (Object.keys(data).length !== MODULE_FIELDS.length) {
-      throw failure('candidate_module_binding_invalid');
-    }
-    const qualificationStatus = boundedString(
-      data.qualificationStatus, TOKEN, 'candidate_module_qualification_invalid',
-    );
-    if (!QUALIFICATION_STATES.has(qualificationStatus)) {
-      throw failure('candidate_module_qualification_invalid');
-    }
-    return Object.freeze({
-      moduleId: boundedString(data.moduleId, MODULE_ID, 'candidate_module_id_invalid'),
-      moduleVersion: boundedString(
-        data.moduleVersion, TOKEN, 'candidate_module_version_invalid',
-      ),
-      capabilityIds: stringSet(
-        data.capabilityIds, CAPABILITY_ID, 'candidate_module_capabilities_invalid', 256,
-      ),
-      qualificationStatus,
-      qualificationIdentity: hashValue(
-        data.qualificationIdentity, 'candidate_module_qualification_identity_invalid',
-      ),
-    });
-  }).sort((left, right) => {
-    const a = stableStringify(left);
-    const b = stableStringify(right);
-    return a < b ? -1 : a > b ? 1 : 0;
+function normalizePlanningModuleQualificationMetadata(value, { requireHash }) {
+  const allowed = requireHash ? MODULE_FIELDS : MODULE_PAYLOAD_FIELDS;
+  const data = dataValues(value, allowed, 'candidate_module_metadata_invalid');
+  if (Object.keys(data).length !== allowed.length) throw failure('candidate_module_metadata_invalid');
+  if (data.schemaVersion !== 1) throw failure('candidate_module_metadata_version_invalid');
+  if (data.kind !== 'PlanningModuleQualificationMetadataV1') {
+    throw failure('candidate_module_metadata_kind_invalid');
+  }
+  const moduleId = boundedString(data.moduleId, MODULE_ID, 'candidate_module_id_invalid');
+  const moduleVersion = boundedString(
+    data.moduleVersion, TOKEN, 'candidate_module_version_invalid',
+  );
+  const capabilityIds = stringSet(
+    data.capabilityIds, CAPABILITY_ID, 'candidate_module_capabilities_invalid', 256,
+  );
+  const qualificationStatus = boundedString(
+    data.qualificationStatus, TOKEN, 'candidate_module_qualification_invalid',
+  );
+  if (!QUALIFICATION_STATES.has(qualificationStatus)) {
+    throw failure('candidate_module_qualification_invalid');
+  }
+  if (data.qualificationTrustClass !== 'caller_supplied_unverified') {
+    throw failure('candidate_module_trust_class_invalid');
+  }
+  if (data.qualificationCurrentnessMode !== 'external_live_revalidation_required') {
+    throw failure('candidate_module_currentness_mode_invalid');
+  }
+  const qualificationIdentity = hashValue(
+    data.qualificationIdentity, 'candidate_module_qualification_identity_invalid',
+  );
+  const qualificationGeneration = boundedInteger(
+    data.qualificationGeneration, 1, Number.MAX_SAFE_INTEGER,
+    'candidate_module_qualification_generation_invalid',
+  );
+  const qualificationObservedAt = canonicalTimestamp(
+    data.qualificationObservedAt, 'candidate_module_observed_at_invalid',
+  );
+  const qualificationExpiresAt = canonicalTimestamp(
+    data.qualificationExpiresAt, 'candidate_module_expiry_invalid',
+  );
+  if (Date.parse(qualificationObservedAt) > Date.parse(qualificationExpiresAt)) {
+    throw failure('candidate_module_currentness_interval_invalid');
+  }
+  const qualificationRevocationSetHash = hashValue(
+    data.qualificationRevocationSetHash, 'candidate_module_revocation_set_invalid',
+  );
+  const qualificationCurrentnessReceiptHash = hashValue(
+    data.qualificationCurrentnessReceiptHash,
+    'candidate_module_currentness_receipt_invalid',
+  );
+  const payload = Object.freeze({
+    schemaVersion: 1,
+    kind: 'PlanningModuleQualificationMetadataV1',
+    moduleId,
+    moduleVersion,
+    capabilityIds,
+    qualificationStatus,
+    qualificationIdentity,
+    qualificationGeneration,
+    qualificationTrustClass: 'caller_supplied_unverified',
+    qualificationCurrentnessMode: 'external_live_revalidation_required',
+    qualificationObservedAt,
+    qualificationExpiresAt,
+    qualificationRevocationSetHash,
+    qualificationCurrentnessReceiptHash,
   });
+  const qualificationMetadataHash = hashRecord(
+    'PlanningModuleQualificationMetadataV1', payload,
+  );
+  if (requireHash && data.qualificationMetadataHash !== qualificationMetadataHash) {
+    throw failure('candidate_module_metadata_hash_invalid');
+  }
+  return Object.freeze({ ...payload, qualificationMetadataHash });
+}
+
+export function sealPlanningModuleQualificationMetadataV1(value) {
+  return normalizePlanningModuleQualificationMetadata(value, { requireHash: false });
+}
+
+function normalizePlanningModuleQualificationMetadataSet(value) {
+  const raw = denseArrayValues(value, 'candidate_module_metadata_set_invalid', MAXIMUMS.modules);
+  const normalized = raw
+    .map((entry) => normalizePlanningModuleQualificationMetadata(entry, { requireHash: true }))
+    .sort((left, right) => compareUtf8(canonicalStringify(left), canonicalStringify(right)));
   const identities = new Set();
-  for (const binding of normalized) {
-    const identity = `${binding.moduleId}\0${binding.moduleVersion}`;
-    if (identities.has(identity)) throw failure('candidate_module_binding_duplicate');
+  for (const metadata of normalized) {
+    const identity = `${metadata.moduleId}\0${metadata.moduleVersion}`;
+    if (identities.has(identity)) throw failure('candidate_module_metadata_duplicate');
     identities.add(identity);
   }
   return Object.freeze(normalized);
 }
 
-export function captureQualifiedPlanningModuleSetV1(value) {
-  const modules = normalizeQualifiedModules(value);
+export function capturePlanningModuleQualificationMetadataSetV1(value) {
+  const moduleQualificationMetadata = normalizePlanningModuleQualificationMetadataSet(value);
   return Object.freeze({
-    modules,
-    qualifiedModuleSetHash: hashRecord('QualifiedPlanningModuleSetV1', modules),
+    moduleQualificationMetadata,
+    qualificationTrustClass: 'caller_supplied_unverified',
+    externalCurrentnessGateRequired: true,
+    moduleQualificationMetadataSetHash: hashRecord(
+      'PlanningModuleQualificationMetadataSetV1', moduleQualificationMetadata,
+    ),
   });
 }
 
@@ -263,8 +390,9 @@ function normalizePlanningRequest(value) {
     resourcePriceSnapshotHash: hashValue(
       data.resourcePriceSnapshotHash, 'planning_request_resource_prices_invalid',
     ),
-    qualifiedModuleSetHash: hashValue(
-      data.qualifiedModuleSetHash, 'planning_request_module_set_invalid',
+    moduleQualificationMetadataSetHash: hashValue(
+      data.moduleQualificationMetadataSetHash,
+      'planning_request_module_metadata_set_invalid',
     ),
     candidateLimit: boundedInteger(
       data.candidateLimit, 1, MAXIMUMS.candidates, 'planning_request_candidate_limit_invalid',
@@ -309,7 +437,7 @@ function normalizeResourceVector(value) {
   });
 }
 
-function normalizeCandidate(value, { requireHash }) {
+function normalizeCandidate(value, { requireHash, captureState }) {
   const data = dataValues(value, CANDIDATE_FIELDS, 'action_candidate_invalid');
   const required = CANDIDATE_FIELDS.filter((field) => ![
     'preconditions', 'dependencyEffects', 'irreversibleBoundary', 'inputSchema',
@@ -338,10 +466,10 @@ function normalizeCandidate(value, { requireHash }) {
       data.capabilityId, CAPABILITY_ID, 'action_candidate_capability_invalid',
     ),
     resourceVector: normalizeResourceVector(data.resourceVector),
-    duration: opaqueRecord(data.duration, 'action_candidate_duration_invalid'),
-    cost: opaqueRecord(data.cost, 'action_candidate_cost_invalid'),
-    value: opaqueRecord(data.value, 'action_candidate_value_invalid'),
-    risk: opaqueRecord(data.risk, 'action_candidate_risk_invalid'),
+    duration: opaqueRecord(data.duration, 'action_candidate_duration_invalid', captureState),
+    cost: opaqueRecord(data.cost, 'action_candidate_cost_invalid', captureState),
+    value: opaqueRecord(data.value, 'action_candidate_value_invalid', captureState),
+    risk: opaqueRecord(data.risk, 'action_candidate_risk_invalid', captureState),
     preconditions: Object.hasOwn(data, 'preconditions')
       ? stringSet(data.preconditions, IDENTIFIER, 'action_candidate_preconditions_invalid')
       : Object.freeze([]),
@@ -379,19 +507,27 @@ function normalizeCandidate(value, { requireHash }) {
 }
 
 export function sealActionCandidateV1(value) {
-  return normalizeCandidate(value, { requireHash: false });
+  return normalizeCandidate(value, {
+    requireHash: false, captureState: { nodes: 0, stack: new WeakSet() },
+  });
 }
 
 export function routeActionCandidatesV1(value) {
   const input = dataValues(
-    value, ['planningRequest', 'qualifiedModules', 'candidates', 'observedAt'],
+    value, ['inputBoundary', 'planningRequest', 'moduleQualificationMetadata', 'candidates', 'observedAt'],
     'candidate_routing_input_invalid',
   );
-  if (Object.keys(input).length !== 4) throw failure('candidate_routing_input_invalid');
-  const qualified = captureQualifiedPlanningModuleSetV1(input.qualifiedModules);
+  if (Object.keys(input).length !== 5) throw failure('candidate_routing_input_invalid');
+  if (input.inputBoundary !== CANDIDATE_ROUTER_INPUT_BOUNDARY) {
+    throw failure('candidate_input_boundary_invalid');
+  }
+  const moduleMetadata = capturePlanningModuleQualificationMetadataSetV1(
+    input.moduleQualificationMetadata,
+  );
   const request = normalizePlanningRequest(input.planningRequest);
-  if (request.qualifiedModuleSetHash !== qualified.qualifiedModuleSetHash) {
-    throw failure('planning_request_module_set_mismatch');
+  if (request.moduleQualificationMetadataSetHash
+    !== moduleMetadata.moduleQualificationMetadataSetHash) {
+    throw failure('planning_request_module_metadata_set_mismatch');
   }
   const observedAt = canonicalTimestamp(input.observedAt, 'candidate_routing_observed_at_invalid');
   const observedMs = Date.parse(observedAt);
@@ -400,15 +536,27 @@ export function routeActionCandidatesV1(value) {
   const rawCandidates = denseArrayValues(
     input.candidates, 'candidate_collection_invalid', request.candidateLimit,
   );
-  const modules = new Map(qualified.modules.map((binding) => [
+  for (const binding of moduleMetadata.moduleQualificationMetadata) {
+    const qualificationObservedMs = Date.parse(binding.qualificationObservedAt);
+    const qualificationExpiresMs = Date.parse(binding.qualificationExpiresAt);
+    if (qualificationObservedMs > observedMs || observedMs > qualificationExpiresMs) {
+      throw failure('candidate_module_qualification_not_current');
+    }
+  }
+  const modules = new Map(moduleMetadata.moduleQualificationMetadata.map((binding) => [
     `${binding.moduleId}\0${binding.moduleVersion}`, binding,
   ]));
   const byId = new Map();
   const byHash = new Map();
   const exact = new Map();
   let totalBytes = 0;
+  const captureState = { nodes: 0, stack: new WeakSet() };
+  let frontierExpiryMs = deadlineMs;
+  for (const binding of moduleMetadata.moduleQualificationMetadata) {
+    frontierExpiryMs = Math.min(frontierExpiryMs, Date.parse(binding.qualificationExpiresAt));
+  }
   for (const raw of rawCandidates) {
-    const candidate = normalizeCandidate(raw, { requireHash: true });
+    const candidate = normalizeCandidate(raw, { requireHash: true, captureState });
     if (candidate.planningRequestId !== request.planningRequestId) {
       throw failure('action_candidate_request_mismatch');
     }
@@ -429,7 +577,8 @@ export function routeActionCandidatesV1(value) {
     if (!module || !module.capabilityIds.includes(candidate.capabilityId)) {
       throw failure('action_candidate_module_not_qualified');
     }
-    const encoded = stableStringify(candidate);
+    frontierExpiryMs = Math.min(frontierExpiryMs, expiryMs);
+    const encoded = canonicalStringify(candidate);
     const bytes = Buffer.byteLength(encoded, 'utf8');
     if (bytes > request.maximumCandidateBytes) {
       throw failure('action_candidate_byte_limit');
@@ -464,13 +613,17 @@ export function routeActionCandidatesV1(value) {
   const body = Object.freeze({
     schemaVersion: 1,
     kind: 'CandidateFrontierV1',
+    inputBoundary: CANDIDATE_ROUTER_INPUT_BOUNDARY,
     status: candidates.length ? 'candidate_frontier_complete' : 'candidate_frontier_empty',
     planningRequestId: request.planningRequestId,
     planningRequestHash: hashRecord('PlanningRequestV1', request),
     stateSnapshotHash: request.stateSnapshotHash,
     capabilityId: request.capabilityId,
-    qualifiedModuleSetHash: qualified.qualifiedModuleSetHash,
+    moduleQualificationMetadataSetHash: moduleMetadata.moduleQualificationMetadataSetHash,
+    qualificationTrustClass: 'caller_supplied_unverified',
+    externalCurrentnessGateRequired: true,
     observedAt,
+    expiresAt: new Date(frontierExpiryMs).toISOString(),
     candidateCount: candidates.length,
     deduplicatedCount: rawCandidates.length - candidates.length,
     candidateSetHash,

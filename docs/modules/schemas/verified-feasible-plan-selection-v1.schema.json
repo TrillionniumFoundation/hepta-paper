@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VerifiedFeasiblePlanSelectionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "candidateSetHash",
+    "selectionRequestHash",
+    "planSelectionHash",
+    "selectedCandidateIds",
+    "selectedCandidatePayloadHashes",
+    "independentlyComputedResourceUsage",
+    "independentlyComputedUtilityMicrounits",
+    "independentObjectiveUpperBoundMicrounits",
+    "independentOptimalityGapMicrounits",
+    "exactEnumerationPerformed",
+    "exactOptimalityVerified",
+    "sourceStatus",
+    "sourceOptimalityClaimAccepted",
+    "proof",
+    "authority",
+    "verifiedPlanSelectionHash"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "VerifiedFeasiblePlanSelectionV1" },
+    "status": {
+      "enum": [
+        "exact_optimum_verified_non_authorizing",
+        "feasible_selection_verified_with_independent_bound"
+      ]
+    },
+    "candidateSetHash": { "$ref": "#/$defs/hash" },
+    "selectionRequestHash": { "$ref": "#/$defs/hash" },
+    "planSelectionHash": { "$ref": "#/$defs/hash" },
+    "selectedCandidateIds": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/identifier" }
+    },
+    "selectedCandidatePayloadHashes": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/hash" }
+    },
+    "independentlyComputedResourceUsage": { "$ref": "#/$defs/resourceVector" },
+    "independentlyComputedUtilityMicrounits": { "$ref": "#/$defs/safeInteger" },
+    "independentObjectiveUpperBoundMicrounits": { "$ref": "#/$defs/safeInteger" },
+    "independentOptimalityGapMicrounits": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+    "exactEnumerationPerformed": { "type": "boolean" },
+    "exactOptimalityVerified": { "type": "boolean" },
+    "sourceStatus": { "enum": ["optimal", "bounded_feasible"] },
+    "sourceOptimalityClaimAccepted": { "type": "boolean" },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateAndRequestBindingsVerified",
+        "hardConstraintsVerified",
+        "sourceIncumbentAccountingVerified",
+        "sourceUpperBoundVerified",
+        "dominanceReductionAssumed"
+      ],
+      "properties": {
+        "candidateAndRequestBindingsVerified": { "const": true },
+        "hardConstraintsVerified": { "const": true },
+        "sourceIncumbentAccountingVerified": { "const": true },
+        "sourceUpperBoundVerified": { "type": "boolean" },
+        "dominanceReductionAssumed": { "const": false }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized",
+        "executionAuthorized",
+        "writerAuthorityGranted",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "executionAuthorized": { "const": false },
+        "writerAuthorityGranted": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    },
+    "verifiedPlanSelectionHash": { "$ref": "#/$defs/hash" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "exact_optimum_verified_non_authorizing" }
+        }
+      },
+      "then": {
+        "properties": {
+          "exactEnumerationPerformed": { "const": true },
+          "exactOptimalityVerified": { "const": true },
+          "proof": {
+            "properties": { "sourceUpperBoundVerified": { "const": true } }
+          }
+        }
+      },
+      "else": {
+        "properties": { "exactOptimalityVerified": { "const": false } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "exactEnumerationPerformed": { "const": true } }
+      },
+      "then": {
+        "properties": {
+          "proof": {
+            "properties": { "sourceUpperBoundVerified": { "const": true } }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "proof": {
+            "properties": { "sourceUpperBoundVerified": { "const": false } }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "sourceOptimalityClaimAccepted": { "const": true } }
+      },
+      "then": {
+        "properties": {
+          "sourceStatus": { "const": "optimal" },
+          "exactEnumerationPerformed": { "const": true },
+          "exactOptimalityVerified": { "const": true }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "sourceStatus": { "const": "bounded_feasible" } } },
+      "then": {
+        "properties": { "sourceOptimalityClaimAccepted": { "const": false } }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$"
+    },
+    "safeInteger": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "nonnegativeSafeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "resourceVector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpuMilliunits",
+        "gpuMilliunits",
+        "memoryMiB",
+        "storageBytes",
+        "tokenCount",
+        "maximumCostMicrousd"
+      ],
+      "properties": {
+        "cpuMilliunits": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "gpuMilliunits": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "memoryMiB": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "storageBytes": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "tokenCount": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "maximumCostMicrousd": { "$ref": "#/$defs/nonnegativeSafeInteger" }
+      }
+    }
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/r-source-route-v1.schema.json",
+  "title": "HeptaRSourceRouteV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "repository",
+    "targetPath",
+    "originalGitlink",
+    "publicHistoricalRoute",
+    "materializer",
+    "acceptance",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "HeptaRSourceRouteV1" },
+    "status": { "const": "public_historical_source_route_candidate" },
+    "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+    "targetPath": { "const": "runtime-images/r-scientific/source-cas" },
+    "originalGitlink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "verified", "equivalenceClaimed"],
+      "properties": {
+        "commit": { "const": "d13d857909525f4173063dbd6a7f1f48a089ae93" },
+        "verified": { "const": false },
+        "equivalenceClaimed": { "const": false }
+      }
+    },
+    "publicHistoricalRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "commit",
+        "path",
+        "subtree",
+        "manifestBlob",
+        "fileCount",
+        "packageCount"
+      ],
+      "properties": {
+        "repository": { "const": "TrillionniumFoundation/hepta-paper" },
+        "commit": { "const": "18b20af983e32575a2faab7dd8fa721a61d2e68c" },
+        "path": { "const": "runtime-images/r-scientific/source-cas" },
+        "subtree": { "const": "d6b31b7145b97ae01c71e76b34ef7c5cb1a3e082" },
+        "manifestBlob": { "const": "0053ff8c14a375874bc5c0ea4f0f6071d648b1eb" },
+        "fileCount": { "const": 107 },
+        "packageCount": { "const": 104 }
+      }
+    },
+    "materializer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "networkAllowed", "packageExecutionAllowed", "overwriteDriftAllowed"],
+      "properties": {
+        "path": { "const": "docs/rust/tools/materialize-public-r-source-cas.py" },
+        "networkAllowed": { "const": false },
+        "packageExecutionAllowed": { "const": false },
+        "overwriteDriftAllowed": { "const": false }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currentBuildClosureVerificationRequired",
+        "exactHeadBaseMergeRequired",
+        "independentReviewRequired",
+        "targetHostQualificationRequired"
+      ],
+      "properties": {
+        "currentBuildClosureVerificationRequired": { "const": true },
+        "exactHeadBaseMergeRequired": { "const": true },
+        "independentReviewRequired": { "const": true },
+        "targetHostQualificationRequired": { "const": true }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceContentVerified",
+        "originalGitlinkVerified",
+        "productionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "sourceContentVerified": { "const": false },
+        "originalGitlinkVerified": { "const": false },
+        "productionAuthorized": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    }
+  }
+}

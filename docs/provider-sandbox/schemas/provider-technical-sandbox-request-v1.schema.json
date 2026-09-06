@@ -34,11 +34,11 @@
     },
     "dispatchAuthorizationHash": {
       "type": "string",
-      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}$"
+      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}(?![\\s\\S])"
     },
     "packageHash": {
       "type": "string",
-      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}$"
+      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}(?![\\s\\S])"
     },
     "liveActionAllowed": {
       "const": false

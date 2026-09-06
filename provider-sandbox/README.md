@@ -1,9 +1,11 @@
 # Provider technical sandbox companion
 
-This directory contains the repository-owned **technical sandbox** companion used
-by portable source integration. It is a real versioned program, not a fixed JSON
-test responder, but it deliberately has no credential, network, portal,
-submission, release, or production authority.
+This directory contains the single canonical repository-owned **technical sandbox**
+companion used by portable source integration. It is a real versioned program, not
+a fixed JSON test responder, but it deliberately has no credential, network, portal,
+submission, release, or production authority. All portable schema, CLI, adversarial
+and SQLite quarantine tests execute this exact file; there is no parallel adapter
+implementation with a different request or response contract.
 
 ## Interface
 

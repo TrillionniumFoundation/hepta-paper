@@ -1,15 +1,16 @@
 # Provider technical sandbox companion
 
-`paper-adapters/submission/provider-technical-sandbox-companion.mjs` is the
-repository-owned **technical sandbox** used by portable source integration. It is
-a versioned executable program, not a fixed JSON fixture, but it deliberately has
-no credential, network, portal, submission, release, or production authority.
+`provider-sandbox/provider-sandbox.mjs` is the single canonical repository-owned
+**technical sandbox** executable used by portable source integration. It is a
+versioned program, not a fixed JSON fixture, but it deliberately has no credential,
+network, portal, submission, release, or production authority. No second adapter
+implementation is maintained; schema, CLI, adversarial and SQLite quarantine tests
+all execute this same file.
 
 ## Interface
 
 ```text
-node paper-adapters/submission/provider-technical-sandbox-companion.mjs \
-  REQUEST.json RESPONSE.json
+node provider-sandbox/provider-sandbox.mjs REQUEST.json RESPONSE.json
 ```
 
 The request and response must be distinct absolute files in one canonical private

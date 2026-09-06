@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { runTechnicalProviderSandbox } from '../../paper-adapters/submission/provider-technical-sandbox-companion.mjs';
+import { runTechnicalProviderSandbox } from '../../provider-sandbox/provider-sandbox.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const validator = path.join(root, 'docs/rust/tools/strict_json_schema.py');
@@ -100,4 +100,42 @@ test('schema and runtime preserve the existing bounded opaque sha256 identity do
   assert.equal(validate(requestSchema, value.requestPath).status, 0);
   assert.doesNotThrow(() => runTechnicalProviderSandbox([value.requestPath, value.responsePath]));
   assert.equal(validate(responseSchema, value.responsePath).status, 0);
+});
+
+
+test('schema and runtime both reject terminal controls in opaque identities', (t) => {
+  const base = fixture(t).request;
+  for (const [index, suffix] of ['\n', '\r', '\r\n', '\u2028', '\u2029'].entries()) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), `provider-schema-terminal-${index}-`));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const input = path.join(directory, 'request.json');
+    const output = path.join(directory, 'response.json');
+    const request = { ...base, packageHash: `${base.packageHash}${suffix}` };
+    fs.writeFileSync(input, JSON.stringify(request), { mode: 0o600, flag: 'wx' });
+    assert.notEqual(validate(requestSchema, input).status, 0, JSON.stringify(suffix));
+    assert.throws(() => runTechnicalProviderSandbox([input, output]));
+    assert.equal(fs.existsSync(output), false);
+  }
+});
+
+test('opaque identity boundary accepts the exact ASCII maximum and rejects one-byte overrun', (t) => {
+  const base = fixture(t).request;
+  const exact = `sha256:${'a'.repeat(2041)}`;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-schema-maximum-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const validInput = path.join(directory, 'valid.json');
+  const validOutput = path.join(directory, 'valid-response.json');
+  fs.writeFileSync(validInput, JSON.stringify({ ...base, packageHash: exact }),
+    { mode: 0o600, flag: 'wx' });
+  assert.equal(validate(requestSchema, validInput).status, 0);
+  assert.doesNotThrow(() => runTechnicalProviderSandbox([validInput, validOutput]));
+  assert.equal(validate(responseSchema, validOutput).status, 0);
+
+  const invalidInput = path.join(directory, 'invalid.json');
+  const invalidOutput = path.join(directory, 'invalid-response.json');
+  fs.writeFileSync(invalidInput, JSON.stringify({ ...base, packageHash: `${exact}a` }),
+    { mode: 0o600, flag: 'wx' });
+  assert.notEqual(validate(requestSchema, invalidInput).status, 0);
+  assert.throws(() => runTechnicalProviderSandbox([invalidInput, invalidOutput]));
+  assert.equal(fs.existsSync(invalidOutput), false);
 });

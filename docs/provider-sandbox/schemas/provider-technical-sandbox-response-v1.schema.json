@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-technical-sandbox-response-v1.schema.json",
+  "title": "ProviderTechnicalSandboxResponseV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "kind",
+    "status",
+    "companionVersion",
+    "requestHash",
+    "dispatchAuthorizationHash",
+    "packageHash",
+    "providerReceipt",
+    "externalActionPerformed",
+    "productionEligible",
+    "externalAuthorityClaimed",
+    "responseHash"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "ProviderTechnicalSandboxResponseV1" },
+    "status": { "const": "technical_sandbox_response_incomplete_for_external_acceptance" },
+    "companionVersion": { "const": "provider-technical-sandbox-v1" },
+    "requestHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "dispatchAuthorizationHash": {
+      "type": "string",
+      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}$"
+    },
+    "packageHash": {
+      "type": "string",
+      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}$"
+    },
+    "providerReceipt": {
+      "$ref": "#/$defs/providerReceipt"
+    },
+    "externalActionPerformed": { "const": false },
+    "productionEligible": { "const": false },
+    "externalAuthorityClaimed": { "const": false },
+    "responseHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "providerReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "kind",
+        "status",
+        "companionVersion",
+        "requestHash",
+        "dispatchAuthorizationHash",
+        "packageHash",
+        "sandbox",
+        "deterministic",
+        "credentialsObserved",
+        "networkActionPerformed",
+        "externalActionPerformed",
+        "productionEligible",
+        "externalAuthorityClaimed",
+        "providerReceiptHash"
+      ],
+      "properties": {
+        "version": { "const": 1 },
+        "kind": { "const": "ProviderTechnicalSandboxReceiptV1" },
+        "status": { "const": "technical_sandbox_observation_only" },
+        "companionVersion": { "const": "provider-technical-sandbox-v1" },
+        "requestHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "dispatchAuthorizationHash": {
+          "type": "string",
+          "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}$"
+        },
+        "packageHash": {
+          "type": "string",
+          "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}$"
+        },
+        "sandbox": { "const": true },
+        "deterministic": { "const": true },
+        "credentialsObserved": { "const": false },
+        "networkActionPerformed": { "const": false },
+        "externalActionPerformed": { "const": false },
+        "productionEligible": { "const": false },
+        "externalAuthorityClaimed": { "const": false },
+        "providerReceiptHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

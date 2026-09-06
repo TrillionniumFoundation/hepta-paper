@@ -185,9 +185,34 @@ rollback is a reviewed revert followed by fresh exact-source, base/merge, and
 consumer qualification. Rollback cannot restore expired qualification metadata
 or waive an external currentness gate.
 
+## Machine wire schemas and executable conformance
+
+The checked-in closed wire schemas are:
+
+- `docs/modules/schemas/planning-state-snapshot-request-v1.schema.json`;
+- `docs/modules/schemas/planning-snapshot-component-v1.schema.json`;
+- `docs/modules/schemas/planning-state-snapshot-v1.schema.json`;
+- `docs/modules/schemas/planning-state-snapshot-currentness-receipt-v1.schema.json`.
+
+They fix every named field, identity literal, scalar pattern/range, collection
+ceiling, timestamp shape and false-authority field at the JSON boundary. They
+do not attempt to encode cross-field time ordering, component/hash relations,
+UTF-8 byte ceilings, Unicode-scalar validity, aggregate capture budgets, exact
+set coverage, freshness, or currentness. Those remain executable runtime
+obligations and are rechecked after parsing. Schema acceptance by itself is
+never a qualification or integrity receipt.
+
+`paper-core/tests/planning-snapshot-schema-conformance.test.mjs` validates every
+runtime-produced public record against its schema, round-trips schema-valid JSON
+through full runtime reconstruction, and requires both layers to reject shared
+closed-shape, identity, range and authority violations. It also proves the
+intentional boundary with a schema-valid component whose payload/hash relation
+is forged: the runtime must still reject it. The test invokes the repository's
+fail-closed strict schema verifier rather than a permissive third-party default.
+
 ## Required acceptance
 
-Source acceptance requires focused adversarial tests, schema/contract review,
+Source acceptance requires the checked-in wire schemas, executable conformance, focused adversarial tests, schema/contract review,
 current exact-head and prospective-merge CI, module-documentation integrity, and
 an independent latest-head decision. Production use additionally requires a
 qualified readonly-control adapter, authoritative generation semantics,

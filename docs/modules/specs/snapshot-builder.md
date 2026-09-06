@@ -131,6 +131,18 @@ with the current candidate router. Static module state and CTL-002 remain
 `design_ready` until the readonly adapter, schema/conformance, exact hosted
 qualification, and independent review are accepted.
 
+The four public JSON record kinds have closed Draft 2020-12 wire schemas in
+`docs/modules/schemas/planning-*-v1.schema.json`. Executable conformance in
+`paper-core/tests/planning-snapshot-schema-conformance.test.mjs` verifies runtime
+outputs against those schemas and reconstructs schema-valid JSON through the
+runtime. Schema shape cannot prove canonical byte ceilings, Unicode-scalar
+validity, cross-field time/hash relations, aggregate budgets, freshness or
+authenticity; runtime reconstruction and the external currentness gate remain
+mandatory. A schema-valid forged payload/hash pair is an explicit rejection
+case. The registry and documentation manifest enumerate the implementation,
+contract and schema paths without changing `design_ready`, activation, owner or
+authority state.
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback

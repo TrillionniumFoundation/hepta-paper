@@ -1,23 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  CANDIDATE_ROUTER_INPUT_BOUNDARY,
-  capturePlanningModuleQualificationMetadataSetV1,
-  routeActionCandidatesV1,
-  sealActionCandidateV1,
   SNAPSHOT_BUILDER_INPUT_BOUNDARY,
   buildPlanningStateSnapshotV1,
-  sealPlanningSnapshotComponentV1,
   verifyPlanningStateSnapshotCurrentV1,
   hash,
-  observedAt,
   moduleMetadata,
-  requirement,
-  request,
   component,
   build,
   currentContext,
-  resealComponent,
 } from './planning-snapshot-fixtures.mjs';
 
 test('__proto__ remains an own hash-visible key while lone surrogates are rejected', () => {

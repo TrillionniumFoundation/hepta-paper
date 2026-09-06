@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/hepta-paper/schemas/sealed-candidate-batch-json-v1.schema.json",
+  "title": "SealedCandidateBatchJsonV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "candidateCount",
+    "candidateBatchJson",
+    "candidateBatchByteHash",
+    "candidates",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "SealedCandidateBatchJsonV1" },
+    "candidateCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4096
+    },
+    "candidateBatchJson": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 4194304
+    },
+    "candidateBatchByteHash": { "$ref": "#/$defs/hash" },
+    "candidates": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "type": "object" }
+    },
+    "authority": { "$ref": "#/$defs/authority" }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized",
+        "providerAuthorized",
+        "campaignWriterActivated",
+        "releaseAuthorized",
+        "submissionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "providerAuthorized": { "const": false },
+        "campaignWriterActivated": { "const": false },
+        "releaseAuthorized": { "const": false },
+        "submissionAuthorized": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    }
+  }
+}

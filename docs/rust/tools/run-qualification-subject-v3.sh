@@ -33,7 +33,8 @@ PYTHONPYCACHEPREFIX="${RUNNER_TEMP:-/tmp}/hepta-v3-pycache" python3 -m py_compil
   docs/rust/tools/validate_qualification_evidence_projection.py \
   docs/rust/tools/test_qualification_evidence_projection.py \
   docs/rust/tools/test-plan-v4-qualification.py \
-  docs/rust/tools/test_qualification_subject_v3.py
+  docs/rust/tools/test_qualification_subject_v3.py \
+  docs/rust/tools/test_qualification_job_time_skew.py
 
 bash -n docs/rust/tools/run-qualification-subject-v3.sh
 python3 docs/rust/tools/validate-program-truth.py \
@@ -42,6 +43,8 @@ python3 docs/rust/tools/test-plan-v4-qualification.py \
   2>&1 | tee "$EVIDENCE_ROOT/plan-v4-tests.log"
 python3 docs/rust/tools/test_qualification_subject_v3.py \
   2>&1 | tee "$EVIDENCE_ROOT/subject-v3-tests.log"
+python3 docs/rust/tools/test_qualification_job_time_skew.py \
+  2>&1 | tee "$EVIDENCE_ROOT/job-time-skew-tests.log"
 python3 docs/rust/tools/test_qualification_collection_completeness.py \
   2>&1 | tee "$EVIDENCE_ROOT/collection-completeness-tests.log"
 python3 docs/rust/tools/test_qualification_evidence_projection.py \

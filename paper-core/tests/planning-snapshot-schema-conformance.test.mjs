@@ -9,7 +9,9 @@ import {
   SNAPSHOT_BUILDER_INPUT_BOUNDARY,
   verifyPlanningStateSnapshotCurrentV1,
   moduleMetadata,
+  requirement,
   request,
+  component,
   build,
   currentContext,
 } from './planning-snapshot-fixtures.mjs';
@@ -53,12 +55,12 @@ function records() {
   return { request: snapshot.request, component: snapshot.components[0], snapshot, receipt };
 }
 
-test('every runtime-produced public snapshot record validates its closed wire schema', (t) => {
+test('every runtime-produced public snapshot record validates its closed wire schema', { concurrency: false }, (t) => {
   const values = records();
   for (const name of Object.keys(schemas)) validateSchema(t, name, values[name]);
 });
 
-test('schema-valid JSON round trips through runtime reconstruction with stable identities', (t) => {
+test('schema-valid JSON round trips through runtime reconstruction with stable identities', { concurrency: false }, (t) => {
   const values = records();
   const wire = plain(values.snapshot);
   const rebuilt = build({
@@ -80,7 +82,7 @@ test('schema-valid JSON round trips through runtime reconstruction with stable i
   validateSchema(t, 'receipt', receipt);
 });
 
-test('request schema and runtime both reject closed-shape and scalar violations', (t) => {
+test('request schema and runtime both reject closed-shape and scalar violations', { concurrency: false }, (t) => {
   const base = plain(records().request);
   for (const changed of [
     { ...base, unexpected: false },
@@ -94,7 +96,7 @@ test('request schema and runtime both reject closed-shape and scalar violations'
   }
 });
 
-test('component schema and runtime both reject identity, range and closed-shape violations', (t) => {
+test('component schema and runtime both reject identity, range and closed-shape violations', { concurrency: false }, (t) => {
   const values = records();
   const base = plain(values.component);
   const resource = plain(values.snapshot.components[1]);
@@ -110,7 +112,7 @@ test('component schema and runtime both reject identity, range and closed-shape 
   }
 });
 
-test('snapshot and receipt schemas close all authority and extension fields', (t) => {
+test('snapshot and receipt schemas close all authority and extension fields', { concurrency: false }, (t) => {
   const values = records();
   const authorityEscalation = plain(values.snapshot);
   authorityEscalation.authority.productionAuthorized = true;
@@ -130,7 +132,7 @@ test('snapshot and receipt schemas close all authority and extension fields', (t
   validateSchema(t, 'receipt', receiptEscalation, 1);
 });
 
-test('wire schema acceptance never replaces runtime hash and semantic verification', (t) => {
+test('wire schema acceptance never replaces runtime hash and semantic verification', { concurrency: false }, (t) => {
   const values = records();
   const forged = plain(values.component);
   forged.payload = { changed: true };
@@ -138,4 +140,146 @@ test('wire schema acceptance never replaces runtime hash and semantic verificati
   validateSchema(t, 'component', forged);
   assert.throws(() => build({ components: [forged, plain(values.snapshot.components[1])] }),
     { code: 'snapshot_component_hash_invalid' });
+});
+
+test('schema patterns and runtime both reject terminal control suffixes', { concurrency: false }, (t) => {
+  const base = plain(records().request);
+  const cases = Object.freeze([
+    Object.freeze({
+      name: 'identifier-lf',
+      value: { ...base, snapshotRequestId: `${base.snapshotRequestId}\n` },
+    }),
+    Object.freeze({
+      name: 'digest-lf',
+      value: { ...base, readTransactionHash: `${base.readTransactionHash}\n` },
+    }),
+    Object.freeze({
+      name: 'token-lf',
+      value: { ...base, objectiveVersion: `${base.objectiveVersion}\n` },
+    }),
+    Object.freeze({
+      name: 'module-id-lf',
+      value: {
+        ...base,
+        requiredComponents: base.requiredComponents.map((entry, index) => (
+          index === 0 ? { ...entry, sourceModuleId: `${entry.sourceModuleId}\n` } : entry
+        )),
+      },
+    }),
+    Object.freeze({
+      name: 'capability-id-lf',
+      value: {
+        ...base,
+        requiredComponents: base.requiredComponents.map((entry, index) => (
+          index === 0
+            ? { ...entry, requiredCapabilityId: `${entry.requiredCapabilityId}\n` }
+            : entry
+        )),
+      },
+    }),
+    Object.freeze({
+      name: 'remaining-terminal-controls',
+      value: {
+        ...base,
+        snapshotRequestId: `${base.snapshotRequestId}\r`,
+        readTransactionHash: `${base.readTransactionHash}\r\n`,
+        objectiveVersion: `${base.objectiveVersion}\u2028`,
+        requiredComponents: base.requiredComponents.map((entry, index) => (
+          index === 0
+            ? { ...entry, sourceModuleId: `${entry.sourceModuleId}\u2029` }
+            : { ...entry, requiredCapabilityId: `${entry.requiredCapabilityId}\r` }
+        )),
+      },
+    }),
+  ]);
+
+  for (const item of cases) {
+    validateSchema(t, 'request', item.value, 1);
+    assert.throws(
+      () => build({ request: item.value }),
+      { name: 'Error' },
+      item.name,
+    );
+  }
+});
+
+test('schema pattern ceilings accept exact maxima and reject one-unit overruns', { concurrency: false }, (t) => {
+  const identifier = 'i'.repeat(192);
+  const componentKind = 'k'.repeat(192);
+  const moduleId = `module.${'m'.repeat(96)}`;
+  const moduleVersion = 'v'.repeat(128);
+  const capabilityId = `CAP-${'C'.repeat(96)}`;
+  const objectiveVersion = 'o'.repeat(128);
+  const metadata = [moduleMetadata({
+    moduleId,
+    moduleVersion,
+    capabilityIds: [capabilityId],
+  })];
+  const exactRequest = request(metadata, {
+    snapshotRequestId: identifier,
+    objectiveVersion,
+    requiredComponents: [
+      requirement(identifier, {
+        componentKind,
+        sourceModuleId: moduleId,
+        sourceModuleVersion: moduleVersion,
+        requiredCapabilityId: capabilityId,
+      }),
+      requirement('secondary', {
+        sourceModuleId: moduleId,
+        sourceModuleVersion: moduleVersion,
+        requiredCapabilityId: capabilityId,
+      }),
+    ],
+  });
+  const exactComponents = [
+    component(identifier, {
+      componentKind,
+      sourceModuleId: moduleId,
+      sourceModuleVersion: moduleVersion,
+      requiredCapabilityId: capabilityId,
+      sourceQualificationMetadataHash: metadata[0].qualificationMetadataHash,
+    }),
+    component('secondary', {
+      sourceModuleId: moduleId,
+      sourceModuleVersion: moduleVersion,
+      requiredCapabilityId: capabilityId,
+      sourceQualificationMetadataHash: metadata[0].qualificationMetadataHash,
+    }),
+  ];
+  const exactSnapshot = build({
+    request: exactRequest,
+    moduleQualificationMetadata: metadata,
+    components: exactComponents,
+  });
+  validateSchema(t, 'request', exactRequest);
+  assert.equal(exactSnapshot.request.snapshotRequestId, identifier);
+  assert.equal(exactSnapshot.request.objectiveVersion, objectiveVersion);
+
+  const base = plain(records().request);
+  const invalid = Object.freeze([
+    {
+      ...base,
+      snapshotRequestId: 'i'.repeat(193),
+      objectiveVersion: 'o'.repeat(129),
+      readTransactionHash: `sha256:${'a'.repeat(65)}`,
+    },
+    {
+      ...base,
+      requiredComponents: base.requiredComponents.map((entry, index) => (
+        index === 0
+          ? {
+            ...entry,
+            sourceModuleId: `module.${'m'.repeat(97)}`,
+            sourceModuleVersion: 'v'.repeat(129),
+            requiredCapabilityId: `CAP-${'C'.repeat(97)}`,
+          }
+          : entry
+      )),
+    },
+  ]);
+  for (const changed of invalid) {
+    validateSchema(t, 'request', changed, 1);
+    assert.throws(() => build({ request: changed }));
+  }
 });

@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoundedGlobalPlanSelectionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "selectionRequestId",
+    "selectionRequestHash",
+    "planningRequestHash",
+    "stateSnapshotHash",
+    "candidateSetHash",
+    "hardConstraintSetHash",
+    "objectiveVersion",
+    "resourcePriceSnapshotHash",
+    "selectedCandidateIds",
+    "selectedCandidatePayloadHashes",
+    "resourceUsage",
+    "objectiveLowerBoundMicrounits",
+    "objectiveUpperBoundMicrounits",
+    "optimalityGapMicrounits",
+    "expandedNodes",
+    "expansionBudget",
+    "frontierExhausted",
+    "proof",
+    "authority",
+    "planSelectionHash"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "BoundedGlobalPlanSelectionV1" },
+    "status": {
+      "enum": ["optimal", "infeasible", "bounded_feasible", "bounded_no_incumbent"]
+    },
+    "selectionRequestId": { "$ref": "#/$defs/identifier" },
+    "selectionRequestHash": { "$ref": "#/$defs/hash" },
+    "planningRequestHash": { "$ref": "#/$defs/hash" },
+    "stateSnapshotHash": { "$ref": "#/$defs/hash" },
+    "candidateSetHash": { "$ref": "#/$defs/hash" },
+    "hardConstraintSetHash": { "$ref": "#/$defs/hash" },
+    "objectiveVersion": { "$ref": "#/$defs/identifier" },
+    "resourcePriceSnapshotHash": { "$ref": "#/$defs/hash" },
+    "selectedCandidateIds": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      ]
+    },
+    "selectedCandidatePayloadHashes": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "maxItems": 4096,
+          "items": { "$ref": "#/$defs/hash" }
+        }
+      ]
+    },
+    "resourceUsage": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/resourceVector" }
+      ]
+    },
+    "objectiveLowerBoundMicrounits": { "$ref": "#/$defs/nullableSafeInteger" },
+    "objectiveUpperBoundMicrounits": { "$ref": "#/$defs/nullableSafeInteger" },
+    "optimalityGapMicrounits": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/nonnegativeSafeInteger" }
+      ]
+    },
+    "expandedNodes": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+    "expansionBudget": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+    "frontierExhausted": { "type": "boolean" },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "feasibleIncumbent",
+        "hardConstraintsSatisfied",
+        "infeasibilityProven",
+        "optimalSelectionProven",
+        "dominanceReductionAssumed"
+      ],
+      "properties": {
+        "feasibleIncumbent": { "type": "boolean" },
+        "hardConstraintsSatisfied": { "type": "boolean" },
+        "infeasibilityProven": { "type": "boolean" },
+        "optimalSelectionProven": { "type": "boolean" },
+        "dominanceReductionAssumed": { "const": false }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized",
+        "writerAuthorityGranted",
+        "executionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "writerAuthorityGranted": { "const": false },
+        "executionAuthorized": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    },
+    "planSelectionHash": { "$ref": "#/$defs/hash" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": { "const": "optimal" },
+        "selectedCandidateIds": { "type": "array" },
+        "selectedCandidatePayloadHashes": { "type": "array" },
+        "resourceUsage": { "$ref": "#/$defs/resourceVector" },
+        "objectiveLowerBoundMicrounits": { "$ref": "#/$defs/safeInteger" },
+        "objectiveUpperBoundMicrounits": { "$ref": "#/$defs/safeInteger" },
+        "optimalityGapMicrounits": { "const": 0 },
+        "frontierExhausted": { "const": true },
+        "proof": {
+          "properties": {
+            "feasibleIncumbent": { "const": true },
+            "hardConstraintsSatisfied": { "const": true },
+            "infeasibilityProven": { "const": false },
+            "optimalSelectionProven": { "const": true }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "infeasible" },
+        "selectedCandidateIds": { "type": "null" },
+        "selectedCandidatePayloadHashes": { "type": "null" },
+        "resourceUsage": { "type": "null" },
+        "objectiveLowerBoundMicrounits": { "type": "null" },
+        "objectiveUpperBoundMicrounits": { "type": "null" },
+        "optimalityGapMicrounits": { "type": "null" },
+        "frontierExhausted": { "const": true },
+        "proof": {
+          "properties": {
+            "feasibleIncumbent": { "const": false },
+            "hardConstraintsSatisfied": { "const": false },
+            "infeasibilityProven": { "const": true },
+            "optimalSelectionProven": { "const": false }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "bounded_feasible" },
+        "selectedCandidateIds": { "type": "array" },
+        "selectedCandidatePayloadHashes": { "type": "array" },
+        "resourceUsage": { "$ref": "#/$defs/resourceVector" },
+        "objectiveLowerBoundMicrounits": { "$ref": "#/$defs/safeInteger" },
+        "objectiveUpperBoundMicrounits": { "$ref": "#/$defs/safeInteger" },
+        "optimalityGapMicrounits": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "frontierExhausted": { "const": false },
+        "proof": {
+          "properties": {
+            "feasibleIncumbent": { "const": true },
+            "hardConstraintsSatisfied": { "const": true },
+            "infeasibilityProven": { "const": false },
+            "optimalSelectionProven": { "const": false }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "bounded_no_incumbent" },
+        "selectedCandidateIds": { "type": "null" },
+        "selectedCandidatePayloadHashes": { "type": "null" },
+        "resourceUsage": { "type": "null" },
+        "objectiveLowerBoundMicrounits": { "type": "null" },
+        "objectiveUpperBoundMicrounits": { "$ref": "#/$defs/safeInteger" },
+        "optimalityGapMicrounits": { "type": "null" },
+        "frontierExhausted": { "const": false },
+        "proof": {
+          "properties": {
+            "feasibleIncumbent": { "const": false },
+            "hardConstraintsSatisfied": { "const": false },
+            "infeasibilityProven": { "const": false },
+            "optimalSelectionProven": { "const": false }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$"
+    },
+    "safeInteger": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "nonnegativeSafeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "nullableSafeInteger": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/safeInteger" }
+      ]
+    },
+    "resourceVector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpuMilliunits",
+        "gpuMilliunits",
+        "memoryMiB",
+        "storageBytes",
+        "tokenCount",
+        "maximumCostMicrousd"
+      ],
+      "properties": {
+        "cpuMilliunits": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "gpuMilliunits": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "memoryMiB": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "storageBytes": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "tokenCount": { "$ref": "#/$defs/nonnegativeSafeInteger" },
+        "maximumCostMicrousd": { "$ref": "#/$defs/nonnegativeSafeInteger" }
+      }
+    }
+  }
+}

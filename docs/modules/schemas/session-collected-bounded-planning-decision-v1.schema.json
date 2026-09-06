@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionCollectedBoundedPlanningDecisionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "kind", "status", "verificationStatus", "observedAt",
+    "snapshotCollectionHash", "snapshotRequestHash", "stateSnapshotHash",
+    "candidateCollectionHash", "candidateSetHash", "planSelectionHash",
+    "verifiedPlanSelectionHash", "planningDecisionHash", "selectedCandidateIds",
+    "expiresAt", "executionEligible", "authority", "snapshotCollection",
+    "planningDecision", "sessionPlanningDecisionHash"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "SessionCollectedBoundedPlanningDecisionV1" },
+    "status": {
+      "enum": ["optimal", "infeasible", "bounded_feasible", "bounded_no_incumbent"]
+    },
+    "verificationStatus": {
+      "enum": [
+        "exact_optimum_verified_non_authorizing",
+        "feasible_selection_verified_with_independent_bound",
+        "no_feasible_selection_receipt"
+      ]
+    },
+    "observedAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+    "snapshotCollectionHash": { "$ref": "#/$defs/hash" },
+    "snapshotRequestHash": { "$ref": "#/$defs/hash" },
+    "stateSnapshotHash": { "$ref": "#/$defs/hash" },
+    "candidateCollectionHash": { "$ref": "#/$defs/hash" },
+    "candidateSetHash": { "$ref": "#/$defs/hash" },
+    "planSelectionHash": { "$ref": "#/$defs/hash" },
+    "verifiedPlanSelectionHash": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/hash" }]
+    },
+    "planningDecisionHash": { "$ref": "#/$defs/hash" },
+    "selectedCandidateIds": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "array", "maxItems": 4096, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      ]
+    },
+    "expiresAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+    "executionEligible": { "const": false },
+    "authority": { "$ref": "#/$defs/authority" },
+    "snapshotCollection": {
+      "type": "object",
+      "required": [
+        "kind", "status", "snapshotRequestHash", "stateSnapshotHash",
+        "sessionClosed", "collectionHash"
+      ],
+      "properties": {
+        "kind": { "const": "CollectedPlanningStateSnapshotV1" },
+        "status": { "const": "complete" },
+        "snapshotRequestHash": { "$ref": "#/$defs/hash" },
+        "stateSnapshotHash": { "$ref": "#/$defs/hash" },
+        "sessionClosed": { "const": true },
+        "collectionHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "planningDecision": {
+      "type": "object",
+      "required": [
+        "kind", "status", "verificationStatus", "stateSnapshotHash",
+        "candidateCollectionHash", "candidateSetHash", "planSelectionHash",
+        "verifiedPlanSelectionHash", "selectedCandidateIds", "executionEligible",
+        "planningDecisionHash"
+      ],
+      "properties": {
+        "kind": { "const": "CollectedBoundedPlanningDecisionV1" },
+        "status": {
+          "enum": ["optimal", "infeasible", "bounded_feasible", "bounded_no_incumbent"]
+        },
+        "verificationStatus": {
+          "enum": [
+            "exact_optimum_verified_non_authorizing",
+            "feasible_selection_verified_with_independent_bound",
+            "no_feasible_selection_receipt"
+          ]
+        },
+        "stateSnapshotHash": { "$ref": "#/$defs/hash" },
+        "candidateCollectionHash": { "$ref": "#/$defs/hash" },
+        "candidateSetHash": { "$ref": "#/$defs/hash" },
+        "planSelectionHash": { "$ref": "#/$defs/hash" },
+        "verifiedPlanSelectionHash": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/hash" }]
+        },
+        "selectedCandidateIds": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "array", "maxItems": 4096, "uniqueItems": true,
+              "items": { "$ref": "#/$defs/identifier" } }
+          ]
+        },
+        "executionEligible": { "const": false },
+        "planningDecisionHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "sessionPlanningDecisionHash": { "$ref": "#/$defs/hash" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "enum": ["optimal", "bounded_feasible"] } }
+      },
+      "then": {
+        "properties": {
+          "selectedCandidateIds": { "type": "array" },
+          "verifiedPlanSelectionHash": { "$ref": "#/$defs/hash" },
+          "verificationStatus": {
+            "enum": [
+              "exact_optimum_verified_non_authorizing",
+              "feasible_selection_verified_with_independent_bound"
+            ]
+          },
+          "planningDecision": {
+            "properties": {
+              "status": { "enum": ["optimal", "bounded_feasible"] },
+              "selectedCandidateIds": { "type": "array" },
+              "verifiedPlanSelectionHash": { "$ref": "#/$defs/hash" }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "selectedCandidateIds": { "type": "null" },
+          "verifiedPlanSelectionHash": { "type": "null" },
+          "verificationStatus": { "const": "no_feasible_selection_receipt" },
+          "planningDecision": {
+            "properties": {
+              "status": { "enum": ["infeasible", "bounded_no_incumbent"] },
+              "selectedCandidateIds": { "type": "null" },
+              "verifiedPlanSelectionHash": { "type": "null" }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "identifier": {
+      "type": "string", "minLength": 1, "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized", "providerAuthorized", "executionAuthorized",
+        "writerAuthorityGranted", "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "providerAuthorized": { "const": false },
+        "executionAuthorized": { "const": false },
+        "writerAuthorityGranted": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    }
+  }
+}

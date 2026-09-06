@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/hepta-paper/schemas/module-candidate-disposition-v1.schema.json",
+  "title": "ModuleCandidateDispositionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "moduleId",
+    "moduleVersion",
+    "qualificationMetadataHash",
+    "planningRequestId",
+    "planningRequestHash",
+    "stateSnapshotHash",
+    "capabilityId",
+    "status",
+    "completedAt",
+    "candidateCount",
+    "candidateBatchJson",
+    "candidateBatchByteHash",
+    "emptyReason",
+    "failureCode",
+    "externalActionPerformed",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ModuleCandidateDispositionV1" },
+    "moduleId": {
+      "type": "string",
+      "pattern": "^module\\.[a-z0-9][a-z0-9-]{0,95}$"
+    },
+    "moduleVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$"
+    },
+    "qualificationMetadataHash": { "$ref": "#/$defs/hash" },
+    "planningRequestId": { "$ref": "#/$defs/identifier" },
+    "planningRequestHash": { "$ref": "#/$defs/hash" },
+    "stateSnapshotHash": { "$ref": "#/$defs/hash" },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^CAP-[A-Z0-9][A-Z0-9-]{0,95}$"
+    },
+    "status": {
+      "enum": [
+        "candidate_batch_complete",
+        "candidate_batch_failed",
+        "candidate_batch_cancelled",
+        "candidate_batch_timeout",
+        "candidate_batch_unavailable"
+      ]
+    },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "candidateCount": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "integer", "minimum": 0, "maximum": 4096 }
+      ]
+    },
+    "candidateBatchJson": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 2, "maxLength": 4194304 }
+      ]
+    },
+    "candidateBatchByteHash": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/hash" }
+      ]
+    },
+    "emptyReason": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/identifier" }
+      ]
+    },
+    "failureCode": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$"
+        }
+      ]
+    },
+    "externalActionPerformed": { "const": false },
+    "authority": { "$ref": "#/$defs/authority" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "candidate_batch_complete" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "candidateCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4096
+          },
+          "candidateBatchJson": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 4194304
+          },
+          "candidateBatchByteHash": { "$ref": "#/$defs/hash" },
+          "failureCode": { "type": "null" }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "candidateCount": { "const": 0 }
+              },
+              "required": ["candidateCount"]
+            },
+            "then": {
+              "properties": {
+                "emptyReason": { "$ref": "#/$defs/identifier" }
+              }
+            },
+            "else": {
+              "properties": {
+                "emptyReason": { "type": "null" }
+              }
+            }
+          }
+        ]
+      },
+      "else": {
+        "properties": {
+          "candidateCount": { "type": "null" },
+          "candidateBatchJson": { "type": "null" },
+          "candidateBatchByteHash": { "type": "null" },
+          "emptyReason": { "type": "null" },
+          "failureCode": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAuthorized",
+        "providerAuthorized",
+        "campaignWriterActivated",
+        "releaseAuthorized",
+        "submissionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "productionAuthorized": { "const": false },
+        "providerAuthorized": { "const": false },
+        "campaignWriterActivated": { "const": false },
+        "releaseAuthorized": { "const": false },
+        "submissionAuthorized": { "const": false },
+        "externalAuthorityClaimed": { "const": false }
+      }
+    }
+  }
+}

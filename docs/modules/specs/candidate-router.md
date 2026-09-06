@@ -63,6 +63,7 @@ Current implementation and contract roots:
 
 - `docs/modules/MODULE_PROTOCOL.md`
 - `docs/control-plane/COMPOSITION_ROOT.md`
+- `paper-application/orchestration/candidate-router.mjs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -108,7 +109,42 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
-Capability bindings: `CAP-MOD-CANDIDATES`. Related work identifiers: `CTL-004`, `MOD-002`. Implementation/contract roots: `docs/modules/MODULE_PROTOCOL.md`, `docs/control-plane/COMPOSITION_ROOT.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-MOD-CANDIDATES`. Related work identifiers: `CTL-004`, `MOD-002`. Implementation/contract roots: `docs/modules/MODULE_PROTOCOL.md`, `docs/control-plane/COMPOSITION_ROOT.md`, `paper-application/orchestration/candidate-router.mjs`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+
+### Executable candidate-frontier source candidate
+
+`paper-application/orchestration/candidate-router.mjs` provides the pure,
+deterministic `routeActionCandidatesV1` boundary. It captures descriptor-backed
+plain data without invoking accessors, validates a bounded `PlanningRequestV1`,
+requires an exact caller-supplied qualified module/version/capability set, and
+recomputes every `ActionCandidateV1` payload hash. Request, snapshot, capability,
+module version, expiry and allowed-side-effect identities must match before a
+candidate enters the frontier.
+
+Unknown fields, sparse arrays, cycles, nonfinite resource values, duplicate set
+members, and count/byte/depth overflows fail the complete routing request rather
+than yielding a partially trusted frontier. Exact byte-identical candidates are
+idempotently deduplicated. Conflicting candidate identities are rejected.
+Canonical sorting and an explicit observation time make the candidate-set and
+frontier hashes independent of producer declaration order and ambient wall time.
+A one-candidate frontier must carry a singleton reason. Empty frontiers remain
+explicit and non-authorizing.
+
+The current source deliberately performs **no Pareto reduction**. Local value,
+cost, or resource dominance is not a context-safe replacement proof when
+candidate dependency effects, permissions, or downstream feasibility differ.
+Candidates remain available unless a future protocol version supplies and
+independently verifies a bounded replacement certificate covering all hard
+constraints. Global selection remains the scheduler/control-plane decision.
+
+`paper-core/tests/candidate-router.test.mjs` covers order independence, exact
+deduplication, identity conflicts, qualified-module substitution, expiry and
+side-effect boundaries, malformed numbers, accessor suppression, sparse/cyclic
+inputs, count/byte limits, request-hash sensitivity, and post-call mutation.
+These are synthetic source controls, not registry authentication, source
+qualification, or accepted MOD-002/CTL-004 evidence. The static module state
+therefore remains `design_ready` pending current exact-source qualification,
+consumer integration, and independent review.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 

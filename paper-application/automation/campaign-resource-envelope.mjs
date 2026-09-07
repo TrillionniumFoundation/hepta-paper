@@ -70,16 +70,17 @@ export function prepareCampaignResourceEnvelopes({ policy, governor, localGovern
       }
     }
   };
-  // Reject impossible configured nodes before claimReady/startNode or provider work.
+  // A prepared-result replay cannot start new nested work. Do not require or
+  // reserve child capacity that the recovery path is forbidden to consume.
   for (const node of nodes) {
-    if (Object.hasOwn(slotsByKind, node.kind)) {
+    if (!node.preparedResultHash && Object.hasOwn(slotsByKind, node.kind)) {
       checkCapacity(resourcesForCampaignNode(campaign, node), slotsByKind[node.kind]);
     }
   }
   return Object.freeze({
     policyHash, maximumChildren,
     async acquire(node, resources, signal) {
-      if (!Object.hasOwn(slotsByKind, node.kind)) return null;
+      if (node.preparedResultHash || !Object.hasOwn(slotsByKind, node.kind)) return null;
       const slots = slotsByKind[node.kind];
       checkCapacity(resources, slots); // Recheck each actual admission, not just initial DAG.
       const definition = { retained: resources, childCapacity: { agent: slots } };

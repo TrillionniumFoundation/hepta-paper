@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "ProviderExternalTargetHostProfileTemplateV1",
+  "status": "template_unbound",
+  "templateOnly": true,
+  "requiredBindings": [
+    "subject.hostId",
+    "subject.hostnameSha256",
+    "subject.osRelease",
+    "subject.kernelRelease",
+    "subject.architecture",
+    "process.unitName",
+    "process.unitFileSha256",
+    "process.uid",
+    "process.gid",
+    "filesystem.runtimeRoot",
+    "filesystem.sourceRoot",
+    "network.allowedDestinations",
+    "resourceControl.cpuQuotaMicrosPerSecond",
+    "resourceControl.memoryMaxBytes",
+    "resourceControl.pidsMax",
+    "audit.logSink",
+    "audit.receiptStore",
+    "audit.clockSource",
+    "audit.retentionDays"
+  ],
+  "candidateSchema": "docs/provider-sandbox/schemas/provider-external-target-host-profile-v1.schema.json",
+  "externalAcceptanceEligible": false,
+  "authority": {
+    "hostQualified": false,
+    "providerAuthorized": false,
+    "externalActionAuthorized": false,
+    "productionAuthorized": false,
+    "externalAuthorityClaimed": false
+  }
+}

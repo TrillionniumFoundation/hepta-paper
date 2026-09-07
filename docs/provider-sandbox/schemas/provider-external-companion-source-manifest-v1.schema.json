@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-external-companion-source-manifest-v1.schema.json",
+  "title": "ProviderExternalCompanionSourceManifestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "providerOwner",
+    "release",
+    "source",
+    "runtime",
+    "reproducibility",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ProviderExternalCompanionSourceManifestV1"
+    },
+    "status": {
+      "const": "external_candidate_unaccepted"
+    },
+    "providerOwner": {
+      "$ref": "#/$defs/providerOwner"
+    },
+    "release": {
+      "$ref": "#/$defs/release"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime"
+    },
+    "reproducibility": {
+      "$ref": "#/$defs/reproducibility"
+    },
+    "authority": {
+      "$ref": "#/$defs/authority"
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}(?![\\s\\S])"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "gitObject": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}(?![\\s\\S])"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])"
+    },
+    "absolutePath": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 4096,
+      "pattern": "^/[^\\u0000\\r\\n]{1,4095}(?![\\s\\S])"
+    },
+    "providerOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ownerId",
+        "organization",
+        "acceptanceAuthorityId",
+        "contact"
+      ],
+      "properties": {
+        "ownerId": {
+          "$ref": "#/$defs/token"
+        },
+        "organization": {
+          "$ref": "#/$defs/token"
+        },
+        "acceptanceAuthorityId": {
+          "$ref": "#/$defs/token"
+        },
+        "contact": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 320,
+          "pattern": "^[^\\u0000\\r\\n]{3,320}(?![\\s\\S])"
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "releaseId",
+        "version",
+        "createdAt",
+        "artifactSha256",
+        "signatureArtifactSha256"
+      ],
+      "properties": {
+        "releaseId": {
+          "$ref": "#/$defs/token"
+        },
+        "version": {
+          "$ref": "#/$defs/token"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "artifactSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "signatureArtifactSha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "commit",
+        "tree",
+        "executablePath",
+        "executableSha256",
+        "dependencyLockSha256",
+        "buildRecipeSha256"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 512,
+          "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\\s\\S])"
+        },
+        "commit": {
+          "$ref": "#/$defs/gitObject"
+        },
+        "tree": {
+          "$ref": "#/$defs/gitObject"
+        },
+        "executablePath": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "executableSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "dependencyLockSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "buildRecipeSha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodeVersion",
+        "protocolVersion",
+        "requestSchemaSha256",
+        "responseSchemaSha256"
+      ],
+      "properties": {
+        "nodeVersion": {
+          "type": "string",
+          "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?![\\s\\S])"
+        },
+        "protocolVersion": {
+          "const": 1
+        },
+        "requestSchemaSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "responseSchemaSha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceArchiveSha256",
+        "cleanBuildRequired",
+        "networkDuringBuildAllowed",
+        "deterministicOutputRequired"
+      ],
+      "properties": {
+        "sourceArchiveSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "cleanBuildRequired": {
+          "const": true
+        },
+        "networkDuringBuildAllowed": {
+          "const": false
+        },
+        "deterministicOutputRequired": {
+          "const": true
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerAuthorized",
+        "credentialCustodyEstablished",
+        "externalActionAuthorized",
+        "releaseAuthorized",
+        "submissionAuthorized",
+        "productionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "providerAuthorized": {
+          "const": false
+        },
+        "credentialCustodyEstablished": {
+          "const": false
+        },
+        "externalActionAuthorized": {
+          "const": false
+        },
+        "releaseAuthorized": {
+          "const": false
+        },
+        "submissionAuthorized": {
+          "const": false
+        },
+        "productionAuthorized": {
+          "const": false
+        },
+        "externalAuthorityClaimed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

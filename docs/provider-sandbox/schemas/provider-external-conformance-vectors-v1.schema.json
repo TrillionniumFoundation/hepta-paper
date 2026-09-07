@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-external-conformance-vectors-v1.schema.json",
+  "title": "ProviderExternalConformanceVectorsV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "vectors",
+    "mutations",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ProviderExternalConformanceVectorsV1"
+    },
+    "status": {
+      "const": "credential_free_non_authorizing"
+    },
+    "vectors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/vector"
+      }
+    },
+    "mutations": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/mutation"
+      }
+    },
+    "authority": {
+      "$ref": "#/$defs/authority"
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}(?![\\s\\S])"
+    },
+    "opaqueIdentity": {
+      "type": "string",
+      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}(?![\\s\\S])"
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment",
+        "provider",
+        "accountId",
+        "paperId",
+        "dispatchAuthorizationHash",
+        "packageHash",
+        "liveActionAllowed"
+      ],
+      "properties": {
+        "environment": {
+          "const": "provider_sandbox"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "paperId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "dispatchAuthorizationHash": {
+          "$ref": "#/$defs/opaqueIdentity"
+        },
+        "packageHash": {
+          "$ref": "#/$defs/opaqueIdentity"
+        },
+        "liveActionAllowed": {
+          "const": false
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exitCode",
+        "responseKind",
+        "responseStatus",
+        "companionVersion",
+        "sandbox",
+        "credentialsObserved",
+        "networkActionPerformed",
+        "externalActionPerformed",
+        "productionEligible",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "exitCode": {
+          "const": 0
+        },
+        "responseKind": {
+          "const": "ProviderTechnicalSandboxResponseV1"
+        },
+        "responseStatus": {
+          "const": "technical_sandbox_response_incomplete_for_external_acceptance"
+        },
+        "companionVersion": {
+          "const": "provider-technical-sandbox-v1"
+        },
+        "sandbox": {
+          "const": true
+        },
+        "credentialsObserved": {
+          "const": false
+        },
+        "networkActionPerformed": {
+          "const": false
+        },
+        "externalActionPerformed": {
+          "const": false
+        },
+        "productionEligible": {
+          "const": false
+        },
+        "externalAuthorityClaimed": {
+          "const": false
+        }
+      }
+    },
+    "vector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vectorId",
+        "purpose",
+        "request",
+        "expected"
+      ],
+      "properties": {
+        "vectorId": {
+          "$ref": "#/$defs/token"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 512
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "expected": {
+          "$ref": "#/$defs/expected"
+        }
+      }
+    },
+    "mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mutationId",
+        "operation",
+        "expectedError",
+        "responseFileExpected"
+      ],
+      "properties": {
+        "mutationId": {
+          "$ref": "#/$defs/token"
+        },
+        "operation": {
+          "enum": [
+            "set_live_action_true",
+            "set_production_environment",
+            "append_terminal_lf_to_package_hash",
+            "add_unknown_field",
+            "remove_account_id"
+          ]
+        },
+        "expectedError": {
+          "$ref": "#/$defs/token"
+        },
+        "responseFileExpected": {
+          "const": false
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "credentialsRequired",
+        "externalActionAuthorized",
+        "providerAuthorized",
+        "productionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "credentialsRequired": {
+          "const": false
+        },
+        "externalActionAuthorized": {
+          "const": false
+        },
+        "providerAuthorized": {
+          "const": false
+        },
+        "productionAuthorized": {
+          "const": false
+        },
+        "externalAuthorityClaimed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

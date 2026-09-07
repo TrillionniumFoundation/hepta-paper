@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-external-principal-registry-v1.schema.json",
+  "title": "ProviderExternalPrincipalRegistryV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "registryId",
+    "generation",
+    "observedAt",
+    "principals",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ProviderExternalPrincipalRegistryV1"
+    },
+    "status": {
+      "const": "external_principal_registry_unaccepted"
+    },
+    "registryId": {
+      "$ref": "#/$defs/token"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "observedAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "principals": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/providerOwner"
+        },
+        {
+          "$ref": "#/$defs/evidenceOwner"
+        },
+        {
+          "$ref": "#/$defs/releaseOwner"
+        }
+      ],
+      "items": false
+    },
+    "authority": {
+      "$ref": "#/$defs/authority"
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}(?![\\s\\S])"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])"
+    },
+    "principal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "principalId",
+        "publicKeySha256",
+        "algorithm",
+        "activeFrom",
+        "validUntil",
+        "revocationSnapshotSha256"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "provider_owner",
+            "evidence_owner",
+            "release_owner"
+          ]
+        },
+        "principalId": {
+          "$ref": "#/$defs/token"
+        },
+        "publicKeySha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "algorithm": {
+          "const": "ed25519"
+        },
+        "activeFrom": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "validUntil": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "revocationSnapshotSha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "providerOwner": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/principal"
+        },
+        {
+          "properties": {
+            "role": {
+              "const": "provider_owner"
+            }
+          }
+        }
+      ]
+    },
+    "evidenceOwner": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/principal"
+        },
+        {
+          "properties": {
+            "role": {
+              "const": "evidence_owner"
+            }
+          }
+        }
+      ]
+    },
+    "releaseOwner": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/principal"
+        },
+        {
+          "properties": {
+            "role": {
+              "const": "release_owner"
+            }
+          }
+        }
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerAuthorized",
+        "credentialCustodyEstablished",
+        "externalActionAuthorized",
+        "releaseAuthorized",
+        "submissionAuthorized",
+        "productionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "providerAuthorized": {
+          "const": false
+        },
+        "credentialCustodyEstablished": {
+          "const": false
+        },
+        "externalActionAuthorized": {
+          "const": false
+        },
+        "releaseAuthorized": {
+          "const": false
+        },
+        "submissionAuthorized": {
+          "const": false
+        },
+        "productionAuthorized": {
+          "const": false
+        },
+        "externalAuthorityClaimed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

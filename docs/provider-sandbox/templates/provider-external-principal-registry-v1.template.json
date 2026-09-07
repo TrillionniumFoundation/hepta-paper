@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "kind": "ProviderExternalPrincipalRegistryTemplateV1",
+  "status": "template_unbound",
+  "templateOnly": true,
+  "candidateSchema": "docs/provider-sandbox/schemas/provider-external-principal-registry-v1.schema.json",
+  "requiredBindings": [
+    "registryId",
+    "generation",
+    "observedAt",
+    "principals[0].provider_owner.principalId",
+    "principals[0].provider_owner.publicKeySha256",
+    "principals[0].provider_owner.activeFrom",
+    "principals[0].provider_owner.validUntil",
+    "principals[0].provider_owner.revocationSnapshotSha256",
+    "principals[1].evidence_owner.principalId",
+    "principals[1].evidence_owner.publicKeySha256",
+    "principals[1].evidence_owner.activeFrom",
+    "principals[1].evidence_owner.validUntil",
+    "principals[1].evidence_owner.revocationSnapshotSha256",
+    "principals[2].release_owner.principalId",
+    "principals[2].release_owner.publicKeySha256",
+    "principals[2].release_owner.activeFrom",
+    "principals[2].release_owner.validUntil",
+    "principals[2].release_owner.revocationSnapshotSha256"
+  ],
+  "externalAcceptanceEligible": false,
+  "authority": {
+    "providerAuthorized": false,
+    "credentialCustodyEstablished": false,
+    "externalActionAuthorized": false,
+    "releaseAuthorized": false,
+    "submissionAuthorized": false,
+    "productionAuthorized": false,
+    "externalAuthorityClaimed": false
+  }
+}

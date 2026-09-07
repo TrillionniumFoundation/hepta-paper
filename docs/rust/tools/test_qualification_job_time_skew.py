@@ -18,7 +18,7 @@ class QualificationJobTimeSkewTests(unittest.TestCase):
     def test_required_or_executed_job_inversion_is_rejected(self) -> None:
         cases = [(self.skipped, {"nonrequired-skipped"}),
             ({**self.skipped, "conclusion": "success", "steps": [{"number": 1,
-             "name": "Execute", "status": "completed", "conclusion": "success"}]},
+                "name": "Execute", "status": "completed", "conclusion": "success"}]},
              {"required-context"})]
         for job, required in cases:
             with self.subTest(name=job["name"], required=required), self.assertRaisesRegex(

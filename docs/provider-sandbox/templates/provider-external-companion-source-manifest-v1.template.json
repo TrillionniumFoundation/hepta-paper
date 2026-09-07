@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "ProviderExternalCompanionSourceManifestTemplateV1",
+  "status": "template_unbound",
+  "templateOnly": true,
+  "requiredBindings": [
+    "providerOwner.ownerId",
+    "providerOwner.organization",
+    "providerOwner.acceptanceAuthorityId",
+    "providerOwner.contact",
+    "release.releaseId",
+    "release.version",
+    "release.createdAt",
+    "release.artifactSha256",
+    "release.signatureArtifactSha256",
+    "source.repository",
+    "source.commit",
+    "source.tree",
+    "source.executablePath",
+    "source.executableSha256",
+    "source.dependencyLockSha256",
+    "source.buildRecipeSha256",
+    "runtime.nodeVersion",
+    "runtime.requestSchemaSha256",
+    "runtime.responseSchemaSha256",
+    "reproducibility.sourceArchiveSha256"
+  ],
+  "candidateSchema": "docs/provider-sandbox/schemas/provider-external-companion-source-manifest-v1.schema.json",
+  "externalAcceptanceEligible": false,
+  "authority": {
+    "providerAuthorized": false,
+    "credentialCustodyEstablished": false,
+    "externalActionAuthorized": false,
+    "releaseAuthorized": false,
+    "submissionAuthorized": false,
+    "productionAuthorized": false,
+    "externalAuthorityClaimed": false
+  }
+}

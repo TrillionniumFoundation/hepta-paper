@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "kind": "ProviderExternalConformanceVectorsV1",
+  "status": "credential_free_non_authorizing",
+  "vectors": [
+    {
+      "vectorId": "provider-external-positive-basic",
+      "purpose": "Prove deterministic protocol parsing and explicit no-effect declarations without credentials.",
+      "request": {
+        "environment": "provider_sandbox",
+        "provider": "external-companion-conformance",
+        "accountId": "credential-free-control",
+        "paperId": "provider-conformance-basic",
+        "dispatchAuthorizationHash": "sha256:dispatch-control-basic",
+        "packageHash": "sha256:package-control-basic",
+        "liveActionAllowed": false
+      },
+      "expected": {
+        "exitCode": 0,
+        "responseKind": "ProviderTechnicalSandboxResponseV1",
+        "responseStatus": "technical_sandbox_response_incomplete_for_external_acceptance",
+        "companionVersion": "provider-technical-sandbox-v1",
+        "sandbox": true,
+        "credentialsObserved": false,
+        "networkActionPerformed": false,
+        "externalActionPerformed": false,
+        "productionEligible": false,
+        "externalAuthorityClaimed": false
+      }
+    },
+    {
+      "vectorId": "provider-external-positive-opaque-identities",
+      "purpose": "Prove bounded opaque dispatch and package identities remain data rather than authority claims.",
+      "request": {
+        "environment": "provider_sandbox",
+        "provider": "external-companion-conformance-v1",
+        "accountId": "credential-free-control-v1",
+        "paperId": "provider-conformance-opaque-v1",
+        "dispatchAuthorizationHash": "sha256:dispatch.alpha_01:control",
+        "packageHash": "sha256:package.alpha_01:control",
+        "liveActionAllowed": false
+      },
+      "expected": {
+        "exitCode": 0,
+        "responseKind": "ProviderTechnicalSandboxResponseV1",
+        "responseStatus": "technical_sandbox_response_incomplete_for_external_acceptance",
+        "companionVersion": "provider-technical-sandbox-v1",
+        "sandbox": true,
+        "credentialsObserved": false,
+        "networkActionPerformed": false,
+        "externalActionPerformed": false,
+        "productionEligible": false,
+        "externalAuthorityClaimed": false
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "mutationId": "provider-external-negative-live-action",
+      "operation": "set_live_action_true",
+      "expectedError": "provider_sandbox_live_action_forbidden",
+      "responseFileExpected": false
+    },
+    {
+      "mutationId": "provider-external-negative-production-environment",
+      "operation": "set_production_environment",
+      "expectedError": "provider_sandbox_live_action_forbidden",
+      "responseFileExpected": false
+    },
+    {
+      "mutationId": "provider-external-negative-terminal-lf",
+      "operation": "append_terminal_lf_to_package_hash",
+      "expectedError": "provider_sandbox_package_hash_invalid",
+      "responseFileExpected": false
+    },
+    {
+      "mutationId": "provider-external-negative-unknown-field",
+      "operation": "add_unknown_field",
+      "expectedError": "provider_sandbox_request_invalid",
+      "responseFileExpected": false
+    },
+    {
+      "mutationId": "provider-external-negative-missing-account",
+      "operation": "remove_account_id",
+      "expectedError": "provider_sandbox_request_invalid",
+      "responseFileExpected": false
+    }
+  ],
+  "authority": {
+    "credentialsRequired": false,
+    "externalActionAuthorized": false,
+    "providerAuthorized": false,
+    "productionAuthorized": false,
+    "externalAuthorityClaimed": false
+  }
+}

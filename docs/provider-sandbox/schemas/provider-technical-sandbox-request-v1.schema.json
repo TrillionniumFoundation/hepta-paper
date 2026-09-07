@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-technical-sandbox-request-v1.schema.json",
+  "title": "ProviderTechnicalSandboxRequestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "environment",
+    "provider",
+    "accountId",
+    "paperId",
+    "dispatchAuthorizationHash",
+    "packageHash",
+    "liveActionAllowed"
+  ],
+  "properties": {
+    "environment": {
+      "const": "provider_sandbox"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "accountId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "paperId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "dispatchAuthorizationHash": {
+      "type": "string",
+      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}(?![\\s\\S])"
+    },
+    "packageHash": {
+      "type": "string",
+      "pattern": "^sha256:[A-Za-z0-9._:-]{8,2041}(?![\\s\\S])"
+    },
+    "liveActionAllowed": {
+      "const": false
+    }
+  }
+}

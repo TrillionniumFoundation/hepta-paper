@@ -62,6 +62,8 @@ Hard registered module dependencies:
 
 Current implementation and contract roots:
 
+- `paper-application/orchestration/planning-snapshot-builder.mjs`
+- `docs/control-plane/PLANNING_SNAPSHOT_BUILDER_V1.md`
 - `docs/control-plane/COMPOSITION_ROOT.md`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
@@ -108,7 +110,41 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
-Capability bindings: `CAP-CTL-SNAPSHOT`. Related work identifiers: `CTL-002`. Implementation/contract roots: `docs/control-plane/COMPOSITION_ROOT.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-CTL-SNAPSHOT`. Related work identifiers: `CTL-002`. Implementation/contract roots: `paper-application/orchestration/planning-snapshot-builder.mjs`, `docs/control-plane/PLANNING_SNAPSHOT_BUILDER_V1.md`, `docs/control-plane/COMPOSITION_ROOT.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+
+The current source candidate builds a complete immutable snapshot from one exact
+request, the Candidate Router V1 `PlanningModuleQualificationMetadataV1` set,
+and exact bounded read-only components. It rejects partial coverage,
+mixed transaction/epoch, stale generation, qualification-set drift, forged
+hashes, Unicode non-scalar strings, structural/byte overflow, and authority
+escalation. Snapshot expiry includes each component's observation time plus its
+request-bound maximum age, so later currentness cannot outlive the age check
+performed during construction. It offers a separate currentness verifier that
+reconstructs the complete snapshot and compares current context and component
+generations.
+
+Qualification metadata and read-transaction assertions remain
+caller-supplied/unverified. The output explicitly requires external live
+currentness and does not authenticate a store or create snapshot isolation.
+The same-realm object API is a trusted boundary; untrusted Proxy or serialized
+inputs require a separate bounded adapter. Source controls in
+`paper-core/tests/planning-snapshot-builder-*.test.mjs`, with shared fixtures in
+`paper-core/tests/planning-snapshot-fixtures.mjs`, include direct composition
+with the current candidate router. Static module state and CTL-002 remain
+`design_ready` until the readonly adapter, schema/conformance, exact hosted
+qualification, and independent review are accepted.
+
+The four public JSON record kinds have closed Draft 2020-12 wire schemas in
+`docs/modules/schemas/planning-*-v1.schema.json`. Executable conformance in
+`paper-core/tests/planning-snapshot-schema-conformance.test.mjs` verifies runtime
+outputs against those schemas and reconstructs schema-valid JSON through the
+runtime. Schema shape cannot prove canonical byte ceilings, Unicode-scalar
+validity, cross-field time/hash relations, aggregate budgets, freshness or
+authenticity; runtime reconstruction and the external currentness gate remain
+mandatory. A schema-valid forged payload/hash pair is an explicit rejection
+case. The registry and documentation manifest enumerate the implementation,
+contract and schema paths without changing `design_ready`, activation, owner or
+authority state.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 

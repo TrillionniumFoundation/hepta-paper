@@ -1,0 +1,143 @@
+name: provider-external-acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact hepta-paper candidate commit
+        required: true
+        type: string
+      candidate_tree:
+        description: Exact candidate source tree
+        required: true
+        type: string
+      pull_request:
+        description: Pull request number owning the candidate
+        required: true
+        type: string
+      base_sha:
+        description: Exact pull-request base commit
+        required: true
+        type: string
+      prospective_merge_sha:
+        description: Exact tested prospective merge commit
+        required: true
+        type: string
+      source_manifest_path:
+        description: Absolute protected-host source manifest path
+        required: true
+        type: string
+      target_profile_path:
+        description: Absolute protected-host target profile path
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >-
+    provider-external-acceptance-${{ inputs.candidate_sha }}-${{
+    inputs.candidate_tree }}-${{ inputs.prospective_merge_sha }}
+  cancel-in-progress: false
+
+jobs:
+  provider-external-acceptance:
+    name: provider-external-acceptance
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - hepta-provider-sandbox
+    timeout-minutes: 60
+    env:
+      EXPECTED_HEAD_SHA: ${{ inputs.candidate_sha }}
+      EXPECTED_HEAD_TREE: ${{ inputs.candidate_tree }}
+      EXPECTED_PR_NUMBER: ${{ inputs.pull_request }}
+      EXPECTED_BASE_SHA: ${{ inputs.base_sha }}
+      EXPECTED_MERGE_SHA: ${{ inputs.prospective_merge_sha }}
+      PROVIDER_SOURCE_MANIFEST: ${{ inputs.source_manifest_path }}
+      PROVIDER_TARGET_PROFILE: ${{ inputs.target_profile_path }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Bind exact source and protected host inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_HEAD_TREE"
+          case "$EXPECTED_HEAD_SHA:$EXPECTED_HEAD_TREE:$EXPECTED_BASE_SHA:$EXPECTED_MERGE_SHA" in
+            *[!0-9a-f:]*|'') exit 2 ;;
+          esac
+          test "${#EXPECTED_HEAD_SHA}" -eq 40
+          test "${#EXPECTED_HEAD_TREE}" -eq 40
+          test "${#EXPECTED_BASE_SHA}" -eq 40
+          test "${#EXPECTED_MERGE_SHA}" -eq 40
+          case "$EXPECTED_PR_NUMBER" in
+            ''|*[!0-9]*) exit 2 ;;
+          esac
+          test "$EXPECTED_PR_NUMBER" -gt 0
+          for candidate in "$PROVIDER_SOURCE_MANIFEST" "$PROVIDER_TARGET_PROFILE"; do
+            case "$candidate" in
+              /etc/hepta-provider/*) ;;
+              *) printf '%s\n' 'provider_external_protected_path_invalid' >&2; exit 2 ;;
+            esac
+            test "$(realpath -e -- "$candidate")" = "$candidate"
+            test -f "$candidate"
+            test ! -L "$candidate"
+          done
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Execute external provider acceptance kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/provider-external-acceptance"
+          test ! -e "$evidence"
+          export EVIDENCE_ROOT="$evidence"
+          bash docs/provider-sandbox/tools/run-external-provider-acceptance.sh
+          {
+            printf 'repository=%s\n' "$GITHUB_REPOSITORY"
+            printf 'pull_request=%s\n' "$EXPECTED_PR_NUMBER"
+            printf 'base_commit=%s\n' "$EXPECTED_BASE_SHA"
+            printf 'head_commit=%s\n' "$EXPECTED_HEAD_SHA"
+            printf 'head_tree=%s\n' "$EXPECTED_HEAD_TREE"
+            printf 'prospective_merge_commit=%s\n' "$EXPECTED_MERGE_SHA"
+            printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'production_authorized=false\n'
+            printf 'external_authority_claimed=false\n'
+          } > "$evidence/exact-subject.txt"
+          chmod 0600 "$evidence/exact-subject.txt"
+
+      - name: Prove source identity after execution
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_HEAD_TREE"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Retain non-authorizing acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-external-acceptance-${{ inputs.candidate_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/provider-external-acceptance
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false

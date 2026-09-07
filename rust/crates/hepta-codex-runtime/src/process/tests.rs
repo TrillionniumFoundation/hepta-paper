@@ -286,10 +286,15 @@ fn cooperative_cancellation_terminates_an_actual_process_group() {
         time::{Duration, Instant},
     };
     let tree = TempTree::new();
-    let script = tree.script("cancel.sh", "#!/bin/sh\nsleep 10\n");
-    let request = request(&tree, script);
+    // Execute an existing binary: another test's concurrent fork can briefly
+    // inherit a just-written script's descriptor and make exec return ETXTBSY,
+    // even after the writing thread has closed its own descriptor.
+    let shell = fs::canonicalize("/bin/sh").expect("canonical shell");
+    let mut request = request(&tree, shell);
+    request.arguments = vec!["-c".into(), "sleep 10 & wait".into()];
     let mut command = Command::new(&request.executable);
     command
+        .args(&request.arguments)
         .current_dir(&request.working_directory)
         .env_clear()
         .stdin(Stdio::null())

@@ -130,9 +130,11 @@ stateSnapshotHash
 expiresAt
 ```
 
-`expiresAt` is the earliest request deadline, component validity boundary, or
-module-qualification metadata expiry. A valid outer hash cannot renew an inner
-expiry.
+`expiresAt` is the earliest request deadline, component validity boundary,
+component observation time plus its request-bound `maximumAgeMilliseconds`, or
+module-qualification metadata expiry. Maximum-age addition is range-safe and
+clamped only at the JavaScript Date ceiling before the earlier valid boundaries
+are selected. A valid outer hash cannot renew an inner expiry.
 
 For the same accepted input records and explicit observation time, output bytes
 and hashes are deterministic across input order and process locale. The output
@@ -197,7 +199,7 @@ The checked-in closed wire schemas are:
 They fix every named field, identity literal, scalar pattern/range, collection
 ceiling, timestamp shape and false-authority field at the JSON boundary. They
 do not attempt to encode cross-field time ordering, component/hash relations,
-UTF-8 byte ceilings, Unicode-scalar validity, aggregate capture budgets, exact
+UTF-8 byte ceilings, Unicode-scalar integrity, aggregate capture budgets, exact
 set coverage, freshness, or currentness. Those remain executable runtime
 obligations and are rechecked after parsing. Schema acceptance by itself is
 never a qualification or integrity receipt.
@@ -206,9 +208,9 @@ never a qualification or integrity receipt.
 runtime-produced public record against its schema, round-trips schema-valid JSON
 through full runtime reconstruction, and requires both layers to reject shared
 closed-shape, identity, range and authority violations. It also proves the
-intentional boundary with a schema-valid component whose payload/hash relation
-is forged: the runtime must still reject it. The test invokes the repository's
-fail-closed strict schema verifier rather than a permissive third-party default.
+intentional boundary with a schema-valid forged payload/hash pair: it runtime must
+still reject it. The test invokes the repository's fail-closed strict schema
+verifier rather than a permissive third-party default.
 
 ## Required acceptance
 

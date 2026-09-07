@@ -198,15 +198,38 @@ export function snapshotMetadataKey(moduleId, moduleVersion) {
   return `${moduleId}\0${moduleVersion}`;
 }
 
+const MAX_DATE_MILLISECONDS = 8_640_000_000_000_000n;
+
+function componentMaximumAgeExpiryMilliseconds(component, requirement) {
+  const captured = BigInt(Date.parse(component.observedAt));
+  const maximumAge = BigInt(requirement.maximumAgeMilliseconds);
+  const expiry = captured + maximumAge;
+  return Number(expiry > MAX_DATE_MILLISECONDS ? MAX_DATE_MILLISECONDS : expiry);
+}
+
 export function buildSnapshotBody({ request, moduleQualificationMetadata,
   components, observedAt }) {
   const snapshotRequestHash = snapshotHashRecord('PlanningStateSnapshotRequestV1', request);
   const componentSetHash = snapshotHashRecord('PlanningSnapshotComponentSetV1', components);
-  const expiresAt = new Date(Math.min(
-    Date.parse(request.deadline),
-    ...moduleQualificationMetadata.map((entry) => Date.parse(entry.qualificationExpiresAt)),
-    ...components.map((entry) => Date.parse(entry.validUntil)),
-  )).toISOString();
+  const requirements = new Map(request.requiredComponents.map((entry) => [
+    entry.componentId, entry,
+  ]));
+  let expiresAtMilliseconds = Date.parse(request.deadline);
+  for (const entry of moduleQualificationMetadata) {
+    expiresAtMilliseconds = Math.min(
+      expiresAtMilliseconds, Date.parse(entry.qualificationExpiresAt),
+    );
+  }
+  for (const component of components) {
+    const requirement = requirements.get(component.componentId);
+    if (!requirement) throw snapshotFailure('snapshot_component_coverage_invalid');
+    expiresAtMilliseconds = Math.min(
+      expiresAtMilliseconds,
+      Date.parse(component.validUntil),
+      componentMaximumAgeExpiryMilliseconds(component, requirement),
+    );
+  }
+  const expiresAt = new Date(expiresAtMilliseconds).toISOString();
   return Object.freeze({
     schemaVersion: 1,
     kind: 'PlanningStateSnapshotV1',

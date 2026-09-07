@@ -117,8 +117,11 @@ request, the Candidate Router V1 `PlanningModuleQualificationMetadataV1` set,
 and exact bounded read-only components. It rejects partial coverage,
 mixed transaction/epoch, stale generation, qualification-set drift, forged
 hashes, Unicode non-scalar strings, structural/byte overflow, and authority
-escalation. It offers a separate currentness verifier that reconstructs the
-complete snapshot and compares current context and component generations.
+escalation. Snapshot expiry includes each component's observation time plus its
+request-bound maximum age, so later currentness cannot outlive the age check
+performed during construction. It offers a separate currentness verifier that
+reconstructs the complete snapshot and compares current context and component
+generations.
 
 Qualification metadata and read-transaction assertions remain
 caller-supplied/unverified. The output explicitly requires external live

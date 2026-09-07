@@ -56,28 +56,44 @@ def unique_sorted(values: list, code: str) -> None:
     require(values == sorted(set(values)), code)
 
 
-# GitHub occasionally records a no-step skipped job with second-granularity
-# timestamps one second out of order. Preserve the raw values and tolerate only
-# that explicitly bounded, non-required case; executed/required jobs remain
-# strictly ordered.
-SKIPPED_JOB_NEGATIVE_SKEW_SECONDS = 1
+def validate_job_time(
+    job: dict[str, Any],
+    required_contexts: set[str],
+    run_created_at: str,
+    run_updated_at: str,
+) -> None:
+    """Validate raw GitHub job clocks without promoting skipped synthetic rows.
 
-
-def validate_job_time(job: dict[str, Any], required_contexts: list[str]) -> None:
-    started, completed = job['startedAt'], job['completedAt']
+    GitHub can report a completed/skipped job with no steps whose ``startedAt``
+    is later than ``completedAt``. Such a job cannot satisfy a required context
+    and contributes no executed step evidence. Preserve and hash-bind the raw
+    timestamps, but accept that one narrow non-evidentiary case only while both
+    clocks remain inside the containing workflow-run interval. Required jobs,
+    jobs with steps, and every other disposition retain strict ordering.
+    """
+    started = job['startedAt']
+    completed = job['completedAt']
     if started is None or completed is None:
         return
-    started_at, completed_at = parse_timestamp(started), parse_timestamp(completed)
+
+    run_created = parse_timestamp(run_created_at)
+    run_updated = parse_timestamp(run_updated_at)
+    started_at = parse_timestamp(started)
+    completed_at = parse_timestamp(completed)
+    require(run_created <= started_at <= run_updated,
+            'qualification_job_time_outside_run')
+    require(run_created <= completed_at <= run_updated,
+            'qualification_job_time_outside_run')
     if started_at <= completed_at:
         return
-    tolerated = (
-        job.get('name') not in required_contexts
-        and job.get('status') == 'completed'
-        and job.get('conclusion') == 'skipped'
-        and job.get('steps') == []
-        and (started_at - completed_at).total_seconds() <= SKIPPED_JOB_NEGATIVE_SKEW_SECONDS
+
+    non_evidentiary_skipped_job = (
+        job['name'] not in required_contexts
+        and job['status'] == 'completed'
+        and job['conclusion'] == 'skipped'
+        and job['steps'] == []
     )
-    require(tolerated, 'qualification_job_time_order')
+    require(non_evidentiary_skipped_job, 'qualification_job_time_order')
 
 
 def validate_subject(subject: dict[str, Any]) -> None:
@@ -105,6 +121,7 @@ def validate_subject(subject: dict[str, Any]) -> None:
     for history in histories:
         contexts, rows = history['requiredContexts'], history['eligibleRuns']
         unique_sorted(contexts, 'qualification_context_order')
+        required_contexts = set(contexts)
         require(not seen_contexts.intersection(contexts), 'qualification_context_duplicate')
         seen_contexts.update(contexts)
         require(len(rows) <= 4096, 'qualification_attempt_limit')
@@ -125,7 +142,9 @@ def validate_subject(subject: dict[str, Any]) -> None:
             unique_sorted([j['id'] for j in row['jobs']], 'qualification_job_identity_duplicate_or_order')
             for job in row['jobs']:
                 unique_sorted([s['number'] for s in job['steps']], 'qualification_step_identity_duplicate_or_order')
-                validate_job_time(job, contexts)
+                validate_job_time(
+                    job, required_contexts, row['createdAt'], row['updatedAt'],
+                )
             unique_sorted([a['id'] for a in row['artifacts']], 'qualification_artifact_identity_duplicate_or_order')
             check_hash(row['jobs'], row['jobSetSha256'], 'qualification_job_hash_invalid')
             check_hash([{'jobId': j['id'], **s} for j in row['jobs'] for s in j['steps']],

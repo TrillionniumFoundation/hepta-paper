@@ -24,7 +24,7 @@ The exact executable/image/source digest, configuration digest, deployment gener
 
 ## Mission and non-goals
 
-Request, bound, validate, canonicalize, and deduplicate module planning candidates against one immutable snapshot before global selection.
+Request, bound, validate, canonicalize, and deduplicate module planning candidates against one immutable snapshot before global selection. The current source accepts caller-supplied module qualification metadata but does not authenticate it; production composition must pass a separately verified currentness receipt.
 
 It does not hold credentials, execute external effects, or mutate authoritative state. A source implementation, fixture, model narrative, repository administrator statement, or this document is never sufficient production authority.
 
@@ -33,9 +33,9 @@ It does not hold credentials, execute external effects, or mutate authoritative 
 Inputs:
 
 - planning request bound to one snapshot
-- qualified module registry
+- caller-supplied, self-consistent module qualification metadata whose external currentness receipt has been authenticated by composition
 - hard policy
-- candidate byte/count budgets
+- candidate byte/count/aggregate-structure budgets
 
 Outputs:
 
@@ -63,6 +63,7 @@ Current implementation and contract roots:
 
 - `docs/modules/MODULE_PROTOCOL.md`
 - `docs/control-plane/COMPOSITION_ROOT.md`
+- `paper-application/orchestration/candidate-router.mjs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -80,7 +81,7 @@ A candidate-producing module must expose feasible alternatives or a justified si
 
 ## Failure, recovery, and idempotency
 
-Reject late, stale, duplicate, oversize, infeasible, unauthorized, non-finite, uncalibrated, or semantically conflicting candidates. A timeout yields a typed incomplete-frontier disposition and triggers replan rather than implicit acceptance.
+Reject late, stale, duplicate, oversize, infeasible, unauthorized, non-finite, uncalibrated, or semantically conflicting candidates. The pure source boundary does not invoke producers or implement timeouts; a separate bounded producer-collection layer must return a typed incomplete-frontier disposition rather than partial success.
 
 Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
 
@@ -108,7 +109,81 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
-Capability bindings: `CAP-MOD-CANDIDATES`. Related work identifiers: `CTL-004`, `MOD-002`. Implementation/contract roots: `docs/modules/MODULE_PROTOCOL.md`, `docs/control-plane/COMPOSITION_ROOT.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-MOD-CANDIDATES`. Related work identifiers: `CTL-004`, `MOD-002`. Implementation/contract roots: `docs/modules/MODULE_PROTOCOL.md`, `docs/control-plane/COMPOSITION_ROOT.md`, `paper-application/orchestration/candidate-router.mjs`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+
+### Executable candidate-frontier source candidate
+
+`paper-application/orchestration/candidate-router.mjs` provides the pure,
+deterministic `routeActionCandidatesV1` boundary. Its JavaScript object API is
+explicitly limited to `trusted_same_realm_plain_data`. Accessor properties,
+unknown fields, sparse arrays, symbols, unsupported prototypes and malformed
+records fail closed. Reflection on a JavaScript `Proxy` can itself execute proxy
+traps; the module catches reflection failures but does not claim that same-realm
+Proxy input is inert. Untrusted input must first cross a duplicate-key-safe,
+bounded serialized or process-isolation boundary which produces ordinary
+plain/null-prototype data.
+
+Opaque candidate records are copied into null-prototype objects using explicit
+data-property definition. Legal own keys including `__proto__`, `constructor`
+and `prototype` therefore remain hash-visible and cannot mutate the captured
+prototype. Strings and keys are bounded by UTF-8 bytes. One aggregate node
+budget covers every opaque `duration`, `cost`, `value` and `risk` field across
+the complete routing transaction; it is not reset per field or candidate.
+Per-candidate and aggregate canonical byte ceilings remain separate limits.
+
+The V1 hash domain uses deterministic canonical JSON with object keys ordered by
+unsigned UTF-8 bytes. It does not call `localeCompare`, inherit process locale,
+or rely on JavaScript's integer-key enumeration order. Candidate/module/request
+input order is separately canonicalized. Non-ASCII subprocess vectors under
+multiple locale environments must produce identical module, candidate,
+candidate-set and frontier hashes.
+
+The source accepts closed `PlanningModuleQualificationMetadataV1` records. Each
+record binds module/version/capabilities, claimed qualification status and
+identity, monotonic generation, observation/expiry interval, revocation-set
+identity and an external-currentness receipt identity. The complete payload is
+rehashable through `qualificationMetadataHash`, and the planning request binds
+the complete metadata-set hash. Routing time must lie within every supplied
+interval and the frontier expires no later than the earliest module, request or
+candidate expiry.
+
+These records deliberately carry:
+
+```text
+qualificationTrustClass: caller_supplied_unverified
+qualificationCurrentnessMode: external_live_revalidation_required
+externalCurrentnessGateRequired: true
+```
+
+The router checks internal identity, interval and hash consistency only. It does
+not authenticate the currentness receipt, query a revocation service, qualify a
+module or convert metadata into production trust. Trusted composition must
+verify the receipt against the current registry/revocation subject before
+calling the router and again before consuming the frontier.
+
+`sealActionCandidateV1` recomputes a candidate payload hash. Exact duplicate
+candidates collapse idempotently; conflicting candidate IDs or payload hashes
+reject the whole request. Request, snapshot, capability, module version, expiry
+and side-effect identities must match before a candidate enters the frontier.
+A one-candidate frontier requires an explicit singleton reason; an empty
+frontier remains explicit. All authority fields remain false.
+
+The source deliberately performs **no Pareto reduction**. Local value, cost or
+resource dominance is not a context-safe replacement proof when dependency
+effects, permissions, evidence, compatibility or downstream feasibility differ.
+Candidates remain available unless a future version supplies and independently
+verifies a bounded contextual-replacement certificate covering every hard
+constraint. Global selection remains the scheduler/control-plane decision.
+
+`paper-core/tests/candidate-router.test.mjs` covers order and locale
+independence, exact deduplication, special-key preservation, aggregate structure
+budgets, request/module/currentness identity, expiry and side-effect boundaries,
+malformed numbers, accessor and Proxy failure classification, sparse/cyclic
+inputs, count/byte limits, request-hash sensitivity and post-call mutation.
+These are source controls, not registry authentication, external currentness,
+source qualification or accepted MOD-002/CTL-004 evidence. The static module
+state therefore remains `design_ready` pending isolated-input composition,
+current exact-source qualification, consumer integration and independent review.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 

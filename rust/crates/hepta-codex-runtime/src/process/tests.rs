@@ -82,6 +82,17 @@ fn request(tree: &TempTree, script: PathBuf) -> BoundedProcessRequestV1 {
     }
 }
 
+fn shell_request(tree: &TempTree, source: &str) -> BoundedProcessRequestV1 {
+    // Execute an existing binary: another test's concurrent fork can briefly
+    // inherit a just-written script's descriptor and make exec return ETXTBSY,
+    // even after the writing thread has closed its own descriptor. Tests of
+    // executable path/permission validation still use their exact file fixture.
+    let shell = fs::canonicalize("/bin/sh").expect("canonical shell");
+    let mut value = request(tree, shell);
+    value.arguments = vec!["-c".into(), source.into()];
+    value
+}
+
 fn pressure_limits() -> ProcessLimitsV1 {
     ProcessLimitsV1 {
         timeout_ms: 2_000,
@@ -98,8 +109,8 @@ fn pressure_limits() -> ProcessLimitsV1 {
 #[test]
 fn child_environment_does_not_inherit_provider_secret() {
     let tree = TempTree::new();
-    let script = tree.script("environment.sh", "#!/bin/sh\nset -eu\nenv | sort\n");
-    let result = run_bounded_process(&request(&tree, script), ProcessLimitsV1::default())
+    let request = shell_request(&tree, "set -eu\nenv | sort\n");
+    let result = run_bounded_process(&request, ProcessLimitsV1::default())
         .expect("bounded environment probe");
     let output = String::from_utf8(result.stdout_tail).expect("UTF-8 env output");
     assert!(!output.contains("OPENAI_API_KEY"));
@@ -110,13 +121,13 @@ fn child_environment_does_not_inherit_provider_secret() {
 #[test]
 fn stdout_limit_terminates_the_process_group() {
     let tree = TempTree::new();
-    let script = tree.script(
-        "overflow.sh",
-        "#!/bin/sh\nset -eu\nwhile :; do printf '0123456789abcdef'; done\n",
+    let request = shell_request(
+        &tree,
+        "set -eu\nwhile :; do printf '0123456789abcdef'; done\n",
     );
     let limits = pressure_limits();
-    let result = run_bounded_process(&request(&tree, script), limits)
-        .expect("overflow must be terminated and reaped");
+    let result =
+        run_bounded_process(&request, limits).expect("overflow must be terminated and reaped");
     assert_eq!(
         result.termination_reason,
         ProcessTerminationReason::StdoutLimitExceeded,
@@ -128,12 +139,12 @@ fn stdout_limit_terminates_the_process_group() {
 #[test]
 fn stderr_limit_terminates_the_process_group() {
     let tree = TempTree::new();
-    let script = tree.script(
-        "stderr-overflow.sh",
-        "#!/bin/sh\nset -eu\nwhile :; do printf 'stderr-pressure' >&2; done\n",
+    let request = shell_request(
+        &tree,
+        "set -eu\nwhile :; do printf 'stderr-pressure' >&2; done\n",
     );
     let limits = pressure_limits();
-    let result = run_bounded_process(&request(&tree, script), limits)
+    let result = run_bounded_process(&request, limits)
         .expect("stderr overflow must be terminated and reaped");
     assert_eq!(
         result.termination_reason,
@@ -146,10 +157,7 @@ fn stderr_limit_terminates_the_process_group() {
 #[test]
 fn term_resistant_process_group_is_escalated_to_kill() {
     let tree = TempTree::new();
-    let script = tree.script(
-        "term-resistant.sh",
-        "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n",
-    );
+    let request = shell_request(&tree, "trap '' TERM\nwhile :; do sleep 1; done\n");
     let limits = ProcessLimitsV1 {
         timeout_ms: 50,
         termination_grace_ms: 50,
@@ -160,7 +168,7 @@ fn term_resistant_process_group_is_escalated_to_kill() {
         maximum_stderr_bytes: 1024,
         maximum_tail_bytes: 1024,
     };
-    let result = run_bounded_process(&request(&tree, script), limits)
+    let result = run_bounded_process(&request, limits)
         .expect("TERM-resistant group must be killed and reaped");
     assert_eq!(
         result.termination_reason,
@@ -174,9 +182,9 @@ fn term_resistant_process_group_is_escalated_to_kill() {
 #[test]
 fn timeout_terminates_descendants_in_the_same_process_group() {
     let tree = TempTree::new();
-    let script = tree.script(
-        "descendant.sh",
-        "#!/bin/sh\nset -eu\nsleep 30 &\nchild=$!\nprintf '%s\\n' \"$child\"\nwait \"$child\"\n",
+    let request = shell_request(
+        &tree,
+        "set -eu\nsleep 30 &\nchild=$!\nprintf '%s\\n' \"$child\"\nwait \"$child\"\n",
     );
     let limits = ProcessLimitsV1 {
         timeout_ms: 100,
@@ -188,8 +196,8 @@ fn timeout_terminates_descendants_in_the_same_process_group() {
         maximum_stderr_bytes: 1024,
         maximum_tail_bytes: 1024,
     };
-    let result = run_bounded_process(&request(&tree, script), limits)
-        .expect("timeout must clean the process group");
+    let result =
+        run_bounded_process(&request, limits).expect("timeout must clean the process group");
     assert_eq!(
         result.termination_reason,
         ProcessTerminationReason::TimedOut
@@ -286,12 +294,7 @@ fn cooperative_cancellation_terminates_an_actual_process_group() {
         time::{Duration, Instant},
     };
     let tree = TempTree::new();
-    // Execute an existing binary: another test's concurrent fork can briefly
-    // inherit a just-written script's descriptor and make exec return ETXTBSY,
-    // even after the writing thread has closed its own descriptor.
-    let shell = fs::canonicalize("/bin/sh").expect("canonical shell");
-    let mut request = request(&tree, shell);
-    request.arguments = vec!["-c".into(), "sleep 10 & wait".into()];
+    let request = shell_request(&tree, "sleep 10 & wait");
     let mut command = Command::new(&request.executable);
     command
         .args(&request.arguments)

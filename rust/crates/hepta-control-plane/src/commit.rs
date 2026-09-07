@@ -83,11 +83,28 @@ mod sealed {
 /// composition. Production sequencers must be implemented and audited in this
 /// crate with the same all-or-nothing batch contract.
 pub trait CommitSequencerV1: sealed::Sealed {
+    /// Binds the run clock and immutable campaign snapshot before execution.
+    fn begin_run(
+        &mut self,
+        _snapshot: &crate::ControlPlaneSnapshotV1,
+        _now_unix_ms: u64,
+    ) -> Result<(), ControlPlaneError> {
+        Ok(())
+    }
     /// Returns the only verifier identity accepted by this sequencer.
     fn authorized_verifier_hash(&self) -> &Sha256Digest;
 
     /// Returns the next sequence for a newly integrated result.
     fn next_sequence(&self) -> u64;
+
+    /// Computes exact receipts without mutating storage. A successful subsequent
+    /// commit on this exclusively owned sequencer must return these same receipts.
+    /// This lets the runtime finish every fallible event/receipt operation before
+    /// crossing the durable transaction boundary, without shallow-cloning a DB.
+    fn preview_batch(
+        &self,
+        requests: &[CommitRequestV1],
+    ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError>;
 
     /// Atomically integrates a complete batch in monotonic sequence order.
     ///
@@ -252,6 +269,13 @@ impl CommitSequencerV1 for FixtureCommitSequencerV1 {
         self.next_sequence
     }
 
+    fn preview_batch(
+        &self,
+        requests: &[CommitRequestV1],
+    ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError> {
+        self.clone().commit_batch(requests)
+    }
+
     fn commit_batch(
         &mut self,
         requests: &[CommitRequestV1],
@@ -285,4 +309,263 @@ struct CommitTransitionV1 {
     result_hash: Sha256Digest,
     verifier_hash: Sha256Digest,
     verification_receipt_hash: Sha256Digest,
+}
+
+/// Exclusive SQLite sequencer integrating complete verified result bodies and
+/// immutable receipts into the real campaign writer. It is intentionally not
+/// `Clone`: copying a DB handle cannot stage an atomic transaction.
+pub struct SqliteCommitSequencerV1 {
+    store: hepta_campaign_writer::CampaignWriterStoreV1,
+    writer: hepta_campaign_writer::WriterLeaseV1,
+    campaign_id: String,
+    state: FixtureCommitSequencerV1,
+    now_unix_ms: u64,
+    run_snapshot: Option<(Sha256Digest, Sha256Digest, u64)>,
+    known_snapshots: BTreeSet<Sha256Digest>,
+}
+
+impl std::fmt::Debug for SqliteCommitSequencerV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SqliteCommitSequencerV1")
+            .field("campaign_id", &self.campaign_id)
+            .field("next_sequence", &self.state.next_sequence)
+            .field("local_only", &self.store.is_local_only())
+            .finish_non_exhaustive()
+    }
+}
+
+impl SqliteCommitSequencerV1 {
+    /// Opens or restores the stream through a generation-fenced writer store.
+    /// The store must already hold a live writer lease and an existing campaign.
+    /// Reopen recomputes every prepared-result and state-transition hash and
+    /// compares every receipt field; corrupt or mismatched bindings fail closed.
+    pub fn new(
+        mut store: hepta_campaign_writer::CampaignWriterStoreV1,
+        writer: hepta_campaign_writer::WriterLeaseV1,
+        campaign_id: String,
+        initial_state_hash: Sha256Digest,
+        authorized_verifier_hash: Sha256Digest,
+        now_unix_ms: u64,
+    ) -> Result<Self, ControlPlaneError> {
+        let log = store
+            .open_control_log(
+                &writer,
+                &campaign_id,
+                &initial_state_hash,
+                &authorized_verifier_hash,
+                now_unix_ms,
+            )
+            .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+        let mut state = FixtureCommitSequencerV1::new(initial_state_hash, authorized_verifier_hash);
+        let mut known_snapshots = BTreeSet::new();
+        for entry in log.entries {
+            let result: hepta_module_platform::PreparedResultV1 =
+                serde_json::from_str(&entry.result_json)
+                    .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+            let expected: CommitReceiptV1 = serde_json::from_str(&entry.receipt_json)
+                .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+            let result_hash = result
+                .result_hash()
+                .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+            if entry.sequence != state.next_sequence
+                || entry.result_hash != result_hash
+                || entry.attempt_id != result.attempt_id
+                || entry.plan_hash != result.plan_hash
+                || entry.actual_cost_microusd != result.actual_cost_microusd
+                || result.status != hepta_module_platform::PreparedResultStatusV1::Prepared
+                || result.external_action_may_have_started
+            {
+                return Err(ControlPlaneError::PersistenceInvalid);
+            }
+            let verification_receipt_hash =
+                verification_receipt_hash_v1(&result_hash, &state.authorized_verifier_hash)?;
+            known_snapshots.insert(result.snapshot_hash.clone());
+            let verified = VerifiedPreparedResultV1 {
+                result,
+                result_hash,
+                verifier_hash: state.authorized_verifier_hash.clone(),
+                verification_receipt_hash,
+                artifact_contents_verified: false,
+            };
+            let actual = state.apply_commit(&CommitRequestV1::new(entry.plan_hash, verified)?)?;
+            if actual != expected {
+                return Err(ControlPlaneError::PersistenceInvalid);
+            }
+        }
+        if state.next_sequence != log.next_sequence {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        Ok(Self {
+            store,
+            writer,
+            campaign_id,
+            state,
+            now_unix_ms,
+            run_snapshot: None,
+            known_snapshots,
+        })
+    }
+
+    /// Advances the caller-supplied admission clock. Every SQL transaction checks
+    /// the persisted lease expiry against this clock before accepting writes.
+    pub fn advance_clock(&mut self, now_unix_ms: u64) -> Result<(), ControlPlaneError> {
+        if now_unix_ms < self.now_unix_ms {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        self.now_unix_ms = now_unix_ms;
+        if now_unix_ms >= self.writer.expires_at_unix_ms {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        Ok(())
+    }
+
+    /// Exact currently committed state hash.
+    #[must_use]
+    pub fn current_state_hash(&self) -> &Sha256Digest {
+        self.state.current_state_hash()
+    }
+
+    /// Count of durable results, including restored results.
+    #[must_use]
+    pub fn receipt_count(&self) -> usize {
+        self.state.receipt_count()
+    }
+
+    /// Read/backup access to the exclusively owned campaign database.
+    #[must_use]
+    pub fn store(&self) -> &hepta_campaign_writer::CampaignWriterStoreV1 {
+        &self.store
+    }
+
+    /// Returns the writer store after dropping the composition root.
+    #[must_use]
+    pub fn into_store(self) -> hepta_campaign_writer::CampaignWriterStoreV1 {
+        self.store
+    }
+}
+
+impl sealed::Sealed for SqliteCommitSequencerV1 {}
+
+impl CommitSequencerV1 for SqliteCommitSequencerV1 {
+    fn begin_run(
+        &mut self,
+        snapshot: &crate::ControlPlaneSnapshotV1,
+        now_unix_ms: u64,
+    ) -> Result<(), ControlPlaneError> {
+        self.run_snapshot = None;
+        if snapshot.campaign_id != self.campaign_id {
+            return Err(ControlPlaneError::SnapshotInvalid);
+        }
+        self.advance_clock(now_unix_ms)?;
+        let snapshot_hash = snapshot.snapshot_hash()?;
+        let campaign = self
+            .store
+            .load_campaign(&self.campaign_id)
+            .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+        if !self.known_snapshots.contains(&snapshot_hash)
+            && (&snapshot.state_hash != self.state.current_state_hash()
+                || snapshot.campaign_revision
+                    != campaign
+                        .revision
+                        .checked_add(1)
+                        .ok_or(ControlPlaneError::PersistenceInvalid)?)
+        {
+            return Err(ControlPlaneError::SnapshotInvalid);
+        }
+        self.run_snapshot = Some((
+            snapshot_hash,
+            snapshot.state_hash.clone(),
+            snapshot.campaign_revision,
+        ));
+        Ok(())
+    }
+    fn authorized_verifier_hash(&self) -> &Sha256Digest {
+        self.state.authorized_verifier_hash()
+    }
+    fn next_sequence(&self) -> u64 {
+        self.state.next_sequence()
+    }
+
+    fn preview_batch(
+        &self,
+        requests: &[CommitRequestV1],
+    ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError> {
+        if !self.store.is_local_only()
+            && requests
+                .iter()
+                .any(|request| !request.verified.artifact_contents_verified)
+        {
+            return Err(ControlPlaneError::VerificationInvalid);
+        }
+        let receipts = self.state.preview_batch(requests)?;
+        if let Some((snapshot_hash, state_hash, revision)) = &self.run_snapshot {
+            let campaign = self
+                .store
+                .load_campaign(&self.campaign_id)
+                .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+            if requests
+                .iter()
+                .any(|request| &request.verified.result.snapshot_hash != snapshot_hash)
+                || (receipts.iter().any(|receipt| receipt.newly_committed)
+                    && (state_hash != self.state.current_state_hash()
+                        || *revision
+                            != campaign
+                                .revision
+                                .checked_add(1)
+                                .ok_or(ControlPlaneError::PersistenceInvalid)?))
+            {
+                return Err(ControlPlaneError::SnapshotInvalid);
+            }
+        } else if !self.store.is_local_only() {
+            return Err(ControlPlaneError::SnapshotInvalid);
+        }
+        Ok(receipts)
+    }
+
+    fn commit_batch(
+        &mut self,
+        requests: &[CommitRequestV1],
+    ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError> {
+        self.preview_batch(requests)?;
+        let mut staged = self.state.clone();
+        let receipts = staged.commit_batch(requests)?;
+        let entries = requests
+            .iter()
+            .zip(&receipts)
+            .map(|(request, receipt)| {
+                // Durable receipt bytes always describe the original transition;
+                // newly_committed=false is a response-only idempotency annotation.
+                let mut original = receipt.clone();
+                original.newly_committed = true;
+                let result = request.verified.result();
+                Ok(hepta_campaign_writer::DurableControlEntryV1 {
+                    sequence: receipt.sequence,
+                    result_hash: receipt.result_hash.clone(),
+                    attempt_id: result.attempt_id.clone(),
+                    plan_hash: request.plan_hash.clone(),
+                    result_json: serde_json::to_string(result)
+                        .map_err(|_| ControlPlaneError::EncodingInvalid)?,
+                    receipt_json: serde_json::to_string(&original)
+                        .map_err(|_| ControlPlaneError::EncodingInvalid)?,
+                    actual_cost_microusd: result.actual_cost_microusd,
+                })
+            })
+            .collect::<Result<Vec<_>, ControlPlaneError>>()?;
+        self.store
+            .append_control_batch(
+                &self.writer,
+                &self.campaign_id,
+                self.state.next_sequence,
+                &entries,
+                self.now_unix_ms,
+            )
+            .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+        self.state = staged;
+        for request in requests {
+            self.known_snapshots
+                .insert(request.verified.result.snapshot_hash.clone());
+        }
+        Ok(receipts)
+    }
 }

@@ -31,7 +31,7 @@ pub trait ModuleExecutorV1 {
     ) -> Result<Vec<PreparedResultV1>, ControlPlaneError>;
 }
 
-mod sealed {
+pub(crate) mod sealed {
     pub trait Sealed {}
 }
 
@@ -46,6 +46,9 @@ pub struct VerifiedPreparedResultV1 {
     pub(crate) result_hash: Sha256Digest,
     pub(crate) verifier_hash: Sha256Digest,
     pub(crate) verification_receipt_hash: Sha256Digest,
+    /// In-process provenance, never accepted from a serialized wire claim.
+    #[serde(skip)]
+    pub(crate) artifact_contents_verified: bool,
 }
 
 impl VerifiedPreparedResultV1 {
@@ -132,6 +135,7 @@ impl PreparedResultVerifierV1 for DeterministicPreparedResultVerifierV1 {
             result_hash,
             verifier_hash: self.verifier_hash.clone(),
             verification_receipt_hash,
+            artifact_contents_verified: false,
         })
     }
 

@@ -275,3 +275,53 @@ fn setid_executable_is_rejected_before_spawn() {
         Err(BoundedProcessError::ExecutablePermissionsInvalid(0o4700)),
     );
 }
+
+#[test]
+fn cooperative_cancellation_terminates_an_actual_process_group() {
+    use std::{
+        os::unix::process::CommandExt,
+        process::{Command, Stdio},
+        sync::atomic::AtomicBool,
+        thread,
+        time::{Duration, Instant},
+    };
+    let tree = TempTree::new();
+    let script = tree.script("cancel.sh", "#!/bin/sh\nsleep 10\n");
+    let request = request(&tree, script);
+    let mut command = Command::new(&request.executable);
+    command
+        .current_dir(&request.working_directory)
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    for (key, value) in request.environment.iter() {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().expect("spawn cancellable process");
+    let pid = child.id();
+    let cancelled = AtomicBool::new(false);
+    let result = thread::scope(|scope| {
+        scope.spawn(|| {
+            thread::sleep(Duration::from_millis(30));
+            cancelled.store(true, Ordering::Release);
+        });
+        super::unix::supervise_spawned_group_with_cancellation(
+            &mut child,
+            pid,
+            &request,
+            pressure_limits(),
+            &super::unix::resolve_kill_utility().expect("kill utility"),
+            Instant::now(),
+            &cancelled,
+        )
+    })
+    .expect("bounded cancelled supervision");
+    assert_eq!(
+        result.termination_reason,
+        ProcessTerminationReason::Cancelled
+    );
+    assert!(result.process_group_cleanup_verified);
+    assert!(result.signal.is_some());
+}

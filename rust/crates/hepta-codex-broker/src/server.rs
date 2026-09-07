@@ -104,7 +104,23 @@ pub struct BrokerServerRunSummaryV1 {
     pub telemetry: BrokerTelemetrySnapshotV1,
 }
 
-/// Fake-only role service. It admits and durably reserves requests but does not launch Codex.
+/// Optional trusted composition of request preparation and qualified execution.
+/// Implementations must call the production dispatch API and preserve deployment authority.
+/// Startup recovery must clean exact persisted cgroups before generic process reconciliation.
+pub trait BrokerOperationDispatcherV1: Send + Sync {
+    fn recover_before_ready(
+        &self,
+        journal: &mut BrokerJournalStoreV1,
+    ) -> Result<(), crate::CodexDispatchError>;
+    fn dispatch(
+        &self,
+        journal: &mut BrokerJournalStoreV1,
+        operation_id: &str,
+        cancelled: &AtomicBool,
+    ) -> Result<(), crate::CodexDispatchError>;
+}
+
+/// Role-specific service; reservation-only by default, with explicit qualified dispatch opt-in.
 pub struct BrokerServerV1 {
     listener: BrokerListenerV1,
     peer_policy: PeerPolicyV1,
@@ -117,6 +133,7 @@ pub struct BrokerServerV1 {
     clock: Arc<dyn BrokerClockV1>,
     shutdown: Arc<AtomicBool>,
     telemetry: Arc<BrokerTelemetryV1>,
+    dispatcher: Option<Arc<dyn BrokerOperationDispatcherV1>>,
 }
 
 impl BrokerServerV1 {
@@ -149,6 +166,7 @@ impl BrokerServerV1 {
             clock,
             shutdown,
             telemetry: Arc::new(BrokerTelemetryV1::default()),
+            dispatcher: None,
         })
     }
 
@@ -156,6 +174,13 @@ impl BrokerServerV1 {
     #[must_use]
     pub fn with_telemetry(mut self, telemetry: Arc<BrokerTelemetryV1>) -> Self {
         self.telemetry = telemetry;
+        self
+    }
+
+    /// Installs explicit production composition. Absence retains reservation-only behavior.
+    #[must_use]
+    pub fn with_dispatcher(mut self, dispatcher: Arc<dyn BrokerOperationDispatcherV1>) -> Self {
+        self.dispatcher = Some(dispatcher);
         self
     }
 
@@ -167,6 +192,9 @@ impl BrokerServerV1 {
         let mut journal_probe =
             BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)?;
         journal_probe.validate_integrity()?;
+        if let Some(dispatcher) = &self.dispatcher {
+            dispatcher.recover_before_ready(&mut journal_probe)?;
+        }
         let reconciled_processes = reconcile_before_listener_ready(
             &mut journal_probe,
             now,
@@ -200,6 +228,7 @@ impl BrokerServerV1 {
                 qualification.trust_bundle_hash.clone(),
                 self.server_policy.write_timeout_ms,
                 self.telemetry.clone(),
+                self.dispatcher.clone(),
             ));
         }
 
@@ -249,7 +278,8 @@ impl BrokerServerV1 {
             }
         }
 
-        self.shutdown.store(true, Ordering::Release);
+        // Reaching the acceptance cap drains already admitted work. Only an explicit
+        // shutdown request cancels a released operation; closing the queue wakes workers.
         drop(sender);
         for handle in worker_handles {
             match handle.join() {
@@ -313,6 +343,7 @@ fn spawn_worker(
     startup_bundle_hash: hepta_codex_protocol::Sha256Digest,
     write_timeout_ms: u64,
     telemetry: Arc<BrokerTelemetryV1>,
+    dispatcher: Option<Arc<dyn BrokerOperationDispatcherV1>>,
 ) -> thread::JoinHandle<Result<(), BrokerServerError>> {
     thread::spawn(move || {
         loop {
@@ -363,10 +394,36 @@ fn spawn_worker(
                 FaultInjectionPointV1::None,
             ) {
                 Ok(reservation) => {
-                    let (kind, journal_state) = match reservation.outcome {
+                    let (kind, mut journal_state) = match reservation.outcome {
                         ReservationOutcomeV1::Reserved(journal) => (true, journal.current_state),
                         ReservationOutcomeV1::Existing(journal) => (false, journal.current_state),
                     };
+                    if kind && let Some(dispatcher) = &dispatcher {
+                        if dispatcher
+                            .dispatch(&mut journal, &reservation.operation_id, &shutdown)
+                            .is_err()
+                        {
+                            // The durable state carries failure/ambiguity; never resubmit this operation.
+                            // An error before a state transition is an internal dispatch rejection.
+                            let state = journal
+                                .load_journal(&reservation.operation_id)?
+                                .current_state;
+                            if state == hepta_codex_journal::OperationState::Reserved {
+                                journal.append_transition(
+                                    &reservation.operation_id,
+                                    state,
+                                    hepta_codex_journal::OperationState::RejectedPreflight,
+                                    clock.now_unix_ms()?,
+                                    None,
+                                    Some("codex_dispatch_rejected".to_owned()),
+                                    FaultInjectionPointV1::None,
+                                )?;
+                            }
+                        }
+                        journal_state = journal
+                            .load_journal(&reservation.operation_id)?
+                            .current_state;
+                    }
                     let response = if kind {
                         telemetry.reserved();
                         BrokerResponseV1::reserved(
@@ -459,6 +516,8 @@ pub enum BrokerServerError {
     WorkerPanicked,
     #[error("socket configuration failed: {0:?}")]
     SocketConfiguration(std::io::ErrorKind),
+    #[error(transparent)]
+    Dispatch(#[from] crate::CodexDispatchError),
     #[error(transparent)]
     Listener(#[from] BrokerListenerError),
     #[error(transparent)]

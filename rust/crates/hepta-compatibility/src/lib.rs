@@ -1,8 +1,9 @@
-//! Historical canonical JSON compatibility kernel.
+//! Production Node compatibility exports and retained Rust draft format.
 //!
-//! V1 intentionally models the frozen Node-era stable JSON contract. It is a
-//! read/verification boundary, not a general-purpose serializer for new Rust
-//! contracts.
+//! Use `production_*` or `parse_and_*_production_*` for actual historical Node
+//! records. The old `legacy_*` exports encoded a Rust migration draft; they are
+//! retained to avoid changing any draft receipts, with explicit `rust_draft_*`
+//! aliases. Their length-prefixed digest was never Node `hashRecord`.
 
 #![forbid(unsafe_code)]
 
@@ -13,10 +14,17 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub use hepta_legacy_compatibility::{
+    CompatibilityError as ProductionCompatibilityError, LegacyRecordHash,
+    PRODUCTION_NODE_PROFILE_V1, parse_and_digest_production_v1, parse_and_encode_production_v1,
+    parse_and_hash_production_record_v1, production_digest_v1, production_hash_record_v1,
+    production_stable_json_v1, qualify_production_node_profile_v1,
+};
+
 const MAXIMUM_NESTING_DEPTH: usize = 256;
 const MAXIMUM_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
-/// Encodes one JSON value using the frozen `LegacyStableJsonV1` ordering rules.
+/// Encodes the retained Rust draft, not historical production Node JSON.
 pub fn legacy_stable_json_v1(value: &Value) -> Result<Vec<u8>, CompatibilityError> {
     let mut output = Vec::new();
     encode(value, 0, &mut output)?;
@@ -26,7 +34,7 @@ pub fn legacy_stable_json_v1(value: &Value) -> Result<Vec<u8>, CompatibilityErro
     Ok(output)
 }
 
-/// Parses UTF-8 JSON and returns its exact frozen V1 canonical bytes.
+/// Parses UTF-8 JSON and returns retained Rust draft bytes.
 pub fn parse_and_encode_legacy_v1(input: &[u8]) -> Result<Vec<u8>, CompatibilityError> {
     if input.is_empty() || input.len() > MAXIMUM_OUTPUT_BYTES {
         return Err(CompatibilityError::InputLimitExceeded);
@@ -36,7 +44,7 @@ pub fn parse_and_encode_legacy_v1(input: &[u8]) -> Result<Vec<u8>, Compatibility
     legacy_stable_json_v1(&value)
 }
 
-/// Domain-separated hash of canonical V1 bytes.
+/// Domain-separated Rust draft hash; not Node `digest` or `hashRecord`.
 pub fn legacy_stable_json_hash_v1(value: &Value) -> Result<Sha256Digest, CompatibilityError> {
     let canonical = legacy_stable_json_v1(value)?;
     let mut hasher = Sha256::new();
@@ -45,6 +53,13 @@ pub fn legacy_stable_json_hash_v1(value: &Value) -> Result<Sha256Digest, Compati
     Sha256Digest::from_str(&format!("sha256:{}", hex::encode(hasher.finalize())))
         .map_err(|_| CompatibilityError::DigestConstruction)
 }
+
+/// Explicit name for the retained pre-production domain-separated digest.
+pub use legacy_stable_json_hash_v1 as rust_draft_stable_json_hash_v1;
+/// Explicit name for the retained pre-production draft serializer.
+pub use legacy_stable_json_v1 as rust_draft_stable_json_v1;
+/// Explicit name for the retained pre-production draft parser.
+pub use parse_and_encode_legacy_v1 as parse_and_encode_rust_draft_v1;
 
 fn encode(value: &Value, depth: usize, output: &mut Vec<u8>) -> Result<(), CompatibilityError> {
     if depth > MAXIMUM_NESTING_DEPTH {

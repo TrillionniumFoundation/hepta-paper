@@ -17,6 +17,9 @@ use thiserror::Error;
 
 const MAXIMUM_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 
+pub mod node_schema;
+pub use node_schema::{DatabaseFormatV1, DatabaseSchemaV1, validate_database_schema_v1};
+
 /// Exact immutable database identity observed before and after inspection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,8 +47,10 @@ pub struct ReadOnlyDatabaseIdentityV1 {
 /// Deterministic normalized snapshot of one supported database.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOnlyStoreSnapshotV1 {
-    /// SQLite user version in the supported 1..=25 range.
+    /// Effective migration version, independently of SQLite's user_version header.
     pub schema_version: u32,
+    /// Recognized database format and original header metadata.
+    pub schema: DatabaseSchemaV1,
     /// Number of user tables.
     pub table_count: u64,
     /// Number of rows included in the normalized snapshot.
@@ -71,12 +76,8 @@ pub fn inspect_read_only_store(path: &Path) -> Result<ReadOnlyStoreSnapshotV1, R
          PRAGMA trusted_schema = OFF;
          PRAGMA temp_store = MEMORY;",
     )?;
-    let version_i64: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    let schema_version =
-        u32::try_from(version_i64).map_err(|_| ReadOnlyStoreError::SchemaVersion)?;
-    if !(1..=25).contains(&schema_version) {
-        return Err(ReadOnlyStoreError::SchemaVersion);
-    }
+    let schema = validate_database_schema_v1(&connection)?;
+    let schema_version = schema.schema_version;
     let (table_count, row_count, logical_hash) = logical_snapshot(&connection, schema_version)?;
     drop(connection);
     reject_sidecars(path)?;
@@ -86,6 +87,7 @@ pub fn inspect_read_only_store(path: &Path) -> Result<ReadOnlyStoreSnapshotV1, R
     }
     Ok(ReadOnlyStoreSnapshotV1 {
         schema_version,
+        schema,
         table_count,
         row_count,
         logical_hash,
@@ -102,7 +104,7 @@ fn logical_snapshot(
     update_field(&mut hasher, &schema_version.to_be_bytes());
     let mut statement = connection.prepare(
         "SELECT name, type, COALESCE(sql, '') FROM sqlite_schema
-         WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+         WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name",
     )?;
     let objects = statement
         .query_map([], |row| {
@@ -136,7 +138,13 @@ fn logical_snapshot(
         }
         let order = columns
             .iter()
-            .map(|column| quote_identifier(column))
+            // Integer 1 and real 1.0 compare equal in SQLite despite distinct typed
+            // hash encodings. Add a storage-class tie-breaker, and avoid collation
+            // rules making distinct TEXT values depend on physical insertion order.
+            .map(|column| {
+                let quoted = quote_identifier(column);
+                format!("{quoted} COLLATE BINARY, typeof({quoted}) COLLATE BINARY")
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let query = format!("SELECT * FROM {escaped} ORDER BY {order}");
@@ -221,8 +229,10 @@ fn inspect_identity(path: &Path) -> Result<ReadOnlyDatabaseIdentityV1, ReadOnlyS
 fn reject_sidecars(path: &Path) -> Result<(), ReadOnlyStoreError> {
     for suffix in ["-wal", "-shm", "-journal"] {
         let candidate = PathBuf::from(format!("{}{suffix}", path.display()));
-        if fs::symlink_metadata(candidate).is_ok() {
-            return Err(ReadOnlyStoreError::SidecarPresent);
+        match fs::symlink_metadata(candidate) {
+            Ok(_) => return Err(ReadOnlyStoreError::SidecarPresent),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(ReadOnlyStoreError::Io(error)),
         }
     }
     Ok(())
@@ -277,6 +287,15 @@ pub enum ReadOnlyStoreError {
     /// Schema version is outside 1 through 25.
     #[error("unsupported SQLite schema version")]
     SchemaVersion,
+    /// Migration descriptors are incomplete, changed or inconsistent with the metadata marker.
+    #[error("Node migration history is inconsistent")]
+    MigrationHistoryMismatch,
+    /// The actual schema differs from the schema produced by the recorded migrations.
+    #[error("database schema drift detected")]
+    SchemaDrift,
+    /// Physical or referential integrity failed.
+    #[error("database integrity check failed")]
+    IntegrityCheck,
     /// Database changed during inspection.
     #[error("database changed during read-only inspection")]
     DatabaseChanged,
@@ -319,13 +338,39 @@ mod tests {
         let path = root.join("store.sqlite");
         let connection = Connection::open(&path).expect("SQLite fixture");
         connection
-            .execute_batch(&format!(
-                "PRAGMA journal_mode = DELETE;
-                 PRAGMA user_version = {version};
-                 CREATE TABLE campaigns(id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
-                 INSERT INTO campaigns VALUES ('campaign-1', 2);"
-            ))
-            .expect("fixture schema");
+            .execute_batch("PRAGMA journal_mode=DELETE")
+            .expect("delete journal");
+        for migration in node_schema::NODE_MIGRATIONS_V1
+            .iter()
+            .take(version.min(25) as usize)
+        {
+            connection.execute_batch("BEGIN IMMEDIATE").expect("begin");
+            connection
+                .execute_batch(migration.sql)
+                .expect("actual Node migration");
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations(version,name,migration_sha256) VALUES(?1,?2,?3)",
+                    rusqlite::params![
+                        migration.version,
+                        migration.name,
+                        format!(
+                            "sha256:{}",
+                            hex::encode(Sha256::digest(migration.sql.as_bytes()))
+                        )
+                    ],
+                )
+                .expect("migration history");
+            connection.execute_batch("COMMIT").expect("commit");
+        }
+        connection
+            .execute_batch("INSERT INTO papers(slug,canonical_dir) VALUES('paper-a','papers/a')")
+            .expect("real data");
+        if version > 25 {
+            connection
+                .pragma_update(None, "user_version", version)
+                .expect("unknown schema");
+        }
         drop(connection);
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("db mode");
         (root, path)
@@ -338,8 +383,8 @@ mod tests {
             let before = fs::read(&path).expect("before bytes");
             let snapshot = inspect_read_only_store(&path).expect("snapshot");
             assert_eq!(snapshot.schema_version, version);
-            assert_eq!(snapshot.table_count, 1);
-            assert_eq!(snapshot.row_count, 1);
+            assert!(snapshot.table_count >= 11);
+            assert!(snapshot.row_count > u64::from(version));
             assert_eq!(before, fs::read(&path).expect("after bytes"));
             fs::remove_dir_all(root).expect("cleanup");
         }

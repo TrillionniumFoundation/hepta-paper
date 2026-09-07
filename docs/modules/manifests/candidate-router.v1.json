@@ -5,7 +5,7 @@
   "registryRef": "docs/system/truth/modules.v1.json#/modules/module.candidate-router",
   "specPath": "docs/modules/specs/candidate-router.md",
   "runbookPath": "docs/modules/specs/candidate-router.md#operational-runbook",
-  "implementationPaths": ["docs/modules/MODULE_PROTOCOL.md","docs/control-plane/COMPOSITION_ROOT.md"],
+  "implementationPaths": ["docs/modules/MODULE_PROTOCOL.md","docs/control-plane/COMPOSITION_ROOT.md","paper-application/orchestration/candidate-router.mjs"],
   "capabilityIds": ["CAP-MOD-CANDIDATES"],
   "authorityClass": "pure",
   "ownerTeams": ["TEAM-KERNEL","TEAM-SCHEDULER","TEAM-EVIDENCE"],

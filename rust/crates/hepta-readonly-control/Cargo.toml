@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hepta-campaign-writer = { version = "=0.1.0", path = "../hepta-campaign-writer" }
 hex.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

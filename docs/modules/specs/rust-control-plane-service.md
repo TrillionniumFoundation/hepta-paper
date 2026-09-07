@@ -64,6 +64,8 @@ Hard registered module dependencies:
 Current implementation and contract roots:
 
 - `docs/control-plane/COMPOSITION_ROOT.md`
+- `rust/crates/hepta-paper-service`
+- `docs/rust/RUNTIME_MIGRATION_IMPLEMENTATION.md`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -109,9 +111,15 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 ## Verification and evidence
 
-Capability bindings: `CAP-CTL-SNAPSHOT`, `CAP-CTL-POLICY`, `CAP-EXE-DISPATCH`. Related work identifiers: `CTL-001`, `CTL-008`. Implementation/contract roots: `docs/control-plane/COMPOSITION_ROOT.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-CTL-SNAPSHOT`, `CAP-CTL-POLICY`, `CAP-EXE-DISPATCH`. Related work identifiers: `CTL-001`, `CTL-008`. Implementation/contract roots: `docs/control-plane/COMPOSITION_ROOT.md`, `rust/crates/hepta-paper-service`, `docs/rust/RUNTIME_MIGRATION_IMPLEMENTATION.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
+
+### Runtime migration implementation details
+
+The executable source is now in `rust/crates/hepta-paper-service`. See [runtime migration implementation and commands](../../rust/RUNTIME_MIGRATION_IMPLEMENTATION.md), the [control-plane contract](../../../rust/crates/hepta-control-plane/README.md), and the [durable campaign writer contract](../../../rust/crates/hepta-campaign-writer/README.md) for concrete request fields, persisted state, exact replay, shadow inspection, local execution and verification commands.
+
+The static module state intentionally remains `design_ready` and activation remains `disabled`: executable local/shadow paths do not satisfy production composition. `CTL-001` remains blocked on real qualified runtime composition, independent host/evidence authority, complete Node business coverage and rollout acceptance. No local command generates production qualification or activation.
 
 ## Rollout and rollback
 

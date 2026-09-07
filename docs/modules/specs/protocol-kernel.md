@@ -63,6 +63,7 @@ Current implementation and contract roots:
 
 - `workflow-kernel`
 - `paper-domain/contracts`
+- `rust/crates/hepta-codex-protocol`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -108,9 +109,13 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
-Capability bindings: `CAP-PROTOCOL-CANONICAL`. Related work identifiers: `MOD-006`. Implementation/contract roots: `workflow-kernel`, `paper-domain/contracts`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-PROTOCOL-CANONICAL`. Related work identifiers: `MOD-006`. Implementation/contract roots: `workflow-kernel`, `paper-domain/contracts`, `rust/crates/hepta-codex-protocol`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
+
+### Runtime migration implementation details
+
+The Rust protocol contract lives in `rust/crates/hepta-codex-protocol`, alongside the production Node hashing boundary in `workflow-kernel/record-hash.mjs`. See the [legacy serialization compatibility implementation](../../../rust/crates/hepta-legacy-compatibility/README.md) for numeric-property ordering, IEEE-754 number semantics, UTF-16 key ordering, negative cases and cross-runtime oracle tests. Protocol and legacy byte domains remain explicit; a protocol digest is not automatically a legacy record hash.
 
 ## Rollout and rollback
 

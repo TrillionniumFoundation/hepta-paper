@@ -111,6 +111,10 @@ Capability bindings: `CAP-STATE-READ`. Related work identifiers: `CTL-002`. Impl
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+### Runtime migration implementation details
+
+See the [database detection and read-only compatibility contract](../../../rust/crates/hepta-readonly-store/README.md). It specifies recognition of real Node `schema_migrations` and metadata with `PRAGMA user_version=0`, structural and migration-history checks, the separate Rust HPCW discriminator, snapshot decoding and adversarial tests. Read-only inspection preserves the source database; it neither upgrades native schema nor grants a writer lease.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

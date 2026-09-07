@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     str::FromStr,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -22,8 +22,8 @@ use super::{
         BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1, ProcessLimitsV1,
     },
     unix::{
-        cleanup_after_error, resolve_kill_utility, send_group_signal, supervise_spawned_group,
-        validate_request,
+        cleanup_after_error, resolve_kill_utility, send_group_signal,
+        supervise_spawned_group_with_cancellation, validate_request,
     },
 };
 
@@ -275,6 +275,19 @@ impl BlockedPreExecGateV1 {
         &self.identity
     }
 
+    /// Tightens execution time after preflight/gate setup consumed part of an absolute deadline.
+    /// A caller cannot extend the originally validated process timeout.
+    pub fn restrict_execution_timeout(
+        &mut self,
+        remaining_ms: u64,
+    ) -> Result<(), DurableGateError> {
+        if remaining_ms == 0 {
+            return Err(DurableGateError::InvalidPolicyLimits);
+        }
+        self.limits.timeout_ms = self.limits.timeout_ms.min(remaining_ms);
+        Ok(())
+    }
+
     /// Releases the OS stop only after the caller has durably linked and authorized `identity()`.
     pub fn release(mut self) -> Result<ReleasedPreExecGateV1, DurableGateError> {
         send_group_signal(&self.kill_utility, self.process_id, "CONT")?;
@@ -332,7 +345,15 @@ impl ReleasedPreExecGateV1 {
 
     /// Runs bounded supervision after the durable release record has committed.
     pub fn supervise(
+        self,
+    ) -> Result<(PreExecGateIdentityV1, BoundedProcessResultV1), DurableGateError> {
+        self.supervise_with_cancellation(&AtomicBool::new(false))
+    }
+
+    /// Supervises the released target, honoring cancellation with the same bounded cleanup.
+    pub fn supervise_with_cancellation(
         mut self,
+        cancelled: &AtomicBool,
     ) -> Result<(PreExecGateIdentityV1, BoundedProcessResultV1), DurableGateError> {
         let mut child = self
             .child
@@ -340,13 +361,14 @@ impl ReleasedPreExecGateV1 {
             .ok_or(DurableGateError::GateChildMissing)?;
         let mut supervisor_request = self.request.clone();
         supervisor_request.stdin = None;
-        let result = supervise_spawned_group(
+        let result = supervise_spawned_group_with_cancellation(
             &mut child,
             self.process_id,
             &supervisor_request,
             self.limits,
             &self.kill_utility,
             self.released_at,
+            cancelled,
         );
         if result.is_err() {
             cleanup_after_error(&mut child, &self.kill_utility, self.process_id, self.limits);
@@ -410,6 +432,8 @@ pub fn spawn_blocked_preexec_gate(
         .arg(&envelope_path)
         .arg("--expected-hash")
         .arg(envelope_identity.content_hash.as_str())
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string())
         .current_dir(&policy.state_directory)
         .env_clear()
         .stdin(Stdio::null())

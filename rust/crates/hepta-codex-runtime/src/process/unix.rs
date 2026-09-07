@@ -3,7 +3,10 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -95,6 +98,27 @@ pub(super) fn supervise_spawned_group(
     kill_utility: &Path,
     started: Instant,
 ) -> Result<BoundedProcessResultV1, BoundedProcessError> {
+    supervise_spawned_group_with_cancellation(
+        child,
+        process_id,
+        request,
+        limits,
+        kill_utility,
+        started,
+        &AtomicBool::new(false),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn supervise_spawned_group_with_cancellation(
+    child: &mut Child,
+    process_id: u32,
+    request: &BoundedProcessRequestV1,
+    limits: ProcessLimitsV1,
+    kill_utility: &Path,
+    started: Instant,
+    cancelled: &AtomicBool,
+) -> Result<BoundedProcessResultV1, BoundedProcessError> {
     let stdout = child
         .stdout
         .take()
@@ -131,7 +155,9 @@ pub(super) fn supervise_spawned_group(
 
     loop {
         if reason.is_none() {
-            if let Ok(stream) = limit_rx.try_recv() {
+            if cancelled.load(Ordering::Acquire) {
+                reason = Some(ProcessTerminationReason::Cancelled);
+            } else if let Ok(stream) = limit_rx.try_recv() {
                 reason = Some(match stream {
                     StreamKind::Stdout => ProcessTerminationReason::StdoutLimitExceeded,
                     StreamKind::Stderr => ProcessTerminationReason::StderrLimitExceeded,

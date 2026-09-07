@@ -18,7 +18,8 @@ pub struct ControlPlaneSnapshotV1 {
     pub version: u16,
     /// Stable campaign ID.
     pub campaign_id: String,
-    /// Monotonic campaign revision.
+    /// Monotonic planning revision. The SQLite writer binds a fresh snapshot to
+    /// `persisted_campaign.revision + 1`; the initial writer revision is zero.
     pub campaign_revision: u64,
     /// Hash of the immutable campaign/read-model state.
     pub state_hash: Sha256Digest,

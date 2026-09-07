@@ -32,6 +32,18 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Install qualified production Node oracle runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Verify production Node oracle runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.1"
+          node --input-type=module -e 'console.log(JSON.stringify({ node: process.version, versions: process.versions, collator: new Intl.Collator().resolvedOptions() }))'
+
       - name: Install qualified Rust toolchain
         shell: bash
         run: |

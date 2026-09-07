@@ -15,16 +15,18 @@ Plan v4 separates two facts that earlier documents conflated:
 2. `source_qualified` is an **effective, exact-head evidence result** derived by
    CI after all required jobs complete successfully on that unchanged head.
 
-Source files never self-assert `source_qualified`. The current V2 pipeline binds
-workflow ID, path, Git blob, SHA-256, pull-request event, selected run attempt,
-job, and non-empty successful steps. It is **not currently sufficient for an
-accepted latest-RC qualification**: independent review found that exact base
-repository/commit/tree and tested merge commit/tree are not completely part of
-the subject, and a later rerun of an older eligible run can be ignored after a
-newer run ID exists. `QUAL-001` through `QUAL-004` and Qualification Subject V3
-must close these gaps before a retained artifact is accepted. Zero-job, skipped,
-dirty, stale, base-moved, merge-moved, or run-history-mutated evidence is intended
-to fail closed.
+Source files never self-assert `source_qualified`. The current source contains a
+Qualification Subject V3 collector and integrity validator, a V3-bound effective
+artifact wrapper (artifact version 2), and live currentness verification. V2
+required-check evidence and the V1 effective artifact remain intermediate inputs;
+they are not a substitute for V3 base/head/tested-merge and complete eligible
+run-attempt-history binding. Zero-job, skipped, dirty, stale, base-moved,
+merge-moved and run-history-mutated evidence must fail closed.
+
+`QUAL-001` through `QUAL-005` remain open acceptance records in static machine
+truth. Their historical defect wording does not mean the V3 source is still
+missing. No current exact-head qualification or independent acceptance is
+asserted by this document.
 
 ## Bound baseline and current candidate
 
@@ -37,20 +39,23 @@ commit      80223a2531de32ceeeab7d5d4e6c9b36a605716f
 tree        cee44bee7bf42f5a7287de14700b83985f5e3557
 ```
 
-The single repository-local convergence branch is:
+The prior release-candidate branch `codex/rust-plan-v4-rc1-20260831` and its
+`codex/rust-plan-v3-final-product-20260830` integration base are historical audit
+lineage. They do not identify the current implementation candidate:
 
 ```text
-branch            codex/rust-plan-v4-rc1-20260831
-integration base  codex/rust-plan-v3-final-product-20260830
-stage             release-candidate source requalification
-exact head/tree   read live from GitHub; never committed into static truth
+implementation branch  codex/rust-production-migration-20260908
+source baseline        6e56a3508e871018e1b4e0c5a573b50818032e38
+stage                  executable local/shadow runtime migration
+exact head/tree        read live; never substituted by a historical audit digest
 ```
 
-Its lineage contains the descriptor-bound workspace traversal and signed
-campaign-writer cutover hardening. Those changes are not treated as qualified
-until the current branch head receives a producer-authenticated non-empty matrix,
-a freshly generated full-schema-valid artifact, and a successful currentness
-revalidation.
+The current implementation map, reproducible commands and remaining production
+boundaries are in
+[`RUNTIME_MIGRATION_IMPLEMENTATION.md`](RUNTIME_MIGRATION_IMPLEMENTATION.md).
+Each changed candidate still needs a producer-authenticated non-empty matrix,
+retained fully schema-valid artifacts, live V3 revalidation and independent
+review. Local execution does not qualify a branch or authorize a deployment.
 
 ## Static source state
 
@@ -60,45 +65,62 @@ revalidation.
 | Broker protocol/journal | `source_implemented` | eligible for exact-head workflow promotion | broker-local fixture state only |
 | Durable pre-exec gate | `source_implemented` | eligible for exact-head workflow promotion | fake/local executable only |
 | Workspace mutation authority | `source_implemented` | latest descriptor-bound P0 patch awaits exact-head execution | attempt fixtures only |
-| Compatibility kernel | `source_implemented` | public source corpus present; hosted 263-file replay remains external | verification only |
-| Read-only Rust campaign plane | `source_implemented` | eligible for exact-head workflow promotion | read-only inspection only |
+| Compatibility kernel | `source_implemented` | actual production Node serializer and native database differential fixtures present; hosted historical replay remains external | verification only |
+| Read-only Rust campaign plane | `source_implemented` | real Node migration-ledger/schema validation plus separate Rust HPCW detection await exact-head qualification | read-only inspection only |
 | Local author/reviewer slice | `source_implemented` | latest writer/workspace integration awaits exact-head execution | no live provider authority |
-| Rust campaign writer | `source_implemented` | signed cutover P0 patch awaits exact-head execution | no production writer activation |
+| Rust campaign writer | `source_implemented` | atomic campaign/control result and receipt persistence, replay and signed activation source await exact-head qualification | explicitly local marked database writes; no production activation |
 | Scientific evidence orchestration | `source_implemented` | eligible for exact-head workflow promotion | no assurance elevation |
-| Cutover/retirement contracts | `source_implemented` | eligible for exact-head workflow promotion | no cutover authorization |
+| Cutover/retirement contracts | `source_implemented` | durable journal, epoch, process-crash/concurrency and data-preserving local rollback tests await exact-head qualification | local drill only; production requires separate signed authorization |
 | Protected main merge boundary | `blocked_external` | policy is configured; seven denial probes and independent signed decision remain | none |
 | Trusted legacy matrix replay | `blocked_external` | private archive exists; retained hosted replay receipt/index remains absent | verification only |
 | Production target host | `blocked_external` | repository and hosted runners cannot establish target-host facts | none |
 | Real Codex credentials/provider | `blocked_external` | real credential custody and live role canaries remain absent | none |
 | Release/KMS/WORM/submission | `blocked_external` | real external authority receipts remain absent | none |
 
-The static table deliberately uses `source_implemented`. A successful,
+The static table preserves the declared component projection. The separate
+`module.rust-control-plane-service` registry entry remains `design_ready`:
+local/shadow execution exists, while production composition, adapters, complete
+capability parity and host acceptance remain open. A successful,
 artifact-retained exact-head run may derive `source_qualified` for eligible
 repository-local rows without editing this file. External rows never
 auto-promote.
 
-## Plan v4.1 qualification hardening and open G0 defects
+## Qualification Subject V3 source and remaining evidence closure
 
-The current candidate materially closes earlier producer-origin, schema, and
-capability-mapping defects with four machine-readable contracts:
+The current source contains these concrete contracts and executables:
 
-- `qualification/source-check-producers.v1.json` binds every required context to
-  one exact workflow ID, path, candidate-tree Git blob and SHA-256;
-- `qualification/source-capability-evidence.v1.json` gives every promotable
-  product, workstream, backlog, parity and gap projection a non-empty
-  capability-specific context set;
-- `qualification/required-check-evidence-v2.schema.json` validates normalized
-  producer/run/job/step evidence;
-- `qualification/effective-status-v1.schema.json` validates the complete derived
-  artifact before publication.
+- `qualification/source-check-producers.v1.json` binds required contexts to exact
+  workflow identities and candidate-tree file digests.
+- `qualification/source-capability-evidence.v1.json` defines capability-specific
+  context sets; the scoped validator reports 126 bindings across its projections.
+- `qualification/required-check-evidence-v2.schema.json` and
+  `qualification/effective-status-v1.schema.json` validate the intermediate
+  producer/run/job/step and effective results.
+- `../qualification/schemas/qualification-subject-runtime-v3.schema.json`,
+  `tools/qualification_subject_v3.py` and `tools/qualification_subject_integrity.py`
+  implement exact base/head/tested-merge, bounded complete eligible run-attempt
+  histories, history hashes, freshness and artifact/evidence integrity checks.
+- `qualification/effective-status-runtime-v2.schema.json`,
+  `tools/derive_effective_status_v2.py` and
+  `tools/verify_effective_status_v2_current.py` wrap the effective result in the
+  verified V3 subject and compare it with freshly collected live evidence.
+- `tools/run-qualification-subject-v3.sh` runs schema/adversarial tests, raw
+  collection completeness and projection validation, V3 derivation and repeat
+  collection/currentness checks.
 
-`.github/workflows/rust-source-qualification-revalidation.yml` is deliberately
-outside the source matrix to avoid recursion. Its current selected-run snapshot
-logic is retained as partial protection, but it does not yet prove the complete
-V3 subject. Until exact base/merge identity and the complete eligible run-history
-hash are implemented, the latest RC remains `source_implemented` with an active
-request-changes decision. No current artifact grants production or external
-authority.
+`rust-effective-source-qualification.yml`, `rust-qualification-subject-v3.yml`
+and `rust-qualification-subject-v3-revalidation.yml` invoke that V3 entry point.
+The legacy `rust-source-qualification-revalidation.yml` still revalidates the V1
+intermediate artifact under `source-qualification-current`; that older check
+alone cannot establish V3 acceptance. The dedicated V3 currentness context is
+`source-qualification-v3-current`. Existing machine policy is retained rather
+than silently rewritten by this narrative update.
+
+The remaining G0 question is accepted current-source evidence and independent
+review of the complete chain, not the absence of V3 collector or verifier code.
+Historical green artifacts and historical request-changes decisions describe
+their own exact subjects; neither qualifies nor reviews this new candidate.
+Production and external authority remain independently controlled.
 
 ## Repository-local closure represented in this candidate
 
@@ -109,12 +131,23 @@ The source candidate contains contracts and tests for:
 - durable pre-exec gating and conservative ambiguity recovery;
 - descriptor-bound COW workspaces, hard-link/symlink/cross-device rejection,
   two-pass hashing and partial-copy cleanup;
-- immutable schema-1..25 inspection and Node/Rust compatibility vectors;
-- generation-fenced campaign persistence, prepared-result recovery, backup and
-  deterministic 10k simulation;
+- real Node migration-ledger/schema-1..25 inspection, native logical-report
+  parity, separate Rust HPCW detection and production serializer oracle vectors;
+- generation-fenced campaign persistence, atomic prepared-result/receipt/control
+  accounting, exact replay, stale-plan rejection, backup and recovery;
+- runnable local/shadow service composition with explicit native workers and
+  pinned process-language/source provenance;
 - exact-subject Ed25519 writer cutover authorization binding repository, commit,
   tree, binary, configuration, host, service, database preimage and first lease;
-- non-activating external evidence ingestion and cutover fencing.
+- concrete signed broker dispatch, bounded output/schema validation and cgroup
+  containment with deployment authority supplied externally;
+- non-activating external evidence ingestion and durable Node/Rust cutover
+  fencing, actual SQLite restore drills and ownership rollback preserving
+  post-cutover committed data.
+
+The global inventory has 72 work items; the separate scoped Rust backlog has 75.
+These counts come from their respective machine records and must not be merged
+into a synthetic completion percentage.
 
 None of these source contracts grants target-host, credential, key-custody,
 release, portal or submission authority.
@@ -136,9 +169,10 @@ release, portal or submission authority.
 |---|---|---|---|
 | `LEGACY-REPLAY-001` | `blocked_external` | issue #28 | private companion operator plus independent archive/replay reviewer |
 
-`main` is currently protected and requires the configured status contexts, but
-`GAP-GOV-003` remains open until the active policy export, all seven denial
-outcomes and an independent signed exact-candidate decision are retained.
+Historical repository evidence records protected `main` and configured status
+contexts. `GAP-GOV-003` remains open until the current active policy export, all
+seven denial outcomes and an independent signed exact-candidate decision are
+retained; the historical configuration is not a current policy attestation.
 
 The 263-file legacy archive has been recovered in the private companion and its
 digest/matrix can be checked locally. `LEGACY-REPLAY-001` remains open until the
@@ -186,13 +220,14 @@ authority.
 
 1. Run every required Rust, Node, workflow, supply-chain, program-truth,
    qualification and impacted-test producer on the exact RC head.
-2. Authenticate each result against the producer manifest, derive and fully
-   schema-validate `effective-status.v1.json`, then pass
-   `source-qualification-current` against the newest producer snapshot.
+2. Authenticate results against the producer manifest, derive the V1 intermediate
+   result and V3-bound `effective-status.v2.json`, validate both complete schemas,
+   then pass `source-qualification-v3-current` using newly collected complete
+   required-check and V3-subject evidence; the legacy currentness check alone is insufficient.
 3. Retain exact-head/tree, workflow-definition, run/job/step and artifact
    digests; reject collisions, zero-job, skipped, stale or failed reruns.
-4. Obtain an independent latest-push review and integrate the RC into the sole
-   product branch; close duplicate P0 PRs.
+4. Obtain an independent review of the exact new candidate and integrate through
+   the repository's existing qualified merge boundary.
 5. Complete issue #25 denial evidence and exact policy export.
 6. Complete issue #28 hosted private legacy replay and acknowledgement.
 7. Execute target-host listener/systemd/cgroup qualification in issue #17.
@@ -201,11 +236,14 @@ authority.
 10. Execute separated authenticated Codex author/reviewer canaries in issue #21.
 11. Execute real KMS/HSM, WORM, release, portal and submission drills in issue
     #22.
-12. Only after every prerequisite is accepted, perform shadow, canary, rollback,
-    writer cutover and Node-authority retirement.
+12. Use the existing local/shadow service and cutover drills as source tests; only
+    after all production prerequisites, complete capability/state translation and
+    reverse compatibility are accepted perform production canary, rollback, writer
+    cutover and Node-authority retirement.
 
 ## Canonical document set
 
+- [`RUNTIME_MIGRATION_IMPLEMENTATION.md`](RUNTIME_MIGRATION_IMPLEMENTATION.md)
 - [`RUST_REWRITE_MASTER_PLAN.md`](RUST_REWRITE_MASTER_PLAN.md)
 - [`RUST_REWRITE_BACKLOG.md`](RUST_REWRITE_BACKLOG.md)
 - [`RUST_PARITY_MATRIX.md`](RUST_PARITY_MATRIX.md)

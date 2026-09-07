@@ -63,6 +63,10 @@ Current implementation and contract roots:
 
 - `rust/crates/hepta-codex-broker`
 - `rust/crates/hepta-codex-journal`
+- `rust/crates/hepta-cgroup-containment`
+- `rust/crates/hepta-codex-event-stream`
+- `rust/crates/hepta-codex-runtime`
+- `rust/crates/hepta-codex-testkit`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -108,9 +112,13 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 ## Verification and evidence
 
-Capability bindings: `CAP-EXE-BROKER`. Related work identifiers: `GAP-CODEX-001`, `GAP-HOST-001`, `GAP-KEY-001`. Implementation/contract roots: `rust/crates/hepta-codex-broker`, `rust/crates/hepta-codex-journal`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-EXE-BROKER`. Related work identifiers: `GAP-CODEX-001`, `GAP-HOST-001`, `GAP-KEY-001`. Implementation/contract roots: `rust/crates/hepta-codex-broker`, `rust/crates/hepta-codex-journal`, `rust/crates/hepta-cgroup-containment`, `rust/crates/hepta-codex-event-stream`, `rust/crates/hepta-codex-runtime`, `rust/crates/hepta-codex-testkit`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
+
+### Runtime migration implementation details
+
+See the [Codex dispatch implementation and operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md). It describes external execution-authority verification, permit and deadline binding, bounded stdin/stdout/stderr, cancellation, cgroup attachment and cleanup, output-schema validation, event journaling, and provider ambiguity. Its quiesced dispatch backup/restore contract binds shared/exclusive locking, journal and sidecar hash manifests, fresh restore destinations and rejection of active PID/cgroup authority recovery. The implementation roots explicitly include containment, event-stream, runtime and testkit crates. Local protocol tests cannot establish target-host cgroup, namespace or process-gate qualification.
 
 ## Rollout and rollback
 

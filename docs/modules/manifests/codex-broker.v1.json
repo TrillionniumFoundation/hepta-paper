@@ -5,7 +5,7 @@
   "registryRef": "docs/system/truth/modules.v1.json#/modules/module.codex-broker",
   "specPath": "docs/modules/specs/codex-broker.md",
   "runbookPath": "docs/modules/specs/codex-broker.md#operational-runbook",
-  "implementationPaths": ["rust/crates/hepta-codex-broker","rust/crates/hepta-codex-journal"],
+  "implementationPaths": ["rust/crates/hepta-codex-broker","rust/crates/hepta-codex-journal","rust/crates/hepta-cgroup-containment","rust/crates/hepta-codex-event-stream","rust/crates/hepta-codex-runtime","rust/crates/hepta-codex-testkit"],
   "capabilityIds": ["CAP-EXE-BROKER"],
   "authorityClass": "prepared_result_only",
   "ownerTeams": ["TEAM-RUNTIME","TEAM-SRE","TEAM-EVIDENCE"],

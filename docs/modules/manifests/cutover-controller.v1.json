@@ -5,7 +5,7 @@
   "registryRef": "docs/system/truth/modules.v1.json#/modules/module.cutover-controller",
   "specPath": "docs/modules/specs/cutover-controller.md",
   "runbookPath": "docs/modules/specs/cutover-controller.md#operational-runbook",
-  "implementationPaths": ["rust/crates/hepta-cutover"],
+  "implementationPaths": ["rust/crates/hepta-cutover","paper-adapters/migration/rust-cutover-fence.mjs","paper-adapters/persistence/sqlite-store.mjs"],
   "capabilityIds": ["CAP-MIG-CUTOVER"],
   "authorityClass": "prepared_result_only",
   "ownerTeams": ["TEAM-KERNEL","TEAM-STATE","TEAM-EVIDENCE"],

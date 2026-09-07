@@ -5,7 +5,7 @@
 //! listeners, bounded backpressure, response framing, public-key rotation,
 //! fake-process journal linkage, signed prepared-result acknowledgement, and
 //! journal recovery/backup APIs. It still does not hold provider credentials,
-//! launch real Codex, write the campaign database, or grant release and
+//! grant provider authority itself, write the campaign database, or grant release and
 //! submission authority.
 
 #![forbid(unsafe_code)]
@@ -16,10 +16,14 @@ compile_error!("hepta-codex-broker V1 requires Linux SO_PEERCRED semantics");
 mod acknowledgement;
 mod admission;
 mod capability;
+mod codex_dispatch;
+mod dispatch_backup;
+mod dispatch_containment;
 mod fake_execution;
 mod frame;
 mod journal;
 mod listener;
+mod output_schema;
 mod peer;
 mod response;
 mod server;
@@ -44,6 +48,15 @@ pub use capability::{
     CapabilityPolicyV1, CapabilityTrustStoreV1, CapabilityVerificationError, VerifiedCapabilityV1,
     capability_signing_bytes, verify_request_capability,
 };
+pub use codex_dispatch::{
+    CodexDispatchAuthorityV1, CodexDispatchError, CodexDispatchPlanV1, CodexDispatchResultV1,
+    run_reserved_codex_operation,
+};
+pub use dispatch_backup::{
+    CodexDispatchBackupBundleReceiptV1, CodexDispatchBackupEntryV1, CodexDispatchBackupManifestV1,
+    create_quiesced_codex_dispatch_backup, restore_quiesced_codex_dispatch_backup,
+};
+pub use dispatch_containment::recover_codex_dispatch_containment;
 pub use fake_execution::{
     FakeBrokerExecutionError, FakeBrokerExecutionPlanV1, FakeBrokerPreparedResultV1,
     FakeExecutionEvidenceV1, FakeExecutionFaultV1, FakeExecutionTimelineV1,
@@ -72,8 +85,8 @@ pub use response::{
     BrokerResponseV1, read_response_frame, write_response_frame,
 };
 pub use server::{
-    BrokerClockV1, BrokerServerError, BrokerServerPolicyV1, BrokerServerRunSummaryV1,
-    BrokerServerV1, SystemBrokerClockV1,
+    BrokerClockV1, BrokerOperationDispatcherV1, BrokerServerError, BrokerServerPolicyV1,
+    BrokerServerRunSummaryV1, BrokerServerV1, SystemBrokerClockV1,
 };
 pub use service::{BrokerReservationV1, BrokerStateError, admit_and_reserve_unix_stream};
 pub use telemetry::{BrokerTelemetrySnapshotV1, BrokerTelemetryV1};

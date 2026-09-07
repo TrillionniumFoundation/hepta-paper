@@ -1,4 +1,12 @@
-//! Frozen historical JSON canonicalization used only for compatibility verification.
+//! Production Node record compatibility and the separately retained Rust draft format.
+//!
+//! Use `production_*_v1` for existing Node records. The older
+//! `encode_legacy_stable_json_v1` and `hash_legacy_record_v1` names describe a Rust
+//! migration draft, not the historical Node wire format, and remain available
+//! only so already-created draft receipts do not silently change identity.
+
+mod production;
+pub use production::*;
 
 use std::{collections::BTreeMap, str::FromStr};
 
@@ -36,14 +44,14 @@ impl FromStr for LegacyRecordHash {
     }
 }
 
-/// Encodes one JSON value using the immutable `LegacyStableJsonV1` rules.
+/// Encodes the Rust migration draft; **not** production Node `stableStringify`.
 pub fn encode_legacy_stable_json_v1(value: &Value) -> Result<Vec<u8>, CompatibilityError> {
     let mut output = Vec::new();
     encode_value(value, &mut output)?;
     Ok(output)
 }
 
-/// Hashes exact V1 bytes with domain separation.
+/// Hashes the Rust migration draft with domain separation; **not** Node `hashRecord`.
 pub fn hash_legacy_record_v1(value: &Value) -> Result<LegacyRecordHash, CompatibilityError> {
     let encoded = encode_legacy_stable_json_v1(value)?;
     let mut hasher = Sha256::new();
@@ -51,6 +59,11 @@ pub fn hash_legacy_record_v1(value: &Value) -> Result<LegacyRecordHash, Compatib
     update_length_prefixed(&mut hasher, &encoded);
     LegacyRecordHash::from_str(&format!("sha256:{}", hex::encode(hasher.finalize())))
 }
+
+/// Explicit name for the retained pre-production Rust draft encoding.
+pub use encode_legacy_stable_json_v1 as encode_rust_draft_stable_json_v1;
+/// Explicit name for the retained pre-production Rust draft digest.
+pub use hash_legacy_record_v1 as hash_rust_draft_record_v1;
 
 fn encode_value(value: &Value, output: &mut Vec<u8>) -> Result<(), CompatibilityError> {
     match value {
@@ -113,6 +126,33 @@ fn update_length_prefixed(hasher: &mut Sha256, value: &[u8]) {
 /// Compatibility encoding or digest failure.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum CompatibilityError {
+    /// Raw input or encoded output exceeds the resource bound.
+    #[error("production JSON exceeds the 16 MiB size limit")]
+    SizeLimit,
+    /// Nesting exceeds the bounded compatibility parser's contract.
+    #[error("production JSON exceeds the 256-level nesting limit")]
+    NestingLimit,
+    /// A raw input does not match the JSON grammar.
+    #[error("invalid production JSON at byte {0}")]
+    InvalidJson(usize),
+    /// The supplied JSON is not encoded as valid UTF-8.
+    #[error("production JSON input must be UTF-8")]
+    InvalidUtf8,
+    /// A serde Value has lost the original insertion order of equivalent keys.
+    #[error("collation-equivalent object keys require original JSON bytes, not serde_json::Value")]
+    AmbiguousObjectKeyOrder,
+    /// ICU4X does not preserve ICU4C ordering of unpaired surrogate keys.
+    #[error("unpaired UTF-16 surrogate in an object key is not qualified for native collation")]
+    UnpairedSurrogateKey,
+    /// The frozen collation data did not match its digest or could not be decoded.
+    #[error("production collation data integrity or decoding failed")]
+    CollationData,
+    /// The frozen ICU collator could not be initialized.
+    #[error("production en-US collator initialization failed")]
+    Collator,
+    /// Metadata does not identify the qualified production Node environment.
+    #[error("production Node runtime/source profile mismatch: {0}")]
+    RuntimeProfile(String),
     /// JSON encoding failed.
     #[error("legacy JSON encoding failed")]
     Encoding,

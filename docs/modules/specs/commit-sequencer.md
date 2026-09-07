@@ -62,6 +62,7 @@ Current implementation and contract roots:
 
 - `rust/crates/hepta-campaign-writer`
 - `docs/control-plane/COMMIT_SEQUENCER.md`
+- `rust/crates/hepta-control-plane/src/commit.rs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -107,9 +108,13 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 ## Verification and evidence
 
-Capability bindings: `CAP-STATE-COMMIT`. Related work identifiers: `CTL-007`, `GAP-HOST-002`. Implementation/contract roots: `rust/crates/hepta-campaign-writer`, `docs/control-plane/COMMIT_SEQUENCER.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-STATE-COMMIT`. Related work identifiers: `CTL-007`, `GAP-HOST-002`. Implementation/contract roots: `rust/crates/hepta-campaign-writer`, `docs/control-plane/COMMIT_SEQUENCER.md`, `rust/crates/hepta-control-plane/src/commit.rs`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
+
+### Runtime migration implementation details
+
+See the [persistent control commit contract](../../../rust/crates/hepta-control-plane/README.md) and [campaign writer schema, fencing and recovery contract](../../../rust/crates/hepta-campaign-writer/README.md). These documents specify atomic resource/revision and prepared-result/receipt journal updates, idempotent replay, stale-plan rejection, local database marking, independent signed writer activation and the distinction between native schema 25 and Rust HPCW storage. The source implementation does not imply native-to-HPCW migration or target-host qualification.
 
 ## Rollout and rollback
 

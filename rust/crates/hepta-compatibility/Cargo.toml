@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 hepta-codex-protocol = { version = "=0.1.0", path = "../hepta-codex-protocol" }
+hepta-legacy-compatibility = { version = "=0.1.0", path = "../hepta-legacy-compatibility" }
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

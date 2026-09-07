@@ -1,0 +1,159 @@
+name: rust-migration-acceptance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-migration-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  RUSTFLAGS: '-Dunsafe-code'
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  migration:
+    name: Node parity and disposable Rust migration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EVIDENCE_ROOT: ${{ runner.temp }}/hepta-rust-migration-evidence
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install qualified production Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+
+      - name: Record exact source and runtime identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test "$(node --version)" = "v22.23.1"
+          git rev-parse HEAD HEAD^{tree} > "$EVIDENCE_ROOT/source.txt"
+          sha256sum rust/Cargo.lock workflow-kernel/record-hash.mjs \
+            > "$EVIDENCE_ROOT/source-inputs.sha256"
+          node --input-type=module -e 'console.log(JSON.stringify({ node: process.version, versions: process.versions, collator: new Intl.Collator().resolvedOptions() }, null, 2))' \
+            > "$EVIDENCE_ROOT/node-runtime.json"
+          rustc --version --verbose > "$EVIDENCE_ROOT/rustc.txt"
+          cargo --version --verbose > "$EVIDENCE_ROOT/cargo.txt"
+          # All subjects are disposable test data. No secrets, live provider,
+          # target-host credentials, production database, or activation is used.
+
+      - name: Compare native hashes against actual production Node functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-legacy-compatibility -p hepta-compatibility \
+            2>&1 | tee "$EVIDENCE_ROOT/production-hash-parity.log"
+
+      - name: Verify actual Node migration databases and immutable Rust readers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-readonly-control -p hepta-readonly-store \
+            2>&1 | tee "$EVIDENCE_ROOT/node-database-parity.log"
+
+      - name: Verify durable control service recovery and writer ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-campaign-writer -p hepta-control-plane \
+            -p hepta-paper-service -p hepta-cutover \
+            2>&1 | tee "$EVIDENCE_ROOT/durable-migration.log"
+
+      - name: Verify Node fencing through actual SQLite store adapters
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test paper-core/tests/rust-cutover-fence.test.mjs \
+            paper-core/tests/sqlite-transaction-control-boundary.test.mjs \
+            paper-core/tests/sqlite-store-failure-contract.test.mjs \
+            paper-core/tests/typed-persistence-ports.test.mjs \
+            2>&1 | tee "$EVIDENCE_ROOT/node-store-fencing.log"
+
+      - name: Run disposable shadow canary recovery and rollback drill
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path rust/Cargo.toml --locked \
+            -p hepta-cutover --example local_cutover_drill -- \
+            "$RUNNER_TEMP/hepta-rust-local-cutover-drill" \
+            > "$EVIDENCE_ROOT/local-cutover-drill.json"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            assert.equal(report.status, "local_cutover_drill_passed");
+            assert.equal(report.productionActivation, false);
+            assert.equal(report.shadow.equal, true);
+            assert.equal(report.preservedRecords.length, 2);
+          ' "$EVIDENCE_ROOT/local-cutover-drill.json"
+
+      - name: Run disposable native service and durable replay drill
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path rust/Cargo.toml --locked \
+            -p hepta-paper-service --example local_service_drill -- \
+            "$RUNNER_TEMP/hepta-rust-local-service-drill" \
+            > "$EVIDENCE_ROOT/service-drill.json"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            assert.equal(report.status, "local_service_drill_passed");
+            assert.equal(report.productionActivation, false);
+            assert.equal(report.first.commitReceipts.length, 1);
+            assert.equal(report.replay.commitReceipts.length, 1);
+            assert.equal(report.first.commitReceipts[0].newlyCommitted, true);
+            assert.equal(report.replay.commitReceipts[0].newlyCommitted, false);
+            assert.equal(report.first.commitReceipts[0].committedStateHash,
+              report.replay.commitReceipts[0].committedStateHash);
+          ' "$EVIDENCE_ROOT/service-drill.json"
+
+      - name: Verify source remained unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum --check "$EVIDENCE_ROOT/source-inputs.sha256"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Upload migration acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-migration-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/hepta-rust-migration-evidence
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

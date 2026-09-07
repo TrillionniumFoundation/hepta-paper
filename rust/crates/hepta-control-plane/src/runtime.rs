@@ -44,7 +44,7 @@ pub struct ControlPlaneV1<E, V, C>
 where
     E: ModuleExecutorV1,
     V: PreparedResultVerifierV1,
-    C: CommitSequencerV1 + Clone,
+    C: CommitSequencerV1,
 {
     registry: ModuleRegistryArtifactV1,
     hard_policy: HardPolicyV1,
@@ -60,7 +60,7 @@ impl<E, V, C> ControlPlaneV1<E, V, C>
 where
     E: ModuleExecutorV1,
     V: PreparedResultVerifierV1,
-    C: CommitSequencerV1 + Clone,
+    C: CommitSequencerV1,
 {
     /// Creates a source composition without production or external authority.
     #[allow(clippy::too_many_arguments)]
@@ -115,6 +115,7 @@ where
             return Err(ControlPlaneError::SnapshotInvalid);
         }
         frontier.validate(snapshot, &self.registry, &self.hard_policy)?;
+        self.sequencer.begin_run(snapshot, now_unix_ms)?;
         let snapshot_hash = snapshot.snapshot_hash()?;
         let plan = select_plan_v1(snapshot, frontier, &self.hard_policy, &self.planner_policy)?;
         let waves = dependency_waves(frontier, &plan)?;
@@ -198,7 +199,7 @@ where
 
     fn reserve_selected(
         &mut self,
-        snapshot: &ControlPlaneSnapshotV1,
+        _snapshot: &ControlPlaneSnapshotV1,
         snapshot_hash: &Sha256Digest,
         plan: &PlanCertificateV1,
         ordered: &[&ActionCandidateV1],
@@ -211,7 +212,7 @@ where
             let ordinal = index
                 .checked_add(1)
                 .ok_or(ControlPlaneError::ReservationInvalid)?;
-            let reservation_id = format!("{}:reservation:{ordinal}", snapshot.campaign_id);
+            let reservation_id = format!("{}:reservation:{ordinal}", plan.plan_hash.as_str());
             let reservation = match self.allocator.reserve(
                 AdmissionRequestV1 {
                     reservation_id: reservation_id.clone(),
@@ -243,7 +244,7 @@ where
                 self.release_without_events(&reservation_ids)?;
                 return Err(error);
             }
-            let attempt_id = format!("{}:attempt:{ordinal}", snapshot.campaign_id);
+            let attempt_id = format!("{}:attempt:{ordinal}", plan.plan_hash.as_str());
             requests.push(ExecutionRequestV1 {
                 version: 1,
                 attempt_id,
@@ -305,6 +306,9 @@ where
                     .get(&candidate_hash)
                     .cloned()
                     .ok_or(ControlPlaneError::ExecutionInvalid)?;
+                if result.attempt_id != request.attempt_id {
+                    return Err(ControlPlaneError::ExecutionInvalid);
+                }
                 self.emit(
                     ControlPlaneEventKindV1::ResultPrepared,
                     snapshot_hash,
@@ -354,7 +358,6 @@ where
             .ok_or(ControlPlaneError::ObservabilityBudgetExceeded)?;
 
         let mut staged_allocator = self.allocator.clone();
-        let mut staged_sequencer = self.sequencer.clone();
         let mut staged_events = self.events.clone();
         let mut commit_requests = Vec::with_capacity(verified_run.verified.len());
         let mut released_reservations = Vec::with_capacity(requests.len());
@@ -368,7 +371,7 @@ where
             released_reservations.push(released);
             commit_requests.push(CommitRequestV1::new(plan.plan_hash.clone(), verified)?);
         }
-        let commit_receipts = staged_sequencer.commit_batch(&commit_requests)?;
+        let commit_receipts = self.sequencer.preview_batch(&commit_requests)?;
         if commit_receipts.len() != requests.len() {
             return Err(ControlPlaneError::CommitInvalid);
         }
@@ -434,8 +437,12 @@ where
             receipt_hash,
         };
 
+        // All validation, allocation, event construction and hashing above is
+        // fallible. The durable sequencer is committed exactly once, last. Its
+        // sealed contract guarantees the preview receipts and batch atomicity.
+        let committed = self.sequencer.commit_batch(&commit_requests)?;
+        debug_assert_eq!(committed, receipt.commit_receipts);
         self.allocator = staged_allocator;
-        self.sequencer = staged_sequencer;
         self.events = staged_events;
         Ok(receipt)
     }

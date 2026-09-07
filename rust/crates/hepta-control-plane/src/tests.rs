@@ -15,6 +15,290 @@ use hepta_module_platform::{
 
 use crate::*;
 
+struct DurableFixture {
+    root: std::path::PathBuf,
+    database: std::path::PathBuf,
+    policy: hepta_campaign_writer::CampaignWriterPolicyV1,
+}
+
+impl DurableFixture {
+    fn new() -> Self {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "hepta-durable-control-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).expect("create private root");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+            .expect("private mode");
+        let policy = hepta_campaign_writer::CampaignWriterPolicyV1::strict(
+            std::fs::metadata(&root).expect("metadata").uid(),
+        );
+        Self {
+            database: root.join("campaign.sqlite"),
+            root,
+            policy,
+        }
+    }
+
+    fn lease() -> hepta_campaign_writer::WriterLeaseV1 {
+        hepta_campaign_writer::WriterLeaseV1 {
+            generation: 1,
+            token: "local-writer-1".into(),
+            expires_at_unix_ms: 10_000,
+        }
+    }
+
+    fn sequencer(&self, create: bool, budget: u64) -> SqliteCommitSequencerV1 {
+        let mut store = if create {
+            hepta_campaign_writer::CampaignWriterStoreV1::create_local(&self.database, self.policy)
+        } else {
+            hepta_campaign_writer::CampaignWriterStoreV1::open_local(&self.database, self.policy)
+        }
+        .expect("local store");
+        let writer = store.acquire_writer(Self::lease(), 1).expect("lease");
+        if create {
+            store
+                .create_campaign(&writer, "campaign-1", budget, 100, 0, 2)
+                .expect("campaign");
+        }
+        SqliteCommitSequencerV1::new(
+            store,
+            writer,
+            "campaign-1".into(),
+            digest('1'),
+            digest('c'),
+            3,
+        )
+        .expect("durable sequencer")
+    }
+}
+
+impl Drop for DurableFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn durable_batch_survives_restart_and_replay_does_not_debit_twice() {
+    let fixture = DurableFixture::new();
+    let requests = ['a', 'b'].map(|marker| {
+        CommitRequestV1::new(
+            digest('9'),
+            standalone_verified(digest('c'), digest('9'), marker),
+        )
+        .expect("request")
+    });
+    let mut sequencer = fixture.sequencer(true, 100);
+    let first = sequencer.commit_batch(&requests).expect("atomic commit");
+    assert_eq!(
+        sequencer
+            .store()
+            .load_campaign("campaign-1")
+            .expect("campaign")
+            .budget_remaining_microusd,
+        98
+    );
+    let committed = sequencer.current_state_hash().clone();
+    drop(sequencer);
+    let mut restored = fixture.sequencer(false, 100);
+    assert_eq!(restored.current_state_hash(), &committed);
+    assert_eq!(restored.next_sequence(), 3);
+    let replay = restored.commit_batch(&requests).expect("idempotent replay");
+    assert!(replay.iter().all(|receipt| !receipt.newly_committed));
+    assert_eq!(
+        first
+            .iter()
+            .map(|receipt| receipt.sequence)
+            .collect::<Vec<_>>(),
+        replay
+            .iter()
+            .map(|receipt| receipt.sequence)
+            .collect::<Vec<_>>()
+    );
+    let campaign = restored
+        .store()
+        .load_campaign("campaign-1")
+        .expect("campaign");
+    assert_eq!(campaign.budget_remaining_microusd, 98);
+    assert_eq!(campaign.revision, 2);
+    restored
+        .store()
+        .validate_integrity()
+        .expect("event and SQLite integrity");
+}
+
+#[test]
+fn durable_second_item_budget_failure_rolls_back_first_item_and_event() {
+    let fixture = DurableFixture::new();
+    let mut sequencer = fixture.sequencer(true, 1);
+    let requests = ['a', 'b'].map(|marker| {
+        CommitRequestV1::new(
+            digest('9'),
+            standalone_verified(digest('c'), digest('9'), marker),
+        )
+        .expect("request")
+    });
+    assert_eq!(
+        sequencer.commit_batch(&requests),
+        Err(ControlPlaneError::PersistenceInvalid)
+    );
+    assert_eq!(sequencer.receipt_count(), 0);
+    assert_eq!(sequencer.next_sequence(), 1);
+    drop(sequencer);
+    let mut restored = fixture.sequencer(false, 1);
+    assert_eq!(restored.receipt_count(), 0);
+    let campaign = restored
+        .store()
+        .load_campaign("campaign-1")
+        .expect("campaign");
+    assert_eq!(campaign.budget_remaining_microusd, 1);
+    assert_eq!(campaign.revision, 0);
+    restored
+        .store()
+        .validate_integrity()
+        .expect("rollback event chain");
+    restored
+        .commit(requests[0].clone())
+        .expect("single result affordable");
+}
+
+#[test]
+fn durable_changed_result_for_same_attempt_fails_and_preserves_old_receipt() {
+    let fixture = DurableFixture::new();
+    let mut sequencer = fixture.sequencer(true, 100);
+    let verified = standalone_verified(digest('c'), digest('9'), 'a');
+    sequencer
+        .commit(CommitRequestV1::new(digest('9'), verified.clone()).expect("request"))
+        .expect("first");
+    let mut changed = verified;
+    changed.result.evidence_hash = digest('7');
+    changed.result_hash = changed.result.result_hash().expect("result hash");
+    changed.verification_receipt_hash =
+        verification_receipt_hash_v1(&changed.result_hash, &changed.verifier_hash)
+            .expect("receipt");
+    assert_eq!(
+        sequencer.commit(CommitRequestV1::new(digest('9'), changed).expect("changed request")),
+        Err(ControlPlaneError::PersistenceInvalid)
+    );
+    assert_eq!(sequencer.receipt_count(), 1);
+    assert_eq!(
+        sequencer
+            .store()
+            .load_campaign("campaign-1")
+            .expect("campaign")
+            .budget_remaining_microusd,
+        99
+    );
+}
+
+#[test]
+fn durable_reopen_rejects_changed_verifier_binding() {
+    let fixture = DurableFixture::new();
+    drop(fixture.sequencer(true, 100));
+    let mut store =
+        hepta_campaign_writer::CampaignWriterStoreV1::open_local(&fixture.database, fixture.policy)
+            .expect("local store");
+    let writer = store
+        .acquire_writer(DurableFixture::lease(), 4)
+        .expect("lease");
+    assert!(matches!(
+        SqliteCommitSequencerV1::new(
+            store,
+            writer,
+            "campaign-1".into(),
+            digest('1'),
+            digest('d'),
+            4
+        ),
+        Err(ControlPlaneError::PersistenceInvalid)
+    ));
+}
+
+#[test]
+fn durable_control_plane_runs_real_sqlite_and_restarts() {
+    let fixture = DurableFixture::new();
+    let (registry, hard_policy, snapshot, frontier, limit) = fixture_subject();
+    let expected_policy = registry.policy_hash().clone();
+    let sequencer = fixture.sequencer(true, 100);
+    let mut control = ControlPlaneV1::new(
+        registry,
+        expected_policy,
+        hard_policy,
+        planner_policy(),
+        allocator(limit),
+        FakeExecutorV1,
+        DeterministicPreparedResultVerifierV1::new(digest('c')),
+        sequencer,
+        BoundedEventLogV1::new(128, 128).expect("events"),
+    )
+    .expect("control plane");
+    let receipt = control
+        .run(&snapshot, &frontier, "tenant-1", 10)
+        .expect("durable run");
+    assert_eq!(receipt.commit_receipts.len(), 2);
+    assert!(receipt.resource_report.reserved.is_zero());
+    assert!(!receipt.production_activation);
+    let replay = control
+        .run(&snapshot, &frontier, "tenant-1", 11)
+        .expect("same plan replay");
+    assert!(
+        replay
+            .commit_receipts
+            .iter()
+            .all(|receipt| !receipt.newly_committed)
+    );
+    assert_eq!(
+        control
+            .sequencer()
+            .store()
+            .load_campaign("campaign-1")
+            .expect("campaign")
+            .budget_remaining_microusd,
+        80
+    );
+    drop(control);
+    assert_eq!(fixture.sequencer(false, 100).receipt_count(), 2);
+}
+
+#[test]
+fn durable_expired_writer_cannot_run_even_with_prepared_results() {
+    let fixture = DurableFixture::new();
+    let mut sequencer = fixture.sequencer(true, 100);
+    let (_, _, snapshot, _, _) = fixture_subject();
+    assert_eq!(
+        sequencer.begin_run(&snapshot, 10_000),
+        Err(ControlPlaneError::PersistenceInvalid)
+    );
+    assert_eq!(sequencer.receipt_count(), 0);
+}
+
+#[test]
+fn durable_new_run_rejects_stale_state_and_planning_revision_before_execution() {
+    let fixture = DurableFixture::new();
+    let mut sequencer = fixture.sequencer(true, 100);
+    let (_, _, mut snapshot, _, _) = fixture_subject();
+    snapshot.state_hash = digest('7');
+    assert_eq!(
+        sequencer.begin_run(&snapshot, 4),
+        Err(ControlPlaneError::SnapshotInvalid)
+    );
+    snapshot.state_hash = digest('1');
+    snapshot.campaign_revision = 2;
+    assert_eq!(
+        sequencer.begin_run(&snapshot, 5),
+        Err(ControlPlaneError::SnapshotInvalid)
+    );
+    snapshot.campaign_revision = 1;
+    sequencer
+        .begin_run(&snapshot, 6)
+        .expect("persisted revision plus one");
+    assert_eq!(sequencer.next_sequence(), 1);
+}
+
 #[derive(Debug)]
 struct FakeExecutorV1;
 

@@ -135,6 +135,41 @@ pub fn create_broker_backup(
     backup_policy: BrokerBackupPolicyV1,
     now_unix_ms: u64,
 ) -> Result<BrokerBackupReceiptV1, BrokerJournalError> {
+    create_broker_backup_inner(
+        store,
+        destination,
+        journal_policy,
+        backup_policy,
+        now_unix_ms,
+        false,
+    )
+}
+
+pub(crate) fn create_broker_backup_for_dispatch_bundle(
+    store: &BrokerJournalStoreV1,
+    destination: &Path,
+    journal_policy: BrokerJournalPolicyV1,
+    backup_policy: BrokerBackupPolicyV1,
+    now_unix_ms: u64,
+) -> Result<BrokerBackupReceiptV1, BrokerJournalError> {
+    create_broker_backup_inner(
+        store,
+        destination,
+        journal_policy,
+        backup_policy,
+        now_unix_ms,
+        true,
+    )
+}
+
+fn create_broker_backup_inner(
+    store: &BrokerJournalStoreV1,
+    destination: &Path,
+    journal_policy: BrokerJournalPolicyV1,
+    backup_policy: BrokerBackupPolicyV1,
+    now_unix_ms: u64,
+    dispatch_bundle: bool,
+) -> Result<BrokerBackupReceiptV1, BrokerJournalError> {
     let backup_policy = backup_policy.validate()?;
     if now_unix_ms == 0 {
         return Err(BrokerJournalError::InvalidRecordedTime);
@@ -152,6 +187,19 @@ pub fn create_broker_backup(
             | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )?;
     source.busy_timeout(Duration::from_millis(journal_policy.busy_timeout_ms))?;
+    let active: i64 = source.query_row(
+        "SELECT count(*) FROM operation_processes WHERE release_state != 'terminated'",
+        [],
+        |row| row.get(0),
+    )?;
+    if active != 0 {
+        return Err(BrokerJournalError::IntegrityCheckFailed(
+            "active broker execution must be quiesced before backup".to_owned(),
+        ));
+    }
+    if !dispatch_bundle {
+        reject_dispatch_journal_only_backup(&source)?;
+    }
     let checkpoint: (i64, i64, i64) =
         source.query_row("PRAGMA wal_checkpoint(FULL)", [], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -178,7 +226,21 @@ pub fn create_broker_backup(
     sync_parent(destination)?;
     inspect_backup_file(destination, backup_policy)?;
     verify_backup_database(destination, journal_policy, backup_policy)?;
+    let backup_check = open_read_only(destination)?;
+    let active: i64 = backup_check.query_row(
+        "SELECT count(*) FROM operation_processes WHERE release_state != 'terminated'",
+        [],
+        |row| row.get(0),
+    )?;
+    if active != 0 {
+        return Err(BrokerJournalError::IntegrityCheckFailed(
+            "backup captured active broker execution".to_owned(),
+        ));
+    }
 
+    if !dispatch_bundle {
+        reject_dispatch_journal_only_backup(&backup_check)?;
+    }
     let (backup_content_hash, backup_bytes) =
         hash_file(destination, backup_policy.maximum_backup_bytes)?;
     Ok(BrokerBackupReceiptV1 {
@@ -190,6 +252,19 @@ pub fn create_broker_backup(
         backup_bytes,
         operation_count: store.operation_count()?,
     })
+}
+
+fn reject_dispatch_journal_only_backup(connection: &Connection) -> Result<(), BrokerJournalError> {
+    let required: i64 = connection.query_row(
+        "SELECT count(*) FROM operations WHERE provider_action_may_have_started = 1 OR current_state = 'request_bound' OR operation_id IN
+         (SELECT operation_id FROM operation_processes WHERE reconciliation_disposition GLOB 'codex_*')",
+        [], |row| row.get(0))?;
+    if required != 0 {
+        return Err(BrokerJournalError::IntegrityCheckFailed(
+            "Codex dispatch requires quiesced journal-and-sidecar backup bundle".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn restore_broker_backup(

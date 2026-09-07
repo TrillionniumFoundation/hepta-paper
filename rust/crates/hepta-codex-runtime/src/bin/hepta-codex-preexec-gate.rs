@@ -19,8 +19,11 @@ use base64ct::{Base64UrlUnpadded, Encoding};
 use hepta_codex_protocol::Sha256Digest;
 use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
-    sys::signal::{Signal, raise},
-    unistd::{close, setsid},
+    sys::{
+        prctl::set_pdeathsig,
+        signal::{Signal, raise},
+    },
+    unistd::{close, getppid, setsid},
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -66,10 +69,17 @@ fn main() -> ExitCode {
 
 fn run() -> Result<u8, String> {
     close_unexpected_file_descriptors()?;
+    let (envelope_path, expected_hash, expected_parent_pid) = parse_arguments()?;
+    // Close the spawn-to-journal crash window: an unlinked stopped gate must
+    // die with its broker. Check after arming to cover a prior parent death.
+    set_pdeathsig(Signal::SIGKILL)
+        .map_err(|error| format!("parent-death signal failed: {error}"))?;
+    if getppid().as_raw() != expected_parent_pid {
+        return Err("broker parent changed before gate stop".to_owned());
+    }
     setsid().map_err(|error| format!("setsid failed: {error}"))?;
     raise(Signal::SIGSTOP).map_err(|error| format!("SIGSTOP failed: {error}"))?;
 
-    let (envelope_path, expected_hash) = parse_arguments()?;
     let bytes = read_bound_envelope(&envelope_path)?;
     let observed_hash = hash_bytes(&bytes)?;
     if observed_hash != expected_hash {
@@ -148,7 +158,7 @@ fn run() -> Result<u8, String> {
     Ok(u8::try_from(128 + signal).unwrap_or(125))
 }
 
-fn parse_arguments() -> Result<(PathBuf, Sha256Digest), String> {
+fn parse_arguments() -> Result<(PathBuf, Sha256Digest, i32), String> {
     let mut values = env::args_os().skip(1);
     if values.next().as_deref() != Some(std::ffi::OsStr::new("--envelope")) {
         return Err("missing --envelope".to_owned());
@@ -164,12 +174,21 @@ fn parse_arguments() -> Result<(PathBuf, Sha256Digest), String> {
         .next()
         .and_then(|value| value.into_string().ok())
         .ok_or_else(|| "missing expected hash".to_owned())?;
+    if values.next().as_deref() != Some(std::ffi::OsStr::new("--parent-pid")) {
+        return Err("missing --parent-pid".to_owned());
+    }
+    let parent_pid = values
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "invalid parent PID".to_owned())?;
     if values.next().is_some() {
         return Err("unexpected gate arguments".to_owned());
     }
     let digest =
         Sha256Digest::from_str(&expected).map_err(|_| "expected hash is invalid".to_owned())?;
-    Ok((envelope, digest))
+    Ok((envelope, digest, parent_pid))
 }
 
 fn read_bound_envelope(path: &Path) -> Result<Vec<u8>, String> {

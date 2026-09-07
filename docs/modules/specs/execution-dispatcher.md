@@ -65,6 +65,7 @@ Current implementation and contract roots:
 - `docs/control-plane/COMPOSITION_ROOT.md`
 - `docs/control-plane/REPLAN_AND_RECOVERY.md`
 - `rust/crates/hepta-control-plane`
+- `rust/crates/hepta-codex-broker/src/codex_dispatch.rs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -110,9 +111,13 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
-Capability bindings: `CAP-EXE-DISPATCH`, `CAP-MOD-EXECUTION`. Related work identifiers: `CTL-005`, `MOD-003`. Implementation/contract roots: `docs/control-plane/COMPOSITION_ROOT.md`, `docs/control-plane/REPLAN_AND_RECOVERY.md`, `rust/crates/hepta-control-plane`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-EXE-DISPATCH`, `CAP-MOD-EXECUTION`. Related work identifiers: `CTL-005`, `MOD-003`. Implementation/contract roots: `docs/control-plane/COMPOSITION_ROOT.md`, `docs/control-plane/REPLAN_AND_RECOVERY.md`, `rust/crates/hepta-control-plane`, `rust/crates/hepta-codex-broker/src/codex_dispatch.rs`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
+
+### Runtime migration implementation details
+
+See the [control-plane execution and prepared-result contract](../../../rust/crates/hepta-control-plane/README.md) and [broker dispatch contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md). The local filesystem executor and signed broker dispatcher have different authority envelopes. Prepared result files require bounded real-file verification and exact identity; successful JSON parsing or caller-supplied evidence hashes alone cannot authorize a commit or a provider action.
 
 ## Rollout and rollback
 

@@ -111,6 +111,10 @@ Capability bindings: `CAP-CMP-LEGACY`. Related work identifiers: `LEGACY-REPLAY-
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+### Runtime migration implementation details
+
+See the [legacy serialization and oracle contract](../../../rust/crates/hepta-legacy-compatibility/README.md). It specifies the actual production Node serializer oracle, JavaScript integer-property enumeration, string ordering, number formatting, limits and the distinction between real production compatibility and an independent test implementation. Cross-runtime vectors are source evidence only.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

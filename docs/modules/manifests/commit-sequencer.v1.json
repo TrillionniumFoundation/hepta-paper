@@ -5,7 +5,7 @@
   "registryRef": "docs/system/truth/modules.v1.json#/modules/module.commit-sequencer",
   "specPath": "docs/modules/specs/commit-sequencer.md",
   "runbookPath": "docs/modules/specs/commit-sequencer.md#operational-runbook",
-  "implementationPaths": ["rust/crates/hepta-campaign-writer","docs/control-plane/COMMIT_SEQUENCER.md"],
+  "implementationPaths": ["rust/crates/hepta-campaign-writer","docs/control-plane/COMMIT_SEQUENCER.md","rust/crates/hepta-control-plane/src/commit.rs"],
   "capabilityIds": ["CAP-STATE-COMMIT"],
   "authorityClass": "central_state_write",
   "ownerTeams": ["TEAM-STATE","TEAM-KERNEL","TEAM-EVIDENCE"],

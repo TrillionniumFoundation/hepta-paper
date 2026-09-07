@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 hepta-codex-protocol = { version = "=0.1.0", path = "../hepta-codex-protocol" }
+hepta-readonly-control = { version = "=0.1.0", path = "../hepta-readonly-control" }
+hepta-legacy-compatibility = { version = "=0.1.0", path = "../hepta-legacy-compatibility" }
 hex.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

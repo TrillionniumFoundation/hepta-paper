@@ -175,6 +175,55 @@ impl CgroupV2OperationV1 {
         })
     }
 
+    /// Reopens only the exact operation directory recorded before target release.
+    /// Absence is an idempotent cleanup result; a replacement is never adopted.
+    pub fn recover_existing(
+        policy: CgroupV2PolicyV1,
+        operation_id: &str,
+        expected_device: u64,
+        expected_inode: u64,
+        expected_changed_seconds: i64,
+        expected_changed_nanoseconds: i64,
+    ) -> Result<Option<Self>, CgroupV2Error> {
+        policy.validate()?;
+        validate_identifier(operation_id)?;
+        let path = policy.delegated_root.join(operation_id);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(CgroupV2Error::Filesystem("recover", error.kind())),
+        };
+        inspect_operation(&path, policy.owner_uid)?;
+        if metadata.dev() != expected_device
+            || metadata.ino() != expected_inode
+            || metadata.ctime() != expected_changed_seconds
+            || metadata.ctime_nsec() != expected_changed_nanoseconds
+        {
+            return Err(CgroupV2Error::RecoveryIdentityMismatch);
+        }
+        let fixture_members = (policy.authority_mode == CgroupAuthorityModeV1::LocalFixture)
+            .then(|| Mutex::new(BTreeSet::new()));
+        Ok(Some(Self {
+            path,
+            policy,
+            fixture_members,
+            cleaned: false,
+        }))
+    }
+
+    /// Captures the exact directory identity for durable crash recovery.
+    pub fn directory_identity(&self) -> Result<(u64, u64, i64, i64), CgroupV2Error> {
+        inspect_operation(&self.path, self.policy.owner_uid)?;
+        let metadata = fs::symlink_metadata(&self.path)
+            .map_err(|error| CgroupV2Error::Filesystem("identity", error.kind()))?;
+        Ok((
+            metadata.dev(),
+            metadata.ino(),
+            metadata.ctime(),
+            metadata.ctime_nsec(),
+        ))
+    }
+
     /// Attaches one process. Descendants remain members after `setsid` or double-fork.
     pub fn attach_pid(&self, pid: u32) -> Result<(), CgroupV2Error> {
         if pid == 0 || pid > i32::MAX as u32 {
@@ -238,9 +287,15 @@ impl CgroupV2OperationV1 {
         }
         fs::remove_dir(&self.path)
             .map_err(|error| CgroupV2Error::Filesystem("remove", error.kind()))?;
-        File::open(&self.policy.delegated_root)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| CgroupV2Error::Filesystem("sync_parent", error.kind()))?;
+        // cgroup2 is a kernel pseudo-filesystem: directory fsync returns EINVAL.
+        // Its cleanup proof is populated=0 followed by successful removal, not
+        // filesystem durability. Only the on-disk test hierarchy uses fsync;
+        // the broker separately fsyncs its real-filesystem recovery record.
+        if self.policy.authority_mode == CgroupAuthorityModeV1::LocalFixture {
+            File::open(&self.policy.delegated_root)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| CgroupV2Error::Filesystem("sync_parent", error.kind()))?;
+        }
         self.cleaned = true;
         Ok(())
     }
@@ -339,12 +394,17 @@ fn read_populated(path: &Path) -> Result<bool, CgroupV2Error> {
     contents
         .lines()
         .find_map(|line| line.strip_prefix("populated "))
-        .map(|value| value == "1")
+        .and_then(|value| match value {
+            "0" => Some(false),
+            "1" => Some(true),
+            _ => None,
+        })
         .ok_or(CgroupV2Error::EventsMalformed)
 }
 
 fn validate_identifier(value: &str) -> Result<(), CgroupV2Error> {
     if value.is_empty()
+        || !value.as_bytes()[0].is_ascii_alphanumeric()
         || value.len() > 128
         || !value
             .bytes()
@@ -364,6 +424,9 @@ pub enum CgroupV2Error {
     /// Hierarchy is not canonical, delegated, or cgroup-v2.
     #[error("cgroup-v2 hierarchy is invalid")]
     InvalidHierarchy,
+    /// The durable operation directory has been replaced.
+    #[error("cgroup-v2 recovery directory identity mismatch")]
+    RecoveryIdentityMismatch,
     /// Operation identifier is invalid.
     #[error("cgroup-v2 operation id is invalid")]
     InvalidOperationId,

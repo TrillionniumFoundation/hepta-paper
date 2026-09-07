@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod durable;
+pub use durable::*;
+
 /// Durable cutover phase.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -111,6 +114,10 @@ impl CutoverStateV1 {
         if self.revision != expected_revision {
             return Err(CutoverError::RevisionConflict);
         }
+        let next_revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(CutoverError::NumericOverflow)?;
         match (self.phase, next) {
             (CutoverPhaseV1::Planned, CutoverPhaseV1::Quiesced) => {
                 reject_unexpected(&evidence)?;
@@ -151,10 +158,7 @@ impl CutoverStateV1 {
             _ => return Err(CutoverError::IllegalTransition),
         }
         self.phase = next;
-        self.revision = self
-            .revision
-            .checked_add(1)
-            .ok_or(CutoverError::NumericOverflow)?;
+        self.revision = next_revision;
         Ok(())
     }
 
@@ -162,11 +166,10 @@ impl CutoverStateV1 {
     #[must_use]
     pub fn authoritative_writer(&self) -> Option<&str> {
         match self.phase {
-            CutoverPhaseV1::Planned
-            | CutoverPhaseV1::Quiesced
+            CutoverPhaseV1::Planned | CutoverPhaseV1::RolledBack => Some(&self.old_writer_id),
+            CutoverPhaseV1::Quiesced
             | CutoverPhaseV1::BackedUp
-            | CutoverPhaseV1::ShadowVerified
-            | CutoverPhaseV1::RolledBack => Some(&self.old_writer_id),
+            | CutoverPhaseV1::ShadowVerified => None,
             CutoverPhaseV1::WriterTransferred | CutoverPhaseV1::Activated => {
                 Some(&self.new_writer_id)
             }
@@ -271,6 +274,7 @@ mod tests {
         state
             .transition(0, CutoverPhaseV1::Quiesced, CutoverEvidenceV1::default())
             .expect("quiesce");
+        assert_eq!(state.authoritative_writer(), None);
         state
             .transition(
                 1,

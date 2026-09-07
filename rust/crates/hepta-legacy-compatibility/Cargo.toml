@@ -10,6 +10,11 @@ workspace = true
 
 [dependencies]
 hex.workspace = true
-serde_json.workspace = true
+icu_collator = { version = "=2.1.1", default-features = false, features = ["serde"] }
+icu_locale = { version = "=2.1.1", default-features = false }
+icu_provider = { version = "=2.3.1", features = ["sync"] }
+icu_provider_blob = { version = "=2.1.1", features = ["alloc"] }
+ryu-js = "=1.0.2"
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
 thiserror.workspace = true

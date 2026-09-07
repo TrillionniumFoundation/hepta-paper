@@ -63,6 +63,8 @@ Hard registered module dependencies:
 Current implementation and contract roots:
 
 - `rust/crates/hepta-cutover`
+- `paper-adapters/migration/rust-cutover-fence.mjs`
+- `paper-adapters/persistence/sqlite-store.mjs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -108,9 +110,15 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
-Capability bindings: `CAP-MIG-CUTOVER`. Related work identifiers: `MIG-005`, `MIG-006`. Implementation/contract roots: `rust/crates/hepta-cutover`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-MIG-CUTOVER`. Related work identifiers: `MIG-005`, `MIG-006`. Implementation/contract roots: `rust/crates/hepta-cutover`, `paper-adapters/migration/rust-cutover-fence.mjs`, `paper-adapters/persistence/sqlite-store.mjs`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
+
+### Runtime migration implementation details
+
+See the [durable cutover protocol, Node fencing and runbook](../../../rust/crates/hepta-cutover/README.md). It specifies the append-only SQLite state journal, persisted file identities, monotonic writer epochs, mandatory initial maintenance enrollment, Node StorePort enforcement, scoped canary, exact shadow comparisons, SQLite backup/restore and subprocess crash/concurrency tests. The runnable disposable drill preserves Rust-era committed records when returning ownership to a new Node epoch.
+
+Local drill receipts remain nonproduction. Production canary uses the existing independently signed writer authorization and exact database preimage. Production expansion, reverse-schema compatibility and production rollback remain unqualified; restoring an old backup over newer committed records is not a supported rollback.
 
 ## Rollout and rollback
 

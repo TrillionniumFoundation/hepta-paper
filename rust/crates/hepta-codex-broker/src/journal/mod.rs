@@ -5,6 +5,7 @@ mod request;
 mod schema;
 mod store;
 
+pub(crate) use maintenance::create_broker_backup_for_dispatch_bundle;
 pub use maintenance::{
     BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerRecoveryCandidateV1, create_broker_backup,
     list_recovery_candidates, restore_broker_backup,

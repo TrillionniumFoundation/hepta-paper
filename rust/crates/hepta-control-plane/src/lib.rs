@@ -2,8 +2,9 @@
 //!
 //! This crate composes immutable snapshots, module candidate frontiers, hard
 //! policy, bounded planning, hierarchical resource admission, prepared-result
-//! verification, a single commit sequencer interface, and privacy-bounded
-//! observability. It deliberately contains no production composition root,
+//! verification, an exclusive SQLite commit sequencer, and privacy-bounded
+//! observability. Durable commits include prepared bodies, receipts, campaign
+//! budgets and audit events in one transaction. It contains no production activation root,
 //! provider credential loader, release authority, or automatic activation.
 
 #![forbid(unsafe_code)]
@@ -11,18 +12,23 @@
 mod commit;
 mod events;
 mod execution;
+mod execution_filesystem;
 mod model;
 mod planner;
 mod resource;
 mod runtime;
 
-pub use commit::{CommitReceiptV1, CommitRequestV1, CommitSequencerV1, FixtureCommitSequencerV1};
+pub use commit::{
+    CommitReceiptV1, CommitRequestV1, CommitSequencerV1, FixtureCommitSequencerV1,
+    SqliteCommitSequencerV1,
+};
 pub use events::{BoundedEventLogV1, ControlPlaneEventKindV1, ControlPlaneEventV1};
 pub(crate) use execution::verification_receipt_hash_v1;
 pub use execution::{
     DeterministicPreparedResultVerifierV1, ExecutionRequestV1, ModuleExecutorV1,
     PreparedResultVerifierV1, VerifiedPreparedResultV1,
 };
+pub use execution_filesystem::FilesystemPreparedResultVerifierV1;
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
 pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1};
 pub use resource::{
@@ -80,6 +86,9 @@ pub enum ControlPlaneError {
     /// Commit sequencing or idempotency failed.
     #[error("commit sequencing failed")]
     CommitInvalid,
+    /// The durable writer rejected persistence, fencing, budget or integrity.
+    #[error("durable campaign persistence failed")]
+    PersistenceInvalid,
     /// Event cardinality or event-count budget was exceeded.
     #[error("observability budget exceeded")]
     ObservabilityBudgetExceeded,

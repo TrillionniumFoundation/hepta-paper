@@ -1,32 +1,23 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
+import fs from 'node:fs';
+import { productionOracleProfile, evaluateProductionRecord } from '../../../oracle/production-record-hash-v1.mjs';
 
-function canonical(value) {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
-    return JSON.stringify(value);
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error('non-finite number');
-    return JSON.stringify(Object.is(value, -0) ? 0 : value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
-  }
-  throw new Error('unsupported value');
+// stdin batch avoids operating-system argv limits for randomized differential
+// corpora and retains raw JSON number/string lexemes rather than reparsing them
+// into a different language's Value before reaching the actual Node functions.
+if (process.argv[2] === '--batch') {
+  const input = fs.readFileSync(0);
+  if (!input.length || input.length > 16 * 1024 * 1024) throw new Error('oracle_input_limit');
+  const request = JSON.parse(input);
+  if (!Array.isArray(request.cases)) throw new Error('missing_cases');
+  process.stdout.write(JSON.stringify({
+    profile: productionOracleProfile(),
+    results: request.cases.map((raw) => evaluateProductionRecord(raw, request.kind)),
+  }));
+} else {
+  if (process.argv[2] === undefined) throw new Error('missing_JSON_argument');
+  process.stdout.write(JSON.stringify({
+    profile: productionOracleProfile(),
+    ...evaluateProductionRecord(process.argv[2], process.argv[3]),
+  }));
 }
-
-function lengthPrefix(bytes) {
-  const length = Buffer.alloc(8);
-  length.writeBigUInt64BE(BigInt(bytes.length));
-  return Buffer.concat([length, bytes]);
-}
-
-const input = process.argv[2];
-if (!input) throw new Error('missing JSON argument');
-const encoded = Buffer.from(canonical(JSON.parse(input)), 'utf8');
-const hash = crypto.createHash('sha256')
-  .update(lengthPrefix(Buffer.from('HeptaLegacyStableJsonV1')))
-  .update(lengthPrefix(encoded))
-  .digest('hex');
-process.stdout.write(JSON.stringify({ canonical: encoded.toString('utf8'), hash: `sha256:${hash}` }));

@@ -86,6 +86,8 @@ pub struct BoundedProcessRequestV1 {
 pub enum ProcessTerminationReason {
     Exited,
     TimedOut,
+    /// A caller requested cancellation; process-group cleanup remains mandatory.
+    Cancelled,
     StdoutLimitExceeded,
     StderrLimitExceeded,
     DescendantSurvivedLeader,

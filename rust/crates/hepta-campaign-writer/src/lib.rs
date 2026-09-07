@@ -19,7 +19,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod control;
 mod cutover;
+
+pub use control::{
+    CONTROL_STREAM_SCHEMA_V1, DurableControlEntryV1, DurableControlLogV1, LOCAL_WRITER_SCHEMA_V1,
+};
 
 pub use cutover::{
     VerifiedWriterCutoverV1, WriterCutoverAuthorizationV1, WriterCutoverPolicyV1,
@@ -85,6 +90,9 @@ CREATE TABLE IF NOT EXISTS campaign_events (
 ) STRICT;
 COMMIT;
 "#;
+
+/// The exact original writer schema, separate from the legacy Node database.
+pub const CAMPAIGN_WRITER_SCHEMA_V1: &str = SCHEMA;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CampaignWriterPolicyV1 {
@@ -248,6 +256,7 @@ pub struct CampaignWriterStoreV1 {
     policy: CampaignWriterPolicyV1,
     activation: Option<VerifiedWriterCutoverV1>,
     initial_writer_acquired: bool,
+    local_only: bool,
 }
 
 impl CampaignWriterStoreV1 {
@@ -294,6 +303,7 @@ impl CampaignWriterStoreV1 {
             policy,
             activation,
             initial_writer_acquired: false,
+            local_only: false,
         };
         store.validate_integrity()?;
         Ok(store)
@@ -325,16 +335,18 @@ impl CampaignWriterStoreV1 {
         requested: WriterLeaseV1,
         now_unix_ms: u64,
     ) -> Result<WriterLeaseV1, CampaignWriterError> {
-        let activation = self
-            .activation
-            .as_ref()
-            .ok_or(CampaignWriterError::ActiveWriterAuthorizationRequired)?;
         requested.validate(now_unix_ms)?;
-        if !self.initial_writer_acquired
-            && &writer_lease_activation_hash_v1(&requested)?
-                != activation.initial_writer_lease_hash()
-        {
-            return Err(CampaignWriterError::CutoverWriterBindingMismatch);
+        if !self.local_only {
+            let activation = self
+                .activation
+                .as_ref()
+                .ok_or(CampaignWriterError::ActiveWriterAuthorizationRequired)?;
+            if !self.initial_writer_acquired
+                && &writer_lease_activation_hash_v1(&requested)?
+                    != activation.initial_writer_lease_hash()
+            {
+                return Err(CampaignWriterError::CutoverWriterBindingMismatch);
+            }
         }
         let transaction = self
             .connection
@@ -1429,7 +1441,7 @@ fn verify_schema(connection: &Connection) -> Result<(), CampaignWriterError> {
             return Err(CampaignWriterError::SchemaMismatch);
         }
     }
-    Ok(())
+    control::verify_known_schema(connection)
 }
 
 fn validate_identifier(value: &str) -> Result<(), CampaignWriterError> {
@@ -1528,6 +1540,10 @@ fn sync_parent(path: &Path) -> Result<(), CampaignWriterError> {
 pub enum CampaignWriterError {
     #[error("campaign writer policy is invalid")]
     InvalidPolicy,
+    #[error("database is not an explicitly created local-only writer store")]
+    NotLocalDatabase,
+    #[error("durable control log conflicts with its persisted binding or sequence")]
+    ControlLogConflict,
     #[error("campaign writer database path is invalid")]
     DatabasePathInvalid,
     #[error("campaign writer database exceeds the byte limit")]

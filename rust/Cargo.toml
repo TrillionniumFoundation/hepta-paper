@@ -22,6 +22,7 @@ members = [
   "crates/hepta-qualification-ingest",
   "crates/hepta-module-platform",
   "crates/hepta-control-plane",
+  "crates/hepta-paper-service",
 ]
 
 [workspace.package]
@@ -36,8 +37,8 @@ ed25519-dalek = "=3.0.0"
 hex = "=0.4.3"
 nix = { version = "=0.31.3", features = ["fs", "process", "signal", "socket"] }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
-serde = { version = "=1.0.219", features = ["derive"] }
-serde_derive = "=1.0.219"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_derive = "=1.0.228"
 serde_json = "=1.0.140"
 sha2 = "=0.10.8"
 thiserror = "=2.0.12"

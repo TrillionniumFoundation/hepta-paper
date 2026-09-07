@@ -187,6 +187,10 @@ current exact-source qualification, consumer integration and independent review.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+### Runtime migration implementation details
+
+The actual JavaScript source path is `paper-application/orchestration/candidate-router.mjs` in the registry, manifest and implementation roots above. The static state remains `design_ready`; this registration repairs source inventory and confers no currentness or activation authority.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

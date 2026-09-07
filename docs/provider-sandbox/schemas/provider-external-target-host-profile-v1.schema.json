@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-external-target-host-profile-v1.schema.json",
+  "title": "ProviderExternalTargetHostProfileV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "subject",
+    "process",
+    "filesystem",
+    "network",
+    "resourceControl",
+    "audit",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ProviderExternalTargetHostProfileV1"
+    },
+    "status": {
+      "const": "external_target_unaccepted"
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "process": {
+      "$ref": "#/$defs/process"
+    },
+    "filesystem": {
+      "$ref": "#/$defs/filesystem"
+    },
+    "network": {
+      "$ref": "#/$defs/network"
+    },
+    "resourceControl": {
+      "$ref": "#/$defs/resourceControl"
+    },
+    "audit": {
+      "$ref": "#/$defs/audit"
+    },
+    "authority": {
+      "$ref": "#/$defs/authority"
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}(?![\\s\\S])"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "absolutePath": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 4096,
+      "pattern": "^/[^\\u0000\\r\\n]{1,4095}(?![\\s\\S])"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostId",
+        "hostnameSha256",
+        "osRelease",
+        "kernelRelease",
+        "architecture"
+      ],
+      "properties": {
+        "hostId": {
+          "$ref": "#/$defs/token"
+        },
+        "hostnameSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "osRelease": {
+          "$ref": "#/$defs/token"
+        },
+        "kernelRelease": {
+          "$ref": "#/$defs/token"
+        },
+        "architecture": {
+          "enum": [
+            "x86_64",
+            "aarch64"
+          ]
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serviceManager",
+        "unitName",
+        "unitFileSha256",
+        "uid",
+        "gid",
+        "noNewPrivileges",
+        "privateTmp",
+        "protectSystem",
+        "protectHome",
+        "privateDevices",
+        "restrictSuidSgid",
+        "lockPersonality",
+        "memoryDenyWriteExecute"
+      ],
+      "properties": {
+        "serviceManager": {
+          "const": "systemd"
+        },
+        "unitName": {
+          "$ref": "#/$defs/token"
+        },
+        "unitFileSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967294
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967294
+        },
+        "noNewPrivileges": {
+          "const": true
+        },
+        "privateTmp": {
+          "const": true
+        },
+        "protectSystem": {
+          "const": "strict"
+        },
+        "protectHome": {
+          "const": true
+        },
+        "privateDevices": {
+          "const": true
+        },
+        "restrictSuidSgid": {
+          "const": true
+        },
+        "lockPersonality": {
+          "const": true
+        },
+        "memoryDenyWriteExecute": {
+          "const": true
+        }
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtimeRoot",
+        "sourceRoot",
+        "ownerUid",
+        "ownerGid",
+        "runtimeMode",
+        "noSymlinkRuntimeRoot",
+        "singleLinkInputs",
+        "immutableSourceMount"
+      ],
+      "properties": {
+        "runtimeRoot": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "sourceRoot": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "ownerUid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967294
+        },
+        "ownerGid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967294
+        },
+        "runtimeMode": {
+          "const": "0700"
+        },
+        "noSymlinkRuntimeRoot": {
+          "const": true
+        },
+        "singleLinkInputs": {
+          "const": true
+        },
+        "immutableSourceMount": {
+          "const": true
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "defaultDeny",
+        "allowedDestinations",
+        "proxyEnvironmentAllowed",
+        "dnsPolicy",
+        "socketActivationAllowed"
+      ],
+      "properties": {
+        "defaultDeny": {
+          "const": true
+        },
+        "allowedDestinations": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 512,
+            "pattern": "^[^\\u0000\\r\\n]{3,512}(?![\\s\\S])"
+          }
+        },
+        "proxyEnvironmentAllowed": {
+          "const": false
+        },
+        "dnsPolicy": {
+          "enum": [
+            "disabled",
+            "allowlisted_resolver"
+          ]
+        },
+        "socketActivationAllowed": {
+          "const": false
+        }
+      }
+    },
+    "resourceControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cgroupVersion",
+        "cpuQuotaMicrosPerSecond",
+        "memoryMaxBytes",
+        "pidsMax",
+        "ioMaxEntries",
+        "killMode"
+      ],
+      "properties": {
+        "cgroupVersion": {
+          "const": 2
+        },
+        "cpuQuotaMicrosPerSecond": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 1000000000
+        },
+        "memoryMaxBytes": {
+          "type": "integer",
+          "minimum": 67108864,
+          "maximum": 1099511627776
+        },
+        "pidsMax": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "ioMaxEntries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "killMode": {
+          "const": "control-group"
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logSink",
+        "receiptStore",
+        "clockSource",
+        "retentionDays",
+        "appendOnlyRequired"
+      ],
+      "properties": {
+        "logSink": {
+          "$ref": "#/$defs/token"
+        },
+        "receiptStore": {
+          "$ref": "#/$defs/token"
+        },
+        "clockSource": {
+          "$ref": "#/$defs/token"
+        },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 90,
+          "maximum": 3650
+        },
+        "appendOnlyRequired": {
+          "const": true
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostQualified",
+        "providerAuthorized",
+        "externalActionAuthorized",
+        "productionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "hostQualified": {
+          "const": false
+        },
+        "providerAuthorized": {
+          "const": false
+        },
+        "externalActionAuthorized": {
+          "const": false
+        },
+        "productionAuthorized": {
+          "const": false
+        },
+        "externalAuthorityClaimed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

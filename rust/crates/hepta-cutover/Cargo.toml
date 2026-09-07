@@ -15,4 +15,4 @@ serde_json.workspace = true
 rusqlite.workspace = true
 sha2.workspace = true
 hex.workspace = true
-hepta-campaign-writer = { path = "../hepta-campaign-writer" }
+hepta-campaign-writer = { path = "../hepta-campaign-writer", version = "=0.1.0" }

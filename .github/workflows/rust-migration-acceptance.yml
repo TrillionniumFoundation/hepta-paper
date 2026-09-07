@@ -25,8 +25,15 @@ jobs:
     timeout-minutes: 30
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      EVIDENCE_ROOT: ${{ runner.temp }}/hepta-rust-migration-evidence
     steps:
+      - name: Prepare disposable migration evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration_evidence_root="$RUNNER_TEMP/hepta-rust-migration-evidence"
+          mkdir -p "$migration_evidence_root"
+          printf 'EVIDENCE_ROOT=%s\n' "$migration_evidence_root" >> "$GITHUB_ENV"
+
       - name: Check out exact candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:

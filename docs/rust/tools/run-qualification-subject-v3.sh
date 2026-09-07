@@ -30,8 +30,11 @@ PYTHONPYCACHEPREFIX="${RUNNER_TEMP:-/tmp}/hepta-v3-pycache" python3 -m py_compil
   docs/rust/tools/verify_effective_status_v2_current.py \
   docs/rust/tools/validate_qualification_collection_completeness.py \
   docs/rust/tools/test_qualification_collection_completeness.py \
+  docs/rust/tools/validate_qualification_evidence_projection.py \
+  docs/rust/tools/test_qualification_evidence_projection.py \
   docs/rust/tools/test-plan-v4-qualification.py \
   docs/rust/tools/test_qualification_subject_v3.py \
+  docs/rust/tools/test_qualification_job_time_skew.py \
   docs/rust/tools/test_qualification_job_time_compatibility.py
 
 bash -n docs/rust/tools/run-qualification-subject-v3.sh
@@ -41,10 +44,14 @@ python3 docs/rust/tools/test-plan-v4-qualification.py \
   2>&1 | tee "$EVIDENCE_ROOT/plan-v4-tests.log"
 python3 docs/rust/tools/test_qualification_subject_v3.py \
   2>&1 | tee "$EVIDENCE_ROOT/subject-v3-tests.log"
+python3 docs/rust/tools/test_qualification_job_time_skew.py \
+  2>&1 | tee "$EVIDENCE_ROOT/job-time-skew-tests.log"
 python3 docs/rust/tools/test_qualification_job_time_compatibility.py \
   2>&1 | tee "$EVIDENCE_ROOT/job-time-compatibility-tests.log"
 python3 docs/rust/tools/test_qualification_collection_completeness.py \
   2>&1 | tee "$EVIDENCE_ROOT/collection-completeness-tests.log"
+python3 docs/rust/tools/test_qualification_evidence_projection.py \
+  2>&1 | tee "$EVIDENCE_ROOT/evidence-projection-tests.log"
 
 python3 docs/rust/tools/collect-required-checks.py \
   --repository "$GITHUB_REPOSITORY" \
@@ -62,6 +69,11 @@ python3 docs/rust/tools/validate_qualification_collection_completeness.py \
   --raw-root "$EVIDENCE_ROOT/raw/required" \
   --artifact "$EVIDENCE_ROOT/check-evidence.v2.json" \
   | tee "$EVIDENCE_ROOT/required-collection-validation.json"
+python3 docs/rust/tools/validate_qualification_evidence_projection.py \
+  --mode required \
+  --raw-root "$EVIDENCE_ROOT/raw/required" \
+  --artifact "$EVIDENCE_ROOT/check-evidence.v2.json" \
+  | tee "$EVIDENCE_ROOT/required-projection-validation.json"
 
 python3 docs/rust/tools/derive-effective-status.py \
   --check-runs "$EVIDENCE_ROOT/check-evidence.v2.json" \
@@ -96,6 +108,11 @@ python3 docs/rust/tools/validate_qualification_collection_completeness.py \
   --raw-root "$EVIDENCE_ROOT/raw/subject" \
   --artifact "$EVIDENCE_ROOT/qualification-subject.v3.json" \
   | tee "$EVIDENCE_ROOT/subject-collection-validation.json"
+python3 docs/rust/tools/validate_qualification_evidence_projection.py \
+  --mode subject \
+  --raw-root "$EVIDENCE_ROOT/raw/subject" \
+  --artifact "$EVIDENCE_ROOT/qualification-subject.v3.json" \
+  | tee "$EVIDENCE_ROOT/subject-projection-validation.json"
 python3 docs/rust/tools/strict_json_schema.py \
   --schema docs/qualification/schemas/qualification-subject-runtime-v3.schema.json \
   --instance "$EVIDENCE_ROOT/qualification-subject.v3.json" \
@@ -127,6 +144,11 @@ python3 docs/rust/tools/validate_qualification_collection_completeness.py \
   --raw-root "$EVIDENCE_ROOT/raw/current-required" \
   --artifact "$EVIDENCE_ROOT/current-check-evidence.v2.json" \
   | tee "$EVIDENCE_ROOT/current-required-collection-validation.json"
+python3 docs/rust/tools/validate_qualification_evidence_projection.py \
+  --mode required \
+  --raw-root "$EVIDENCE_ROOT/raw/current-required" \
+  --artifact "$EVIDENCE_ROOT/current-check-evidence.v2.json" \
+  | tee "$EVIDENCE_ROOT/current-required-projection-validation.json"
 python3 docs/rust/tools/qualification_subject_v3.py \
   --repository "$GITHUB_REPOSITORY" \
   --pull-request "$EXPECTED_PR_NUMBER" \
@@ -144,6 +166,11 @@ python3 docs/rust/tools/validate_qualification_collection_completeness.py \
   --raw-root "$EVIDENCE_ROOT/raw/current-subject" \
   --artifact "$EVIDENCE_ROOT/current-qualification-subject.v3.json" \
   | tee "$EVIDENCE_ROOT/current-subject-collection-validation.json"
+python3 docs/rust/tools/validate_qualification_evidence_projection.py \
+  --mode subject \
+  --raw-root "$EVIDENCE_ROOT/raw/current-subject" \
+  --artifact "$EVIDENCE_ROOT/current-qualification-subject.v3.json" \
+  | tee "$EVIDENCE_ROOT/current-subject-projection-validation.json"
 python3 docs/rust/tools/strict_json_schema.py \
   --schema docs/qualification/schemas/qualification-subject-runtime-v3.schema.json \
   --instance "$EVIDENCE_ROOT/current-qualification-subject.v3.json" \

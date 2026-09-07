@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "ProviderExternalAcceptanceKitV1",
+  "status": "source_contract_ready_external_evidence_required",
+  "requestSchema": "docs/provider-sandbox/schemas/provider-technical-sandbox-request-v1.schema.json",
+  "responseSchema": "docs/provider-sandbox/schemas/provider-technical-sandbox-response-v1.schema.json",
+  "sourceManifestSchema": "docs/provider-sandbox/schemas/provider-external-companion-source-manifest-v1.schema.json",
+  "sourceManifestTemplate": "docs/provider-sandbox/templates/provider-external-companion-source-manifest-v1.template.json",
+  "targetHostProfileSchema": "docs/provider-sandbox/schemas/provider-external-target-host-profile-v1.schema.json",
+  "targetHostProfileTemplate": "docs/provider-sandbox/templates/provider-external-target-host-profile-v1.template.json",
+  "conformanceVectorSchema": "docs/provider-sandbox/schemas/provider-external-conformance-vectors-v1.schema.json",
+  "conformanceVectors": "docs/provider-sandbox/fixtures/provider-external-conformance-vectors-v1.json",
+  "idempotencyReconciliationContract": "docs/provider-sandbox/EXTERNAL_PROVIDER_IDEMPOTENCY_RECONCILIATION.md",
+  "revocationRollbackChecklist": "docs/provider-sandbox/EXTERNAL_PROVIDER_REVOCATION_ROLLBACK.md",
+  "acceptanceGuide": "docs/provider-sandbox/EXTERNAL_PROVIDER_ACCEPTANCE_KIT.md",
+  "operationalRunner": "docs/provider-sandbox/tools/run-external-provider-acceptance.sh",
+  "externalOperationalTest": "paper-core/operational/provider-sandbox-external.operational.mjs",
+  "authority": {
+    "providerAuthorized": false,
+    "credentialCustodyEstablished": false,
+    "externalActionAuthorized": false,
+    "releaseAuthorized": false,
+    "submissionAuthorized": false,
+    "productionAuthorized": false,
+    "externalAuthorityClaimed": false
+  }
+}

@@ -1,0 +1,379 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-external-acceptance-receipt-v1.schema.json",
+  "title": "ProviderExternalAcceptanceReceiptV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "exactSubject",
+    "providerSubject",
+    "evidence",
+    "currentness",
+    "decisions",
+    "technicalCompanionAccepted",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ProviderExternalAcceptanceReceiptV1"
+    },
+    "status": {
+      "const": "technical_external_companion_accepted_non_authorizing"
+    },
+    "exactSubject": {
+      "$ref": "#/$defs/exactSubject"
+    },
+    "providerSubject": {
+      "$ref": "#/$defs/providerSubject"
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidence"
+    },
+    "currentness": {
+      "$ref": "#/$defs/currentness"
+    },
+    "decisions": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/providerOwnerDecision"
+        },
+        {
+          "$ref": "#/$defs/evidenceOwnerDecision"
+        },
+        {
+          "$ref": "#/$defs/releaseOwnerDecision"
+        }
+      ],
+      "items": false
+    },
+    "technicalCompanionAccepted": {
+      "const": true
+    },
+    "authority": {
+      "$ref": "#/$defs/authority"
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}(?![\\s\\S])"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "gitObject": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}(?![\\s\\S])"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])"
+    },
+    "exactSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryId",
+        "repository",
+        "pullRequest",
+        "baseRef",
+        "baseCommit",
+        "baseTree",
+        "headRef",
+        "headCommit",
+        "headTree",
+        "prospectiveMergeCommit",
+        "prospectiveMergeTree",
+        "mergeParents"
+      ],
+      "properties": {
+        "repositoryId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\\s\\S])"
+        },
+        "pullRequest": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "baseRef": {
+          "$ref": "#/$defs/token"
+        },
+        "baseCommit": {
+          "$ref": "#/$defs/gitObject"
+        },
+        "baseTree": {
+          "$ref": "#/$defs/gitObject"
+        },
+        "headRef": {
+          "$ref": "#/$defs/token"
+        },
+        "headCommit": {
+          "$ref": "#/$defs/gitObject"
+        },
+        "headTree": {
+          "$ref": "#/$defs/gitObject"
+        },
+        "prospectiveMergeCommit": {
+          "$ref": "#/$defs/gitObject"
+        },
+        "prospectiveMergeTree": {
+          "$ref": "#/$defs/gitObject"
+        },
+        "mergeParents": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/gitObject"
+            },
+            {
+              "$ref": "#/$defs/gitObject"
+            }
+          ],
+          "items": false
+        }
+      }
+    },
+    "providerSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerOwnerId",
+        "providerAccountId",
+        "sandboxAccount",
+        "credentialVersionSha256",
+        "endpointSetSha256",
+        "companionReleaseId",
+        "companionExecutableSha256",
+        "targetHostId",
+        "targetHostProfileSha256"
+      ],
+      "properties": {
+        "providerOwnerId": {
+          "$ref": "#/$defs/token"
+        },
+        "providerAccountId": {
+          "$ref": "#/$defs/token"
+        },
+        "sandboxAccount": {
+          "const": true
+        },
+        "credentialVersionSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "endpointSetSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "companionReleaseId": {
+          "$ref": "#/$defs/token"
+        },
+        "companionExecutableSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "targetHostId": {
+          "$ref": "#/$defs/token"
+        },
+        "targetHostProfileSha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceManifestSha256",
+        "conformanceResultSha256",
+        "quarantineResultSha256",
+        "idempotencyRecoveryResultSha256",
+        "revocationResultSha256",
+        "evidenceIndexSha256",
+        "retentionReceiptSha256"
+      ],
+      "properties": {
+        "sourceManifestSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "conformanceResultSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "quarantineResultSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "idempotencyRecoveryResultSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "revocationResultSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "evidenceIndexSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "retentionReceiptSha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "currentness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observedAt",
+        "validUntil",
+        "revocationSnapshotSha256",
+        "currentnessVerifierSha256",
+        "liveRevalidationRequired"
+      ],
+      "properties": {
+        "observedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "validUntil": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "revocationSnapshotSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "currentnessVerifierSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "liveRevalidationRequired": {
+          "const": true
+        }
+      }
+    },
+    "decisionBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "principalId",
+        "decision",
+        "decidedAt",
+        "signedPayloadSha256",
+        "signatureArtifactSha256",
+        "algorithm"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "provider_owner",
+            "evidence_owner",
+            "release_owner"
+          ]
+        },
+        "principalId": {
+          "$ref": "#/$defs/token"
+        },
+        "decision": {
+          "const": "technical_external_acceptance_approved_non_authorizing"
+        },
+        "decidedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "signedPayloadSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "signatureArtifactSha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "algorithm": {
+          "const": "ed25519"
+        }
+      }
+    },
+    "providerOwnerDecision": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/decisionBase"
+        },
+        {
+          "properties": {
+            "role": {
+              "const": "provider_owner"
+            }
+          }
+        }
+      ]
+    },
+    "evidenceOwnerDecision": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/decisionBase"
+        },
+        {
+          "properties": {
+            "role": {
+              "const": "evidence_owner"
+            }
+          }
+        }
+      ]
+    },
+    "releaseOwnerDecision": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/decisionBase"
+        },
+        {
+          "properties": {
+            "role": {
+              "const": "release_owner"
+            }
+          }
+        }
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerAuthorized",
+        "credentialCustodyEstablished",
+        "externalActionAuthorized",
+        "releaseAuthorized",
+        "submissionAuthorized",
+        "productionAuthorized",
+        "externalAuthorityClaimed"
+      ],
+      "properties": {
+        "providerAuthorized": {
+          "const": false
+        },
+        "credentialCustodyEstablished": {
+          "const": false
+        },
+        "externalActionAuthorized": {
+          "const": false
+        },
+        "releaseAuthorized": {
+          "const": false
+        },
+        "submissionAuthorized": {
+          "const": false
+        },
+        "productionAuthorized": {
+          "const": false
+        },
+        "externalAuthorityClaimed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

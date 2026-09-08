@@ -153,52 +153,52 @@ jobs:
           )
           body = f'''## Canonical direct-to-main Rust replacement subject
 
-This PR is the sole convergence surface for the `hepta-paper` Node-to-Rust replacement candidate.
+          This PR is the sole convergence surface for the `hepta-paper` Node-to-Rust replacement candidate.
 
-- Base branch: `main`
-- Exact base commit: `{main['commit']['sha']}`
-- Head branch: `codex/rust-full-replacement-rc-20260908`
-- Exact head commit: `{head_sha}`
-- Exact head tree: `{head['commit']['tree']['sha']}`
+          - Base branch: `main`
+          - Exact base commit: `{main['commit']['sha']}`
+          - Head branch: `codex/rust-full-replacement-rc-20260908`
+          - Exact head commit: `{head_sha}`
+          - Exact head tree: `{head['commit']['tree']['sha']}`
 
-Any base, head, tree, workflow, policy, generated merge, review, or evidence movement invalidates this subject and requires a fresh matrix and review.
+          Any base, head, tree, workflow, policy, generated merge, review, or evidence movement invalidates this subject and requires a fresh matrix and review.
 
-## Integrated repository-local closure
+          ## Integrated repository-local closure
 
-- durable Rust broker, journal, pre-exec and containment contracts;
-- descriptor-bound workspace authority and actual mutation verification;
-- exact Node schema-1..25 database and record-hash compatibility;
-- generation-fenced Rust campaign writer and exactly-once prepared-result integration;
-- native Rust author, reviewer, formal, empirical, numerical and build workers;
-- immutable Node database drain/freeze proof before the first Rust writer lease;
-- reversible state projection/import/export and post-cutover rollback proof;
-- deterministic Rust planning snapshots, Pareto routing, hierarchical resource transactions, privacy-bounded telemetry and canonical performance qualification;
-- fail-closed Rust-only production composition and Node-retirement verifier;
-- complete module, parity, risk, runbook, program-truth and qualification documentation.
+          - durable Rust broker, journal, pre-exec and containment contracts;
+          - descriptor-bound workspace authority and actual mutation verification;
+          - exact Node schema-1..25 database and record-hash compatibility;
+          - generation-fenced Rust campaign writer and exactly-once prepared-result integration;
+          - native Rust author, reviewer, formal, empirical, numerical and build workers;
+          - immutable Node database drain/freeze proof before the first Rust writer lease;
+          - reversible state projection/import/export and post-cutover rollback proof;
+          - deterministic Rust planning snapshots, Pareto routing, hierarchical resource transactions, privacy-bounded telemetry and canonical performance qualification;
+          - fail-closed Rust-only production composition and Node-retirement verifier;
+          - complete module, parity, risk, runbook, program-truth and qualification documentation.
 
-No Node or generic shell bridge counts as a native Rust production capability.
+          No Node or generic shell bridge counts as a native Rust production capability.
 
-## Exact-head workflow matrix
+          ## Exact-head workflow matrix
 
-{lines}
+          {lines}
 
-## Non-forgeable production boundary
+          ## Non-forgeable production boundary
 
-The repository-local matrix does not manufacture separately controlled facts. Production activation remains fail closed until verified current receipts exist for:
+          The repository-local matrix does not manufacture separately controlled facts. Production activation remains fail closed until verified current receipts exist for:
 
-- protected-main governance and independent non-author review (#25);
-- target-host principal, systemd, listener and cgroup qualification (#17);
-- destructive storage, reboot, corruption and 72-hour production-topology soak (#12);
-- independent capability-key lifecycle and compromise drill (#14);
-- real credential custody and authenticated Codex role canaries (#21);
-- real KMS/HSM, WORM, release, portal and submission authority (#22);
-- private 263-file legacy replay with retained index and independent acknowledgement (#28).
+          - protected-main governance and independent non-author review (#25);
+          - target-host principal, systemd, listener and cgroup qualification (#17);
+          - destructive storage, reboot, corruption and 72-hour production-topology soak (#12);
+          - independent capability-key lifecycle and compromise drill (#14);
+          - real credential custody and authenticated Codex role canaries (#21);
+          - real KMS/HSM, WORM, release, portal and submission authority (#22);
+          - private 263-file legacy replay with retained index and independent acknowledgement (#28).
 
-Administrator privilege, source booleans, fixtures, hosted runners and self-signed records cannot substitute for those receipts.
+          Administrator privilege, source booleans, fixtures, hosted runners and self-signed records cannot substitute for those receipts.
 
-## Review request
+          ## Review request
 
-Review this exact subject. Confirm repository-local source and migration closure, production authority non-forgeability, single-writer preservation, Node-free production composition, and the continued external-evidence boundary. Do not approve or merge after any subject movement without a new exact-head matrix.'''
+          Review this exact subject. Confirm repository-local source and migration closure, production authority non-forgeability, single-writer preservation, Node-free production composition, and the continued external-evidence boundary. Do not approve or merge after any subject movement without a new exact-head matrix.'''
           request_json(
               'PATCH',
               '/pulls/110',

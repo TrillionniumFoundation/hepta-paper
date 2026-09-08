@@ -187,40 +187,40 @@ jobs:
           )
           body = f'''## Canonical direct-to-main Rust replacement subject
 
-- Base: `main@{main['commit']['sha']}`
-- Head: `codex/rust-full-replacement-rc-20260908@{head_sha}`
-- Head tree: `{head['commit']['tree']['sha']}`
-- Admission workflow: `admit-rust-replacement-rc`
+          - Base: `main@{main['commit']['sha']}`
+          - Head: `codex/rust-full-replacement-rc-20260908@{head_sha}`
+          - Head tree: `{head['commit']['tree']['sha']}`
+          - Admission workflow: `admit-rust-replacement-rc`
 
-Any base, head, tree, workflow, policy, generated merge, review, or evidence movement invalidates this subject.
+          Any base, head, tree, workflow, policy, generated merge, review, or evidence movement invalidates this subject.
 
-## Repository-local Rust replacement closure
+          ## Repository-local Rust replacement closure
 
-The exact head contains and validates:
+          The exact head contains and validates:
 
-- Rust protocols, broker, durable journal, pre-exec gate, containment and recovery;
-- descriptor-bound workspace authority and actual changeset enforcement;
-- Node schema-1..25/database/hash compatibility and reversible migration contracts;
-- generation-fenced Rust campaign writer and exactly-once prepared-result integration;
-- native Rust author, reviewer, formal, empirical, numerical and build capabilities;
-- immutable Node database drain/freeze proof before the first Rust writer lease;
-- deterministic planning snapshots, Pareto candidate routing, hierarchical resource transactions, privacy-bounded telemetry and canonical performance qualification through the `hepta-control-plane` facade;
-- Rust-only production composition, Node-retirement verification, cutover and rollback boundaries;
-- source, module, parity, risk, supply-chain, program-truth and operator documentation.
+          - Rust protocols, broker, durable journal, pre-exec gate, containment and recovery;
+          - descriptor-bound workspace authority and actual changeset enforcement;
+          - Node schema-1..25/database/hash compatibility and reversible migration contracts;
+          - generation-fenced Rust campaign writer and exactly-once prepared-result integration;
+          - native Rust author, reviewer, formal, empirical, numerical and build capabilities;
+          - immutable Node database drain/freeze proof before the first Rust writer lease;
+          - deterministic planning snapshots, Pareto candidate routing, hierarchical resource transactions, privacy-bounded telemetry and canonical performance qualification through the `hepta-control-plane` facade;
+          - Rust-only production composition, Node-retirement verification, cutover and rollback boundaries;
+          - source, module, parity, risk, supply-chain, program-truth and operator documentation.
 
-A Node process, JavaScript file, generic process bridge or shell command cannot count as a native Rust production capability.
+          A Node process, JavaScript file, generic process bridge or shell command cannot count as a native Rust production capability.
 
-## Exact-head producer matrix
+          ## Exact-head producer matrix
 
-{matrix_lines}
+          {matrix_lines}
 
-## External authority boundary
+          ## External authority boundary
 
-Repository-local admission grants no production activation. Real, current and independently controlled receipts remain mandatory for #25, #17, #12, #14, #21, #22 and #28. Administrator access, hosted CI, fixtures, source booleans and self-signed records cannot substitute for those facts.
+          Repository-local admission grants no production activation. Real, current and independently controlled receipts remain mandatory for #25, #17, #12, #14, #21, #22 and #28. Administrator access, hosted CI, fixtures, source booleans and self-signed records cannot substitute for those facts.
 
-## Independent review
+          ## Independent review
 
-Review this exact subject only. Confirm the full repository-local closure, single-writer preservation, Node-free production path and non-forgeable external evidence boundary. Any later movement requires a new complete matrix and review.'''
+          Review this exact subject only. Confirm the full repository-local closure, single-writer preservation, Node-free production path and non-forgeable external evidence boundary. Any later movement requires a new complete matrix and review.'''
           api(
               'PATCH',
               f'{rest}/pulls/110',

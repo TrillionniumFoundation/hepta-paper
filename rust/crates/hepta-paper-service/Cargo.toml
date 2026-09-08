@@ -15,6 +15,7 @@ hepta-module-platform = { path = "../hepta-module-platform", version = "=0.1.0" 
 hepta-control-plane = { path = "../hepta-control-plane", version = "=0.1.0" }
 hepta-campaign-writer = { path = "../hepta-campaign-writer", version = "=0.1.0" }
 hepta-readonly-store = { path = "../hepta-readonly-store", version = "=0.1.0" }
+hepta-qualification-ingest = { path = "../hepta-qualification-ingest", version = "=0.1.0" }
 hex.workspace = true
 nix.workspace = true
 serde.workspace = true

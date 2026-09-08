@@ -8,6 +8,7 @@
 
 pub mod native_business;
 mod objects;
+mod production;
 mod worker;
 
 use hepta_campaign_writer::{CampaignWriterPolicyV1, CampaignWriterStoreV1, WriterLeaseV1};
@@ -23,6 +24,10 @@ use std::{collections::BTreeMap, fs, os::unix::fs::MetadataExt, path::PathBuf};
 use thiserror::Error;
 
 pub use objects::ObjectStoreV1;
+pub use production::{
+    ProductionActivationStageV1, ProductionServiceReceiptV1, ProductionServiceRunV1,
+    run_production_service_v1,
+};
 pub use worker::{
     NativeJobV1, ServiceExecutorV1, WorkerBindingV1, WorkerResponseV1,
     native_implementation_hash_v1,

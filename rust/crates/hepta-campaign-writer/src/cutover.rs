@@ -188,7 +188,9 @@ impl VerifiedWriterCutoverV1 {
         Ok(())
     }
 
-    pub(crate) fn database_preimage_hash(&self) -> &Sha256Digest {
+    /// Exact database preimage hash bound by the independent authorization.
+    #[must_use]
+    pub fn database_preimage_hash(&self) -> &Sha256Digest {
         &self.database_preimage_hash
     }
 

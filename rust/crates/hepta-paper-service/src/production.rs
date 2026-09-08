@@ -158,10 +158,7 @@ pub fn run_production_service_v1(
     let tenant = config.service.snapshot.campaign_id.clone();
     let allocator = ResourceAllocatorV1::new(
         config.service.snapshot.resource_limit,
-        BTreeMap::from([(
-            tenant.clone(),
-            config.service.snapshot.resource_limit,
-        )]),
+        BTreeMap::from([(tenant.clone(), config.service.snapshot.resource_limit)]),
         BTreeMap::from([(tenant.clone(), 1)]),
         1,
     )
@@ -214,8 +211,7 @@ fn validate_authority_bindings(
         || config.service.production_activation
         || config.service.hard_policy.external_actions_authorized
         || config.service.observed_at_unix_ms == 0
-        || config.service.writer_lease.expires_at_unix_ms
-            <= config.service.observed_at_unix_ms
+        || config.service.writer_lease.expires_at_unix_ms <= config.service.observed_at_unix_ms
         || config.service.workers.is_empty()
         || config.service.workers.len() > 256
     {
@@ -433,8 +429,7 @@ mod tests {
             "\"canary\""
         );
         assert_eq!(
-            serde_json::to_string(&ProductionActivationStageV1::Authoritative)
-                .expect("stage JSON"),
+            serde_json::to_string(&ProductionActivationStageV1::Authoritative).expect("stage JSON"),
             "\"authoritative\""
         );
     }

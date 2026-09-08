@@ -465,6 +465,7 @@ dependencies = [
  "hepta-codex-runtime",
  "hepta-control-plane",
  "hepta-module-platform",
+ "hepta-qualification-ingest",
  "hepta-readonly-store",
  "hex",
  "nix",

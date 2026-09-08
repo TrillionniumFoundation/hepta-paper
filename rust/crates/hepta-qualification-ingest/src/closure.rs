@@ -71,6 +71,8 @@ pub struct VerifiedExternalQualificationClosureV1 {
     subject: ExternalQualificationClosureSubjectV1,
     receipt_hash: String,
     trust_store_generation: u64,
+    verified_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
     packages: BTreeMap<QualificationPackageIdV1, VerifiedExternalQualificationV1>,
     authority_groups: BTreeMap<String, Vec<String>>,
     runtime_facts: ExternalQualificationRuntimeFactsV1,
@@ -93,6 +95,20 @@ impl VerifiedExternalQualificationClosureV1 {
     #[must_use]
     pub const fn trust_store_generation(&self) -> u64 {
         self.trust_store_generation
+    }
+
+    /// Rechecks that the complete package set is still within the verified window.
+    pub fn assert_current(&self, now_unix_ms: u64) -> Result<(), QualificationClosureError> {
+        if now_unix_ms < self.verified_at_unix_ms || now_unix_ms >= self.expires_at_unix_ms {
+            return Err(QualificationClosureError::ClosureExpired);
+        }
+        Ok(())
+    }
+
+    /// Earliest expiry among the seven independently signed packages.
+    #[must_use]
+    pub const fn expires_at_unix_ms(&self) -> u64 {
+        self.expires_at_unix_ms
     }
 
     /// Cross-package host, database, service and runtime facts.
@@ -129,6 +145,11 @@ pub fn verify_external_qualification_closure_v1(
     if trust_store_generation == 0 || candidates.len() != QualificationPackageIdV1::ALL.len() {
         return Err(QualificationClosureError::PackageSetIncomplete);
     }
+    let expires_at_unix_ms = candidates
+        .iter()
+        .map(|candidate| candidate.envelope.expires_at_unix_ms)
+        .min()
+        .ok_or(QualificationClosureError::PackageSetIncomplete)?;
     let mut total_payload_bytes = 0usize;
     let mut records = Vec::with_capacity(candidates.len());
     for candidate in candidates {
@@ -169,14 +190,25 @@ pub fn verify_external_qualification_closure_v1(
             .map_err(|_| QualificationClosureError::PayloadFactsInvalid)?;
         records.push((verified, payload));
     }
-    assemble_verified_closure(subject, trust_store_generation, records)
+    assemble_verified_closure(
+        subject,
+        trust_store_generation,
+        now_unix_ms,
+        expires_at_unix_ms,
+        records,
+    )
 }
 
 fn assemble_verified_closure(
     subject: &ExternalQualificationClosureSubjectV1,
     trust_store_generation: u64,
+    verified_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
     records: Vec<(VerifiedExternalQualificationV1, Value)>,
 ) -> Result<VerifiedExternalQualificationClosureV1, QualificationClosureError> {
+    if verified_at_unix_ms == 0 || expires_at_unix_ms <= verified_at_unix_ms {
+        return Err(QualificationClosureError::ClosureExpired);
+    }
     let mut by_package = BTreeMap::new();
     let mut payload_by_package = BTreeMap::new();
     let mut nonces = BTreeSet::new();
@@ -277,6 +309,8 @@ fn assemble_verified_closure(
         kind: "VerifiedExternalQualificationClosureV1",
         subject,
         trust_store_generation,
+        verified_at_unix_ms,
+        expires_at_unix_ms,
         packages: ordered_packages,
         authority_groups: &authority_groups,
         runtime_facts: &runtime_facts,
@@ -290,6 +324,8 @@ fn assemble_verified_closure(
         subject: subject.clone(),
         receipt_hash,
         trust_store_generation,
+        verified_at_unix_ms,
+        expires_at_unix_ms,
         packages: by_package,
         authority_groups,
         runtime_facts,
@@ -373,6 +409,8 @@ struct ClosureBodyV1<'a> {
     kind: &'static str,
     subject: &'a ExternalQualificationClosureSubjectV1,
     trust_store_generation: u64,
+    verified_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
     packages: Vec<ClosurePackageBodyV1<'a>>,
     authority_groups: &'a BTreeMap<String, Vec<String>>,
     runtime_facts: &'a ExternalQualificationRuntimeFactsV1,
@@ -430,6 +468,9 @@ pub enum QualificationClosureError {
     /// Envelope, trust, subject, time or signature verification failed.
     #[error(transparent)]
     Ingest(#[from] QualificationIngestError),
+    /// The closure is used outside the common verified package lifetime.
+    #[error("external qualification closure is expired or not yet current")]
+    ClosureExpired,
     /// Package-specific canonical semantics or nested signatures failed.
     #[error(transparent)]
     Payload(#[from] QualificationPayloadError),
@@ -508,7 +549,7 @@ mod tests {
 
     #[test]
     fn complete_set_derives_cross_bound_opaque_receipt() {
-        let verified = assemble_verified_closure(&subject(), 7, complete_records())
+        let verified = assemble_verified_closure(&subject(), 7, 1_000, 2_000, complete_records())
             .expect("complete closure");
         assert_eq!(verified.packages.len(), 7);
         assert_eq!(verified.authority_groups.len(), 5);
@@ -518,7 +559,13 @@ mod tests {
             format!("sha256:{}", "1".repeat(64))
         );
         assert!(valid_sha256(verified.receipt_hash()));
-        let repeated = assemble_verified_closure(&subject(), 7, complete_records())
+        assert_eq!(verified.expires_at_unix_ms(), 2_000);
+        assert!(verified.assert_current(1_500).is_ok());
+        assert!(matches!(
+            verified.assert_current(2_000),
+            Err(QualificationClosureError::ClosureExpired)
+        ));
+        let repeated = assemble_verified_closure(&subject(), 7, 1_000, 2_000, complete_records())
             .expect("repeat closure");
         assert_eq!(verified.receipt_hash(), repeated.receipt_hash());
     }
@@ -528,21 +575,21 @@ mod tests {
         let mut incomplete = complete_records();
         incomplete.pop();
         assert!(matches!(
-            assemble_verified_closure(&subject(), 1, incomplete),
+            assemble_verified_closure(&subject(), 1, 1_000, 2_000, incomplete),
             Err(QualificationClosureError::PackageSetIncomplete)
         ));
 
         let mut duplicate = complete_records();
         duplicate[1].0.nonce = duplicate[0].0.nonce.clone();
         assert!(matches!(
-            assemble_verified_closure(&subject(), 1, duplicate),
+            assemble_verified_closure(&subject(), 1, 1_000, 2_000, duplicate),
             Err(QualificationClosureError::DuplicateNonce)
         ));
 
         let mut collapsed = complete_records();
         collapsed[3].0.authority_domain_id = "governance-review".into();
         assert!(matches!(
-            assemble_verified_closure(&subject(), 1, collapsed),
+            assemble_verified_closure(&subject(), 1, 1_000, 2_000, collapsed),
             Err(QualificationClosureError::AuthoritySeparationViolation)
         ));
     }
@@ -550,10 +597,9 @@ mod tests {
     #[test]
     fn closure_rejects_cross_package_host_or_database_drift() {
         let mut records = complete_records();
-        records[2].1["hostIdentityHash"] =
-            Value::String(format!("sha256:{}", "9".repeat(64)));
+        records[2].1["hostIdentityHash"] = Value::String(format!("sha256:{}", "9".repeat(64)));
         assert!(matches!(
-            assemble_verified_closure(&subject(), 1, records),
+            assemble_verified_closure(&subject(), 1, 1_000, 2_000, records),
             Err(QualificationClosureError::CrossPackageIdentityMismatch)
         ));
     }

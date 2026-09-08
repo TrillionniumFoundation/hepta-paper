@@ -111,7 +111,7 @@ for (const [mode, program, code] of [
   ['hardlink', "import fs from 'node:fs';fs.linkSync(process.argv[2],process.argv[3]);", 'request_unsafe'],
   ['FIFO', "import {spawnSync} from 'node:child_process';spawnSync('/usr/bin/mkfifo',[process.argv[3]]);", 'response_unsafe'],
   ['request mutation', emit('{}') + "fs.appendFileSync(process.argv[2], ' ');", 'request_changed'],
-  ['source mutation', emit('{}') + "fs.appendFileSync(process.argv[1], '\n// mutated');", 'companion_changed'],
+  ['source mutation', emit('{}') + String.raw`fs.appendFileSync(process.argv[1], '\n// mutated');`, 'companion_changed'],
 ]) {
   test(`process control rejects ${mode} artifact`, (t) => {
     assert.throws(() => setup(t, program).run(), { code: `provider_sandbox_${code}` });

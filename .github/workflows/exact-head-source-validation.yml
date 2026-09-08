@@ -4,7 +4,6 @@ on:
   pull_request:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -81,7 +80,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: exact-head-static-${{ github.event.pull_request.head.sha || github.sha }}
+          name: exact-head-static-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/exact-head-static
           if-no-files-found: error
           retention-days: 90
@@ -228,7 +227,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: exact-head-impact-${{ matrix.shard }}-${{ github.event.pull_request.head.sha }}
+          name: exact-head-impact-${{ matrix.shard }}-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/exact-head-impact-${{ matrix.shard }}
           if-no-files-found: error
           retention-days: 90

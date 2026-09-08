@@ -1,4 +1,4 @@
-name: admit-rust-replacement-rc
+name: audit-rust-replacement-rc
 
 on:
   push:
@@ -6,25 +6,24 @@ on:
       - codex/rust-full-replacement-rc-20260908
 
 permissions:
-  actions: read
   contents: read
-  pull-requests: write
 
 concurrency:
-  group: admit-rust-replacement-rc-${{ github.ref }}
+  group: audit-rust-replacement-rc-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  admit-exact-head:
+  audit-exact-head:
     if: github.actor != 'hepta-paper-automation'
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
-      - name: Check out exact RC head
+      - name: Check out exact RC head without persistent credentials
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify the orchestration closure is part of the actual workspace
         shell: bash
@@ -56,194 +55,17 @@ jobs:
           cargo clippy --manifest-path rust/Cargo.toml -p hepta-orchestration-kernel -p hepta-control-plane --all-targets --all-features --locked -- -D warnings
           RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml -p hepta-orchestration-kernel -p hepta-control-plane --all-features --no-deps --locked
 
-      - name: Wait for all exact-head repository qualification producers
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          HEAD_SHA: ${{ github.sha }}
+      - name: Record the non-authoritative boundary
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import time
-          import urllib.request
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Read-only RC audit
 
-          repository = os.environ['REPOSITORY']
-          head_sha = os.environ['HEAD_SHA']
-          token = os.environ['GH_TOKEN']
-          required = {
-              'hepta-paper-ci',
-              'rust-foundation',
-              'rust-migration-acceptance',
-              'rust-broker-installed-qualification',
-              'rust-broker-installed-qualification-v2',
-              'rust-supply-chain',
-              'workflow-lint',
-              'module-documentation-integrity',
-              'rust-program-truth',
-              'rust-qualification-artifacts',
-              'rust-qualification-subject-v3',
-              'rust-effective-source-qualification',
-              'exact-head-source-validation',
-              'rust-source-snapshot',
-              'rust-plan-v3-external-contracts',
-          }
+          This workflow validates repository-local source only. It intentionally has no
+          permission or code path to mutate pull requests, refs, readiness state, reviews,
+          issues, releases, deployments, environments, or external evidence.
 
-          def get_json(path):
-              request = urllib.request.Request(
-                  f'https://api.github.com/repos/{repository}{path}',
-                  headers={
-                      'Accept': 'application/vnd.github+json',
-                      'Authorization': f'Bearer {token}',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                      'User-Agent': 'hepta-paper-rc-admission',
-                  },
-              )
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  return json.load(response)
-
-          for _ in range(90):
-              payload = get_json(f'/actions/runs?head_sha={head_sha}&per_page=100')
-              latest = {}
-              for run in payload.get('workflow_runs', []):
-                  name = run.get('name')
-                  if name not in required:
-                      continue
-                  previous = latest.get(name)
-                  if previous is None or run.get('created_at', '') > previous.get('created_at', ''):
-                      latest[name] = run
-              failed = sorted(
-                  name for name, run in latest.items()
-                  if run.get('status') == 'completed' and run.get('conclusion') != 'success'
-              )
-              if failed:
-                  raise SystemExit(f'exact-head workflow failure: {failed}')
-              missing = sorted(required.difference(latest))
-              incomplete = sorted(
-                  name for name, run in latest.items()
-                  if run.get('status') != 'completed'
-              )
-              if not missing and not incomplete:
-                  break
-              time.sleep(30)
-          else:
-              raise SystemExit(
-                  f'exact-head workflow matrix incomplete: missing={missing}; incomplete={incomplete}'
-              )
-
-          result = {
-              name: {'id': latest[name]['id'], 'conclusion': latest[name]['conclusion']}
-              for name in sorted(required)
-          }
-          with open('/tmp/required-matrix.json', 'w', encoding='utf-8') as output:
-              json.dump(result, output, indent=2, sort_keys=True)
-              output.write('\n')
-          PY
-
-      - name: Bind PR 110 to this exact admitted subject
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          HEAD_SHA: ${{ github.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          repository = os.environ['REPOSITORY']
-          head_sha = os.environ['HEAD_SHA']
-          token = os.environ['GH_TOKEN']
-
-          def api(method, url, payload=None):
-              data = None if payload is None else json.dumps(payload).encode('utf-8')
-              request = urllib.request.Request(
-                  url,
-                  data=data,
-                  method=method,
-                  headers={
-                      'Accept': 'application/vnd.github+json',
-                      'Authorization': f'Bearer {token}',
-                      'Content-Type': 'application/json',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                      'User-Agent': 'hepta-paper-rc-admission',
-                  },
-              )
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  return json.load(response)
-
-          rest = f'https://api.github.com/repos/{repository}'
-          pr = api('GET', f'{rest}/pulls/110')
-          main = api('GET', f'{rest}/branches/main')
-          head = api('GET', f'{rest}/commits/{head_sha}')
-          matrix = json.load(open('/tmp/required-matrix.json', encoding='utf-8'))
-          matrix_lines = '\n'.join(
-              f"- `{name}`: success (run `{data['id']}`)"
-              for name, data in matrix.items()
-          )
-          body = f'''## Canonical direct-to-main Rust replacement subject
-
-          - Base: `main@{main['commit']['sha']}`
-          - Head: `codex/rust-full-replacement-rc-20260908@{head_sha}`
-          - Head tree: `{head['commit']['tree']['sha']}`
-          - Admission workflow: `admit-rust-replacement-rc`
-
-          Any base, head, tree, workflow, policy, generated merge, review, or evidence movement invalidates this subject.
-
-          ## Repository-local Rust replacement closure
-
-          The exact head contains and validates:
-
-          - Rust protocols, broker, durable journal, pre-exec gate, containment and recovery;
-          - descriptor-bound workspace authority and actual changeset enforcement;
-          - Node schema-1..25/database/hash compatibility and reversible migration contracts;
-          - generation-fenced Rust campaign writer and exactly-once prepared-result integration;
-          - native Rust author, reviewer, formal, empirical, numerical and build capabilities;
-          - immutable Node database drain/freeze proof before the first Rust writer lease;
-          - deterministic planning snapshots, Pareto candidate routing, hierarchical resource transactions, privacy-bounded telemetry and canonical performance qualification through the `hepta-control-plane` facade;
-          - Rust-only production composition, Node-retirement verification, cutover and rollback boundaries;
-          - source, module, parity, risk, supply-chain, program-truth and operator documentation.
-
-          A Node process, JavaScript file, generic process bridge or shell command cannot count as a native Rust production capability.
-
-          ## Exact-head producer matrix
-
-          {matrix_lines}
-
-          ## External authority boundary
-
-          Repository-local admission grants no production activation. Real, current and independently controlled receipts remain mandatory for #25, #17, #12, #14, #21, #22 and #28. Administrator access, hosted CI, fixtures, source booleans and self-signed records cannot substitute for those facts.
-
-          ## Independent review
-
-          Review this exact subject only. Confirm the full repository-local closure, single-writer preservation, Node-free production path and non-forgeable external evidence boundary. Any later movement requires a new complete matrix and review.'''
-          api(
-              'PATCH',
-              f'{rest}/pulls/110',
-              {
-                  'title': 'feat(rust): complete the full Node-to-Rust replacement closure',
-                  'body': body,
-                  'base': 'main',
-              },
-          )
-          try:
-              api(
-                  'POST',
-                  f'{rest}/pulls/110/requested_reviewers',
-                  {'reviewers': ['Tomasrgbsf']},
-              )
-          except Exception:
-              pass
-
-          if pr.get('draft'):
-              query = '''mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id isDraft}}}'''
-              api(
-                  'POST',
-                  'https://api.github.com/graphql',
-                  {'query': query, 'variables': {'id': pr['node_id']}},
-              )
-          PY
+          Promotion remains a separately controlled human decision after exact-head CI,
+          CodeQL, independent review, and all required external-authority receipts close.
+          EOF

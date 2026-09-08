@@ -111,7 +111,7 @@ for (const [mode, program, code] of [
   ['hardlink', "import fs from 'node:fs';fs.linkSync(process.argv[2],process.argv[3]);", 'request_unsafe'],
   ['FIFO', "import {spawnSync} from 'node:child_process';spawnSync('/usr/bin/mkfifo',[process.argv[3]]);", 'response_unsafe'],
   ['request mutation', emit('{}') + "fs.appendFileSync(process.argv[2], ' ');", 'request_changed'],
-  ['source mutation', emit('{}') + "fs.appendFileSync(process.argv[1], '\\n// mutated');", 'companion_changed'],
+  ['source mutation', emit('{}') + "fs.appendFileSync(process.argv[1], '\n// mutated');", 'companion_changed'],
 ]) {
   test(`process control rejects ${mode} artifact`, (t) => {
     assert.throws(() => setup(t, program).run(), { code: `provider_sandbox_${code}` });
@@ -175,8 +175,9 @@ for (const mode of ['unsafe', 'downstream', 'environment']) {
       fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, source); };
     put('paper-core/bin/run-real-paper-provider-sandbox.mjs',
       fs.readFileSync(path.join(root, 'paper-core/bin/run-real-paper-provider-sandbox.mjs')));
-    const log = `import fs from 'node:fs';const log = (value) => fs.appendFileSync(${JSON.stringify(trace)}, value+'\\n');`;
-    put('paper-core/src/workspace-layout.mjs', `export const defaultPaperRuntimeRoot=()=>${JSON.stringify(runtime)};`);
+    const log = "import fs from 'node:fs';const trace=process.env.HEPTA_TEST_TRACE_PATH;if(typeof trace!=='string'||trace.length===0)throw Error('test_trace_path_missing');const log=(value)=>fs.appendFileSync(trace,value+'\\n');";
+    put('paper-core/src/workspace-layout.mjs',
+      "const runtimeRoot=process.env.HEPTA_TEST_RUNTIME_ROOT;if(typeof runtimeRoot!=='string'||runtimeRoot.length===0)throw Error('test_runtime_root_missing');export const defaultPaperRuntimeRoot=()=>runtimeRoot;");
     put('paper-core/src/code-provenance.mjs', 'export const currentCodeProvenance=()=>({});');
     put('workflow-kernel/record-hash.mjs', `export {hashRecord} from ${JSON.stringify(pathToFileURL(path.join(root, 'workflow-kernel/record-hash.mjs')).href)};`);
     put('paper-core/bin/release-integrity-signing.mjs', log + "export function signReleasePayload(){ log('SIGNING_MUST_NOT_BE_REACHED');throw Error('test_signing_forbidden'); }");
@@ -201,6 +202,7 @@ for (const mode of ['unsafe', 'downstream', 'environment']) {
         providerReceipt:{sandbox:true},externalActionPerformed:${badClaims}}));`);
     const result = spawnSync(process.execPath, [path.join(project, 'paper-core/bin/run-real-paper-provider-sandbox.mjs'), 'probe'], {
       encoding:'utf8',timeout:10000,env:{PATH:'/usr/bin:/bin',TMPDIR:temporary,HOME:parent,
+        HEPTA_TEST_TRACE_PATH:trace,HEPTA_TEST_RUNTIME_ROOT:runtime,
         HEPTA_TEST_PRIVATE_CANARY:'test-only-operator-private-diagnostic'},
     });
     assert.notEqual(result.status, 0);

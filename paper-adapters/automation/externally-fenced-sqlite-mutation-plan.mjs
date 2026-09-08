@@ -189,6 +189,32 @@ function isReadOnlyRaiseTrigger(sql) {
   ));
 }
 
+function plannedEventsFor(plan) {
+  const plannedEvents = new Map();
+  for (const statement of plan.statements.filter((entry) => entry.writeTable)) {
+    const events = plannedEvents.get(statement.writeTable) || new Set();
+    for (const event of writeEvents(statement)) events.add(event);
+    plannedEvents.set(statement.writeTable, events);
+  }
+  return plannedEvents;
+}
+
+function assertMutationTriggersSafe(database, plannedEvents) {
+  const triggers = database.prepare(`
+SELECT name,tbl_name,coalesce(sql,'') AS sql FROM sqlite_schema
+WHERE type='trigger' AND tbl_name NOT LIKE 'autonomous_research_online_mutation_%'
+ORDER BY name;
+`).all();
+  for (const trigger of triggers) {
+    const events = plannedEvents.get(String(trigger.tbl_name));
+    const event = triggerEvent(trigger.sql);
+    if (!events || (event && !events.has(event))) continue;
+    if (!event || !isReadOnlyRaiseTrigger(trigger.sql)) {
+      fail('externally_fenced_sqlite_mutation_business_trigger_forbidden');
+    }
+  }
+}
+
 export function assertExternallyFencedSqliteMutationDatabaseSurface(database, plan) {
   const databases = database.prepare('PRAGMA database_list').all()
     .map((entry) => String(entry.name));
@@ -214,15 +240,7 @@ ORDER BY name;
   if ([...plannedTables].some((table) => !businessTables.includes(table))) {
     fail('externally_fenced_sqlite_mutation_planned_table_missing');
   }
-  const writeStatements = plan.statements.filter((entry) => entry.writeTable);
-  // Only tables in the pinned plan can be changed directly. We validate those
-  // targets plus reverse foreign-key actions and matching triggers below;
-  // unrelated tables therefore cannot block a safe bounded operation merely
-  // because they belong to the same native database.
-  const plannedEvents = new Map([...plannedTables].map((table) => [table, new Set()]));
-  for (const statement of writeStatements) {
-    for (const event of writeEvents(statement)) plannedEvents.get(statement.writeTable).add(event);
-  }
+  const plannedEvents = plannedEventsFor(plan);
   for (const table of plannedTables) {
     const columns = database.prepare(`PRAGMA table_info(${quotedIdentifier(table)})`).all();
     if (!columns.some((column) => Number(column.pk) > 0)) {
@@ -261,28 +279,14 @@ ORDER BY name;
       }
     }
   }
-  const triggers = database.prepare(`
-SELECT name,tbl_name,coalesce(sql,'') AS sql FROM sqlite_schema
-WHERE type='trigger' AND tbl_name NOT LIKE 'autonomous_research_online_mutation_%'
-ORDER BY name;
-`).all();
-  for (const trigger of triggers) {
-    const events = plannedEvents.get(String(trigger.tbl_name));
-    const event = triggerEvent(trigger.sql);
-    if (!events || (event && !events.has(event))) continue;
-    if (!event || !isReadOnlyRaiseTrigger(trigger.sql)) {
-      fail('externally_fenced_sqlite_mutation_business_trigger_forbidden');
-    }
-  }
 }
 
 function installMutationOperationGuards(database, plan) {
-  const allowedByTable = new Map();
-  for (const statement of plan.statements.filter((entry) => entry.writeTable)) {
-    const allowed = allowedByTable.get(statement.writeTable) || new Set();
-    for (const operation of writeEvents(statement)) allowed.add(operation);
-    allowedByTable.set(statement.writeTable, allowed);
-  }
+  const allowedByTable = plannedEventsFor(plan);
+  // Trigger validation runs at mutation start rather than store construction so
+  // opening a database remains observational. It still occurs before the caller
+  // callback, changeset capture, reservation, authority marker, or commit.
+  assertMutationTriggersSafe(database, allowedByTable);
   const tables = database.prepare(`
 SELECT name FROM sqlite_schema
 WHERE type='table' AND name NOT LIKE 'sqlite_%'

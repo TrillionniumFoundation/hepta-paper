@@ -104,13 +104,14 @@ jobs:
               raise SystemExit(f'orchestration_kernel_source_missing:{missing}')
           PY
 
-      - name: Validate with pinned Rust and repository governance
+      - name: Format and validate with pinned Rust and repository governance
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.98.0
           cargo metadata --manifest-path rust/Cargo.toml --locked --format-version 1 >/tmp/cargo-metadata.json
+          cargo fmt --manifest-path rust/Cargo.toml --all
           cargo fmt --manifest-path rust/Cargo.toml --all -- --check
           cargo test --manifest-path rust/Cargo.toml -p hepta-orchestration-kernel -p hepta-control-plane --all-features --locked
           cargo clippy --manifest-path rust/Cargo.toml -p hepta-orchestration-kernel -p hepta-control-plane --all-targets --all-features --locked -- -D warnings
@@ -125,7 +126,20 @@ jobs:
           set -euo pipefail
           rm .github/workflows/orchestration-kernel-integrator.yml
           git add -A
-          cat >/tmp/expected-files <<'EOF'
+          cat >/tmp/allowed-files <<'EOF'
+          .github/workflows/orchestration-kernel-integrator.yml
+          rust/Cargo.lock
+          rust/Cargo.toml
+          rust/crates/hepta-control-plane/Cargo.toml
+          rust/crates/hepta-control-plane/src/lib.rs
+          rust/crates/hepta-orchestration-kernel/src/lib.rs
+          rust/crates/hepta-orchestration-kernel/src/performance.rs
+          rust/crates/hepta-orchestration-kernel/src/resource.rs
+          rust/crates/hepta-orchestration-kernel/src/router.rs
+          rust/crates/hepta-orchestration-kernel/src/snapshot.rs
+          rust/crates/hepta-orchestration-kernel/src/telemetry.rs
+          EOF
+          cat >/tmp/required-files <<'EOF'
           .github/workflows/orchestration-kernel-integrator.yml
           rust/Cargo.lock
           rust/Cargo.toml
@@ -133,8 +147,18 @@ jobs:
           rust/crates/hepta-control-plane/src/lib.rs
           EOF
           git diff --cached --name-only | LC_ALL=C sort >/tmp/actual-files
-          LC_ALL=C sort -o /tmp/expected-files /tmp/expected-files
-          diff -u /tmp/expected-files /tmp/actual-files
+          while IFS= read -r changed; do
+            grep -Fqx "$changed" /tmp/allowed-files || {
+              echo "unexpected integration change: $changed" >&2
+              exit 1
+            }
+          done </tmp/actual-files
+          while IFS= read -r required; do
+            grep -Fqx "$required" /tmp/actual-files || {
+              echo "required integration change missing: $required" >&2
+              exit 1
+            }
+          done </tmp/required-files
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'feat(rust): integrate the canonical orchestration kernel'

@@ -1,0 +1,203 @@
+name: apply-production-freeze-integration-once
+
+on:
+  push:
+    branches:
+      - codex/rust-full-replacement-rc-20260908
+    paths:
+      - .github/workflows/apply-production-freeze-integration-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-production-freeze-integration-once-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+
+      - name: Apply, validate, and publish production freeze integration
+        shell: bash
+        env:
+          TARGET_BRANCH: codex/rust-full-replacement-rc-20260908
+        run: |
+          set -euo pipefail
+          git apply <<'PATCH'
+          --- a/rust/crates/hepta-paper-service/Cargo.toml
+          +++ b/rust/crates/hepta-paper-service/Cargo.toml
+          @@ -14,6 +14,7 @@
+           hepta-module-platform = { path = "../hepta-module-platform", version = "=0.1.0" }
+           hepta-control-plane = { path = "../hepta-control-plane", version = "=0.1.0" }
+           hepta-campaign-writer = { path = "../hepta-campaign-writer", version = "=0.1.0" }
+          +hepta-cutover = { path = "../hepta-cutover", version = "=0.1.0" }
+           hepta-readonly-store = { path = "../hepta-readonly-store", version = "=0.1.0" }
+           hepta-qualification-ingest = { path = "../hepta-qualification-ingest", version = "=0.1.0" }
+           hex.workspace = true
+          --- a/rust/crates/hepta-paper-service/src/lib.rs
+          +++ b/rust/crates/hepta-paper-service/src/lib.rs
+          @@ -13,6 +13,10 @@
+           mod worker;
+           
+           use hepta_campaign_writer::{CampaignWriterPolicyV1, CampaignWriterStoreV1, WriterLeaseV1};
+          +pub use hepta_cutover::{
+          +    LegacyNodeFreezeError, LegacyNodeFreezeReceiptV1, LegacyNodeFreezeSubjectV1,
+          +    LegacyRollbackModeV1, VerifiedLegacyNodeFreezeV1, verify_legacy_node_freeze_v1,
+          +};
+           use hepta_codex_protocol::Sha256Digest;
+           use hepta_control_plane::{
+               BoundedEventLogV1, ControlPlaneRunReceiptV1, ControlPlaneSnapshotV1, ControlPlaneV1,
+          --- a/rust/crates/hepta-paper-service/src/production.rs
+          +++ b/rust/crates/hepta-paper-service/src/production.rs
+          @@ -35,7 +35,8 @@
+           use sha2::{Digest, Sha256};
+           
+           use crate::{
+          -    ObjectStoreV1, ServiceError, ServiceExecutorV1, ServiceRunV1, VerifiedProductionDeploymentV1,
+          +    ObjectStoreV1, ServiceError, ServiceExecutorV1, ServiceRunV1, VerifiedLegacyNodeFreezeV1,
+          +    VerifiedProductionDeploymentV1,
+               WorkerBindingV1, native_implementation_hash_v1, service_configuration_hash_v1,
+           };
+           
+          @@ -85,6 +86,8 @@
+               pub writer_cutover_authorization_hash: Sha256Digest,
+               /// Filesystem-verified Node-free deployment identity.
+               pub deployment_identity_hash: Sha256Digest,
+          +    /// Actual immutable legacy database drain/freeze receipt.
+          +    pub legacy_node_freeze_hash: Sha256Digest,
+               /// Exact running executable identity.
+               pub executable_hash: Sha256Digest,
+               /// Exact service configuration identity.
+          @@ -109,8 +112,9 @@
+               qualification: &VerifiedExternalQualificationClosureV1,
+               cutover: &VerifiedWriterCutoverV1,
+               deployment: &VerifiedProductionDeploymentV1,
+          +    legacy_freeze: &VerifiedLegacyNodeFreezeV1,
+           ) -> Result<ProductionServiceReceiptV1, ServiceError> {
+          -    validate_authority_bindings(&config, qualification, cutover, deployment)?;
+          +    validate_authority_bindings(&config, qualification, cutover, deployment, legacy_freeze)?;
+               let registry = validate_production_registry(&config)?;
+               let objects = ObjectStoreV1::open(&config.service.state_directory)?;
+               let owner = fs::metadata(&config.service.state_directory)
+          @@ -206,6 +210,7 @@
+                   qualification,
+                   cutover,
+                   deployment,
+          +        legacy_freeze,
+                   control_plane_receipt,
+               )
+           }
+          @@ -215,6 +220,7 @@
+               qualification: &VerifiedExternalQualificationClosureV1,
+               cutover: &VerifiedWriterCutoverV1,
+               deployment: &VerifiedProductionDeploymentV1,
+          +    legacy_freeze: &VerifiedLegacyNodeFreezeV1,
+           ) -> Result<(), ServiceError> {
+               if config.version != 1
+                   || config.service.version != 1
+          @@ -238,6 +244,9 @@
+                   || qualified_subject.repository != deployment.repository()
+                   || qualified_subject.commit != deployment.commit()
+                   || qualified_subject.tree != deployment.tree()
+          +        || qualified_subject.repository != legacy_freeze.subject().repository
+          +        || qualified_subject.commit != legacy_freeze.subject().commit
+          +        || qualified_subject.tree != legacy_freeze.subject().tree
+               {
+                   return Err(ServiceError::Configuration);
+               }
+          @@ -313,6 +322,7 @@
+               qualification: &VerifiedExternalQualificationClosureV1,
+               cutover: &VerifiedWriterCutoverV1,
+               deployment: &VerifiedProductionDeploymentV1,
+          +    legacy_freeze: &VerifiedLegacyNodeFreezeV1,
+               control_plane_receipt: ControlPlaneRunReceiptV1,
+           ) -> Result<ProductionServiceReceiptV1, ServiceError> {
+               let qualification_closure_hash = parse_digest(qualification.receipt_hash())?;
+          @@ -327,6 +337,7 @@
+                   qualification_closure_hash: &qualification_closure_hash,
+                   writer_cutover_authorization_hash: cutover.authorization_hash(),
+                   deployment_identity_hash: deployment.identity_hash(),
+          +        legacy_node_freeze_hash: legacy_freeze.receipt_hash(),
+                   executable_hash: &executable_hash,
+                   configuration_hash: &configuration_hash,
+                   control_plane_receipt: &control_plane_receipt,
+          @@ -343,6 +354,7 @@
+                   qualification_closure_hash,
+                   writer_cutover_authorization_hash: cutover.authorization_hash().clone(),
+                   deployment_identity_hash: deployment.identity_hash().clone(),
+          +        legacy_node_freeze_hash: legacy_freeze.receipt_hash().clone(),
+                   executable_hash,
+                   configuration_hash,
+                   control_plane_receipt,
+          @@ -363,6 +375,7 @@
+               qualification_closure_hash: &'a Sha256Digest,
+               writer_cutover_authorization_hash: &'a Sha256Digest,
+               deployment_identity_hash: &'a Sha256Digest,
+          +    legacy_node_freeze_hash: &'a Sha256Digest,
+               executable_hash: &'a Sha256Digest,
+               configuration_hash: &'a Sha256Digest,
+               control_plane_receipt: &'a ControlPlaneRunReceiptV1,
+          --- a/rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs
+          +++ b/rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs
+          @@ -1,6 +1,7 @@
+           //! Bounded JSON command interface for the durable Rust composition.
+           use hepta_paper_service::{
+          -    ObjectStoreV1, ServiceRunV1, native_implementation_hash_v1, run_service_v1,
+          +    LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1,
+          +    native_implementation_hash_v1, run_service_v1, verify_legacy_node_freeze_v1,
+           };
+           use std::{
+               env,
+          @@ -57,6 +58,17 @@
+                           println!("{}", serde_json::to_string(&run_service_v1(config)?)?);
+                       }
+                   }
+          +        Some("verify-legacy-freeze") if args.len() == 5 => {
+          +            let receipt = verify_legacy_node_freeze_v1(
+          +                PathBuf::from(&args[1]),
+          +                LegacyNodeFreezeSubjectV1 {
+          +                    repository: args[2].clone(),
+          +                    commit: args[3].clone(),
+          +                    tree: args[4].clone(),
+          +                },
+          +            )?;
+          +            println!("{}", serde_json::to_string(receipt.receipt())?);
+          +        }
+                   Some("inspect-db") if args.len() == 2 => {
+                       let store = hepta_readonly_store::ReadOnlyStoreV1::open(PathBuf::from(&args[1]))?;
+                       println!(
+          @@ -67,7 +79,8 @@
+                   _ => {
+                       return Err(concat!(
+                           "usage: hepta-paper-rust native-identity | put STATE FILE | ",
+          -                "run CONFIG | serve | inspect-db IMMUTABLE_DB"
+          +                "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
+          +                "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE"
+                       )
+                       .into());
+                   }
+          PATCH
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo check --manifest-path rust/Cargo.toml -p hepta-paper-service --all-targets --all-features
+          cargo test --manifest-path rust/Cargo.toml -p hepta-cutover -p hepta-paper-service --all-features
+          git rm .github/workflows/apply-production-freeze-integration-once.yml
+          git config user.name hepta-paper-automation
+          git config user.email hepta-paper-automation@users.noreply.github.com
+          git add rust
+          git commit -m 'feat(rust): bind production activation to legacy drain proof'
+          git push origin "HEAD:${TARGET_BRANCH}"

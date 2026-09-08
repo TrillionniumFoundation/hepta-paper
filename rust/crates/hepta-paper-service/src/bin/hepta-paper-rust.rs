@@ -1,6 +1,7 @@
 //! Bounded JSON command interface for the durable Rust composition.
 use hepta_paper_service::{
-    ObjectStoreV1, ServiceRunV1, native_implementation_hash_v1, run_service_v1,
+    LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1, native_implementation_hash_v1,
+    run_service_v1, verify_legacy_node_freeze_v1,
 };
 use std::{
     env,
@@ -57,6 +58,17 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string(&run_service_v1(config)?)?);
             }
         }
+        Some("verify-legacy-freeze") if args.len() == 5 => {
+            let receipt = verify_legacy_node_freeze_v1(
+                PathBuf::from(&args[1]),
+                LegacyNodeFreezeSubjectV1 {
+                    repository: args[2].clone(),
+                    commit: args[3].clone(),
+                    tree: args[4].clone(),
+                },
+            )?;
+            println!("{}", serde_json::to_string(receipt.receipt())?);
+        }
         Some("inspect-db") if args.len() == 2 => {
             let store = hepta_readonly_store::ReadOnlyStoreV1::open(PathBuf::from(&args[1]))?;
             println!(
@@ -67,7 +79,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
-                "run CONFIG | serve | inspect-db IMMUTABLE_DB"
+                "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
+                "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE"
             )
             .into());
         }

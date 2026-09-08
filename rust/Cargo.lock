@@ -399,6 +399,9 @@ name = "hepta-cutover"
 version = "0.1.0"
 dependencies = [
  "hepta-campaign-writer",
+ "hepta-codex-protocol",
+ "hepta-readonly-control",
+ "hepta-readonly-store",
  "hex",
  "rusqlite",
  "serde",
@@ -464,6 +467,7 @@ dependencies = [
  "hepta-codex-protocol",
  "hepta-codex-runtime",
  "hepta-control-plane",
+ "hepta-cutover",
  "hepta-module-platform",
  "hepta-qualification-ingest",
  "hepta-readonly-store",

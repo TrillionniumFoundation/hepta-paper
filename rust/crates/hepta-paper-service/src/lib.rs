@@ -19,6 +19,10 @@ use hepta_control_plane::{
     FilesystemPreparedResultVerifierV1, HardPolicyV1, PlannerPolicyV1, PlanningFrontierV1,
     ResourceAllocatorV1, SqliteCommitSequencerV1, canonical_hash_v1,
 };
+pub use hepta_cutover::{
+    LegacyNodeFreezeError, LegacyNodeFreezeReceiptV1, LegacyNodeFreezeSubjectV1,
+    LegacyRollbackModeV1, VerifiedLegacyNodeFreezeV1, verify_legacy_node_freeze_v1,
+};
 use hepta_module_platform::ModuleRegistryArtifactV1;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, os::unix::fs::MetadataExt, path::PathBuf};

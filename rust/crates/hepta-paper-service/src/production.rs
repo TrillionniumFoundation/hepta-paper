@@ -35,8 +35,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ObjectStoreV1, ServiceError, ServiceExecutorV1, ServiceRunV1, VerifiedProductionDeploymentV1,
-    WorkerBindingV1, native_implementation_hash_v1, service_configuration_hash_v1,
+    ObjectStoreV1, ServiceError, ServiceExecutorV1, ServiceRunV1, VerifiedLegacyNodeFreezeV1,
+    VerifiedProductionDeploymentV1, WorkerBindingV1, native_implementation_hash_v1,
+    service_configuration_hash_v1,
 };
 
 const MAXIMUM_PRODUCTION_BINARY_BYTES: u64 = 512 * 1024 * 1024;
@@ -85,6 +86,8 @@ pub struct ProductionServiceReceiptV1 {
     pub writer_cutover_authorization_hash: Sha256Digest,
     /// Filesystem-verified Node-free deployment identity.
     pub deployment_identity_hash: Sha256Digest,
+    /// Actual immutable legacy database drain/freeze receipt.
+    pub legacy_node_freeze_hash: Sha256Digest,
     /// Exact running executable identity.
     pub executable_hash: Sha256Digest,
     /// Exact service configuration identity.
@@ -109,8 +112,9 @@ pub fn run_production_service_v1(
     qualification: &VerifiedExternalQualificationClosureV1,
     cutover: &VerifiedWriterCutoverV1,
     deployment: &VerifiedProductionDeploymentV1,
+    legacy_freeze: &VerifiedLegacyNodeFreezeV1,
 ) -> Result<ProductionServiceReceiptV1, ServiceError> {
-    validate_authority_bindings(&config, qualification, cutover, deployment)?;
+    validate_authority_bindings(&config, qualification, cutover, deployment, legacy_freeze)?;
     let registry = validate_production_registry(&config)?;
     let objects = ObjectStoreV1::open(&config.service.state_directory)?;
     let owner = fs::metadata(&config.service.state_directory)
@@ -206,6 +210,7 @@ pub fn run_production_service_v1(
         qualification,
         cutover,
         deployment,
+        legacy_freeze,
         control_plane_receipt,
     )
 }
@@ -215,6 +220,7 @@ fn validate_authority_bindings(
     qualification: &VerifiedExternalQualificationClosureV1,
     cutover: &VerifiedWriterCutoverV1,
     deployment: &VerifiedProductionDeploymentV1,
+    legacy_freeze: &VerifiedLegacyNodeFreezeV1,
 ) -> Result<(), ServiceError> {
     if config.version != 1
         || config.service.version != 1
@@ -238,6 +244,9 @@ fn validate_authority_bindings(
         || qualified_subject.repository != deployment.repository()
         || qualified_subject.commit != deployment.commit()
         || qualified_subject.tree != deployment.tree()
+        || qualified_subject.repository != legacy_freeze.subject().repository
+        || qualified_subject.commit != legacy_freeze.subject().commit
+        || qualified_subject.tree != legacy_freeze.subject().tree
     {
         return Err(ServiceError::Configuration);
     }
@@ -313,6 +322,7 @@ fn build_receipt(
     qualification: &VerifiedExternalQualificationClosureV1,
     cutover: &VerifiedWriterCutoverV1,
     deployment: &VerifiedProductionDeploymentV1,
+    legacy_freeze: &VerifiedLegacyNodeFreezeV1,
     control_plane_receipt: ControlPlaneRunReceiptV1,
 ) -> Result<ProductionServiceReceiptV1, ServiceError> {
     let qualification_closure_hash = parse_digest(qualification.receipt_hash())?;
@@ -327,6 +337,7 @@ fn build_receipt(
         qualification_closure_hash: &qualification_closure_hash,
         writer_cutover_authorization_hash: cutover.authorization_hash(),
         deployment_identity_hash: deployment.identity_hash(),
+        legacy_node_freeze_hash: legacy_freeze.receipt_hash(),
         executable_hash: &executable_hash,
         configuration_hash: &configuration_hash,
         control_plane_receipt: &control_plane_receipt,
@@ -343,6 +354,7 @@ fn build_receipt(
         qualification_closure_hash,
         writer_cutover_authorization_hash: cutover.authorization_hash().clone(),
         deployment_identity_hash: deployment.identity_hash().clone(),
+        legacy_node_freeze_hash: legacy_freeze.receipt_hash().clone(),
         executable_hash,
         configuration_hash,
         control_plane_receipt,
@@ -363,6 +375,7 @@ struct ProductionReceiptBodyV1<'a> {
     qualification_closure_hash: &'a Sha256Digest,
     writer_cutover_authorization_hash: &'a Sha256Digest,
     deployment_identity_hash: &'a Sha256Digest,
+    legacy_node_freeze_hash: &'a Sha256Digest,
     executable_hash: &'a Sha256Digest,
     configuration_hash: &'a Sha256Digest,
     control_plane_receipt: &'a ControlPlaneRunReceiptV1,

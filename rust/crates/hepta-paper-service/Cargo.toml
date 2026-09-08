@@ -14,6 +14,7 @@ hepta-codex-runtime = { path = "../hepta-codex-runtime", version = "=0.1.0" }
 hepta-module-platform = { path = "../hepta-module-platform", version = "=0.1.0" }
 hepta-control-plane = { path = "../hepta-control-plane", version = "=0.1.0" }
 hepta-campaign-writer = { path = "../hepta-campaign-writer", version = "=0.1.0" }
+hepta-cutover = { path = "../hepta-cutover", version = "=0.1.0" }
 hepta-readonly-store = { path = "../hepta-readonly-store", version = "=0.1.0" }
 hepta-qualification-ingest = { path = "../hepta-qualification-ingest", version = "=0.1.0" }
 hex.workspace = true

@@ -1,0 +1,111 @@
+name: repository-blocker-remediation-once
+
+on:
+  push:
+    branches:
+      - codex/rust-full-replacement-rc-20260908
+    paths:
+      - .github/workflows/repository-blocker-remediation-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repository-blocker-remediation-once-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  remediate:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact remediation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 2
+
+      - name: Set up pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.1
+          cache: npm
+
+      - name: Apply bounded repository remediation
+        env:
+          EXPECTED_PARENT_SHA: ba803579238e63dc668f92a4c69d469def72a7ad
+          PATCH_GZIP_BASE64: >-
+            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
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT_SHA"
+          printf '%s' "$PATCH_GZIP_BASE64" | base64 -d | gzip -d | git apply --index --whitespace=error
+
+          cat > docs/rust/qualification/ORCHESTRATION_SOURCE_CLOSURE.md <<'DOC'
+          # Orchestration source closure
+
+          Status: **exact-head qualification pending**
+
+          This file is the permanent, non-activating source-closure anchor for the Rust
+          orchestration kernel. It is committed before current-head qualification so that
+          the permanent admission workflow can evaluate the actual repository tree after
+          temporary one-shot automation has been removed.
+
+          - repository: `TrillionniumFoundation/hepta-paper`
+          - candidate branch: `codex/rust-full-replacement-rc-20260908`
+          - evidence state: pending current-head repository qualification
+          - production authority granted: false
+
+          No passing check, artifact, review, target-host result, credential canary,
+          private replay, key-custody result, release permission, submission permission,
+          or Node-retirement fact is asserted by this pending anchor. Repository-local
+          source closure is established only by the complete exact-head producer set and
+          its effective qualification artifact; any head, tree, workflow, policy, base,
+          review, or producer-run change invalidates that result and requires fresh
+          derivation.
+
+          The governing rules remain in
+          [`../RUST_REWRITE_MASTER_PLAN.md`](../RUST_REWRITE_MASTER_PLAN.md) and
+          [`../QUALIFICATION_STATE_MACHINE.md`](../QUALIFICATION_STATE_MACHINE.md).
+          DOC
+          sed -i 's/^          //' docs/rust/qualification/ORCHESTRATION_SOURCE_CLOSURE.md
+          git add docs/rust/qualification/ORCHESTRATION_SOURCE_CLOSURE.md
+
+          find .github/workflows -maxdepth 1 -type f \
+            \( -name '*-once.yml' -o -name '*-once.yaml' \) -print0 \
+            | xargs -0 -r git rm -f --
+          test -z "$(find .github/workflows -maxdepth 1 -type f \
+            \( -name '*-once.yml' -o -name '*-once.yaml' \) -print -quit)"
+          git diff --cached --check
+
+      - name: Validate remediated contracts
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          node --check paper-adapters/automation/externally-fenced-sqlite-mutation-plan.mjs
+          node --check paper-adapters/automation/autonomous-research-online-writer-operation-manifest.mjs
+          node --check paper-adapters/automation/autonomous-research-online-writer-static-config.mjs
+          node --test \
+            paper-core/tests/development-documentation-hostile.test.mjs \
+            paper-core/tests/autonomous-research-online-writer-static-inspection.test.mjs \
+            paper-core/tests/autonomous-research-online-mutation-active-refresh.test.mjs \
+            paper-core/tests/externally-fenced-sqlite-mutation-coordinator.test.mjs \
+            paper-core/tests/autonomous-research-machine-intake-online-mutation.test.mjs \
+            paper-core/tests/native-store-online-mutation.test.mjs \
+            paper-core/tests/native-store-ledger-online-mutation.test.mjs \
+            paper-core/tests/native-store-submission-delivery-online-mutation.test.mjs
+
+      - name: Commit exact validated result
+        env:
+          BRANCH: codex/rust-full-replacement-rc-20260908
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BRANCH"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          test -n "$(git status --porcelain)"
+          git commit -m 'fix(ci): close deterministic RC blockers'
+          git push origin "HEAD:refs/heads/$BRANCH"

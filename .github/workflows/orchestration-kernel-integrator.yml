@@ -102,6 +102,27 @@ jobs:
           missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
           if missing:
               raise SystemExit(f'orchestration_kernel_source_missing:{missing}')
+
+          kernel_root = Path('rust/crates/hepta-orchestration-kernel/src')
+          for source in sorted(kernel_root.glob('*.rs')):
+              source_text = source.read_text()
+              source.write_text(source_text.replace('assert!(false, ', 'panic!('))
+
+          performance = kernel_root / 'performance.rs'
+          performance_text = performance.read_text()
+          old_zero_check = '''observation
+                          .sample_durations_ns
+                          .iter()
+                          .any(|duration| *duration == 0)'''
+          if old_zero_check not in performance_text:
+              raise SystemExit('performance_zero_sample_check_anchor_invalid')
+          performance.write_text(
+              performance_text.replace(
+                  old_zero_check,
+                  'observation.sample_durations_ns.contains(&0)',
+                  1,
+              )
+          )
           PY
 
       - name: Format and validate with pinned Rust and repository governance

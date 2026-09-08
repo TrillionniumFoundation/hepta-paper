@@ -1,15 +1,16 @@
 # Orchestration source closure
 
-Status: **exact-head qualification pending**
+Status: **exact-head qualification requested; result pending**
 
 This file is the permanent, non-activating source-closure anchor for the Rust
-orchestration kernel. It is committed before current-head qualification so that
-the permanent admission workflow can evaluate the actual repository tree after
-temporary one-shot automation has been removed.
+orchestration kernel. This document revision requests the standard current-head
+qualification workflows after temporary one-shot automation has been removed;
+the workflows must evaluate the actual repository tree and independently derive
+their result.
 
 - repository: `TrillionniumFoundation/hepta-paper`
 - candidate branch: `codex/rust-full-replacement-rc-20260908`
-- evidence state: pending current-head repository qualification
+- evidence state: current-head qualification requested; result pending
 - production authority granted: false
 
 No passing check, artifact, review, target-host result, credential canary,

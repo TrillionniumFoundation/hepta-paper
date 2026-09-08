@@ -1,95 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
-import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
-import {
-  assertExternallyFencedSqliteMutationCoordinatorPort,
-} from '../../paper-ports/autonomous-research-online-mutation-port.mjs';
+
 import { assertStorePort } from '../../paper-ports/store-port.mjs';
 import { createRustCutoverFence } from '../migration/rust-cutover-fence.mjs';
 import { assertNoSqliteTransactionControl } from './sqlite-transaction-sql-guard.mjs';
-
-const SAFE_MUTATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,191}$/;
-
-function failure(error, fallback) {
-  return {
-    ok: false,
-    status: 1,
-    stdout: '',
-    stderr: String(error?.message || fallback),
-    error: normalizeText(error?.message || fallback),
-  };
-}
-
-function openDatabase({ dbPath, readOnly = false, immutable = false, busyTimeoutMs = 10_000 } = {}) {
-  const resolved = path.resolve(dbPath);
-  if (!readOnly) fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  const location = immutable ? pathToFileURL(resolved) : resolved;
-  if (immutable) {
-    location.searchParams.set('mode', 'ro');
-    location.searchParams.set('immutable', '1');
-  }
-  const database = new DatabaseSync(location, { readOnly });
-  database.exec(`PRAGMA busy_timeout=${Math.max(1, Number(busyTimeoutMs || 10_000))};`);
-  database.exec('PRAGMA foreign_keys=ON;');
-  if (!readOnly) {
-    database.exec('PRAGMA journal_mode=WAL;');
-    database.exec('PRAGMA synchronous=NORMAL;');
-  }
-  return database;
-}
-
-function checkedOnlineMutationBoundary(boundary) {
-  const coordinator = assertExternallyFencedSqliteMutationCoordinatorPort(
-    boundary?.coordinator,
-  );
-  const status = coordinator.inspectStatus();
-  const operationIds = Array.isArray(boundary?.operationIds)
-    ? [...boundary.operationIds].map(String).sort() : [];
-  const suppliedOperationWriters = boundary?.operationWriters;
-  const operationWritersArePlain = suppliedOperationWriters
-    && typeof suppliedOperationWriters === 'object'
-    && !Array.isArray(suppliedOperationWriters)
-    && [Object.prototype, null].includes(Object.getPrototypeOf(suppliedOperationWriters));
-  const operationWriterEntries = operationWritersArePlain
-    ? Object.entries(suppliedOperationWriters)
-      .map(([operationId, writerId]) => [String(operationId), String(writerId)])
-      .sort(([left], [right]) => left.localeCompare(right))
-    : operationIds.map((operationId) => [operationId, String(boundary?.writerId || '')]);
-  const writerIds = [...new Set(operationWriterEntries.map(([, writerId]) => writerId))]
-    .sort();
-  if (coordinator.implemented !== true
-    || status?.implemented !== true
-    || status.status !== 'externally_fenced_sqlite_mutation_coordinator_ready'
-    || !Array.isArray(status.blockers) || status.blockers.length !== 0
-    || !SAFE_MUTATION_ID.test(String(boundary?.databaseRole || ''))
-    || !coordinator.coveredDatabaseRoles?.includes(boundary.databaseRole)
-    || !status.coveredDatabaseRoles?.includes(boundary.databaseRole)
-    || !SAFE_MUTATION_ID.test(String(boundary?.databaseInstanceId || ''))
-    || !SAFE_MUTATION_ID.test(String(boundary?.schemaContractId || ''))
-    || operationIds.length === 0
-    || new Set(operationIds).size !== operationIds.length
-    || operationIds.some((operationId) => !SAFE_MUTATION_ID.test(operationId))
-    || operationWriterEntries.map(([operationId]) => operationId).join('\0')
-      !== operationIds.join('\0')
-    || writerIds.length === 0
-    || writerIds.some((writerId) => !SAFE_MUTATION_ID.test(writerId))) {
-    throw new Error('native_store_external_mutation_coordinator_required');
-  }
-  return Object.freeze({
-    coordinator,
-    databaseRole: boundary.databaseRole,
-    databaseInstanceId: boundary.databaseInstanceId,
-    schemaContractId: boundary.schemaContractId,
-    writerId: writerIds.length === 1 ? writerIds[0] : null,
-    writerIds: Object.freeze(writerIds),
-    operationWriters: Object.freeze(Object.fromEntries(operationWriterEntries)),
-    writerByOperationId: new Map(operationWriterEntries),
-    operationIds: Object.freeze(operationIds),
-    operationIdSet: new Set(operationIds),
-  });
-}
+import {
+  checkedOnlineMutationBoundary,
+  createStoreAccessState,
+  invokeSqliteStatement,
+  openSqliteDatabase,
+  storeFailure,
+} from './sqlite-store-runtime.mjs';
 
 function createPort({
   dbPath,
@@ -111,12 +32,17 @@ function createPort({
   let database;
   let publicReadDatabase = null;
   try {
-    database = fenced(() => openDatabase({ dbPath, readOnly, immutable, busyTimeoutMs }));
+    database = fenced(() => openSqliteDatabase({
+      dbPath,
+      readOnly,
+      immutable,
+      busyTimeoutMs,
+    }));
     // Public queries on an externally fenced store use a physically read-only
     // connection. The authority connection may temporarily clear query_only,
     // but no StorePort query can ever inherit that write capability.
     if (onlineMutation) {
-      publicReadDatabase = openDatabase({ dbPath, readOnly: true, busyTimeoutMs });
+      publicReadDatabase = openSqliteDatabase({ dbPath, readOnly: true, busyTimeoutMs });
     }
   } catch (error) {
     try { publicReadDatabase?.close(); } catch { /* preserve the opening failure */ }
@@ -125,45 +51,34 @@ function createPort({
     throw error;
   }
   let closed = false;
-  let activeTransaction = null;
+  const ownership = createStoreAccessState();
   let onlineWriteGuardHealthy = true;
   if (onlineMutation) database.exec('PRAGMA query_only=ON;');
 
-  function accessError(ownerToken = null, state = null) {
-    if (state && !state.active) return new Error('sqlite_transaction_scope_inactive');
-    if (activeTransaction && ownerToken !== activeTransaction.owner) {
-      const error = new Error('sqlite_outer_store_access_during_unit_of_work_forbidden');
-      if (!activeTransaction.state.failure) activeTransaction.state.failure = error;
-      return error;
-    }
-    return null;
-  }
-
-  function invoke(statement, operation, parameters) {
-    if (Array.isArray(parameters)) return statement[operation](...parameters);
-    if (parameters && typeof parameters === 'object') return statement[operation](parameters);
-    return statement[operation]();
-  }
-
   function query(sql, parameters = [], state = null, ownerToken = null) {
-    const denied = accessError(ownerToken, state);
+    const denied = ownership.accessError(ownerToken, state);
     if (denied) throw denied;
     return fenced(() => queryInner(sql, parameters, state, ownerToken));
   }
 
   function queryInner(sql, parameters = [], state = null, ownerToken = null) {
-    const denied = accessError(ownerToken, state);
+    const denied = ownership.accessError(ownerToken, state);
     if (denied) throw denied;
     if (closed) throw new Error('sqlite_store_closed');
     if (!onlineWriteGuardHealthy) throw new Error('native_store_online_write_guard_failed');
     try {
       const text = String(sql || '');
-      // A query is never classified from its first token. Top-level online
-      // reads execute on a read-only SQLite connection; scoped reads execute
-      // under the transaction's query_only/owner-token boundary.
       assertNoSqliteTransactionControl(text);
+      // This is an obvious-write rejection only, not a read-only classifier.
+      // Ambiguous forms such as WITH/EXPLAIN execute against the physically
+      // read-only public connection and SQLite decides whether they may write.
+      if (onlineMutation && !state
+        && /^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(text)) {
+        throw new Error('native_store_unfenced_query_write_forbidden');
+      }
       const target = onlineMutation && !state ? publicReadDatabase : database;
-      const rows = invoke(target.prepare(text), 'all', parameters).map((row) => ({ ...row }));
+      const rows = invokeSqliteStatement(target.prepare(text), 'all', parameters)
+        .map((row) => ({ ...row }));
       return { ok: true, status: 0, stdout: '', stderr: '', error: null, rows };
     } catch (error) {
       if (state && !state.failure) state.failure = error;
@@ -175,32 +90,32 @@ function createPort({
   }
 
   function run(sql, parameters = [], state = null, scopedReadOnly = readOnly, ownerToken = null) {
-    const denied = accessError(ownerToken, state);
-    if (denied) return failure(denied, denied.message);
+    const denied = ownership.accessError(ownerToken, state);
+    if (denied) return storeFailure(denied, denied.message);
     try { return fenced(() => runInner(sql, parameters, state, scopedReadOnly, ownerToken)); }
     catch (error) {
       if (state && !state.failure) state.failure = error;
-      return failure(error, 'rust_cutover_write_fenced');
+      return storeFailure(error, 'rust_cutover_write_fenced');
     }
   }
 
   function runInner(sql, parameters = [], state = null, scopedReadOnly = readOnly, ownerToken = null) {
-    const denied = accessError(ownerToken, state);
-    if (denied) return failure(denied, denied.message);
+    const denied = ownership.accessError(ownerToken, state);
+    if (denied) return storeFailure(denied, denied.message);
     if (onlineMutation) {
       const error = new Error('native_store_unfenced_write_forbidden');
       if (state && !state.failure) state.failure = error;
-      return failure(error, error.message);
+      return storeFailure(error, error.message);
     }
     if (scopedReadOnly) {
       const error = new Error('sqlite_readonly_store_execute_forbidden');
       if (state && !state.failure) state.failure = error;
-      return failure(error, 'sqlite_readonly_store_execute_forbidden');
+      return storeFailure(error, 'sqlite_readonly_store_execute_forbidden');
     }
     try {
       const text = String(sql || '');
       if (state) assertNoSqliteTransactionControl(text);
-      const result = invoke(database.prepare(text), 'run', parameters);
+      const result = invokeSqliteStatement(database.prepare(text), 'run', parameters);
       return {
         ok: true,
         status: 0,
@@ -212,32 +127,32 @@ function createPort({
       };
     } catch (error) {
       if (state && !state.failure) state.failure = error;
-      return failure(error, 'sqlite_statement_failed');
+      return storeFailure(error, 'sqlite_statement_failed');
     }
   }
 
   function execute(sql, state = null, scopedReadOnly = readOnly, ownerToken = null) {
-    const denied = accessError(ownerToken, state);
-    if (denied) return failure(denied, denied.message);
+    const denied = ownership.accessError(ownerToken, state);
+    if (denied) return storeFailure(denied, denied.message);
     try { return fenced(() => executeInner(sql, state, scopedReadOnly, ownerToken)); }
     catch (error) {
       if (state && !state.failure) state.failure = error;
-      return failure(error, 'rust_cutover_write_fenced');
+      return storeFailure(error, 'rust_cutover_write_fenced');
     }
   }
 
   function executeInner(sql, state = null, scopedReadOnly = readOnly, ownerToken = null) {
-    const denied = accessError(ownerToken, state);
-    if (denied) return failure(denied, denied.message);
+    const denied = ownership.accessError(ownerToken, state);
+    if (denied) return storeFailure(denied, denied.message);
     if (onlineMutation) {
       const error = new Error('native_store_unfenced_write_forbidden');
       if (state && !state.failure) state.failure = error;
-      return failure(error, error.message);
+      return storeFailure(error, error.message);
     }
     if (scopedReadOnly) {
       const error = new Error('sqlite_readonly_store_execute_forbidden');
       if (state && !state.failure) state.failure = error;
-      return failure(error, 'sqlite_readonly_store_execute_forbidden');
+      return storeFailure(error, 'sqlite_readonly_store_execute_forbidden');
     }
     try {
       const text = String(sql || '');
@@ -249,12 +164,12 @@ function createPort({
       if (!state && database.isTransaction) {
         try { database.exec('ROLLBACK;'); } catch { /* preserve the original SQLite error */ }
       }
-      return failure(error, 'sqlite_execute_failed');
+      return storeFailure(error, 'sqlite_execute_failed');
     }
   }
 
   function transaction(callback, options = {}) {
-    const denied = accessError();
+    const denied = ownership.accessError();
     if (denied) throw denied;
     return fenced(() => transactionInner(callback, options));
   }
@@ -265,15 +180,17 @@ function createPort({
     if (onlineMutation && !transactionReadOnly) {
       throw new Error('native_store_unfenced_write_forbidden');
     }
-    if (activeTransaction || database.isTransaction) {
+    if (ownership.activeTransaction || database.isTransaction) {
       const error = new Error('sqlite_nested_unit_of_work_forbidden');
-      if (activeTransaction && !activeTransaction.state.failure) activeTransaction.state.failure = error;
+      if (ownership.activeTransaction && !ownership.activeTransaction.state.failure) {
+        ownership.activeTransaction.state.failure = error;
+      }
       throw error;
     }
     if (readOnly && !transactionReadOnly) throw new Error('sqlite_readonly_unit_of_work_write_forbidden');
     const state = { active: true, failure: null };
     const owner = Symbol('sqlite-unit-of-work');
-    activeTransaction = { owner, state };
+    ownership.activeTransaction = { owner, state };
     const effectiveReadOnly = Boolean(readOnly || transactionReadOnly);
     const queryOnlyApplied = Boolean(effectiveReadOnly && !readOnly && !onlineMutation);
     const scopedStore = assertStorePort(Object.freeze({
@@ -281,9 +198,20 @@ function createPort({
       kind: effectiveReadOnly ? 'ReadOnlySqliteTransactionStoreAdapter' : 'SqliteTransactionStoreAdapter',
       dbPath,
       readOnly: effectiveReadOnly,
-      query: (sql, parameters = []) => query(sql, parameters, state, owner),
-      run: (sql, parameters = []) => run(sql, parameters, state, effectiveReadOnly, owner),
-      execute: (sql) => execute(sql, state, effectiveReadOnly, owner),
+      query: (statement, statementParameters = []) => query(
+        statement,
+        statementParameters,
+        state,
+        owner,
+      ),
+      run: (statement, statementParameters = []) => run(
+        statement,
+        statementParameters,
+        state,
+        effectiveReadOnly,
+        owner,
+      ),
+      execute: (statement) => execute(statement, state, effectiveReadOnly, owner),
       available: () => Boolean(state.active && !closed),
     }));
     let began = false;
@@ -307,12 +235,12 @@ function createPort({
         try { database.exec('PRAGMA query_only=OFF;'); } catch { /* the store will fail closed on later use */ }
       }
       state.active = false;
-      if (activeTransaction?.owner === owner) activeTransaction = null;
+      if (ownership.activeTransaction?.owner === owner) ownership.activeTransaction = null;
     }
   }
 
   function withOnlineWrite(action) {
-    const denied = accessError();
+    const denied = ownership.accessError();
     if (denied) throw denied;
     return fenced(() => withOnlineWriteInner(action));
   }
@@ -322,7 +250,7 @@ function createPort({
     checkedOnlineMutationBoundary(onlineMutation);
     if (closed) throw new Error('sqlite_store_closed');
     if (!onlineWriteGuardHealthy) throw new Error('native_store_online_write_guard_failed');
-    if (activeTransaction || database.isTransaction) {
+    if (ownership.activeTransaction || database.isTransaction) {
       throw new Error('sqlite_nested_unit_of_work_forbidden');
     }
     database.exec('PRAGMA query_only=OFF;');
@@ -359,7 +287,7 @@ function createPort({
     return withOnlineWrite(() => {
       const state = { active: true, failure: null };
       const owner = Symbol('sqlite-online-mutation');
-      activeTransaction = { owner, state };
+      ownership.activeTransaction = { owner, state };
       try {
         return onlineMutation.coordinator.executeMutation({
           database,
@@ -388,7 +316,7 @@ function createPort({
         });
       } finally {
         state.active = false;
-        if (activeTransaction?.owner === owner) activeTransaction = null;
+        if (ownership.activeTransaction?.owner === owner) ownership.activeTransaction = null;
       }
     });
   }
@@ -417,14 +345,14 @@ function createPort({
       operationIds: onlineMutation.operationIds,
       mutate,
       recoverPendingMutations() {
-        const denied = accessError();
+        const denied = ownership.accessError();
         if (denied) throw denied;
         return withOnlineWrite(() => onlineMutation.coordinator
           .recoverPendingMutations({ database }));
       },
     } : {}),
     available() {
-      const denied = accessError();
+      const denied = ownership.accessError();
       if (denied) return false;
       try {
         (publicReadDatabase || database).prepare('SELECT 1 AS available').get();
@@ -434,8 +362,8 @@ function createPort({
       }
     },
     checkpoint({ mode = 'PASSIVE' } = {}) {
-      const denied = accessError();
-      if (denied) return failure(denied, denied.message);
+      const denied = ownership.accessError();
+      if (denied) return storeFailure(denied, denied.message);
       if (readOnly) return { ok: true, status: 0, stdout: '', stderr: '', error: null };
       try {
         const normalized = String(mode || 'PASSIVE').toUpperCase();
@@ -443,13 +371,20 @@ function createPort({
           throw new Error('sqlite_checkpoint_mode_invalid');
         }
         const row = fenced(() => database.prepare(`PRAGMA wal_checkpoint(${normalized})`).get());
-        return { ok: true, status: 0, stdout: JSON.stringify(row || {}), stderr: '', error: null, row: row ? { ...row } : null };
+        return {
+          ok: true,
+          status: 0,
+          stdout: JSON.stringify(row || {}),
+          stderr: '',
+          error: null,
+          row: row ? { ...row } : null,
+        };
       } catch (error) {
-        return failure(error, 'sqlite_checkpoint_failed');
+        return storeFailure(error, 'sqlite_checkpoint_failed');
       }
     },
     close() {
-      const denied = accessError();
+      const denied = ownership.accessError();
       if (denied) throw denied;
       if (!closed) {
         publicReadDatabase?.close();
@@ -520,6 +455,10 @@ export function createExternallyFencedSqliteStore({
   });
 }
 
-export function createReadOnlySqliteStore({ dbPath, busyTimeoutMs = 10_000, immutable = false } = {}) {
+export function createReadOnlySqliteStore({
+  dbPath,
+  busyTimeoutMs = 10_000,
+  immutable = false,
+} = {}) {
   return createPort({ dbPath, busyTimeoutMs, readOnly: true, immutable });
 }

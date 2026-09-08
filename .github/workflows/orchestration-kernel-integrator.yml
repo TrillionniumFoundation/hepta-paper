@@ -106,7 +106,12 @@ jobs:
           kernel_root = Path('rust/crates/hepta-orchestration-kernel/src')
           for source in sorted(kernel_root.glob('*.rs')):
               source_text = source.read_text()
-              source.write_text(source_text.replace('assert!(false, ', 'panic!('))
+              source_text = source_text.replace('assert!(false, ', 'panic!(')
+              source_text = source_text.replace(
+                  'panic!("ledger construction failed: {error}");\n                unreachable!()',
+                  'panic!("ledger construction failed: {error}")',
+              )
+              source.write_text(source_text)
 
           performance = kernel_root / 'performance.rs'
           performance_text = performance.read_text()

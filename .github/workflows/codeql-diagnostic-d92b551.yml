@@ -1,0 +1,52 @@
+name: codeql-diagnostic-d92b551
+
+on:
+  push:
+    branches:
+      - codex/codeql-diagnostic-d92b551-20260909
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-diagnostic-d92b551
+  cancel-in-progress: false
+
+jobs:
+  javascript:
+    name: JavaScript security-extended SARIF
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out diagnostic subject without persistent credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Initialize pinned CodeQL
+        uses: github/codeql-action/init@6f5948dfacef28e207b48d0905cf90c03365536d
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze without publishing a security decision
+        id: analyze
+        uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d
+        with:
+          output: ${{ runner.temp }}/codeql-results
+          post-processed-sarif-path: ${{ runner.temp }}/codeql-post-processed
+          upload: never
+          upload-database: false
+
+      - name: Retain diagnostic SARIF
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: codeql-diagnostic-d92b551-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/codeql-results
+            ${{ runner.temp }}/codeql-post-processed
+          if-no-files-found: error
+          retention-days: 14

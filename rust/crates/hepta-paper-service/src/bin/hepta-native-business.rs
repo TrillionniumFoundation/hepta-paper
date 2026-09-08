@@ -2,12 +2,9 @@
 
 #![forbid(unsafe_code)]
 
-#[path = "../native_business.rs"]
-mod native_business;
-
 use base64ct::{Base64, Encoding};
 use hepta_control_plane::ExecutionRequestV1;
-use native_business::{
+use hepta_paper_service::native_business::{
     NativeBusinessError, NativeBusinessJobV1, execute_native_business_v1,
     native_business_implementation_hash_v1,
 };

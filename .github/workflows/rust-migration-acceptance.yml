@@ -101,6 +101,7 @@ jobs:
           set -euo pipefail
           node --test paper-core/tests/rust-cutover-fence.test.mjs \
             paper-core/tests/sqlite-transaction-control-boundary.test.mjs \
+            paper-core/tests/sqlite-online-mutation-authority-boundary.test.mjs \
             paper-core/tests/sqlite-store-failure-contract.test.mjs \
             paper-core/tests/typed-persistence-ports.test.mjs \
             2>&1 | tee "$EVIDENCE_ROOT/node-store-fencing.log"

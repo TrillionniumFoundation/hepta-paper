@@ -109,9 +109,18 @@ function createPort({
   const cutoverFence = readOnly ? null : createRustCutoverFence({ dbPath, busyTimeoutMs });
   const fenced = (action) => cutoverFence ? cutoverFence.withWrite(action) : action();
   let database;
+  let publicReadDatabase = null;
   try {
     database = fenced(() => openDatabase({ dbPath, readOnly, immutable, busyTimeoutMs }));
+    // Public queries on an externally fenced store use a physically read-only
+    // connection. The authority connection may temporarily clear query_only,
+    // but no StorePort query can ever inherit that write capability.
+    if (onlineMutation) {
+      publicReadDatabase = openDatabase({ dbPath, readOnly: true, busyTimeoutMs });
+    }
   } catch (error) {
+    try { publicReadDatabase?.close(); } catch { /* preserve the opening failure */ }
+    try { database?.close(); } catch { /* preserve the opening failure */ }
     cutoverFence?.close();
     throw error;
   }
@@ -137,6 +146,8 @@ function createPort({
   }
 
   function query(sql, parameters = [], state = null, ownerToken = null) {
+    const denied = accessError(ownerToken, state);
+    if (denied) throw denied;
     return fenced(() => queryInner(sql, parameters, state, ownerToken));
   }
 
@@ -145,19 +156,14 @@ function createPort({
     if (denied) throw denied;
     if (closed) throw new Error('sqlite_store_closed');
     if (!onlineWriteGuardHealthy) throw new Error('native_store_online_write_guard_failed');
-    if (onlineMutation
-      && !/^\s*(?:SELECT|WITH|EXPLAIN)\b/i.test(String(sql || ''))) {
-      const error = new Error('native_store_unfenced_query_write_forbidden');
-      if (state && !state.failure) state.failure = error;
-      throw error;
-    }
     try {
       const text = String(sql || '');
-      if (state) assertNoSqliteTransactionControl(text);
-      const rows = invoke(database.prepare(text), 'all', parameters).map((row) => ({ ...row }));
-      // StorePort v3 exposes query data through `rows`. Serializing an
-      // unbounded result a second time can exceed the JavaScript string limit
-      // even though SQLite returned the rows successfully.
+      // A query is never classified from its first token. Top-level online
+      // reads execute on a read-only SQLite connection; scoped reads execute
+      // under the transaction's query_only/owner-token boundary.
+      assertNoSqliteTransactionControl(text);
+      const target = onlineMutation && !state ? publicReadDatabase : database;
+      const rows = invoke(target.prepare(text), 'all', parameters).map((row) => ({ ...row }));
       return { ok: true, status: 0, stdout: '', stderr: '', error: null, rows };
     } catch (error) {
       if (state && !state.failure) state.failure = error;
@@ -169,6 +175,8 @@ function createPort({
   }
 
   function run(sql, parameters = [], state = null, scopedReadOnly = readOnly, ownerToken = null) {
+    const denied = accessError(ownerToken, state);
+    if (denied) return failure(denied, denied.message);
     try { return fenced(() => runInner(sql, parameters, state, scopedReadOnly, ownerToken)); }
     catch (error) {
       if (state && !state.failure) state.failure = error;
@@ -209,6 +217,8 @@ function createPort({
   }
 
   function execute(sql, state = null, scopedReadOnly = readOnly, ownerToken = null) {
+    const denied = accessError(ownerToken, state);
+    if (denied) return failure(denied, denied.message);
     try { return fenced(() => executeInner(sql, state, scopedReadOnly, ownerToken)); }
     catch (error) {
       if (state && !state.failure) state.failure = error;
@@ -244,6 +254,8 @@ function createPort({
   }
 
   function transaction(callback, options = {}) {
+    const denied = accessError();
+    if (denied) throw denied;
     return fenced(() => transactionInner(callback, options));
   }
 
@@ -269,14 +281,7 @@ function createPort({
       kind: effectiveReadOnly ? 'ReadOnlySqliteTransactionStoreAdapter' : 'SqliteTransactionStoreAdapter',
       dbPath,
       readOnly: effectiveReadOnly,
-      query: (sql, parameters = []) => {
-        if (effectiveReadOnly && !/^\s*(?:SELECT|WITH|EXPLAIN)\b/i.test(String(sql || ''))) {
-          const error = new Error('sqlite_readonly_query_statement_forbidden');
-          if (!state.failure) state.failure = error;
-          throw error;
-        }
-        return query(sql, parameters, state, owner);
-      },
+      query: (sql, parameters = []) => query(sql, parameters, state, owner),
       run: (sql, parameters = []) => run(sql, parameters, state, effectiveReadOnly, owner),
       execute: (sql) => execute(sql, state, effectiveReadOnly, owner),
       available: () => Boolean(state.active && !closed),
@@ -307,6 +312,8 @@ function createPort({
   }
 
   function withOnlineWrite(action) {
+    const denied = accessError();
+    if (denied) throw denied;
     return fenced(() => withOnlineWriteInner(action));
   }
 
@@ -326,6 +333,7 @@ function createPort({
     try { database.exec('PRAGMA query_only=ON;'); }
     catch (restoreError) {
       onlineWriteGuardHealthy = false;
+      try { publicReadDatabase?.close(); } catch { /* preserve the guard failure */ }
       try { database.close(); } catch { /* the adapter remains permanently closed */ }
       closed = true;
       const error = new Error('native_store_query_only_restore_failed');
@@ -348,17 +356,41 @@ function createPort({
       || typeof callback !== 'function') {
       throw new Error('native_store_online_mutation_input_invalid');
     }
-    return withOnlineWrite(() => onlineMutation.coordinator.executeMutation({
-      database,
-      databaseRole: onlineMutation.databaseRole,
-      databaseInstanceId: onlineMutation.databaseInstanceId,
-      schemaContractId: onlineMutation.schemaContractId,
-      writerId: onlineMutation.writerByOperationId.get(operationId),
-      operationId,
-      authorizationReceiptHashes: Object.freeze([...authorizationReceiptHashes]),
-      sideEffectReservationHashes: Object.freeze([...sideEffectReservationHashes]),
-      mutate: callback,
-    }));
+    return withOnlineWrite(() => {
+      const state = { active: true, failure: null };
+      const owner = Symbol('sqlite-online-mutation');
+      activeTransaction = { owner, state };
+      try {
+        return onlineMutation.coordinator.executeMutation({
+          database,
+          databaseRole: onlineMutation.databaseRole,
+          databaseInstanceId: onlineMutation.databaseInstanceId,
+          schemaContractId: onlineMutation.schemaContractId,
+          writerId: onlineMutation.writerByOperationId.get(operationId),
+          operationId,
+          authorizationReceiptHashes: Object.freeze([...authorizationReceiptHashes]),
+          sideEffectReservationHashes: Object.freeze([...sideEffectReservationHashes]),
+          mutate(transactionSurface) {
+            let value;
+            try { value = callback(transactionSurface); }
+            catch (error) {
+              if (!state.failure) state.failure = error;
+              throw error;
+            }
+            if (value && typeof value.then === 'function') {
+              const error = new Error('externally_fenced_sqlite_mutation_async_callback_forbidden');
+              if (!state.failure) state.failure = error;
+              throw error;
+            }
+            if (state.failure) throw state.failure;
+            return value;
+          },
+        });
+      } finally {
+        state.active = false;
+        if (activeTransaction?.owner === owner) activeTransaction = null;
+      }
+    });
   }
 
   return assertStorePort({
@@ -385,6 +417,8 @@ function createPort({
       operationIds: onlineMutation.operationIds,
       mutate,
       recoverPendingMutations() {
+        const denied = accessError();
+        if (denied) throw denied;
         return withOnlineWrite(() => onlineMutation.coordinator
           .recoverPendingMutations({ database }));
       },
@@ -393,7 +427,7 @@ function createPort({
       const denied = accessError();
       if (denied) return false;
       try {
-        database.prepare('SELECT 1 AS available').get();
+        (publicReadDatabase || database).prepare('SELECT 1 AS available').get();
         return true;
       } catch {
         return false;
@@ -417,7 +451,10 @@ function createPort({
     close() {
       const denied = accessError();
       if (denied) throw denied;
-      if (!closed) database.close();
+      if (!closed) {
+        publicReadDatabase?.close();
+        database.close();
+      }
       cutoverFence?.close();
       closed = true;
     },

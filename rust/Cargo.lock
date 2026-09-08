@@ -386,6 +386,7 @@ dependencies = [
  "hepta-campaign-writer",
  "hepta-codex-protocol",
  "hepta-module-platform",
+ "hepta-orchestration-kernel",
  "hex",
  "nix",
  "serde",
@@ -451,6 +452,17 @@ name = "hepta-module-platform"
 version = "0.1.0"
 dependencies = [
  "hepta-codex-protocol",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+]
+
+[[package]]
+name = "hepta-orchestration-kernel"
+version = "0.1.0"
+dependencies = [
  "hex",
  "serde",
  "serde_json",

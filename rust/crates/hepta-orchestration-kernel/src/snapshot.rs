@@ -217,7 +217,7 @@ mod tests {
         let right = build_planning_snapshot_v1(request(&["beta", "alpha"]));
         match (left, right) {
             (Ok(left), Ok(right)) => assert_eq!(left.snapshot_hash, right.snapshot_hash),
-            other => assert!(false, "unexpected result: {other:?}"),
+            other => panic!("unexpected result: {other:?}"),
         }
     }
 

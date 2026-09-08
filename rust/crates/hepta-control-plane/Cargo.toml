@@ -12,6 +12,7 @@ workspace = true
 hepta-campaign-writer = { version = "=0.1.0", path = "../hepta-campaign-writer" }
 hepta-codex-protocol = { version = "=0.1.0", path = "../hepta-codex-protocol" }
 hepta-module-platform = { version = "=0.1.0", path = "../hepta-module-platform" }
+hepta-orchestration-kernel = { path = "../hepta-orchestration-kernel", version = "=0.1.0" }
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

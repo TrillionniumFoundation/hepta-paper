@@ -98,8 +98,7 @@ pub fn route_candidate_v1(
     for candidate in frontier.iter().skip(1) {
         let candidate_score = score(candidate, &policy)?;
         if candidate_score > selected_score
-            || (candidate_score == selected_score
-                && candidate.candidate_id < selected.candidate_id)
+            || (candidate_score == selected_score && candidate.candidate_id < selected.candidate_id)
         {
             selected = candidate;
             selected_score = candidate_score;
@@ -198,7 +197,9 @@ fn validate_policy(policy: &CandidateRouterPolicyV1) -> Result<(), CandidateRout
     if policy.version != 1
         || !valid_identifier(&policy.policy_id, 256)
         || policy.minimum_evidence_ppm > 1_000_000
-        || weights.iter().any(|weight| *weight == 0 || *weight > MAX_WEIGHT)
+        || weights
+            .iter()
+            .any(|weight| *weight == 0 || *weight > MAX_WEIGHT)
     {
         return Err(CandidateRouterError::Contract);
     }
@@ -307,18 +308,24 @@ mod tests {
     fn routing_is_order_independent() {
         let left = route_candidate_v1(
             policy(),
-            vec![candidate("candidate:b", 20, 20), candidate("candidate:a", 20, 20)],
+            vec![
+                candidate("candidate:b", 20, 20),
+                candidate("candidate:a", 20, 20),
+            ],
         );
         let right = route_candidate_v1(
             policy(),
-            vec![candidate("candidate:a", 20, 20), candidate("candidate:b", 20, 20)],
+            vec![
+                candidate("candidate:a", 20, 20),
+                candidate("candidate:b", 20, 20),
+            ],
         );
         match (left, right) {
             (Ok(left), Ok(right)) => {
                 assert_eq!(left.selected_candidate_id, "candidate:a");
                 assert_eq!(left.route_hash, right.route_hash);
             }
-            other => assert!(false, "unexpected result: {other:?}"),
+            other => panic!("unexpected result: {other:?}"),
         }
     }
 
@@ -326,11 +333,14 @@ mod tests {
     fn dominated_candidate_is_removed() {
         let result = route_candidate_v1(
             policy(),
-            vec![candidate("candidate:strong", 30, 10), candidate("candidate:weak", 20, 20)],
+            vec![
+                candidate("candidate:strong", 30, 10),
+                candidate("candidate:weak", 20, 20),
+            ],
         );
         match result {
             Ok(receipt) => assert_eq!(receipt.pareto_frontier_ids, ["candidate:strong"]),
-            other => assert!(false, "unexpected result: {other:?}"),
+            other => panic!("unexpected result: {other:?}"),
         }
     }
 

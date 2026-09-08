@@ -95,10 +95,7 @@ pub fn qualify_performance_v1(
         if !valid_identifier(&observation.workload_id, 256)
             || observation.sample_durations_ns.len() < MINIMUM_SAMPLES
             || observation.sample_durations_ns.len() > MAXIMUM_SAMPLES
-            || observation
-                .sample_durations_ns
-                .iter()
-                .any(|duration| *duration == 0)
+            || observation.sample_durations_ns.contains(&0)
             || observations_by_id
                 .insert(observation.workload_id.clone(), observation)
                 .is_some()
@@ -119,14 +116,9 @@ pub fn qualify_performance_v1(
         durations.sort_unstable();
         let median_duration_ns = median(&durations)?;
         let p95_duration_ns = percentile_95(&durations)?;
-        let throughput_per_second = throughput(
-            workload.operations_per_sample,
-            median_duration_ns,
-        )?;
-        let regression_ppm = regression_ppm(
-            workload.baseline_median_duration_ns,
-            median_duration_ns,
-        )?;
+        let throughput_per_second = throughput(workload.operations_per_sample, median_duration_ns)?;
+        let regression_ppm =
+            regression_ppm(workload.baseline_median_duration_ns, median_duration_ns)?;
         let accepted = regression_ppm <= workload.maximum_regression_ppm
             && throughput_per_second >= workload.minimum_throughput_per_second
             && p95_duration_ns <= workload.maximum_p95_duration_ns;
@@ -238,9 +230,7 @@ fn validate_subject(subject: &PerformanceSubjectV1) -> Result<(), PerformanceQua
     Ok(())
 }
 
-fn validate_workload(
-    workload: &CanonicalWorkloadV1,
-) -> Result<(), PerformanceQualificationError> {
+fn validate_workload(workload: &CanonicalWorkloadV1) -> Result<(), PerformanceQualificationError> {
     if !valid_identifier(&workload.workload_id, 256)
         || !valid_digest(&workload.workload_hash)
         || workload.operations_per_sample == 0
@@ -369,7 +359,7 @@ mod tests {
                 assert!(!receipt.production_authority_granted);
                 assert_eq!(receipt.workload_results[0].median_duration_ns, 1_000);
             }
-            other => assert!(false, "unexpected qualification: {other:?}"),
+            other => panic!("unexpected qualification: {other:?}"),
         }
     }
 
@@ -389,7 +379,7 @@ mod tests {
         );
         match result {
             Ok(receipt) => assert!(!receipt.all_workloads_accepted),
-            other => assert!(false, "unexpected qualification: {other:?}"),
+            other => panic!("unexpected qualification: {other:?}"),
         }
     }
 }

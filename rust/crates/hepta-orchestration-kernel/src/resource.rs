@@ -348,7 +348,10 @@ impl ResourceLedgerV1 {
             if matches!(
                 reservation.state,
                 ReservationStateV1::Prepared | ReservationStateV1::Committed
-            ) && self.hierarchy(&reservation.scope_id)?.iter().any(|item| item == scope_id)
+            ) && self
+                .hierarchy(&reservation.scope_id)?
+                .iter()
+                .any(|item| item == scope_id)
             {
                 return Err(ResourceLedgerError::ActiveReservation);
             }
@@ -372,10 +375,7 @@ impl ResourceLedgerV1 {
         self.reserved.get(scope_id).copied()
     }
 
-    fn release_reserved(
-        &mut self,
-        reservation: &ReservationV1,
-    ) -> Result<(), ResourceLedgerError> {
+    fn release_reserved(&mut self, reservation: &ReservationV1) -> Result<(), ResourceLedgerError> {
         let hierarchy = self.hierarchy(&reservation.scope_id)?;
         for current_scope_id in hierarchy {
             let value = self
@@ -567,8 +567,7 @@ mod tests {
         ]) {
             Ok(value) => value,
             Err(error) => {
-                assert!(false, "ledger construction failed: {error}");
-                unreachable!()
+                panic!("ledger construction failed: {error}")
             }
         }
     }
@@ -589,7 +588,10 @@ mod tests {
         assert_eq!(value.reserved("tenant:one"), Some(vector(30)));
         assert!(value.commit("reservation:one", 15).is_ok());
         assert!(value.finalize("reservation:one", vector(20)).is_ok());
-        assert_eq!(value.reserved("tenant:one"), Some(ResourceVectorV1::default()));
+        assert_eq!(
+            value.reserved("tenant:one"),
+            Some(ResourceVectorV1::default())
+        );
         assert_eq!(value.consumed("tenant:one"), Some(vector(20)));
     }
 
@@ -642,7 +644,7 @@ mod tests {
                 assert_eq!(disposition.ambiguous_committed, ["reservation:ambiguous"]);
                 assert_eq!(value.reserved("tenant:one"), Some(vector(10)));
             }
-            other => assert!(false, "unexpected recovery: {other:?}"),
+            other => panic!("unexpected recovery: {other:?}"),
         }
     }
 }

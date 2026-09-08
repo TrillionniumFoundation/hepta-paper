@@ -22,6 +22,7 @@ members = [
   "crates/hepta-qualification-ingest",
   "crates/hepta-module-platform",
   "crates/hepta-control-plane",
+  "crates/hepta-orchestration-kernel",
   "crates/hepta-paper-service",
 ]
 

@@ -208,9 +208,8 @@ impl TelemetryAggregatorV1 {
         let first_observed_at_unix_ms = self
             .first_observed_at_unix_ms
             .ok_or(TelemetryError::Empty)?;
-        let last_observed_at_unix_ms = self
-            .last_observed_at_unix_ms
-            .ok_or(TelemetryError::Empty)?;
+        let last_observed_at_unix_ms =
+            self.last_observed_at_unix_ms.ok_or(TelemetryError::Empty)?;
         let counters = self
             .counters
             .iter()
@@ -315,32 +314,41 @@ mod tests {
             severity: SeverityV1::Info,
             latency_ms: 8,
             observed_at_unix_ms: at,
-            labels: BTreeMap::from([(
-                LabelKeyV1::ExecutionClass,
-                LabelValueV1::NativeRust,
-            )]),
+            labels: BTreeMap::from([(LabelKeyV1::ExecutionClass, LabelValueV1::NativeRust)]),
         }
     }
 
     #[test]
     fn aggregate_contains_no_free_form_identity() {
         let mut aggregate = TelemetryAggregatorV1::default();
-        assert!(aggregate.record(observation(10, OutcomeClassV1::Accepted)).is_ok());
-        assert!(aggregate.record(observation(11, OutcomeClassV1::Accepted)).is_ok());
+        assert!(
+            aggregate
+                .record(observation(10, OutcomeClassV1::Accepted))
+                .is_ok()
+        );
+        assert!(
+            aggregate
+                .record(observation(11, OutcomeClassV1::Accepted))
+                .is_ok()
+        );
         match aggregate.snapshot() {
             Ok(snapshot) => {
                 assert_eq!(snapshot.observation_count, 2);
                 assert_eq!(snapshot.counters.len(), 1);
                 assert_eq!(snapshot.latency_histogram.len(), 1);
             }
-            other => assert!(false, "unexpected snapshot: {other:?}"),
+            other => panic!("unexpected snapshot: {other:?}"),
         }
     }
 
     #[test]
     fn clock_regression_fails_closed() {
         let mut aggregate = TelemetryAggregatorV1::default();
-        assert!(aggregate.record(observation(10, OutcomeClassV1::Accepted)).is_ok());
+        assert!(
+            aggregate
+                .record(observation(10, OutcomeClassV1::Accepted))
+                .is_ok()
+        );
         assert_eq!(
             aggregate.record(observation(9, OutcomeClassV1::Accepted)),
             Err(TelemetryError::ClockRegression)

@@ -3,7 +3,14 @@
 #[cfg(not(unix))]
 compile_error!("hepta-qualification-ingest requires Unix file identity semantics");
 
+mod closure;
 mod package_payload;
+
+pub use closure::{
+    ExternalQualificationCandidateV1, ExternalQualificationClosureSubjectV1,
+    ExternalQualificationRuntimeFactsV1, QualificationClosureError,
+    VerifiedExternalQualificationClosureV1, verify_external_qualification_closure_v1,
+};
 
 pub use package_payload::{
     QualificationPayloadError, authority_receipt_signing_bytes_v1, authority_set_signing_bytes_v1,

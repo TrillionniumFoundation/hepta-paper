@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod native_business;
 mod objects;
 mod worker;
 

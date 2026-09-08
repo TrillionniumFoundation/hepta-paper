@@ -199,13 +199,12 @@ mod tests {
             expires_at_unix_ms: 2_000,
             components: order
                 .iter()
-                .enumerate()
-                .map(|(index, name)| PlanningComponentObservationV1 {
+                .map(|name| PlanningComponentObservationV1 {
                     component_id: (*name).to_owned(),
                     source_revision: 9,
                     barrier_id: "barrier:9".to_owned(),
                     observed_at_unix_ms: 900,
-                    payload_hash: digest(if index == 0 { 'a' } else { 'b' }),
+                    payload_hash: digest(name.chars().next().unwrap_or('0')),
                     payload_bytes: 10,
                 })
                 .collect(),

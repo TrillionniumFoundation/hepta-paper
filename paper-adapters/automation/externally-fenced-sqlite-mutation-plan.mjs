@@ -184,6 +184,56 @@ function plannedEventsFor(plan) {
   return plannedEvents;
 }
 
+function triggerWriteEffects(sql) {
+  const source = String(sql || '');
+  const begin = source.search(/\bBEGIN\b/i);
+  if (begin < 0) return null;
+  const body = source.slice(begin + 'BEGIN'.length)
+    .replace(/'(?:''|[^'])*'/g, "''")
+    .replace(/--[^\r\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const identifier = String.raw`(?:"((?:""|[^"])*)"|\x60((?:\x60\x60|[^\x60])*)\x60|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))`;
+  const parseTarget = (statement, prefix, operation) => {
+    const match = statement.match(new RegExp(`^${prefix}\\s+(?:main\\s*\\.\\s*)?${identifier}`, 'i'));
+    if (!match) return null;
+    const table = match[1]?.replaceAll('""', '"')
+      ?? match[2]?.replaceAll('``', '`')
+      ?? match[3]
+      ?? match[4];
+    return SAFE_TABLE.test(String(table || '')) ? { table, operation } : null;
+  };
+  const effects = [];
+  for (const rawStatement of body.split(';')) {
+    const statement = rawStatement.trim();
+    if (!statement || /^END\b/i.test(statement) || /^SELECT\b/i.test(statement)) continue;
+    let effect = null;
+    if (/^INSERT\b/i.test(statement)) {
+      effect = parseTarget(
+        statement,
+        String.raw`INSERT(?:\s+OR\s+(?:ABORT|FAIL|IGNORE|REPLACE|ROLLBACK))?\s+INTO`,
+        'INSERT',
+      );
+    } else if (/^REPLACE\b/i.test(statement)) {
+      effect = parseTarget(statement, String.raw`REPLACE\s+INTO`, 'INSERT');
+    } else if (/^UPDATE\b/i.test(statement)) {
+      effect = parseTarget(
+        statement,
+        String.raw`UPDATE(?:\s+OR\s+(?:ABORT|FAIL|IGNORE|REPLACE|ROLLBACK))?`,
+        'UPDATE',
+      );
+    } else if (/^DELETE\b/i.test(statement)) {
+      effect = parseTarget(statement, String.raw`DELETE\s+FROM`, 'DELETE');
+    } else if (/\b(?:INSERT|REPLACE|UPDATE|DELETE)\b/i.test(statement)) {
+      return null;
+    } else {
+      continue;
+    }
+    if (!effect) return null;
+    effects.push(Object.freeze(effect));
+  }
+  return Object.freeze(effects);
+}
+
 export function assertExternallyFencedSqliteMutationDatabaseSurface(database, plan) {
   const databases = database.prepare('PRAGMA database_list').all()
     .map((entry) => String(entry.name));
@@ -210,6 +260,24 @@ ORDER BY name;
     fail('externally_fenced_sqlite_mutation_planned_table_missing');
   }
   const plannedEvents = plannedEventsFor(plan);
+  const mutatingBusinessTrigger = database.prepare(`
+SELECT name,tbl_name,coalesce(sql,'') AS sql FROM sqlite_schema
+WHERE type='trigger' AND tbl_name NOT IN (
+  'autonomous_research_online_mutation_authority_metadata',
+  'autonomous_research_online_mutation_authority_marker',
+  'autonomous_research_online_mutation_finalization_receipt'
+)
+ORDER BY name;
+`).all().find((trigger) => {
+    if (!plannedTables.has(String(trigger.tbl_name))) return false;
+    const effects = triggerWriteEffects(trigger.sql);
+    return effects === null || effects.some(
+      (effect) => plannedEvents.get(effect.table)?.has(effect.operation),
+    );
+  });
+  if (mutatingBusinessTrigger) {
+    fail(`externally_fenced_sqlite_mutation_business_trigger_forbidden:${mutatingBusinessTrigger.name}`);
+  }
   for (const table of plannedTables) {
     const columns = database.prepare(`PRAGMA table_info(${quotedIdentifier(table)})`).all();
     if (!columns.some((column) => Number(column.pk) > 0)) {

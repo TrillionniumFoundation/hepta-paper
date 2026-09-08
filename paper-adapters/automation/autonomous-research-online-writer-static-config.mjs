@@ -112,6 +112,8 @@ export const PROVENANCE_ONLY_SOURCES = new Set([
 ]);
 export const SQL_MIGRATION_ROOT = 'store/migrations';
 export const NON_WRITER_EXCLUSIONS = Object.freeze({
+  'paper-adapters/migration/rust-cutover-fence.mjs':
+    'dedicated writer-handoff sidecar fence; it holds and rolls back coordination locks but never commits business DML to a registered research database',
   'paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs':
     'append-only one-shot control-state journal in a dedicated root outside every registered research runtime database',
   'paper-adapters/automation/externally-fenced-sqlite-mutation-plan.mjs':
@@ -402,6 +404,8 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'internal StorePort method; strict mode rejects this generic write surface',
   'paper-adapters/persistence/sqlite-store.mjs:execute':
     'internal StorePort method; strict mode rejects this generic write surface',
+  'paper-adapters/persistence/sqlite-store.mjs:executeInner':
+    'module-private compatibility executor; strict online mode rejects it before raw SQL and the public execute boundary remains separately fenced',
   'paper-adapters/persistence/sqlite-store.mjs:transaction':
     'internal StorePort method; strict mode permits read-only units and rejects generic writes',
   'paper-adapters/persistence/sqlite-campaign-store.mjs:mutation':
@@ -589,6 +593,7 @@ export const DIRECT_SQL_ALLOWED_ENTRYPOINT_EXCLUSIONS = new Set([
   'paper-adapters/persistence/sqlite-store.mjs:query',
   'paper-adapters/persistence/sqlite-store.mjs:run',
   'paper-adapters/persistence/sqlite-store.mjs:execute',
+  'paper-adapters/persistence/sqlite-store.mjs:executeInner',
   'paper-adapters/persistence/sqlite-store.mjs:transaction',
   'paper-adapters/persistence/native-store-ledger-mutation-plan.mjs:moduleSchemaProvisioning',
   'paper-adapters/persistence/native-store-quality-release-mutation-plan.mjs:moduleSchemaProvisioning',

@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod durable;
+mod retirement;
 pub use durable::*;
+pub use retirement::*;
 
 /// Durable cutover phase.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

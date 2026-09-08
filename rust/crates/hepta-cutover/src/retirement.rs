@@ -261,7 +261,12 @@ pub fn verify_legacy_node_snapshot_v1(
     observe_empty_columns(
         &tables,
         "submission_outbox",
-        &["claimed_by", "lease_token", "lease_expires_at", "heartbeat_at"],
+        &[
+            "claimed_by",
+            "lease_token",
+            "lease_expires_at",
+            "heartbeat_at",
+        ],
         &mut observations,
     )?;
     observe_empty_columns(
@@ -331,7 +336,9 @@ fn observe_statuses(
     let allowed = allowed.iter().copied().collect::<BTreeSet<_>>();
     let mut active = 0usize;
     for row in &table.rows {
-        let value = row.get(index).ok_or(LegacyNodeFreezeError::SnapshotInvalid)?;
+        let value = row
+            .get(index)
+            .ok_or(LegacyNodeFreezeError::SnapshotInvalid)?;
         match value {
             LogicalSqlValueV1::Text(value) if allowed.contains(value.as_str()) => {}
             _ => active = active.saturating_add(1),
@@ -406,10 +413,9 @@ fn observe_nonempty_columns(
         .rows
         .iter()
         .filter(|row| {
-            indices.iter().any(|index| {
-                row.get(*index)
-                    .is_none_or(logical_value_is_empty)
-            })
+            indices
+                .iter()
+                .any(|index| row.get(*index).is_none_or(logical_value_is_empty))
         })
         .count();
     observations.push(LegacyNodeQuiescenceObservationV1 {
@@ -431,10 +437,7 @@ fn required_table<'a>(
         .ok_or_else(|| LegacyNodeFreezeError::RequiredTableMissing(name.to_owned()))
 }
 
-fn required_column(
-    table: &LogicalTableV1,
-    name: &str,
-) -> Result<usize, LegacyNodeFreezeError> {
+fn required_column(table: &LogicalTableV1, name: &str) -> Result<usize, LegacyNodeFreezeError> {
     table
         .columns
         .iter()
@@ -512,7 +515,12 @@ fn policy_hash_v1() -> Result<Sha256Digest, LegacyNodeFreezeError> {
         ("jobs", &["lease_owner", "lease_expires_at"]),
         (
             "submission_outbox",
-            &["claimed_by", "heartbeat_at", "lease_expires_at", "lease_token"],
+            &[
+                "claimed_by",
+                "heartbeat_at",
+                "lease_expires_at",
+                "lease_token",
+            ],
         ),
         (
             "submission_response_consumption",
@@ -647,7 +655,11 @@ mod tests {
             },
             schema_objects: Vec::new(),
             tables: vec![
-                table("paper_campaigns", &["status"], vec![vec![text("completed")]]),
+                table(
+                    "paper_campaigns",
+                    &["status"],
+                    vec![vec![text("completed")]],
+                ),
                 table(
                     "campaign_nodes",
                     &[
@@ -742,7 +754,9 @@ mod tests {
     #[test]
     fn missing_critical_table_fails_closed() {
         let mut value = snapshot(false);
-        value.tables.retain(|table| table.name != "submission_outbox");
+        value
+            .tables
+            .retain(|table| table.name != "submission_outbox");
         assert!(matches!(
             verify_legacy_node_snapshot_v1(subject(), digest('6'), value),
             Err(LegacyNodeFreezeError::RequiredTableMissing(table)) if table == "submission_outbox"

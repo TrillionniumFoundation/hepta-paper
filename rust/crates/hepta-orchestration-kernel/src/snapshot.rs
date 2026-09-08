@@ -49,12 +49,12 @@ pub struct PlanningSnapshotV1 {
 /// Build a deterministic snapshot only when every component was observed under
 /// the same barrier and exact source revision.
 pub fn build_planning_snapshot_v1(
-    request: PlanningSnapshotRequestV1,
+    mut request: PlanningSnapshotRequestV1,
 ) -> Result<PlanningSnapshotV1, PlanningSnapshotError> {
     validate_request(&request)?;
     let mut components = BTreeMap::new();
     let mut total_payload_bytes = 0_u64;
-    for component in request.components {
+    for component in std::mem::take(&mut request.components) {
         validate_component(&component, &request)?;
         total_payload_bytes = total_payload_bytes
             .checked_add(component.payload_bytes)

@@ -174,21 +174,6 @@ function writeEvents(statement) {
   return new Set(['DELETE', 'INSERT', 'UPDATE']);
 }
 
-function triggerEvent(sql) {
-  return String(sql || '').match(
-    /\b(?:BEFORE|AFTER|INSTEAD\s+OF)\s+(INSERT|UPDATE|DELETE)\b/i,
-  )?.[1]?.toUpperCase() || null;
-}
-
-function isReadOnlyRaiseTrigger(sql) {
-  const body = String(sql || '').match(/\bBEGIN\b([\s\S]*)\bEND\s*$/i)?.[1];
-  if (!body || /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(body)) return false;
-  const statements = body.split(';').map((entry) => entry.trim()).filter(Boolean);
-  return statements.length > 0 && statements.every((statement) => (
-    /^SELECT\b/i.test(statement) && /\bRAISE\s*\(/i.test(statement)
-  ));
-}
-
 function plannedEventsFor(plan) {
   const plannedEvents = new Map();
   for (const statement of plan.statements.filter((entry) => entry.writeTable)) {
@@ -197,22 +182,6 @@ function plannedEventsFor(plan) {
     plannedEvents.set(statement.writeTable, events);
   }
   return plannedEvents;
-}
-
-function assertMutationTriggersSafe(database, plannedEvents) {
-  const triggers = database.prepare(`
-SELECT name,tbl_name,coalesce(sql,'') AS sql FROM sqlite_schema
-WHERE type='trigger' AND tbl_name NOT LIKE 'autonomous_research_online_mutation_%'
-ORDER BY name;
-`).all();
-  for (const trigger of triggers) {
-    const events = plannedEvents.get(String(trigger.tbl_name));
-    const event = triggerEvent(trigger.sql);
-    if (!events || (event && !events.has(event))) continue;
-    if (!event || !isReadOnlyRaiseTrigger(trigger.sql)) {
-      fail('externally_fenced_sqlite_mutation_business_trigger_forbidden');
-    }
-  }
 }
 
 export function assertExternallyFencedSqliteMutationDatabaseSurface(database, plan) {
@@ -283,10 +252,6 @@ ORDER BY name;
 
 function installMutationOperationGuards(database, plan) {
   const allowedByTable = plannedEventsFor(plan);
-  // Trigger validation runs at mutation start rather than store construction so
-  // opening a database remains observational. It still occurs before the caller
-  // callback, changeset capture, reservation, authority marker, or commit.
-  assertMutationTriggersSafe(database, allowedByTable);
   const tables = database.prepare(`
 SELECT name FROM sqlite_schema
 WHERE type='table' AND name NOT LIKE 'sqlite_%'

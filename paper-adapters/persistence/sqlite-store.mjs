@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import path from 'node:path';
 
 import { assertStorePort } from '../../paper-ports/store-port.mjs';
 import { createRustCutoverFence } from '../migration/rust-cutover-fence.mjs';

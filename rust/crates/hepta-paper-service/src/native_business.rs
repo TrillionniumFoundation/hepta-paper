@@ -14,8 +14,8 @@ mod reviewer;
 mod types;
 
 pub use types::{
-    BuildEntryV1, ManuscriptSectionV1, NativeBusinessJobV1, NativeBusinessOutputV1,
-    ObservationV1, ProofStepV1, PropositionV1, ReviewPolicyV1,
+    BuildEntryV1, ManuscriptSectionV1, NativeBusinessJobV1, NativeBusinessOutputV1, ObservationV1,
+    ProofStepV1, PropositionV1, ReviewPolicyV1,
 };
 
 use author::author_draft;
@@ -91,14 +91,8 @@ pub fn execute_native_business_v1(
     Ok(output)
 }
 
-pub(super) fn validate_inline_text(
-    value: &str,
-    maximum: usize,
-) -> Result<(), NativeBusinessError> {
-    if value.is_empty()
-        || value.len() > maximum
-        || value.chars().any(char::is_control)
-    {
+pub(super) fn validate_inline_text(value: &str, maximum: usize) -> Result<(), NativeBusinessError> {
+    if value.is_empty() || value.len() > maximum || value.chars().any(char::is_control) {
         return Err(NativeBusinessError::Contract);
     }
     Ok(())
@@ -117,10 +111,7 @@ pub(super) fn validate_body_text(value: &str) -> Result<(), NativeBusinessError>
     Ok(())
 }
 
-pub(super) fn validate_identifier(
-    value: &str,
-    maximum: usize,
-) -> Result<(), NativeBusinessError> {
+pub(super) fn validate_identifier(value: &str, maximum: usize) -> Result<(), NativeBusinessError> {
     if value.is_empty()
         || value.len() > maximum
         || !value.bytes().all(|byte| {

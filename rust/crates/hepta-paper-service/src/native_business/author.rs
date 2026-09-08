@@ -1,6 +1,6 @@
 use super::{
-    ManuscriptSectionV1, NativeBusinessError, NativeBusinessOutputV1, count_words, hash_bytes,
-    validate_body_text, validate_identifier, validate_inline_text, MAX_TOTAL_TEXT_BYTES,
+    MAX_TOTAL_TEXT_BYTES, ManuscriptSectionV1, NativeBusinessError, NativeBusinessOutputV1,
+    count_words, hash_bytes, validate_body_text, validate_identifier, validate_inline_text,
 };
 use serde_json::json;
 use std::collections::BTreeSet;

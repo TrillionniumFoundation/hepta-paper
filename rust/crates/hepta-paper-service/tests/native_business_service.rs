@@ -9,8 +9,8 @@ use hepta_module_platform::{
 };
 use hepta_paper_service::{
     NativeJobV1, ObjectStoreV1, ServiceRunV1, WorkerBindingV1,
-    native_business::{BuildEntryV1, NativeBusinessJobV1}, native_implementation_hash_v1,
-    run_service_v1,
+    native_business::{BuildEntryV1, NativeBusinessJobV1},
+    native_implementation_hash_v1, run_service_v1,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -46,7 +46,9 @@ impl Drop for Temp {
 
 fn build_configuration(temp: &Temp) -> ServiceRunV1 {
     let objects = ObjectStoreV1::open(&temp.0).expect("object store");
-    let initial = objects.put(b"native business initial state\n").expect("initial object");
+    let initial = objects
+        .put(b"native business initial state\n")
+        .expect("initial object");
     let payload = objects
         .put(
             &serde_json::to_vec(&NativeJobV1::Business {

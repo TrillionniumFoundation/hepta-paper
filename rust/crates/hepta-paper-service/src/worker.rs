@@ -1,8 +1,7 @@
 use crate::{
     ObjectStoreV1, ServiceError,
     native_business::{
-        NativeBusinessJobV1, execute_native_business_v1,
-        native_business_implementation_hash_v1,
+        NativeBusinessJobV1, execute_native_business_v1, native_business_implementation_hash_v1,
     },
 };
 use base64ct::{Base64, Encoding};

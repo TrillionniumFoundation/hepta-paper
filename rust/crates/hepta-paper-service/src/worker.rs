@@ -1,4 +1,10 @@
-use crate::{ObjectStoreV1, ServiceError};
+use crate::{
+    ObjectStoreV1, ServiceError,
+    native_business::{
+        NativeBusinessJobV1, execute_native_business_v1,
+        native_business_implementation_hash_v1,
+    },
+};
 use base64ct::{Base64, Encoding};
 use hepta_codex_protocol::Sha256Digest;
 use hepta_codex_runtime::{
@@ -65,6 +71,11 @@ pub enum NativeJobV1 {
         /// SHA256 of the exact immutable SQLite bytes. Prepared replay refers to
         /// this historical input, even if the original path later disappears.
         expected_database_hash: Sha256Digest,
+    },
+    /// Execute one bounded first-party Rust business capability in-process.
+    Business {
+        /// Closed capability-specific job. It has prepared-result authority only.
+        job: NativeBusinessJobV1,
     },
     /// A closed JSON request to the registered process backend.
     Process {
@@ -200,6 +211,25 @@ impl ServiceExecutorV1 {
                     vec![self.objects.put(&bytes)?],
                     json!({"version":1,"verifier":"native_sqlite_inspector","requestHash":identity,
                     "databaseContentHash":expected_database_hash,"replayScope":"historical_pinned_database_input"}),
+                )
+            }
+            (WorkerBindingV1::Native, NativeJobV1::Business { job }) => {
+                let output =
+                    execute_native_business_v1(job).map_err(|_| ServiceError::Execution)?;
+                let mut hashes = Vec::with_capacity(output.artifacts.len());
+                for bytes in output.artifacts {
+                    hashes.push(self.objects.put(&bytes)?);
+                }
+                (
+                    hashes,
+                    json!({
+                        "version": 1,
+                        "requestHash": identity,
+                        "verifier": "native_business_kernel",
+                        "nativeBusinessImplementationHash": native_business_implementation_hash_v1(),
+                        "workerEvidence": output.evidence,
+                        "scope": "prepared_result_only_no_external_authority"
+                    }),
                 )
             }
             (WorkerBindingV1::Process { .. }, NativeJobV1::Process { input }) => {
@@ -367,6 +397,7 @@ pub fn native_implementation_hash_v1() -> Result<Sha256Digest, ServiceError> {
     let mut h = Sha256::new();
     h.update(include_bytes!("worker.rs"));
     h.update(include_bytes!("objects.rs"));
+    h.update(native_business_implementation_hash_v1().as_bytes());
     format!("sha256:{}", hex::encode(h.finalize()))
         .parse()
         .map_err(|_| ServiceError::Configuration)

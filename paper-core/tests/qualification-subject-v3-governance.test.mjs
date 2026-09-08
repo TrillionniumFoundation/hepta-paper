@@ -89,8 +89,30 @@ test('V3 derivation and post-producer regeneration are permanently wired', () =>
   assert.match(deriveWorkflow, /^  pull_request:\s*$/mu);
   assert.match(deriveWorkflow, /refs\/pull\/\$EXPECTED_PR_NUMBER\/merge/u);
   assert.match(deriveWorkflow, /run-qualification-subject-v3\.sh/u);
+  for (const unsafeTrigger of [
+    'workflow_run:',
+    'workflow_dispatch:',
+    'workflow_call:',
+    'inputs.candidate_sha',
+  ]) assert.equal(deriveWorkflow.includes(unsafeTrigger), false, unsafeTrigger);
+
   assert.match(revalidationWorkflow, /^  workflow_run:/mu);
   assert.match(revalidationWorkflow, /source-qualification-v3-current/u);
+  assert.match(revalidationWorkflow, /EXPECTED_COLLECTOR_WORKFLOW: rust-qualification-subject-v3/u);
+  assert.match(revalidationWorkflow, /fresh_exact_head_collector_verified/u);
+  assert.equal(revalidationWorkflow.includes('actions/checkout@'), false);
+  for (const unsafeAuthority of [
+    'workflow_dispatch:',
+    'workflow_call:',
+    'inputs.candidate_sha',
+    'pull-requests: write',
+    'contents: write',
+    'actions: write',
+  ]) assert.equal(
+    revalidationWorkflow.includes(unsafeAuthority),
+    false,
+    unsafeAuthority,
+  );
   for (const workflow of [
     'hepta-paper-ci',
     'exact-head-source-validation',
@@ -107,4 +129,28 @@ test('V3 derivation and post-producer regeneration are permanently wired', () =>
   assert.match(runner, /qualification_subject_v3\.py/u);
   assert.match(runner, /derive_effective_status_v2\.py/u);
   assert.match(runner, /verify_effective_status_v2_current\.py/u);
+});
+
+
+test('candidate-controlled RC workflows have no promotion or ref authority', () => {
+  for (const relative of [
+    '.github/workflows/admit-rust-replacement-rc.yml',
+    '.github/workflows/sync-rust-rc-pr-subject.yml',
+  ]) {
+    const workflow = read(relative);
+    for (const forbidden of [
+      'pull-requests: write',
+      'contents: write',
+      'actions: write',
+      'deployments: write',
+      'issues: write',
+      "'/pulls/110/requested_reviewers'",
+      "'PATCH'",
+      'markPullRequestReadyForReview',
+    ]) assert.equal(workflow.includes(forbidden), false, `${relative}: ${forbidden}`);
+  }
+  const admission = read('.github/workflows/admit-rust-replacement-rc.yml');
+  assert.match(admission, /persist-credentials: false/u);
+  const subjectAudit = read('.github/workflows/sync-rust-rc-pr-subject.yml');
+  assert.match(subjectAudit, /mutation authority: `none`/u);
 });

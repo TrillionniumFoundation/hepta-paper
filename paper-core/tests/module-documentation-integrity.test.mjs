@@ -169,7 +169,10 @@ const hostileCases = [
   ['oversized specification', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), 'x'.repeat(1024 * 1024)), /byte limit/],
   ['duplicate raw JSON key', (root) => {
     const file = path.join(root, WRITER_MANIFEST);
-    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('{', '{"schemaVersion":1,'));
+    const source = fs.readFileSync(file, 'utf8');
+    const objectStart = source.indexOf('{');
+    assert.equal(objectStart, 0, 'manifest fixture must start with a JSON object');
+    fs.writeFileSync(file, `{"schemaVersion":1,${source.slice(objectStart + 1)}`);
   }, /duplicate JSON property/],
   ['unindexed symbolic document', (root) => fs.symlinkSync(path.join(root, WRITER_SPEC), path.join(root, 'docs/modules/specs/unindexed.md')), /symbolic module document/],
 ];

@@ -1,4 +1,4 @@
-name: sync-rust-rc-pr-subject
+name: audit-rust-rc-pr-subject
 
 on:
   push:
@@ -8,19 +8,19 @@ on:
 permissions:
   actions: read
   contents: read
-  pull-requests: write
+  pull-requests: read
 
 concurrency:
-  group: sync-rust-rc-pr-subject-${{ github.ref }}
+  group: audit-rust-rc-pr-subject-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  sync-after-complete-matrix:
+  audit-complete-matrix:
     if: github.actor != 'hepta-paper-automation'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Wait for the exact-head required workflow matrix
+      - name: Verify the exact-head required workflow matrix
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -62,12 +62,13 @@ jobs:
                       'Accept': 'application/vnd.github+json',
                       'Authorization': f'Bearer {token}',
                       'X-GitHub-Api-Version': '2022-11-28',
-                      'User-Agent': 'hepta-paper-exact-subject-sync',
+                      'User-Agent': 'hepta-paper-exact-subject-audit',
                   },
               )
               with urllib.request.urlopen(request, timeout=30) as response:
                   return json.load(response)
 
+          latest = {}
           for _ in range(80):
               payload = get_json(f'/actions/runs?head_sha={head_sha}&per_page=100')
               latest = {}
@@ -84,7 +85,7 @@ jobs:
               )
               if failed:
                   raise SystemExit(f'exact-head required workflows failed: {failed}')
-              missing = required.difference(latest)
+              missing = sorted(required.difference(latest))
               incomplete = sorted(
                   name for name, run in latest.items()
                   if run.get('status') != 'completed'
@@ -94,8 +95,19 @@ jobs:
               time.sleep(30)
           else:
               raise SystemExit(
-                  f'exact-head matrix incomplete; missing={sorted(missing)} incomplete={incomplete}'
+                  f'exact-head matrix incomplete; missing={missing} incomplete={incomplete}'
               )
+
+          pull_requests = get_json(f'/commits/{head_sha}/pulls')
+          matches = [
+              pr for pr in pull_requests
+              if pr.get('number') == 110
+              and pr.get('state') == 'open'
+              and pr.get('head', {}).get('sha') == head_sha
+              and pr.get('base', {}).get('ref') == 'main'
+          ]
+          if len(matches) != 1:
+              raise SystemExit(f'exact_pull_request_subject_invalid:{len(matches)}')
 
           matrix = {
               name: {
@@ -105,115 +117,25 @@ jobs:
               }
               for name in sorted(required)
           }
-          with open('/tmp/exact-head-matrix.json', 'w', encoding='utf-8') as output:
-              json.dump(matrix, output, indent=2, sort_keys=True)
-              output.write('\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
+              output.write('## Read-only exact-head audit\n\n')
+              output.write(f'- head: `{head_sha}`\n')
+              output.write('- pull request: `#110` (open, base `main`, exact head matched)\n')
+              output.write('- mutation authority: `none`\n\n')
+              output.write('| workflow | run | conclusion |\n|---|---:|---|\n')
+              for name, value in matrix.items():
+                  output.write(
+                      f"| `{name}` | `{value['id']}` | `{value['conclusion']}` |\n"
+                  )
           PY
 
-      - name: Synchronize PR exact subject and independent review request
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          HEAD_SHA: ${{ github.sha }}
+      - name: Assert this candidate-controlled workflow cannot promote itself
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
 
-          repository = os.environ['REPOSITORY']
-          head_sha = os.environ['HEAD_SHA']
-          token = os.environ['GH_TOKEN']
-
-          def request_json(method, path, payload=None):
-              data = None if payload is None else json.dumps(payload).encode('utf-8')
-              request = urllib.request.Request(
-                  f'https://api.github.com/repos/{repository}{path}',
-                  data=data,
-                  method=method,
-                  headers={
-                      'Accept': 'application/vnd.github+json',
-                      'Authorization': f'Bearer {token}',
-                      'Content-Type': 'application/json',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                      'User-Agent': 'hepta-paper-exact-subject-sync',
-                  },
-              )
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  return json.load(response)
-
-          main = request_json('GET', '/branches/main')
-          head = request_json('GET', f'/commits/{head_sha}')
-          matrix = json.load(open('/tmp/exact-head-matrix.json', encoding='utf-8'))
-          lines = '\n'.join(
-              f"- `{name}`: success (run `{value['id']}`)"
-              for name, value in matrix.items()
-          )
-          body = f'''## Canonical direct-to-main Rust replacement subject
-
-          This PR is the sole convergence surface for the `hepta-paper` Node-to-Rust replacement candidate.
-
-          - Base branch: `main`
-          - Exact base commit: `{main['commit']['sha']}`
-          - Head branch: `codex/rust-full-replacement-rc-20260908`
-          - Exact head commit: `{head_sha}`
-          - Exact head tree: `{head['commit']['tree']['sha']}`
-
-          Any base, head, tree, workflow, policy, generated merge, review, or evidence movement invalidates this subject and requires a fresh matrix and review.
-
-          ## Integrated repository-local closure
-
-          - durable Rust broker, journal, pre-exec and containment contracts;
-          - descriptor-bound workspace authority and actual mutation verification;
-          - exact Node schema-1..25 database and record-hash compatibility;
-          - generation-fenced Rust campaign writer and exactly-once prepared-result integration;
-          - native Rust author, reviewer, formal, empirical, numerical and build workers;
-          - immutable Node database drain/freeze proof before the first Rust writer lease;
-          - reversible state projection/import/export and post-cutover rollback proof;
-          - deterministic Rust planning snapshots, Pareto routing, hierarchical resource transactions, privacy-bounded telemetry and canonical performance qualification;
-          - fail-closed Rust-only production composition and Node-retirement verifier;
-          - complete module, parity, risk, runbook, program-truth and qualification documentation.
-
-          No Node or generic shell bridge counts as a native Rust production capability.
-
-          ## Exact-head workflow matrix
-
-          {lines}
-
-          ## Non-forgeable production boundary
-
-          The repository-local matrix does not manufacture separately controlled facts. Production activation remains fail closed until verified current receipts exist for:
-
-          - protected-main governance and independent non-author review (#25);
-          - target-host principal, systemd, listener and cgroup qualification (#17);
-          - destructive storage, reboot, corruption and 72-hour production-topology soak (#12);
-          - independent capability-key lifecycle and compromise drill (#14);
-          - real credential custody and authenticated Codex role canaries (#21);
-          - real KMS/HSM, WORM, release, portal and submission authority (#22);
-          - private 263-file legacy replay with retained index and independent acknowledgement (#28).
-
-          Administrator privilege, source booleans, fixtures, hosted runners and self-signed records cannot substitute for those receipts.
-
-          ## Review request
-
-          Review this exact subject. Confirm repository-local source and migration closure, production authority non-forgeability, single-writer preservation, Node-free production composition, and the continued external-evidence boundary. Do not approve or merge after any subject movement without a new exact-head matrix.'''
-          request_json(
-              'PATCH',
-              '/pulls/110',
-              {
-                  'title': 'feat(rust): complete the full Node-to-Rust replacement closure',
-                  'body': body,
-                  'base': 'main',
-              },
-          )
-          try:
-              request_json(
-                  'POST',
-                  '/pulls/110/requested_reviewers',
-                  {'reviewers': ['Tomasrgbsf']},
-              )
-          except Exception:
-              pass
-          PY
+          This workflow is intentionally read-only. It cannot edit the pull request,
+          request reviews, change draft state, push refs, create releases or produce
+          external-authority receipts. Those actions remain separately controlled.
+          EOF

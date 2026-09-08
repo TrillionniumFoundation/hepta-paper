@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod deployment;
 pub mod native_business;
 mod objects;
 mod production;
@@ -23,6 +24,11 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, os::unix::fs::MetadataExt, path::PathBuf};
 use thiserror::Error;
 
+pub use deployment::{
+    LegacyNodeRuntimeDispositionV1, ProductionDeploymentError, ProductionDeploymentManifestV1,
+    ProductionServiceRoleV1, ProductionServiceUnitV1, ProductionWritableRootV1,
+    VerifiedProductionDeploymentV1, verify_production_deployment_v1,
+};
 pub use objects::ObjectStoreV1;
 pub use production::{
     ProductionActivationStageV1, ProductionServiceReceiptV1, ProductionServiceRunV1,

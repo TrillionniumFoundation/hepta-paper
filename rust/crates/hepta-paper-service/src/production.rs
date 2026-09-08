@@ -35,8 +35,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ObjectStoreV1, ServiceError, ServiceExecutorV1, ServiceRunV1, WorkerBindingV1,
-    native_implementation_hash_v1, service_configuration_hash_v1,
+    ObjectStoreV1, ServiceError, ServiceExecutorV1, ServiceRunV1, VerifiedProductionDeploymentV1,
+    WorkerBindingV1, native_implementation_hash_v1, service_configuration_hash_v1,
 };
 
 const MAXIMUM_PRODUCTION_BINARY_BYTES: u64 = 512 * 1024 * 1024;
@@ -83,6 +83,8 @@ pub struct ProductionServiceReceiptV1 {
     pub qualification_closure_hash: Sha256Digest,
     /// Independent writer-cutover authorization identity.
     pub writer_cutover_authorization_hash: Sha256Digest,
+    /// Filesystem-verified Node-free deployment identity.
+    pub deployment_identity_hash: Sha256Digest,
     /// Exact running executable identity.
     pub executable_hash: Sha256Digest,
     /// Exact service configuration identity.
@@ -106,8 +108,9 @@ pub fn run_production_service_v1(
     config: ProductionServiceRunV1,
     qualification: &VerifiedExternalQualificationClosureV1,
     cutover: &VerifiedWriterCutoverV1,
+    deployment: &VerifiedProductionDeploymentV1,
 ) -> Result<ProductionServiceReceiptV1, ServiceError> {
-    validate_authority_bindings(&config, qualification, cutover)?;
+    validate_authority_bindings(&config, qualification, cutover, deployment)?;
     let registry = validate_production_registry(&config)?;
     let objects = ObjectStoreV1::open(&config.service.state_directory)?;
     let owner = fs::metadata(&config.service.state_directory)
@@ -198,13 +201,20 @@ pub fn run_production_service_v1(
             return Err(ServiceError::Control);
         }
     }
-    build_receipt(&config, qualification, cutover, control_plane_receipt)
+    build_receipt(
+        &config,
+        qualification,
+        cutover,
+        deployment,
+        control_plane_receipt,
+    )
 }
 
 fn validate_authority_bindings(
     config: &ProductionServiceRunV1,
     qualification: &VerifiedExternalQualificationClosureV1,
     cutover: &VerifiedWriterCutoverV1,
+    deployment: &VerifiedProductionDeploymentV1,
 ) -> Result<(), ServiceError> {
     if config.version != 1
         || config.service.version != 1
@@ -225,6 +235,9 @@ fn validate_authority_bindings(
     if qualified_subject.repository != cutover_subject.repository
         || qualified_subject.commit != cutover_subject.commit_sha
         || qualified_subject.tree != cutover_subject.tree_sha
+        || qualified_subject.repository != deployment.repository()
+        || qualified_subject.commit != deployment.commit()
+        || qualified_subject.tree != deployment.tree()
     {
         return Err(ServiceError::Configuration);
     }
@@ -234,6 +247,7 @@ fn validate_authority_bindings(
     let database = parse_digest(&facts.database_identity_hash)?;
     if host != cutover_subject.host_identity_hash
         || service != cutover_subject.service_identity_hash
+        || service != *deployment.identity_hash()
         || database != *cutover.database_preimage_hash()
     {
         return Err(ServiceError::Configuration);
@@ -241,6 +255,8 @@ fn validate_authority_bindings(
     let executable_hash = stable_current_executable_hash(&config.executable_path)?;
     let configuration_hash = service_configuration_hash_v1(&config.service)?;
     if executable_hash != cutover_subject.binary_hash
+        || executable_hash != *deployment.control_executable_hash()
+        || config.executable_path.as_path() != deployment.control_executable_path()
         || configuration_hash != cutover_subject.configuration_hash
     {
         return Err(ServiceError::Configuration);
@@ -296,6 +312,7 @@ fn build_receipt(
     config: &ProductionServiceRunV1,
     qualification: &VerifiedExternalQualificationClosureV1,
     cutover: &VerifiedWriterCutoverV1,
+    deployment: &VerifiedProductionDeploymentV1,
     control_plane_receipt: ControlPlaneRunReceiptV1,
 ) -> Result<ProductionServiceReceiptV1, ServiceError> {
     let qualification_closure_hash = parse_digest(qualification.receipt_hash())?;
@@ -309,6 +326,7 @@ fn build_receipt(
         tree: &qualification.subject().tree,
         qualification_closure_hash: &qualification_closure_hash,
         writer_cutover_authorization_hash: cutover.authorization_hash(),
+        deployment_identity_hash: deployment.identity_hash(),
         executable_hash: &executable_hash,
         configuration_hash: &configuration_hash,
         control_plane_receipt: &control_plane_receipt,
@@ -324,6 +342,7 @@ fn build_receipt(
         tree: qualification.subject().tree.clone(),
         qualification_closure_hash,
         writer_cutover_authorization_hash: cutover.authorization_hash().clone(),
+        deployment_identity_hash: deployment.identity_hash().clone(),
         executable_hash,
         configuration_hash,
         control_plane_receipt,
@@ -343,6 +362,7 @@ struct ProductionReceiptBodyV1<'a> {
     tree: &'a str,
     qualification_closure_hash: &'a Sha256Digest,
     writer_cutover_authorization_hash: &'a Sha256Digest,
+    deployment_identity_hash: &'a Sha256Digest,
     executable_hash: &'a Sha256Digest,
     configuration_hash: &'a Sha256Digest,
     control_plane_receipt: &'a ControlPlaneRunReceiptV1,

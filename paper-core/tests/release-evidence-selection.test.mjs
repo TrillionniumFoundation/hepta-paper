@@ -583,7 +583,7 @@ test('release integrity primitives reject provenance and signature mutations', (
     authorityLimit: RELEASE_INTEGRITY_AUTHORITY_LIMIT,
   };
   assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, signature), true);
-  const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 });
+  const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const signatureMutations = [
     (value) => { value.extra = true; },
     (value) => { value.version = 2; },

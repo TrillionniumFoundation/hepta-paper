@@ -1,0 +1,61 @@
+name: inspect-platform-codeql-c89938b
+
+on:
+  push:
+    branches:
+      - codex/codeql-diagnostic-c89938b-20260909
+
+permissions:
+  contents: read
+  checks: read
+  security-events: read
+
+concurrency:
+  group: inspect-platform-codeql-c89938b
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Read exact CodeQL check metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CHECK_RUN_ID: '102301551318'
+      TARGET_SHA: c89938bf9ce90aac520baba4cfd05d665f6676f7
+    steps:
+      - name: Fetch check and annotations without executing candidate code
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/platform-codeql"
+          gh api "repos/$GITHUB_REPOSITORY/check-runs/$CHECK_RUN_ID" \
+            > "$RUNNER_TEMP/platform-codeql/check.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/check-runs/$CHECK_RUN_ID/annotations?per_page=100" \
+            > "$RUNNER_TEMP/platform-codeql/annotations.json"
+          jq -e --arg sha "$TARGET_SHA" '.head_sha == $sha and .name == "CodeQL"' \
+            "$RUNNER_TEMP/platform-codeql/check.json" >/dev/null
+
+      - name: Fetch matching open CodeQL alerts when authorized
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/code-scanning/alerts?state=open&tool_name=CodeQL&ref=refs%2Fpull%2F116%2Fmerge&per_page=100" \
+            > "$RUNNER_TEMP/platform-codeql/alerts.json" \
+            2> "$RUNNER_TEMP/platform-codeql/alerts.stderr"
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$RUNNER_TEMP/platform-codeql/alerts.exit"
+          if [ "$status" -ne 0 ]; then
+            printf '[]\n' > "$RUNNER_TEMP/platform-codeql/alerts.json"
+          fi
+
+      - name: Upload read-only platform diagnostic
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: platform-codeql-c89938b-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/platform-codeql
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,47 @@
+name: admit-rust-replacement-rc-safe
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: admit-rust-replacement-rc-safe-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  exact-subject-admission-audit:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact pull-request subject
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test -n "$EXPECTED_BASE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Validate repository program truth
+        run: |
+          set -euo pipefail
+          python3 docs/rust/tools/validate-program-truth.py
+          python3 docs/rust/tools/test-plan-v4-qualification.py
+          python3 docs/rust/tools/test_strict_json_schema_contract.py
+      - name: Assert non-authority boundary
+        run: |
+          set -euo pipefail
+          ! grep -R --line-number --fixed-strings 'pull-requests: write' .github/workflows/admit-rust-replacement-rc-safe.yml
+          printf '%s\n' 'Repository-local admission grants no production or external authority.'

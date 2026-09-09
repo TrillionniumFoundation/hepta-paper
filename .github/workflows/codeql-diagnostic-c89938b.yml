@@ -40,6 +40,49 @@ jobs:
           upload: never
           upload-database: false
 
+      - name: Print compact SARIF findings
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("${{ runner.temp }}")
+          rows = []
+          for path in sorted(root.rglob("*.sarif")):
+              try:
+                  data = json.loads(path.read_text(encoding="utf-8"))
+              except Exception:
+                  continue
+              for run in data.get("runs", []):
+                  rules = {r.get("id"): r for r in (run.get("tool", {}).get("driver", {}).get("rules", []) or [])}
+                  for result in run.get("results", []) or []:
+                      loc = (result.get("locations") or [{}])[0].get("physicalLocation", {})
+                      region = loc.get("region", {})
+                      rule = rules.get(result.get("ruleId"), {})
+                      props = rule.get("properties", {})
+                      rows.append({
+                          "rule": result.get("ruleId"),
+                          "path": loc.get("artifactLocation", {}).get("uri"),
+                          "line": region.get("startLine"),
+                          "message": result.get("message", {}).get("text"),
+                          "level": result.get("level") or rule.get("defaultConfiguration", {}).get("level"),
+                          "securitySeverity": props.get("security-severity"),
+                          "fingerprints": result.get("partialFingerprints", {}),
+                      })
+          seen = set()
+          unique = []
+          for row in rows:
+              key = json.dumps(row, sort_keys=True)
+              if key not in seen:
+                  seen.add(key)
+                  unique.append(row)
+          print("CODEQL_FINDINGS_BEGIN")
+          print(json.dumps(unique, sort_keys=True, separators=(",", ":")))
+          print("CODEQL_FINDINGS_END")
+          PY
+
       - name: Retain security-extended diagnostic SARIF
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

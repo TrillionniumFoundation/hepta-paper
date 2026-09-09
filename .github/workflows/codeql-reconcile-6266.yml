@@ -1,0 +1,63 @@
+name: codeql-reconcile-6266
+
+on:
+  push:
+    branches:
+      - admin/codeql-reconcile-6266-20260909
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+concurrency:
+  group: codeql-reconcile-6266
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    name: CodeQL exact merge (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build_mode: none
+          - language: c-cpp
+            build_mode: none
+          - language: javascript-typescript
+            build_mode: none
+    steps:
+      - name: Check out exact generated merge without persistent credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 6e707f114b6faac468597a81eb5b69a5ed2f4c87
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact merge identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 6e707f114b6faac468597a81eb5b69a5ed2f4c87
+          test "$(git rev-parse HEAD^2)" = 6266ec2ba544b40f1ac2748773d8081c6ed52231
+          test "$(git rev-parse HEAD^1)" = 7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Initialize pinned CodeQL v4
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build_mode }}
+
+      - name: Analyze and publish the matching default-setup category
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938
+        with:
+          category: /language:${{ matrix.language }}
+          ref: refs/pull/116/merge
+          sha: 6e707f114b6faac468597a81eb5b69a5ed2f4c87
+          upload: always
+          upload-database: false
+          wait-for-processing: true

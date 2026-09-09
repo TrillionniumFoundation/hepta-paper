@@ -166,7 +166,9 @@ impl NodeLegacyObservationAdapterV1 {
     }
 }
 
-fn validate_request(request: &NodeLegacyObservationRequestV1) -> Result<(), NodeLegacyAdapterError> {
+fn validate_request(
+    request: &NodeLegacyObservationRequestV1,
+) -> Result<(), NodeLegacyAdapterError> {
     if request.version != 1
         || request.module_id != NODE_LEGACY_ADAPTER_MODULE_ID_V1
         || !valid_identifier(&request.attempt_id)

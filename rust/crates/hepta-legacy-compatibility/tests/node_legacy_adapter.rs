@@ -1,7 +1,6 @@
 use hepta_legacy_compatibility::{
-    MAXIMUM_NODE_ADAPTER_OUTPUT_BYTES_V1, NODE_LEGACY_ADAPTER_MODULE_ID_V1,
-    NodeLegacyAdapterError, NodeLegacyObservationAdapterV1, NodeLegacyObservationRequestV1,
-    NodeLegacyObservationV1,
+    MAXIMUM_NODE_ADAPTER_OUTPUT_BYTES_V1, NODE_LEGACY_ADAPTER_MODULE_ID_V1, NodeLegacyAdapterError,
+    NodeLegacyObservationAdapterV1, NodeLegacyObservationRequestV1, NodeLegacyObservationV1,
 };
 
 fn digest(byte: u8) -> String {

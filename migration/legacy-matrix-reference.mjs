@@ -1,72 +1,80 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { defaultLegacyPaperFactoryRoot } from '../paper-adapters/runtime/workspace-layout.mjs';
+import { bindIdentityBoundTemporaryDirectory } from '../paper-composition/bootstrap/immutable-release-workspace-composition.mjs';
+import { captureLegacyMatrixArchive, extractLegacyMatrixSources, legacyBytesHash, readStableLegacyFile } from './legacy-matrix-archive-io.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifestPath = path.join(workspaceRoot, 'migration', 'fixtures', 'legacy-matrix-reference-v1.json');
 
-function sha256File(file) {
-  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
-}
-
-function walk(directory, basename, rows = []) {
-  if (!fs.existsSync(directory)) return rows;
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+function walk(directory, basename, budget = { remaining: 4096 }, depth = 0) {
+  if (depth > 16 || --budget.remaining < 0) throw new Error('legacy_matrix_discovery_limit');
+  let selected;
+  try { selected = fs.lstatSync(directory); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  if (!selected.isDirectory() || selected.isSymbolicLink()) throw new Error('legacy_matrix_discovery_root_unsafe');
+  const rows = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (--budget.remaining < 0) throw new Error('legacy_matrix_discovery_limit');
     const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) walk(absolute, basename, rows);
+    if (entry.isDirectory()) rows.push(...walk(absolute, basename, budget, depth + 1));
     else if (entry.isFile() && entry.name === basename) rows.push(absolute);
   }
   return rows;
 }
 
-export function resolveImmutableLegacyMatrixArchive({ manifest = null } = {}) {
-  const resolvedManifest = manifest || JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  const explicit = process.env.HEPTA_LEGACY_REFERENCE_ARCHIVE
-    ? path.resolve(process.env.HEPTA_LEGACY_REFERENCE_ARCHIVE)
-    : null;
-  const referenceRoot = path.join(path.dirname(defaultLegacyPaperFactoryRoot()), 'hepta-paper-legacy-reference');
-  const candidates = [
-    ...(explicit ? [explicit] : []),
-    ...walk(referenceRoot, resolvedManifest.archiveBasename),
-  ];
-  const archivePath = [...new Set(candidates)].find((candidate) => (
-    fs.existsSync(candidate) && sha256File(candidate) === resolvedManifest.archiveSha256
-  ));
-  if (!archivePath) throw new Error(`Immutable legacy matrix archive ${resolvedManifest.archiveSha256} not found`);
-  return archivePath;
+function captureSelectedArchive(manifest, environment = process.env) {
+  if (!manifest || typeof manifest.archiveBasename !== 'string'
+    || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/u.test(manifest.archiveBasename)
+    || typeof manifest.archiveSha256 !== 'string'
+    || !/^sha256:[a-f0-9]{64}$/u.test(manifest.archiveSha256)) {
+    throw new Error('legacy_matrix_archive_manifest_invalid');
+  }
+  if (environment.HEPTA_LEGACY_REFERENCE_ARCHIVE) {
+    // An explicit input is an assertion. Never silently substitute a discovered archive.
+    return captureLegacyMatrixArchive(path.resolve(environment.HEPTA_LEGACY_REFERENCE_ARCHIVE), manifest.archiveSha256);
+  }
+  const legacyRoot = environment.PAPER_FACTORY_LEGACY_ROOT
+    ? path.resolve(environment.PAPER_FACTORY_LEGACY_ROOT) : defaultLegacyPaperFactoryRoot();
+  const referenceRoot = path.join(path.dirname(legacyRoot), 'hepta-paper-legacy-reference');
+  for (const candidate of walk(referenceRoot, manifest.archiveBasename)) {
+    try { return captureLegacyMatrixArchive(candidate, manifest.archiveSha256); }
+    catch (error) { if (error.code !== 'legacy_matrix_archive_hash_mismatch') throw error; }
+  }
+  throw new Error(`Immutable legacy matrix archive ${manifest.archiveSha256} not found`);
+}
+
+export function resolveImmutableLegacyMatrixArchive({ manifest = null, environment = process.env } = {}) {
+  const resolvedManifest = manifest || JSON.parse(readStableLegacyFile(manifestPath, 1024 * 1024));
+  return captureSelectedArchive(resolvedManifest, environment).archivePath;
 }
 
 export function prepareImmutableLegacyMatrixReference() {
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const manifest = JSON.parse(readStableLegacyFile(manifestPath, 1024 * 1024));
   const matrixPath = path.join(workspaceRoot, manifest.matrixPath);
-  if (sha256File(matrixPath) !== manifest.matrixSha256) throw new Error('Legacy matrix reference hash mismatch');
-  const matrix = JSON.parse(fs.readFileSync(matrixPath, 'utf8'));
-  const sourcePaths = [...new Set((matrix.entries || []).map((entry) => String(entry?.source?.path || '')).filter(Boolean))].sort();
-  if (sourcePaths.length !== Number(manifest.sourceFileCount)) throw new Error('Legacy matrix source file count mismatch');
-  const archivePath = resolveImmutableLegacyMatrixArchive({ manifest });
+  const matrixBytes = readStableLegacyFile(matrixPath, 4 * 1024 * 1024);
+  if (legacyBytesHash(matrixBytes) !== manifest.matrixSha256) throw new Error('Legacy matrix reference hash mismatch');
+  const matrix = JSON.parse(matrixBytes);
+  const sources = (matrix.entries || []).map((entry) => ({
+    path: entry?.source?.path,
+    sha256: `sha256:${String(entry?.source?.sha256 || '').replace(/^sha256:/u, '')}`,
+  }));
+  const sourcePaths = sources.map((source) => source.path);
+  if (!Number.isSafeInteger(manifest.sourceFileCount) || sources.length !== manifest.sourceFileCount
+    || new Set(sourcePaths).size !== sources.length) throw new Error('Legacy matrix source file count mismatch');
+  const archive = captureSelectedArchive(manifest);
+  const archivePath = archive.archivePath;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-legacy-matrix-reference-'));
-  const extract = spawnSync('tar', ['-xzf', archivePath, '-C', root, '--', ...sourcePaths], {
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-  });
-  if (extract.status !== 0) {
-    fs.rmSync(root, { recursive: true, force: true });
-    throw new Error(extract.stderr || 'immutable_legacy_matrix_extract_failed');
-  }
-  const extracted = sourcePaths.filter((relative) => fs.existsSync(path.join(root, relative)));
-  if (extracted.length !== sourcePaths.length) {
-    fs.rmSync(root, { recursive: true, force: true });
-    throw new Error('Immutable legacy matrix archive is missing source files');
-  }
+  const ownedRoot = bindIdentityBoundTemporaryDirectory(root);
+  try { extractLegacyMatrixSources(archive, sources, root); }
+  catch (error) { ownedRoot.cleanup(); throw error; }
   let cleaned = false;
   const cleanup = () => {
-    if (cleaned || !fs.existsSync(root)) return;
+    if (cleaned) return;
+    ownedRoot.cleanup();
     cleaned = true;
-    fs.rmSync(root, { recursive: true, force: true });
   };
   return Object.freeze({
     version: 1,
@@ -77,21 +85,22 @@ export function prepareImmutableLegacyMatrixReference() {
     matrixPath,
     matrixSha256: manifest.matrixSha256,
     sourceFileCount: sourcePaths.length,
-    sourcePaths,
+    sourcePaths: Object.freeze(sourcePaths),
     cleanup,
   });
 }
 
 export function immutableLegacyMatrixReferenceStatus() {
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  const archivePath = resolveImmutableLegacyMatrixArchive({ manifest });
+  const manifest = JSON.parse(readStableLegacyFile(manifestPath, 1024 * 1024));
+  const archive = captureSelectedArchive(manifest);
+  const archivePath = archive.archivePath;
   return Object.freeze({
     version: 1,
     kind: 'ImmutableLegacyMatrixReferenceStatus',
     status: 'immutable_legacy_matrix_reference_ready',
     manifestPath,
     archivePath,
-    archiveSha256: sha256File(archivePath),
+    archiveSha256: archive.archiveSha256,
     matrixPath: path.join(workspaceRoot, manifest.matrixPath),
     matrixSha256: manifest.matrixSha256,
     sourceFileCount: manifest.sourceFileCount,

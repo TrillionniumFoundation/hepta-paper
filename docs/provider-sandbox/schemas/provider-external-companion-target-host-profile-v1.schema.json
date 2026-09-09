@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-external-companion-target-host-profile-v1.schema.json",
+  "title": "ProviderExternalCompanionTargetHostProfileV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "kind",
+    "status",
+    "operatingSystem",
+    "process",
+    "filesystem",
+    "environment",
+    "network",
+    "credentials",
+    "limits",
+    "evidence",
+    "authority"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "ProviderExternalCompanionTargetHostProfileV1" },
+    "status": { "const": "profile_unbound_external_host_required" },
+    "operatingSystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "dedicatedNonRootIdentity", "immutableImageDigestRequired"],
+      "properties": {
+        "family": { "const": "linux" },
+        "dedicatedNonRootIdentity": { "const": true },
+        "immutableImageDigestRequired": { "const": true }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shell", "newPrivileges", "processGroupIsolation", "descendantReaping", "seccompRequired"],
+      "properties": {
+        "shell": { "const": false },
+        "newPrivileges": { "const": false },
+        "processGroupIsolation": { "const": true },
+        "descendantReaping": { "const": true },
+        "seccompRequired": { "const": true }
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["privateRuntimeDirectory", "inputNoFollow", "singleLinkInput", "exclusiveOutput", "outputMode", "readOnlySource"],
+      "properties": {
+        "privateRuntimeDirectory": { "const": true },
+        "inputNoFollow": { "const": true },
+        "singleLinkInput": { "const": true },
+        "exclusiveOutput": { "const": true },
+        "outputMode": { "const": "0600" },
+        "readOnlySource": { "const": true }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inheritAmbient", "allowedNames", "forbiddenNamePatterns"],
+      "properties": {
+        "inheritAmbient": { "const": false },
+        "allowedNames": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "enum": ["HOME", "LANG", "LC_ALL", "PATH", "TMPDIR"] }
+        },
+        "forbiddenNamePatterns": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/token" }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "permittedDestinations", "kernelEvidenceRequired"],
+      "properties": {
+        "mode": { "const": "deny_all" },
+        "permittedDestinations": { "const": [] },
+        "kernelEvidenceRequired": { "const": true }
+      }
+    },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["credentialFree", "secretMounts", "agentSockets", "cloudMetadataAccess"],
+      "properties": {
+        "credentialFree": { "const": true },
+        "secretMounts": { "const": false },
+        "agentSockets": { "const": false },
+        "cloudMetadataAccess": { "const": false }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wallTimeMs", "stdoutBytes", "stderrBytes", "requestBytes", "responseBytes", "processCount", "openFiles"],
+      "properties": {
+        "wallTimeMs": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "stdoutBytes": { "type": "integer", "minimum": 0, "maximum": 65536 },
+        "stderrBytes": { "type": "integer", "minimum": 0, "maximum": 65536 },
+        "requestBytes": { "const": 65536 },
+        "responseBytes": { "const": 65536 },
+        "processCount": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "openFiles": { "type": "integer", "minimum": 3, "maximum": 64 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostIdentity", "imageDigest", "kernelPolicy", "networkNamespace", "resourceLimits", "cleanupReceipt", "independentSigner"],
+      "properties": {
+        "hostIdentity": { "const": "required" },
+        "imageDigest": { "const": "required" },
+        "kernelPolicy": { "const": "required" },
+        "networkNamespace": { "const": "required" },
+        "resourceLimits": { "const": "required" },
+        "cleanupReceipt": { "const": "required" },
+        "independentSigner": { "const": "required" }
+      }
+    },
+    "authority": { "$ref": "#/$defs/authority" }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_*.-]{0,63}(?![\\s\\S])"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["externalAuthorityClaimed", "productionAuthorized", "providerCredentialGranted", "releaseAuthorized", "submissionAuthorized"],
+      "properties": {
+        "externalAuthorityClaimed": { "const": false },
+        "productionAuthorized": { "const": false },
+        "providerCredentialGranted": { "const": false },
+        "releaseAuthorized": { "const": false },
+        "submissionAuthorized": { "const": false }
+      }
+    }
+  }
+}

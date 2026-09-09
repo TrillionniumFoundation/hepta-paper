@@ -20,9 +20,6 @@ import {
 } from '../../../paper-adapters/build-package/gpu-scientific-artifact-body-archive.mjs';
 import { runPackageAdapter } from '../../../paper-adapters/build-package/index.mjs';
 import {
-  runProcessIsolatedPdePoisson2dIndependentCpuOracle,
-} from '../../../paper-adapters/research-verify/process-isolated-pde-poisson-2d-independent-cpu-oracle.mjs';
-import {
   safeRetentionNodeKey,
 } from '../../../paper-adapters/automation/runtime-retention-scope-repository.mjs';
 import {
@@ -80,12 +77,21 @@ import {
   withGpuSelectorExecutionLeaseForTest,
 } from './os-sandboxed-worker-runner-test-driver.mjs';
 import {
+  importProcessIsolatedPdePoisson2dIndependentCpuOracleForTest,
+  withPdePoisson2dCpuOracleSandboxRunnerForTest,
+} from './process-isolated-pde-poisson-2d-independent-cpu-oracle-test-seam.mjs';
+import {
+  createPdePoisson2dCpuOracleFixtureRunner,
+} from './pde-poisson-2d-cpu-oracle-fixture-runner.mjs';
+import {
+  buildDeterministicPdfFixture,
   createTrustedIndependentPdfRebuildVerifierFixture,
 } from '../fixtures/trusted-independent-pdf-rebuild-verifier.mjs';
-import { buildDeterministicPdfFixture } from './deterministic-pdf-fixture.mjs';
 
 const canonicalPdeExecutorModule =
   await importCanonicalCupyPdePoisson2dExecutorForTest();
+const processIsolatedPdeCpuOracleModule =
+  await importProcessIsolatedPdePoisson2dIndependentCpuOracleForTest();
 const canonicalDeepLearningExecutorModule =
   await importCanonicalCupyDeepLearningTrainingExecutorForTest();
 
@@ -177,6 +183,24 @@ function gpuCapacityObservation(gpuDeviceSelector = GPU_UUID) {
   });
 }
 
+function gpuEnvironmentBomSpawnSync(executable, args = []) {
+  if (executable !== 'nvidia-smi') {
+    return { status: 1, stdout: '', stderr: 'fixture_command_not_supported' };
+  }
+  if (args[0] === '--query-gpu=name,compute_cap,driver_version') {
+    return {
+      status: 0,
+      stdout: 'Fixture NVIDIA GPU, 8.9, 580.173.02\n',
+      stderr: '',
+    };
+  }
+  return {
+    status: 0,
+    stdout: 'NVIDIA-SMI fixture CUDA Version: 12.6\n',
+    stderr: '',
+  };
+}
+
 function discreteReferenceBytes(gridSize, modes) {
   const spacing = 1 / (gridSize + 1);
   const buffer = Buffer.alloc(gridSize * gridSize * Float64Array.BYTES_PER_ELEMENT);
@@ -235,6 +259,7 @@ function pdeFixtureRunner(outputRoot, runtimeRoot) {
         ? AUTOMATION_RUNTIME_IMAGES.pythonGpu.imageDigest : null
     ),
     gpuDeviceCapacityObserver: (selector) => gpuCapacityObservation(selector),
+    environmentBomSpawnSync: gpuEnvironmentBomSpawnSync,
     executor(_launcher, args, options) {
       const outputVolume = args.find(
         (value) => String(value).endsWith(':/output:rw'),
@@ -425,6 +450,7 @@ function deepLearningFixtureRunner(outputRoot, runtimeRoot) {
         ? AUTOMATION_RUNTIME_IMAGES.pythonGpu.imageDigest : null
     ),
     gpuDeviceCapacityObserver: (selector) => gpuCapacityObservation(selector),
+    environmentBomSpawnSync: gpuEnvironmentBomSpawnSync,
     executor(_launcher, args, options) {
       const outputVolume = args.find(
         (value) => String(value).endsWith(':/output:rw'),
@@ -592,13 +618,17 @@ async function buildGpuExecution({
         );
       }
       const cpuOracleAssurance =
-        runProcessIsolatedPdePoisson2dIndependentCpuOracle({
-          artifactRoot: pdeGpuReceipt.outputDirectory,
-          artifactManifest: pdeGpuReceipt.artifactManifest,
-          producerSpecification: pdeGpuReceipt.producerSpecification,
-          absoluteDeadlineEpochMs:
-            executionPlan.absoluteExecutionDeadlineEpochMs,
-        });
+        withPdePoisson2dCpuOracleSandboxRunnerForTest(
+          createPdePoisson2dCpuOracleFixtureRunner({ runtimeRoot }),
+          () => processIsolatedPdeCpuOracleModule
+            .runProcessIsolatedPdePoisson2dIndependentCpuOracle({
+              artifactRoot: pdeGpuReceipt.outputDirectory,
+              artifactManifest: pdeGpuReceipt.artifactManifest,
+              producerSpecification: pdeGpuReceipt.producerSpecification,
+              absoluteDeadlineEpochMs:
+                executionPlan.absoluteExecutionDeadlineEpochMs,
+            }),
+        );
       const pdeScientificPayload = {
         version: 1,
         kind: 'CanonicalPdePoisson2dGpuScientificReceipt',

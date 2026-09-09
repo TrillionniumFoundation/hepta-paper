@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ActionCandidateV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "candidateId",
+    "planningRequestId",
+    "stateSnapshotHash",
+    "moduleId",
+    "moduleVersion",
+    "capabilityId",
+    "resourceVector",
+    "duration",
+    "cost",
+    "value",
+    "risk",
+    "sideEffectClass",
+    "rollbackClass",
+    "expiresAt",
+    "candidatePayloadHash"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ActionCandidateV1"
+    },
+    "candidateId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "planningRequestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stateSnapshotHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "moduleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "moduleVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capabilityId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resourceVector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpuUnits",
+        "gpuUnits",
+        "memoryMiB",
+        "storageBytes"
+      ],
+      "properties": {
+        "cpuUnits": {
+          "type": "number",
+          "minimum": 0
+        },
+        "gpuUnits": {
+          "type": "number",
+          "minimum": 0
+        },
+        "memoryMiB": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "storageBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokenCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maximumCostMicrousd": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "duration": {
+      "type": "object"
+    },
+    "cost": {
+      "type": "object"
+    },
+    "value": {
+      "type": "object"
+    },
+    "risk": {
+      "type": "object"
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "dependencyEffects": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "sideEffectClass": {
+      "type": "string",
+      "minLength": 1
+    },
+    "irreversibleBoundary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rollbackClass": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "inputSchema": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "outputSchema": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "candidatePayloadHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "singletonReason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

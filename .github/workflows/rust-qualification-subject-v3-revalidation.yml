@@ -1,0 +1,329 @@
+name: rust-qualification-subject-v3-revalidation
+
+on:
+  workflow_run:
+    workflows:
+      - hepta-paper-ci
+      - exact-head-source-validation
+      - rust-broker-installed-qualification
+      - rust-broker-installed-qualification-v2
+      - rust-foundation
+      - rust-plan-v3-external-contracts
+      - rust-program-truth
+      - rust-qualification-artifacts
+      - rust-source-snapshot
+      - rust-supply-chain
+      - workflow-lint
+      - rust-qualification-subject-v3
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: rust-qualification-subject-v3-revalidation-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  source-qualification-v3-current:
+    name: source-qualification-v3-current
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+      EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      EXPECTED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      EXPECTED_COLLECTOR_WORKFLOW: rust-qualification-subject-v3
+      EXPECTED_COLLECTOR_PATH: .github/workflows/rust-qualification-subject-v3.yml
+      EXPECTED_COLLECTOR_JOB: derive-effective-source-status-v3
+      EXPECTED_ARTIFACT_PREFIX: rust-qualification-subject-v3-
+    steps:
+      - name: Prove a fresh exact-head collector result without executing candidate code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import re
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          repository = os.environ['REPOSITORY']
+          token = os.environ['GH_TOKEN']
+          trigger_run_id = int(os.environ['TRIGGER_RUN_ID'])
+          head_sha = os.environ['EXPECTED_HEAD_SHA']
+          head_branch = os.environ['EXPECTED_HEAD_BRANCH']
+          collector_name = os.environ['EXPECTED_COLLECTOR_WORKFLOW']
+          collector_path = os.environ['EXPECTED_COLLECTOR_PATH']
+          collector_job = os.environ['EXPECTED_COLLECTOR_JOB']
+          artifact_name = f"{os.environ['EXPECTED_ARTIFACT_PREFIX']}{head_sha}"
+          required = {
+              'hepta-paper-ci',
+              'exact-head-source-validation',
+              'rust-broker-installed-qualification',
+              'rust-broker-installed-qualification-v2',
+              'rust-foundation',
+              'rust-plan-v3-external-contracts',
+              'rust-program-truth',
+              'rust-qualification-artifacts',
+              'rust-source-snapshot',
+              'rust-supply-chain',
+              'workflow-lint',
+          }
+          allowed_triggers = required | {collector_name}
+          sha_pattern = re.compile(r'^[0-9a-f]{40}$')
+          if not sha_pattern.fullmatch(head_sha):
+              raise SystemExit('workflow_run_head_sha_invalid')
+
+          def parse_time(value):
+              if not isinstance(value, str) or not value:
+                  raise SystemExit('github_timestamp_missing')
+              return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+          def get_json(path):
+              request = urllib.request.Request(
+                  f'https://api.github.com/repos/{repository}{path}',
+                  headers={
+                      'Accept': 'application/vnd.github+json',
+                      'Authorization': f'Bearer {token}',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                      'User-Agent': 'hepta-paper-trusted-currentness-audit',
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  value = json.load(response)
+              if not isinstance(value, dict):
+                  raise SystemExit(f'github_object_required:{path}')
+              return value
+
+          trigger = get_json(f'/actions/runs/{trigger_run_id}')
+          trigger_repository = (trigger.get('repository') or {}).get('full_name')
+          trigger_head_repository = (trigger.get('head_repository') or {}).get('full_name')
+          if (
+              trigger.get('event') != 'pull_request'
+              or trigger.get('name') not in allowed_triggers
+              or trigger.get('head_sha') != head_sha
+              or trigger.get('head_branch') != head_branch
+              or trigger_repository != repository
+              or trigger_head_repository != repository
+          ):
+              raise SystemExit('workflow_run_subject_invalid')
+
+          # This endpoint returns a JSON array, unlike the object-shaped
+          # Actions endpoints consumed by get_json().
+          request = urllib.request.Request(
+              f'https://api.github.com/repos/{repository}/commits/{head_sha}/pulls?per_page=100',
+              headers={
+                  'Accept': 'application/vnd.github+json',
+                  'Authorization': f'Bearer {token}',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'User-Agent': 'hepta-paper-trusted-currentness-audit',
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              pulls = json.load(response)
+          if not isinstance(pulls, list):
+              raise SystemExit('commit_pull_request_list_invalid')
+          matches = [
+              pr for pr in pulls
+              if isinstance(pr, dict)
+              and pr.get('state') == 'open'
+              and (pr.get('head') or {}).get('sha') == head_sha
+              and (pr.get('head') or {}).get('ref') == head_branch
+              and ((pr.get('head') or {}).get('repo') or {}).get('full_name') == repository
+              and (pr.get('base') or {}).get('ref') == 'main'
+          ]
+          if len(matches) != 1:
+              raise SystemExit(f'exact_pull_request_not_unique:{len(matches)}')
+          pull_number = int(matches[0]['number'])
+
+          def run_key(run):
+              attempt = run.get('run_attempt', 1)
+              if not isinstance(attempt, int) or attempt <= 0:
+                  raise SystemExit('workflow_run_attempt_invalid')
+              identifier = run.get('id')
+              if not isinstance(identifier, int) or identifier <= 0:
+                  raise SystemExit('workflow_run_id_invalid')
+              return (str(run.get('created_at') or ''), attempt, identifier)
+
+          deadline = time.monotonic() + 2700
+          detail = {}
+          while True:
+              query = urllib.parse.urlencode({
+                  'head_sha': head_sha,
+                  'event': 'pull_request',
+                  'per_page': 100,
+              })
+              payload = get_json(f'/actions/runs?{query}')
+              runs = payload.get('workflow_runs')
+              if not isinstance(runs, list):
+                  raise SystemExit('workflow_runs_list_invalid')
+              same_subject = [
+                  run for run in runs
+                  if isinstance(run, dict)
+                  and run.get('head_sha') == head_sha
+                  and run.get('head_branch') == head_branch
+                  and run.get('event') == 'pull_request'
+                  and (run.get('repository') or {}).get('full_name') == repository
+                  and (run.get('head_repository') or {}).get('full_name') == repository
+              ]
+              latest = {}
+              for run in same_subject:
+                  workflow_name = run.get('name')
+                  if workflow_name not in required | {collector_name}:
+                      continue
+                  previous = latest.get(workflow_name)
+                  if previous is None or run_key(run) > run_key(previous):
+                      latest[workflow_name] = run
+
+              missing = sorted(required.difference(latest))
+              incomplete = sorted(
+                  item for item in required
+                  if item in latest and latest[item].get('status') != 'completed'
+              )
+              failed = sorted(
+                  item for item in required
+                  if item in latest
+                  and latest[item].get('status') == 'completed'
+                  and latest[item].get('conclusion') != 'success'
+              )
+              collector = latest.get(collector_name)
+              detail = {
+                  'missing': missing,
+                  'incomplete': incomplete,
+                  'failed': failed,
+                  'collectorStatus': None if collector is None else collector.get('status'),
+                  'collectorConclusion': None if collector is None else collector.get('conclusion'),
+              }
+              if failed:
+                  raise SystemExit(f'producer_matrix_failed:{failed}')
+              if not missing and not incomplete and collector is not None:
+                  if collector.get('status') == 'completed':
+                      if collector.get('conclusion') != 'success':
+                          raise SystemExit(
+                              f'collector_not_success:{collector.get("conclusion")}'
+                          )
+                      producer_updated = max(
+                          parse_time(latest[item].get('updated_at')) for item in required
+                      )
+                      collector_updated = parse_time(collector.get('updated_at'))
+                      if collector_updated >= producer_updated:
+                          break
+                      detail['producerUpdatedAt'] = producer_updated.isoformat()
+                      detail['collectorUpdatedAt'] = collector_updated.isoformat()
+              if time.monotonic() >= deadline:
+                  raise SystemExit(
+                      'fresh_collector_timeout:' + json.dumps(detail, sort_keys=True)
+                  )
+              print(
+                  json.dumps(
+                      {'status': 'waiting_for_fresh_collector', **detail},
+                      sort_keys=True,
+                  ),
+                  flush=True,
+              )
+              time.sleep(30)
+
+          observed_path = str(collector.get('path') or '').split('@', 1)[0]
+          if observed_path != collector_path:
+              raise SystemExit(
+                  f'collector_workflow_path_invalid:{observed_path}:{collector_path}'
+              )
+          collector_id = int(collector['id'])
+          attempt = int(collector.get('run_attempt', 1))
+          jobs_path = f'/actions/runs/{collector_id}/attempts/{attempt}/jobs?per_page=100'
+          try:
+              jobs_payload = get_json(jobs_path)
+          except urllib.error.HTTPError as error:
+              if error.code not in {403, 404}:
+                  raise
+              jobs_payload = get_json(
+                  f'/actions/runs/{collector_id}/jobs?filter=latest&per_page=100'
+              )
+          jobs = jobs_payload.get('jobs')
+          if not isinstance(jobs, list):
+              raise SystemExit('collector_jobs_list_invalid')
+          job_matches = [
+              job for job in jobs
+              if isinstance(job, dict)
+              and job.get('name') == collector_job
+              and job.get('status') == 'completed'
+              and job.get('conclusion') == 'success'
+              and isinstance(job.get('steps'), list)
+              and len(job['steps']) > 0
+          ]
+          if len(job_matches) != 1:
+              raise SystemExit(f'collector_job_invalid:{len(job_matches)}')
+
+          artifacts_payload = get_json(
+              f'/actions/runs/{collector_id}/artifacts?per_page=100'
+          )
+          artifacts = artifacts_payload.get('artifacts')
+          if not isinstance(artifacts, list):
+              raise SystemExit('collector_artifacts_list_invalid')
+          artifact_matches = [
+              artifact for artifact in artifacts
+              if isinstance(artifact, dict)
+              and artifact.get('name') == artifact_name
+              and artifact.get('expired') is False
+              and isinstance(artifact.get('digest'), str)
+              and re.fullmatch(r'sha256:[0-9a-f]{64}', artifact['digest'])
+          ]
+          if len(artifact_matches) != 1:
+              raise SystemExit(f'collector_artifact_invalid:{len(artifact_matches)}')
+          if parse_time(artifact_matches[0].get('created_at')) < max(
+              parse_time(latest[item].get('updated_at')) for item in required
+          ):
+              raise SystemExit('collector_artifact_predates_producer_matrix')
+
+          summary = {
+              'status': 'fresh_exact_head_collector_verified',
+              'repository': repository,
+              'pullRequest': pull_number,
+              'headCommit': head_sha,
+              'headBranch': head_branch,
+              'triggerRunId': trigger_run_id,
+              'collectorWorkflow': collector_name,
+              'collectorPath': observed_path,
+              'collectorRunId': collector_id,
+              'collectorRunAttempt': attempt,
+              'collectorJob': collector_job,
+              'artifact': {
+                  'id': artifact_matches[0]['id'],
+                  'name': artifact_name,
+                  'digest': artifact_matches[0]['digest'],
+              },
+              'producerRuns': {
+                  item: {
+                      'id': latest[item]['id'],
+                      'attempt': latest[item].get('run_attempt', 1),
+                      'updatedAt': latest[item]['updated_at'],
+                  }
+                  for item in sorted(required)
+              },
+              'authority': {
+                  'candidateCodeExecuted': False,
+                  'pullRequestMutation': False,
+                  'refMutation': False,
+                  'productionAuthorized': False,
+                  'externalAuthorityClaimed': False,
+              },
+          }
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
+              output.write('## Trusted currentness audit\n\n')
+              output.write('```json\n')
+              json.dump(summary, output, indent=2, sort_keys=True)
+              output.write('\n```\n')
+          print(json.dumps(summary, sort_keys=True))
+          PY

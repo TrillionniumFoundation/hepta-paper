@@ -151,8 +151,8 @@ if (options.json || options['dry-run']) {
 if (options['dry-run'] || !shardTests.length) process.exit(0);
 
 const result = spawnSync(process.execPath, [
-  '--test',
   `--test-concurrency=${testConcurrency}`,
+  '--test',
   ...shardTests,
 ], {
   cwd: workspaceRoot,

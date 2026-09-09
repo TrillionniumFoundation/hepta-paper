@@ -20,7 +20,8 @@ function fixture(t, outputBytes, requestedMaximumOutputBytes) {
   fs.writeFileSync(path.join(source, 'run.mjs'), 'process.exit(0);\n');
   const runner = createOsSandboxedWorkerRunner({
     allowedExecutables: [process.execPath], allowedRoots: [source], allowedOutputRoots: [output],
-    probe: { available: true, backend: 'bubblewrap', status: 'os_sandbox_available' },
+    probe: { available: true, backend: 'bubblewrap', status: 'os_sandbox_available',
+      processLimit: { available: true, mechanism: 'fixture' } },
     executor(_launcher, command) {
       const outputTarget = command.indexOf('/output');
       fs.writeFileSync(path.join(command[outputTarget - 1], 'results.json'), 'x'.repeat(outputBytes));

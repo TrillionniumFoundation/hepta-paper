@@ -25,11 +25,10 @@ pub use conformance::{
 };
 pub use error::ModulePlatformError;
 pub use legacy_adapter::{
-    LegacyAdapterError, LegacyBeginOutcomeV1, LegacyCapabilityBindingV1,
-    LegacyNodeInvocationV1, LegacyNodeObservationV1, LegacyParityClassV1,
-    LegacyPlanningReceiptV1, LegacyReservationOutcomeV1, LegacyTranslationReceiptV1,
-    MAXIMUM_LEGACY_CAPABILITY_BINDINGS_V1, MAXIMUM_LEGACY_EXECUTIONS_V1,
-    NODE_LEGACY_ADAPTER_MODULE_ID_V1, NodeLegacyAdapterV1,
+    LegacyAdapterError, LegacyBeginOutcomeV1, LegacyCapabilityBindingV1, LegacyNodeInvocationV1,
+    LegacyNodeObservationV1, LegacyParityClassV1, LegacyPlanningReceiptV1,
+    LegacyReservationOutcomeV1, LegacyTranslationReceiptV1, MAXIMUM_LEGACY_CAPABILITY_BINDINGS_V1,
+    MAXIMUM_LEGACY_EXECUTIONS_V1, NODE_LEGACY_ADAPTER_MODULE_ID_V1, NodeLegacyAdapterV1,
 };
 pub use lifecycle::{
     CircuitBreakerStateV1, DeterminismClassV1, ModuleHealthReportV1, ModuleLifecycleProfileV1,

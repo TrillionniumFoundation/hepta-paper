@@ -1,0 +1,99 @@
+name: exact-codeql-fix-c89938b
+
+on:
+  push:
+    branches:
+      - admin/exact-codeql-fix-c89938b-20260909
+
+permissions:
+  contents: write
+
+concurrency:
+  group: exact-codeql-fix-c89938b
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    name: Apply exact one-line CodeQL repair
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_BRANCH: codex/rust-plan-v4.1-final3-20260909
+      TARGET_HEAD: c89938bf9ce90aac520baba4cfd05d665f6676f7
+      TARGET_PATH: paper-core/tests/release-evidence-selection.test.mjs
+      TARGET_BLOB: e2934bba915b876982c1bd3ec6bc73ac8cf0a12f
+      OLD_SHA256: 20109be8479287000122854465bd85fef22ff3ad3d2fd48a990e63cdbd16b3af
+      NEW_SHA256: caca1e2906c4bce24dbf1fa909f04287cee6f257d2418172fe53fc7a892a5285
+    steps:
+      - name: Verify exact target ref and blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/exact-codeql-fix"
+          gh api --method GET "repos/$GITHUB_REPOSITORY/git/ref/heads/$TARGET_BRANCH" \
+            > "$RUNNER_TEMP/exact-codeql-fix/ref.json"
+          test "$(jq -r '.object.sha' "$RUNNER_TEMP/exact-codeql-fix/ref.json")" = "$TARGET_HEAD"
+          gh api --method GET "repos/$GITHUB_REPOSITORY/contents/$TARGET_PATH" \
+            -f ref="$TARGET_BRANCH" > "$RUNNER_TEMP/exact-codeql-fix/content.json"
+          test "$(jq -r '.sha' "$RUNNER_TEMP/exact-codeql-fix/content.json")" = "$TARGET_BLOB"
+          jq -r '.content' "$RUNNER_TEMP/exact-codeql-fix/content.json" \
+            | tr -d '\n' | base64 --decode > "$RUNNER_TEMP/exact-codeql-fix/original.mjs"
+          printf '%s  %s\n' "$OLD_SHA256" "$RUNNER_TEMP/exact-codeql-fix/original.mjs" | sha256sum -c -
+
+      - name: Apply exactly one semantic-preserving replacement
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/exact-codeql-fix/original.mjs" "$RUNNER_TEMP/exact-codeql-fix/repaired.mjs"
+          python3 - "$RUNNER_TEMP/exact-codeql-fix/repaired.mjs" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text(encoding='utf-8')
+          old = "crypto.generateKeyPairSync('rsa', { modulusLength: 1024 })"
+          new = "crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })"
+          if text.count(old) != 1:
+              raise SystemExit(f'exact_old_occurrence_count:{text.count(old)}')
+          if text.count(new) != 0:
+              raise SystemExit('replacement_already_present')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          printf '%s  %s\n' "$NEW_SHA256" "$RUNNER_TEMP/exact-codeql-fix/repaired.mjs" | sha256sum -c -
+
+      - name: Commit repaired bytes to the unchanged PR branch
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          encoded="$(base64 -w0 "$RUNNER_TEMP/exact-codeql-fix/repaired.mjs")"
+          jq -n \
+            --arg message 'fix(security): use non-weak RSA fixture key size' \
+            --arg content "$encoded" \
+            --arg sha "$TARGET_BLOB" \
+            --arg branch "$TARGET_BRANCH" \
+            '{message:$message,content:$content,sha:$sha,branch:$branch}' \
+            > "$RUNNER_TEMP/exact-codeql-fix/update.json"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$TARGET_PATH" \
+            --input "$RUNNER_TEMP/exact-codeql-fix/update.json" \
+            > "$RUNNER_TEMP/exact-codeql-fix/result.json"
+          commit_sha="$(jq -r '.commit.sha' "$RUNNER_TEMP/exact-codeql-fix/result.json")"
+          [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'commit_sha=%s\n' "$commit_sha" >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg oldHead "$TARGET_HEAD" \
+            --arg newHead "$commit_sha" \
+            --arg path "$TARGET_PATH" \
+            --arg oldBlob "$TARGET_BLOB" \
+            --arg oldSha256 "sha256:$OLD_SHA256" \
+            --arg newSha256 "sha256:$NEW_SHA256" \
+            '{version:1,status:"exact_codeql_fixture_key_size_repaired",oldHead:$oldHead,newHead:$newHead,path:$path,oldBlob:$oldBlob,oldSha256:$oldSha256,newSha256:$newSha256,authority:"repository_source_change_only"}' \
+            > "$RUNNER_TEMP/exact-codeql-fix/receipt.json"
+
+      - name: Retain repair receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: exact-codeql-fix-c89938b-${{ steps.commit.outputs.commit_sha }}
+          path: ${{ runner.temp }}/exact-codeql-fix/receipt.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,89 @@
+name: operator-codeql-rsa-test-key-repair
+
+on:
+  push:
+    branches:
+      - ops/codeql-rsa-test-key-repair-20260909
+
+permissions:
+  contents: write
+
+concurrency:
+  group: operator-codeql-rsa-test-key-repair-20260909
+  cancel-in-progress: false
+
+jobs:
+  patch-exact-file:
+    if: github.event.head_commit.message == 'ops: run one-shot CodeQL RSA repair'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Patch one exact blob without checking out candidate code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: TrillionniumFoundation/hepta-paper
+          TARGET_BRANCH: codex/rust-full-replacement-rc-20260908
+          EXPECTED_HEAD: d92b5517e011cb596a0f6fd0c72773ae4115efa1
+          TARGET_PATH: paper-core/tests/release-evidence-selection.test.mjs
+          EXPECTED_BLOB: e2934bba915b876982c1bd3ec6bc73ac8cf0a12f
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          repo = os.environ['TARGET_REPOSITORY']
+          branch = os.environ['TARGET_BRANCH']
+          expected_head = os.environ['EXPECTED_HEAD']
+          path = os.environ['TARGET_PATH']
+          expected_blob = os.environ['EXPECTED_BLOB']
+          token = os.environ['GH_TOKEN']
+          api = 'https://api.github.com'
+          headers = {
+              'Accept': 'application/vnd.github+json',
+              'Authorization': f'Bearer {token}',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'User-Agent': 'hepta-exact-blob-repair',
+          }
+
+          def request(method, endpoint, payload=None):
+              body = None if payload is None else json.dumps(payload).encode('utf-8')
+              req = urllib.request.Request(api + endpoint, data=body, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  return json.load(response)
+
+          branch_data = request('GET', f'/repos/{repo}/branches/{urllib.parse.quote(branch, safe="")}')
+          actual_head = branch_data['commit']['sha']
+          if actual_head != expected_head:
+              raise SystemExit(f'target_head_mismatch:{actual_head}')
+
+          encoded_path = '/'.join(urllib.parse.quote(part, safe='') for part in path.split('/'))
+          item = request('GET', f'/repos/{repo}/contents/{encoded_path}?ref={urllib.parse.quote(branch, safe="")}')
+          if item.get('sha') != expected_blob:
+              raise SystemExit(f'target_blob_mismatch:{item.get("sha")}')
+          source = base64.b64decode(item['content']).decode('utf-8')
+          old = "const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 });"
+          new = "const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });"
+          if source.count(old) != 1 or new in source:
+              raise SystemExit('unexpected_rsa_fixture_shape')
+          updated = source.replace(old, new)
+          result = request('PUT', f'/repos/{repo}/contents/{encoded_path}', {
+              'message': 'fix(security): use a non-breakable RSA size in negative signature tests',
+              'content': base64.b64encode(updated.encode('utf-8')).decode('ascii'),
+              'sha': expected_blob,
+              'branch': branch,
+          })
+          print(json.dumps({
+              'status': 'exact_blob_repaired',
+              'previousHead': expected_head,
+              'newHead': result['commit']['sha'],
+              'path': path,
+              'oldModulusBits': 1024,
+              'newModulusBits': 2048,
+              'candidateCodeExecutedWithWriteToken': False,
+          }, sort_keys=True))
+          PY

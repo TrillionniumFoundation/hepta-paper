@@ -1,6 +1,6 @@
 # ADR-0011: migrate Node capabilities through a strangler module adapter
 
-Status: **accepted as the current target decision; implementation and qualification remain gated**
+Status: **accepted; generic Rust adapter source implemented, capability inventory, shadow integration and qualification remain gated**
 
 ## Context
 
@@ -31,5 +31,6 @@ architecture layer.
 
 ## Adoption gates
 
-`MIG-001` through `MIG-006`, full parity dependencies, rollback rehearsal, and
-Node authority reachability removal are required.
+`MIG-002` now has a bounded Rust source implementation. `MIG-001`, `MIG-003`
+through `MIG-006`, full parity dependencies, rollback rehearsal, and Node
+authority reachability removal remain required.

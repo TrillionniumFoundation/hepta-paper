@@ -81,6 +81,29 @@ The first module registry may point to Node legacy adapters. An adapter:
 
 Adapters are temporary and have retirement work items.
 
+### Current generic Rust adapter source
+
+`rust/crates/hepta-module-platform/src/legacy_adapter.rs` implements the common
+`MIG-002` strangler boundary. A deployment supplies a closed set of exact Node
+entrypoint, contract, translation-policy, parity, resource and cost bindings.
+The adapter produces a deterministic candidate, persists a reserve-before-run
+lifecycle in its caller-owned ledger, emits an immutable Node invocation, and
+accepts only a bounded terminal observation. It returns a prepared result plus a
+hash-bound differential receipt; it never launches Node or receives a central
+writer or irreversible external-effect capability.
+
+Exact duplicate retries are idempotent. Conflicting command, candidate,
+invocation or observation reuse is rejected. A running or unknown execution is
+classified for reconciliation, not retried as absent. Central-state-write or
+irreversible-effect observations are rejected. These properties are covered by
+Rust unit tests and the complete workspace formatting, Clippy, test and
+documentation gates.
+
+The source closes only the generic adapter implementation work item `MIG-002`.
+`MIG-001` remains open for the complete incumbent capability inventory and
+`MIG-004` remains open for per-capability shadow/evaluation integration. No
+static record advances to shadow, canary, authoritative, retiring or retired.
+
 ## 6. Duplicate crate resolution
 
 Before production composition, adjacent Rust responsibilities receive one

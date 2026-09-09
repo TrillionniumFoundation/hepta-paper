@@ -9,7 +9,7 @@ Registry: [`../../system/truth/modules.v1.json`](../../system/truth/modules.v1.j
 ```text
 moduleId: module.node-legacy-adapter
 implementationKind: legacy_adapter
-staticImplementationState: design_ready
+staticImplementationState: source_implemented
 staticActivation: disabled
 authorityClass: prepared_result_only
 qualificationRequirement: source
@@ -63,6 +63,7 @@ Hard registered module dependencies:
 Current implementation and contract roots:
 
 - `docs/migration/NODE_RUST_MIGRATION.md`
+- `rust/crates/hepta-module-platform/src/legacy_adapter.rs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -108,7 +109,15 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
-Capability bindings: `CAP-MOD-CANDIDATES`, `CAP-MOD-EXECUTION`, `CAP-CMP-LEGACY`. Related work identifiers: `MIG-001`, `MIG-002`, `MIG-004`. Implementation/contract roots: `docs/migration/NODE_RUST_MIGRATION.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-MOD-CANDIDATES`, `CAP-MOD-EXECUTION`, `CAP-CMP-LEGACY`. Related work identifiers: `MIG-001`, `MIG-002`, `MIG-004`. Implementation/contract roots: `docs/migration/NODE_RUST_MIGRATION.md`, `rust/crates/hepta-module-platform/src/legacy_adapter.rs`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+
+### Bounded Rust strangler source
+
+The Rust source implements the generic `MIG-002` execution adapter boundary. It accepts a closed set of hash-bound legacy capability bindings, emits one deterministic Module Protocol V1 candidate, reserves an exact execution identity before a separately controlled Node port may run, and translates one bounded observation into a common prepared result. Exact duplicate observations replay the retained result; changed command, candidate, invocation, output, resource, cost, or authority facts fail closed. Running work and unknown cancellation identities require reconciliation rather than inferred success.
+
+The source receives no Node executable handle, central writer, provider credential, release signer, portal session, or submission capability. It rejects central-state-write and irreversible-external-effect observations, caps retained execution identities, resources, cost, artifacts, deadlines and source bindings, and keeps activation `disabled`. The complete Rust workspace, rustfmt, Clippy and documentation build passed on the exact implementation head before this static status update.
+
+This source does not close `MIG-001`: the repository still needs a closed per-capability inventory binding every incumbent Node entrypoint, contract, parity class, resource profile and rollback target. It also does not close `MIG-004`: no production-shaped per-capability shadow comparator, evaluation decision, or authority-safe consumer rollout is activated.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
@@ -119,5 +128,5 @@ Current channel is `disabled`. A new version progresses through registered/contr
 ## Open blockers
 
 - `MIG-001` — `design_ready`
-- `MIG-002` — `design_ready`
+- `MIG-002` — `source_implemented`
 - `MIG-004` — `design_ready`

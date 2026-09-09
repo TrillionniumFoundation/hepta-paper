@@ -85,7 +85,7 @@ backlog and machine projection rather than becoming a second global status sourc
 | current Node campaign and automation control | source implemented | existing scoped gates | authoritative |
 | Rust broker/runtime/workspace/writer components | source implemented | fresh exact-subject requalification required | disabled |
 | global machine truth and documentation controls | source implemented | fresh exact-subject qualification required | disabled as governance authority |
-| module protocol, registry, SDK and conformance | typed policy-owned registry and prepared-effect source slice implemented; full SDK/conformance pending | fresh exact-subject qualification required | disabled |
+| module protocol, registry, SDK and conformance | typed policy-owned registry, prepared-effect source slice, and bounded Node legacy execution adapter implemented; full capability inventory/SDK/conformance pending | fresh exact-subject qualification required | disabled |
 | Rust central composition root | runnable local/shadow CLI and durable plan-to-commit composition; module remains `design_ready`; qualified production composition absent | fresh exact-subject and host/capability qualification required | disabled |
 | global scheduler/optimizer | bounded exact selection, deterministic fallback and replayable certificate source implemented; full optimizer port/calibration pending | fresh exact-subject qualification required | disabled |
 | hierarchical DRF/aging/reservation model | current Node governor plus Rust weighted dominant-share, aging and exact reservation/accounting source slice | full canonical workload qualification pending | disabled for Rust control |

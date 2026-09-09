@@ -14,7 +14,7 @@ status.
 | G2 | MOD-001…008: module registry, protocol, SDK and conformance | typed registry source implemented; full command protocol, SDK, conformance and real teams pending |
 | G3 | CTL-001…008: Rust composition root, policy, dispatch, verification and sequencer | non-production policy/dispatch/sequencer vertical source implemented; production composition remains open |
 | G4 | RES-001…007: hierarchical accounting, DRF, aging, reservations and bounded blocking | weighted resource/aging source slice implemented; full hierarchy, starvation and blocking qualification pending |
-| G5 | MIG/NODE/domain module items: capability inventory, adapters, shadow and cutover | current Node modules registered; migration implementation pending |
+| G5 | MIG/NODE/domain module items: capability inventory, adapters, shadow and cutover | bounded Rust legacy execution adapter source implemented; complete inventory, shadow evaluation, cutover and retirement pending |
 | G6 | SCH-001…007: deterministic scheduler, optimizer certificate, fallback and calibration | bounded exact/fallback source implemented; Pareto reduction, optimizer port and calibration pending |
 | G7 | PERF/OBS/ORG: canonical workloads, SLOs, ownership and affected CI | design ready |
 | G8 | governance, host, storage, key, Codex, release and legacy replay packages | blocked external |

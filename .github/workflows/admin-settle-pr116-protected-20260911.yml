@@ -1,0 +1,93 @@
+name: admin-settle-pr116-protected-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-settle-pr116-protected-20260911.yml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+  statuses: read
+
+concurrency:
+  group: admin-settle-pr116-protected-20260911
+  cancel-in-progress: false
+
+env:
+  PR_NUMBER: "116"
+  EXPECTED_HEAD: 38ccd556d4c741c5b0e25bd0941f419857ea314f
+  AUDIT_BRANCH: codex/source-audit-export-20260911
+
+jobs:
+  settle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Verify exact review/check state and ordinary-merge PR 116
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          pr="$(gh api "repos/$repo/pulls/$PR_NUMBER")"
+          if [ "$(jq -r '.merged' <<<"$pr")" = true ]; then
+            merge_sha="$(jq -r '.merge_commit_sha' <<<"$pr")"
+            jq -n --argjson pullRequest "$PR_NUMBER" --arg head "$EXPECTED_HEAD" --arg mergeCommit "$merge_sha" '{schemaVersion:1,kind:"ProtectedPrSettlementV1",pullRequest:$pullRequest,head:$head,alreadyMerged:true,merged:true,mergeCommit:$mergeCommit,adminBypassUsed:false}' > "$RUNNER_TEMP/status.json"
+          else
+            test "$(jq -r '.state' <<<"$pr")" = open
+            test "$(jq -r '.head.sha' <<<"$pr")" = "$EXPECTED_HEAD"
+            gh pr ready "$PR_NUMBER" --repo "$repo" || true
+            gh api "repos/$repo/pulls/$PR_NUMBER/reviews?per_page=100" > "$RUNNER_TEMP/reviews.json"
+            approver="$(jq -r --arg sha "$EXPECTED_HEAD" --arg author "$(jq -r '.user.login' <<<"$pr")" '[.[] | select(.state=="APPROVED" and .commit_id==$sha and .user.login!=$author)] | sort_by(.submitted_at) | last | .user.login // empty' "$RUNNER_TEMP/reviews.json")"
+            test -n "$approver"
+            stable=0
+            previous=""
+            for attempt in $(seq 1 60); do
+              pr="$(gh api "repos/$repo/pulls/$PR_NUMBER")"
+              test "$(jq -r '.head.sha' <<<"$pr")" = "$EXPECTED_HEAD"
+              merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pr")"
+              : > "$RUNNER_TEMP/check-parts.jsonl"
+              for sha in "$EXPECTED_HEAD" "$merge_sha"; do
+                [ -n "$sha" ] || continue
+                gh api "repos/$repo/commits/$sha/check-runs?per_page=100" --jq '.check_runs[] | {name,status,conclusion,id,head_sha}' >> "$RUNNER_TEMP/check-parts.jsonl" || true
+              done
+              jq -s 'sort_by(.name,.id)|group_by(.name)|map(last)|sort_by(.name)' "$RUNNER_TEMP/check-parts.jsonl" > "$RUNNER_TEMP/checks.json"
+              count="$(jq 'length' "$RUNNER_TEMP/checks.json")"
+              pending="$(jq '[.[]|select(.status!="completed")]|length' "$RUNNER_TEMP/checks.json")"
+              failed="$(jq '[.[]|select(.status=="completed" and (.conclusion|IN("success","neutral","skipped")|not))]|length' "$RUNNER_TEMP/checks.json")"
+              fingerprint="$(sha256sum "$RUNNER_TEMP/checks.json" | awk '{print $1}')"
+              if [ "$count" -ge 20 ] && [ "$pending" = 0 ] && [ "$failed" = 0 ]; then
+                if [ "$fingerprint" = "$previous" ]; then stable=$((stable+1)); else stable=1; fi
+              else
+                stable=0
+              fi
+              previous="$fingerprint"
+              echo "attempt=$attempt stable=$stable checks=$count pending=$pending failed=$failed"
+              [ "$stable" -ge 2 ] && break
+              [ "$attempt" = 60 ] && exit 1
+              sleep 20
+            done
+            merge_response="$(gh api -X PUT "repos/$repo/pulls/$PR_NUMBER/merge" --input - <<JSON
+          {"merge_method":"merge","sha":"$EXPECTED_HEAD","commit_title":"Merge pull request #116 from TrillionniumFoundation/codex/rust-plan-v4.1-final3-20260909","commit_message":"feat(rust): converge plan v4.1 repository source\n\nOrdinary protected merge of the independently approved exact-head source candidate. No external authority, target-host qualification, production activation, writer cutover, or Node retirement is granted."}
+          JSON
+          )"
+            test "$(jq -r '.merged' <<<"$merge_response")" = true
+            merge_sha="$(jq -r '.sha' <<<"$merge_response")"
+            main_sha="$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+            test "$main_sha" = "$merge_sha"
+            jq -n --argjson pullRequest "$PR_NUMBER" --arg head "$EXPECTED_HEAD" --arg mergeCommit "$merge_sha" --arg approver "$approver" --argjson checkCount "$count" '{schemaVersion:1,kind:"ProtectedPrSettlementV1",pullRequest:$pullRequest,head:$head,alreadyMerged:false,merged:true,mergeCommit:$mergeCommit,independentExactHeadApprover:$approver,checkCount:$checkCount,allChecksTerminalNonFailing:true,adminBypassUsed:false,externalAuthorityGranted:false,targetHostQualified:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/status.json"
+          fi
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          path=.github/admin-status/pr116-protected-settlement-20260911.json
+          existing="$(gh api "repos/$repo/contents/$path?ref=$AUDIT_BRANCH" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$repo/contents/$path" -f message='chore(admin): record PR 116 protected settlement' -f content="$content" -f sha="$existing" -f branch="$AUDIT_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$repo/contents/$path" -f message='chore(admin): record PR 116 protected settlement' -f content="$content" -f branch="$AUDIT_BRANCH" >/dev/null
+          fi

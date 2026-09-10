@@ -1,0 +1,63 @@
+name: admin-snapshot-current-closure-state-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-snapshot-current-closure-state-20260911.yml
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Capture bounded live state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+          PUBLISHER_BRANCH: codex/source-audit-export-20260911
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          remote="https://x-access-token:$GH_TOKEN@github.com/$repo.git"
+          source_sha="$(git ls-remote "$remote" "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+          main_sha="$(git ls-remote "$remote" refs/heads/main | awk '{print $1}')"
+          test -n "$source_sha"
+          pr="$(gh api "repos/$repo/pulls?state=open&head=TrillionniumFoundation:$SOURCE_BRANCH&base=main&per_page=20" --jq '.[0].number // empty')"
+          mkdir -p repo
+          git -C repo init -q
+          git -C repo remote add origin "$remote"
+          git -C repo fetch -q --depth=1 origin "$source_sha"
+          git -C repo checkout -q --detach FETCH_HEAD
+          counts="$(jq -c '[.items | to_entries[] | .value.state] | group_by(.) | map({key:.[0],value:length}) | from_entries' repo/docs/system/truth/work-items.v2.json)"
+          requested="$(jq -c '[.records | to_entries[] | select(.value.promotionRequested == true) | .key] | sort' repo/docs/system/evidence/repository-source-implementation-v1.json 2>/dev/null || echo '[]')"
+          tmp="$RUNNER_TEMP/workflows.json"
+          gh api "repos/$repo/actions/runs?branch=$PUBLISHER_BRANCH&event=push&per_page=50" > "$tmp"
+          workflow_state="$(jq -c '[.workflow_runs | sort_by(.created_at) | group_by(.name) | map(last) | .[] | select(.name | test("internal-source|main-source|closure";"i")) | {name,status,conclusion,id,head_sha,created_at,updated_at}] | sort_by(.name)' "$tmp")"
+          pr116="$(gh api "repos/$repo/pulls/116" --jq '{number,state,draft,merged,mergeable_state,headSha:.head.sha,baseSha:.base.sha}')"
+          pr119="$(gh api "repos/$repo/pulls/119" --jq '{number,state,draft,merged,mergeable_state,headSha:.head.sha,baseSha:.base.sha}')"
+          if [ -n "$pr" ]; then
+            direct="$(gh api "repos/$repo/pulls/$pr" --jq '{number,state,draft,merged,mergeable_state,headSha:.head.sha,baseSha:.base.sha}')"
+          else
+            direct=null
+          fi
+          jq -n --arg capturedAt "$(date -u +%FT%TZ)" --arg sourceBranch "$SOURCE_BRANCH" --arg sourceSha "$source_sha" --arg mainSha "$main_sha" --argjson directPullRequest "$direct" --argjson pr116 "$pr116" --argjson pr119 "$pr119" --argjson workItemCounts "$counts" --argjson requestedItemIds "$requested" --argjson workflowRuns "$workflow_state" '{schemaVersion:1,kind:"CurrentClosureStateSnapshotV1",capturedAt:$capturedAt,sourceBranch:$sourceBranch,sourceSha:$sourceSha,mainSha:$mainSha,directPullRequest:$directPullRequest,pr116:$pr116,pr119:$pr119,workItemCounts:$workItemCounts,requestedItemIds:$requestedItemIds,workflowRuns:$workflowRuns,externalAuthorityGranted:false,targetHostQualified:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/snapshot.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/snapshot.json")"
+          path=.github/admin-status/current-closure-state-20260911.json
+          existing="$(gh api "repos/$repo/contents/$path?ref=$PUBLISHER_BRANCH" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$repo/contents/$path" -f message='chore(admin): snapshot current closure state' -f content="$content" -f sha="$existing" -f branch="$PUBLISHER_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$repo/contents/$path" -f message='chore(admin): snapshot current closure state' -f content="$content" -f branch="$PUBLISHER_BRANCH" >/dev/null
+          fi
+          if [ -n "$pr" ]; then
+            summary="$(jq -r '"Live bounded snapshot: source `"+.sourceSha+"`; main `"+.mainSha+"`; work-item states `"+(.workItemCounts|tojson)+"`; pending strict promotions `"+(.requestedItemIds|tojson)+"`. Convergence workflows: `"+(.workflowRuns|tojson)+"`. External authority, target-host qualification, production activation, writer cutover, and Node retirement remain false."' "$RUNNER_TEMP/snapshot.json")"
+            gh api -X POST "repos/$repo/issues/$pr/comments" -f body="$summary" >/dev/null
+          fi

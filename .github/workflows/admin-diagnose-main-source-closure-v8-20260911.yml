@@ -1,0 +1,160 @@
+name: admin-diagnose-main-source-closure-v8-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-diagnose-main-source-closure-v8-20260911.yml
+      - .github/admin-status/main-source-closure-v8-monitor-20260911.json
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: admin-diagnose-main-source-closure-v8-20260911
+  cancel-in-progress: true
+
+env:
+  WATCH_NAME: admin-converge-main-source-closure-v8-20260911
+  SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  AUDIT_BRANCH: codex/source-audit-export-20260911
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Resolve and await latest v8 run
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=""
+          for attempt in $(seq 1 180); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=$AUDIT_BRANCH&event=push&per_page=100" > "$RUNNER_TEMP/runs.json"
+            run_id="$(jq -r --arg name "$WATCH_NAME" '[.workflow_runs[]|select(.name==$name)]|sort_by(.created_at)|last|.id//empty' "$RUNNER_TEMP/runs.json")"
+            [ -n "$run_id" ] && break
+            sleep 10
+          done
+          test -n "$run_id"
+          for attempt in $(seq 1 1080); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$RUNNER_TEMP/run.json"
+            status="$(jq -r '.status' "$RUNNER_TEMP/run.json")"
+            [ "$status" = completed ] && break
+            [ "$attempt" = 1080 ] && exit 1
+            sleep 20
+          done
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" > "$RUNNER_TEMP/jobs.json"
+          echo "id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Build bounded redacted diagnostic
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.run.outputs.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed > "$RUNNER_TEMP/raw-failed.log" 2>&1 || true
+          python3 - "$RUNNER_TEMP/raw-failed.log" "$RUNNER_TEMP/run.json" "$RUNNER_TEMP/jobs.json" "$RUNNER_TEMP/diagnostic.json" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import sys
+
+          log_path, run_path, jobs_path, out_path = map(pathlib.Path, sys.argv[1:])
+          raw = log_path.read_text(errors='replace')
+          run = json.loads(run_path.read_text())
+          jobs = json.loads(jobs_path.read_text())
+
+          redacted_lines = []
+          sensitive = re.compile(r'(?i)(authorization|bearer\s|x-access-token|gh[pousr]_[A-Za-z0-9_]+|secret|password|private.?key|BEGIN [A-Z ]*PRIVATE KEY|client_secret|access_key|session_token)')
+          assignment = re.compile(r'(?i)(token|secret|password|key|credential)(\s*[:=]\s*)(\S+)')
+          url_credentials = re.compile(r'https://[^/@\s]+@')
+          for line in raw.splitlines():
+              line = url_credentials.sub('https://[REDACTED]@', line)
+              line = assignment.sub(lambda m: m.group(1) + m.group(2) + '[REDACTED]', line)
+              if sensitive.search(line):
+                  redacted_lines.append('[SENSITIVE LINE REDACTED]')
+              else:
+                  redacted_lines.append(line[:2000])
+          bounded = '\n'.join(redacted_lines[-240:])
+          bounded_bytes = bounded.encode()
+          if len(bounded_bytes) > 24000:
+              bounded = bounded_bytes[-24000:].decode(errors='replace')
+
+          lower = raw.lower()
+          conclusion = run.get('conclusion')
+          if conclusion == 'success':
+              failure_class = 'success'
+          elif 'fresh independent exact-head approval did not arrive' in lower or 'independent exact-head review: pending' in lower:
+              failure_class = 'independent_review_pending'
+          elif 'ordinary protected auto-merge request was rejected' in lower or 'protected pull merge' in lower and 'not yet accepted' in lower:
+              failure_class = 'ordinary_protected_merge_rejected'
+          elif 'ci did not reach a stable green terminal snapshot' in lower or 'first-stage:' in lower and 'failed=' in lower or 'final-stage:' in lower and 'failed=' in lower:
+              failure_class = 'ci_not_stably_green'
+          elif 'rust workspace owner-test superset failed' in lower or 'test result: failed' in lower or 'failures:' in lower and 'cargo +1.98.0 test' in lower:
+              failure_class = 'rust_owner_test_failure'
+          elif 'source implementation evidence' in lower or 'parseStrictJson' in raw or 'source evidence must contain exactly ten records' in lower:
+              failure_class = 'source_evidence_validation_failure'
+          elif 'py_compile' in lower or 'syntaxerror' in lower or 'yaml' in lower and 'error' in lower:
+              failure_class = 'orchestrator_static_failure'
+          elif 'missing remote branch' in lower or 'invalid remote ref object' in lower or 'checkout is not the observed source branch head' in lower:
+              failure_class = 'source_ref_unavailable_or_advanced'
+          elif 'github api failed' in lower or 'http 4' in lower or 'gh: ' in lower:
+              failure_class = 'github_api_or_permission_failure'
+          else:
+              failure_class = 'unclassified_fail_closed'
+
+          failed_jobs = [job.get('name') for job in jobs.get('jobs', []) if job.get('conclusion') not in ('success', 'skipped')]
+          failed_steps = [step.get('name') for job in jobs.get('jobs', []) for step in job.get('steps', []) if step.get('conclusion') not in (None, 'success', 'skipped')]
+          value = {
+              'schemaVersion': 1,
+              'kind': 'MainSourceClosureV8Diagnostic',
+              'runId': run.get('id'),
+              'runHeadSha': run.get('head_sha'),
+              'status': run.get('status'),
+              'conclusion': conclusion,
+              'failureClass': failure_class,
+              'failedJobNames': failed_jobs,
+              'failedStepNames': failed_steps,
+              'rawFailedLogBytes': len(raw.encode()),
+              'rawFailedLogSha256': 'sha256:' + hashlib.sha256(raw.encode()).hexdigest(),
+              'redactedExcerptBytes': len(bounded.encode()),
+              'redactedExcerptSha256': 'sha256:' + hashlib.sha256(bounded.encode()).hexdigest(),
+              'redactedExcerpt': bounded,
+              'externalAuthorityGranted': False,
+              'targetHostQualified': False,
+              'productionActivated': False,
+              'writerCutoverAuthorized': False,
+              'nodeRetirementAuthorized': False,
+          }
+          out_path.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
+          print(json.dumps({k:value[k] for k in ('runId','conclusion','failureClass','failedJobNames','failedStepNames','redactedExcerptSha256')}, sort_keys=True))
+          PY
+
+      - name: Publish diagnostic and bounded PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          content="$(base64 -w0 "$RUNNER_TEMP/diagnostic.json")"
+          path=.github/admin-status/main-source-closure-v8-diagnostic-20260911.json
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/contents/$path?ref=$AUDIT_BRANCH" --jq '.sha' 2>/dev/null||true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): publish redacted v8 diagnostic' -f content="$content" -f sha="$existing" -f branch="$AUDIT_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): publish redacted v8 diagnostic' -f content="$content" -f branch="$AUDIT_BRANCH" >/dev/null
+          fi
+          class="$(jq -r '.failureClass' "$RUNNER_TEMP/diagnostic.json")"
+          digest="$(jq -r '.redactedExcerptSha256' "$RUNNER_TEMP/diagnostic.json")"
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=TrillionniumFoundation:$SOURCE_BRANCH&base=main&per_page=20" --jq '.[0].number//empty')"
+          if [ -n "$pr" ] && [ "$class" != success ]; then
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f body="Structured v8 failure class: $class. Redacted bounded diagnostic digest: $digest. The complete diagnostic object is on the audit branch; all external and production authority flags remain false." >/dev/null
+          fi

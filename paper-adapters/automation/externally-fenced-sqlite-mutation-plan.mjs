@@ -3,6 +3,9 @@ import {
 } from '../../paper-domain/automation/autonomous-research-online-writer-manifest.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  assertSqliteChangesetEffectsAuthorized,
+} from './sqlite-changeset-policy.mjs';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,191}$/;
 const SAFE_TABLE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
@@ -156,7 +159,9 @@ function writeEvents(statement) {
   const sql = String(statement?.sql || '').trim();
   if (/^REPLACE\s+INTO\b/i.test(sql)
     || /^INSERT\s+OR\s+REPLACE\s+INTO\b/i.test(sql)) {
-    return new Set(['DELETE', 'INSERT']);
+    // SQLite sessions may represent REPLACE of an existing primary key as
+    // UPDATE, so authorize every data-change opcode the fixed statement can emit.
+    return new Set(['DELETE', 'INSERT', 'UPDATE']);
   }
   if (/^INSERT\s+(?:OR\s+(?:ABORT|FAIL|IGNORE|ROLLBACK)\s+)?INTO\b/i.test(sql)) {
     return new Set(/\bON\s+CONFLICT\b[\s\S]*\bDO\s+UPDATE\b/i.test(sql)
@@ -169,19 +174,64 @@ function writeEvents(statement) {
   return new Set(['DELETE', 'INSERT', 'UPDATE']);
 }
 
-function triggerEvent(sql) {
-  return String(sql || '').match(
-    /\b(?:BEFORE|AFTER|INSTEAD\s+OF)\s+(INSERT|UPDATE|DELETE)\b/i,
-  )?.[1]?.toUpperCase() || null;
+function plannedEventsFor(plan) {
+  const plannedEvents = new Map();
+  for (const statement of plan.statements.filter((entry) => entry.writeTable)) {
+    const events = plannedEvents.get(statement.writeTable) || new Set();
+    for (const event of writeEvents(statement)) events.add(event);
+    plannedEvents.set(statement.writeTable, events);
+  }
+  return plannedEvents;
 }
 
-function isReadOnlyRaiseTrigger(sql) {
-  const body = String(sql || '').match(/\bBEGIN\b([\s\S]*)\bEND\s*$/i)?.[1];
-  if (!body || /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(body)) return false;
-  const statements = body.split(';').map((entry) => entry.trim()).filter(Boolean);
-  return statements.length > 0 && statements.every((statement) => (
-    /^SELECT\b/i.test(statement) && /\bRAISE\s*\(/i.test(statement)
-  ));
+function triggerWriteEffects(sql) {
+  const source = String(sql || '');
+  const begin = source.search(/\bBEGIN\b/i);
+  if (begin < 0) return null;
+  const body = source.slice(begin + 'BEGIN'.length)
+    .replace(/'(?:''|[^'])*'/g, "''")
+    .replace(/--[^\r\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const identifier = String.raw`(?:"((?:""|[^"])*)"|\x60((?:\x60\x60|[^\x60])*)\x60|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))`;
+  const parseTarget = (statement, prefix, operation) => {
+    const match = statement.match(new RegExp(`^${prefix}\\s+(?:main\\s*\\.\\s*)?${identifier}`, 'i'));
+    if (!match) return null;
+    const table = match[1]?.replaceAll('""', '"')
+      ?? match[2]?.replaceAll('``', '`')
+      ?? match[3]
+      ?? match[4];
+    return SAFE_TABLE.test(String(table || '')) ? { table, operation } : null;
+  };
+  const effects = [];
+  for (const rawStatement of body.split(';')) {
+    const statement = rawStatement.trim();
+    if (!statement || /^END\b/i.test(statement) || /^SELECT\b/i.test(statement)) continue;
+    let effect = null;
+    if (/^INSERT\b/i.test(statement)) {
+      effect = parseTarget(
+        statement,
+        String.raw`INSERT(?:\s+OR\s+(?:ABORT|FAIL|IGNORE|REPLACE|ROLLBACK))?\s+INTO`,
+        'INSERT',
+      );
+    } else if (/^REPLACE\b/i.test(statement)) {
+      effect = parseTarget(statement, String.raw`REPLACE\s+INTO`, 'INSERT');
+    } else if (/^UPDATE\b/i.test(statement)) {
+      effect = parseTarget(
+        statement,
+        String.raw`UPDATE(?:\s+OR\s+(?:ABORT|FAIL|IGNORE|REPLACE|ROLLBACK))?`,
+        'UPDATE',
+      );
+    } else if (/^DELETE\b/i.test(statement)) {
+      effect = parseTarget(statement, String.raw`DELETE\s+FROM`, 'DELETE');
+    } else if (/\b(?:INSERT|REPLACE|UPDATE|DELETE)\b/i.test(statement)) {
+      return null;
+    } else {
+      continue;
+    }
+    if (!effect) return null;
+    effects.push(Object.freeze(effect));
+  }
+  return Object.freeze(effects);
 }
 
 export function assertExternallyFencedSqliteMutationDatabaseSurface(database, plan) {
@@ -209,14 +259,24 @@ ORDER BY name;
   if ([...plannedTables].some((table) => !businessTables.includes(table))) {
     fail('externally_fenced_sqlite_mutation_planned_table_missing');
   }
-  const writeStatements = plan.statements.filter((entry) => entry.writeTable);
-  // Only tables in the pinned plan can be changed directly. We validate those
-  // targets plus reverse foreign-key actions and matching triggers below;
-  // unrelated tables therefore cannot block a safe bounded operation merely
-  // because they belong to the same native database.
-  const plannedEvents = new Map([...plannedTables].map((table) => [table, new Set()]));
-  for (const statement of writeStatements) {
-    for (const event of writeEvents(statement)) plannedEvents.get(statement.writeTable).add(event);
+  const plannedEvents = plannedEventsFor(plan);
+  const mutatingBusinessTrigger = database.prepare(`
+SELECT name,tbl_name,coalesce(sql,'') AS sql FROM sqlite_schema
+WHERE type='trigger' AND tbl_name NOT IN (
+  'autonomous_research_online_mutation_authority_metadata',
+  'autonomous_research_online_mutation_authority_marker',
+  'autonomous_research_online_mutation_finalization_receipt'
+)
+ORDER BY name;
+`).all().find((trigger) => {
+    if (!plannedTables.has(String(trigger.tbl_name))) return false;
+    const effects = triggerWriteEffects(trigger.sql);
+    return effects === null || effects.some(
+      (effect) => plannedEvents.get(effect.table)?.has(effect.operation),
+    );
+  });
+  if (mutatingBusinessTrigger) {
+    fail(`externally_fenced_sqlite_mutation_business_trigger_forbidden:${mutatingBusinessTrigger.name}`);
   }
   for (const table of plannedTables) {
     const columns = database.prepare(`PRAGMA table_info(${quotedIdentifier(table)})`).all();
@@ -256,34 +316,98 @@ ORDER BY name;
       }
     }
   }
-  const triggers = database.prepare(`
-SELECT name,tbl_name,coalesce(sql,'') AS sql FROM sqlite_schema
-WHERE type='trigger' AND tbl_name NOT LIKE 'autonomous_research_online_mutation_%'
+}
+
+function installMutationOperationGuards(database, plan) {
+  const allowedByTable = plannedEventsFor(plan);
+  const tables = database.prepare(`
+SELECT name FROM sqlite_schema
+WHERE type='table' AND name NOT LIKE 'sqlite_%'
 ORDER BY name;
-`).all();
-  for (const trigger of triggers) {
-    const events = plannedEvents.get(String(trigger.tbl_name));
-    const event = triggerEvent(trigger.sql);
-    if (!events || (event && !events.has(event))) continue;
-    if (!event || !isReadOnlyRaiseTrigger(trigger.sql)) {
-      fail('externally_fenced_sqlite_mutation_business_trigger_forbidden');
+`).all().map((entry) => String(entry.name));
+  if (tables.length > 1024) fail('externally_fenced_sqlite_mutation_table_limit_exceeded');
+  const installed = [];
+  const remove = () => {
+    let firstError = null;
+    for (const name of installed.reverse()) {
+      try { database.exec(`DROP TRIGGER temp.${quotedIdentifier(name)};`); }
+      catch (error) { firstError ||= error; }
     }
+    if (firstError) {
+      const error = new Error('externally_fenced_sqlite_mutation_guard_cleanup_failed');
+      error.cause = firstError;
+      throw error;
+    }
+  };
+  try {
+    for (const table of tables) {
+      const allowed = allowedByTable.get(table) || new Set();
+      for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+        if (allowed.has(operation)) continue;
+        const name = `hepta_mutation_guard_${installed.length}`;
+        database.exec(`CREATE TEMP TRIGGER ${quotedIdentifier(name)}
+BEFORE ${operation} ON main.${quotedIdentifier(table)}
+BEGIN
+  SELECT RAISE(ABORT, 'externally_fenced_sqlite_mutation_table_operation_forbidden');
+END;`);
+        installed.push(name);
+      }
+    }
+  } catch (error) {
+    try { remove(); } catch { /* preserve installation failure */ }
+    throw error;
   }
+  return remove;
 }
 
 export function createExternallyFencedSqliteMutationTransaction(database, plan) {
-  const statements = new Map(plan.statements.map((entry) => [
-    entry.statementId,
-    Object.freeze({ definition: entry, statement: database.prepare(entry.sql) }),
-  ]));
+  const executablePlan = canonicalOperationPlan({
+    version: plan?.version,
+    operationId: plan?.operationId,
+    statements: Array.isArray(plan?.statements) ? plan.statements.map((entry) => ({
+      statementId: entry?.statementId,
+      mode: entry?.mode,
+      sql: entry?.sql,
+    })) : plan?.statements,
+  });
+  const removeGuards = installMutationOperationGuards(database, executablePlan);
+  let statements;
+  let session;
+  try {
+    statements = new Map(executablePlan.statements.map((entry) => [
+      entry.statementId,
+      Object.freeze({ definition: entry, statement: database.prepare(entry.sql) }),
+    ]));
+    session = database.createSession();
+  } catch (error) {
+    try { removeGuards(); } catch { /* preserve preparation failure */ }
+    throw error;
+  }
+  const authorizedEffects = Object.freeze(executablePlan.statements
+    .filter((entry) => entry.writeTable)
+    .flatMap((entry) => [...writeEvents(entry)].map((operation) => Object.freeze({
+      table: entry.writeTable,
+      operation,
+    }))));
+  const executedEffects = [];
   let active = true;
+  let revocationReport = null;
   const invoke = (mode, statementId, parameters) => {
     if (!active) fail('externally_fenced_sqlite_mutation_transaction_revoked');
     const entry = statements.get(statementId);
     if (!entry || entry.definition.mode !== mode) {
       fail('externally_fenced_sqlite_mutation_statement_not_authorized');
     }
-    return entry.statement[mode](...parameters);
+    const result = entry.statement[mode](...parameters);
+    if (mode === 'run' && entry.definition.writeTable) {
+      for (const operation of writeEvents(entry.definition)) {
+        executedEffects.push(Object.freeze({
+          table: entry.definition.writeTable,
+          operation,
+        }));
+      }
+    }
+    return result;
   };
   return Object.freeze({
     transaction: Object.freeze({
@@ -291,6 +415,25 @@ export function createExternallyFencedSqliteMutationTransaction(database, plan) 
       all: (statementId, ...parameters) => invoke('all', statementId, parameters),
       run: (statementId, ...parameters) => invoke('run', statementId, parameters),
     }),
-    revoke() { active = false; },
+    revoke() {
+      if (!active) return revocationReport;
+      active = false;
+      let failure = null;
+      try {
+        revocationReport = assertSqliteChangesetEffectsAuthorized({
+          changeset: Buffer.from(session.changeset()),
+          authorizedEffects,
+          executedEffects,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      try { session.close(); }
+      catch (error) { failure ||= error; }
+      try { removeGuards(); }
+      catch (error) { failure ||= error; }
+      if (failure) throw failure;
+      return revocationReport;
+    },
   });
 }

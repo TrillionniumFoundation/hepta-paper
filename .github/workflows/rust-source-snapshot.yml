@@ -1,0 +1,54 @@
+name: rust-source-snapshot
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head-source-snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Package deterministic exact-head source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          snapshot_root="$RUNNER_TEMP/hepta-paper-source-$EXPECTED_HEAD_SHA"
+          mkdir -p "$snapshot_root"
+          git ls-files -z \
+            | LC_ALL=C sort -z \
+            | tar --null --files-from=- \
+                --format=posix \
+                --sort=name \
+                --mtime='UTC 1970-01-01' \
+                --owner=0 --group=0 --numeric-owner \
+                --pax-option=delete=atime,delete=ctime \
+                -czf "$snapshot_root/source.tar.gz"
+          printf '%s\n' "$EXPECTED_HEAD_SHA" > "$snapshot_root/commit.txt"
+          git rev-parse HEAD^{tree} > "$snapshot_root/tree.txt"
+          (
+            cd "$snapshot_root"
+            sha256sum source.tar.gz commit.txt tree.txt > SHA256SUMS
+          )
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Upload exact-head source snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-source-snapshot-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/hepta-paper-source-${{ github.event.pull_request.head.sha || github.sha }}
+          if-no-files-found: error
+          retention-days: 14

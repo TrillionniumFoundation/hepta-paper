@@ -1,0 +1,117 @@
+name: admin-qualify-pr116-after-source-closure
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/pr116-source-closure-qualification-trigger
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Wait for merged source closure and qualify the moved public candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          candidate_branch=codex/rust-plan-v4.1-final3-20260909
+          status_path=.github/admin-status/global-source-closure-merged.json
+          for attempt in $(seq 1 40); do
+            if merged_raw="$(gh api "repos/$repo/contents/$status_path?ref=$admin_branch" --jq -r '.content' 2>/dev/null)"; then
+              merged="$(printf '%s' "$merged_raw" | tr -d '\n' | base64 -d)"
+              break
+            fi
+            if [ "$attempt" = 40 ]; then echo 'source-closure merge status did not appear' >&2; exit 1; fi
+            sleep 15
+          done
+          test "$(jq -r '.merged' <<<"$merged")" = true
+          test "$(jq -r '.baseBranch' <<<"$merged")" = "$candidate_branch"
+          merged_commit="$(jq -r '.mergeCommit' <<<"$merged")"
+          head="$(gh api "repos/$repo/branches/$candidate_branch" --jq '.commit.sha')"
+          test "$head" = "$merged_commit"
+          tree="$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')"
+          pr=116
+          live="$(gh api "repos/$repo/pulls/$pr")"
+          test "$(jq -r '.state' <<<"$live")" = open
+          test "$(jq -r '.draft' <<<"$live")" = true
+          test "$(jq -r '.head.ref' <<<"$live")" = "$candidate_branch"
+          test "$(jq -r '.head.sha' <<<"$live")" = "$head"
+          base_sha="$(jq -r '.base.sha' <<<"$live")"
+          merge_sha="$(jq -r '.merge_commit_sha' <<<"$live")"
+          test -n "$merge_sha" && test "$merge_sha" != null
+
+          checkout="$RUNNER_TEMP/candidate"
+          git -c protocol.version=2 clone --no-checkout "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" "$checkout"
+          git -C "$checkout" -c advice.detachedHead=false checkout --detach "$head"
+          test "$(git -C "$checkout" rev-parse HEAD^{tree})" = "$tree"
+          test "$(jq '.promotedItemIds | length' "$checkout/docs/system/truth/source-implementation-evidence.v1.json")" = 20
+          node "$checkout/docs/tools/validate-source-implementation-evidence.mjs" --root "$checkout"
+          node --test "$checkout/paper-core/tests/source-implementation-evidence.test.mjs"
+          node "$checkout/docs/tools/validate-development-docs.mjs"
+          node "$checkout/docs/tools/validate-module-documentation.mjs"
+          python3 "$checkout/docs/rust/tools/validate-program-truth.py"
+          test -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all)"
+
+          required='["rust-qualification-subject-v3","rust-effective-source-qualification","workflow-lint","rust-plan-v3-external-contracts","rust-source-snapshot","rust-program-truth","rust-qualification-artifacts","rust-foundation","rust-migration-acceptance","rust-broker-installed-qualification-v2","hepta-paper-ci","exact-head-source-validation","module-documentation-integrity","hepta-paper-gpu-scientific","rust-supply-chain","rust-broker-installed-qualification"]'
+          for attempt in $(seq 1 70); do
+            gh api "repos/$repo/actions/runs?head_sha=$head&event=pull_request&per_page=100" > "$RUNNER_TEMP/runs.json"
+            jq --argjson required "$required" '[.workflow_runs | sort_by(.created_at) | group_by(.name) | map(last) | .[] | select(.name as $n | $required | index($n)) | {name,status,conclusion,id,run_attempt}] | sort_by(.name)' "$RUNNER_TEMP/runs.json" > "$RUNNER_TEMP/current.json"
+            count="$(jq 'length' "$RUNNER_TEMP/current.json")"
+            pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/current.json")"
+            failed="$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' "$RUNNER_TEMP/current.json")"
+            if [ "$count" = 16 ] && [ "$pending" = 0 ]; then test "$failed" = 0; break; fi
+            if [ "$attempt" = 70 ]; then echo "post-merge matrix did not settle: count=$count pending=$pending failed=$failed" >&2; cat "$RUNNER_TEMP/current.json" >&2; exit 1; fi
+            sleep 30
+          done
+
+          promoted="$(jq -c '.promotedItemIds | sort' "$checkout/docs/system/truth/source-implementation-evidence.v1.json")"
+          jq -n --argjson pr "$pr" --arg head "$head" --arg tree "$tree" --arg baseSha "$base_sha" --arg prospectiveMerge "$merge_sha" --argjson promoted "$promoted" --slurpfile runs "$RUNNER_TEMP/current.json" '{schemaVersion:1,kind:"PublicCandidatePostSourceClosureQualification",pullRequest:$pr,baseSha:$baseSha,head:$head,tree:$tree,prospectiveMerge:$prospectiveMerge,promotedItemIds:$promoted,promotionCount:($promoted|length),requiredWorkflowCount:16,workflowRuns:$runs[0],allTerminalSuccess:true,independentReviewAccepted:false,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          out=.github/admin-status/pr116-post-source-closure-qualified.json
+          existing="$(gh api "repos/$repo/contents/$out?ref=$admin_branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record post-source-closure PR116 qualification' -f content="$content" -f sha="$existing" -f branch="$admin_branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record post-source-closure PR116 qualification' -f content="$content" -f branch="$admin_branch" >/dev/null; fi
+
+          body="$(jq -r '.body' <<<"$live")"
+          body="$(printf '%s\n' "$body" | sed '/<!-- repository-source-closure:start -->/,/<!-- repository-source-closure:end -->/d')"
+          item_lines="$(jq -r '.promotedItemIds | sort | map("- `" + . + "`") | join("\n")' "$checkout/docs/system/truth/source-implementation-evidence.v1.json")"
+          run_lines="$(jq -r '.[] | "- `" + .name + "` — run " + (.id|tostring) + " — `success`"' "$RUNNER_TEMP/current.json")"
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          $body
+
+          <!-- repository-source-closure:start -->
+          ## Repository-source closure integrated
+
+          \`\`\`text
+          head              $head
+          tree              $tree
+          prospective merge $merge_sha
+          source promotions 20
+          current CI        16/16 terminal success
+          \`\`\`
+
+          $item_lines
+
+          $run_lines
+
+          Each promotion is bound to exact implementation/test hashes and all authority flags remain false. This invalidates predecessor-head approval; fresh independent review is required. Issues #25, #28, #17, #12, #14, #21 and #22 remain external collectors.
+          <!-- repository-source-closure:end -->
+          EOF
+          gh api -X PATCH "repos/$repo/pulls/$pr" -f body=@"$RUNNER_TEMP/body.md" >/dev/null
+          gh api -X DELETE "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null 2>&1 <<'JSON' || true
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          gh api -X POST "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          cat "$RUNNER_TEMP/status.json"

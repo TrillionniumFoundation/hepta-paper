@@ -1,0 +1,190 @@
+name: bootstrap-private-main-phase-a-public
+
+on:
+  push:
+    branches:
+      - admin/bootstrap-private-main-protection-public-20260909
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-private-main-phase-a-public
+  cancel-in-progress: false
+
+jobs:
+  install-and-read-back:
+    name: install-and-read-back-private-main-phase-a
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Install exact Phase-A protection and retain sanitized readback
+        env:
+          ADMIN_TOKEN: ${{ secrets.HEPTA_PRIVATE_ADMIN_TOKEN || secrets.HEPTA_GITHUB_ADMIN_TOKEN || secrets.HEPTA_ADMIN_TOKEN }}
+          SOURCE_REPOSITORY: TrillionniumFoundation/hepta-paper
+          TARGET_REPOSITORY: TrillionniumFoundation/hepta-paper-legacy-reference
+          TARGET_BRANCH: main
+          EXPECTED_MAIN_SHA: a53019030d8525b495e78576ae079e8aa4e2e65d
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$GITHUB_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$GITHUB_REF" = refs/heads/admin/bootstrap-private-main-protection-public-20260909
+
+          evidence="$RUNNER_TEMP/private-main-phase-a"
+          install -d -m 0700 "$evidence"
+
+          if [ -z "${ADMIN_TOKEN:-}" ]; then
+            jq -n \
+              --arg sourceRepository "$SOURCE_REPOSITORY" \
+              --arg targetRepository "$TARGET_REPOSITORY" \
+              --arg targetBranch "$TARGET_BRANCH" \
+              --arg expectedMainSha "$EXPECTED_MAIN_SHA" \
+              --arg workflowSha "$GITHUB_SHA" \
+              --arg runId "$GITHUB_RUN_ID" \
+              '{
+                version: 1,
+                kind: "PrivateMainPhaseAProtectionReceipt",
+                status: "blocked_admin_secret_not_configured",
+                sourceRepository: $sourceRepository,
+                targetRepository: $targetRepository,
+                targetBranch: $targetBranch,
+                expectedMainSha: $expectedMainSha,
+                workflowSha: $workflowSha,
+                workflowRunId: $runId,
+                mutationAttempted: false,
+                authorityGranted: false
+              }' > "$evidence/receipt.json"
+            chmod 0444 "$evidence/receipt.json"
+            echo 'No accepted Administration-capable secret is configured in the public execution repository.' >&2
+            exit 78
+          fi
+
+          api="https://api.github.com/repos/$TARGET_REPOSITORY"
+          auth=(
+            -H "Authorization: Bearer $ADMIN_TOKEN"
+            -H 'Accept: application/vnd.github+json'
+            -H 'X-GitHub-Api-Version: 2022-11-28'
+          )
+
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            "${auth[@]}" "$api/branches/$TARGET_BRANCH" \
+            > "$evidence/branch.before.json"
+          test "$(jq -er '.commit.sha' "$evidence/branch.before.json")" = "$EXPECTED_MAIN_SHA"
+          test "$(jq -er '.protected' "$evidence/branch.before.json")" = false
+
+          cat > "$evidence/request.json" <<'JSON'
+          {
+            "required_status_checks": null,
+            "enforce_admins": true,
+            "required_pull_request_reviews": {
+              "dismissal_restrictions": {},
+              "dismiss_stale_reviews": true,
+              "require_code_owner_reviews": false,
+              "required_approving_review_count": 1,
+              "require_last_push_approval": true,
+              "bypass_pull_request_allowances": {}
+            },
+            "restrictions": null,
+            "required_linear_history": true,
+            "allow_force_pushes": false,
+            "allow_deletions": false,
+            "block_creations": false,
+            "required_conversation_resolution": true,
+            "lock_branch": false,
+            "allow_fork_syncing": false
+          }
+          JSON
+
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            -X PUT "${auth[@]}" \
+            -H 'Content-Type: application/json' \
+            --data-binary @"$evidence/request.json" \
+            "$api/branches/$TARGET_BRANCH/protection" \
+            > "$evidence/put-response.json"
+
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            "${auth[@]}" "$api/branches/$TARGET_BRANCH/protection" \
+            > "$evidence/readback.json"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            "${auth[@]}" "$api/branches/$TARGET_BRANCH" \
+            > "$evidence/branch.after.json"
+
+          unset ADMIN_TOKEN GITHUB_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+
+          test "$(jq -er '.commit.sha' "$evidence/branch.after.json")" = "$EXPECTED_MAIN_SHA"
+          jq -e '
+            .protected == true and
+            .protection.enabled == true
+          ' "$evidence/branch.after.json" >/dev/null
+          jq -e '
+            .required_status_checks == null and
+            .enforce_admins.enabled == true and
+            .required_pull_request_reviews.dismiss_stale_reviews == true and
+            .required_pull_request_reviews.require_code_owner_reviews == false and
+            .required_pull_request_reviews.required_approving_review_count == 1 and
+            .required_pull_request_reviews.require_last_push_approval == true and
+            ((.required_pull_request_reviews.bypass_pull_request_allowances.users // []) | length) == 0 and
+            ((.required_pull_request_reviews.bypass_pull_request_allowances.teams // []) | length) == 0 and
+            ((.required_pull_request_reviews.bypass_pull_request_allowances.apps // []) | length) == 0 and
+            .required_linear_history.enabled == true and
+            .allow_force_pushes.enabled == false and
+            .allow_deletions.enabled == false and
+            .required_conversation_resolution.enabled == true and
+            .lock_branch.enabled == false and
+            .allow_fork_syncing.enabled == false
+          ' "$evidence/readback.json" >/dev/null
+
+          request_sha="$(sha256sum "$evidence/request.json" | awk '{print "sha256:" $1}')"
+          readback_sha="$(sha256sum "$evidence/readback.json" | awk '{print "sha256:" $1}')"
+          jq -n \
+            --arg sourceRepository "$SOURCE_REPOSITORY" \
+            --arg targetRepository "$TARGET_REPOSITORY" \
+            --arg targetBranch "$TARGET_BRANCH" \
+            --arg mainSha "$EXPECTED_MAIN_SHA" \
+            --arg workflowSha "$GITHUB_SHA" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg requestSha "$request_sha" \
+            --arg readbackSha "$readback_sha" \
+            '{
+              version: 1,
+              kind: "PrivateMainPhaseAProtectionReceipt",
+              status: "phase_a_private_main_protection_installed_and_read_back",
+              sourceRepository: $sourceRepository,
+              targetRepository: $targetRepository,
+              targetBranch: $targetBranch,
+              protectedMainSha: $mainSha,
+              workflowSha: $workflowSha,
+              workflowRunId: $runId,
+              triggeringActor: $actor,
+              requestSha256: $requestSha,
+              readbackSha256: $readbackSha,
+              requiredStatusChecks: [],
+              enforceAdmins: true,
+              requiredApprovals: 1,
+              dismissStaleReviews: true,
+              requireCodeOwnerReviews: false,
+              requireLastPushApproval: true,
+              requiredConversationResolution: true,
+              requiredLinearHistory: true,
+              bypassActors: [],
+              forcePushAllowed: false,
+              deletionAllowed: false,
+              mutationAttempted: true,
+              authority: "Phase-A private-main governance only; not independent acceptance, replay, production, release, credential, key, cutover or retirement authority"
+            }' > "$evidence/receipt.json"
+
+          sha256sum "$evidence"/*.json > "$evidence/SHA256SUMS"
+          chmod 0444 "$evidence"/*
+
+      - name: Retain sanitized Phase-A evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: private-main-phase-a-public-${{ github.run_id }}
+          path: ${{ runner.temp }}/private-main-phase-a
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

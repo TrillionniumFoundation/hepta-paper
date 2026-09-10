@@ -1,0 +1,3 @@
+require-status=.github/admin-status/public-repository-source-closure-final.json
+repository-source-unresolved=0
+require-ci-and-review=true

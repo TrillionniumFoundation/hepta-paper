@@ -1,0 +1,138 @@
+name: admin-collect-governance-snapshot-v2-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-collect-governance-snapshot-v2-20260911.yml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Export complete governance surfaces without mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_BRANCH: codex/source-audit-export-20260911
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          mkdir -p "$RUNNER_TEMP/governance/rulesets"
+          gh api "repos/$repo/rulesets?includes_parents=true&per_page=100" > "$RUNNER_TEMP/governance/rulesets-index.json"
+          jq -r '.[].id' "$RUNNER_TEMP/governance/rulesets-index.json" | while read -r id; do
+            gh api "repos/$repo/rulesets/$id?includes_parents=true" > "$RUNNER_TEMP/governance/rulesets/$id.json"
+          done
+          gh api "repos/$repo/branches/main/protection" > "$RUNNER_TEMP/governance/main-protection.json"
+          gh api "repos/$repo/branches/main" > "$RUNNER_TEMP/governance/main-branch.json"
+          for pr in 116 119 120; do
+            gh api "repos/$repo/pulls/$pr" > "$RUNNER_TEMP/governance/pr-$pr.json" 2>/dev/null || true
+          done
+          python3 - "$RUNNER_TEMP/governance" "$RUNNER_TEMP/governance-envelope.json" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+          from datetime import datetime, timezone
+
+          root = pathlib.Path(sys.argv[1])
+          out = pathlib.Path(sys.argv[2])
+          ruleset_index = json.loads((root / 'rulesets-index.json').read_text())
+          rulesets = []
+          for entry in sorted((root / 'rulesets').glob('*.json'), key=lambda p: int(p.stem)):
+              value = json.loads(entry.read_text())
+              raw = json.dumps(value, sort_keys=True, separators=(',', ':')).encode()
+              rulesets.append({
+                  'id': value.get('id'),
+                  'name': value.get('name'),
+                  'target': value.get('target'),
+                  'enforcement': value.get('enforcement'),
+                  'sourceType': value.get('source_type'),
+                  'source': value.get('source'),
+                  'conditions': value.get('conditions'),
+                  'rules': value.get('rules'),
+                  'bypassActors': value.get('bypass_actors'),
+                  'canonicalSha256': 'sha256:' + hashlib.sha256(raw).hexdigest(),
+              })
+          protection = json.loads((root / 'main-protection.json').read_text())
+          main_branch = json.loads((root / 'main-branch.json').read_text())
+          pull_requests = []
+          for path in sorted(root.glob('pr-*.json')):
+              if path.stat().st_size == 0:
+                  continue
+              value = json.loads(path.read_text())
+              pull_requests.append({
+                  'number': value.get('number'),
+                  'state': value.get('state'),
+                  'draft': value.get('draft'),
+                  'merged': value.get('merged'),
+                  'headSha': (value.get('head') or {}).get('sha'),
+                  'baseSha': (value.get('base') or {}).get('sha'),
+                  'mergeCommitSha': value.get('merge_commit_sha'),
+                  'mergeableState': value.get('mergeable_state'),
+              })
+          required = protection.get('required_status_checks') or {}
+          review = protection.get('required_pull_request_reviews') or {}
+          envelope = {
+              'schemaVersion': 2,
+              'kind': 'GovernanceCurrentStateSnapshotV2',
+              'capturedAt': datetime.now(timezone.utc).isoformat(),
+              'repository': 'TrillionniumFoundation/hepta-paper',
+              'mainHeadSha': (main_branch.get('commit') or {}).get('sha'),
+              'rulesetIndexCount': len(ruleset_index),
+              'rulesets': rulesets,
+              'classicProtection': protection,
+              'requiredStatusContexts': sorted(set(required.get('contexts') or []) | {v.get('context') for v in required.get('checks') or [] if v.get('context')}),
+              'requiredApprovingReviewCount': review.get('required_approving_review_count'),
+              'dismissStaleReviews': review.get('dismiss_stale_reviews'),
+              'requireCodeOwnerReviews': review.get('require_code_owner_reviews'),
+              'allowForcePushes': bool((protection.get('allow_force_pushes') or {}).get('enabled')),
+              'allowDeletions': bool((protection.get('allow_deletions') or {}).get('enabled')),
+              'enforceAdmins': bool((protection.get('enforce_admins') or {}).get('enabled')),
+              'pullRequests': pull_requests,
+              'denialTransactions': [],
+              'denialTransactionCount': 0,
+              'requiredDenialTransactionCount': 7,
+              'independentLowPrivilegePrincipalObserved': False,
+              'independentSignedDecisionPresent': False,
+              'closureEligible': False,
+              'administratorSelfAttestationAccepted': False,
+              'externalAuthorityGranted': False,
+              'productionActivated': False,
+              'writerCutoverAuthorized': False,
+              'nodeRetirementAuthorized': False,
+          }
+          canonical = json.dumps(envelope, sort_keys=True, separators=(',', ':')).encode()
+          envelope['snapshotSha256'] = 'sha256:' + hashlib.sha256(canonical).hexdigest()
+          out.write_text(json.dumps(envelope, indent=2, sort_keys=True) + '\n')
+          print(json.dumps({'rulesets': len(rulesets), 'requiredContexts': len(envelope['requiredStatusContexts']), 'snapshotSha256': envelope['snapshotSha256']}, sort_keys=True))
+          PY
+          content="$(base64 -w0 "$RUNNER_TEMP/governance-envelope.json")"
+          path=.github/admin-status/governance-current-state-v2-20260911.json
+          existing="$(gh api "repos/$repo/contents/$path?ref=$AUDIT_BRANCH" --jq '.sha' 2>/dev/null||true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$repo/contents/$path" -f message='chore(admin): publish complete governance snapshot v2' -f content="$content" -f sha="$existing" -f branch="$AUDIT_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$repo/contents/$path" -f message='chore(admin): publish complete governance snapshot v2' -f content="$content" -f branch="$AUDIT_BRANCH" >/dev/null
+          fi
+          digest="$(jq -r '.snapshotSha256' "$RUNNER_TEMP/governance-envelope.json")"
+          contexts="$(jq '.requiredStatusContexts|length' "$RUNNER_TEMP/governance-envelope.json")"
+          rulesets="$(jq '.rulesets|length' "$RUNNER_TEMP/governance-envelope.json")"
+          gh api -X POST "repos/$repo/issues/25/comments" -f body="Complete non-mutating governance snapshot v2 published on the audit branch. Rulesets: $rulesets; required status contexts: $contexts; canonical snapshot digest: $digest. This closes the current-state export subtask only. The seven real low-privilege denial transactions and independent signed decision remain mandatory and are not self-attested." >/dev/null
+
+      - name: Upload governance snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: governance-current-state-v2-${{ github.run_id }}
+          path: ${{ runner.temp }}/governance-envelope.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

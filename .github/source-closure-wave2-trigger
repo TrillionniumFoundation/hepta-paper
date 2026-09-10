@@ -1,0 +1,4 @@
+require-status=.github/admin-status/pr116-post-source-closure-approved.json
+source-branch=codex/global-plan-v1.1-source-closure-wave2-20260910
+exclude-external-issues=25,28,17,12,14,21,22
+exact-evidence=true

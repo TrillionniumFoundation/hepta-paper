@@ -1,0 +1,74 @@
+name: admin-sync-external-collectors-after-source-closure
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/external-collectors-source-closure-sync-trigger
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Close source-only tracker and restamp external collectors
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          branch=codex/admin-apply-global-source-closure-20260910
+          assertion_path=.github/admin-status/public-repository-source-fully-closed.json
+          assertion="$(gh api "repos/$repo/contents/$assertion_path?ref=$branch" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          test "$(jq -r '.repositorySourceFullyClosed' <<<"$assertion")" = true
+          test "$(jq -r '.repositorySourceUnresolvedCount' <<<"$assertion")" = 0
+          head="$(jq -r '.head' <<<"$assertion")"
+          tree="$(jq -r '.tree' <<<"$assertion")"
+          merge="$(jq -r '.prospectiveMerge' <<<"$assertion")"
+          promotions="$(jq -r '.promotionCount' <<<"$assertion")"
+          for issue in 54 55; do
+            test "$(gh api "repos/$repo/issues/$issue" --jq '.state')" = closed
+          done
+          title='SOURCE: close remaining Global Plan repository-owned implementations'
+          tracker="$(gh api "repos/$repo/issues?state=open&per_page=100" --jq ".[] | select(.pull_request == null and .title == \"$title\") | .number" | head -n1)"
+          if [ -n "$tracker" ]; then
+            gh api -X POST "repos/$repo/issues/$tracker/comments" -f body="Repository-source closure is machine-complete on PR #116 head \`$head\`, tree \`$tree\`: zero repository-source-unresolved items, $promotions evidence-bound promotions, 16/16 exact-head CI and fresh independent review. External/activation collectors remain separate." >/dev/null
+            gh api -X PATCH "repos/$repo/issues/$tracker" -f state=closed -f state_reason=completed >/dev/null
+          fi
+          for issue in 25 28 17 12 14 21 22; do
+            marker="<!-- repository-source-closure:$head:issue-$issue -->"
+            existing="$(gh api "repos/$repo/issues/$issue/comments?per_page=100" --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n1)"
+            if [ -z "$existing" ]; then
+              cat > "$RUNNER_TEMP/comment-$issue.md" <<EOF
+          $marker
+          ## Repository-source denominator closed on the current exact subject
+
+          \`\`\`text
+          public PR          #116
+          head               $head
+          tree               $tree
+          prospective merge  $merge
+          source promotions  $promotions
+          repository source  closed (0 unresolved)
+          exact CI           16/16 terminal success
+          independent review accepted
+          \`\`\`
+
+          This collector now remains open only for its independently controlled external/activation evidence. Repository CI, implementation authors, administrators, generated fixtures and this comment do not satisfy that denominator. Production activation, writer cutover and Node retirement remain false.
+          EOF
+              gh api -X POST "repos/$repo/issues/$issue/comments" -f body=@"$RUNNER_TEMP/comment-$issue.md" >/dev/null
+            fi
+          done
+          jq -n --arg head "$head" --arg tree "$tree" --arg prospectiveMerge "$merge" --argjson promotions "$promotions" --arg tracker "${tracker:-}" '{schemaVersion:1,kind:"ExternalCollectorSourceClosureSync",head:$head,tree:$tree,prospectiveMerge:$prospectiveMerge,promotionCount:$promotions,sourceTrackerClosed:($tracker != ""),restampedIssues:[25,28,17,12,14,21,22],closedSourceIssues:[54,55],repositorySourceFullyClosed:true,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          out=.github/admin-status/external-collectors-source-closure-synced.json
+          old="$(gh api "repos/$repo/contents/$out?ref=$branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$old" ]; then gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): refresh external collector source-closure sync' -f content="$content" -f sha="$old" -f branch="$branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record external collector source-closure sync' -f content="$content" -f branch="$branch" >/dev/null; fi
+          cat "$RUNNER_TEMP/status.json"

@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "kind": "ExternalGapDispatchManifestV1",
+  "plan": "global-plan-v1.1",
+  "capturedAt": "2026-09-11T00:00:00Z",
+  "administratorAuthorityDoesNotSatisfyIndependence": true,
+  "collectors": [
+    {
+      "issue": 25,
+      "collectorId": "EXT-GOV-MAIN-001",
+      "state": "externally_blocked",
+      "requiredOwnerClass": "independent_low_privilege_governance_observer",
+      "requiredFacts": [
+        "complete_current_rulesets_and_classic_protection_export",
+        "seven_real_denial_transactions_from_non_bypass_principal",
+        "exact_head_and_merge_object_binding",
+        "independent_signed_decision"
+      ],
+      "administratorSelfAttestationAccepted": false
+    },
+    {
+      "issue": 28,
+      "collectorId": "LEGACY-REPLAY-001",
+      "state": "externally_blocked",
+      "requiredOwnerClass": "private_repository_custody_operator_and_independent_observer",
+      "requiredFacts": [
+        "phase_a_and_phase_b_private_main_protection",
+        "ordinary_protected_merge_without_bypass",
+        "jit_custody_of_exact_263_file_subject",
+        "exact_replay_receipt_and_index",
+        "cleanup_or_destruction_receipt",
+        "independent_confirmation"
+      ],
+      "administratorSelfAttestationAccepted": false
+    },
+    {
+      "issue": 17,
+      "collectorId": "EXT-HOST-CGROUP-001",
+      "state": "externally_blocked",
+      "requiredOwnerClass": "independent_linux_target_host_operator",
+      "requiredFacts": [
+        "separate_target_host_identity",
+        "systemd_unit_and_dedicated_uid_gid",
+        "listener_schema_gate_and_journal_receipts",
+        "kernel_cgroup_enforcement",
+        "crash_and_reboot_recovery_package"
+      ],
+      "github_hosted_runnerAcceptedAsIndependentTarget": false
+    },
+    {
+      "issue": 12,
+      "collectorId": "EXT-HOST-STORAGE-001",
+      "state": "externally_blocked",
+      "requiredOwnerClass": "dedicated_storage_fault_operator_and_independent_observer",
+      "requiredFacts": [
+        "dedicated_mount_identity",
+        "wal_sigkill_reboot_disk_full_io_error_corruption_matrix",
+        "real_continuous_72_hour_soak",
+        "independent_signed_observation"
+      ],
+      "shortenedOrSimulatedSoakAccepted": false
+    },
+    {
+      "issue": 14,
+      "collectorId": "external-key-owner-drill-v1",
+      "state": "externally_blocked",
+      "requiredOwnerClass": "off_repository_key_owner_and_independent_observer",
+      "requiredFacts": [
+        "external_key_custody",
+        "rotation_and_revocation",
+        "rollback_and_compromise_drill",
+        "fresh_signed_receipts"
+      ],
+      "repositoryFixtureKeyAccepted": false
+    },
+    {
+      "issue": 21,
+      "collectorId": "authenticated-codex-role-canary-v1",
+      "state": "externally_blocked",
+      "requiredOwnerClass": "separated_authenticated_codex_principals",
+      "requiredFacts": [
+        "distinct_unix_principals",
+        "distinct_codex_home_and_session_identity",
+        "real_authenticated_author_canary",
+        "fresh_independent_reviewer_canary",
+        "exact_release_binding"
+      ],
+      "singleCredentialRoleAliasAccepted": false
+    },
+    {
+      "issue": 22,
+      "collectorId": "external-authority-set-v1",
+      "state": "externally_blocked",
+      "requiredOwnerClass": "kms_hsm_worm_release_deployment_and_submission_operators",
+      "requiredFacts": [
+        "real_kms_or_hsm_signatures",
+        "worm_retention_receipts",
+        "release_and_deployment_receipts",
+        "portal_identity_and_submission_receipts",
+        "independent_end_to_end_verification"
+      ],
+      "localFixtureAuthorityAccepted": false
+    }
+  ],
+  "globalAuthorityFlags": {
+    "externalAuthorityGranted": false,
+    "targetHostQualified": false,
+    "productionActivated": false,
+    "writerCutoverAuthorized": false,
+    "nodeRetirementAuthorized": false
+  }
+}

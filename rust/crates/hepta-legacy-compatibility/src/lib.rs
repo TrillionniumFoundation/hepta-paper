@@ -5,9 +5,11 @@
 //! migration draft, not the historical Node wire format, and remain available
 //! only so already-created draft receipts do not silently change identity.
 
+mod module_adapter;
 mod node_adapter;
 mod production;
 
+pub use module_adapter::*;
 pub use node_adapter::*;
 pub use production::*;
 

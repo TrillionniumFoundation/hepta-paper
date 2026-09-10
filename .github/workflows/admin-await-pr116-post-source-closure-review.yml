@@ -1,0 +1,74 @@
+name: admin-await-pr116-post-source-closure-review
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/pr116-source-closure-review-trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  await-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Wait for an exact-head independent PR 116 decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          qualified_path=.github/admin-status/pr116-post-source-closure-qualified.json
+          qualified="$(gh api "repos/$repo/contents/$qualified_path?ref=$admin_branch" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          test "$(jq -r '.allTerminalSuccess' <<<"$qualified")" = true
+          test "$(jq -r '.promotionCount' <<<"$qualified")" = 20
+          head="$(jq -r '.head' <<<"$qualified")"
+          tree="$(jq -r '.tree' <<<"$qualified")"
+          merge="$(jq -r '.prospectiveMerge' <<<"$qualified")"
+          pr="$(jq -r '.pullRequest' <<<"$qualified")"
+          test "$pr" = 116
+          live="$(gh api "repos/$repo/pulls/$pr")"
+          test "$(jq -r '.head.sha' <<<"$live")" = "$head"
+          test "$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')" = "$tree"
+          test "$(jq -r '.merge_commit_sha' <<<"$live")" = "$merge"
+          gh api -X DELETE "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null 2>&1 <<'JSON' || true
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          gh api -X POST "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          approved_by=
+          for attempt in $(seq 1 100); do
+            live="$(gh api "repos/$repo/pulls/$pr")"
+            test "$(jq -r '.head.sha' <<<"$live")" = "$head"
+            test "$(jq -r '.merge_commit_sha' <<<"$live")" = "$merge"
+            gh api "repos/$repo/pulls/$pr/reviews?per_page=100" > "$RUNNER_TEMP/reviews.json"
+            approved_by="$(jq -r --arg head "$head" '[.[] | select(.state == "APPROVED" and .commit_id == $head and (.user.login == "Franksudoman" or .user.login == "Tomasrgbsf")) | .user.login] | unique | join(",")' "$RUNNER_TEMP/reviews.json")"
+            if [ -n "$approved_by" ]; then break; fi
+            if [ "$attempt" = 100 ]; then echo 'no fresh exact-head independent approval' >&2; exit 1; fi
+            sleep 30
+          done
+          jq -n --argjson pr "$pr" --arg head "$head" --arg tree "$tree" --arg prospectiveMerge "$merge" --arg approvedBy "$approved_by" '{schemaVersion:1,kind:"PublicCandidatePostSourceClosureReviewStatus",pullRequest:$pr,head:$head,tree:$tree,prospectiveMerge:$prospectiveMerge,approvedBy:($approvedBy|split(",")),independentReviewAccepted:true,repositorySourceQualified:true,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          out=.github/admin-status/pr116-post-source-closure-approved.json
+          existing="$(gh api "repos/$repo/contents/$out?ref=$admin_branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record post-source-closure PR116 approval' -f content="$content" -f sha="$existing" -f branch="$admin_branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record post-source-closure PR116 approval' -f content="$content" -f branch="$admin_branch" >/dev/null; fi
+          body="$(jq -r '.body' <<<"$live")"
+          body="$(printf '%s\n' "$body" | sed '/<!-- repository-source-review:start -->/,/<!-- repository-source-review:end -->/d')"
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          $body
+
+          <!-- repository-source-review:start -->
+          ## Fresh independent repository-source decision
+
+          Exact head \`$head\`, tree \`$tree\`, and prospective merge \`$merge\` are approved by \`$approved_by\` for repository-local source qualification only. External authority, production activation, writer cutover and Node retirement remain false.
+          <!-- repository-source-review:end -->
+          EOF
+          gh api -X PATCH "repos/$repo/pulls/$pr" -f body=@"$RUNNER_TEMP/body.md" >/dev/null
+          cat "$RUNNER_TEMP/status.json"

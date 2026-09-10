@@ -1,0 +1,93 @@
+name: admin-converge-main-source-closure-v8-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-converge-main-source-closure-v8-20260911.yml
+      - .github/admin-tools/converge_internal_source_v6.py
+      - .github/admin-tools/converge_internal_source_v7.py
+      - .github/admin-tools/converge_internal_source_v8.py
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+  statuses: read
+
+concurrency:
+  group: admin-converge-main-source-closure-v7-20260911
+  cancel-in-progress: false
+
+env:
+  SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  AUDIT_BRANCH: codex/source-audit-export-20260911
+  NODE_VERSION: 22.23.1
+  RUST_VERSION: 1.98.0
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Check out immutable orchestration source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: publisher
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out current product candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.SOURCE_BRANCH }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up exact Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: target/package-lock.json
+
+      - name: Install dependencies and compile-check the complete state machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v$NODE_VERSION"
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          (cd target/rust && rustup override set "$RUST_VERSION")
+          test "$(rustc +$RUST_VERSION --version | awk '{print $2}')" = "$RUST_VERSION"
+          npm --prefix target ci --ignore-scripts --no-audit --no-fund
+          python3 -m py_compile \
+            publisher/.github/admin-tools/converge_internal_source_v6.py \
+            publisher/.github/admin-tools/converge_internal_source_v7.py \
+            publisher/.github/admin-tools/converge_internal_source_v8.py
+
+      - name: Converge source, stable checks, exact review, and ordinary protected merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 publisher/.github/admin-tools/converge_internal_source_v8.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --source-branch "$SOURCE_BRANCH" \
+            --audit-branch "$AUDIT_BRANCH" \
+            --target-dir target \
+            --evidence-dir "$RUNNER_TEMP/internal-source-v8"
+
+      - name: Upload bounded convergence evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: internal-source-v8-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/internal-source-v8
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 9

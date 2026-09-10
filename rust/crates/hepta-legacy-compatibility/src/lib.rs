@@ -5,7 +5,9 @@
 //! migration draft, not the historical Node wire format, and remain available
 //! only so already-created draft receipts do not silently change identity.
 
+mod node_adapter;
 mod production;
+pub use node_adapter::*;
 pub use production::*;
 
 use std::{collections::BTreeMap, str::FromStr};

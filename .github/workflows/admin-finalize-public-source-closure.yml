@@ -1,0 +1,157 @@
+name: admin-finalize-public-source-closure
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/public-source-closure-finalize-trigger
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - name: Qualify, independently review and close the public repository-source set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          candidate_branch=codex/rust-plan-v4.1-final3-20260909
+          wave2_path=.github/admin-status/source-closure-wave2-complete.json
+          wave2="$(gh api "repos/$repo/contents/$wave2_path?ref=$admin_branch" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          for key in externalAuthorityGranted productionActivated writerCutoverAuthorized nodeRetirementAuthorized; do test "$(jq -r ".$key" <<<"$wave2")" = false; done
+          pr=116
+          live="$(gh api "repos/$repo/pulls/$pr")"
+          test "$(jq -r '.state' <<<"$live")" = open
+          test "$(jq -r '.draft' <<<"$live")" = true
+          test "$(jq -r '.head.ref' <<<"$live")" = "$candidate_branch"
+          head="$(jq -r '.head.sha' <<<"$live")"
+          base_sha="$(jq -r '.base.sha' <<<"$live")"
+          merge="$(jq -r '.merge_commit_sha' <<<"$live")"
+          tree="$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')"
+
+          checkout="$RUNNER_TEMP/candidate"
+          git -c protocol.version=2 clone --no-checkout "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" "$checkout"
+          git -C "$checkout" -c advice.detachedHead=false checkout --detach "$head"
+          test "$(git -C "$checkout" rev-parse HEAD^{tree})" = "$tree"
+          node "$checkout/docs/tools/validate-development-docs.mjs"
+          node "$checkout/docs/tools/validate-module-documentation.mjs"
+          python3 "$checkout/docs/rust/tools/validate-program-truth.py"
+          node "$checkout/docs/tools/validate-source-implementation-evidence.mjs" --root "$checkout"
+          node --test "$checkout/paper-core/tests/source-implementation-evidence.test.mjs"
+          test -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all)"
+          promotion_count="$(jq '.promotedItemIds | length' "$checkout/docs/system/truth/source-implementation-evidence.v1.json")"
+          test "$promotion_count" -ge 20
+
+          required='["rust-qualification-subject-v3","rust-effective-source-qualification","workflow-lint","rust-plan-v3-external-contracts","rust-source-snapshot","rust-program-truth","rust-qualification-artifacts","rust-foundation","rust-migration-acceptance","rust-broker-installed-qualification-v2","hepta-paper-ci","exact-head-source-validation","module-documentation-integrity","hepta-paper-gpu-scientific","rust-supply-chain","rust-broker-installed-qualification"]'
+          for attempt in $(seq 1 90); do
+            current_live="$(gh api "repos/$repo/pulls/$pr")"
+            test "$(jq -r '.head.sha' <<<"$current_live")" = "$head"
+            test "$(jq -r '.merge_commit_sha' <<<"$current_live")" = "$merge"
+            gh api "repos/$repo/actions/runs?head_sha=$head&event=pull_request&per_page=100" > "$RUNNER_TEMP/runs.json"
+            jq --argjson required "$required" '[.workflow_runs | sort_by(.created_at) | group_by(.name) | map(last) | .[] | select(.name as $n | $required | index($n)) | {name,status,conclusion,id,run_attempt}] | sort_by(.name)' "$RUNNER_TEMP/runs.json" > "$RUNNER_TEMP/current-runs.json"
+            count="$(jq 'length' "$RUNNER_TEMP/current-runs.json")"
+            pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/current-runs.json")"
+            failed="$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' "$RUNNER_TEMP/current-runs.json")"
+            if [ "$count" = 16 ] && [ "$pending" = 0 ]; then test "$failed" = 0; break; fi
+            if [ "$attempt" = 90 ]; then echo "final public CI did not settle: count=$count pending=$pending failed=$failed" >&2; cat "$RUNNER_TEMP/current-runs.json" >&2; exit 1; fi
+            sleep 30
+          done
+          gh api -X DELETE "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null 2>&1 <<'JSON' || true
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          gh api -X POST "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          approved_by=
+          for attempt in $(seq 1 110); do
+            current_live="$(gh api "repos/$repo/pulls/$pr")"
+            test "$(jq -r '.head.sha' <<<"$current_live")" = "$head"
+            test "$(jq -r '.merge_commit_sha' <<<"$current_live")" = "$merge"
+            gh api "repos/$repo/pulls/$pr/reviews?per_page=100" > "$RUNNER_TEMP/reviews.json"
+            approved_by="$(jq -r --arg head "$head" '[.[] | select(.state == "APPROVED" and .commit_id == $head and (.user.login == "Franksudoman" or .user.login == "Tomasrgbsf")) | .user.login] | unique | join(",")' "$RUNNER_TEMP/reviews.json")"
+            if [ -n "$approved_by" ]; then break; fi
+            if [ "$attempt" = 110 ]; then echo 'final public exact-head approval absent' >&2; exit 1; fi
+            sleep 30
+          done
+
+          SUBJECT_HEAD="$head" SUBJECT_TREE="$tree" CHECKOUT="$checkout" python3 - <<'PY'
+          from __future__ import annotations
+          import json, os, re
+          from pathlib import Path
+          from typing import Any
+
+          root=Path(os.environ['CHECKOUT'])
+          items=json.loads((root/'docs/system/truth/work-items.v2.json').read_text())['items']
+          manifests={}
+          for path in (root/'docs/modules/manifests').glob('*.json'):
+              value=json.loads(path.read_text())
+              if isinstance(value,dict) and isinstance(value.get('moduleId'),str): manifests[value['moduleId']]=value
+          issue_map={'#25':'protected_main_governance','#28':'private_legacy_replay','#17':'independent_target_host','#12':'destructive_storage_and_72h_soak','#14':'independent_key_owner','#21':'authenticated_codex_principals','#22':'kms_worm_release_portal_submission'}
+          tokens={'blocked_external','external authority','external_authority','independent owner','independent reviewer','target host','target-host','production host','production-host','credential custody','key custody','kms','hsm','worm','portal','submission','72 hour','72-hour','soak','reboot','disk full','disk-full','destructive','production canary','writer cutover','node retirement','node-retirement','ruleset','branch protection','provider owner','release authority','operator acceptance','team provisioning','owner provisioning','physical topology','actual deployment','real credential','real provider','private archive','custody runner'}
+          def strings(value:Any):
+              if isinstance(value,str): yield value
+              elif isinstance(value,dict):
+                  for k,v in value.items(): yield str(k); yield from strings(v)
+              elif isinstance(value,list):
+                  for v in value: yield from strings(v)
+          rows=[]
+          for item_id,row in sorted(items.items()):
+              if row.get('state') not in {'design_ready','blocked_external'}: continue
+              text=' '.join(strings({'item':row,'manifest':manifests.get(row.get('moduleId'),{})})).lower()
+              issues=sorted(x for x in issue_map if x in text)
+              packages=sorted(set(re.findall(r'\b(?:EXT|GAP)-[A-Z0-9-]+\b',text.upper())))
+              hits=sorted(x for x in tokens if x in text)
+              external=row.get('state')=='blocked_external' or bool(issues) or bool(packages) or bool(hits)
+              rows.append({'id':item_id,'state':row.get('state'),'moduleId':row.get('moduleId'),'classification':'external_evidence_or_activation' if external else 'repository_source_unresolved','canonicalIssues':issues,'packageRefs':packages,'externalTokenHits':hits})
+          unresolved=[x for x in rows if x['classification']=='repository_source_unresolved']
+          result={'schemaVersion':1,'kind':'FinalPublicRepositorySourceClosureStatus','subject':{'head':os.environ['SUBJECT_HEAD'],'tree':os.environ['SUBJECT_TREE']},'remainingItemCount':len(rows),'externalEvidenceOrActivationCount':len(rows)-len(unresolved),'repositorySourceUnresolvedCount':len(unresolved),'repositorySourceFullyClosed':not unresolved,'rows':rows,'authorityClaims':{'externalAuthorityGranted':False,'productionActivated':False,'writerCutoverAuthorized':False,'nodeRetirementAuthorized':False}}
+          Path(os.environ['RUNNER_TEMP'],'final-classification.json').write_text(json.dumps(result,indent=2)+'\n')
+          PY
+
+          jq -n --argjson pr "$pr" --arg baseSha "$base_sha" --arg head "$head" --arg tree "$tree" --arg prospectiveMerge "$merge" --argjson promotionCount "$promotion_count" --arg approvedBy "$approved_by" --slurpfile runs "$RUNNER_TEMP/current-runs.json" --slurpfile classification "$RUNNER_TEMP/final-classification.json" '{schemaVersion:1,kind:"FinalPublicRepositorySourceClosure",pullRequest:$pr,baseSha:$baseSha,head:$head,tree:$tree,prospectiveMerge:$prospectiveMerge,promotionCount:$promotionCount,workflowRuns:$runs[0],allTerminalSuccess:true,approvedBy:($approvedBy|split(",")),independentReviewAccepted:true,classification:$classification[0],repositorySourceFullyClosed:$classification[0].repositorySourceFullyClosed,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/final.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/final.json")"
+          out=.github/admin-status/public-repository-source-closure-final.json
+          existing="$(gh api "repos/$repo/contents/$out?ref=$admin_branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): refresh final public source-closure status' -f content="$content" -f sha="$existing" -f branch="$admin_branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record final public source-closure status' -f content="$content" -f branch="$admin_branch" >/dev/null; fi
+
+          body="$(jq -r '.body' <<<"$current_live")"
+          body="$(printf '%s\n' "$body" | sed '/<!-- final-public-source-closure:start -->/,/<!-- final-public-source-closure:end -->/d')"
+          unresolved="$(jq '.repositorySourceUnresolvedCount' "$RUNNER_TEMP/final-classification.json")"
+          external="$(jq '.externalEvidenceOrActivationCount' "$RUNNER_TEMP/final-classification.json")"
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          $body
+
+          <!-- final-public-source-closure:start -->
+          ## Final repository-source closed classification
+
+          \`\`\`text
+          head                       $head
+          tree                       $tree
+          prospective merge          $merge
+          source-evidence promotions $promotion_count
+          exact CI                   16/16 terminal success
+          independent approval       $approved_by
+          source unresolved          $unresolved
+          external/activation items  $external
+          \`\`\`
+
+          Repository-source closure does not grant target-host, external-authority, production, writer-cutover or Node-retirement authority. PR #116 remains Draft.
+          <!-- final-public-source-closure:end -->
+          EOF
+          gh api -X PATCH "repos/$repo/pulls/$pr" -f body=@"$RUNNER_TEMP/body.md" >/dev/null
+          if [ "$unresolved" -ne 0 ]; then
+            jq '.classification.rows[] | select(.classification == "repository_source_unresolved")' "$RUNNER_TEMP/final.json" >&2
+            exit 2
+          fi
+          cat "$RUNNER_TEMP/final.json"

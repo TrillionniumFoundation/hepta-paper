@@ -1,0 +1,123 @@
+name: admin-apply-global-source-closure
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+
+permissions:
+  contents: write
+
+concurrency:
+  group: admin-apply-global-source-closure
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out immutable admin payload
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: admin
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out exact target branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/global-plan-v1.1-repository-source-closure-20260910
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify, apply and validate exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = TrillionniumFoundation/hepta-paper
+          test "$GITHUB_EVENT_NAME" = push
+          test "$GITHUB_REF" = refs/heads/codex/admin-apply-global-source-closure-20260910
+          test "$(git -C target rev-parse HEAD)" = d90efa3bee65a782d276479aa003656ae035cdf4
+          test -z "$(git -C target status --porcelain=v1 --untracked-files=all)"
+
+          encoded="$RUNNER_TEMP/source-closure.patch.gz.b64"
+          patch="$RUNNER_TEMP/source-closure.patch"
+          cat admin/.github/admin-data/source-closure.patch.gz.b64.part* > "$encoded"
+          printf '%s  %s\n' 0e7c5579636c3095b8349073e6f7ad4b7b413e04c53637148b5cbc40b26ff66b "$encoded" | sha256sum -c -
+          base64 -d "$encoded" | gzip -d > "$patch"
+          printf '%s  %s\n' 7b89dbb71b17f19b0602a44fdd0af9a4b0e212c9ce1d5f08ccedbf6eb1d68e7d "$patch" | sha256sum -c -
+
+          git -C target apply --check -p4 "$patch"
+          git -C target apply -p4 "$patch"
+          git -C target diff --check
+
+          cat > "$RUNNER_TEMP/expected-paths" <<'EOF'
+          docs/README.md
+          docs/modules/MODULE_DOCUMENTATION_MATRIX.md
+          docs/modules/manifests/candidate-router.v1.json
+          docs/modules/manifests/performance-qualification.v1.json
+          docs/modules/manifests/snapshot-builder.v1.json
+          docs/modules/specs/candidate-router.md
+          docs/modules/specs/compatibility-kernel.md
+          docs/modules/specs/execution-dispatcher.md
+          docs/modules/specs/module-registry.md
+          docs/modules/specs/observability.md
+          docs/modules/specs/performance-qualification.md
+          docs/modules/specs/program-truth.md
+          docs/modules/specs/protocol-kernel.md
+          docs/modules/specs/readonly-control.md
+          docs/modules/specs/rust-local-vertical.md
+          docs/modules/specs/scientific-evidence.md
+          docs/modules/specs/snapshot-builder.md
+          docs/modules/specs/source-qualification.md
+          docs/modules/specs/workspace-authority.md
+          docs/system/BACKLOG.md
+          docs/system/CURRENT_STATUS.md
+          docs/system/DOCUMENTATION_GOVERNANCE.md
+          docs/system/TRACEABILITY.md
+          docs/system/truth/capabilities.v1.json
+          docs/system/truth/milestones.v1.json
+          docs/system/truth/modules.v1.json
+          docs/system/truth/program.v2.json
+          docs/system/truth/source-implementation-evidence.v1.json
+          docs/system/truth/work-items.v2.json
+          docs/tools/validate-development-docs.mjs
+          paper-core/tests/development-documentation-hostile.test.mjs
+          EOF
+          sed -i 's/^          //' "$RUNNER_TEMP/expected-paths"
+          git -C target status --porcelain=v1 | sed -E 's/^.. //' | sort > "$RUNNER_TEMP/actual-paths"
+          sort -o "$RUNNER_TEMP/expected-paths" "$RUNNER_TEMP/expected-paths"
+          diff -u "$RUNNER_TEMP/expected-paths" "$RUNNER_TEMP/actual-paths"
+          if grep -q '^\.github/' "$RUNNER_TEMP/actual-paths"; then
+            echo 'candidate-controlled workflow mutation is forbidden' >&2
+            exit 1
+          fi
+
+          cd target
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          python3 docs/rust/tools/test-plan-v4-qualification.py
+          node --test paper-core/tests/development-documentation-hostile.test.mjs
+
+      - name: Commit and fast-forward exact source-closure branch
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          test "$(git rev-parse HEAD)" = d90efa3bee65a782d276479aa003656ae035cdf4
+          git config user.name 'Qian QI'
+          git config user.email '102159240+ProfHepta@users.noreply.github.com'
+          git add --all
+          git commit -m 'feat(global): record evidence-backed repository source closure' -m 'Promote only source-complete work items with explicit implementation/test evidence and all external/production authority flags false.' -m 'Signed-off-by: Qian QI <102159240+ProfHepta@users.noreply.github.com>'
+          new_head="$(git rev-parse HEAD)"
+          new_tree="$(git rev-parse HEAD^{tree})"
+          remote="https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --porcelain "$remote" HEAD:refs/heads/codex/global-plan-v1.1-repository-source-closure-20260910
+          unset PUSH_TOKEN remote
+          printf 'new_head=%s\nnew_tree=%s\n' "$new_head" "$new_tree"

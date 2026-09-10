@@ -1,0 +1,185 @@
+name: admin-audit-remaining-global-gaps
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/remaining-global-gaps-audit-trigger
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Resolve approved current candidate
+        id: subject
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          status_path=.github/admin-status/pr116-post-source-closure-approved.json
+          approved="$(gh api "repos/$repo/contents/$status_path?ref=$admin_branch" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          test "$(jq -r '.independentReviewAccepted' <<<"$approved")" = true
+          test "$(jq -r '.repositorySourceQualified' <<<"$approved")" = true
+          head="$(jq -r '.head' <<<"$approved")"
+          tree="$(jq -r '.tree' <<<"$approved")"
+          live="$(gh api "repos/$repo/pulls/116")"
+          test "$(jq -r '.head.sha' <<<"$live")" = "$head"
+          test "$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')" = "$tree"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact approved tree
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.subject.outputs.head }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build closed remaining-gap classification
+        env:
+          SUBJECT_HEAD: ${{ steps.subject.outputs.head }}
+          SUBJECT_TREE: ${{ steps.subject.outputs.tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+          import json, os, re
+          from pathlib import Path
+          from typing import Any
+
+          root = Path.cwd()
+          work = json.loads((root/'docs/system/truth/work-items.v2.json').read_text())['items']
+          manifests = {}
+          for path in sorted((root/'docs/modules/manifests').glob('*.json')):
+              value = json.loads(path.read_text())
+              if isinstance(value, dict) and isinstance(value.get('moduleId'), str):
+                  manifests[value['moduleId']] = value
+
+          external_issue_map = {
+              '#25': 'protected_main_governance',
+              '#28': 'private_legacy_replay',
+              '#17': 'independent_target_host',
+              '#12': 'destructive_storage_and_72h_soak',
+              '#14': 'independent_key_owner',
+              '#21': 'authenticated_codex_principals',
+              '#22': 'kms_worm_release_portal_submission',
+          }
+          external_tokens = {
+              'blocked_external','external authority','external_authority','independent owner','independent reviewer',
+              'target host','target-host','production host','production-host','credential custody','key custody',
+              'kms','hsm','worm','portal','submission','72 hour','72-hour','soak','reboot','disk full','disk-full',
+              'destructive','canary','cutover','node retirement','node-retirement','ruleset','branch protection',
+              'provider owner','release authority','operator acceptance','team provisioning','owner provisioning',
+              'physical topology','actual deployment','real credential','real provider','private archive','custody runner',
+          }
+
+          def strings(value: Any):
+              if isinstance(value, str):
+                  yield value
+              elif isinstance(value, dict):
+                  for key, child in value.items():
+                      yield str(key)
+                      yield from strings(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from strings(child)
+
+          rows=[]
+          for item_id,row in sorted(work.items()):
+              state=row.get('state')
+              if state not in {'design_ready','blocked_external'}:
+                  continue
+              module_id=row.get('moduleId')
+              manifest=manifests.get(module_id,{})
+              text=' '.join(strings({'item':row,'manifest':manifest})).lower()
+              issue_refs=sorted(ref for ref in external_issue_map if ref in text)
+              package_refs=sorted(set(re.findall(r'\b(?:EXT|GAP)-[A-Z0-9-]+\b', text.upper())))
+              token_hits=sorted(token for token in external_tokens if token in text)
+              explicit_external=(state=='blocked_external' or bool(issue_refs) or bool(package_refs) or bool(token_hits))
+              classification='external_evidence_or_activation' if explicit_external else 'repository_source_unresolved'
+              rows.append({
+                  'id':item_id,
+                  'state':state,
+                  'moduleId':module_id,
+                  'classification':classification,
+                  'canonicalIssues':issue_refs,
+                  'packageRefs':package_refs,
+                  'externalTokenHits':token_hits,
+              })
+          unresolved=[x for x in rows if x['classification']=='repository_source_unresolved']
+          external=[x for x in rows if x['classification']=='external_evidence_or_activation']
+          result={
+              'schemaVersion':1,
+              'kind':'RemainingGlobalGapClosedClassificationV1',
+              'subject':{'head':os.environ['SUBJECT_HEAD'],'tree':os.environ['SUBJECT_TREE']},
+              'remainingItemCount':len(rows),
+              'externalEvidenceOrActivationCount':len(external),
+              'repositorySourceUnresolvedCount':len(unresolved),
+              'repositorySourceFullyClosed':len(unresolved)==0,
+              'rows':rows,
+              'authorityClaims':{
+                  'externalAuthorityGranted':False,
+                  'productionActivated':False,
+                  'writerCutoverAuthorized':False,
+                  'nodeRetirementAuthorized':False,
+              },
+          }
+          Path(os.environ['RUNNER_TEMP'],'remaining-global-gaps.json').write_text(json.dumps(result,indent=2,sort_keys=False)+'\n')
+          lines=[
+              '# Remaining Global Plan gap classification','',
+              f"- Subject: `{os.environ['SUBJECT_HEAD']}` / `{os.environ['SUBJECT_TREE']}`",
+              f"- Remaining items: **{len(rows)}**",
+              f"- External evidence/activation: **{len(external)}**",
+              f"- Repository source unresolved: **{len(unresolved)}**",'',
+              '| Work item | State | Module | Classification | Canonical issues/packages |','|---|---|---|---|---|'
+          ]
+          for x in rows:
+              refs=', '.join(x['canonicalIssues']+x['packageRefs']) or '—'
+              lines.append(f"| `{x['id']}` | `{x['state']}` | `{x['moduleId']}` | `{x['classification']}` | {refs} |")
+          Path(os.environ['RUNNER_TEMP'],'remaining-global-gaps.md').write_text('\n'.join(lines)+'\n')
+          PY
+          jq -e '.remainingItemCount == (.rows|length)' "$RUNNER_TEMP/remaining-global-gaps.json" >/dev/null
+          jq -e '.authorityClaims | all(. == false)' "$RUNNER_TEMP/remaining-global-gaps.json" >/dev/null
+
+      - name: Publish audit status and open or refresh the exact repository-source blocker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          status_path=.github/admin-status/remaining-global-gaps-audit.json
+          content="$(base64 -w0 "$RUNNER_TEMP/remaining-global-gaps.json")"
+          existing="$(gh api "repos/$repo/contents/$status_path?ref=$admin_branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh api -X PUT "repos/$repo/contents/$status_path" -f message='chore(admin): refresh remaining Global Plan gap audit' -f content="$content" -f sha="$existing" -f branch="$admin_branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$status_path" -f message='chore(admin): record remaining Global Plan gap audit' -f content="$content" -f branch="$admin_branch" >/dev/null; fi
+          unresolved="$(jq '.repositorySourceUnresolvedCount' "$RUNNER_TEMP/remaining-global-gaps.json")"
+          title='SOURCE: close remaining Global Plan repository-owned implementations'
+          issue="$(gh api "repos/$repo/issues?state=open&per_page=100" --jq ".[] | select(.pull_request == null and .title == \"$title\") | .number" | head -n1)"
+          if [ "$unresolved" -gt 0 ]; then
+            cat > "$RUNNER_TEMP/issue.md" <<EOF
+          This issue is generated from an exact-tree closed classification. It tracks only work items that remain \`design_ready\` without a canonical external/activation dependency in either the work item or its module manifest.
+
+          $(cat "$RUNNER_TEMP/remaining-global-gaps.md")
+
+          Do not close by changing state labels alone. Each item requires implementation, tests, exact evidence hashes, full CI, and fresh review. This issue grants no external or production authority.
+          EOF
+            if [ -z "$issue" ]; then
+              gh api -X POST "repos/$repo/issues" -f title="$title" -f body=@"$RUNNER_TEMP/issue.md" >/dev/null
+            else
+              gh api -X PATCH "repos/$repo/issues/$issue" -f body=@"$RUNNER_TEMP/issue.md" >/dev/null
+            fi
+          elif [ -n "$issue" ]; then
+            gh api -X PATCH "repos/$repo/issues/$issue" -f state=closed -f state_reason=completed >/dev/null
+          fi
+          cat "$RUNNER_TEMP/remaining-global-gaps.json"

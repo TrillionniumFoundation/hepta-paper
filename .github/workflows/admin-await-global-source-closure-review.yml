@@ -1,0 +1,76 @@
+name: admin-await-global-source-closure-review
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/source-closure-review-trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  await-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for a fresh independent exact-head approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          branch=codex/global-plan-v1.1-repository-source-closure-20260910
+          base=codex/rust-plan-v4.1-final3-20260909
+          head="$(gh api "repos/$repo/branches/$branch" --jq '.commit.sha')"
+          tree="$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')"
+          pr="$(gh api "repos/$repo/pulls?state=open&head=TrillionniumFoundation:$branch&base=$base&per_page=10" --jq '.[0].number // empty')"
+          test -n "$pr"
+          ci_path=.github/admin-status/global-source-closure-qualified.json
+          ci="$(gh api "repos/$repo/contents/$ci_path?ref=codex/admin-apply-global-source-closure-20260910" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          test "$(jq -r '.head' <<<"$ci")" = "$head"
+          test "$(jq -r '.tree' <<<"$ci")" = "$tree"
+          test "$(jq -r '.allTerminalSuccess' <<<"$ci")" = true
+          gh api -X POST "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          approved_by=
+          for attempt in $(seq 1 80); do
+            gh api "repos/$repo/pulls/$pr/reviews?per_page=100" > "$RUNNER_TEMP/reviews.json"
+            approved_by="$(jq -r --arg head "$head" '
+              [.[] | select(.state == "APPROVED" and .commit_id == $head and (.user.login == "Franksudoman" or .user.login == "Tomasrgbsf")) | .user.login] | unique | join(",")
+            ' "$RUNNER_TEMP/reviews.json")"
+            if [ -n "$approved_by" ]; then break; fi
+            if [ "$attempt" = 80 ]; then
+              echo "no exact-head independent approval after polling" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+          jq -n --arg head "$head" --arg tree "$tree" --arg approvedBy "$approved_by" --argjson pr "$pr" \
+            '{schemaVersion:1,kind:"RepositorySourceClosureIndependentReviewStatus",pullRequest:$pr,head:$head,tree:$tree,approvedBy:($approvedBy|split(",")),independentReviewAccepted:true,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' \
+            > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          status_path=.github/admin-status/global-source-closure-approved.json
+          existing="$(gh api "repos/$repo/contents/$status_path?ref=codex/admin-apply-global-source-closure-20260910" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$repo/contents/$status_path" -f message='chore(admin): record exact source-closure approval' -f content="$content" -f sha="$existing" -f branch=codex/admin-apply-global-source-closure-20260910 >/dev/null
+          else
+            gh api -X PUT "repos/$repo/contents/$status_path" -f message='chore(admin): record exact source-closure approval' -f content="$content" -f branch=codex/admin-apply-global-source-closure-20260910 >/dev/null
+          fi
+          body="$(gh api "repos/$repo/pulls/$pr" --jq '.body')"
+          body="$(printf '%s\n' "$body" | sed '/<!-- source-closure-review:start -->/,/<!-- source-closure-review:end -->/d')"
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          $body
+
+          <!-- source-closure-review:start -->
+          ## Independent exact-head review
+
+          Current head \`$head\` / tree \`$tree\` is approved by \`$approved_by\` for repository-local source-state closure only. The approval cannot be transferred after any head/tree/base movement and grants no external or production authority.
+          <!-- source-closure-review:end -->
+          EOF
+          gh api -X PATCH "repos/$repo/pulls/$pr" -f body=@"$RUNNER_TEMP/body.md" >/dev/null
+          cat "$RUNNER_TEMP/status.json"

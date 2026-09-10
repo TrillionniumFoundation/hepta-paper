@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "kind": "MainSourceClosureConvergenceMonitorV1",
+  "runId": 34534382410,
+  "workflowName": "admin-converge-main-source-closure-v4-20260911",
+  "headSha": "165241fc61ab8d5ffee921b050fe35fbc6fae6f3",
+  "status": "completed",
+  "conclusion": "failure",
+  "createdAt": "2026-09-10T21:51:01Z",
+  "updatedAt": "2026-09-10T21:51:17Z",
+  "jobs": [
+    {
+      "name": "converge",
+      "status": "completed",
+      "conclusion": "failure",
+      "startedAt": "2026-09-10T21:51:04Z",
+      "completedAt": "2026-09-10T21:51:16Z"
+    }
+  ],
+  "failedJobNames": [
+    "converge"
+  ],
+  "failedLogBytes": 4199,
+  "failedLogSha256": "sha256:a0adaf5424d623ac6553b67c3d36120cff9ae0ae7e1a01af6d76713f7f9229ae"
+}

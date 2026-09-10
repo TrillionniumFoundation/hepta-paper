@@ -1,0 +1,376 @@
+name: admin-converge-internal-source-closure-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-converge-internal-source-closure-20260911.yml
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: admin-publish-internal-source-closure-20260911
+  cancel-in-progress: false
+
+env:
+  SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  PUBLISHER_BRANCH: codex/source-audit-export-20260911
+  STACK_BASE_PR: "119"
+  NODE_VERSION: 22.23.1
+  RUST_VERSION: 1.98.0
+  MIN_WORKFLOW_FAMILIES: "16"
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Resolve current stacked branch and PR
+        id: subject
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          base="$(gh api "repos/$repo/pulls/$STACK_BASE_PR")"
+          test "$(jq -r '.state' <<<"$base")" = open
+          base_ref="$(jq -r '.head.ref' <<<"$base")"
+          base_sha="$(jq -r '.head.sha' <<<"$base")"
+          source_sha="$(gh api "repos/$repo/branches/$SOURCE_BRANCH" --jq '.commit.sha')"
+          pr="$(gh api "repos/$repo/pulls?state=open&head=TrillionniumFoundation:$SOURCE_BRANCH&base=$base_ref&per_page=10" --jq '.[0].number // empty')"
+          if [ -z "$pr" ]; then
+            pr="$(gh api -X POST "repos/$repo/pulls" -f title='feat(truth): close internal repository-source states' -f head="$SOURCE_BRANCH" -f base="$base_ref" -F draft=true -f body='Strict internal source closure; exact metadata pending validated publication.' --jq '.number')"
+          fi
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for first-stage exact-head workflows
+        id: first_ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.subject.outputs.pr }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          for attempt in $(seq 1 180); do
+            head="$(gh api "repos/$repo/pulls/$PR_NUMBER" --jq '.head.sha')"
+            gh api "repos/$repo/actions/runs?head_sha=$head&event=pull_request&per_page=100" > "$RUNNER_TEMP/runs.json"
+            jq '[.workflow_runs | sort_by(.created_at) | group_by(.name) | map(last) | .[] | {name,status,conclusion,id,run_attempt,created_at}] | sort_by(.name)' "$RUNNER_TEMP/runs.json" > "$RUNNER_TEMP/current-first.json"
+            count="$(jq 'length' "$RUNNER_TEMP/current-first.json")"
+            pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/current-first.json")"
+            failed="$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' "$RUNNER_TEMP/current-first.json")"
+            echo "first-stage attempt=$attempt head=$head families=$count pending=$pending failed=$failed"
+            if [ "$count" -ge "$MIN_WORKFLOW_FAMILIES" ] && [ "$pending" = 0 ]; then
+              test "$failed" = 0
+              echo "head=$head" >> "$GITHUB_OUTPUT"
+              echo "families=$count" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$attempt" = 180 ]; then
+              cat "$RUNNER_TEMP/current-first.json" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Check out exact first-stage head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.first_ci.outputs.head }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up pinned toolchains
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup override set "$RUST_VERSION" --path target/rust
+          test "$(node --version)" = "v$NODE_VERSION"
+          test "$(rustc +$RUST_VERSION --version | awk '{print $2}')" = "$RUST_VERSION"
+          npm --prefix target ci --ignore-scripts --no-audit --no-fund
+
+      - name: Revalidate evidence and execute typed owner tests before promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          node paper-core/bin/verify-source-implementation-evidence.mjs
+          node --test paper-core/tests/source-implementation-evidence.test.mjs
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          python3 - "$RUNNER_TEMP/pre-promotion-owner-tests.json" <<'PY'
+          import hashlib, json, pathlib, subprocess, sys, time
+          repo = pathlib.Path.cwd().resolve()
+          output_path = pathlib.Path(sys.argv[1])
+          doc = json.loads((repo / 'docs/system/evidence/repository-source-implementation-v1.json').read_text())
+          records, bundles = doc['records'], doc['bundles']
+          requested = sorted(k for k, v in records.items() if v.get('promotionRequested') is True)
+          if len(requested) != 10:
+              raise SystemExit(f'expected exactly ten pre-audited promotion requests, got {requested}')
+          allowed = {'cargo', 'node', 'python3', 'bash'}
+          runs, seen = [], set()
+          for item_id in requested:
+              record = records[item_id]
+              if item_id.startswith(('GAP-', 'LEGACY-REPLAY-')):
+                  raise SystemExit(f'external item requested: {item_id}')
+              if any(record.get('authorityClaims', {}).values()):
+                  raise SystemExit(f'authority escalation: {item_id}')
+              for bundle_id in record['bundleIds']:
+                  bundle = bundles[bundle_id]
+                  for command in bundle['verificationCommands']:
+                      key = json.dumps(command, sort_keys=True, separators=(',', ':'))
+                      if key in seen:
+                          continue
+                      seen.add(key)
+                      if not isinstance(command, dict):
+                          raise SystemExit('untyped command')
+                      program, args = command.get('program'), command.get('args')
+                      workdir, timeout = command.get('workdir'), command.get('timeoutSeconds')
+                      if program not in allowed or not isinstance(args, list) or not all(isinstance(x, str) for x in args):
+                          raise SystemExit(f'unsafe command: {command}')
+                      if not isinstance(workdir, str) or workdir.startswith('/') or '..' in pathlib.PurePosixPath(workdir).parts:
+                          raise SystemExit(f'unsafe workdir: {workdir}')
+                      if command.get('expectedExitCode') != 0 or not isinstance(timeout, int) or not 1 <= timeout <= 600:
+                          raise SystemExit(f'unsafe limits: {command}')
+                      cwd = (repo / workdir).resolve()
+                      if repo not in (cwd, *cwd.parents):
+                          raise SystemExit(f'workdir escape: {cwd}')
+                      start = time.time()
+                      result = subprocess.run([program, *args], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+                      raw = result.stdout.encode()
+                      runs.append({'itemId': item_id, 'bundleId': bundle_id, 'program': program, 'args': args, 'workdir': workdir, 'actualExitCode': result.returncode, 'durationMilliseconds': round((time.time()-start)*1000), 'outputBytes': len(raw), 'outputSha256': 'sha256:'+hashlib.sha256(raw).hexdigest()})
+                      if result.returncode:
+                          print(result.stdout)
+                          raise SystemExit(f'owner test failed: {item_id}')
+          receipt = {'schemaVersion':1,'kind':'InternalRepositorySourcePrePromotionV1','subjectHead':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'subjectTree':subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),'requestedItemIds':requested,'commandCount':len(runs),'runs':runs,'allPassed':True,'externalAuthorityGranted':False,'targetHostQualified':False,'productionActivated':False,'writerCutoverAuthorized':False,'nodeRetirementAuthorized':False}
+          output_path.write_text(json.dumps(receipt, indent=2, sort_keys=True)+'\n')
+          print(json.dumps({'requestedItemIds':requested,'commandCount':len(runs)},sort_keys=True))
+          PY
+
+      - name: Apply exact source-state promotion and canonical registry synchronization
+        id: promote
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          python3 - "$RUNNER_TEMP/promotion.json" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path.cwd()
+          out = pathlib.Path(sys.argv[1])
+          work_path = root / 'docs/system/truth/work-items.v2.json'
+          modules_path = root / 'docs/system/truth/modules.v1.json'
+          evidence_path = root / 'docs/system/evidence/repository-source-implementation-v1.json'
+          work = json.loads(work_path.read_text())
+          modules = json.loads(modules_path.read_text())
+          evidence = json.loads(evidence_path.read_text())
+          requested = sorted(k for k,v in evidence['records'].items() if v.get('promotionRequested') is True)
+          if len(requested) != 10:
+              raise SystemExit(f'promotion set drift: {requested}')
+          promoted_modules = set()
+          for item_id in requested:
+              record = evidence['records'][item_id]
+              row = work['items'].get(item_id)
+              if not isinstance(row, dict) or row.get('state') != 'design_ready':
+                  raise SystemExit(f'non-design item in promotion set: {item_id} {row}')
+              if row.get('type') == 'external_gap' or row.get('evidenceTier') == 'external_authority':
+                  raise SystemExit(f'external item in promotion set: {item_id}')
+              if row.get('moduleId') != record.get('moduleId'):
+                  raise SystemExit(f'module mismatch: {item_id}')
+              expected_caps = sorted(row.get('capabilityIds') or ([row['capabilityId']] if row.get('capabilityId') else []))
+              if expected_caps != sorted(record.get('capabilityIds', [])):
+                  raise SystemExit(f'capability mismatch: {item_id}')
+              if any(record.get('authorityClaims', {}).values()):
+                  raise SystemExit(f'authority escalation: {item_id}')
+              row['state'] = 'source_implemented'
+              row['evidenceTier'] = 'source'
+              record['promotionRequested'] = False
+              promoted_modules.add(row['moduleId'])
+
+          module_rows = modules.get('modules', {})
+          for module_id in sorted(promoted_modules):
+              remaining = [item for item in work['items'].values() if isinstance(item, dict) and item.get('moduleId') == module_id and item.get('state') in {'not_started','design_ready'}]
+              if not remaining and isinstance(module_rows.get(module_id), dict) and module_rows[module_id].get('state') == 'design_ready':
+                  module_rows[module_id]['state'] = 'source_implemented'
+
+          manifests = {}
+          manifest_paths = {}
+          for path in sorted((root / 'docs/modules/manifests').glob('*.json')):
+              value = json.loads(path.read_text())
+              module_id = value.get('moduleId') if isinstance(value, dict) else None
+              if isinstance(module_id, str):
+                  manifests[module_id] = value
+                  manifest_paths[module_id] = path
+          changed_manifests = []
+          for module_id in sorted(promoted_modules):
+              value = manifests.get(module_id)
+              if not isinstance(value, dict):
+                  continue
+              remaining = [item for item in work['items'].values() if isinstance(item, dict) and item.get('moduleId') == module_id and item.get('state') in {'not_started','design_ready'}]
+              if remaining:
+                  continue
+              changed = False
+              for key in ('implementationStatus','implementation_status','sourceStatus'):
+                  if value.get(key) == 'design_ready':
+                      value[key] = 'source_implemented'; changed = True
+              if isinstance(value.get('implementation'), dict) and value['implementation'].get('status') == 'design_ready':
+                  value['implementation']['status'] = 'source_implemented'; changed = True
+              if changed:
+                  manifest_paths[module_id].write_text(json.dumps(value, indent=2, ensure_ascii=False)+'\n')
+                  changed_manifests.append(manifest_paths[module_id].relative_to(root).as_posix())
+
+          work_path.write_text(json.dumps(work, separators=(',', ':'), ensure_ascii=False)+'\n')
+          modules_path.write_text(json.dumps(modules, separators=(',', ':'), ensure_ascii=False)+'\n')
+          evidence_path.write_text(json.dumps(evidence, indent=2, ensure_ascii=False)+'\n')
+          result = {'schemaVersion':1,'kind':'InternalRepositorySourcePromotionV1','promotedItemIds':requested,'promotedModuleIds':sorted(promoted_modules),'changedManifests':changed_manifests,'externalAuthorityGranted':False,'targetHostQualified':False,'productionActivated':False,'writerCutoverAuthorized':False,'nodeRetirementAuthorized':False}
+          out.write_text(json.dumps(result, indent=2, sort_keys=True)+'\n')
+          print(json.dumps(result,sort_keys=True))
+          PY
+          git diff --check
+          node paper-core/bin/verify-source-implementation-evidence.mjs
+          node --test paper-core/tests/source-implementation-evidence.test.mjs
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          echo "ids=$(jq -c '.promotedItemIds' "$RUNNER_TEMP/promotion.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and CAS-push promotion
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          git config user.name 'Qian QI'
+          git config user.email '102159240+ProfHepta@users.noreply.github.com'
+          git add docs/system/truth/work-items.v2.json docs/system/truth/modules.v1.json docs/system/evidence/repository-source-implementation-v1.json docs/modules/manifests
+          test -n "$(git diff --cached --name-only)"
+          git commit -m 'feat(truth): promote verified internal source states' \
+            -m 'Promote exactly ten repository-owned work items only after strict evidence validation, typed owner tests, and first-stage exact-head CI. Preserve all external and production authority ceilings.' \
+            -m 'Signed-off-by: Qian QI <102159240+ProfHepta@users.noreply.github.com>'
+          head="$(git rev-parse HEAD)"
+          tree="$(git rev-parse HEAD^{tree})"
+          git push --force-with-lease="refs/heads/$SOURCE_BRANCH:${{ steps.first_ci.outputs.head }}" origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+
+      - name: Refresh PR metadata and request fresh review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.subject.outputs.pr }}
+          BASE_REF: ${{ steps.subject.outputs.base_ref }}
+          HEAD: ${{ steps.commit.outputs.head }}
+          TREE: ${{ steps.commit.outputs.tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ids="$(jq -r '.promotedItemIds | map("`" + . + "`") | join(", ")' "$RUNNER_TEMP/promotion.json")"
+          body="$RUNNER_TEMP/final-pr-body.md"
+          cat > "$body" <<EOF
+          ## Exact internal repository-source closure
+
+          \`\`\`text
+          stacked base PR  #$STACK_BASE_PR
+          base branch      $BASE_REF
+          head branch      $SOURCE_BRANCH
+          head commit      $HEAD
+          head tree        $TREE
+          \`\`\`
+
+          Promoted from strict source evidence: $ids
+
+          Promotion occurred only after first-stage exact-head CI was terminal green, the strict closed-world evidence verifier passed, and every typed owner-test command succeeded under Node $NODE_VERSION and Rust $RUST_VERSION. Final exact-head CI must now pass again.
+
+          No external authority, target-host qualification, production activation, writer cutover, or Node retirement is granted. A fresh independent approval must bind this final head/tree.
+          EOF
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" -f title='feat(truth): close internal repository-source states' -F body=@"$body" >/dev/null
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$STACK_BASE_PR/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+
+      - name: Wait for final exact-head workflows
+        id: final_ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_HEAD: ${{ steps.commit.outputs.head }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          for attempt in $(seq 1 180); do
+            live_head="$(gh api "repos/$repo/pulls/${{ steps.subject.outputs.pr }}" --jq '.head.sha')"
+            test "$live_head" = "$FINAL_HEAD"
+            gh api "repos/$repo/actions/runs?head_sha=$FINAL_HEAD&event=pull_request&per_page=100" > "$RUNNER_TEMP/final-runs.json"
+            jq '[.workflow_runs | sort_by(.created_at) | group_by(.name) | map(last) | .[] | {name,status,conclusion,id,run_attempt,created_at}] | sort_by(.name)' "$RUNNER_TEMP/final-runs.json" > "$RUNNER_TEMP/current-final.json"
+            count="$(jq 'length' "$RUNNER_TEMP/current-final.json")"
+            pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/current-final.json")"
+            failed="$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' "$RUNNER_TEMP/current-final.json")"
+            echo "final attempt=$attempt families=$count pending=$pending failed=$failed"
+            if [ "$count" -ge "$MIN_WORKFLOW_FAMILIES" ] && [ "$pending" = 0 ]; then
+              test "$failed" = 0
+              echo "families=$count" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$attempt" = 180 ]; then
+              cat "$RUNNER_TEMP/current-final.json" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Mark final exact head ready and retain status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.subject.outputs.pr }}
+          HEAD: ${{ steps.commit.outputs.head }}
+          TREE: ${{ steps.commit.outputs.tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr ready "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" || true
+          jq -n \
+            --argjson pullRequest "$PR_NUMBER" \
+            --arg head "$HEAD" \
+            --arg tree "$TREE" \
+            --argjson promoted '${{ steps.promote.outputs.ids }}' \
+            --argjson firstFamilies '${{ steps.first_ci.outputs.families }}' \
+            --argjson finalFamilies '${{ steps.final_ci.outputs.families }}' \
+            '{schemaVersion:1,kind:"InternalRepositorySourceClosureStatusV1",pullRequest:$pullRequest,head:$head,tree:$tree,promotedItemIds:$promoted,firstStageWorkflowFamilies:$firstFamilies,finalWorkflowFamilies:$finalFamilies,allTerminalSuccess:true,independentReviewAccepted:false,externalAuthorityGranted:false,targetHostQualified:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/final-status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/final-status.json")"
+          path=.github/admin-status/internal-source-closure-20260911.json
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/contents/$path?ref=$PUBLISHER_BRANCH" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): record internal source closure status' -f content="$content" -f sha="$existing" -f branch="$PUBLISHER_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): record internal source closure status' -f content="$content" -f branch="$PUBLISHER_BRANCH" >/dev/null
+          fi
+
+      - name: Upload promotion evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: internal-source-promotion-${{ steps.commit.outputs.head }}
+          path: |
+            ${{ runner.temp }}/pre-promotion-owner-tests.json
+            ${{ runner.temp }}/promotion.json
+            ${{ runner.temp }}/current-first.json
+            ${{ runner.temp }}/current-final.json
+            ${{ runner.temp }}/final-status.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

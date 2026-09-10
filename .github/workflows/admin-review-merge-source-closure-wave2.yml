@@ -1,0 +1,85 @@
+name: admin-review-merge-source-closure-wave2
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/source-closure-wave2-review-merge-trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  review-and-merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Resolve wave-two status and conditionally review/merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          source_branch=codex/global-plan-v1.1-source-closure-wave2-20260910
+          base_branch=codex/rust-plan-v4.1-final3-20260909
+          status_path=.github/admin-status/source-closure-wave2.json
+          status="$(gh api "repos/$repo/contents/$status_path?ref=$admin_branch" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          candidate_count="$(jq -r '.candidateCount' <<<"$status")"
+          test "$candidate_count" -ge 0
+          if [ "$candidate_count" = 0 ]; then
+            test "$(jq -r '.committed' <<<"$status")" = false
+            test "$(jq -r '.allRepositorySourceCandidatesExhausted' <<<"$status")" = true
+            jq -n --argjson prior "$status" '{schemaVersion:1,kind:"RepositorySourceClosureWave2Completion",candidateCount:0,merged:false,allRepositorySourceCandidatesExhausted:true,prior:$prior,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/final.json"
+          else
+            test "$(jq -r '.committed' <<<"$status")" = true
+            test "$(jq -r '.allTerminalSuccess' <<<"$status")" = true
+            head="$(jq -r '.head' <<<"$status")"
+            tree="$(jq -r '.tree' <<<"$status")"
+            merge="$(jq -r '.prospectiveMerge' <<<"$status")"
+            pr="$(jq -r '.pullRequest' <<<"$status")"
+            live="$(gh api "repos/$repo/pulls/$pr")"
+            test "$(jq -r '.state' <<<"$live")" = open
+            test "$(jq -r '.draft' <<<"$live")" = true
+            test "$(jq -r '.head.sha' <<<"$live")" = "$head"
+            test "$(jq -r '.head.ref' <<<"$live")" = "$source_branch"
+            test "$(jq -r '.base.ref' <<<"$live")" = "$base_branch"
+            test "$(jq -r '.merge_commit_sha' <<<"$live")" = "$merge"
+            test "$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')" = "$tree"
+            gh api -X DELETE "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null 2>&1 <<'JSON' || true
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+            gh api -X POST "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+            approved_by=
+            for attempt in $(seq 1 100); do
+              current="$(gh api "repos/$repo/pulls/$pr")"
+              test "$(jq -r '.head.sha' <<<"$current")" = "$head"
+              test "$(jq -r '.merge_commit_sha' <<<"$current")" = "$merge"
+              gh api "repos/$repo/pulls/$pr/reviews?per_page=100" > "$RUNNER_TEMP/reviews.json"
+              approved_by="$(jq -r --arg head "$head" '[.[] | select(.state == "APPROVED" and .commit_id == $head and (.user.login == "Franksudoman" or .user.login == "Tomasrgbsf")) | .user.login] | unique | join(",")' "$RUNNER_TEMP/reviews.json")"
+              if [ -n "$approved_by" ]; then break; fi
+              if [ "$attempt" = 100 ]; then echo 'wave-two exact-head approval absent' >&2; exit 1; fi
+              sleep 30
+            done
+            node_id="$(jq -r '.node_id' <<<"$current")"
+            gh api graphql -f query='mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{number,isDraft,headRefOid}}}' -f id="$node_id" --jq '.data.markPullRequestReadyForReview.pullRequest' > "$RUNNER_TEMP/ready.json"
+            test "$(jq -r '.isDraft' "$RUNNER_TEMP/ready.json")" = false
+            test "$(jq -r '.headRefOid' "$RUNNER_TEMP/ready.json")" = "$head"
+            gh api "repos/$repo/pulls/$pr/files?per_page=100" > "$RUNNER_TEMP/files.json"
+            jq -e 'length >= 2 and all(.[]; ((.filename == "docs/system/truth/work-items.v2.json") or (.filename == "docs/system/truth/source-implementation-evidence.v1.json") or (.filename | startswith("docs/modules/manifests/"))) and (.status == "added" or .status == "modified") and (.previous_filename == null))' "$RUNNER_TEMP/files.json" >/dev/null
+            merge_result="$(gh api -X PUT "repos/$repo/pulls/$pr/merge" -f sha="$head" -f merge_method=merge -f commit_title='Merge second-wave repository source closure' -f commit_message='Only exact code/test-backed repository source states are advanced. External authority, production activation, writer cutover and Node retirement remain false.')"
+            test "$(jq -r '.merged' <<<"$merge_result")" = true
+            merge_commit="$(jq -r '.sha' <<<"$merge_result")"
+            test "$(gh api "repos/$repo/branches/$base_branch" --jq '.commit.sha')" = "$merge_commit"
+            jq -n --argjson pr "$pr" --argjson candidateCount "$candidate_count" --arg sourceHead "$head" --arg sourceTree "$tree" --arg approvedBy "$approved_by" --arg mergeCommit "$merge_commit" '{schemaVersion:1,kind:"RepositorySourceClosureWave2Completion",pullRequest:$pr,candidateCount:$candidateCount,sourceHead:$sourceHead,sourceTree:$sourceTree,approvedBy:($approvedBy|split(",")),mergeCommit:$mergeCommit,merged:true,allRepositorySourceCandidatesExhausted:false,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/final.json"
+          fi
+          content="$(base64 -w0 "$RUNNER_TEMP/final.json")"
+          out=.github/admin-status/source-closure-wave2-complete.json
+          existing="$(gh api "repos/$repo/contents/$out?ref=$admin_branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): refresh source-closure wave-two completion' -f content="$content" -f sha="$existing" -f branch="$admin_branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record source-closure wave-two completion' -f content="$content" -f branch="$admin_branch" >/dev/null; fi
+          cat "$RUNNER_TEMP/final.json"

@@ -1,0 +1,3 @@
+require-assertion=.github/admin-status/public-repository-source-fully-closed.json
+publish-contract=.github/admin-status/pr116-post-source-closure-approved.json
+exact-current-subject=true

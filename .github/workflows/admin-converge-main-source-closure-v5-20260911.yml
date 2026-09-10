@@ -1,0 +1,616 @@
+name: admin-converge-main-source-closure-v5-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-converge-main-source-closure-v5-20260911.yml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: admin-converge-main-source-closure-v5-20260911
+  cancel-in-progress: false
+
+env:
+  SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  PUBLISHER_BRANCH: codex/source-audit-export-20260911
+  NODE_VERSION: 22.23.1
+  RUST_VERSION: 1.98.0
+  MIN_WORKFLOW_FAMILIES: "16"
+  MIN_CHECK_RUNS: "20"
+  BLOB_1: 05d3b20d14cf05473ecca8da6a15b3919192fa87
+  BLOB_2: bb392f41843b9fc6c60404ca318b8dcc0fc42c27
+  BLOB_3: df468481fda2741158ba1279bb18669f40796f9a
+  BLOB_4: e95ae33a076d887e7de5b16e98cfdbf2bebb9771
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Resolve source ref
+        id: refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+          source_sha="$(git ls-remote "$remote" "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+          test -n "$source_sha"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact source head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.refs.outputs.source_sha }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up pinned runtimes
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install exact dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          (cd target/rust && rustup override set "$RUST_VERSION")
+          test "$(node --version)" = "v$NODE_VERSION"
+          test "$(rustc +$RUST_VERSION --version | awk '{print $2}')" = "$RUST_VERSION"
+          npm --prefix target ci --ignore-scripts --no-audit --no-fund
+
+      - name: Reconstruct exact audited evidence objects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/v5-blobs"
+          rm -rf "$root"
+          mkdir -p "$root"
+          for sha in "$BLOB_1" "$BLOB_2" "$BLOB_3" "$BLOB_4"; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$sha" --jq '.content' | tr -d '\n' | base64 --decode > "$root/$sha"
+            test "$(git hash-object "$root/$sha")" = "$sha"
+          done
+          python3 - "$root" target <<'PY'
+          import json
+          import pathlib
+          import shutil
+          import sys
+
+          source_root = pathlib.Path(sys.argv[1])
+          checkout = pathlib.Path(sys.argv[2])
+          mapping = {}
+          for source in sorted(source_root.iterdir()):
+              text = source.read_text(encoding='utf-8')
+              destination = None
+              try:
+                  value = json.loads(text)
+              except json.JSONDecodeError:
+                  value = None
+              if isinstance(value, dict) and value.get('kind') == 'RepositorySourceImplementationEvidenceV1':
+                  destination = 'docs/system/evidence/repository-source-implementation-v1.json'
+              elif isinstance(value, dict):
+                  properties = value.get('properties')
+                  if isinstance(properties, dict):
+                      kind = properties.get('kind')
+                      if isinstance(kind, dict) and kind.get('const') == 'RepositorySourceImplementationEvidenceV1':
+                          destination = 'docs/system/schemas/source-implementation-evidence-v1.schema.json'
+              if destination is None and 'node:test' in text:
+                  destination = 'paper-core/tests/source-implementation-evidence.test.mjs'
+              if destination is None and ('parseStrictJson' in text or 'source implementation evidence' in text.lower()):
+                  destination = 'paper-core/bin/verify-source-implementation-evidence.mjs'
+              if destination is None or destination in mapping:
+                  raise SystemExit(f'closed content classification failed: {source.name} -> {destination}')
+              mapping[destination] = source
+          expected = {
+              'docs/system/evidence/repository-source-implementation-v1.json',
+              'docs/system/schemas/source-implementation-evidence-v1.schema.json',
+              'paper-core/bin/verify-source-implementation-evidence.mjs',
+              'paper-core/tests/source-implementation-evidence.test.mjs',
+          }
+          if set(mapping) != expected:
+              raise SystemExit(f'exact four-class mismatch: {sorted(mapping)}')
+          for destination, source in mapping.items():
+              output = checkout / destination
+              output.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source, output)
+          PY
+          chmod 0755 target/paper-core/bin/verify-source-implementation-evidence.mjs
+          git -C target diff --check
+
+      - name: Validate first-stage source and full Rust owner-test superset
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          node paper-core/bin/verify-source-implementation-evidence.mjs
+          node --test paper-core/tests/source-implementation-evidence.test.mjs
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          evidence = json.loads(Path('docs/system/evidence/repository-source-implementation-v1.json').read_text())
+          records = evidence.get('records')
+          if not isinstance(records, dict) or len(records) != 10:
+              raise SystemExit(f'evidence must contain exactly ten closed records, got {type(records).__name__}:{0 if not isinstance(records, dict) else len(records)}')
+          requested = sorted(k for k, v in records.items() if isinstance(v, dict) and v.get('promotionRequested') is True)
+          if len(requested) not in (0, 10):
+              raise SystemExit(f'partial promotion state forbidden: {requested}')
+          for item_id, record in records.items():
+              if item_id.startswith(('GAP-', 'LEGACY-REPLAY-')):
+                  raise SystemExit(f'external item forbidden: {item_id}')
+              claims = record.get('authorityClaims')
+              if not isinstance(claims, dict) or any(value is not False for value in claims.values()):
+                  raise SystemExit(f'authority ceiling invalid: {item_id}')
+          Path('/tmp/v5-item-ids.json').write_text(json.dumps(sorted(records), separators=(',', ':')) + '\n')
+          print(json.dumps({'itemIds': sorted(records), 'requestedCount': len(requested)}, sort_keys=True))
+          PY
+          (cd rust && cargo +$RUST_VERSION test --locked --workspace --all-targets 2>&1 | tee "$RUNNER_TEMP/v5-first-rust.log")
+
+      - name: CAS-publish or adopt first-stage head
+        id: first
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          git config user.name 'Qian QI'
+          git config user.email '102159240+ProfHepta@users.noreply.github.com'
+          git add docs/system/evidence/repository-source-implementation-v1.json docs/system/schemas/source-implementation-evidence-v1.schema.json paper-core/bin/verify-source-implementation-evidence.mjs paper-core/tests/source-implementation-evidence.test.mjs
+          observed="${{ steps.refs.outputs.source_sha }}"
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat(truth): request strict internal source promotions' \
+              -m 'Bind exactly ten repository-owned items to audited source objects and a complete Rust owner-test superset while preserving all external and production authority ceilings.' \
+              -m 'Signed-off-by: Qian QI <102159240+ProfHepta@users.noreply.github.com>'
+            candidate="$(git rev-parse HEAD)"
+            if git push --force-with-lease="refs/heads/$SOURCE_BRANCH:$observed" origin "HEAD:refs/heads/$SOURCE_BRANCH"; then
+              head="$candidate"
+            else
+              remote="https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+              live="$(git ls-remote "$remote" "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+              test -n "$live"
+              git fetch --no-tags origin "$live"
+              git reset --hard "$live"
+              node paper-core/bin/verify-source-implementation-evidence.mjs
+              test "$(jq '.records | length' docs/system/evidence/repository-source-implementation-v1.json)" = 10
+              head="$live"
+            fi
+          else
+            head="$(git rev-parse HEAD)"
+          fi
+          tree="$(git rev-parse HEAD^{tree})"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure one direct-to-main Draft PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUBJECT_HEAD: ${{ steps.first.outputs.head }}
+          SUBJECT_TREE: ${{ steps.first.outputs.tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=TrillionniumFoundation:$SOURCE_BRANCH&base=main&per_page=20" --jq '.[0].number // empty')"
+          if [ -z "$pr" ]; then
+            pr="$(gh api -X POST "repos/$GITHUB_REPOSITORY/pulls" -f title='feat(truth): converge repository source closure' -f head="$SOURCE_BRANCH" -f base=main -F draft=true -f body='Full exact-head repository source-closure candidate. Exact metadata follows after validated publication. No external or production authority is granted.' --jq '.number')"
+          fi
+          export PR_NUMBER="$pr"
+          python3 - "$RUNNER_TEMP/v5-pr-first.md" <<'PY'
+          import json
+          import os
+          import pathlib
+          ids = json.loads(pathlib.Path('/tmp/v5-item-ids.json').read_text())
+          lines = [
+              '## Full exact-head repository source-closure candidate',
+              '',
+              'Base: main',
+              f'Head branch: {os.environ["SOURCE_BRANCH"]}',
+              f'First-stage head: {os.environ["SUBJECT_HEAD"]}',
+              f'First-stage tree: {os.environ["SUBJECT_TREE"]}',
+              '',
+              'Closed evidence item set: ' + ', '.join(ids),
+              '',
+              'Before CAS publication, exact Git blob hashes, strict JSON/schema semantics, hostile parser tests, documentation owners, program truth, and the complete Rust 1.98.0 workspace with all targets passed.',
+              '',
+              'No external authority, target-host qualification, production activation, writer cutover, or Node retirement is granted. The pull request remains Draft until final exact-head checks and an independent exact-head approval succeed.',
+          ]
+          pathlib.Path(__import__('sys').argv[1]).write_text('\n'.join(lines) + '\n')
+          PY
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$pr" -f title='feat(truth): converge repository source closure' -F body=@"$RUNNER_TEMP/v5-pr-first.md" >/dev/null
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for stable non-failing first-stage PR checks
+        id: first_ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SUBJECT_HEAD: ${{ steps.first.outputs.head }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stable=0
+          previous=""
+          for attempt in $(seq 1 300); do
+            pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+            live_head="$(jq -r '.head.sha' <<<"$pr_json")"
+            test "$live_head" = "$SUBJECT_HEAD"
+            merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pr_json")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SUBJECT_HEAD&per_page=100" > "$RUNNER_TEMP/v5-first-runs-all.json"
+            jq --argjson pr "$PR_NUMBER" '[.workflow_runs[] | select(any(.pull_requests[]?; .number == $pr))] | sort_by(.created_at) | group_by(.name) | map(last) | map({name,status,conclusion,id,run_attempt,created_at}) | sort_by(.name)' "$RUNNER_TEMP/v5-first-runs-all.json" > "$RUNNER_TEMP/v5-first-runs.json"
+            : > "$RUNNER_TEMP/v5-first-checks-parts.jsonl"
+            for sha in "$SUBJECT_HEAD" "$merge_sha"; do
+              [ -n "$sha" ] || continue
+              gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?per_page=100" --jq '.check_runs[] | {name,status,conclusion,id,head_sha,app:.app.slug}' >> "$RUNNER_TEMP/v5-first-checks-parts.jsonl" || true
+            done
+            jq -s 'sort_by(.name,.id) | group_by(.name) | map(last) | sort_by(.name)' "$RUNNER_TEMP/v5-first-checks-parts.jsonl" > "$RUNNER_TEMP/v5-first-checks.json"
+            wf_count="$(jq 'length' "$RUNNER_TEMP/v5-first-runs.json")"
+            wf_pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/v5-first-runs.json")"
+            wf_failed="$(jq '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | length' "$RUNNER_TEMP/v5-first-runs.json")"
+            check_count="$(jq 'length' "$RUNNER_TEMP/v5-first-checks.json")"
+            check_pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/v5-first-checks.json")"
+            check_failed="$(jq '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | length' "$RUNNER_TEMP/v5-first-checks.json")"
+            fingerprint="$(jq -c '[.[] | [.name,.status,.conclusion]]' "$RUNNER_TEMP/v5-first-checks.json")|$(jq -c '[.[] | [.name,.status,.conclusion]]' "$RUNNER_TEMP/v5-first-runs.json")"
+            if [ "$wf_count" -ge "$MIN_WORKFLOW_FAMILIES" ] && [ "$check_count" -ge "$MIN_CHECK_RUNS" ] && [ "$wf_pending" = 0 ] && [ "$check_pending" = 0 ] && [ "$wf_failed" = 0 ] && [ "$check_failed" = 0 ]; then
+              if [ "$fingerprint" = "$previous" ]; then stable=$((stable+1)); else stable=1; fi
+            else
+              stable=0
+            fi
+            previous="$fingerprint"
+            echo "first attempt=$attempt stable=$stable workflows=$wf_count pending=$wf_pending failed=$wf_failed checks=$check_count pending=$check_pending failed=$check_failed"
+            if [ "$stable" -ge 3 ]; then
+              echo "workflow_families=$wf_count" >> "$GITHUB_OUTPUT"
+              echo "check_runs=$check_count" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$attempt" = 300 ]; then
+              cat "$RUNNER_TEMP/v5-first-runs.json" >&2
+              cat "$RUNNER_TEMP/v5-first-checks.json" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Promote exactly the closed ten-item set or verify prior promotion
+        id: promote
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          live="$(git ls-remote origin "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+          test "$live" = "${{ steps.first.outputs.head }}"
+          git reset --hard "$live"
+          python3 - "$RUNNER_TEMP/v5-promotion.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path.cwd()
+          work_path = root / 'docs/system/truth/work-items.v2.json'
+          modules_path = root / 'docs/system/truth/modules.v1.json'
+          evidence_path = root / 'docs/system/evidence/repository-source-implementation-v1.json'
+          work = json.loads(work_path.read_text())
+          modules = json.loads(modules_path.read_text())
+          evidence = json.loads(evidence_path.read_text())
+          records = evidence.get('records')
+          items = work.get('items')
+          if not isinstance(records, dict) or len(records) != 10 or not isinstance(items, dict):
+              raise SystemExit('closed ten-record evidence or work-item map missing')
+          target_ids = sorted(records)
+          requested = sorted(k for k, v in records.items() if isinstance(v, dict) and v.get('promotionRequested') is True)
+          if len(requested) not in (0, 10):
+              raise SystemExit(f'partial promotion forbidden: {requested}')
+          already = len(requested) == 0
+          promoted_modules = set()
+          for item_id in target_ids:
+              row = items.get(item_id)
+              record = records[item_id]
+              if not isinstance(row, dict):
+                  raise SystemExit(f'missing work item: {item_id}')
+              if item_id.startswith(('GAP-', 'LEGACY-REPLAY-')) or row.get('type') == 'external_gap':
+                  raise SystemExit(f'external item forbidden: {item_id}')
+              if any(record.get('authorityClaims', {}).values()):
+                  raise SystemExit(f'authority escalation: {item_id}')
+              if row.get('moduleId') != record.get('moduleId'):
+                  raise SystemExit(f'module mismatch: {item_id}')
+              declared = row.get('capabilityIds')
+              if declared is None and row.get('capabilityId') is not None:
+                  declared = [row['capabilityId']]
+              if sorted(declared or []) != sorted(record.get('capabilityIds', [])):
+                  raise SystemExit(f'capability mismatch: {item_id}')
+              if already:
+                  if row.get('state') != 'source_implemented':
+                      raise SystemExit(f'zero-request state is not already promoted: {item_id}:{row.get("state")}')
+              else:
+                  if row.get('state') != 'design_ready':
+                      raise SystemExit(f'promotion pre-state drift: {item_id}:{row.get("state")}')
+                  row['state'] = 'source_implemented'
+                  record['promotionRequested'] = False
+              promoted_modules.add(row['moduleId'])
+
+          changed_manifests = []
+          if not already:
+              module_rows = modules.get('modules')
+              if isinstance(module_rows, dict):
+                  for module_id in sorted(promoted_modules):
+                      remaining = [row for row in items.values() if isinstance(row, dict) and row.get('moduleId') == module_id and row.get('state') in {'not_started', 'design_ready'}]
+                      module = module_rows.get(module_id)
+                      if not remaining and isinstance(module, dict) and module.get('state') == 'design_ready':
+                          module['state'] = 'source_implemented'
+              for path in sorted((root / 'docs/modules/manifests').glob('*.json')):
+                  value = json.loads(path.read_text())
+                  if not isinstance(value, dict) or value.get('moduleId') not in promoted_modules:
+                      continue
+                  module_id = value['moduleId']
+                  remaining = [row for row in items.values() if isinstance(row, dict) and row.get('moduleId') == module_id and row.get('state') in {'not_started', 'design_ready'}]
+                  if remaining:
+                      continue
+                  changed = False
+                  for key in ('implementationStatus', 'implementation_status', 'sourceStatus'):
+                      if value.get(key) == 'design_ready':
+                          value[key] = 'source_implemented'
+                          changed = True
+                  implementation = value.get('implementation')
+                  if isinstance(implementation, dict) and implementation.get('status') == 'design_ready':
+                      implementation['status'] = 'source_implemented'
+                      changed = True
+                  if changed:
+                      path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
+                      changed_manifests.append(path.relative_to(root).as_posix())
+              work_path.write_text(json.dumps(work, separators=(',', ':'), ensure_ascii=False) + '\n')
+              modules_path.write_text(json.dumps(modules, separators=(',', ':'), ensure_ascii=False) + '\n')
+              evidence_path.write_text(json.dumps(evidence, indent=2, ensure_ascii=False) + '\n')
+          result = {
+              'schemaVersion': 1,
+              'kind': 'InternalRepositorySourcePromotionV5',
+              'promotedItemIds': target_ids,
+              'alreadyPromoted': already,
+              'promotedModuleIds': sorted(promoted_modules),
+              'changedManifests': changed_manifests,
+              'externalAuthorityGranted': False,
+              'targetHostQualified': False,
+              'productionActivated': False,
+              'writerCutoverAuthorized': False,
+              'nodeRetirementAuthorized': False,
+          }
+          pathlib.Path(sys.argv[1]).write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(result, sort_keys=True))
+          PY
+          git diff --check
+          node paper-core/bin/verify-source-implementation-evidence.mjs
+          node --test paper-core/tests/source-implementation-evidence.test.mjs
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          (cd rust && cargo +$RUST_VERSION test --locked --workspace --all-targets 2>&1 | tee "$RUNNER_TEMP/v5-final-rust.log")
+          echo "ids=$(jq -c '.promotedItemIds' "$RUNNER_TEMP/v5-promotion.json")" >> "$GITHUB_OUTPUT"
+          echo "already=$(jq -r '.alreadyPromoted' "$RUNNER_TEMP/v5-promotion.json")" >> "$GITHUB_OUTPUT"
+
+      - name: CAS-push or adopt final promoted head
+        id: final
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          git add docs/system/truth/work-items.v2.json docs/system/truth/modules.v1.json docs/system/evidence/repository-source-implementation-v1.json docs/modules/manifests
+          observed="${{ steps.first.outputs.head }}"
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat(truth): promote verified internal source states' \
+              -m 'Promote exactly ten repository-owned work items after stable green main-target checks and a second complete Rust owner-test pass. Preserve every external and production authority ceiling.' \
+              -m 'Signed-off-by: Qian QI <102159240+ProfHepta@users.noreply.github.com>'
+            candidate="$(git rev-parse HEAD)"
+            if git push --force-with-lease="refs/heads/$SOURCE_BRANCH:$observed" origin "HEAD:refs/heads/$SOURCE_BRANCH"; then
+              head="$candidate"
+            else
+              remote="https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+              live="$(git ls-remote "$remote" "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+              test -n "$live"
+              git fetch --no-tags origin "$live"
+              git reset --hard "$live"
+              node paper-core/bin/verify-source-implementation-evidence.mjs
+              python3 - <<'PY'
+              import json
+              from pathlib import Path
+              evidence = json.loads(Path('docs/system/evidence/repository-source-implementation-v1.json').read_text())
+              work = json.loads(Path('docs/system/truth/work-items.v2.json').read_text())
+              records = evidence.get('records', {})
+              if len(records) != 10 or any(v.get('promotionRequested') is not False for v in records.values()):
+                  raise SystemExit('concurrent head is not a complete final promotion')
+              for item_id in records:
+                  if work['items'][item_id].get('state') != 'source_implemented':
+                      raise SystemExit(f'concurrent head item not promoted: {item_id}')
+              PY
+              head="$live"
+            fi
+          else
+            head="$(git rev-parse HEAD)"
+          fi
+          tree="$(git rev-parse HEAD^{tree})"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+
+      - name: Refresh PR for final exact head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          FINAL_HEAD: ${{ steps.final.outputs.head }}
+          FINAL_TREE: ${{ steps.final.outputs.tree }}
+          FIRST_WORKFLOWS: ${{ steps.first_ci.outputs.workflow_families }}
+          FIRST_CHECKS: ${{ steps.first_ci.outputs.check_runs }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/v5-pr-final.md" <<'PY'
+          import json
+          import os
+          import pathlib
+          ids = json.loads(os.environ['PROMOTED_IDS'])
+          lines = [
+              '## Full exact-head repository source closure',
+              '',
+              'Base: main',
+              f'Head branch: {os.environ["SOURCE_BRANCH"]}',
+              f'Final head: {os.environ["FINAL_HEAD"]}',
+              f'Final tree: {os.environ["FINAL_TREE"]}',
+              '',
+              'Promoted source work items: ' + ', '.join(ids),
+              '',
+              f'First-stage gate: {os.environ["FIRST_WORKFLOWS"]} stable workflow families and {os.environ["FIRST_CHECKS"]} stable non-failing check runs.',
+              'Strict evidence, hostile tests, documentation owners, program truth, and the complete Rust 1.98.0 workspace with all targets were replayed after promotion and before the final CAS push.',
+              '',
+              'No external authority, target-host qualification, production activation, writer cutover, or Node retirement is granted. A fresh independent approval must bind this final head before ordinary protected merge.',
+          ]
+          pathlib.Path(__import__('sys').argv[1]).write_text('\n'.join(lines) + '\n')
+          PY
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          FINAL_HEAD: ${{ steps.final.outputs.head }}
+          FINAL_TREE: ${{ steps.final.outputs.tree }}
+          FIRST_WORKFLOWS: ${{ steps.first_ci.outputs.workflow_families }}
+          FIRST_CHECKS: ${{ steps.first_ci.outputs.check_runs }}
+          PROMOTED_IDS: ${{ steps.promote.outputs.ids }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" -f title='feat(truth): converge repository source closure' -F body=@"$RUNNER_TEMP/v5-pr-final.md" >/dev/null
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+
+      - name: Wait for stable non-failing final PR checks
+        id: final_ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SUBJECT_HEAD: ${{ steps.final.outputs.head }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stable=0
+          previous=""
+          for attempt in $(seq 1 300); do
+            pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+            test "$(jq -r '.head.sha' <<<"$pr_json")" = "$SUBJECT_HEAD"
+            merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pr_json")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SUBJECT_HEAD&per_page=100" > "$RUNNER_TEMP/v5-final-runs-all.json"
+            jq --argjson pr "$PR_NUMBER" '[.workflow_runs[] | select(any(.pull_requests[]?; .number == $pr))] | sort_by(.created_at) | group_by(.name) | map(last) | map({name,status,conclusion,id,run_attempt,created_at}) | sort_by(.name)' "$RUNNER_TEMP/v5-final-runs-all.json" > "$RUNNER_TEMP/v5-final-runs.json"
+            : > "$RUNNER_TEMP/v5-final-checks-parts.jsonl"
+            for sha in "$SUBJECT_HEAD" "$merge_sha"; do
+              [ -n "$sha" ] || continue
+              gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?per_page=100" --jq '.check_runs[] | {name,status,conclusion,id,head_sha,app:.app.slug}' >> "$RUNNER_TEMP/v5-final-checks-parts.jsonl" || true
+            done
+            jq -s 'sort_by(.name,.id) | group_by(.name) | map(last) | sort_by(.name)' "$RUNNER_TEMP/v5-final-checks-parts.jsonl" > "$RUNNER_TEMP/v5-final-checks.json"
+            wf_count="$(jq 'length' "$RUNNER_TEMP/v5-final-runs.json")"
+            wf_pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/v5-final-runs.json")"
+            wf_failed="$(jq '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | length' "$RUNNER_TEMP/v5-final-runs.json")"
+            check_count="$(jq 'length' "$RUNNER_TEMP/v5-final-checks.json")"
+            check_pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/v5-final-checks.json")"
+            check_failed="$(jq '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | length' "$RUNNER_TEMP/v5-final-checks.json")"
+            fingerprint="$(jq -c '[.[] | [.name,.status,.conclusion]]' "$RUNNER_TEMP/v5-final-checks.json")|$(jq -c '[.[] | [.name,.status,.conclusion]]' "$RUNNER_TEMP/v5-final-runs.json")"
+            if [ "$wf_count" -ge "$MIN_WORKFLOW_FAMILIES" ] && [ "$check_count" -ge "$MIN_CHECK_RUNS" ] && [ "$wf_pending" = 0 ] && [ "$check_pending" = 0 ] && [ "$wf_failed" = 0 ] && [ "$check_failed" = 0 ]; then
+              if [ "$fingerprint" = "$previous" ]; then stable=$((stable+1)); else stable=1; fi
+            else
+              stable=0
+            fi
+            previous="$fingerprint"
+            echo "final attempt=$attempt stable=$stable workflows=$wf_count pending=$wf_pending failed=$wf_failed checks=$check_count pending=$check_pending failed=$check_failed"
+            if [ "$stable" -ge 3 ]; then
+              echo "workflow_families=$wf_count" >> "$GITHUB_OUTPUT"
+              echo "check_runs=$check_count" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$attempt" = 300 ]; then
+              cat "$RUNNER_TEMP/v5-final-runs.json" >&2
+              cat "$RUNNER_TEMP/v5-final-checks.json" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Wait for fresh independent exact-head approval
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SUBJECT_HEAD: ${{ steps.final.outputs.head }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 240); do
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" > "$RUNNER_TEMP/v5-reviews.json"
+            approver="$(jq -r --arg sha "$SUBJECT_HEAD" '[.[] | select(.state == "APPROVED" and .commit_id == $sha and (.user.login | IN("Franksudoman","Tomasrgbsf")))] | sort_by(.submitted_at) | last | .user.login // empty' "$RUNNER_TEMP/v5-reviews.json")"
+            echo "review attempt=$attempt approver=${approver:-pending}"
+            if [ -n "$approver" ]; then
+              echo "approver=$approver" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$attempt" = 240 ]; then
+              jq '[.[] | {user:.user.login,state,commit_id,submitted_at}]' "$RUNNER_TEMP/v5-reviews.json" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Publish final bounded status and request ordinary protected merge
+        id: settle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          FINAL_HEAD: ${{ steps.final.outputs.head }}
+          FINAL_TREE: ${{ steps.final.outputs.tree }}
+          APPROVER: ${{ steps.review.outputs.approver }}
+          PROMOTED_IDS: ${{ steps.promote.outputs.ids }}
+          FIRST_WORKFLOWS: ${{ steps.first_ci.outputs.workflow_families }}
+          FIRST_CHECKS: ${{ steps.first_ci.outputs.check_runs }}
+          FINAL_WORKFLOWS: ${{ steps.final_ci.outputs.workflow_families }}
+          FINAL_CHECKS: ${{ steps.final_ci.outputs.check_runs }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr ready "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" || true
+          jq -n --argjson pullRequest "$PR_NUMBER" --arg head "$FINAL_HEAD" --arg tree "$FINAL_TREE" --arg approver "$APPROVER" --argjson promoted "$PROMOTED_IDS" --argjson firstWorkflowFamilies "$FIRST_WORKFLOWS" --argjson firstCheckRuns "$FIRST_CHECKS" --argjson finalWorkflowFamilies "$FINAL_WORKFLOWS" --argjson finalCheckRuns "$FINAL_CHECKS" '{schemaVersion:1,kind:"InternalRepositorySourceClosureStatusV5",pullRequest:$pullRequest,head:$head,tree:$tree,promotedItemIds:$promoted,firstWorkflowFamilies:$firstWorkflowFamilies,firstCheckRuns:$firstCheckRuns,finalWorkflowFamilies:$finalWorkflowFamilies,finalCheckRuns:$finalCheckRuns,allTerminalSuccess:true,independentExactHeadApprover:$approver,independentReviewAccepted:true,externalAuthorityGranted:false,targetHostQualified:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/v5-status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/v5-status.json")"
+          path=.github/admin-status/internal-source-main-closure-v5-20260911.json
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/contents/$path?ref=$PUBLISHER_BRANCH" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): record verified source closure v5' -f content="$content" -f sha="$existing" -f branch="$PUBLISHER_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): record verified source closure v5' -f content="$content" -f branch="$PUBLISHER_BRANCH" >/dev/null
+          fi
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --merge --auto --match-head-commit "$FINAL_HEAD"
+
+      - name: Upload convergence evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: internal-source-main-convergence-v5-${{ steps.final.outputs.head }}
+          path: |
+            ${{ runner.temp }}/v5-promotion.json
+            ${{ runner.temp }}/v5-first-runs.json
+            ${{ runner.temp }}/v5-first-checks.json
+            ${{ runner.temp }}/v5-final-runs.json
+            ${{ runner.temp }}/v5-final-checks.json
+            ${{ runner.temp }}/v5-reviews.json
+            ${{ runner.temp }}/v5-status.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

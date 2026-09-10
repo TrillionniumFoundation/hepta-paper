@@ -1,0 +1,93 @@
+name: admin-publish-global-source-closure-pr
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/source-closure-publish-trigger
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact source-closure branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/global-plan-v1.1-repository-source-closure-20260910
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require complete repository-source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base --is-ancestor 38ccd556d4c741c5b0e25bd0941f419857ea314f HEAD; echo $?)" = 0
+          test -s docs/system/truth/source-implementation-evidence.v1.json
+          test -s docs/tools/validate-source-implementation-evidence.mjs
+          test -s paper-core/tests/source-implementation-evidence.test.mjs
+          test "$(jq -r '.promotedItemIds | length' docs/system/truth/source-implementation-evidence.v1.json)" = 20
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          node docs/tools/validate-source-implementation-evidence.mjs
+          node --test paper-core/tests/source-implementation-evidence.test.mjs
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Create or refresh the stacked Draft PR and request review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          branch=codex/global-plan-v1.1-repository-source-closure-20260910
+          base=codex/rust-plan-v4.1-final3-20260909
+          head_sha="$(git rev-parse HEAD)"
+          head_tree="$(git rev-parse HEAD^{tree})"
+          item_ids="$(jq -r '.promotedItemIds | sort | map("- `" + . + "`") | join("\n")' docs/system/truth/source-implementation-evidence.v1.json)"
+          cat > "$RUNNER_TEMP/pr-body.md" <<EOF
+          ## Exact repository-source subject
+
+          \`\`\`text
+          base branch  $base
+          head branch  $branch
+          head commit  $head_sha
+          head tree    $head_tree
+          promotions   20
+          \`\`\`
+
+          This stacked Draft PR closes only repository-owned source-state drift. Every promoted item is bound to exact module-manifest linkage plus implementation/test file SHA-256 values and is revalidated on the same tree.
+
+          ### Promoted work items
+
+          $item_ids
+
+          ### Non-authority boundary
+
+          Every evidence record fixes target-host qualification, external authority, production activation, writer cutover and Node retirement to \`false\`. Issues #25, #28, #17, #12, #14, #21 and #22 remain independently controlled and are not closed here.
+
+          Keep Draft until the complete inherited CI matrix is terminal success and a fresh independent reviewer accepts this exact final tuple. No merge, auto-merge, direct-main write, external-evidence synthesis or administrator bypass is authorized.
+          EOF
+          head_query="TrillionniumFoundation:$branch"
+          pr_number="$(gh api "repos/$repo/pulls?state=open&head=$head_query&base=$base&per_page=10" --jq '.[0].number // empty')"
+          if [ -z "$pr_number" ]; then
+            pr_number="$(gh api -X POST "repos/$repo/pulls" \
+              -f title='feat(truth): close repository-owned Global Plan source states' \
+              -f head="$branch" -f base="$base" -F draft=true \
+              -f body=@"$RUNNER_TEMP/pr-body.md" --jq '.number')"
+          else
+            gh api -X PATCH "repos/$repo/pulls/$pr_number" \
+              -f title='feat(truth): close repository-owned Global Plan source states' \
+              -f body=@"$RUNNER_TEMP/pr-body.md" >/dev/null
+          fi
+          gh api -X POST "repos/$repo/pulls/$pr_number/requested_reviewers" \
+            --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          printf 'pr=%s\nhead=%s\ntree=%s\n' "$pr_number" "$head_sha" "$head_tree"

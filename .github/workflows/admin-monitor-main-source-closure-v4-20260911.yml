@@ -1,0 +1,72 @@
+name: admin-monitor-main-source-closure-v4-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-monitor-main-source-closure-v4-20260911.yml
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: admin-monitor-main-source-closure-v4-20260911
+  cancel-in-progress: true
+
+env:
+  WATCH_WORKFLOW: admin-converge-main-source-closure-v4-20260911.yml
+  SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  PUBLISHER_BRANCH: codex/source-audit-export-20260911
+
+jobs:
+  monitor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Wait for exact convergence run and publish bounded status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=""
+          for attempt in $(seq 1 60); do
+            run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$WATCH_WORKFLOW" --branch "$PUBLISHER_BRANCH" --event push --limit 10 --json databaseId,createdAt --jq 'sort_by(.createdAt) | last | .databaseId // empty')"
+            [ -n "$run_id" ] && break
+            sleep 10
+          done
+          test -n "$run_id"
+          for attempt in $(seq 1 1050); do
+            state="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha,workflowName,createdAt,updatedAt)"
+            status="$(jq -r '.status' <<<"$state")"
+            echo "watch run=$run_id attempt=$attempt status=$status"
+            if [ "$status" = completed ]; then
+              break
+            fi
+            if [ "$attempt" = 1050 ]; then exit 1; fi
+            sleep 20
+          done
+          gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha,workflowName,createdAt,updatedAt,jobs > "$RUNNER_TEMP/run.json"
+          conclusion="$(jq -r '.conclusion' "$RUNNER_TEMP/run.json")"
+          gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log-failed > "$RUNNER_TEMP/failed.log" 2>&1 || true
+          log_bytes="$(wc -c < "$RUNNER_TEMP/failed.log")"
+          log_hash="sha256:$(sha256sum "$RUNNER_TEMP/failed.log" | awk '{print $1}')"
+          jq --argjson runId "$run_id" --arg logSha256 "$log_hash" --argjson failedLogBytes "$log_bytes" '{schemaVersion:1,kind:"MainSourceClosureConvergenceMonitorV1",runId:$runId,workflowName:.workflowName,headSha:.headSha,status:.status,conclusion:.conclusion,createdAt:.createdAt,updatedAt:.updatedAt,jobs:[.jobs[] | {name,status,conclusion,startedAt,completedAt}],failedJobNames:[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .name],failedLogBytes:$failedLogBytes,failedLogSha256:$logSha256}' "$RUNNER_TEMP/run.json" > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          path=.github/admin-status/main-source-closure-v4-monitor-20260911.json
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/contents/$path?ref=$PUBLISHER_BRANCH" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): record source convergence monitor' -f content="$content" -f sha="$existing" -f branch="$PUBLISHER_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): record source convergence monitor' -f content="$content" -f branch="$PUBLISHER_BRANCH" >/dev/null
+          fi
+          if [ "$conclusion" != success ]; then
+            pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=TrillionniumFoundation:$SOURCE_BRANCH&base=main&per_page=20" --jq '.[0].number // empty')"
+            if [ -n "$pr" ]; then
+              failed="$(jq -r '.failedJobNames | if length == 0 then "workflow-level failure" else join(", ") end' "$RUNNER_TEMP/status.json")"
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f body="Convergence run \`$run_id\` stopped fail-closed. Failed jobs: $failed. Bounded failed-log digest: \`$log_hash\` ($log_bytes bytes). No work-item promotion, production activation, writer cutover, or Node retirement was authorized by this failed run." >/dev/null
+            fi
+          fi

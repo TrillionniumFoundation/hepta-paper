@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "kind": "CurrentClosureStateSnapshotV1",
+  "capturedAt": "2026-09-10T21:55:22Z",
+  "sourceBranch": "codex/global-plan-v1.1-internal-source-closure-20260911",
+  "sourceSha": "dbcd39abd06edd37baea79839e0e019c853833d4",
+  "mainSha": "7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2",
+  "directPullRequest": {
+    "baseSha": "7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2",
+    "draft": true,
+    "headSha": "dbcd39abd06edd37baea79839e0e019c853833d4",
+    "mergeable_state": "blocked",
+    "merged": false,
+    "number": 121,
+    "state": "open"
+  },
+  "pr116": {
+    "baseSha": "7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2",
+    "draft": false,
+    "headSha": "38ccd556d4c741c5b0e25bd0941f419857ea314f",
+    "mergeable_state": "blocked",
+    "merged": false,
+    "number": 116,
+    "state": "open"
+  },
+  "pr119": {
+    "baseSha": "38ccd556d4c741c5b0e25bd0941f419857ea314f",
+    "draft": true,
+    "headSha": "c9a19ff74fa88eb335df7c2205bd9e2fc096ca40",
+    "mergeable_state": "clean",
+    "merged": false,
+    "number": 119,
+    "state": "open"
+  },
+  "workItemCounts": {
+    "blocked_external": 9,
+    "design_ready": 41,
+    "source_implemented": 22
+  },
+  "requestedItemIds": [],
+  "workflowRuns": [
+    {
+      "name": "admin-converge-internal-source-closure-20260911",
+      "status": "in_progress",
+      "conclusion": null,
+      "id": 34533592071,
+      "head_sha": "99634fbb24a7c187e8370a831ccf0390c33ae639",
+      "created_at": "2026-09-10T21:41:54Z",
+      "updated_at": "2026-09-10T21:41:58Z"
+    },
+    {
+      "name": "admin-converge-main-source-closure-v4-20260911",
+      "status": "completed",
+      "conclusion": "failure",
+      "id": 34534382410,
+      "head_sha": "165241fc61ab8d5ffee921b050fe35fbc6fae6f3",
+      "created_at": "2026-09-10T21:51:01Z",
+      "updated_at": "2026-09-10T21:51:17Z"
+    },
+    {
+      "name": "admin-monitor-main-source-closure-v4-20260911",
+      "status": "completed",
+      "conclusion": "success",
+      "id": 34534429700,
+      "head_sha": "06089e660742b704105e4fdde6afb1cba48755e3",
+      "created_at": "2026-09-10T21:51:36Z",
+      "updated_at": "2026-09-10T21:51:48Z"
+    },
+    {
+      "name": "admin-publish-internal-source-closure-20260911",
+      "status": "completed",
+      "conclusion": "failure",
+      "id": 34533370964,
+      "head_sha": "f188ba0b8853fa38ed8f8f37e4cb662c583082f9",
+      "created_at": "2026-09-10T21:39:25Z",
+      "updated_at": "2026-09-10T21:39:48Z"
+    },
+    {
+      "name": "admin-publish-internal-source-closure-v2-20260911",
+      "status": "completed",
+      "conclusion": "failure",
+      "id": 34533991606,
+      "head_sha": "20802990534aa3c67d7fab30e43f3cfb6400256f",
+      "created_at": "2026-09-10T21:46:26Z",
+      "updated_at": "2026-09-10T21:46:45Z"
+    },
+    {
+      "name": "admin-publish-internal-source-closure-v3-20260911",
+      "status": "completed",
+      "conclusion": "failure",
+      "id": 34534192198,
+      "head_sha": "e71cd4ed71311bb0a4e793f39381eb9fd599b4ce",
+      "created_at": "2026-09-10T21:48:47Z",
+      "updated_at": "2026-09-10T21:49:05Z"
+    },
+    {
+      "name": "admin-snapshot-current-closure-state-20260911",
+      "status": "in_progress",
+      "conclusion": null,
+      "id": 34534746872,
+      "head_sha": "f83b5f9141398c3804813ef73f4617c0e11768a9",
+      "created_at": "2026-09-10T21:55:12Z",
+      "updated_at": "2026-09-10T21:55:15Z"
+    }
+  ],
+  "externalAuthorityGranted": false,
+  "targetHostQualified": false,
+  "productionActivated": false,
+  "writerCutoverAuthorized": false,
+  "nodeRetirementAuthorized": false
+}

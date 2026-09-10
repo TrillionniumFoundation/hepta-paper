@@ -1,0 +1,69 @@
+name: admin-probe-source-convergence-v8-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-probe-source-convergence-v8-20260911.yml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Capture exact live state after queue establishment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+          AUDIT_BRANCH: codex/source-audit-export-20260911
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 60
+          repo="$GITHUB_REPOSITORY"
+          encoded_source="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["SOURCE_BRANCH"],safe=""))')"
+          source_sha="$(gh api "repos/$repo/git/ref/heads/$encoded_source" --jq '.object.sha')"
+          main_sha="$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+          pr116="$(gh api "repos/$repo/pulls/116" --jq '{number,state,draft,merged,mergeable,mergeable_state,headSha:.head.sha,baseSha:.base.sha,mergeCommitSha:.merge_commit_sha}')"
+          pr119="$(gh api "repos/$repo/pulls/119" --jq '{number,state,draft,merged,mergeable,mergeable_state,headSha:.head.sha,baseSha:.base.sha,mergeCommitSha:.merge_commit_sha}')"
+          direct="$(gh api "repos/$repo/pulls?state=all&head=TrillionniumFoundation:$SOURCE_BRANCH&base=main&per_page=20" --jq 'sort_by(.created_at) | last | if . == null then null else {number,state,draft,merged,mergeable,mergeable_state,headSha:.head.sha,baseSha:.base.sha,mergeCommitSha:.merge_commit_sha} end')"
+          gh api "repos/$repo/actions/runs?branch=$AUDIT_BRANCH&event=push&per_page=100" > "$RUNNER_TEMP/runs.json"
+          run_state="$(jq -c '[.workflow_runs | sort_by(.created_at) | group_by(.name) | map(last) | .[] | select(.name | test("source-closure-v(7|8)|source convergence v(7|8)|admin-converge-main-source-closure-v(7|8)";"i")) | {name,id,status,conclusion,headSha:.head_sha,createdAt:.created_at,updatedAt:.updated_at}] | sort_by(.name)' "$RUNNER_TEMP/runs.json")"
+          mkdir -p source
+          git -C source init -q
+          git -C source remote add origin "https://github.com/$repo.git"
+          git -C source fetch -q --depth=1 origin "$source_sha"
+          git -C source checkout -q --detach FETCH_HEAD
+          evidence='null'
+          states='null'
+          if [ -f source/docs/system/evidence/repository-source-implementation-v1.json ]; then
+            evidence="$(jq -c '{kind,recordCount:(.records|length),requestedItemIds:[.records|to_entries[]|select(.value.promotionRequested==true)|.key]|sort,settledItemIds:[.records|to_entries[]|select(.value.promotionRequested==false)|.key]|sort,authorityValues:[.records|to_entries[].value.authorityClaims|to_entries[]?.value]|unique}' source/docs/system/evidence/repository-source-implementation-v1.json)"
+            states="$(jq -c --slurpfile e source/docs/system/evidence/repository-source-implementation-v1.json '{targetStates:([$e[0].records|keys[] as $id|{key:$id,value:.items[$id].state}]|from_entries),allTargetSourceImplemented:([$e[0].records|keys[] as $id|.items[$id].state]|all(.=="source_implemented"))}' source/docs/system/truth/work-items.v2.json)"
+          fi
+          jq -n \
+            --arg capturedAt "$(date -u +%FT%TZ)" \
+            --arg sourceBranch "$SOURCE_BRANCH" \
+            --arg sourceSha "$source_sha" \
+            --arg mainSha "$main_sha" \
+            --argjson pr116 "$pr116" \
+            --argjson pr119 "$pr119" \
+            --argjson directPullRequest "$direct" \
+            --argjson evidence "$evidence" \
+            --argjson workItems "$states" \
+            --argjson runs "$run_state" \
+            '{schemaVersion:1,kind:"SourceConvergenceProbeV8",capturedAt:$capturedAt,sourceBranch:$sourceBranch,sourceSha:$sourceSha,mainSha:$mainSha,pr116:$pr116,pr119:$pr119,directPullRequest:$directPullRequest,evidence:$evidence,workItems:$workItems,runs:$runs,externalAuthorityGranted:false,targetHostQualified:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/probe.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/probe.json")"
+          path=.github/admin-status/source-convergence-probe-v8-20260911.json
+          existing="$(gh api "repos/$repo/contents/$path?ref=$AUDIT_BRANCH" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$repo/contents/$path" -f message='chore(admin): record source convergence v8 probe' -f content="$content" -f sha="$existing" -f branch="$AUDIT_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$repo/contents/$path" -f message='chore(admin): record source convergence v8 probe' -f content="$content" -f branch="$AUDIT_BRANCH" >/dev/null
+          fi

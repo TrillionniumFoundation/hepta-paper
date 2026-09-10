@@ -1,0 +1,222 @@
+name: tmp-public-closure-audit-v6
+
+on:
+  push:
+    branches:
+      - codex/public-closure-audit-v6-20260910
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: tmp-public-closure-audit-v6
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Audit exact-head reviews and close only eligible source collectors
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: TrillionniumFoundation/hepta-paper
+          PR_NUMBER: '116'
+          EXPECTED_BASE: 7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2
+          EXPECTED_HEAD: 662180f654459a29e76609c35a02c4778498b9e0
+          EXPECTED_TREE: ea3cac559363ff66322c4597ae04ad18136f4f0f
+          EXPECTED_MERGE: 11245577b5207b130144d251123d900e9d65f319
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$REPOSITORY"
+          test "$GITHUB_REF" = refs/heads/codex/public-closure-audit-v6-20260910
+
+          pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")"
+          test "$(jq -er .state <<<"$pr")" = open
+          test "$(jq -er .draft <<<"$pr")" = true
+          test "$(jq -er .base.sha <<<"$pr")" = "$EXPECTED_BASE"
+          test "$(jq -er .head.sha <<<"$pr")" = "$EXPECTED_HEAD"
+          test "$(jq -er .merge_commit_sha <<<"$pr")" = "$EXPECTED_MERGE"
+          actual_tree="$(gh api "repos/$REPOSITORY/git/commits/$EXPECTED_HEAD" --jq .tree.sha)"
+          test "$actual_tree" = "$EXPECTED_TREE"
+
+          runs="$(gh api --method GET "repos/$REPOSITORY/actions/runs" -f head_sha="$EXPECTED_HEAD" -f per_page=100)"
+          python3 - "$RUNNER_TEMP/audit.json" <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          required = {
+              'rust-qualification-subject-v3',
+              'rust-effective-source-qualification',
+              'workflow-lint',
+              'rust-plan-v3-external-contracts',
+              'rust-source-snapshot',
+              'rust-program-truth',
+              'rust-qualification-artifacts',
+              'rust-foundation',
+              'rust-migration-acceptance',
+              'rust-broker-installed-qualification-v2',
+              'hepta-paper-ci',
+              'exact-head-source-validation',
+              'module-documentation-integrity',
+              'hepta-paper-gpu-scientific',
+              'rust-supply-chain',
+              'rust-broker-installed-qualification',
+          }
+
+          def gh_json(endpoint):
+              raw = subprocess.check_output(['gh', 'api', endpoint], text=True)
+              return json.loads(raw)
+
+          repo = os.environ['REPOSITORY']
+          prn = os.environ['PR_NUMBER']
+          head = os.environ['EXPECTED_HEAD']
+          tree = os.environ['EXPECTED_TREE']
+          merge = os.environ['EXPECTED_MERGE']
+
+          runs = gh_json(f'repos/{repo}/actions/runs?head_sha={head}&per_page=100')['workflow_runs']
+          by_name = {}
+          for run in runs:
+              if run.get('head_sha') != head:
+                  continue
+              current = by_name.get(run.get('name'))
+              if current is None or int(run.get('run_attempt', 1)) >= int(current.get('run_attempt', 1)):
+                  by_name[run.get('name')] = run
+          missing = sorted(required - set(by_name))
+          non_success = sorted(
+              name for name in required
+              if name in by_name and not (
+                  by_name[name].get('status') == 'completed'
+                  and by_name[name].get('conclusion') == 'success'
+              )
+          )
+          ci_ok = not missing and not non_success
+
+          reviews = gh_json(f'repos/{repo}/pulls/{prn}/reviews')
+          eligible = []
+          for review in reviews:
+              login = review.get('user', {}).get('login')
+              if login not in {'Franksudoman', 'Tomasrgbsf'}:
+                  continue
+              if review.get('state') != 'APPROVED' or review.get('commit_id') != head:
+                  continue
+              body = ' '.join((review.get('body') or '').lower().split())
+              eligible.append({'login': login, 'id': review.get('id'), 'body': body})
+
+          def has_any(text, values):
+              return any(value in text for value in values)
+
+          r_acceptors = sorted({
+              r['login'] for r in eligible
+              if has_any(r['body'], ['#54', 'r source', 'source route', 'replacement source'])
+              and has_any(r['body'], ['non-authorizing', 'non-authority', 'does not authorize production'])
+          })
+          companion_acceptors = sorted({
+              r['login'] for r in eligible
+              if '#55' in r['body']
+              and has_any(r['body'], ['technical companion', 'technical-sandbox', 'sqlite quarantine'])
+              and has_any(r['body'], ['non-production', 'does not qualify a production provider', 'no production provider', 'non-authorizing'])
+          })
+
+          report = {
+              'schema': 'hepta.public-closure-audit.v6',
+              'repository': repo,
+              'pullRequest': int(prn),
+              'subject': {'head': head, 'tree': tree, 'prospectiveMerge': merge},
+              'requiredWorkflowCount': len(required),
+              'ciTerminalSuccess': ci_ok,
+              'missingWorkflowFamilies': missing,
+              'nonSuccessWorkflowFamilies': non_success,
+              'eligibleCurrentHeadApprovers': sorted({r['login'] for r in eligible}),
+              'rSourceRouteAcceptors': r_acceptors,
+              'technicalCompanionAcceptors': companion_acceptors,
+              'issue54EligibleForClosure': ci_ok and bool(r_acceptors),
+              'issue55EligibleForClosure': ci_ok and bool(companion_acceptors),
+              'productionAuthorityGranted': False,
+              'writerCutoverAuthorized': False,
+              'nodeRetirementAuthorized': False,
+          }
+          with open(sys.argv[1], 'x', encoding='utf-8') as handle:
+              json.dump(report, handle, indent=2, sort_keys=True)
+              handle.write('\n')
+          print(json.dumps(report, sort_keys=True))
+          PY
+
+          ci_ok="$(jq -r .ciTerminalSuccess "$RUNNER_TEMP/audit.json")"
+          issue54="$(jq -r .issue54EligibleForClosure "$RUNNER_TEMP/audit.json")"
+          issue55="$(jq -r .issue55EligibleForClosure "$RUNNER_TEMP/audit.json")"
+          approvers="$(jq -r '.eligibleCurrentHeadApprovers | join(", ") | if . == "" then "none" else . end' "$RUNNER_TEMP/audit.json")"
+          r_acceptors="$(jq -r '.rSourceRouteAcceptors | join(", ") | if . == "" then "none" else . end' "$RUNNER_TEMP/audit.json")"
+          companion_acceptors="$(jq -r '.technicalCompanionAcceptors | join(", ") | if . == "" then "none" else . end' "$RUNNER_TEMP/audit.json")"
+
+          audit_sha="$(sha256sum "$RUNNER_TEMP/audit.json" | awk '{print $1}')"
+          marker="<!-- hepta-public-closure-audit-v6:$EXPECTED_HEAD:$audit_sha -->"
+          summary="$(cat <<EOF
+          ## Exact-head closure audit v6
+
+          \`\`\`text
+          head                         $EXPECTED_HEAD
+          tree                         $EXPECTED_TREE
+          prospective merge            $EXPECTED_MERGE
+          required CI terminal success $ci_ok
+          current-head approvers       $approvers
+          #54 route acceptors           $r_acceptors
+          #55 scope acceptors           $companion_acceptors
+          audit SHA-256                 $audit_sha
+          \`\`\`
+
+          This audit is fail-closed. It recognizes only \`APPROVED\` reviews by \`Franksudoman\` or \`Tomasrgbsf\` whose \`commit_id\` is the exact current head and whose review body explicitly accepts the corresponding non-authorizing scope. Old-head reviews, comments, repository-administrator prose and source CI alone receive no closure credit.
+
+          $marker
+          EOF
+          )"
+
+          for issue in 54 55; do
+            existing="$(gh api "repos/$REPOSITORY/issues/$issue/comments" --paginate --jq '.[].body' || true)"
+            if ! grep -Fq "$marker" <<<"$existing"; then
+              gh api -X POST "repos/$REPOSITORY/issues/$issue/comments" -f body="$summary" >/dev/null
+            fi
+          done
+
+          if [ "$issue54" = true ]; then
+            gh api -X POST "repos/$REPOSITORY/issues/54/comments" -f body="Independent exact-current-head acceptance closes the public historical R source-location/reproducibility collector only. Original-gitlink equivalence, target-host qualification, provider authority, production activation, writer cutover and Node retirement are not granted." >/dev/null
+            gh api -X PATCH "repos/$REPOSITORY/issues/54" -f state=closed -f state_reason=completed >/dev/null
+          fi
+
+          if [ "$issue55" = true ]; then
+            gh api -X POST "repos/$REPOSITORY/issues/55/comments" -f body="Independent exact-current-head acceptance closes the repository-local technical-companion and bounded process/SQLite quarantine reproducibility collector only. Real provider credentials, remote reconciliation, revocation, portal behavior, release and submission authority remain under their external collectors." >/dev/null
+            gh api -X PATCH "repos/$REPOSITORY/issues/55" -f state=closed -f state_reason=completed >/dev/null
+          fi
+
+          protection="$(gh api "repos/$REPOSITORY/branches/main")"
+          rulesets="$(gh api "repos/$REPOSITORY/rulesets")"
+          protection_enabled="$(jq -r .protected <<<"$protection")"
+          required_count="$(jq -r '.protection.required_status_checks.contexts | length' <<<"$protection")"
+          ruleset_count="$(jq -r length <<<"$rulesets")"
+          gov_marker="<!-- hepta-governance-live-audit-v6:$EXPECTED_HEAD -->"
+          existing25="$(gh api "repos/$REPOSITORY/issues/25/comments" --paginate --jq '.[].body' || true)"
+          if ! grep -Fq "$gov_marker" <<<"$existing25"; then
+            gh api -X POST "repos/$REPOSITORY/issues/25/comments" -f body="$(cat <<EOF
+          ## Live governance readback v6
+
+          \`\`\`text
+          exact candidate head      $EXPECTED_HEAD
+          classic protection        $protection_enabled
+          required status contexts  $required_count
+          active repository rulesets $ruleset_count
+          \`\`\`
+
+          This narrows but does not close #25. Closure still requires the complete active policy export, all seven retained denial transactions and an independent signed decision bound to the exact candidate. Classic protection summary alone is not \`EXT-GOV-MAIN-001\`.
+
+          $gov_marker
+          EOF
+          )" >/dev/null
+          fi
+
+          gh api -X DELETE "repos/$REPOSITORY/git/refs/heads/codex/public-closure-audit-v6-20260910"

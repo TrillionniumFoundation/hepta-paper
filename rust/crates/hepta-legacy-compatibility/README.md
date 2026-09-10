@@ -19,6 +19,28 @@ The companion `hepta-compatibility` crate reexports the production APIs; its
 draft crates differ in float normalization; their draft hashes are not
 interchangeable. Production APIs now share this single implementation.
 
+## Bounded Node observation adapter
+
+`NodeLegacyObservationAdapterV1` is a separate, non-authorizing migration
+primitive for observations that the incumbent Node runtime has already
+produced. A request binds the exact attempt, legacy module/version, capability,
+candidate, frozen input, Node entrypoint, state revision, record kind,
+output-byte ceiling, and artifact-count ceiling. The observation must repeat
+those identities exactly, contain sorted unique canonical artifact hashes,
+remain within both request and absolute limits, and state that no external
+action may have started.
+
+The adapter reuses `parse_and_hash_production_record_v1`, computes a
+length-framed observation digest, returns the original result for an exact
+replay, and rejects conflicting reuse of an attempt identity. It never launches
+Node, receives credentials, calls a provider, commits campaign state, or grants
+writer authority. Durable callers must persist the attempt/fingerprint pair
+across restart. This primitive therefore does not claim the complete Module
+Protocol strangler adapter, production shadow/canary parity, cutover, or Node
+retirement.
+
+The dedicated integration tests are in `tests/node_legacy_adapter.rs`.
+
 ## Source contract
 
 The executable oracle imports `stableStringify`, `digest`, and `hashRecord`

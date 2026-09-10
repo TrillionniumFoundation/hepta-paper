@@ -79,6 +79,25 @@ The first module registry may point to Node legacy adapters. An adapter:
 - cannot add authority beyond the existing path;
 - emits differential evidence for Rust shadow comparison.
 
+### Current bounded observation primitive
+
+`rust/crates/hepta-legacy-compatibility/src/node_adapter.rs` now implements
+`NodeLegacyObservationAdapterV1`. It accepts only an already-produced incumbent
+Node observation and an exact bounded request, reuses the qualified production
+Node record-hash implementation, enforces sorted unique artifact hashes and
+byte/count ceilings, rejects any observation for which an external action may
+have started, and fences conflicting reuse of an attempt identity. The returned
+prepared result always records `authority_granted=false` and
+`central_state_committed=false`.
+
+This is a migration observation primitive, not the complete strangler adapter
+described above. It never launches Node, translates a common command, owns a
+durable campaign journal, performs provider work, commits campaign state,
+proves production shadow/canary parity, transfers writer authority, or retires a
+Node path. Consequently the registered `MIG-001`, `MIG-002`, and `MIG-004` work
+items remain `design_ready` until those larger contracts and their qualification
+evidence are implemented.
+
 Adapters are temporary and have retirement work items.
 
 ## 6. Duplicate crate resolution

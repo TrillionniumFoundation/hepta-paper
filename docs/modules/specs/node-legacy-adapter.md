@@ -26,6 +26,14 @@ The exact executable/image/source digest, configuration digest, deployment gener
 
 Expose current Node capabilities through Module Protocol V1 as bounded shadow/prepared-result implementations for differential migration.
 
+The current Rust source includes `NodeLegacyObservationAdapterV1`, a bounded
+non-authorizing primitive that validates an already-produced incumbent Node
+observation against exact attempt, module, capability, candidate, input,
+entrypoint, state-revision, output, and artifact identities. It does not launch
+Node or translate/execute a Module Protocol command, so it is supporting source
+evidence for the observation boundary only and does not by itself complete
+`MIG-001`, `MIG-002`, or `MIG-004`.
+
 It does not commit campaign state, authorize release/submission, or declare its own result accepted. A source implementation, fixture, model narrative, repository administrator statement, or this document is never sufficient production authority.
 
 ## Inputs and outputs
@@ -108,7 +116,20 @@ No long-lived service lifecycle is assumed. Callers validate module/version/conf
 
 ## Verification and evidence
 
-Capability bindings: `CAP-MOD-CANDIDATES`, `CAP-MOD-EXECUTION`, `CAP-CMP-LEGACY`. Related work identifiers: `MIG-001`, `MIG-002`, `MIG-004`. Implementation/contract roots: `docs/migration/NODE_RUST_MIGRATION.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-MOD-CANDIDATES`, `CAP-MOD-EXECUTION`,
+`CAP-CMP-LEGACY`. Related work identifiers: `MIG-001`, `MIG-002`, `MIG-004`.
+The registered implementation/contract root remains
+`docs/migration/NODE_RUST_MIGRATION.md` while the complete strangler adapter is
+`design_ready`. Supporting source primitive:
+`rust/crates/hepta-legacy-compatibility/src/node_adapter.rs`. Its tests cover
+exact identity matching, bounded outputs/artifacts, record-hash compatibility,
+external-action rejection, and conflicting replay. They do not establish
+common-command translation, Node execution containment, durable restart
+recovery, production shadow/canary, writer cutover, or retirement. Required
+evidence includes positive, negative, malformed, oversize, replay,
+cancellation/crash, resource, authority, compatibility, and secrecy tests as
+applicable. Source conformance never substitutes for target-host or
+external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
@@ -118,6 +139,10 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `MIG-001` — `design_ready`
-- `MIG-002` — `design_ready`
-- `MIG-004` — `design_ready`
+- `MIG-001` — `design_ready`; a bounded already-produced-observation primitive
+  is source implemented, while the complete common-command-to-Node adapter and
+  durable restart contract remain open.
+- `MIG-002` — `design_ready`; no qualified Module Protocol command dispatch into
+  the incumbent Node capability is claimed.
+- `MIG-004` — `design_ready`; production-shaped shadow/canary comparison,
+  rollback, and retirement integration remain open.

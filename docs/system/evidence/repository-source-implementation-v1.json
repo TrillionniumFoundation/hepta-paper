@@ -198,7 +198,7 @@
       "bundleIds": [
         "node-module-protocol-adapter-source"
       ],
-      "promotionRequested": true,
+      "promotionRequested": false,
       "authorityClaims": {
         "targetHostQualified": false,
         "externalAuthorityGranted": false,

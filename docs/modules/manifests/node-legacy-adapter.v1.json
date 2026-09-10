@@ -7,8 +7,7 @@
   "runbookPath": "docs/modules/specs/node-legacy-adapter.md#operational-runbook",
   "implementationPaths": [
     "docs/migration/NODE_RUST_MIGRATION.md",
-    "rust/crates/hepta-module-platform/src/legacy_adapter.rs",
-    "rust/crates/hepta-legacy-compatibility/src/node_adapter.rs"
+    "rust/crates/hepta-module-platform/src/legacy_adapter.rs"
   ],
   "capabilityIds": [
     "CAP-MOD-CANDIDATES",

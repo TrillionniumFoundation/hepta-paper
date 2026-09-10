@@ -1,0 +1,4 @@
+require-status=.github/admin-status/source-closure-wave2.json
+reviewers=Franksudoman,Tomasrgbsf
+exact-head-only=true
+no-external-authority=true

@@ -1,0 +1,146 @@
+name: admin-apply-global-source-closure-wave2
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/source-closure-wave2-trigger
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: admin-apply-global-source-closure-wave2
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Check out immutable administrative derivation source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: admin
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve exact approved candidate and wave-two branch
+        id: subject
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          source_branch=codex/global-plan-v1.1-source-closure-wave2-20260910
+          approved_path=.github/admin-status/pr116-post-source-closure-approved.json
+          approved="$(gh api "repos/$repo/contents/$approved_path?ref=$admin_branch" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          test "$(jq -r '.independentReviewAccepted' <<<"$approved")" = true
+          test "$(jq -r '.repositorySourceQualified' <<<"$approved")" = true
+          head="$(jq -r '.head' <<<"$approved")"
+          tree="$(jq -r '.tree' <<<"$approved")"
+          test "$(gh api "repos/$repo/branches/$source_branch" --jq '.commit.sha')" = "$head"
+          test "$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')" = "$tree"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact wave-two target
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/global-plan-v1.1-source-closure-wave2-20260910
+          path: target
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Derive, validate and publish wave two
+        env:
+          EXPECTED_TARGET_HEAD: ${{ steps.subject.outputs.head }}
+          EXPECTED_TARGET_TREE: ${{ steps.subject.outputs.tree }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          source_branch=codex/global-plan-v1.1-source-closure-wave2-20260910
+          base_branch=codex/rust-plan-v4.1-final3-20260909
+          audit="$RUNNER_TEMP/source-closure-wave2-audit.json"
+          python3 admin/tools/apply_source_closure_wave2.py target "$audit" | tee "$RUNNER_TEMP/derive.out"
+          candidate_count="$(jq '.candidateCount' "$audit")"
+          if [ "$candidate_count" = 0 ]; then
+            jq -n --arg head "$EXPECTED_TARGET_HEAD" --arg tree "$EXPECTED_TARGET_TREE" --slurpfile audit "$audit" '{schemaVersion:1,kind:"RepositorySourceClosureWave2Status",baseHead:$head,baseTree:$tree,candidateCount:0,audit:$audit[0],committed:false,allRepositorySourceCandidatesExhausted:true,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/status.json"
+          else
+            changed="$(git -C target diff --name-only)"
+            test -n "$changed"
+            while IFS= read -r path; do
+              case "$path" in
+                docs/system/truth/work-items.v2.json|docs/system/truth/source-implementation-evidence.v1.json|docs/modules/manifests/*.json) ;;
+                *) echo "unexpected wave-two path: $path" >&2; exit 1 ;;
+              esac
+            done <<< "$changed"
+            git -C target diff --check
+            git -C target config user.name 'Qian QI'
+            git -C target config user.email '102159240+ProfHepta@users.noreply.github.com'
+            git -C target add docs/system/truth/work-items.v2.json docs/system/truth/source-implementation-evidence.v1.json docs/modules/manifests
+            test -n "$(git -C target diff --cached --name-only)"
+            git -C target commit -m 'feat(truth): close second-wave repository source states' \
+              -m 'Promote only non-external work items with registered implementation roots, nontrivial source, executable tests, exact evidence hashes and all canonical validators passing.' \
+              -m 'Signed-off-by: Qian QI <102159240+ProfHepta@users.noreply.github.com>'
+            new_head="$(git -C target rev-parse HEAD)"
+            new_tree="$(git -C target rev-parse HEAD^{tree})"
+            git -C target push origin "HEAD:refs/heads/$source_branch"
+            promoted="$(jq -c '[.candidates[].id] | sort' "$audit")"
+            body="$RUNNER_TEMP/pr-body.md"
+            item_lines="$(jq -r '.candidates | sort_by(.id) | map("- `" + .id + "` — `" + .moduleId + "`") | join("\n")' "$audit")"
+            cat > "$body" <<EOF
+          ## Exact second-wave repository-source closure
+
+          \`\`\`text
+          base branch  $base_branch
+          head branch  $source_branch
+          head commit  $new_head
+          head tree    $new_tree
+          promotions   $candidate_count
+          \`\`\`
+
+          $item_lines
+
+          Each item was independently derived from its registered implementation root, nontrivial source and executable tests, then bound to exact file hashes in the existing source-evidence ledger. Canonical development-document, module-documentation, Rust program-truth and hostile hash-substitution gates passed before commit.
+
+          This PR cannot close any external, target-host, production, cutover or Node-retirement item. Keep Draft until the exact final tree has 16/16 inherited CI and fresh independent review.
+          EOF
+            pr="$(gh api "repos/$repo/pulls?state=open&head=TrillionniumFoundation:$source_branch&base=$base_branch&per_page=10" --jq '.[0].number // empty')"
+            if [ -z "$pr" ]; then
+              pr="$(gh api -X POST "repos/$repo/pulls" -f title='feat(truth): close second-wave repository source states' -f head="$source_branch" -f base="$base_branch" -F draft=true -f body=@"$body" --jq '.number')"
+            else
+              gh api -X PATCH "repos/$repo/pulls/$pr" -f title='feat(truth): close second-wave repository source states' -f body=@"$body" >/dev/null
+            fi
+            required='["rust-qualification-subject-v3","rust-effective-source-qualification","workflow-lint","rust-plan-v3-external-contracts","rust-source-snapshot","rust-program-truth","rust-qualification-artifacts","rust-foundation","rust-migration-acceptance","rust-broker-installed-qualification-v2","hepta-paper-ci","exact-head-source-validation","module-documentation-integrity","hepta-paper-gpu-scientific","rust-supply-chain","rust-broker-installed-qualification"]'
+            for attempt in $(seq 1 80); do
+              gh api "repos/$repo/actions/runs?head_sha=$new_head&event=pull_request&per_page=100" > "$RUNNER_TEMP/runs.json"
+              jq --argjson required "$required" '[.workflow_runs | sort_by(.created_at) | group_by(.name) | map(last) | .[] | select(.name as $n | $required | index($n)) | {name,status,conclusion,id,run_attempt}] | sort_by(.name)' "$RUNNER_TEMP/runs.json" > "$RUNNER_TEMP/current.json"
+              count="$(jq 'length' "$RUNNER_TEMP/current.json")"
+              pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/current.json")"
+              failed="$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' "$RUNNER_TEMP/current.json")"
+              if [ "$count" = 16 ] && [ "$pending" = 0 ]; then test "$failed" = 0; break; fi
+              if [ "$attempt" = 80 ]; then echo "wave-two CI did not settle: count=$count pending=$pending failed=$failed" >&2; cat "$RUNNER_TEMP/current.json" >&2; exit 1; fi
+              sleep 30
+            done
+            live="$(gh api "repos/$repo/pulls/$pr")"
+            merge="$(jq -r '.merge_commit_sha' <<<"$live")"
+            jq -n --argjson pr "$pr" --arg head "$new_head" --arg tree "$new_tree" --arg prospectiveMerge "$merge" --argjson promoted "$promoted" --slurpfile runs "$RUNNER_TEMP/current.json" --slurpfile audit "$audit" '{schemaVersion:1,kind:"RepositorySourceClosureWave2Status",pullRequest:$pr,head:$head,tree:$tree,prospectiveMerge:$prospectiveMerge,promotedItemIds:$promoted,candidateCount:($promoted|length),audit:$audit[0],committed:true,allTerminalSuccess:true,independentReviewAccepted:false,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/status.json"
+            gh api -X POST "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          fi
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          out=.github/admin-status/source-closure-wave2.json
+          existing="$(gh api "repos/$repo/contents/$out?ref=$admin_branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): refresh source-closure wave-two status' -f content="$content" -f sha="$existing" -f branch="$admin_branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record source-closure wave-two status' -f content="$content" -f branch="$admin_branch" >/dev/null; fi
+          cat "$RUNNER_TEMP/status.json"

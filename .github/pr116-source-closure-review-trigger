@@ -1,0 +1,4 @@
+require-status=.github/admin-status/pr116-post-source-closure-qualified.json
+reviewers=Franksudoman,Tomasrgbsf
+require-exact-head-and-merge=true
+external-authority=false

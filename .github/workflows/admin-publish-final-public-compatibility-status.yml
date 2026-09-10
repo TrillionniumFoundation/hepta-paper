@@ -1,0 +1,38 @@
+name: admin-publish-final-public-compatibility-status
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/final-public-compatibility-status-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Publish final source-closed subject to the private-rebind contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          branch=codex/admin-apply-global-source-closure-20260910
+          source=.github/admin-status/public-repository-source-fully-closed.json
+          assertion="$(gh api "repos/$repo/contents/$source?ref=$branch" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          test "$(jq -r '.repositorySourceFullyClosed' <<<"$assertion")" = true
+          test "$(jq -r '.repositorySourceUnresolvedCount' <<<"$assertion")" = 0
+          test "$(jq -r '.allTerminalSuccess' <<<"$assertion")" = true
+          test "$(jq -r '.independentReviewAccepted' <<<"$assertion")" = true
+          for key in externalAuthorityGranted productionActivated writerCutoverAuthorized nodeRetirementAuthorized; do test "$(jq -r ".$key" <<<"$assertion")" = false; done
+          jq -n --arg head "$(jq -r '.head' <<<"$assertion")" --arg tree "$(jq -r '.tree' <<<"$assertion")" --arg prospectiveMerge "$(jq -r '.prospectiveMerge' <<<"$assertion")" --argjson promotionCount "$(jq -r '.promotionCount' <<<"$assertion")" '{schemaVersion:2,kind:"PublicCandidatePostSourceClosureReviewStatus",pullRequest:116,head:$head,tree:$tree,prospectiveMerge:$prospectiveMerge,promotionCount:$promotionCount,independentReviewAccepted:true,repositorySourceQualified:true,repositorySourceFullyClosed:true,repositorySourceUnresolvedCount:0,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          out=.github/admin-status/pr116-post-source-closure-approved.json
+          existing="$(gh api "repos/$repo/contents/$out?ref=$branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): refresh final public subject compatibility status' -f content="$content" -f sha="$existing" -f branch="$branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): publish final public subject compatibility status' -f content="$content" -f branch="$branch" >/dev/null; fi
+          cat "$RUNNER_TEMP/status.json"

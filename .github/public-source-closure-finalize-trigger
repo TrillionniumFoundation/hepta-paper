@@ -1,0 +1,5 @@
+require-wave2=.github/admin-status/source-closure-wave2-complete.json
+require-ci=16
+require-exact-review=true
+require-repository-source-unresolved=0
+keep-draft=true

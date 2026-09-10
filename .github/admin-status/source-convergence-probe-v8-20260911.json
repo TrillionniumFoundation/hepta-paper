@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "kind": "SourceConvergenceProbeV8",
+  "capturedAt": "2026-09-10T22:04:59Z",
+  "sourceBranch": "codex/global-plan-v1.1-internal-source-closure-20260911",
+  "sourceSha": "dbcd39abd06edd37baea79839e0e019c853833d4",
+  "mainSha": "7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2",
+  "pr116": {
+    "baseSha": "7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2",
+    "draft": false,
+    "headSha": "38ccd556d4c741c5b0e25bd0941f419857ea314f",
+    "mergeCommitSha": "7c64cd9a7b747de6548ac340b5920f37b2a7d5f1",
+    "mergeable": true,
+    "mergeable_state": "blocked",
+    "merged": false,
+    "number": 116,
+    "state": "open"
+  },
+  "pr119": {
+    "baseSha": "38ccd556d4c741c5b0e25bd0941f419857ea314f",
+    "draft": true,
+    "headSha": "c9a19ff74fa88eb335df7c2205bd9e2fc096ca40",
+    "mergeCommitSha": "123deef90a5c4d3d470b6b34202cdd9ca4a2e41c",
+    "mergeable": true,
+    "mergeable_state": "clean",
+    "merged": false,
+    "number": 119,
+    "state": "open"
+  },
+  "directPullRequest": {
+    "baseSha": "7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2",
+    "draft": true,
+    "headSha": "dbcd39abd06edd37baea79839e0e019c853833d4",
+    "mergeCommitSha": "475a1f71f78dfdedceec119c4b39786377cd9b6b",
+    "mergeable": null,
+    "mergeable_state": null,
+    "merged": null,
+    "number": 121,
+    "state": "open"
+  },
+  "evidence": {
+    "kind": "RepositorySourceImplementationEvidenceV1",
+    "recordCount": 2,
+    "requestedItemIds": [],
+    "settledItemIds": [
+      "AUTH-001",
+      "MIG-002"
+    ],
+    "authorityValues": [
+      false
+    ]
+  },
+  "workItems": {
+    "targetStates": {
+      "AUTH-001": null,
+      "MIG-002": null
+    },
+    "allTargetSourceImplemented": false
+  },
+  "runs": [
+    {
+      "name": "admin-converge-main-source-closure-v7-20260911",
+      "id": 34535319026,
+      "status": "completed",
+      "conclusion": "failure",
+      "headSha": "212ceccd939813b304e397b873ac45487d3afaca",
+      "createdAt": "2026-09-10T22:01:43Z",
+      "updatedAt": "2026-09-10T22:02:33Z"
+    },
+    {
+      "name": "admin-converge-main-source-closure-v8-20260911",
+      "id": 34535461928,
+      "status": "completed",
+      "conclusion": "failure",
+      "headSha": "72bd91a49b1301c4e7a84bb164f3120928b0aa3d",
+      "createdAt": "2026-09-10T22:03:21Z",
+      "updatedAt": "2026-09-10T22:04:22Z"
+    },
+    {
+      "name": "admin-monitor-main-source-closure-v7-20260911",
+      "id": 34535349212,
+      "status": "in_progress",
+      "conclusion": null,
+      "headSha": "551598f8b51841071249f71e94f6b1570b46ba3f",
+      "createdAt": "2026-09-10T22:02:04Z",
+      "updatedAt": "2026-09-10T22:02:13Z"
+    }
+  ],
+  "externalAuthorityGranted": false,
+  "targetHostQualified": false,
+  "productionActivated": false,
+  "writerCutoverAuthorized": false,
+  "nodeRetirementAuthorized": false
+}

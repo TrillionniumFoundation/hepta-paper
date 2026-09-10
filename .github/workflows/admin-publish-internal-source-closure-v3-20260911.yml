@@ -1,0 +1,219 @@
+name: admin-publish-internal-source-closure-v3-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-publish-internal-source-closure-v3-20260911.yml
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: admin-publish-internal-source-closure-v2-20260911
+  cancel-in-progress: false
+
+env:
+  SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  STACK_BASE_PR: "119"
+  NODE_VERSION: 22.23.1
+  RUST_VERSION: 1.98.0
+  BLOB_1: 05d3b20d14cf05473ecca8da6a15b3919192fa87
+  BLOB_2: bb392f41843b9fc6c60404ca318b8dcc0fc42c27
+  BLOB_3: df468481fda2741158ba1279bb18669f40796f9a
+  BLOB_4: e95ae33a076d887e7de5b16e98cfdbf2bebb9771
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Resolve exact refs
+        id: refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$STACK_BASE_PR")"
+          test "$(jq -r '.state' <<<"$base")" = open
+          base_ref="$(jq -r '.head.ref' <<<"$base")"
+          base_sha="$(jq -r '.head.sha' <<<"$base")"
+          remote="https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+          source_sha="$(git ls-remote "$remote" "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+          test -n "$source_sha"
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact source head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.refs.outputs.source_sha }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify stack ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C target fetch --no-tags origin "${{ steps.refs.outputs.base_sha }}"
+          git -C target merge-base --is-ancestor "${{ steps.refs.outputs.base_sha }}" HEAD
+
+      - name: Set up pinned Node and Rust
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          cd target/rust
+          rustup override set "$RUST_VERSION"
+          cd ../..
+          test "$(node --version)" = "v$NODE_VERSION"
+          test "$(rustc +$RUST_VERSION --version | awk '{print $2}')" = "$RUST_VERSION"
+          npm --prefix target ci --ignore-scripts --no-audit --no-fund
+
+      - name: Materialize exact blobs by content class
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          object_root="$RUNNER_TEMP/internal-source-v3"
+          rm -rf "$object_root"
+          mkdir -p "$object_root"
+          for sha in "$BLOB_1" "$BLOB_2" "$BLOB_3" "$BLOB_4"; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$sha" --jq '.content' | tr -d '\n' | base64 --decode > "$object_root/$sha"
+            test "$(git hash-object "$object_root/$sha")" = "$sha"
+          done
+          python3 - "$object_root" target <<'PY'
+          import json, pathlib, shutil, sys
+          source_root, checkout = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          mapping = {}
+          for source in sorted(source_root.iterdir()):
+              text = source.read_text(encoding='utf-8')
+              destination = None
+              try: value = json.loads(text)
+              except json.JSONDecodeError: value = None
+              if isinstance(value, dict) and value.get('kind') == 'RepositorySourceImplementationEvidenceV1':
+                  destination = 'docs/system/evidence/repository-source-implementation-v1.json'
+              elif isinstance(value, dict):
+                  props = value.get('properties')
+                  if isinstance(props, dict) and isinstance(props.get('kind'), dict) and props['kind'].get('const') == 'RepositorySourceImplementationEvidenceV1':
+                      destination = 'docs/system/schemas/source-implementation-evidence-v1.schema.json'
+              if destination is None and 'node:test' in text:
+                  destination = 'paper-core/tests/source-implementation-evidence.test.mjs'
+              if destination is None and ('parseStrictJson' in text or 'source implementation evidence' in text.lower()):
+                  destination = 'paper-core/bin/verify-source-implementation-evidence.mjs'
+              if destination is None or destination in mapping:
+                  raise SystemExit(f'classification failure: {source.name} -> {destination}')
+              mapping[destination] = source
+          expected = {'docs/system/evidence/repository-source-implementation-v1.json','docs/system/schemas/source-implementation-evidence-v1.schema.json','paper-core/bin/verify-source-implementation-evidence.mjs','paper-core/tests/source-implementation-evidence.test.mjs'}
+          if set(mapping) != expected: raise SystemExit(f'class set mismatch: {sorted(mapping)}')
+          for destination, source in mapping.items():
+              out = checkout / destination
+              out.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source, out)
+          PY
+          chmod 0755 target/paper-core/bin/verify-source-implementation-evidence.mjs
+          git -C target diff --check
+
+      - name: Verify strict evidence and hostile/documentation owners
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          node paper-core/bin/verify-source-implementation-evidence.mjs
+          node --test paper-core/tests/source-implementation-evidence.test.mjs
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+
+      - name: Run Rust workspace owner-test superset
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target/rust
+          cargo +$RUST_VERSION test --locked --workspace --all-targets 2>&1 | tee "$RUNNER_TEMP/rust-workspace-all-targets.log"
+
+      - name: Bind local receipt and commit
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          requested="$(jq -c '[.records | to_entries[] | select(.value.promotionRequested == true) | .key] | sort' docs/system/evidence/repository-source-implementation-v1.json)"
+          test "$(jq 'length' <<<"$requested")" = 10
+          log_hash="sha256:$(sha256sum "$RUNNER_TEMP/rust-workspace-all-targets.log" | awk '{print $1}')"
+          git config user.name 'Qian QI'
+          git config user.email '102159240+ProfHepta@users.noreply.github.com'
+          git add docs/system/evidence/repository-source-implementation-v1.json docs/system/schemas/source-implementation-evidence-v1.schema.json paper-core/bin/verify-source-implementation-evidence.mjs paper-core/tests/source-implementation-evidence.test.mjs
+          if git diff --cached --quiet; then
+            head="$(git rev-parse HEAD)"
+          else
+            git commit -m 'feat(truth): request strict internal source promotions' \
+              -m 'Bind ten repository-owned work items to exact source evidence; validate strict hostile cases and the complete Rust workspace without granting external or production authority.' \
+              -m 'Signed-off-by: Qian QI <102159240+ProfHepta@users.noreply.github.com>'
+            head="$(git rev-parse HEAD)"
+            git push --force-with-lease="refs/heads/$SOURCE_BRANCH:${{ steps.refs.outputs.source_sha }}" origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          fi
+          tree="$(git rev-parse HEAD^{tree})"
+          jq -n --arg head "$head" --arg tree "$tree" --arg rustLogSha256 "$log_hash" --argjson requested "$requested" '{schemaVersion:1,kind:"InternalRepositorySourceOwnerTestsV3",headCommit:$head,headTree:$tree,requestedItemIds:$requested,strictEvidenceVerifierPassed:true,hostileTestsPassed:true,documentationOwnersPassed:true,rustToolchain:"1.98.0",rustWorkspaceAllTargetsPassed:true,rustWorkspaceLogSha256:$rustLogSha256,externalAuthorityGranted:false,targetHostQualified:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/internal-source-v3-receipt.json"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+
+      - name: Open or refresh stacked Draft PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ steps.refs.outputs.base_ref }}
+          HEAD: ${{ steps.commit.outputs.head }}
+          TREE: ${{ steps.commit.outputs.tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=TrillionniumFoundation:$SOURCE_BRANCH&per_page=20" --jq 'map(select(.base.ref == env.BASE_REF))[0].number // empty')"
+          ids="$(jq -r '.requestedItemIds | map("`"+.+"`") | join(", ")' "$RUNNER_TEMP/internal-source-v3-receipt.json")"
+          body="$RUNNER_TEMP/internal-source-v3-pr.md"
+          cat > "$body" <<EOF
+          ## Strict internal repository-source closure request
+
+          \`\`\`text
+          stacked base PR  #$STACK_BASE_PR
+          base branch      $BASE_REF
+          head branch      $SOURCE_BRANCH
+          head commit      $HEAD
+          head tree        $TREE
+          \`\`\`
+
+          Requested work items: $ids
+
+          Before publication, the exact four pre-audited blobs were hash-verified and content-classified; the strict evidence verifier, hostile parser tests, documentation owners, program-truth validator, and the entire Rust $RUST_VERSION workspace with \`--all-targets\` passed.
+
+          This request grants no external authority, target-host qualification, production activation, writer cutover, or Node retirement. Keep Draft until final exact-head CI is terminal green and a fresh independent reviewer approves this exact head/tree.
+          EOF
+          if [ -z "$pr" ]; then
+            pr="$(gh api -X POST "repos/$GITHUB_REPOSITORY/pulls" -f title='feat(truth): close internal repository-source states' -f head="$SOURCE_BRANCH" -f base="$BASE_REF" -F draft=true -F body=@"$body" --jq '.number')"
+          else
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$pr" -f title='feat(truth): close internal repository-source states' -F body=@"$body" >/dev/null
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Upload source-owner receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: internal-source-owner-tests-v3-${{ steps.commit.outputs.head }}
+          path: ${{ runner.temp }}/internal-source-v3-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

@@ -1,0 +1,25 @@
+{
+  "conclusion": "failure",
+  "externalAuthorityGranted": false,
+  "failedJobNames": [
+    "converge"
+  ],
+  "failedStepNames": [
+    "Converge source, stable checks, exact review, and ordinary protected merge"
+  ],
+  "failureClass": "unclassified_fail_closed",
+  "kind": "MainSourceClosureV8Diagnostic",
+  "nodeRetirementAuthorized": false,
+  "productionActivated": false,
+  "rawFailedLogBytes": 3929,
+  "rawFailedLogSha256": "sha256:513b70532424c9994b9a28da68e6eb1b4292387b051936ba81f17b0100dd9868",
+  "redactedExcerpt": "converge\tConverge source, stable checks, exact review, and ordinary protected merge\t\ufeff2026-09-10T22:04:18.6647338Z ##[group]Run set -euo pipefail\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6647686Z ^[[36;1mset -euo pipefail^[[0m\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6648086Z ^[[36;1mpython3 publisher/.github/admin-tools/converge_internal_source_v8.py \\^[[0m\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6648532Z ^[[36;1m  --repo \"$GITHUB_REPOSITORY\" \\^[[0m\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6648841Z ^[[36;1m  --source-branch \"$SOURCE_BRANCH\" \\^[[0m\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6649147Z ^[[36;1m  --audit-branch \"$AUDIT_BRANCH\" \\^[[0m\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6649444Z ^[[36;1m  --target-dir target \\^[[0m\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6649767Z ^[[36;1m  --evidence-dir \"$RUNNER_TEMP/internal-source-v8\"^[[0m\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6686944Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6687301Z env:\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6687636Z   SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6688086Z   AUDIT_BRANCH: codex/source-audit-export-20260911\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6688395Z   NODE_VERSION: 22.23.1\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6688617Z   RUST_VERSION: 1.98.0\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6691114Z   GH_TOKEN: [REDACTED]\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.6691379Z ##[endgroup]\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:18.7120242Z + gh api repos/TrillionniumFoundation/hepta-paper/git/ref/heads/codex%2Fglobal-plan-v1.1-internal-source-closure-20260911\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:19.1056760Z + git rev-parse HEAD\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:19.1074656Z dbcd39abd06edd37baea79839e0e019c853833d4\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:19.1079939Z + gh api repos/TrillionniumFoundation/hepta-paper/git/blobs/05d3b20d14cf05473ecca8da6a15b3919192fa87\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:19.3575851Z + git hash-object /home/runner/work/_temp/internal-source-v8/blobs/05d3b20d14cf05473ecca8da6a15b3919192fa87\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:19.3592308Z 05d3b20d14cf05473ecca8da6a15b3919192fa87\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:19.3593715Z FAIL-CLOSED: unclassified audited blob: 05d3b20d14cf05473ecca8da6a15b3919192fa87\nconverge\tConverge source, stable checks, exact review, and ordinary protected merge\t2026-09-10T22:04:19.3674849Z ##[error]Process completed with exit code 1.",
+  "redactedExcerptBytes": 3935,
+  "redactedExcerptSha256": "sha256:f4dc610a8f7970e2389e3e6636c84f1c82bf6689dcee2feffe626f9d87dab386",
+  "runHeadSha": "72bd91a49b1301c4e7a84bb164f3120928b0aa3d",
+  "runId": 34535461928,
+  "schemaVersion": 1,
+  "status": "completed",
+  "targetHostQualified": false,
+  "writerCutoverAuthorized": false
+}

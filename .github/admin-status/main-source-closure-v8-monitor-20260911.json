@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "kind": "MainSourceClosureV8Monitor",
+  "runId": 34535461928,
+  "headSha": "72bd91a49b1301c4e7a84bb164f3120928b0aa3d",
+  "status": "completed",
+  "conclusion": "failure",
+  "createdAt": "2026-09-10T22:03:21Z",
+  "updatedAt": "2026-09-10T22:04:22Z",
+  "jobs": [
+    {
+      "name": "converge",
+      "status": "completed",
+      "conclusion": "failure",
+      "startedAt": "2026-09-10T22:03:24Z",
+      "completedAt": "2026-09-10T22:04:21Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Check out immutable orchestration source",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Check out current product candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Set up exact Node runtime",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Install dependencies and compile-check the complete state machine",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Converge source, stable checks, exact review, and ordinary protected merge",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 6
+        },
+        {
+          "name": "Upload bounded convergence evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Post Set up exact Node runtime",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12
+        },
+        {
+          "name": "Post Check out current product candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13
+        },
+        {
+          "name": "Post Check out immutable orchestration source",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15
+        }
+      ]
+    }
+  ],
+  "failedJobNames": [
+    "converge"
+  ],
+  "failedStepNames": [
+    "Converge source, stable checks, exact review, and ordinary protected merge"
+  ],
+  "failedLogBytes": 3929,
+  "failedLogSha256": "sha256:513b70532424c9994b9a28da68e6eb1b4292387b051936ba81f17b0100dd9868",
+  "finalStatusExists": false,
+  "externalAuthorityGranted": false,
+  "targetHostQualified": false,
+  "productionActivated": false,
+  "writerCutoverAuthorized": false,
+  "nodeRetirementAuthorized": false
+}

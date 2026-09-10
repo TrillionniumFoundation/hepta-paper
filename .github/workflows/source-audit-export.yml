@@ -1,0 +1,92 @@
+name: source-audit-export
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-audit-export-20260911
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact audit source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prove source identity and generate machine summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = TrillionniumFoundation/hepta-paper
+          test "$GITHUB_REF" = refs/heads/codex/source-audit-export-20260911
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+          out="$RUNNER_TEMP/source-audit"
+          install -d -m 0700 "$out"
+          python3 - "$out/work-item-summary.json" <<'PY'
+          import json, sys
+          from collections import Counter, defaultdict
+          out = sys.argv[1]
+          with open('docs/system/truth/work-items.v2.json', encoding='utf-8') as f:
+              work = json.load(f)['items']
+          with open('docs/system/truth/modules.v1.json', encoding='utf-8') as f:
+              modules = json.load(f)['modules']
+          states = Counter(item['state'] for item in work.values())
+          types = Counter(item['type'] for item in work.values())
+          priorities = Counter(item['priority'] for item in work.values())
+          by_state = defaultdict(list)
+          for key, item in sorted(work.items()):
+              by_state[item['state']].append({
+                  'id': key,
+                  'type': item['type'],
+                  'priority': item['priority'],
+                  'moduleId': item['moduleId'],
+                  'capabilityIds': item['capabilityIds'],
+                  'dependencies': item['dependencies'],
+                  'evidenceTier': item['evidenceTier'],
+                  'issue': item.get('issue'),
+                  'moduleState': modules.get(item['moduleId'], {}).get('state'),
+                  'moduleActivation': modules.get(item['moduleId'], {}).get('activation'),
+                  'moduleQualification': modules.get(item['moduleId'], {}).get('qualification'),
+              })
+          value = {
+              'kind': 'RepositoryGapSourceAuditSummary',
+              'schemaVersion': 1,
+              'sourceSha': __import__('subprocess').check_output(['git','rev-parse','HEAD'], text=True).strip(),
+              'sourceTree': __import__('subprocess').check_output(['git','rev-parse','HEAD^{tree}'], text=True).strip(),
+              'workItemCount': len(work),
+              'moduleCount': len(modules),
+              'stateCounts': dict(sorted(states.items())),
+              'typeCounts': dict(sorted(types.items())),
+              'priorityCounts': dict(sorted(priorities.items())),
+              'itemsByState': dict(sorted(by_state.items())),
+          }
+          with open(out, 'x', encoding='utf-8') as f:
+              json.dump(value, f, indent=2, sort_keys=True)
+              f.write('\n')
+          PY
+          git archive --format=tar.gz --output="$out/hepta-source-${GITHUB_SHA}.tar.gz" HEAD
+          sha256sum "$out"/* > "$out/SHA256SUMS"
+          chmod 0444 "$out"/*
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Upload exact source audit package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: source-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/source-audit
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

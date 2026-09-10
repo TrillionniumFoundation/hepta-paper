@@ -1,0 +1,98 @@
+name: admin-qualify-global-source-closure
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/source-closure-qualification-trigger
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Wait for the exact source-closure workflow matrix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          branch=codex/global-plan-v1.1-repository-source-closure-20260910
+          base=codex/rust-plan-v4.1-final3-20260909
+          required='["rust-qualification-subject-v3","rust-effective-source-qualification","workflow-lint","rust-plan-v3-external-contracts","rust-source-snapshot","rust-program-truth","rust-qualification-artifacts","rust-foundation","rust-migration-acceptance","rust-broker-installed-qualification-v2","hepta-paper-ci","exact-head-source-validation","module-documentation-integrity","hepta-paper-gpu-scientific","rust-supply-chain","rust-broker-installed-qualification"]'
+          head="$(gh api "repos/$repo/branches/$branch" --jq '.commit.sha')"
+          tree="$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')"
+          pr="$(gh api "repos/$repo/pulls?state=open&head=TrillionniumFoundation:$branch&base=$base&per_page=10" --jq '.[0].number // empty')"
+          test -n "$pr"
+          for attempt in $(seq 1 50); do
+            gh api "repos/$repo/actions/runs?head_sha=$head&event=pull_request&per_page=100" > "$RUNNER_TEMP/runs.json"
+            jq --argjson required "$required" '
+              [.workflow_runs | sort_by(.created_at) | group_by(.name) | map(last)
+               | .[] | select(.name as $n | $required | index($n))
+               | {name,status,conclusion,id,run_attempt}] | sort_by(.name)
+            ' "$RUNNER_TEMP/runs.json" > "$RUNNER_TEMP/current.json"
+            count="$(jq 'length' "$RUNNER_TEMP/current.json")"
+            pending="$(jq '[.[] | select(.status != "completed")] | length' "$RUNNER_TEMP/current.json")"
+            failed="$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' "$RUNNER_TEMP/current.json")"
+            if [ "$count" = 16 ] && [ "$pending" = 0 ]; then
+              test "$failed" = 0
+              break
+            fi
+            if [ "$attempt" = 50 ]; then
+              echo "matrix did not settle: count=$count pending=$pending failed=$failed" >&2
+              cat "$RUNNER_TEMP/current.json" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+          jq -n \
+            --arg head "$head" --arg tree "$tree" --argjson pr "$pr" \
+            --slurpfile runs "$RUNNER_TEMP/current.json" \
+            '{schemaVersion:1,kind:"RepositorySourceClosureQualificationStatus",pullRequest:$pr,head:$head,tree:$tree,requiredWorkflowCount:16,workflowRuns:$runs[0],allTerminalSuccess:true,independentReviewAccepted:false,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' \
+            > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          status_path=.github/admin-status/global-source-closure-qualified.json
+          existing="$(gh api "repos/$repo/contents/$status_path?ref=codex/admin-apply-global-source-closure-20260910" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$repo/contents/$status_path" \
+              -f message='chore(admin): record exact source-closure CI qualification' \
+              -f content="$content" -f sha="$existing" \
+              -f branch=codex/admin-apply-global-source-closure-20260910 >/dev/null
+          else
+            gh api -X PUT "repos/$repo/contents/$status_path" \
+              -f message='chore(admin): record exact source-closure CI qualification' \
+              -f content="$content" \
+              -f branch=codex/admin-apply-global-source-closure-20260910 >/dev/null
+          fi
+          body="$(gh api "repos/$repo/pulls/$pr" --jq '.body')"
+          body="$(printf '%s\n' "$body" | sed '/<!-- source-closure-ci:start -->/,/<!-- source-closure-ci:end -->/d')"
+          runs="$(jq -r '.[] | "- `" + .name + "` — run " + (.id|tostring) + " — `success`"' "$RUNNER_TEMP/current.json")"
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          $body
+
+          <!-- source-closure-ci:start -->
+          ## Exact-tree CI qualification
+
+          \`\`\`text
+          head  $head
+          tree  $tree
+          CI    16/16 terminal success
+          \`\`\`
+
+          $runs
+
+          This is repository-source evidence only. Independent review is still required, and no target-host, external-authority, production, writer-cutover or Node-retirement state is changed.
+          <!-- source-closure-ci:end -->
+          EOF
+          gh api -X PATCH "repos/$repo/pulls/$pr" -f body=@"$RUNNER_TEMP/body.md" >/dev/null
+          gh api -X POST "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          cat "$RUNNER_TEMP/status.json"

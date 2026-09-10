@@ -1,0 +1,5 @@
+require-public-source-closure=true
+inspect-runner-labels=true
+inspect-secret-names-only=true
+no-secret-values=true
+no-external-dispatch=true

@@ -1,0 +1,323 @@
+name: admin-publish-internal-source-closure-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-publish-internal-source-closure-20260911.yml
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: admin-publish-internal-source-closure-20260911
+  cancel-in-progress: false
+
+env:
+  SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  STACK_BASE_PR: "119"
+  NODE_VERSION: 22.23.1
+  RUST_VERSION: 1.98.0
+  BLOB_SCHEMA: 05d3b20d14cf05473ecca8da6a15b3919192fa87
+  BLOB_VERIFIER: bb392f41843b9fc6c60404ca318b8dcc0fc42c27
+  BLOB_TESTS: df468481fda2741158ba1279bb18669f40796f9a
+  BLOB_EVIDENCE: e95ae33a076d887e7de5b16e98cfdbf2bebb9771
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Check out immutable publisher source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: publisher
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve the exact stacked subject
+        id: subject
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          live="$(gh api "repos/$repo/pulls/$STACK_BASE_PR")"
+          test "$(jq -r '.state' <<<"$live")" = open
+          base_ref="$(jq -r '.head.ref' <<<"$live")"
+          base_sha="$(jq -r '.head.sha' <<<"$live")"
+          target_sha="$(gh api "repos/$repo/branches/$SOURCE_BRANCH" --jq '.commit.sha')"
+          git -C publisher fetch --no-tags origin "$base_sha" "$target_sha"
+          if [ "$target_sha" != "$base_sha" ]; then
+            git -C publisher merge-base --is-ancestor "$base_sha" "$target_sha"
+          fi
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the exact source-closure branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.subject.outputs.target_sha }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up pinned Node and Rust
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup override set "$RUST_VERSION" --path target/rust
+          test "$(node --version)" = "v$NODE_VERSION"
+          test "$(rustc +$RUST_VERSION --version | awk '{print $2}')" = "$RUST_VERSION"
+          npm --prefix target ci --ignore-scripts --no-audit --no-fund
+
+      - name: Materialize the four pre-audited blobs by closed content class
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          mkdir -p "$RUNNER_TEMP/internal-source-blobs"
+          for sha in "$BLOB_SCHEMA" "$BLOB_VERIFIER" "$BLOB_TESTS" "$BLOB_EVIDENCE"; do
+            gh api "repos/$repo/git/blobs/$sha" --jq -r '.content' | tr -d '\n' | base64 -d > "$RUNNER_TEMP/internal-source-blobs/$sha"
+          done
+          python3 - "$RUNNER_TEMP/internal-source-blobs" target <<'PY'
+          import json
+          import pathlib
+          import shutil
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          target = pathlib.Path(sys.argv[2])
+          mapped = {}
+          for source in sorted(root.iterdir()):
+              raw = source.read_bytes()
+              try:
+                  text = raw.decode('utf-8')
+              except UnicodeDecodeError as exc:
+                  raise SystemExit(f'non-UTF-8 blob {source.name}: {exc}')
+              destination = None
+              try:
+                  value = json.loads(text)
+              except json.JSONDecodeError:
+                  value = None
+              if isinstance(value, dict) and value.get('kind') == 'RepositorySourceImplementationEvidenceV1':
+                  destination = 'docs/system/evidence/repository-source-implementation-v1.json'
+              elif isinstance(value, dict):
+                  props = value.get('properties', {})
+                  kind = props.get('kind', {}) if isinstance(props, dict) else {}
+                  if kind.get('const') == 'RepositorySourceImplementationEvidenceV1':
+                      destination = 'docs/system/schemas/source-implementation-evidence-v1.schema.json'
+              if destination is None and 'node:test' in text:
+                  destination = 'paper-core/tests/source-implementation-evidence.test.mjs'
+              if destination is None and ('verify-source-implementation-evidence' in text or 'RepositorySourceImplementationEvidenceV1' in text):
+                  destination = 'paper-core/bin/verify-source-implementation-evidence.mjs'
+              if destination is None:
+                  raise SystemExit(f'unclassified pre-audited blob {source.name}')
+              if destination in mapped:
+                  raise SystemExit(f'duplicate content class for {destination}')
+              mapped[destination] = source
+          expected = {
+              'docs/system/evidence/repository-source-implementation-v1.json',
+              'docs/system/schemas/source-implementation-evidence-v1.schema.json',
+              'paper-core/bin/verify-source-implementation-evidence.mjs',
+              'paper-core/tests/source-implementation-evidence.test.mjs',
+          }
+          if set(mapped) != expected:
+              raise SystemExit(f'closed class mismatch: {sorted(mapped)}')
+          for destination, source in mapped.items():
+              output = target / destination
+              output.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source, output)
+              print(f'{source.name} -> {destination}')
+          PY
+          git -C target diff --check
+
+      - name: Validate strict evidence and execute every requested owner test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          node paper-core/bin/verify-source-implementation-evidence.mjs
+          node --test paper-core/tests/source-implementation-evidence.test.mjs
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          python3 - "$RUNNER_TEMP/internal-source-owner-tests.json" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import subprocess
+          import sys
+          import time
+
+          repo = pathlib.Path.cwd()
+          receipt_path = pathlib.Path(sys.argv[1])
+          doc = json.loads((repo / 'docs/system/evidence/repository-source-implementation-v1.json').read_text())
+          records = doc.get('records', {})
+          bundles = doc.get('bundles', {})
+          requested = sorted(k for k, v in records.items() if v.get('promotionRequested') is True)
+          if not requested:
+              raise SystemExit('no promotionRequested records')
+          allowed = {'cargo', 'node', 'python3', 'bash'}
+          runs = []
+          seen = set()
+          for item_id in requested:
+              record = records[item_id]
+              claims = record.get('authorityClaims', {})
+              if any(claims.values()):
+                  raise SystemExit(f'authority escalation in {item_id}')
+              for bundle_id in record.get('bundleIds', []):
+                  if bundle_id not in bundles:
+                      raise SystemExit(f'missing bundle {bundle_id}')
+                  for command in bundles[bundle_id].get('verificationCommands', []):
+                      canonical = json.dumps(command, sort_keys=True, separators=(',', ':'))
+                      if canonical in seen:
+                          continue
+                      seen.add(canonical)
+                      if not isinstance(command, dict):
+                          raise SystemExit('verification command is not typed')
+                      program = command.get('program')
+                      args = command.get('args')
+                      workdir = command.get('workdir')
+                      timeout = command.get('timeoutSeconds')
+                      expected = command.get('expectedExitCode')
+                      if program not in allowed or not isinstance(args, list) or not all(isinstance(x, str) for x in args):
+                          raise SystemExit(f'unsafe command for {item_id}')
+                      if not isinstance(workdir, str) or workdir.startswith('/') or '..' in pathlib.PurePosixPath(workdir).parts:
+                          raise SystemExit(f'unsafe workdir for {item_id}')
+                      if not isinstance(timeout, int) or not 1 <= timeout <= 600 or expected != 0:
+                          raise SystemExit(f'unsafe command limits for {item_id}')
+                      cwd = (repo / workdir).resolve()
+                      if repo.resolve() not in (cwd, *cwd.parents):
+                          raise SystemExit(f'workdir escape for {item_id}')
+                      started = time.time()
+                      proc = subprocess.run([program, *args], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+                      output = proc.stdout.encode()
+                      runs.append({
+                          'itemId': item_id,
+                          'bundleId': bundle_id,
+                          'program': program,
+                          'args': args,
+                          'workdir': workdir,
+                          'expectedExitCode': expected,
+                          'actualExitCode': proc.returncode,
+                          'durationMilliseconds': round((time.time() - started) * 1000),
+                          'outputBytes': len(output),
+                          'outputSha256': 'sha256:' + hashlib.sha256(output).hexdigest(),
+                      })
+                      if proc.returncode != expected:
+                          print(proc.stdout)
+                          raise SystemExit(f'owner test failed for {item_id}: {program} {args}')
+          receipt = {
+              'schemaVersion': 1,
+              'kind': 'InternalRepositorySourceOwnerTestsV1',
+              'requestedItemIds': requested,
+              'commandCount': len(runs),
+              'runs': runs,
+              'allPassed': True,
+              'externalAuthorityGranted': False,
+              'targetHostQualified': False,
+              'productionActivated': False,
+              'writerCutoverAuthorized': False,
+              'nodeRetirementAuthorized': False,
+          }
+          receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+          print(json.dumps({'requestedItemIds': requested, 'commandCount': len(runs)}, sort_keys=True))
+          PY
+
+      - name: Commit and CAS-push the validated evidence request
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          git config user.name 'Qian QI'
+          git config user.email '102159240+ProfHepta@users.noreply.github.com'
+          git add \
+            docs/system/evidence/repository-source-implementation-v1.json \
+            docs/system/schemas/source-implementation-evidence-v1.schema.json \
+            paper-core/bin/verify-source-implementation-evidence.mjs \
+            paper-core/tests/source-implementation-evidence.test.mjs
+          if git diff --cached --quiet; then
+            new_head="$(git rev-parse HEAD)"
+          else
+            git commit -m 'feat(truth): request strict internal source promotions' \
+              -m 'Bind ten repository-owned work items to closed-world exact Git blobs, typed symbols, strict owner tests, and false external/production authority claims.' \
+              -m 'Signed-off-by: Qian QI <102159240+ProfHepta@users.noreply.github.com>'
+            new_head="$(git rev-parse HEAD)"
+            git push --force-with-lease="refs/heads/$SOURCE_BRANCH:${{ steps.subject.outputs.target_sha }}" origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          fi
+          new_tree="$(git rev-parse HEAD^{tree})"
+          echo "head=$new_head" >> "$GITHUB_OUTPUT"
+          echo "tree=$new_tree" >> "$GITHUB_OUTPUT"
+          python3 - "$RUNNER_TEMP/internal-source-owner-tests.json" "$new_head" "$new_tree" <<'PY'
+          import json, pathlib, sys
+          p = pathlib.Path(sys.argv[1])
+          v = json.loads(p.read_text())
+          v['headCommit'] = sys.argv[2]
+          v['headTree'] = sys.argv[3]
+          p.write_text(json.dumps(v, indent=2, sort_keys=True) + '\n')
+          PY
+
+      - name: Open or refresh the stacked Draft PR and request independent review
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ steps.subject.outputs.base_ref }}
+          NEW_HEAD: ${{ steps.commit.outputs.head }}
+          NEW_TREE: ${{ steps.commit.outputs.tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          ids="$(jq -r '.requestedItemIds | map("`" + . + "`") | join(", ")' "$RUNNER_TEMP/internal-source-owner-tests.json")"
+          body="$RUNNER_TEMP/pr-body.md"
+          cat > "$body" <<EOF
+          ## Exact internal repository-source closure request
+
+          \`\`\`text
+          stacked base PR  #$STACK_BASE_PR
+          base branch      $BASE_REF
+          head branch      $SOURCE_BRANCH
+          head commit      $NEW_HEAD
+          head tree        $NEW_TREE
+          \`\`\`
+
+          Promotion requests: $ids
+
+          The request is accepted only after strict JSON/schema/semantic verification and every typed owner-test command succeeds under Node $NODE_VERSION and Rust $RUST_VERSION. The retained owner-test artifact hashes stdout rather than publishing raw output.
+
+          This PR grants no external authority, target-host qualification, production activation, writer cutover, or Node retirement. Keep Draft until all inherited exact-head checks are terminal green and a fresh independent reviewer approves this exact head/tree.
+          EOF
+          pr="$(gh api "repos/$repo/pulls?state=open&head=TrillionniumFoundation:$SOURCE_BRANCH&base=$BASE_REF&per_page=10" --jq '.[0].number // empty')"
+          if [ -z "$pr" ]; then
+            pr="$(gh api -X POST "repos/$repo/pulls" -f title='feat(truth): close internal repository-source states' -f head="$SOURCE_BRANCH" -f base="$BASE_REF" -F draft=true -f body=@"$body" --jq '.number')"
+          else
+            gh api -X PATCH "repos/$repo/pulls/$pr" -f title='feat(truth): close internal repository-source states' -F body=@"$body" >/dev/null
+          fi
+          gh api -X POST "repos/$repo/pulls/$pr/requested_reviewers" --input - >/dev/null <<'JSON'
+          {"reviewers":["Franksudoman","Tomasrgbsf"]}
+          JSON
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact owner-test receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: internal-source-owner-tests-${{ steps.commit.outputs.head }}
+          path: ${{ runner.temp }}/internal-source-owner-tests.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

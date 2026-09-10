@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hepta-codex-protocol = { path = "../hepta-codex-protocol", version = "=0.1.0" }
+hepta-module-platform = { path = "../hepta-module-platform", version = "=0.1.0" }
 hex.workspace = true
 icu_collator = { version = "=2.1.1", default-features = false, features = ["serde"] }
 icu_locale = { version = "=2.1.1", default-features = false }

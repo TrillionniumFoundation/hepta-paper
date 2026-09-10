@@ -1,0 +1,85 @@
+name: admin-merge-global-source-closure
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/source-closure-merge-trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Execute one exact reviewed stacked-PR merge transaction
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          admin_branch=codex/admin-apply-global-source-closure-20260910
+          source_branch=codex/global-plan-v1.1-repository-source-closure-20260910
+          base_branch=codex/rust-plan-v4.1-final3-20260909
+          decode_status() {
+            gh api "repos/$repo/contents/$1?ref=$admin_branch" --jq -r '.content' | tr -d '\n' | base64 -d
+          }
+          ci="$(decode_status .github/admin-status/global-source-closure-qualified.json)"
+          review="$(decode_status .github/admin-status/global-source-closure-approved.json)"
+          head="$(gh api "repos/$repo/branches/$source_branch" --jq '.commit.sha')"
+          tree="$(gh api "repos/$repo/git/commits/$head" --jq '.tree.sha')"
+          for value in "$ci" "$review"; do
+            test "$(jq -r '.head' <<<"$value")" = "$head"
+            test "$(jq -r '.tree' <<<"$value")" = "$tree"
+            test "$(jq -r '.externalAuthorityGranted' <<<"$value")" = false
+            test "$(jq -r '.productionActivated' <<<"$value")" = false
+            test "$(jq -r '.writerCutoverAuthorized' <<<"$value")" = false
+            test "$(jq -r '.nodeRetirementAuthorized' <<<"$value")" = false
+          done
+          test "$(jq -r '.allTerminalSuccess' <<<"$ci")" = true
+          test "$(jq -r '.independentReviewAccepted' <<<"$review")" = true
+          pr="$(jq -r '.pullRequest' <<<"$review")"
+          live="$(gh api "repos/$repo/pulls/$pr")"
+          test "$(jq -r '.state' <<<"$live")" = open
+          test "$(jq -r '.draft' <<<"$live")" = false
+          test "$(jq -r '.head.sha' <<<"$live")" = "$head"
+          test "$(jq -r '.head.ref' <<<"$live")" = "$source_branch"
+          test "$(jq -r '.base.ref' <<<"$live")" = "$base_branch"
+          gh api "repos/$repo/pulls/$pr/reviews?per_page=100" > "$RUNNER_TEMP/reviews.json"
+          test "$(jq -r --arg head "$head" '[.[] | select(.state == "APPROVED" and .commit_id == $head and (.user.login == "Franksudoman" or .user.login == "Tomasrgbsf"))] | length' "$RUNNER_TEMP/reviews.json")" -ge 1
+          gh api "repos/$repo/pulls/$pr/files?per_page=100" > "$RUNNER_TEMP/files.json"
+          jq -e '
+            (map(.filename) | sort) == [
+              "docs/system/schemas/source-implementation-evidence-v1.schema.json",
+              "docs/system/truth/source-implementation-evidence.v1.json",
+              "docs/system/truth/work-items.v2.json",
+              "docs/tools/validate-source-implementation-evidence.mjs",
+              "paper-core/tests/source-implementation-evidence.test.mjs"
+            ] and all(.[]; (.status == "added" or .status == "modified") and (.previous_filename == null))
+          ' "$RUNNER_TEMP/files.json" >/dev/null
+          gh api -X PUT "repos/$repo/pulls/$pr/merge" \
+            -f sha="$head" -f merge_method=merge \
+            -f commit_title='Merge repository-owned Global Plan source closure' \
+            -f commit_message='Exact implementation/test evidence and 16/16 CI are accepted for repository-local source states only. External authority, production activation, writer cutover and Node retirement remain false.' \
+            > "$RUNNER_TEMP/merge.json"
+          test "$(jq -r '.merged' "$RUNNER_TEMP/merge.json")" = true
+          merge_sha="$(jq -r '.sha' "$RUNNER_TEMP/merge.json")"
+          new_base_head="$(gh api "repos/$repo/branches/$base_branch" --jq '.commit.sha')"
+          test "$new_base_head" = "$merge_sha"
+          jq -n --argjson pr "$pr" --arg sourceHead "$head" --arg sourceTree "$tree" --arg mergeCommit "$merge_sha" --arg baseBranch "$base_branch" \
+            '{schemaVersion:1,kind:"RepositorySourceClosureMergeStatus",pullRequest:$pr,sourceHead:$sourceHead,sourceTree:$sourceTree,mergeCommit:$mergeCommit,baseBranch:$baseBranch,merged:true,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' \
+            > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          status_path=.github/admin-status/global-source-closure-merged.json
+          existing="$(gh api "repos/$repo/contents/$status_path?ref=$admin_branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$repo/contents/$status_path" -f message='chore(admin): record source-closure merge' -f content="$content" -f sha="$existing" -f branch="$admin_branch" >/dev/null
+          else
+            gh api -X PUT "repos/$repo/contents/$status_path" -f message='chore(admin): record source-closure merge' -f content="$content" -f branch="$admin_branch" >/dev/null
+          fi
+          cat "$RUNNER_TEMP/status.json"

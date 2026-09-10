@@ -1,0 +1,38 @@
+name: admin-assert-public-source-closure
+
+on:
+  push:
+    branches:
+      - codex/admin-apply-global-source-closure-20260910
+    paths:
+      - .github/public-source-closure-assert-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  assert:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Publish only a true exact-tree repository-source closure assertion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          branch=codex/admin-apply-global-source-closure-20260910
+          source=.github/admin-status/public-repository-source-closure-final.json
+          status="$(gh api "repos/$repo/contents/$source?ref=$branch" --jq -r '.content' | tr -d '\n' | base64 -d)"
+          test "$(jq -r '.repositorySourceFullyClosed' <<<"$status")" = true
+          test "$(jq -r '.classification.repositorySourceUnresolvedCount' <<<"$status")" = 0
+          test "$(jq -r '.allTerminalSuccess' <<<"$status")" = true
+          test "$(jq -r '.independentReviewAccepted' <<<"$status")" = true
+          for key in externalAuthorityGranted productionActivated writerCutoverAuthorized nodeRetirementAuthorized; do test "$(jq -r ".$key" <<<"$status")" = false; done
+          jq -n --argjson status "$status" '{schemaVersion:1,kind:"PublicRepositorySourceClosureAssertion",head:$status.head,tree:$status.tree,prospectiveMerge:$status.prospectiveMerge,promotionCount:$status.promotionCount,repositorySourceFullyClosed:true,repositorySourceUnresolvedCount:0,externalEvidenceOrActivationCount:$status.classification.externalEvidenceOrActivationCount,allTerminalSuccess:true,independentReviewAccepted:true,approvedBy:$status.approvedBy,externalAuthorityGranted:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/assertion.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/assertion.json")"
+          out=.github/admin-status/public-repository-source-fully-closed.json
+          existing="$(gh api "repos/$repo/contents/$out?ref=$branch" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): refresh public repository-source closure assertion' -f content="$content" -f sha="$existing" -f branch="$branch" >/dev/null; else gh api -X PUT "repos/$repo/contents/$out" -f message='chore(admin): record public repository-source closure assertion' -f content="$content" -f branch="$branch" >/dev/null; fi
+          cat "$RUNNER_TEMP/assertion.json"

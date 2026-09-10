@@ -11,6 +11,7 @@ mod candidate;
 mod conformance;
 mod error;
 mod hash;
+mod legacy_adapter;
 mod lifecycle;
 mod protocol;
 mod registry;
@@ -23,6 +24,12 @@ pub use conformance::{
     module_contract_conformance_report_v1, node_legacy_adapter_manifest_v1,
 };
 pub use error::ModulePlatformError;
+pub use legacy_adapter::{
+    LegacyAdapterError, LegacyBeginOutcomeV1, LegacyCapabilityBindingV1, LegacyNodeInvocationV1,
+    LegacyNodeObservationV1, LegacyParityClassV1, LegacyPlanningReceiptV1,
+    LegacyReservationOutcomeV1, LegacyTranslationReceiptV1, MAXIMUM_LEGACY_CAPABILITY_BINDINGS_V1,
+    MAXIMUM_LEGACY_EXECUTIONS_V1, NODE_LEGACY_ADAPTER_MODULE_ID_V1, NodeLegacyAdapterV1,
+};
 pub use lifecycle::{
     CircuitBreakerStateV1, DeterminismClassV1, ModuleHealthReportV1, ModuleLifecycleProfileV1,
     RegistryChangeClassV1, RegistryChangeDecisionV1, RolloutChannelV1, classify_registry_change_v1,

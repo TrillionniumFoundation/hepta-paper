@@ -1,0 +1,5 @@
+require-ci=.github/admin-status/global-source-closure-qualified.json
+require-review=.github/admin-status/global-source-closure-approved.json
+exact-sha=true
+external-authority=false
+production-activation=false

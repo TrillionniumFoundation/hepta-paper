@@ -1,0 +1,4 @@
+require-merge-status=.github/admin-status/global-source-closure-merged.json
+require-promotions=20
+require-workflows=16
+exact-head-only=true

@@ -1,0 +1,74 @@
+name: admin-monitor-main-source-closure-v8-20260911
+
+on:
+  push:
+    branches:
+      - codex/source-audit-export-20260911
+    paths:
+      - .github/workflows/admin-monitor-main-source-closure-v8-20260911.yml
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: admin-monitor-main-source-closure-v8-20260911
+  cancel-in-progress: true
+
+env:
+  WATCH_NAME: admin-converge-main-source-closure-v8-20260911
+  SOURCE_BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  AUDIT_BRANCH: codex/source-audit-export-20260911
+
+jobs:
+  monitor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Monitor latest v8 run on the audit branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=""
+          for attempt in $(seq 1 180); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=$AUDIT_BRANCH&event=push&per_page=100" > "$RUNNER_TEMP/runs.json"
+            run_id="$(jq -r --arg name "$WATCH_NAME" '[.workflow_runs[]|select(.name==$name)]|sort_by(.created_at)|last|.id//empty' "$RUNNER_TEMP/runs.json")"
+            [ -n "$run_id" ] && break
+            sleep 10
+          done
+          test -n "$run_id"
+          for attempt in $(seq 1 1080); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$RUNNER_TEMP/run.json"
+            status="$(jq -r '.status' "$RUNNER_TEMP/run.json")"
+            echo "v8 run=$run_id attempt=$attempt status=$status"
+            [ "$status" = completed ] && break
+            [ "$attempt" = 1080 ] && exit 1
+            sleep 20
+          done
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" > "$RUNNER_TEMP/jobs.json"
+          gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log-failed > "$RUNNER_TEMP/failed.log" 2>&1 || true
+          log_bytes="$(wc -c < "$RUNNER_TEMP/failed.log")"
+          log_hash="sha256:$(sha256sum "$RUNNER_TEMP/failed.log"|awk '{print $1}')"
+          final_status_exists=false
+          if gh api "repos/$GITHUB_REPOSITORY/contents/.github/admin-status/internal-source-main-closure-v6-20260911.json?ref=$AUDIT_BRANCH" >/dev/null 2>&1; then final_status_exists=true; fi
+          jq -n --argjson run "$(cat "$RUNNER_TEMP/run.json")" --argjson jobs "$(cat "$RUNNER_TEMP/jobs.json")" --arg logSha256 "$log_hash" --argjson failedLogBytes "$log_bytes" --argjson finalStatusExists "$final_status_exists" '{schemaVersion:1,kind:"MainSourceClosureV8Monitor",runId:$run.id,headSha:$run.head_sha,status:$run.status,conclusion:$run.conclusion,createdAt:$run.created_at,updatedAt:$run.updated_at,jobs:[$jobs.jobs[]|{name,status,conclusion,startedAt:.started_at,completedAt:.completed_at,steps:[.steps[]|{name,status,conclusion,number}]}],failedJobNames:[$jobs.jobs[]|select(.conclusion!="success" and .conclusion!="skipped")|.name],failedStepNames:[$jobs.jobs[].steps[]|select(.conclusion!=null and .conclusion!="success" and .conclusion!="skipped")|.name],failedLogBytes:$failedLogBytes,failedLogSha256:$logSha256,finalStatusExists:$finalStatusExists,externalAuthorityGranted:false,targetHostQualified:false,productionActivated:false,writerCutoverAuthorized:false,nodeRetirementAuthorized:false}' > "$RUNNER_TEMP/status.json"
+          content="$(base64 -w0 "$RUNNER_TEMP/status.json")"
+          path=.github/admin-status/main-source-closure-v8-monitor-20260911.json
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/contents/$path?ref=$AUDIT_BRANCH" --jq '.sha' 2>/dev/null||true)"
+          if [ -n "$existing" ]; then
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): record source convergence v8 monitor' -f content="$content" -f sha="$existing" -f branch="$AUDIT_BRANCH" >/dev/null
+          else
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$path" -f message='chore(admin): record source convergence v8 monitor' -f content="$content" -f branch="$AUDIT_BRANCH" >/dev/null
+          fi
+          conclusion="$(jq -r '.conclusion' "$RUNNER_TEMP/run.json")"
+          if [ "$conclusion" != success ]; then
+            pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=TrillionniumFoundation:$SOURCE_BRANCH&base=main&per_page=20" --jq '.[0].number//empty')"
+            if [ -n "$pr" ]; then
+              failed_jobs="$(jq -r '.failedJobNames|if length==0 then "workflow-level failure" else join(", ") end' "$RUNNER_TEMP/status.json")"
+              failed_steps="$(jq -r '.failedStepNames|if length==0 then "unresolved" else join(", ") end' "$RUNNER_TEMP/status.json")"
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f body="v8 convergence stopped fail-closed. Run: $run_id. Failed jobs: $failed_jobs. Failed steps: $failed_steps. Failed-log digest: $log_hash ($log_bytes bytes). All external/production authority flags remain false." >/dev/null
+            fi
+          fi

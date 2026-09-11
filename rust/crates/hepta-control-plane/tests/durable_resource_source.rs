@@ -14,9 +14,8 @@ fn digest(byte: char) -> Sha256Digest {
 
 fn ledger_path() -> PathBuf {
     std::env::temp_dir().join(format!(
-        "hepta-durable-resource-source-{}-{}.jsonl",
-        std::process::id(),
-        digest('f').as_str().trim_start_matches("sha256:")
+        "hepta-durable-resource-source-{}.jsonl",
+        std::process::id()
     ))
 }
 
@@ -50,12 +49,7 @@ fn durable_resource_recovery_retains_ambiguous_capacity_until_reconciled() {
             .expect("prepare");
         assert_eq!(prepared.state, DurableResourceLeaseStateV1::Prepared);
         let finalized = ledger
-            .finalize(
-                "reservation-source-owner",
-                7,
-                &token_hash,
-                11,
-            )
+            .finalize("reservation-source-owner", 7, &token_hash, 11)
             .expect("finalize");
         assert_eq!(finalized.state, DurableResourceLeaseStateV1::Finalized);
         let recovery = ledger.recover_expired(21).expect("recover expired");

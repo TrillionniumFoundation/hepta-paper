@@ -100,10 +100,8 @@ pub fn select_predictor_v1(
     let challenger_p95_error_ppm = report_p95_error(challenger);
     let champion_safe = report_safe(champion, policy);
     let challenger_safe = report_safe(challenger, policy);
-    let challenger_improvement_ppm = improvement_ppm(
-        champion_p95_error_ppm,
-        challenger_p95_error_ppm,
-    )?;
+    let challenger_improvement_ppm =
+        improvement_ppm(champion_p95_error_ppm, challenger_p95_error_ppm)?;
 
     let (promoted, reason) = match (champion_safe, challenger_safe) {
         (false, true) => (true, PredictorSelectionReasonV1::UnsafeChampionReplaced),
@@ -268,7 +266,12 @@ mod tests {
             .expect("digest")
     }
 
-    fn report(version: &str, error: u64, underestimate: u32, confidence: u32) -> CalibrationReportV1 {
+    fn report(
+        version: &str,
+        error: u64,
+        underestimate: u32,
+        confidence: u32,
+    ) -> CalibrationReportV1 {
         CalibrationReportV1 {
             version: 1,
             workload_id: "workload:author".into(),
@@ -360,7 +363,12 @@ mod tests {
             Err(PredictorSelectionError::ReportsIncomparable)
         );
         assert_eq!(
-            select_predictor_v1(&champion, &report("predictor:v2", 80_000, 50_000, 900_000), &policy(), 12_000),
+            select_predictor_v1(
+                &champion,
+                &report("predictor:v2", 80_000, 50_000, 900_000),
+                &policy(),
+                12_000
+            ),
             Err(PredictorSelectionError::ReportInvalid)
         );
     }

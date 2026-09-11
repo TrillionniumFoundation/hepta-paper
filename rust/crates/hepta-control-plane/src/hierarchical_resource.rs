@@ -191,7 +191,13 @@ impl HierarchicalResourceAllocatorV1 {
                 request.clone(),
             ));
         }
-        keyed.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)).then_with(|| left.2.cmp(&right.2)).then_with(|| left.3.cmp(&right.3)));
+        keyed.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(&right.2))
+                .then_with(|| left.3.cmp(&right.3))
+        });
         self.last_observed_unix_ms = Some(now_unix_ms);
         Ok(keyed.into_iter().map(|item| item.4).collect())
     }
@@ -211,9 +217,18 @@ impl HierarchicalResourceAllocatorV1 {
         }
         let path = self.scope_path(&request.leaf_scope_id)?;
         for scope_id in &path {
-            let scope = self.scopes.get(scope_id).ok_or(HierarchicalResourceError::HierarchyInvalid)?;
-            let current = self.scope_reserved.get(scope_id).copied().unwrap_or_default();
-            let next = current.checked_add(request.resources).map_err(|_| HierarchicalResourceError::CapacityDenied)?;
+            let scope = self
+                .scopes
+                .get(scope_id)
+                .ok_or(HierarchicalResourceError::HierarchyInvalid)?;
+            let current = self
+                .scope_reserved
+                .get(scope_id)
+                .copied()
+                .unwrap_or_default();
+            let next = current
+                .checked_add(request.resources)
+                .map_err(|_| HierarchicalResourceError::CapacityDenied)?;
             if !next.fits_within(scope.hard_limit) {
                 return Err(HierarchicalResourceError::CapacityDenied);
             }
@@ -222,15 +237,22 @@ impl HierarchicalResourceAllocatorV1 {
             request: &request,
             fence_generation: self.next_fence_generation,
         };
-        let prepared_hash = canonical_hash_v1(&body).map_err(|_| HierarchicalResourceError::Encoding)?;
+        let prepared_hash =
+            canonical_hash_v1(&body).map_err(|_| HierarchicalResourceError::Encoding)?;
         let prepared = PreparedHierarchicalReservationV1 {
             request,
             fence_generation: body.fence_generation,
             prepared_hash,
         };
         for scope_id in &path {
-            let current = self.scope_reserved.get(scope_id).copied().unwrap_or_default();
-            let next = current.checked_add(prepared.request.resources).map_err(|_| HierarchicalResourceError::CapacityDenied)?;
+            let current = self
+                .scope_reserved
+                .get(scope_id)
+                .copied()
+                .unwrap_or_default();
+            let next = current
+                .checked_add(prepared.request.resources)
+                .map_err(|_| HierarchicalResourceError::CapacityDenied)?;
             self.scope_reserved.insert(scope_id.clone(), next);
         }
         self.next_fence_generation = self
@@ -238,7 +260,8 @@ impl HierarchicalResourceAllocatorV1 {
             .checked_add(1)
             .ok_or(HierarchicalResourceError::NumericOverflow)?;
         self.last_observed_unix_ms = Some(now_unix_ms);
-        self.prepared.insert(prepared.request.reservation_id.clone(), prepared.clone());
+        self.prepared
+            .insert(prepared.request.reservation_id.clone(), prepared.clone());
         Ok(prepared)
     }
 
@@ -270,15 +293,16 @@ impl HierarchicalResourceAllocatorV1 {
             plan_hash: &prepared.request.plan_hash,
             action_hash: &prepared.request.action_hash,
         };
-        let dispatch_capability_hash = canonical_hash_v1(&dispatch_body)
-            .map_err(|_| HierarchicalResourceError::Encoding)?;
+        let dispatch_capability_hash =
+            canonical_hash_v1(&dispatch_body).map_err(|_| HierarchicalResourceError::Encoding)?;
         let lease_body = LeaseBodyV1 {
             request: &prepared.request,
             fence_generation: prepared.fence_generation,
             finalized_at_unix_ms: now_unix_ms,
             dispatch_capability_hash: &dispatch_capability_hash,
         };
-        let lease_hash = canonical_hash_v1(&lease_body).map_err(|_| HierarchicalResourceError::Encoding)?;
+        let lease_hash =
+            canonical_hash_v1(&lease_body).map_err(|_| HierarchicalResourceError::Encoding)?;
         let lease = ResourceLeaseV1 {
             request: prepared.request,
             fence_generation: prepared.fence_generation,
@@ -287,7 +311,8 @@ impl HierarchicalResourceAllocatorV1 {
             lease_hash,
         };
         self.prepared.remove(reservation_id);
-        self.finalized.insert(reservation_id.to_owned(), lease.clone());
+        self.finalized
+            .insert(reservation_id.to_owned(), lease.clone());
         self.last_observed_unix_ms = Some(now_unix_ms);
         Ok(lease)
     }
@@ -327,8 +352,10 @@ impl HierarchicalResourceAllocatorV1 {
             finalized_at_unix_ms: lease.finalized_at_unix_ms,
             dispatch_capability_hash: &lease.dispatch_capability_hash,
         };
-        lease.lease_hash = canonical_hash_v1(&lease_body).map_err(|_| HierarchicalResourceError::Encoding)?;
-        self.finalized.insert(reservation_id.to_owned(), lease.clone());
+        lease.lease_hash =
+            canonical_hash_v1(&lease_body).map_err(|_| HierarchicalResourceError::Encoding)?;
+        self.finalized
+            .insert(reservation_id.to_owned(), lease.clone());
         self.last_observed_unix_ms = Some(now_unix_ms);
         Ok(lease)
     }
@@ -363,13 +390,18 @@ impl HierarchicalResourceAllocatorV1 {
             finalized_at_unix_ms: lease.finalized_at_unix_ms,
             dispatch_capability_hash: &lease.dispatch_capability_hash,
         };
-        lease.lease_hash = canonical_hash_v1(&lease_body).map_err(|_| HierarchicalResourceError::Encoding)?;
-        self.finalized.insert(reservation_id.to_owned(), lease.clone());
+        lease.lease_hash =
+            canonical_hash_v1(&lease_body).map_err(|_| HierarchicalResourceError::Encoding)?;
+        self.finalized
+            .insert(reservation_id.to_owned(), lease.clone());
         Ok(lease)
     }
 
     /// Releases one exact finalized lease and all ancestor accounting.
-    pub fn release(&mut self, reservation_id: &str) -> Result<ResourceLeaseV1, HierarchicalResourceError> {
+    pub fn release(
+        &mut self,
+        reservation_id: &str,
+    ) -> Result<ResourceLeaseV1, HierarchicalResourceError> {
         let lease = self
             .finalized
             .remove(reservation_id)
@@ -398,7 +430,10 @@ impl HierarchicalResourceAllocatorV1 {
 
     /// Recovers expired or generation-stale prepared reservations. It never
     /// assumes a finalized lease is safe to reclaim merely because its owner vanished.
-    pub fn reap_stale_prepared(&mut self, now_unix_ms: u64) -> Result<Vec<String>, HierarchicalResourceError> {
+    pub fn reap_stale_prepared(
+        &mut self,
+        now_unix_ms: u64,
+    ) -> Result<Vec<String>, HierarchicalResourceError> {
         self.validate_clock(now_unix_ms)?;
         let stale = self
             .prepared
@@ -431,7 +466,8 @@ impl HierarchicalResourceAllocatorV1 {
             finalized_count: self.finalized.len(),
             last_observed_unix_ms: self.last_observed_unix_ms,
         };
-        let report_hash = canonical_hash_v1(&body).map_err(|_| HierarchicalResourceError::Encoding)?;
+        let report_hash =
+            canonical_hash_v1(&body).map_err(|_| HierarchicalResourceError::Encoding)?;
         Ok(HierarchicalAccountingReportV1 {
             version: body.version,
             capacity_generation: body.capacity_generation,
@@ -444,7 +480,11 @@ impl HierarchicalResourceAllocatorV1 {
         })
     }
 
-    fn validate_request(&self, request: &HierarchicalReservationRequestV1, now_unix_ms: u64) -> Result<(), HierarchicalResourceError> {
+    fn validate_request(
+        &self,
+        request: &HierarchicalReservationRequestV1,
+        now_unix_ms: u64,
+    ) -> Result<(), HierarchicalResourceError> {
         if !valid_identifier(&request.reservation_id)
             || !valid_identifier(&request.attempt_id)
             || !valid_identifier(&request.owner_principal)
@@ -455,7 +495,8 @@ impl HierarchicalResourceAllocatorV1 {
             || request.accounting_generation != self.accounting_generation
             || request.requested_at_unix_ms > now_unix_ms
             || request.expires_at_unix_ms <= now_unix_ms
-            || request.expires_at_unix_ms > now_unix_ms.saturating_add(self.maximum_horizon(&request.leaf_scope_id)?)
+            || request.expires_at_unix_ms
+                > now_unix_ms.saturating_add(self.maximum_horizon(&request.leaf_scope_id)?)
         {
             return Err(HierarchicalResourceError::RequestInvalid);
         }
@@ -465,7 +506,11 @@ impl HierarchicalResourceAllocatorV1 {
     fn maximum_horizon(&self, leaf_scope_id: &str) -> Result<u64, HierarchicalResourceError> {
         self.scope_path(leaf_scope_id)?
             .iter()
-            .map(|scope_id| self.scopes.get(scope_id).map(|scope| scope.maximum_reservation_horizon_ms))
+            .map(|scope_id| {
+                self.scopes
+                    .get(scope_id)
+                    .map(|scope| scope.maximum_reservation_horizon_ms)
+            })
             .collect::<Option<Vec<_>>>()
             .and_then(|values| values.into_iter().min())
             .ok_or(HierarchicalResourceError::HierarchyInvalid)
@@ -475,11 +520,21 @@ impl HierarchicalResourceAllocatorV1 {
         scope_path(&self.scopes, leaf_scope_id)
     }
 
-    fn release_vector(&mut self, leaf_scope_id: &str, resources: ResourceVectorV1) -> Result<(), HierarchicalResourceError> {
+    fn release_vector(
+        &mut self,
+        leaf_scope_id: &str,
+        resources: ResourceVectorV1,
+    ) -> Result<(), HierarchicalResourceError> {
         let path = self.scope_path(leaf_scope_id)?;
         for scope_id in path {
-            let current = self.scope_reserved.get(&scope_id).copied().unwrap_or_default();
-            let next = current.checked_sub(resources).map_err(|_| HierarchicalResourceError::AccountingCorrupt)?;
+            let current = self
+                .scope_reserved
+                .get(&scope_id)
+                .copied()
+                .unwrap_or_default();
+            let next = current
+                .checked_sub(resources)
+                .map_err(|_| HierarchicalResourceError::AccountingCorrupt)?;
             if next.is_zero() {
                 self.scope_reserved.remove(&scope_id);
             } else {
@@ -490,7 +545,10 @@ impl HierarchicalResourceAllocatorV1 {
     }
 
     fn validate_clock(&self, now_unix_ms: u64) -> Result<(), HierarchicalResourceError> {
-        if self.last_observed_unix_ms.is_some_and(|previous| now_unix_ms < previous) {
+        if self
+            .last_observed_unix_ms
+            .is_some_and(|previous| now_unix_ms < previous)
+        {
             return Err(HierarchicalResourceError::ClockRollback);
         }
         Ok(())
@@ -499,7 +557,10 @@ impl HierarchicalResourceAllocatorV1 {
 
 fn validate_scope(scope: &ResourceScopeV1) -> Result<(), HierarchicalResourceError> {
     if !valid_identifier(&scope.scope_id)
-        || scope.parent_scope_id.as_deref().is_some_and(|parent| !valid_identifier(parent) || parent == scope.scope_id)
+        || scope
+            .parent_scope_id
+            .as_deref()
+            .is_some_and(|parent| !valid_identifier(parent) || parent == scope.scope_id)
         || scope.hard_limit.is_zero()
         || scope.guaranteed_share.is_zero()
         || !scope.guaranteed_share.fits_within(scope.hard_limit)
@@ -508,19 +569,28 @@ fn validate_scope(scope: &ResourceScopeV1) -> Result<(), HierarchicalResourceErr
     {
         return Err(HierarchicalResourceError::HierarchyInvalid);
     }
-    let entitled = scope.guaranteed_share.checked_add(scope.burst_allowance).map_err(|_| HierarchicalResourceError::HierarchyInvalid)?;
+    let entitled = scope
+        .guaranteed_share
+        .checked_add(scope.burst_allowance)
+        .map_err(|_| HierarchicalResourceError::HierarchyInvalid)?;
     if !entitled.fits_within(scope.hard_limit) {
         return Err(HierarchicalResourceError::HierarchyInvalid);
     }
     Ok(())
 }
 
-fn validate_path(scopes: &BTreeMap<String, ResourceScopeV1>, leaf: &str) -> Result<(), HierarchicalResourceError> {
+fn validate_path(
+    scopes: &BTreeMap<String, ResourceScopeV1>,
+    leaf: &str,
+) -> Result<(), HierarchicalResourceError> {
     let _ = scope_path(scopes, leaf)?;
     Ok(())
 }
 
-fn scope_path(scopes: &BTreeMap<String, ResourceScopeV1>, leaf: &str) -> Result<Vec<String>, HierarchicalResourceError> {
+fn scope_path(
+    scopes: &BTreeMap<String, ResourceScopeV1>,
+    leaf: &str,
+) -> Result<Vec<String>, HierarchicalResourceError> {
     let mut path = Vec::new();
     let mut seen = BTreeSet::new();
     let mut current = Some(leaf.to_owned());
@@ -528,7 +598,9 @@ fn scope_path(scopes: &BTreeMap<String, ResourceScopeV1>, leaf: &str) -> Result<
         if path.len() >= MAXIMUM_DEPTH || !seen.insert(scope_id.clone()) {
             return Err(HierarchicalResourceError::HierarchyInvalid);
         }
-        let scope = scopes.get(&scope_id).ok_or(HierarchicalResourceError::HierarchyInvalid)?;
+        let scope = scopes
+            .get(&scope_id)
+            .ok_or(HierarchicalResourceError::HierarchyInvalid)?;
         path.push(scope_id);
         current = scope.parent_scope_id.clone();
     }
@@ -590,13 +662,21 @@ fn dominant_share_ppm(usage: ResourceVectorV1, entitlement: ResourceVectorV1) ->
 }
 
 fn share(value: u64, limit: u64) -> u128 {
-    if value == 0 { 0 } else if limit == 0 { u128::MAX } else { u128::from(value).saturating_mul(1_000_000) / u128::from(limit) }
+    if value == 0 {
+        0
+    } else if limit == 0 {
+        u128::MAX
+    } else {
+        u128::from(value).saturating_mul(1_000_000) / u128::from(limit)
+    }
 }
 
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/'))
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/')
+        })
 }
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -630,33 +710,93 @@ mod tests {
     use super::*;
 
     fn vector(cpu: u64) -> ResourceVectorV1 {
-        ResourceVectorV1 { cpu_millis: cpu, memory_bytes: cpu.saturating_mul(100), ..ResourceVectorV1::default() }
+        ResourceVectorV1 {
+            cpu_millis: cpu,
+            memory_bytes: cpu.saturating_mul(100),
+            ..ResourceVectorV1::default()
+        }
     }
 
     fn scopes() -> Vec<ResourceScopeV1> {
         vec![
-            ResourceScopeV1 { scope_id: "host".into(), parent_scope_id: None, hard_limit: vector(100), guaranteed_share: vector(100), burst_allowance: ResourceVectorV1::default(), weight: 1, maximum_reservation_horizon_ms: 10_000 },
-            ResourceScopeV1 { scope_id: "service".into(), parent_scope_id: Some("host".into()), hard_limit: vector(80), guaranteed_share: vector(60), burst_allowance: vector(20), weight: 1, maximum_reservation_horizon_ms: 5_000 },
-            ResourceScopeV1 { scope_id: "team-a".into(), parent_scope_id: Some("service".into()), hard_limit: vector(60), guaranteed_share: vector(40), burst_allowance: vector(20), weight: 1, maximum_reservation_horizon_ms: 3_000 },
-            ResourceScopeV1 { scope_id: "campaign-a".into(), parent_scope_id: Some("team-a".into()), hard_limit: vector(50), guaranteed_share: vector(30), burst_allowance: vector(20), weight: 1, maximum_reservation_horizon_ms: 2_000 },
+            ResourceScopeV1 {
+                scope_id: "host".into(),
+                parent_scope_id: None,
+                hard_limit: vector(100),
+                guaranteed_share: vector(100),
+                burst_allowance: ResourceVectorV1::default(),
+                weight: 1,
+                maximum_reservation_horizon_ms: 10_000,
+            },
+            ResourceScopeV1 {
+                scope_id: "service".into(),
+                parent_scope_id: Some("host".into()),
+                hard_limit: vector(80),
+                guaranteed_share: vector(60),
+                burst_allowance: vector(20),
+                weight: 1,
+                maximum_reservation_horizon_ms: 5_000,
+            },
+            ResourceScopeV1 {
+                scope_id: "team-a".into(),
+                parent_scope_id: Some("service".into()),
+                hard_limit: vector(60),
+                guaranteed_share: vector(40),
+                burst_allowance: vector(20),
+                weight: 1,
+                maximum_reservation_horizon_ms: 3_000,
+            },
+            ResourceScopeV1 {
+                scope_id: "campaign-a".into(),
+                parent_scope_id: Some("team-a".into()),
+                hard_limit: vector(50),
+                guaranteed_share: vector(30),
+                burst_allowance: vector(20),
+                weight: 1,
+                maximum_reservation_horizon_ms: 2_000,
+            },
         ]
     }
 
     fn digest(byte: char) -> Sha256Digest {
-        format!("sha256:{}", byte.to_string().repeat(64)).parse().expect("digest")
+        format!("sha256:{}", byte.to_string().repeat(64))
+            .parse()
+            .expect("digest")
     }
 
-    fn request(id: &str, cpu: u64, requested: u64, expires: u64) -> HierarchicalReservationRequestV1 {
+    fn request(
+        id: &str,
+        cpu: u64,
+        requested: u64,
+        expires: u64,
+    ) -> HierarchicalReservationRequestV1 {
         HierarchicalReservationRequestV1 {
-            reservation_id: id.into(), attempt_id: format!("attempt-{id}"), owner_principal: "principal:worker".into(), worker_identity: "worker:1".into(), leaf_scope_id: "campaign-a".into(), plan_hash: digest('a'), action_hash: digest('b'), resources: vector(cpu), capacity_generation: 1, accounting_generation: 1, requested_at_unix_ms: requested, expires_at_unix_ms: expires,
+            reservation_id: id.into(),
+            attempt_id: format!("attempt-{id}"),
+            owner_principal: "principal:worker".into(),
+            worker_identity: "worker:1".into(),
+            leaf_scope_id: "campaign-a".into(),
+            plan_hash: digest('a'),
+            action_hash: digest('b'),
+            resources: vector(cpu),
+            capacity_generation: 1,
+            accounting_generation: 1,
+            requested_at_unix_ms: requested,
+            expires_at_unix_ms: expires,
         }
     }
 
     #[test]
     fn hierarchy_charges_every_ancestor_and_enforces_child_ceiling() {
-        let mut allocator = HierarchicalResourceAllocatorV1::new(scopes(), 1, 1, 1_000).expect("allocator");
-        allocator.prepare(request("one", 40, 0, 1_000), 0).expect("first");
-        assert_eq!(allocator.prepare(request("two", 20, 0, 1_000), 0), Err(HierarchicalResourceError::CapacityDenied));
+        let mut allocator =
+            HierarchicalResourceAllocatorV1::new(scopes(), 1, 1, 1_000).expect("allocator");
+        allocator
+            .prepare(request("one", 40, 0, 1_000), 0)
+            .expect("first");
+        assert_eq!(
+            allocator.prepare(request("two", 20, 0, 1_000), 0),
+            Err(HierarchicalResourceError::CapacityDenied)
+        );
         let report = allocator.report().expect("report");
         assert_eq!(report.scope_reserved["host"].cpu_millis, 40);
         assert_eq!(report.scope_reserved["campaign-a"].cpu_millis, 40);
@@ -664,34 +804,60 @@ mod tests {
 
     #[test]
     fn prepare_finalize_renew_and_release_are_generation_fenced() {
-        let mut allocator = HierarchicalResourceAllocatorV1::new(scopes(), 1, 1, 1_000).expect("allocator");
-        let prepared = allocator.prepare(request("one", 20, 0, 1_000), 0).expect("prepare");
-        let lease = allocator.finalize("one", &prepared.prepared_hash, 10).expect("finalize");
+        let mut allocator =
+            HierarchicalResourceAllocatorV1::new(scopes(), 1, 1, 1_000).expect("allocator");
+        let prepared = allocator
+            .prepare(request("one", 20, 0, 1_000), 0)
+            .expect("prepare");
+        let lease = allocator
+            .finalize("one", &prepared.prepared_hash, 10)
+            .expect("finalize");
         assert_eq!(lease.fence_generation, prepared.fence_generation);
-        let renewed = allocator.renew("one", "principal:worker", lease.fence_generation, 20, 1_500).expect("renew");
+        let renewed = allocator
+            .renew("one", "principal:worker", lease.fence_generation, 20, 1_500)
+            .expect("renew");
         assert_eq!(renewed.request.expires_at_unix_ms, 1_500);
         allocator.release("one").expect("release");
-        assert!(allocator.report().expect("report").scope_reserved.is_empty());
+        assert!(
+            allocator
+                .report()
+                .expect("report")
+                .scope_reserved
+                .is_empty()
+        );
     }
 
     #[test]
     fn stale_prepared_capacity_is_recovered_but_finalized_capacity_is_not_invented_free() {
-        let mut allocator = HierarchicalResourceAllocatorV1::new(scopes(), 1, 1, 1_000).expect("allocator");
-        allocator.prepare(request("prepared", 20, 0, 1_000), 0).expect("prepare");
-        let finalized = allocator.prepare(request("finalized", 20, 0, 1_000), 0).expect("prepare two");
-        allocator.finalize("finalized", &finalized.prepared_hash, 10).expect("finalize");
+        let mut allocator =
+            HierarchicalResourceAllocatorV1::new(scopes(), 1, 1, 1_000).expect("allocator");
+        allocator
+            .prepare(request("prepared", 20, 0, 1_000), 0)
+            .expect("prepare");
+        let finalized = allocator
+            .prepare(request("finalized", 20, 0, 1_000), 0)
+            .expect("prepare two");
+        allocator
+            .finalize("finalized", &finalized.prepared_hash, 10)
+            .expect("finalize");
         allocator.advance_generations(2, 2).expect("advance");
         let reaped = allocator.reap_stale_prepared(20).expect("reap");
         assert_eq!(reaped, vec!["prepared".to_owned()]);
-        assert_eq!(allocator.report().expect("report").scope_reserved["host"].cpu_millis, 20);
+        assert_eq!(
+            allocator.report().expect("report").scope_reserved["host"].cpu_millis,
+            20
+        );
     }
 
     #[test]
     fn aging_promotes_an_old_eligible_request_deterministically() {
-        let mut allocator = HierarchicalResourceAllocatorV1::new(scopes(), 1, 1, 10_000).expect("allocator");
+        let mut allocator =
+            HierarchicalResourceAllocatorV1::new(scopes(), 1, 1, 10_000).expect("allocator");
         let fresh = request("fresh", 1, 9_000, 10_500);
         let old = request("old", 1, 0, 10_500);
-        let ranked = allocator.rank_requests(&[fresh, old.clone()], 10_000).expect("rank");
+        let ranked = allocator
+            .rank_requests(&[fresh, old.clone()], 10_000)
+            .expect("rank");
         assert_eq!(ranked.first(), Some(&old));
     }
 }

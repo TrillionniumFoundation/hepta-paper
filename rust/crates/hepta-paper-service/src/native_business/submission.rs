@@ -44,7 +44,9 @@ pub(super) fn submission_package(
     supplementary_hashes.sort();
     let unique = supplementary_hashes.iter().collect::<BTreeSet<_>>();
     if unique.len() != supplementary_hashes.len()
-        || supplementary_hashes.iter().any(|hash| hash == &manuscript_hash)
+        || supplementary_hashes
+            .iter()
+            .any(|hash| hash == &manuscript_hash)
     {
         return Err(NativeBusinessError::Contract);
     }

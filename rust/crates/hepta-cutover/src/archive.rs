@@ -52,8 +52,12 @@ impl LegacyArchiveProjectionV1 {
             return Err(LegacyArchiveError::SchemaVersion);
         }
         let source_database_content_hash = store.database_content_hash().clone();
-        let source_snapshot = store.logical_snapshot().map_err(|_| LegacyArchiveError::Source)?;
-        store.verify_unchanged().map_err(|_| LegacyArchiveError::Source)?;
+        let source_snapshot = store
+            .logical_snapshot()
+            .map_err(|_| LegacyArchiveError::Source)?;
+        store
+            .verify_unchanged()
+            .map_err(|_| LegacyArchiveError::Source)?;
         build_projection(source_database_content_hash, source_snapshot)
     }
 
@@ -185,7 +189,10 @@ fn validate_snapshot(snapshot: &LogicalDatabaseSnapshotV1) -> Result<(), LegacyA
             || table.columns.len() > MAXIMUM_COLUMNS_PER_TABLE
             || table.columns.iter().any(String::is_empty)
             || table.columns.iter().collect::<BTreeSet<_>>().len() != table.columns.len()
-            || table.rows.iter().any(|row| row.len() != table.columns.len())
+            || table
+                .rows
+                .iter()
+                .any(|row| row.len() != table.columns.len())
         {
             return Err(LegacyArchiveError::ProjectionInvalid);
         }
@@ -313,7 +320,14 @@ mod tests {
     fn complete_projection_round_trips_without_node_runtime() {
         let projection = build_projection(digest('a'), snapshot()).expect("projection");
         assert_eq!(projection.total_row_count, 1);
-        assert_eq!(projection.table("paper_campaigns").expect("table").rows.len(), 1);
+        assert_eq!(
+            projection
+                .table("paper_campaigns")
+                .expect("table")
+                .rows
+                .len(),
+            1
+        );
         let bytes = projection.encode_json().expect("encode");
         let decoded = LegacyArchiveProjectionV1::decode_json(&bytes).expect("decode");
         assert_eq!(decoded, projection);
@@ -339,6 +353,9 @@ mod tests {
     fn any_retained_row_mutation_breaks_the_projection_hash() {
         let mut projection = build_projection(digest('a'), snapshot()).expect("projection");
         projection.source_snapshot.tables[0].rows[0][1] = LogicalSqlValueV1::Text("failed".into());
-        assert_eq!(projection.validate(), Err(LegacyArchiveError::ProjectionHash));
+        assert_eq!(
+            projection.validate(),
+            Err(LegacyArchiveError::ProjectionHash)
+        );
     }
 }

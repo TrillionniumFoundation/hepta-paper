@@ -84,9 +84,7 @@ pub fn calibrate_predictions_v1(
     now_unix_ms: u64,
 ) -> Result<CalibrationReportV1, CalibrationError> {
     policy.validate()?;
-    if now_unix_ms == 0
-        || samples.len() < policy.minimum_samples
-        || samples.len() > MAXIMUM_SAMPLES
+    if now_unix_ms == 0 || samples.len() < policy.minimum_samples || samples.len() > MAXIMUM_SAMPLES
     {
         return Err(CalibrationError::SampleInvalid);
     }
@@ -122,10 +120,14 @@ pub fn calibrate_predictions_v1(
             sample.actual_cost_microusd,
         )?);
         duration_underestimates = duration_underestimates
-            .checked_add(u64::from(sample.predicted_duration_ms < sample.actual_duration_ms))
+            .checked_add(u64::from(
+                sample.predicted_duration_ms < sample.actual_duration_ms,
+            ))
             .ok_or(CalibrationError::NumericOverflow)?;
         cost_underestimates = cost_underestimates
-            .checked_add(u64::from(sample.predicted_cost_microusd < sample.actual_cost_microusd))
+            .checked_add(u64::from(
+                sample.predicted_cost_microusd < sample.actual_cost_microusd,
+            ))
             .ok_or(CalibrationError::NumericOverflow)?;
         minimum_confidence_ppm = minimum_confidence_ppm.min(sample.confidence_ppm);
     }
@@ -219,7 +221,8 @@ fn percentile(values: &mut [u64], percentage: usize) -> Result<u64, CalibrationE
 }
 
 fn rate_ppm(count: u64, sample_count: usize) -> Result<u32, CalibrationError> {
-    let denominator = u128::try_from(sample_count).map_err(|_| CalibrationError::NumericOverflow)?;
+    let denominator =
+        u128::try_from(sample_count).map_err(|_| CalibrationError::NumericOverflow)?;
     let value = u128::from(count)
         .checked_mul(u128::from(PPM))
         .ok_or(CalibrationError::NumericOverflow)?
@@ -230,9 +233,9 @@ fn rate_ppm(count: u64, sample_count: usize) -> Result<u32, CalibrationError> {
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/'))
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
+        })
 }
 
 /// Calibration input, arithmetic, or encoding failure.

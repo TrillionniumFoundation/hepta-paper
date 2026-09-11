@@ -92,7 +92,9 @@ where
         events: BoundedEventLogV1,
     ) -> Result<Self, ControlPlaneError> {
         if bindings.is_empty()
-            || bindings.values().any(|binding| binding.lease_duration_ms == 0)
+            || bindings
+                .values()
+                .any(|binding| binding.lease_duration_ms == 0)
             || bindings
                 .keys()
                 .any(|module_id| registry.module(module_id).is_err())
@@ -140,20 +142,16 @@ where
             return Err(ControlPlaneError::SnapshotInvalid);
         }
         frontier.validate(snapshot, &self.registry, &self.hard_policy)?;
-        let plan = select_plan_v1(
-            snapshot,
-            frontier,
-            &self.hard_policy,
-            &self.planner_policy,
-        )?;
+        let plan = select_plan_v1(snapshot, frontier, &self.hard_policy, &self.planner_policy)?;
         let candidates = frontier
             .candidates
             .iter()
             .map(|candidate| (candidate.candidate_id.as_str(), candidate))
             .collect::<BTreeMap<_, _>>();
-        let hierarchy_baseline = self.hierarchy.report().map_err(|_| {
-            ControlPlaneError::HierarchicalResourceRejected
-        })?;
+        let hierarchy_baseline = self
+            .hierarchy
+            .report()
+            .map_err(|_| ControlPlaneError::HierarchicalResourceRejected)?;
         let mut finalized_ids = Vec::with_capacity(plan.selected_candidate_ids.len());
         let mut hierarchy_lease_hashes = Vec::with_capacity(plan.selected_candidate_ids.len());
 
@@ -175,9 +173,10 @@ where
             }
         }
 
-        let hierarchy_admitted = self.hierarchy.report().map_err(|_| {
-            ControlPlaneError::HierarchicalResourceRejected
-        })?;
+        let hierarchy_admitted = self
+            .hierarchy
+            .report()
+            .map_err(|_| ControlPlaneError::HierarchicalResourceRejected)?;
         if hierarchy_admitted.prepared_count != hierarchy_baseline.prepared_count
             || hierarchy_admitted.finalized_count
                 != hierarchy_baseline
@@ -199,9 +198,10 @@ where
         if control_plane_receipt.plan != plan {
             return Err(ControlPlaneError::PlanInvalid);
         }
-        let hierarchy_released = self.hierarchy.report().map_err(|_| {
-            ControlPlaneError::HierarchicalResourceRejected
-        })?;
+        let hierarchy_released = self
+            .hierarchy
+            .report()
+            .map_err(|_| ControlPlaneError::HierarchicalResourceRejected)?;
         if !same_accounting_state(&hierarchy_baseline, &hierarchy_released) {
             return Err(ControlPlaneError::HierarchicalResourceRejected);
         }
@@ -259,9 +259,10 @@ where
         let ordinal = index
             .checked_add(1)
             .ok_or(ControlPlaneError::HierarchicalResourceRejected)?;
-        let accounting = self.hierarchy.report().map_err(|_| {
-            ControlPlaneError::HierarchicalResourceRejected
-        })?;
+        let accounting = self
+            .hierarchy
+            .report()
+            .map_err(|_| ControlPlaneError::HierarchicalResourceRejected)?;
         let candidate_hash = candidate
             .candidate_hash()
             .map_err(|_| ControlPlaneError::ModulePlatformRejected)?;
@@ -287,18 +288,19 @@ where
                 now_unix_ms,
             )
             .map_err(|_| ControlPlaneError::HierarchicalResourceRejected)?;
-        let lease = match self
-            .hierarchy
-            .finalize(&reservation_id, &prepared.prepared_hash, now_unix_ms)
-        {
-            Ok(lease) => lease,
-            Err(_) => {
-                self.hierarchy
-                    .cancel_prepared(&reservation_id)
-                    .map_err(|_| ControlPlaneError::HierarchicalResourceRejected)?;
-                return Err(ControlPlaneError::HierarchicalResourceRejected);
-            }
-        };
+        let lease =
+            match self
+                .hierarchy
+                .finalize(&reservation_id, &prepared.prepared_hash, now_unix_ms)
+            {
+                Ok(lease) => lease,
+                Err(_) => {
+                    self.hierarchy
+                        .cancel_prepared(&reservation_id)
+                        .map_err(|_| ControlPlaneError::HierarchicalResourceRejected)?;
+                    return Err(ControlPlaneError::HierarchicalResourceRejected);
+                }
+            };
         finalized_ids.push(reservation_id);
         lease_hashes.push(lease.lease_hash);
         Ok(())

@@ -411,6 +411,20 @@ impl HierarchicalResourceAllocatorV1 {
         Ok(lease)
     }
 
+    /// Cancels one exact prepared reservation before dispatch authorization.
+    /// This is the only non-expiry recovery path for a prepare/finalize failure.
+    pub fn cancel_prepared(
+        &mut self,
+        reservation_id: &str,
+    ) -> Result<PreparedHierarchicalReservationV1, HierarchicalResourceError> {
+        let prepared = self
+            .prepared
+            .remove(reservation_id)
+            .ok_or(HierarchicalResourceError::ReservationMissing)?;
+        self.release_vector(&prepared.request.leaf_scope_id, prepared.request.resources)?;
+        Ok(prepared)
+    }
+
     /// Advances externally observed capacity/accounting generations. Existing
     /// finalized leases remain charged but cannot renew; stale prepared entries
     /// are removed by `reap_stale_prepared` before their capacity is reused.

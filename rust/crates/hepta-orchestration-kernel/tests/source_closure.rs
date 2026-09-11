@@ -1,8 +1,9 @@
 use hepta_orchestration_kernel::{
-    CandidateRouterPolicyV1, CandidateV1, CanonicalWorkloadV1, EventCodeV1, ModuleClassV1,
-    ObservationInputV1, OutcomeClassV1, PerformanceObservationV1, PerformanceSubjectV1,
-    PlanningComponentObservationV1, PlanningSnapshotRequestV1, ResourceLedgerV1, ResourceScopeV1,
-    ResourceVectorV1, SeverityV1, TelemetryAggregatorV1, build_planning_snapshot_v1,
+    CalibrationObservationV1, CalibrationPolicyV1, CandidateRouterPolicyV1, CandidateV1,
+    CanonicalWorkloadV1, EventCodeV1, ModuleClassV1, ObservationInputV1, OutcomeClassV1,
+    PerformanceObservationV1, PerformanceSubjectV1, PlanningComponentObservationV1,
+    PlanningSnapshotRequestV1, ResourceLedgerV1, ResourceScopeV1, ResourceVectorV1, SeverityV1,
+    TelemetryAggregatorV1, build_planning_snapshot_v1, calibrate_predictions_v1,
     qualify_performance_v1, route_candidate_v1,
 };
 use std::collections::BTreeMap;
@@ -140,7 +141,7 @@ fn source_closure_snapshot_router_and_resources_are_deterministic() {
 }
 
 #[test]
-fn source_closure_telemetry_and_performance_fail_closed_without_external_authority() {
+fn source_closure_telemetry_performance_and_calibration_fail_closed_without_authority() {
     let mut telemetry = TelemetryAggregatorV1::default();
     telemetry
         .record(ObservationInputV1 {
@@ -186,4 +187,37 @@ fn source_closure_telemetry_and_performance_fail_closed_without_external_authori
     assert!(receipt.all_workloads_accepted);
     assert!(!receipt.production_authority_granted);
     assert!(qualify_performance_v1(subject, vec![workload], Vec::new()).is_err());
+
+    let calibration = calibrate_predictions_v1(
+        CalibrationPolicyV1 {
+            policy_id: "calibration:source-closure".into(),
+            minimum_observations: 2,
+            maximum_mean_absolute_utility_error_microunits: 10,
+            maximum_mean_cost_error_ppm: 200_000,
+            maximum_mean_latency_error_ppm: 200_000,
+        },
+        vec![
+            CalibrationObservationV1 {
+                candidate_id: "candidate:a".into(),
+                predicted_utility_microunits: 100,
+                observed_utility_microunits: 105,
+                predicted_cost_microusd: 100,
+                observed_cost_microusd: 90,
+                predicted_latency_ms: 100,
+                observed_latency_ms: 90,
+            },
+            CalibrationObservationV1 {
+                candidate_id: "candidate:b".into(),
+                predicted_utility_microunits: 100,
+                observed_utility_microunits: 95,
+                predicted_cost_microusd: 100,
+                observed_cost_microusd: 110,
+                predicted_latency_ms: 100,
+                observed_latency_ms: 110,
+            },
+        ],
+    )
+    .expect("calibration report");
+    assert!(calibration.calibrated);
+    assert!(!calibration.production_authority_granted);
 }

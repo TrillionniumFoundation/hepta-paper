@@ -1,0 +1,211 @@
+{
+  "$schema": "../schemas/source-implementation-evidence-v1.schema.json",
+  "schemaVersion": 1,
+  "kind": "RepositorySourceImplementationEvidenceV1",
+  "repository": "TrillionniumFoundation/hepta-paper",
+  "subjectPolicy": "current_clean_git_head_tree_and_exact_blobs",
+  "promotionPolicy": "semantic_registry_binding_plus_exact_git_blobs_plus_executable_owner_tests",
+  "registries": {
+    "workItems": "docs/system/truth/work-items.v2.json",
+    "modules": "docs/system/truth/modules.v1.json",
+    "capabilities": "docs/system/truth/capabilities.v1.json"
+  },
+  "bundles": {
+    "native-author-source": {
+      "description": "Exact Rust implementation and executable owner test for AUTH-001.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/author.rs",
+          "role": "implementation",
+          "gitBlob": "aad89c6a421d50ffe4c967cfee8534a82f143bc1",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "author_draft"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/tests.rs",
+          "role": "test",
+          "gitBlob": "acbebfc5b82b49e7e5bef388e83c90f32ef76985",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "author_and_review_are_deterministic_and_bounded"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "native_business::tests::author_and_review_are_deterministic_and_bounded",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/native_business/tests.rs"
+          ]
+        }
+      ]
+    },
+    "node-module-protocol-adapter-source": {
+      "description": "Exact bounded Node Module Protocol planning, invocation, observation and cancellation implementation for MIG-002.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-module-platform/src/lib.rs",
+          "role": "implementation",
+          "gitBlob": "787641e8adf4999e279c6f0202ae5aa5c39fbf64",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "constant",
+              "name": "MODULE_PROTOCOL_VERSION_V1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter.rs",
+          "role": "implementation",
+          "gitBlob": "e560460538440cf429e208d15d26bedfef1fba35",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "constant",
+              "name": "NODE_LEGACY_ADAPTER_MODULE_ID_V1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter/model.rs",
+          "role": "implementation",
+          "gitBlob": "7e8b3c121d67de74fe0a9effa7100ca81d651e7f",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "type",
+              "name": "NodeLegacyAdapterV1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter/engine.rs",
+          "role": "implementation",
+          "gitBlob": "e4809b4587186a38658066c63f3455897e8d342f",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "plan"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter/support.rs",
+          "role": "implementation",
+          "gitBlob": "cb8023c3808e0539b73a82ad5370759e442bf224",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "validate_observation"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs",
+          "role": "test",
+          "gitBlob": "3a54d2234222596beae9f6b1eefc5dd717657453",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "plan_builds_a_registry_valid_candidate"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-module-platform",
+            "legacy_adapter::tests::plan_builds_a_registry_valid_candidate",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"
+          ]
+        }
+      ]
+    }
+  },
+  "records": {
+    "AUTH-001": {
+      "workItemId": "AUTH-001",
+      "moduleId": "module.author-node",
+      "capabilityIds": [
+        "CAP-AUTHOR"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "native-author-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "targetHostQualified": false,
+        "externalAuthorityGranted": false,
+        "productionActivated": false,
+        "writerCutoverAuthorized": false,
+        "nodeRetirementAuthorized": false
+      }
+    },
+    "MIG-002": {
+      "workItemId": "MIG-002",
+      "moduleId": "module.node-legacy-adapter",
+      "capabilityIds": [
+        "CAP-MOD-EXECUTION"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "node-module-protocol-adapter-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "targetHostQualified": false,
+        "externalAuthorityGranted": false,
+        "productionActivated": false,
+        "writerCutoverAuthorized": false,
+        "nodeRetirementAuthorized": false
+      }
+    }
+  }
+}

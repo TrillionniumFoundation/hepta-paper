@@ -1,142 +1,108 @@
-# Durable cutover coordinator
+# Durable cutover and legacy retirement
 
-`DurableCutoverCoordinatorV1` coordinates participating Node and Rust writers
-through a SQLite journal independent of either application database schema. It
-supplements existing external mutation authorization; holding this fence does
-not authorize a provider action, qualify scientific evidence, or translate the
-legacy native database into the Rust campaign writer's HPCW format.
+`hepta-cutover` contains two complementary source contracts:
 
-## Enrollment and identity
+1. `DurableCutoverCoordinatorV1` — cooperative Node/Rust writer fencing used for
+   local/shadow comparison, backup/restore drills and controlled ownership handoff;
+2. `retirement` — immutable schema-25 Node database drain/freeze verification for
+   the final forward-only production retirement path.
 
-Call `create` only while all old writer processes are stopped and drained under
-the existing maintenance boundary. A callback that started before enrollment
-cannot retroactively acquire the new fence. Restart participating Node writers
-after enrollment. Subsequent handoffs need no process race assumptions: every
-participating mutation holds the coordinator transaction throughout its commit.
+Neither contract grants provider, scientific, release, portal or submission
+authority.
 
-An existing absolute canonical database is required. Enrollment creates two
-non-overwritable files:
+## Cooperative cutover coordinator
 
-- `<database>.rust-cutover.sqlite`: FULL-synchronous WAL journal and state row.
-- `<database>.rust-cutover.enrolled.json`: target path plus target and journal
-  device/inode identities. Node notices enrollment before each mutation.
+Create the coordinator only while incumbent writers are stopped and drained under
+the maintenance boundary. Enrollment binds the exact application database and
+creates non-overwritable journal/marker files. Participating Node and Rust writes
+hold the same coordinator lock; stale generations and missing/replaced enrollment
+state fail closed.
 
-Missing, replaced, symlinked or corrupt enrollment files reject writes. The
-marker survives journal deletion, including for newly opened Node stores.
-Existing store instances also remember observed identities. Removing both
-enrollment artifacts is an out-of-protocol administrative action and is not a
-supported rollback procedure. Application and enrollment files require the same
-trusted filesystem administration as the existing SQLite stores.
+The durable transition sequence supports:
 
-A crash during first enrollment can leave an unpublished enrollment; writers
-fail closed. An operator must inspect and complete/recreate that initial
-enrollment while the maintenance boundary is still held. The API does not guess
-the authority or target identity from partial initialization.
+```text
+enroll -> quiesce -> backup/restore drill -> shadow comparison
+       -> local canary -> local promotion/ownership rollback
+```
 
-## State and transitions
+Every transition uses an expected revision and appends a chained SQLite journal
+entry. Backup output is never silently adopted after a crash. Shadow comparison
+requires actual output bytes from both implementations and any mismatch blocks
+progression.
 
-| Operation | Required state | Writer after operation | Evidence |
-|---|---|---|---|
-| `create` | No enrollment | Node, epoch 1 | Nonproduction enrollment record |
-| `quiesce` | Planned | None; epoch advances | All participating writes drained by coordinator lock |
-| `backup_restore_drill` | Quiesced | None | SQLite `VACUUM INTO`, restored-file integrity, exact copied digest |
-| `compare_shadow` | Backed up or shadow verified | None | Exact executed output bytes, hashes, explicit mismatch count |
-| `start_local_canary` | Passing shadow, local mode | Rust; new epoch | Explicit allowed campaign scopes |
-| `start_production_canary` | Passing shadow, production mode | Rust; new epoch | Existing Ed25519 authorization and exact database preimage |
-| `promote_local` | Local canary | Rust | Local promotion, production flag remains false |
-| `rollback_local` | Any progressed local state | Node; new epoch | Ownership-only rollback, committed files preserved |
+The coordinator is intentionally schema-neutral. It proves writer exclusion,
+replay and ownership mechanics; it is not the final legacy-retirement proof.
 
-Every transition takes `expected_revision`; a stale revision fails without
-changing state or journal. Every entry includes event, measured evidence, full
-resulting state, previous digest and domain-separated SHA-256 digest. The
-entry and current state commit in the same SQLite transaction. Updates and
-deletes of journal entries are blocked by triggers. `open` verifies the complete
-chain and its equality to the current state; it does not treat hashes as digital
-signatures or independent authority.
+## Final production retirement
 
-Before either runtime's callback can run, its reader compares current state with
-the latest journal revision and exact serialized state, recomputes the same
-domain-separated entry hash, and checks the previous-entry link. Rust performs
-this check inside every state load, including an already-open coordinator's
-mutations and transitions; one SQL snapshot binds the state and journal rows.
-A state-only ownership edit cannot re-enable Node or enlarge an active Rust
-canary scope while the journal still records the prior authority boundary.
+`verify_legacy_node_freeze_v1` implements the final production boundary on the
+actual immutable Node migration-ledger database. It requires schema version 25
+and inspects the typed logical snapshot for all known runtime surfaces.
 
-If a crash interrupts backup creation before its journal transition commits,
-the earlier cutover state remains authoritative. Partial backup/restore output
-files are not adopted automatically; inspect them and retry with new output
-paths. Existing output files are never overwritten or confused with committed
-backup evidence.
+The freeze fails unless:
 
-At least one actual shadow comparison is required; any recorded mismatch blocks
-promotion for that enrollment. Comparison receipts always carry
-`productionQualification: false`. A caller must execute both implementations;
-the comparison method does not assert the provenance of caller-supplied bytes.
+- campaigns, nodes, jobs and job attempts are in accepted terminal states;
+- prepared integrations are terminal;
+- submission outbox/response/release-lock state is terminal;
+- automation resource leases and waiters are empty;
+- all lease/claim columns are empty;
+- the database remains byte-identical throughout read-only inspection.
 
-## Mutation boundaries and generations
+Consequently final retirement does **not** translate an active Node campaign into
+the Rust writer schema. Active work must first drain to a terminal state. The exact
+legacy database is then retained as an immutable historical archive, readable by
+the Rust `hepta-readonly-store` compatibility implementation.
 
-Rust uses `with_writer(&WriterFenceV1, scope, callback)`. Node uses
-`createRustCutoverFence({dbPath}).withWrite(callback)`, integrated into the native
-SQLite StorePort's open, query, run, execute, transaction, online mutation,
-recovery and checkpoint paths. The complete synchronous callback executes under
-the same coordinator `BEGIN IMMEDIATE` lock used for handoff. The lock order is
-coordinator then application database. Never acquire them in reverse order.
+The verified freeze receipt binds repository/commit/tree, exact database content
+hash, complete logical database hash, schema version, closed quiescence policy and
+all table observations. It records:
 
-The fence compares writer ID, generation and token. Tokens identify epochs;
-they are not bearer credentials. A Node process remembers the first accepted
-epoch and cannot automatically adopt a rollback epoch. Restarting Node after
-rollback acquires the new current epoch. Canary writes additionally require an
-exact scope from the allowlist; Node remains fenced globally during canary.
+```text
+rollback_mode = pre_activation_only_then_forward_recovery
+immutable_archive_required = true
+node_writer_quiesced = true
+```
 
-Coordinator state does not change during application callbacks; releasing its
-read-only transaction does not create a second commit record. A process crash
-releases the SQLite lock. Recovery must consult the application database's own
-durable commit journal for the outcome of an interrupted callback; this protocol
-does not claim distributed atomicity between databases.
+## Rollback and forward recovery
 
-Read-only Node stores remain usable throughout. A read-write Node StorePort is
-fenced even through its `query` API because SQL can write via `RETURNING`.
-Callbacks must be synchronous; promises are rejected.
+Before the first authoritative Rust commit, the independently controlled cutover
+process may abort and restore incumbent ownership under the accepted cutover
+package. After the first authoritative Rust commit, restoring a stale Node database
+would erase committed Rust records and is therefore forbidden. Recovery proceeds
+forward from Rust state instead.
 
-## Production boundary and rollback limits
+This is deliberately different from maintaining permanent reverse-schema
+compatibility with a retired runtime. Historical Node state remains verifiable in
+the immutable archive; future Rust-only state does not have to remain writable or
+understandable by Node after retirement.
 
-Production canary verifies `WriterCutoverAuthorizationV1` using the existing
-`verify_writer_cutover_authorization_v1`, trusted Ed25519 keys, exact runtime
-subject and current time. It binds the cutover ID and current sidecar-free
-database preimage. It does not create signing keys or self-sign activation.
-The downstream campaign writer still independently checks its signed initial
-writer lease and schema. `production_activation` records that this writer
-handoff was authorized; it is not proof of whole-product compatibility.
+## Production composition boundary
 
-No local-drill method can activate a production enrollment. Production expansion
-and production rollback are intentionally absent until their external authority
-and reverse-schema compatibility contracts are supplied. A schema-changing Rust
-service cannot safely be rolled back simply by restoring an old backup: that
-would erase committed records. Local rollback changes only writer epoch and
-ownership; it never replaces live database bytes.
+The production Rust service independently requires all of the following opaque,
+verified subjects before it can report production activation:
 
-The legacy `CutoverStateV1` remains an in-memory evidence-shape helper. Its hash
-fields alone must not authorize runtime writes; use the durable coordinator and
-existing signed authority instead.
+- complete external qualification closure;
+- Node-free production deployment identity;
+- verified legacy Node freeze receipt;
+- independent writer-cutover authorization bound to the exact database preimage;
+- exact running binary/configuration/host/service identities;
+- a registry in which every legacy Node adapter is `retired`;
+- native Rust workers only for the production composition.
 
-## Execution and validation
+The ordinary local/shadow service cannot manufacture these values and cannot turn
+production on with a boolean or environment variable.
 
-From the repository root, run a disposable end-to-end drill (directory must not already exist):
+## Validation
+
+Representative repository-local checks are:
 
 ```sh
-cargo run --manifest-path rust/Cargo.toml --offline -p hepta-cutover --example local_cutover_drill -- /tmp/hepta-cutover-demo
-cargo test --manifest-path rust/Cargo.toml --offline -p hepta-cutover
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-cutover
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-readonly-store
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
 node --test paper-core/tests/rust-cutover-fence.test.mjs
 ```
 
-The example executes real Node and Rust queries, verifies byte parity, creates
-and restores a SQLite snapshot, commits a canary record, reopens the coordinator,
-promotes locally and rolls ownership back while preserving both records. Its
-JSON output explicitly states `productionActivation: false` and
-`legacySchemaTranslationVerified: false`.
-
-Integration tests additionally kill a child process mid-transition, verify the
-previous durable state on restart, and hold a Node process inside an actual
-native database write while a concurrent Rust handoff waits. Other tests cover
-scope rejection, stale Node/Rust generations, revision conflicts, shadow
-mismatches, missing markers, file substitution and the actual native StorePort.
+A successful local drill proves source behavior only. Target-host shadow/canary,
+real authority packages, destructive storage/soak evidence and the final writer
+transfer remain independently controlled production facts.

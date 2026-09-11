@@ -54,14 +54,13 @@ pub fn prepare_submission_v1(
     for artifact in &package.supplementary_artifacts {
         validate_artifact_reference(artifact)?;
     }
-    if let Some(recipient) = &package.recipient_hint {
-        if recipient.is_empty()
+    if let Some(recipient) = &package.recipient_hint
+        && (recipient.is_empty()
             || recipient.len() > MAX_RECIPIENT_BYTES
             || recipient.contains('\0')
-            || recipient.chars().any(|ch| ch.is_control())
-        {
-            return Err(NativeBusinessError::Contract);
-        }
+            || recipient.chars().any(|ch| ch.is_control()))
+    {
+        return Err(NativeBusinessError::Contract);
     }
 
     // The recipient hint is intentionally excluded from the externally replayable

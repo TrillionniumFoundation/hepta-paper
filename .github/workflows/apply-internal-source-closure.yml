@@ -91,20 +91,60 @@ jobs:
           test "$(node --version)" = v22.23.1
           test "$(rustc --version | awk '{print $2}')" = 1.98.0
 
-      - name: Format and finalize immutable candidate
+      - name: Format, rebind blobs, and finalize immutable candidate
         id: final
         shell: bash
         run: |
           set -euo pipefail
           cargo fmt --manifest-path rust/Cargo.toml --all
           git diff --check
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          evidence_path = pathlib.Path('docs/system/evidence/repository-source-implementation-v1.json')
+          targets = {
+              'rust/crates/hepta-cutover/tests/retirement_source.rs',
+              'rust/crates/hepta-scientific-evidence/tests/source_evidence.rs',
+          }
+          doc = json.loads(evidence_path.read_text(encoding='utf-8'))
+          seen = set()
+          changed = []
+          for bundle_id, bundle in doc.get('bundles', {}).items():
+              for entry in bundle.get('files', []):
+                  path = entry.get('path')
+                  if path not in targets:
+                      continue
+                  if path in seen:
+                      raise SystemExit(f'duplicate_target_evidence:{path}')
+                  if set(entry) != {'path', 'role', 'gitBlob', 'mode', 'language', 'symbols'}:
+                      raise SystemExit(f'unexpected_file_entry_shape:{bundle_id}:{path}:{sorted(entry)}')
+                  new_blob = subprocess.check_output(['git', 'hash-object', '--', path], text=True).strip()
+                  old_blob = entry['gitBlob']
+                  if len(new_blob) != 40 or any(c not in '0123456789abcdef' for c in new_blob):
+                      raise SystemExit(f'invalid_git_blob:{path}:{new_blob}')
+                  if old_blob == new_blob:
+                      raise SystemExit(f'expected_rustfmt_blob_change_missing:{path}')
+                  entry['gitBlob'] = new_blob
+                  seen.add(path)
+                  changed.append((path, old_blob, new_blob))
+          if seen != targets:
+              raise SystemExit(f'missing_target_evidence:{sorted(targets-seen)}')
+          evidence_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          for path, old_blob, new_blob in sorted(changed):
+              print(f'rebound_git_blob:{path}:{old_blob}->{new_blob}')
+          PY
+          git diff --check
           cat > "$RUNNER_TEMP/expected-format-paths" <<'PATHS'
+          docs/system/evidence/repository-source-implementation-v1.json
           rust/crates/hepta-cutover/tests/retirement_source.rs
           rust/crates/hepta-scientific-evidence/tests/source_evidence.rs
           PATHS
           git diff --name-only > "$RUNNER_TEMP/actual-format-paths"
           diff -u "$RUNNER_TEMP/expected-format-paths" "$RUNNER_TEMP/actual-format-paths"
-          git add rust/crates/hepta-cutover/tests/retirement_source.rs \
+          git add docs/system/evidence/repository-source-implementation-v1.json \
+                  rust/crates/hepta-cutover/tests/retirement_source.rs \
                   rust/crates/hepta-scientific-evidence/tests/source_evidence.rs
           git commit --amend --no-edit
           head="$(git rev-parse HEAD)"

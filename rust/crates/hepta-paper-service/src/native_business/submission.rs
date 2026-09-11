@@ -137,7 +137,10 @@ mod tests {
         let first = prepare_submission(
             "journal.example".into(),
             manuscript.clone(),
-            vec![artifact("source.tar.zst", 'b', 2048), artifact("manuscript.pdf", 'a', 1024)],
+            vec![
+                artifact("source.tar.zst", 'b', 2048),
+                artifact("manuscript.pdf", 'a', 1024),
+            ],
             vec![
                 SubmissionMetadataV1 {
                     key: "title".into(),
@@ -153,7 +156,10 @@ mod tests {
         let second = prepare_submission(
             "journal.example".into(),
             manuscript,
-            vec![artifact("manuscript.pdf", 'a', 1024), artifact("source.tar.zst", 'b', 2048)],
+            vec![
+                artifact("manuscript.pdf", 'a', 1024),
+                artifact("source.tar.zst", 'b', 2048),
+            ],
             vec![
                 SubmissionMetadataV1 {
                     key: "article_type".into(),
@@ -169,7 +175,10 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.evidence["authority"], "prepared_result_only");
         assert_eq!(first.evidence["externalActionMayHaveStarted"], false);
-        assert_eq!(first.evidence["requiresIndependentSubmissionAuthority"], true);
+        assert_eq!(
+            first.evidence["requiresIndependentSubmissionAuthority"],
+            true
+        );
     }
 
     #[test]

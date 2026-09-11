@@ -20,7 +20,7 @@ pub enum CapabilityMigrationStageV1 {
     RustShadow,
     /// Rust executes a bounded non-authoritative canary while Node remains authoritative.
     RustCanary,
-    /// Rust owns capability authority; Node is retained only as a disabled rollback artifact.
+    /// Rust owns capability authority; Node execution is fenced and recovery is forward-only.
     RustAuthoritative,
     /// Node execution is removed from the accepted deployment set.
     NodeRetired,
@@ -48,6 +48,18 @@ pub enum CapabilityAuthorityOwnerV1 {
     Rust,
 }
 
+/// Closed rollback/recovery disposition for one migration stage.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityRecoveryModeV1 {
+    /// Before Rust receives authoritative writer ownership, a failed shadow/canary may return
+    /// to the unchanged Node writer after reconciliation.
+    NodeRollbackBeforeRustAuthority,
+    /// After the first authoritative Rust commit, recovery must preserve Rust state and move
+    /// forward. Re-enabling the legacy Node writer is forbidden.
+    ForwardOnlyAfterRustAuthority,
+}
+
 /// Exact migration evidence and reachability state for one capability.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -72,6 +84,8 @@ pub struct CapabilityMigrationRecordV1 {
     pub stage: CapabilityMigrationStageV1,
     /// Current authoritative implementation.
     pub authoritative_owner: CapabilityAuthorityOwnerV1,
+    /// Closed rollback/recovery mode for this stage.
+    pub recovery_mode: CapabilityRecoveryModeV1,
     /// Whether the incumbent Node entrypoint remains executable in the accepted deployment set.
     pub node_execution_enabled: bool,
     /// Whether the Rust entrypoint is executable in the accepted deployment set.
@@ -82,16 +96,18 @@ pub struct CapabilityMigrationRecordV1 {
     pub shadow_receipt_hash: Option<Sha256Digest>,
     /// Accepted bounded canary receipt.
     pub canary_receipt_hash: Option<Sha256Digest>,
-    /// Exercised rollback receipt preserving post-cutover committed state.
+    /// Exercised pre-authority rollback/reconciliation receipt.
     pub rollback_receipt_hash: Option<Sha256Digest>,
+    /// Immutable legacy drain/freeze receipt required before Rust writer ownership.
+    pub legacy_freeze_receipt_hash: Option<Sha256Digest>,
     /// Accepted atomic authority-transfer receipt.
     pub authority_transfer_receipt_hash: Option<Sha256Digest>,
+    /// Receipt for the first authoritative Rust commit after writer transfer.
+    pub first_rust_commit_receipt_hash: Option<Sha256Digest>,
     /// Accepted independently controlled external-authority receipt when required.
     pub external_authority_receipt_hash: Option<Sha256Digest>,
     /// Accepted proof that the Node authority path is disabled and retired.
     pub node_retirement_receipt_hash: Option<Sha256Digest>,
-    /// Whether the accepted rollback path can consume state written by the Rust implementation.
-    pub reverse_compatibility_verified: bool,
 }
 
 impl CapabilityMigrationRecordV1 {
@@ -109,11 +125,16 @@ impl CapabilityMigrationRecordV1 {
         match self.stage {
             CapabilityMigrationStageV1::NodeAuthoritative => {
                 if self.authoritative_owner != CapabilityAuthorityOwnerV1::Node
+                    || self.recovery_mode
+                        != CapabilityRecoveryModeV1::NodeRollbackBeforeRustAuthority
                     || !self.node_execution_enabled
                     || self.rust_execution_enabled
                     || self.shadow_receipt_hash.is_some()
                     || self.canary_receipt_hash.is_some()
+                    || self.rollback_receipt_hash.is_some()
+                    || self.legacy_freeze_receipt_hash.is_some()
                     || self.authority_transfer_receipt_hash.is_some()
+                    || self.first_rust_commit_receipt_hash.is_some()
                     || self.node_retirement_receipt_hash.is_some()
                 {
                     return Err(CapabilityMigrationError::StageInvariantInvalid);
@@ -121,12 +142,17 @@ impl CapabilityMigrationRecordV1 {
             }
             CapabilityMigrationStageV1::RustShadow => {
                 if self.authoritative_owner != CapabilityAuthorityOwnerV1::Node
+                    || self.recovery_mode
+                        != CapabilityRecoveryModeV1::NodeRollbackBeforeRustAuthority
                     || !self.node_execution_enabled
                     || !self.rust_execution_enabled
                     || self.translation_receipt_hash.is_none()
                     || self.shadow_receipt_hash.is_none()
                     || self.canary_receipt_hash.is_some()
+                    || self.rollback_receipt_hash.is_some()
+                    || self.legacy_freeze_receipt_hash.is_some()
                     || self.authority_transfer_receipt_hash.is_some()
+                    || self.first_rust_commit_receipt_hash.is_some()
                     || self.node_retirement_receipt_hash.is_some()
                 {
                     return Err(CapabilityMigrationError::StageInvariantInvalid);
@@ -134,14 +160,17 @@ impl CapabilityMigrationRecordV1 {
             }
             CapabilityMigrationStageV1::RustCanary => {
                 if self.authoritative_owner != CapabilityAuthorityOwnerV1::Node
+                    || self.recovery_mode
+                        != CapabilityRecoveryModeV1::NodeRollbackBeforeRustAuthority
                     || !self.node_execution_enabled
                     || !self.rust_execution_enabled
                     || self.translation_receipt_hash.is_none()
                     || self.shadow_receipt_hash.is_none()
                     || self.canary_receipt_hash.is_none()
                     || self.rollback_receipt_hash.is_none()
-                    || !self.reverse_compatibility_verified
+                    || self.legacy_freeze_receipt_hash.is_some()
                     || self.authority_transfer_receipt_hash.is_some()
+                    || self.first_rust_commit_receipt_hash.is_some()
                     || self.node_retirement_receipt_hash.is_some()
                 {
                     return Err(CapabilityMigrationError::StageInvariantInvalid);
@@ -149,14 +178,17 @@ impl CapabilityMigrationRecordV1 {
             }
             CapabilityMigrationStageV1::RustAuthoritative => {
                 if self.authoritative_owner != CapabilityAuthorityOwnerV1::Rust
+                    || self.recovery_mode
+                        != CapabilityRecoveryModeV1::ForwardOnlyAfterRustAuthority
                     || self.node_execution_enabled
                     || !self.rust_execution_enabled
                     || self.translation_receipt_hash.is_none()
                     || self.shadow_receipt_hash.is_none()
                     || self.canary_receipt_hash.is_none()
                     || self.rollback_receipt_hash.is_none()
+                    || self.legacy_freeze_receipt_hash.is_none()
                     || self.authority_transfer_receipt_hash.is_none()
-                    || !self.reverse_compatibility_verified
+                    || self.first_rust_commit_receipt_hash.is_none()
                     || self.node_retirement_receipt_hash.is_some()
                     || (self.requires_external_authority
                         && self.external_authority_receipt_hash.is_none())
@@ -166,15 +198,18 @@ impl CapabilityMigrationRecordV1 {
             }
             CapabilityMigrationStageV1::NodeRetired => {
                 if self.authoritative_owner != CapabilityAuthorityOwnerV1::Rust
+                    || self.recovery_mode
+                        != CapabilityRecoveryModeV1::ForwardOnlyAfterRustAuthority
                     || self.node_execution_enabled
                     || !self.rust_execution_enabled
                     || self.translation_receipt_hash.is_none()
                     || self.shadow_receipt_hash.is_none()
                     || self.canary_receipt_hash.is_none()
                     || self.rollback_receipt_hash.is_none()
+                    || self.legacy_freeze_receipt_hash.is_none()
                     || self.authority_transfer_receipt_hash.is_none()
+                    || self.first_rust_commit_receipt_hash.is_none()
                     || self.node_retirement_receipt_hash.is_none()
-                    || !self.reverse_compatibility_verified
                     || (self.requires_external_authority
                         && self.external_authority_receipt_hash.is_none())
                 {
@@ -242,8 +277,16 @@ impl CapabilityMigrationLedgerV1 {
             || !receipt_preserved(&current.canary_receipt_hash, &next.canary_receipt_hash)
             || !receipt_preserved(&current.rollback_receipt_hash, &next.rollback_receipt_hash)
             || !receipt_preserved(
+                &current.legacy_freeze_receipt_hash,
+                &next.legacy_freeze_receipt_hash,
+            )
+            || !receipt_preserved(
                 &current.authority_transfer_receipt_hash,
                 &next.authority_transfer_receipt_hash,
+            )
+            || !receipt_preserved(
+                &current.first_rust_commit_receipt_hash,
+                &next.first_rust_commit_receipt_hash,
             )
             || !receipt_preserved(
                 &current.external_authority_receipt_hash,
@@ -338,17 +381,36 @@ mod tests {
             requires_external_authority: false,
             stage: CapabilityMigrationStageV1::NodeAuthoritative,
             authoritative_owner: CapabilityAuthorityOwnerV1::Node,
+            recovery_mode: CapabilityRecoveryModeV1::NodeRollbackBeforeRustAuthority,
             node_execution_enabled: true,
             rust_execution_enabled: false,
             translation_receipt_hash: None,
             shadow_receipt_hash: None,
             canary_receipt_hash: None,
             rollback_receipt_hash: None,
+            legacy_freeze_receipt_hash: None,
             authority_transfer_receipt_hash: None,
+            first_rust_commit_receipt_hash: None,
             external_authority_receipt_hash: None,
             node_retirement_receipt_hash: None,
-            reverse_compatibility_verified: false,
         }
+    }
+
+    fn shadow_record(initial: &CapabilityMigrationRecordV1) -> CapabilityMigrationRecordV1 {
+        let mut shadow = initial.clone();
+        shadow.stage = CapabilityMigrationStageV1::RustShadow;
+        shadow.rust_execution_enabled = true;
+        shadow.translation_receipt_hash = Some(digest('c'));
+        shadow.shadow_receipt_hash = Some(digest('d'));
+        shadow
+    }
+
+    fn canary_record(shadow: &CapabilityMigrationRecordV1) -> CapabilityMigrationRecordV1 {
+        let mut canary = shadow.clone();
+        canary.stage = CapabilityMigrationStageV1::RustCanary;
+        canary.canary_receipt_hash = Some(digest('e'));
+        canary.rollback_receipt_hash = Some(digest('f'));
+        canary
     }
 
     #[test]
@@ -357,42 +419,67 @@ mod tests {
         let initial = base_record();
         ledger.insert_initial(initial.clone()).expect("initial");
 
-        let mut skipped = initial.clone();
-        skipped.stage = CapabilityMigrationStageV1::RustCanary;
-        skipped.rust_execution_enabled = true;
-        skipped.translation_receipt_hash = Some(digest('c'));
-        skipped.shadow_receipt_hash = Some(digest('d'));
-        skipped.canary_receipt_hash = Some(digest('e'));
-        skipped.rollback_receipt_hash = Some(digest('f'));
-        skipped.reverse_compatibility_verified = true;
+        let mut skipped = canary_record(&shadow_record(&initial));
+        assert_eq!(
+            ledger.advance(skipped.clone()),
+            Err(CapabilityMigrationError::TransitionInvalid)
+        );
+
+        let shadow = shadow_record(&initial);
+        ledger.advance(shadow.clone()).expect("shadow");
+        let canary = canary_record(&shadow);
+        ledger.advance(canary.clone()).expect("canary");
+
+        skipped = canary.clone();
+        skipped.stage = CapabilityMigrationStageV1::RustAuthoritative;
+        skipped.authoritative_owner = CapabilityAuthorityOwnerV1::Rust;
+        skipped.recovery_mode = CapabilityRecoveryModeV1::ForwardOnlyAfterRustAuthority;
+        skipped.node_execution_enabled = false;
+        skipped.translation_receipt_hash = Some(digest('9'));
+        skipped.legacy_freeze_receipt_hash = Some(digest('0'));
+        skipped.authority_transfer_receipt_hash = Some(digest('1'));
+        skipped.first_rust_commit_receipt_hash = Some(digest('2'));
         assert_eq!(
             ledger.advance(skipped),
             Err(CapabilityMigrationError::TransitionInvalid)
         );
+    }
 
-        let mut shadow = initial;
-        shadow.stage = CapabilityMigrationStageV1::RustShadow;
-        shadow.rust_execution_enabled = true;
-        shadow.translation_receipt_hash = Some(digest('c'));
-        shadow.shadow_receipt_hash = Some(digest('d'));
+    #[test]
+    fn first_rust_commit_irreversibly_switches_to_forward_only_recovery() {
+        let mut ledger = CapabilityMigrationLedgerV1::default();
+        let initial = base_record();
+        ledger.insert_initial(initial.clone()).expect("initial");
+        let shadow = shadow_record(&initial);
         ledger.advance(shadow.clone()).expect("shadow");
-
-        let mut canary = shadow;
-        canary.stage = CapabilityMigrationStageV1::RustCanary;
-        canary.canary_receipt_hash = Some(digest('e'));
-        canary.rollback_receipt_hash = Some(digest('f'));
-        canary.reverse_compatibility_verified = true;
+        let canary = canary_record(&shadow);
         ledger.advance(canary.clone()).expect("canary");
 
-        let mut rewritten = canary;
-        rewritten.stage = CapabilityMigrationStageV1::RustAuthoritative;
-        rewritten.authoritative_owner = CapabilityAuthorityOwnerV1::Rust;
-        rewritten.node_execution_enabled = false;
-        rewritten.translation_receipt_hash = Some(digest('9'));
-        rewritten.authority_transfer_receipt_hash = Some(digest('1'));
+        let mut authoritative = canary;
+        authoritative.stage = CapabilityMigrationStageV1::RustAuthoritative;
+        authoritative.authoritative_owner = CapabilityAuthorityOwnerV1::Rust;
+        authoritative.recovery_mode = CapabilityRecoveryModeV1::ForwardOnlyAfterRustAuthority;
+        authoritative.node_execution_enabled = false;
+        authoritative.legacy_freeze_receipt_hash = Some(digest('0'));
+        authoritative.authority_transfer_receipt_hash = Some(digest('1'));
+        authoritative.first_rust_commit_receipt_hash = Some(digest('2'));
+        ledger
+            .advance(authoritative.clone())
+            .expect("Rust authority transfer");
+
+        let mut illegal_rollback = authoritative.clone();
+        illegal_rollback.stage = CapabilityMigrationStageV1::NodeRetired;
+        illegal_rollback.recovery_mode = CapabilityRecoveryModeV1::NodeRollbackBeforeRustAuthority;
+        illegal_rollback.node_retirement_receipt_hash = Some(digest('3'));
         assert_eq!(
-            ledger.advance(rewritten),
-            Err(CapabilityMigrationError::TransitionInvalid)
+            ledger.advance(illegal_rollback),
+            Err(CapabilityMigrationError::StageInvariantInvalid)
         );
+
+        let mut retired = authoritative;
+        retired.stage = CapabilityMigrationStageV1::NodeRetired;
+        retired.node_retirement_receipt_hash = Some(digest('3'));
+        ledger.advance(retired).expect("Node retirement");
+        assert!(ledger.all_node_paths_retired());
     }
 }

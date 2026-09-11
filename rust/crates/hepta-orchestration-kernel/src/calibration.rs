@@ -52,8 +52,7 @@ pub fn calibrate_predictions_v1(
     mut observations: Vec<CalibrationObservationV1>,
 ) -> Result<CalibrationReportV1, CalibrationError> {
     validate_policy(&policy)?;
-    if observations.len() < policy.minimum_observations
-        || observations.len() > MAXIMUM_OBSERVATIONS
+    if observations.len() < policy.minimum_observations || observations.len() > MAXIMUM_OBSERVATIONS
     {
         return Err(CalibrationError::ObservationSetInvalid);
     }
@@ -91,12 +90,12 @@ pub fn calibrate_predictions_v1(
     }
 
     let count = u128::try_from(observations.len()).map_err(|_| CalibrationError::Arithmetic)?;
-    let mean_absolute_utility_error_microunits = u64::try_from(total_utility_error / count)
-        .map_err(|_| CalibrationError::Arithmetic)?;
+    let mean_absolute_utility_error_microunits =
+        u64::try_from(total_utility_error / count).map_err(|_| CalibrationError::Arithmetic)?;
     let mean_cost_error_ppm =
         u32::try_from(total_cost_error_ppm / count).map_err(|_| CalibrationError::Arithmetic)?;
-    let mean_latency_error_ppm = u32::try_from(total_latency_error_ppm / count)
-        .map_err(|_| CalibrationError::Arithmetic)?;
+    let mean_latency_error_ppm =
+        u32::try_from(total_latency_error_ppm / count).map_err(|_| CalibrationError::Arithmetic)?;
     let calibrated = mean_absolute_utility_error_microunits
         <= policy.maximum_mean_absolute_utility_error_microunits
         && mean_cost_error_ppm <= policy.maximum_mean_cost_error_ppm
@@ -227,7 +226,12 @@ mod tests {
         }
     }
 
-    fn observation(id: &str, utility_error: i64, cost: u64, latency: u64) -> CalibrationObservationV1 {
+    fn observation(
+        id: &str,
+        utility_error: i64,
+        cost: u64,
+        latency: u64,
+    ) -> CalibrationObservationV1 {
         CalibrationObservationV1 {
             candidate_id: id.to_owned(),
             predicted_utility_microunits: 100,

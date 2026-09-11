@@ -125,6 +125,18 @@ fn source_closure_planner_exact_and_fallback_certificates_are_recomputable() {
             &exact_policy,
         )
         .expect("exact certificate validates");
+    let mut stale_snapshot = exact_snapshot.clone();
+    stale_snapshot.campaign_revision = 2;
+    assert!(
+        exact
+            .validate(
+                &stale_snapshot,
+                &exact_frontier,
+                &hard_policy(),
+                &exact_policy,
+            )
+            .is_err()
+    );
 
     let fallback_snapshot = snapshot(&["CAP-A", "CAP-B"], 100);
     let fallback_hash = fallback_snapshot

@@ -117,3 +117,83 @@ struct SubmissionPackageV1 {
     authority: &'static str,
     external_action_may_have_started: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn artifact(name: &str, byte: char, byte_length: u64) -> SubmissionArtifactV1 {
+        SubmissionArtifactV1 {
+            name: name.into(),
+            media_type: "application/octet-stream".into(),
+            sha256: format!("sha256:{}", byte.to_string().repeat(64)),
+            byte_length,
+        }
+    }
+
+    #[test]
+    fn submission_package_is_deterministic_and_non_activating() {
+        let manuscript = format!("sha256:{}", "c".repeat(64));
+        let first = prepare_submission(
+            "journal.example".into(),
+            manuscript.clone(),
+            vec![artifact("source.tar.zst", 'b', 2048), artifact("manuscript.pdf", 'a', 1024)],
+            vec![
+                SubmissionMetadataV1 {
+                    key: "title".into(),
+                    value: "Native Rust Research".into(),
+                },
+                SubmissionMetadataV1 {
+                    key: "article_type".into(),
+                    value: "research".into(),
+                },
+            ],
+        )
+        .expect("submission package");
+        let second = prepare_submission(
+            "journal.example".into(),
+            manuscript,
+            vec![artifact("manuscript.pdf", 'a', 1024), artifact("source.tar.zst", 'b', 2048)],
+            vec![
+                SubmissionMetadataV1 {
+                    key: "article_type".into(),
+                    value: "research".into(),
+                },
+                SubmissionMetadataV1 {
+                    key: "title".into(),
+                    value: "Native Rust Research".into(),
+                },
+            ],
+        )
+        .expect("deterministic package");
+        assert_eq!(first, second);
+        assert_eq!(first.evidence["authority"], "prepared_result_only");
+        assert_eq!(first.evidence["externalActionMayHaveStarted"], false);
+        assert_eq!(first.evidence["requiresIndependentSubmissionAuthority"], true);
+    }
+
+    #[test]
+    fn submission_package_rejects_duplicates_and_invalid_hashes() {
+        let duplicate = prepare_submission(
+            "journal.example".into(),
+            format!("sha256:{}", "d".repeat(64)),
+            vec![artifact("same", 'e', 1), artifact("same", 'f', 1)],
+            Vec::new(),
+        );
+        assert_eq!(
+            duplicate.expect_err("duplicate artifacts fail"),
+            NativeBusinessError::Contract
+        );
+
+        let invalid = prepare_submission(
+            "journal.example".into(),
+            "sha256:not-a-hash".into(),
+            vec![artifact("manuscript.pdf", 'a', 1)],
+            Vec::new(),
+        );
+        assert_eq!(
+            invalid.expect_err("invalid manuscript hash fails"),
+            NativeBusinessError::Contract
+        );
+    }
+}

@@ -1,5 +1,5 @@
 use hepta_orchestration_kernel::{
-    CanonicalWorkloadV1, CandidateRouterPolicyV1, CandidateV1, EventCodeV1, ModuleClassV1,
+    CandidateRouterPolicyV1, CandidateV1, CanonicalWorkloadV1, EventCodeV1, ModuleClassV1,
     ObservationInputV1, OutcomeClassV1, PerformanceObservationV1, PerformanceSubjectV1,
     PlanningComponentObservationV1, PlanningSnapshotRequestV1, ResourceLedgerV1, ResourceScopeV1,
     ResourceVectorV1, SeverityV1, TelemetryAggregatorV1, build_planning_snapshot_v1,

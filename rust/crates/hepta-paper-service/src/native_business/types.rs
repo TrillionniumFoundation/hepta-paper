@@ -30,20 +30,38 @@ pub enum PropositionV1 {
     /// Atomic proposition with a stable identifier.
     Atom { name: String },
     /// Conjunction.
-    And { left: Box<PropositionV1>, right: Box<PropositionV1> },
+    And {
+        left: Box<PropositionV1>,
+        right: Box<PropositionV1>,
+    },
     /// Material implication.
-    Implies { antecedent: Box<PropositionV1>, consequent: Box<PropositionV1> },
+    Implies {
+        antecedent: Box<PropositionV1>,
+        consequent: Box<PropositionV1>,
+    },
 }
 
 /// One checked proof step. Every referenced index must be earlier than the step.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProofStepV1 {
-    Assumption { proposition: PropositionV1 },
-    AndIntroduction { left_step: usize, right_step: usize },
-    AndEliminationLeft { source_step: usize },
-    AndEliminationRight { source_step: usize },
-    ModusPonens { implication_step: usize, antecedent_step: usize },
+    Assumption {
+        proposition: PropositionV1,
+    },
+    AndIntroduction {
+        left_step: usize,
+        right_step: usize,
+    },
+    AndEliminationLeft {
+        source_step: usize,
+    },
+    AndEliminationRight {
+        source_step: usize,
+    },
+    ModusPonens {
+        implication_step: usize,
+        antecedent_step: usize,
+    },
 }
 
 /// One labeled finite empirical observation.

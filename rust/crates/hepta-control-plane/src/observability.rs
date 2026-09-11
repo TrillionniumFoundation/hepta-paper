@@ -279,9 +279,12 @@ mod tests {
             maximum_signals: 4,
             maximum_labels_per_signal: 2,
             maximum_unique_label_pairs: 3,
-            allowed_signal_names: ["scheduler.queue_age_micros".to_owned(), "audit.commit".to_owned()]
-                .into_iter()
-                .collect(),
+            allowed_signal_names: [
+                "scheduler.queue_age_micros".to_owned(),
+                "audit.commit".to_owned(),
+            ]
+            .into_iter()
+            .collect(),
             allowed_label_keys: ["campaign".to_owned()].into_iter().collect(),
         }
     }

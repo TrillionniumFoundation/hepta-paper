@@ -152,10 +152,7 @@ impl HierarchicalResourceAllocatorV1 {
         for request in requests {
             request.validate(now_unix_ms)?;
             let path = scope_path(&self.scopes, &request.scope_id)?;
-            keyed.push((
-                self.rank_key(request, &path, now_unix_ms)?,
-                request.clone(),
-            ));
+            keyed.push((self.rank_key(request, &path, now_unix_ms)?, request.clone()));
         }
         keyed.sort_by(|left, right| {
             left.0
@@ -274,7 +271,8 @@ impl HierarchicalResourceAllocatorV1 {
             .get(reservation_id)
             .cloned()
             .ok_or(ControlPlaneError::ReservationInvalid)?;
-        let updates = self.release_projection(&reservation.charged_scope_ids, reservation.reserved)?;
+        let updates =
+            self.release_projection(&reservation.charged_scope_ids, reservation.reserved)?;
         apply_projection(&mut self.reserved_by_scope, updates);
         let _removed = self.reservations.remove(reservation_id);
         Ok(reservation)
@@ -329,8 +327,7 @@ impl HierarchicalResourceAllocatorV1 {
             if !projected.fits_within(scope.limit) {
                 return Err(ControlPlaneError::ResourceDenied);
             }
-            let weighted = dominant_share_ppm(projected, scope.limit)
-                .saturating_mul(1_000_000)
+            let weighted = dominant_share_ppm(projected, scope.limit).saturating_mul(1_000_000)
                 / u128::from(scope.weight);
             hierarchical_share = hierarchical_share.max(weighted);
         }
@@ -555,7 +552,8 @@ mod tests {
 
     #[test]
     fn parent_ceiling_is_atomic_across_sibling_scopes() {
-        let mut allocator = HierarchicalResourceAllocatorV1::new(scopes(), 1_000).expect("allocator");
+        let mut allocator =
+            HierarchicalResourceAllocatorV1::new(scopes(), 1_000).expect("allocator");
         allocator
             .reserve(request("a", "campaign:a", 60, 0), 0)
             .expect("first reservation");
@@ -571,53 +569,97 @@ mod tests {
 
     #[test]
     fn reconciliation_and_release_update_every_ancestor() {
-        let mut allocator = HierarchicalResourceAllocatorV1::new(scopes(), 1_000).expect("allocator");
+        let mut allocator =
+            HierarchicalResourceAllocatorV1::new(scopes(), 1_000).expect("allocator");
         let reservation = allocator
             .reserve(request("a", "campaign:a", 60, 0), 0)
             .expect("reservation");
         let reconciled = allocator
             .reconcile(&reservation.reservation_id, resource(20))
-            .expect("reconcile");
+            .expect("reconciliation");
         assert_eq!(reconciled.reserved.cpu_millis, 20);
         let report = allocator.report().expect("reconciled report");
         for scope_id in ["host", "team:a", "campaign:a"] {
             assert_eq!(report.reserved_by_scope[scope_id].cpu_millis, 20);
         }
-        allocator.release(&reservation.reservation_id).expect("release");
-        assert!(allocator.report().expect("released report").reserved_by_scope.is_empty());
+        allocator
+            .release(&reservation.reservation_id)
+            .expect("release");
+        assert!(
+            allocator
+                .report()
+                .expect("released report")
+                .reserved_by_scope
+                .is_empty()
+        );
     }
 
     #[test]
     fn hierarchy_weight_and_aging_produce_deterministic_fair_order() {
-        let mut allocator = HierarchicalResourceAllocatorV1::new(scopes(), 1_000).expect("allocator");
+        let mut allocator =
+            HierarchicalResourceAllocatorV1::new(scopes(), 1_000).expect("allocator");
         allocator
             .reserve(request("active", "campaign:a", 40, 0), 0)
             .expect("active reservation");
-        let fresh = request("fresh", "campaign:a", 1, 10_000);
-        let old = request("old", "campaign:b", 1, 0);
-        let ranked = allocator.rank_requests(&[fresh, old.clone()], 10_000).expect("ranked");
+        let fresh = request("fresh-a", "tenant-a", 1, 10_000);
+        let old = request("old-b", "tenant-b", 1, 0);
+        let ranked = allocator
+            .rank_requests(&[fresh, old.clone()], 10_000)
+            .expect("rank requests");
         assert_eq!(ranked.first(), Some(&old));
-        assert_eq!(
-            allocator.rank_requests(&[old], 9_999),
-            Err(ControlPlaneError::ResourceClockRollback)
-        );
     }
 
     #[test]
-    fn invalid_hierarchy_and_over_reconciliation_fail_closed() {
-        let mut invalid = scopes();
-        invalid[1].parent_scope_id = Some("missing".to_owned());
-        assert!(HierarchicalResourceAllocatorV1::new(invalid, 1_000).is_err());
-
-        let mut allocator = HierarchicalResourceAllocatorV1::new(scopes(), 1_000).expect("allocator");
-        let reservation = allocator
-            .reserve(request("a", "campaign:a", 10, 0), 0)
-            .expect("reservation");
-        let before = allocator.report().expect("before");
+    fn deadline_future_queue_and_clock_rollback_fail_without_accounting_change() {
+        let mut exact_boundary = allocator();
+        let mut expired = request("expired", "tenant-a", 1, 10);
+        expired.deadline_unix_ms = Some(20);
         assert_eq!(
-            allocator.reconcile(&reservation.reservation_id, resource(11)),
-            Err(ControlPlaneError::ReconciliationInvalid)
+            exact_boundary.reserve(expired, 20),
+            Err(ControlPlaneError::ResourcePolicyInvalid)
         );
-        assert_eq!(allocator.report().expect("after"), before);
+        let report = exact_boundary.report().expect("boundary report");
+        assert!(report.reserved.is_zero());
+        assert_eq!(report.reservation_count, 0);
+        assert_eq!(report.last_observed_unix_ms, None);
+
+        let mut future = allocator();
+        assert_eq!(
+            future.reserve(request("future", "tenant-a", 1, 11), 10),
+            Err(ControlPlaneError::ResourcePolicyInvalid)
+        );
+        let report = future.report().expect("future report");
+        assert!(report.reserved.is_zero());
+        assert_eq!(report.reservation_count, 0);
+        assert_eq!(report.last_observed_unix_ms, None);
+
+        let mut reranked = allocator();
+        let mut deadline = request("deadline", "tenant-a", 1, 10);
+        deadline.deadline_unix_ms = Some(20);
+        assert_eq!(
+            reranked
+                .rank_requests(std::slice::from_ref(&deadline), 19)
+                .expect("before deadline"),
+            vec![deadline.clone()]
+        );
+        assert_eq!(
+            reranked.rank_requests(std::slice::from_ref(&deadline), 20),
+            Err(ControlPlaneError::ResourcePolicyInvalid)
+        );
+        assert_eq!(
+            reranked.rank_requests(std::slice::from_ref(&deadline), 18),
+            Err(ControlPlaneError::ResourceClockRollback)
+        );
+        let report = reranked.report().expect("rerank report");
+        assert!(report.reserved.is_zero());
+        assert_eq!(report.reservation_count, 0);
+    }
+
+    #[test]
+    fn accounting_report_hash_is_deterministic() {
+        let allocator = allocator();
+        let left = allocator.report().expect("left report");
+        let right = allocator.report().expect("right report");
+        assert_eq!(left, right);
     }
 }

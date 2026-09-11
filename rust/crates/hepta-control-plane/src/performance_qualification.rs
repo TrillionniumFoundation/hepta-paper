@@ -187,19 +187,24 @@ mod tests {
         let receipt = qualify_performance_v1(&request).expect("receipt");
         assert!(receipt.accepted);
         assert!(!receipt.grants_authority);
-        assert_eq!(receipt.subject_hash, request.subject.subject_hash().expect("hash"));
+        assert_eq!(
+            receipt.subject_hash,
+            request.subject.subject_hash().expect("hash")
+        );
     }
 
     #[test]
     fn observations_without_calibration_policy_fail_closed() {
         let mut request = request();
-        request.calibration_observations.push(CalibrationObservationV1 {
-            observation_id: "obs".to_owned(),
-            predicted_duration_micros: 1,
-            actual_duration_micros: 1,
-            predicted_cost_microusd: 1,
-            actual_cost_microusd: 1,
-        });
+        request
+            .calibration_observations
+            .push(CalibrationObservationV1 {
+                observation_id: "obs".to_owned(),
+                predicted_duration_micros: 1,
+                actual_duration_micros: 1,
+                predicted_cost_microusd: 1,
+                actual_cost_microusd: 1,
+            });
         assert_eq!(
             qualify_performance_v1(&request),
             Err(ControlPlaneError::PerformanceQualificationInvalid)

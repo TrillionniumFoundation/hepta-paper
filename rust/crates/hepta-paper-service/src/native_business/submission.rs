@@ -33,7 +33,9 @@ pub struct PreparedSubmissionV1 {
 fn validate_artifact_reference(value: &str) -> Result<(), NativeBusinessError> {
     validate_identifier(value, 512)?;
     if value.starts_with('/')
-        || value.split('/').any(|component| component == "." || component == "..")
+        || value
+            .split('/')
+            .any(|component| component == "." || component == "..")
     {
         return Err(NativeBusinessError::Contract);
     }
@@ -111,6 +113,9 @@ mod tests {
             supplementary_artifacts: Vec::new(),
             recipient_hint: None,
         };
-        assert_eq!(prepare_submission_v1(package), Err(NativeBusinessError::Contract));
+        assert_eq!(
+            prepare_submission_v1(package),
+            Err(NativeBusinessError::Contract)
+        );
     }
 }

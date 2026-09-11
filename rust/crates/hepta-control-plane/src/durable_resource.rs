@@ -218,7 +218,8 @@ impl DurableResourceLeaseLedgerV1 {
         file.seek(SeekFrom::Start(0))
             .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
         let mut bytes = Vec::with_capacity(
-            usize::try_from(metadata.len()).map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?,
+            usize::try_from(metadata.len())
+                .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?,
         );
         file.read_to_end(&mut bytes)
             .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
@@ -229,7 +230,8 @@ impl DurableResourceLeaseLedgerV1 {
             let retained = last_newline + 1;
             bytes.truncate(retained);
             file.set_len(
-                u64::try_from(retained).map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?,
+                u64::try_from(retained)
+                    .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?,
             )
             .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
             file.sync_all()
@@ -277,11 +279,7 @@ impl DurableResourceLeaseLedgerV1 {
         fence_token_hash: &Sha256Digest,
         now_unix_ms: u64,
     ) -> Result<DurableResourceLeaseV1, ControlPlaneError> {
-        let current = self.owned_current(
-            reservation_id,
-            fence_generation,
-            fence_token_hash,
-        )?;
+        let current = self.owned_current(reservation_id, fence_generation, fence_token_hash)?;
         if current.state == DurableResourceLeaseStateV1::Finalized {
             return Ok(current);
         }
@@ -309,11 +307,7 @@ impl DurableResourceLeaseLedgerV1 {
         now_unix_ms: u64,
         new_expires_at_unix_ms: u64,
     ) -> Result<DurableResourceLeaseV1, ControlPlaneError> {
-        let current = self.owned_current(
-            reservation_id,
-            fence_generation,
-            fence_token_hash,
-        )?;
+        let current = self.owned_current(reservation_id, fence_generation, fence_token_hash)?;
         if current.state != DurableResourceLeaseStateV1::Finalized
             || current.expires_at_unix_ms <= now_unix_ms
             || new_expires_at_unix_ms < current.expires_at_unix_ms
@@ -341,11 +335,7 @@ impl DurableResourceLeaseLedgerV1 {
         fence_generation: u64,
         fence_token_hash: &Sha256Digest,
     ) -> Result<DurableResourceLeaseV1, ControlPlaneError> {
-        let current = self.owned_current(
-            reservation_id,
-            fence_generation,
-            fence_token_hash,
-        )?;
+        let current = self.owned_current(reservation_id, fence_generation, fence_token_hash)?;
         if current.state == DurableResourceLeaseStateV1::Uncertain {
             return Ok(current);
         }
@@ -370,11 +360,7 @@ impl DurableResourceLeaseLedgerV1 {
         fence_token_hash: &Sha256Digest,
         reconciliation_receipt_hash: Sha256Digest,
     ) -> Result<DurableResourceLeaseV1, ControlPlaneError> {
-        let current = self.owned_current(
-            reservation_id,
-            fence_generation,
-            fence_token_hash,
-        )?;
+        let current = self.owned_current(reservation_id, fence_generation, fence_token_hash)?;
         if current.state == DurableResourceLeaseStateV1::Released {
             return if current.reconciliation_receipt_hash.as_ref()
                 == Some(&reconciliation_receipt_hash)
@@ -482,7 +468,10 @@ impl DurableResourceLeaseLedgerV1 {
     }
 
     /// Loads one exact reservation when present.
-    pub fn load(&self, reservation_id: &str) -> Result<Option<DurableResourceLeaseV1>, ControlPlaneError> {
+    pub fn load(
+        &self,
+        reservation_id: &str,
+    ) -> Result<Option<DurableResourceLeaseV1>, ControlPlaneError> {
         if !valid_identifier(reservation_id) {
             return Err(ControlPlaneError::ReservationInvalid);
         }
@@ -508,8 +497,7 @@ impl DurableResourceLeaseLedgerV1 {
             .get(reservation_id)
             .cloned()
             .ok_or(ControlPlaneError::ReservationInvalid)?;
-        if lease.fence_generation != fence_generation
-            || &lease.fence_token_hash != fence_token_hash
+        if lease.fence_generation != fence_generation || &lease.fence_token_hash != fence_token_hash
         {
             return Err(ControlPlaneError::ReservationInvalid);
         }
@@ -597,7 +585,10 @@ fn replay_events(
     let mut leases = BTreeMap::new();
     let mut expected_sequence = 1_u64;
     let mut previous_event_hash: Option<Sha256Digest> = None;
-    for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+    for line in bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
         if line.len() > MAXIMUM_LEDGER_EVENT_BYTES_V1 {
             return Err(ControlPlaneError::ResourcePersistenceInvalid);
         }
@@ -797,8 +788,7 @@ fn valid_identifier(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
-        fs,
-        process,
+        fs, process,
         sync::atomic::{AtomicU64, Ordering},
     };
 

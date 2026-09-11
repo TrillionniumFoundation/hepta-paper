@@ -43,7 +43,6 @@ function collectPromotions(evidenceDocuments) {
       if (record.promotionRequested === true) promotions.add(recordId);
     }
   }
-  if (promotions.size === 0) fail('no_promotions_requested');
   return promotions;
 }
 

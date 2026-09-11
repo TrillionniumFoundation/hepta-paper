@@ -1,4 +1,5 @@
 use hepta_codex_protocol::Sha256Digest;
+use hepta_module_platform::ModuleRegistryArtifactV1;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -35,9 +36,7 @@ impl OptimizerWorkBudgetV2 {
         let mut bound = 0usize;
         while bound < 20 {
             let next = bound + 1;
-            let Some(subsets) = 1u64.checked_shl(u32::try_from(next).unwrap_or(u32::MAX)) else {
-                break;
-            };
+            let subsets = 1_u64 << next;
             if subsets > self.maximum_exact_subset_evaluations {
                 break;
             }
@@ -188,6 +187,7 @@ pub struct OptimizerReceiptV2 {
 /// Runs context-safe Pareto reduction and bounded planning under a reproducible work budget.
 pub fn optimize_v2(
     snapshot: &ControlPlaneSnapshotV1,
+    registry: &ModuleRegistryArtifactV1,
     frontier: &PlanningFrontierV1,
     hard_policy: &HardPolicyV1,
     planner_policy: &PlannerPolicyV1,
@@ -195,6 +195,7 @@ pub fn optimize_v2(
     calibration: Option<&CalibrationReportV1>,
 ) -> Result<OptimizerReceiptV2, ControlPlaneError> {
     work_budget.validate()?;
+    frontier.validate(snapshot, registry, hard_policy)?;
     if frontier.candidates.is_empty()
         || frontier.candidates.len() > work_budget.maximum_frontier_candidates
         || calibration.is_some_and(|report| !report.accepted)
@@ -207,7 +208,7 @@ pub fn optimize_v2(
         snapshot_hash: frontier.snapshot_hash.clone(),
         candidates: pareto_candidates,
     };
-    pareto_frontier.validate(snapshot, hard_policy)?;
+    pareto_frontier.validate(snapshot, registry, hard_policy)?;
 
     let mut effective_policy = planner_policy.clone();
     effective_policy.maximum_exact_candidates = effective_policy

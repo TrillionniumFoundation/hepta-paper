@@ -218,7 +218,9 @@ impl ObservabilityLedgerV1 {
         if maximum_count == 0 || first_index > self.signals.len() {
             return Err(ObservabilityError::RangeInvalid);
         }
-        let next_index = first_index.saturating_add(maximum_count).min(self.signals.len());
+        let next_index = first_index
+            .saturating_add(maximum_count)
+            .min(self.signals.len());
         let signals = self
             .signals
             .get(first_index..next_index)
@@ -314,7 +316,10 @@ fn validate_signal(
             .chain(signal.identifiers.keys())
             .chain(signal.digests.keys())
             .any(|key| !valid_identifier(key))
-        || signal.identifiers.values().any(|value| !valid_identifier(value))
+        || signal
+            .identifiers
+            .values()
+            .any(|value| !valid_identifier(value))
         || signal.module_id.is_some() != signal.module_version.is_some()
         || signal
             .module_id
@@ -381,7 +386,9 @@ fn require_prediction_fields(signal: &TelemetrySignalV1) -> Result<(), Observabi
     Ok(())
 }
 
-fn prediction_sample(signal: &TelemetrySignalV1) -> Result<CalibrationSampleV1, ObservabilityError> {
+fn prediction_sample(
+    signal: &TelemetrySignalV1,
+) -> Result<CalibrationSampleV1, ObservabilityError> {
     let measurement = |key: &str| {
         signal
             .measurements
@@ -530,7 +537,9 @@ mod tests {
         assert!(ledger.ingest(signal.clone()).expect("insert"));
         assert!(!ledger.ingest(signal.clone()).expect("exact retry"));
         let mut conflict = signal;
-        conflict.measurements.insert("actual_duration_ms".into(), 111);
+        conflict
+            .measurements
+            .insert("actual_duration_ms".into(), 111);
         assert_eq!(
             ledger.ingest(conflict),
             Err(ObservabilityError::IdentityConflict)

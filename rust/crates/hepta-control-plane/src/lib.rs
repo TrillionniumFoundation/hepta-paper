@@ -19,6 +19,7 @@ mod hierarchical_runtime;
 mod model;
 mod observability;
 mod performance;
+mod performance_binding;
 mod planner;
 mod resource;
 mod runtime;
@@ -56,6 +57,11 @@ pub use observability::{
 pub use performance::{
     PerformanceBudgetV1, PerformanceError, PerformanceObservationV1,
     PerformanceQualificationReportV1, evaluate_performance_v1,
+};
+pub use performance_binding::{
+    BoundPerformanceQualificationReportV1, PerformanceBindingError, PerformanceRegressionBudgetV1,
+    PerformanceRegressionReportV1, PerformanceSubjectV1, compare_bound_performance_v1,
+    evaluate_bound_performance_v1,
 };
 pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1};
 pub use resource::{

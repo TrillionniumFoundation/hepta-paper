@@ -1,155 +1,181 @@
 # Executable Rust migration: implementation and acceptance boundaries
 
-This document describes the source implementation added on top of
-`6e56a3508e871018e1b4e0c5a573b50818032e38`, the canonical planning-provider replay
-development baseline. It is a technical implementation record, not a qualification
-receipt, deployment authorization, or declaration that Node is retired.
+This document records the current repository-local Rust implementation. It is a
+source implementation record, not a production qualification receipt. Exact-head
+workflow evidence, independent review and separately controlled deployment
+authority remain required before production activation.
 
-## Implementation map
+## Current implementation map
 
-| Layer | Concrete implementation | Technical development contract |
+| Layer | Repository-local implementation | Source disposition |
 |---|---|---|
-| Production hash compatibility | Actual Node source oracle; native JavaScript number/property and pinned locale collation semantics | [Legacy compatibility](../../rust/crates/hepta-legacy-compatibility/README.md) |
-| Production SQLite read compatibility | Actual Node migration ledger versions 1–25; replayed SQL schema; production logical-report parity | [Read-only store](../../rust/crates/hepta-readonly-store/README.md) |
-| Durable campaign authority | Writer lease, atomic state/accounting/event and full result/receipt log, crash recovery | [Campaign writer](../../rust/crates/hepta-campaign-writer/README.md) |
-| Durable control execution | Persistent sequencer, replay validation and independent artifact-byte verifier | [Control plane](../../rust/crates/hepta-control-plane/README.md) |
-| Runnable service | CLI/stdin composition, CAS, dispatch intent, native jobs and pinned process workers | [Service](../../rust/crates/hepta-paper-service/README.md) |
-| Real broker dispatch | Authenticated request, role invocation, pre-exec gate, cgroup containment, output-schema validation, durable recovery | [Broker dispatch](../../rust/crates/hepta-codex-broker/DISPATCH.md) |
-| Cooperative single writer | Durable journal, Node adapter fencing, backup/restore and same-database handoff/rollback | [Cutover](../../rust/crates/hepta-cutover/README.md) |
+| Module protocol / SDK / conformance | `rust/crates/hepta-module-platform` implements canonical protocol envelopes, candidates, SDK, registry, lifecycle, conformance and legacy adapter | implemented source |
+| Planning snapshot | `rust/crates/hepta-orchestration-kernel/src/snapshot.rs` | implemented source |
+| Candidate/Pareto routing | module-platform Pareto reduction plus orchestration `router.rs` integer-only Pareto routing | implemented source |
+| Global bounded planning | `rust/crates/hepta-control-plane/src/planner.rs` exact bounded optimization, deterministic fallback and recomputable `PlanCertificateV1` | implemented source |
+| Hierarchical resources | control-plane and orchestration resource ledgers with generation fencing and recovery | implemented source |
+| Telemetry / performance qualification | orchestration telemetry plus exact-subject canonical workload qualification | implemented source; target-host evidence separate |
+| Node hash compatibility | actual Node production hash/serializer oracle plus Rust compatibility kernel | implemented source |
+| Node SQLite compatibility | actual migration ledger 1–25 validation and Node-compatible logical report | implemented source |
+| Durable Rust writer | generation-fenced SQLite campaign writer and atomic control journal | implemented source |
+| Control execution | persistent sequencer, exact replay, independent artifact-byte verification | implemented source |
+| Runnable Rust service | registry/policy/planning/admission/dispatch/verify/commit composition | implemented local/shadow source |
+| Broker | authenticated request contract, durable journal, pre-exec gate, containment and bounded output validation | implemented source; real credentials/host authority external |
+| Native business kernel | author, reviewer, formal, empirical, numerical, build and submission-package preparation | implemented source |
+| Cutover / retirement | cooperative writer fencing, backup/restore, quiescence proof and forward-only retirement contract | implemented source; production cutover external |
 
-The module registry, manifests and module specifications link these roots.
-Documentation coverage and source implementation remain separate from capability
-equivalence and effective qualification.
+The implementation map deliberately separates **source present** from **source
+qualified**, **target-host qualified**, **external-authority qualified** and
+**production activated**.
 
-## Database and hash compatibility
+## Native business capability closure
 
-Node production leaves `PRAGMA user_version` at zero and records migrations in
-`schema_migrations`. Recognition validates the complete contiguous migration
-history, production SQL digests, exact replayed tables/indexes/triggers/views and
-metadata. Merely changing a version header cannot make an unrelated schema valid.
-The Rust campaign-writer schema is explicitly a different format.
+The first-party native kernel in `hepta-paper-service` now contains a closed,
+bounded Rust protocol for:
 
-The fixture generator calls the actual production `createDefaultPaperStore` for
-each of 25 versions. The Rust reader compares schema hash, logical database hash,
-row counts and every table's canonical row hash with Node's real integrity report.
-It covers SQLite NULL/INTEGER/REAL/TEXT/BLOB and rejects unsupported unsafe Number
-integers, changed files and active SQLite sidecars. Inspection requires a closed,
-consistent copy; it does not checkpoint or migrate a live input database.
+- deterministic manuscript assembly;
+- deterministic structural review;
+- bounded formal proof-certificate checking;
+- finite empirical aggregation;
+- deterministic numerical linear solving;
+- deterministic build/package generation;
+- deterministic submission-package preparation.
 
-The original draft lexical hash format remains versioned. Production compatibility
-uses the actual `workflow-kernel/record-hash.mjs` functions as oracle. The contract
-includes JavaScript integer-index property order, stable locale comparisons,
-number formatting and raw JSON insertion order. ICU/CLDR and Node identities are
-pinned because a library's default collation is insufficient evidence of parity.
-The compatibility README specifies supported inputs and fail-closed cases.
+These workers produce prepared artifacts and evidence only. They have no campaign
+writer, provider, portal, release or submission authority. The submission worker
+specifically cannot perform an external action; real submission remains behind the
+independently authorized external port.
 
-## Control, execution and failure behavior
+This means the previous statement that author/reviewer/empirical/formal/numerical/
+build capabilities had no Rust implementation is obsolete. Remaining work for
+those capabilities is parity corpus/replay, exact-head qualification and
+production rollout evidence, not absence of a native source entry point.
 
-The local Rust service runs the real planner/admission/dispatch/verifier/SQLite
-pipeline. It no longer relies on an in-memory sequencer for durable acceptance.
-The independent verifier checks actual artifact/evidence bytes; a hash-shaped
-string or a self-described successful worker response is insufficient.
+## Planning and optimization closure
 
-Commit persists the prepared body, receipt, expected/new state, campaign revision,
-resource/budget debit and event atomically. Replay reads the original durable
-history. Old snapshots cannot execute new work, and writer generation conflicts
-cannot acquire authority through an alternate service instance.
+The Rust control stack already provides the repository-local source required for
+the planning path:
 
-Dispatch persists intent before launching a worker. A restart after intent but
-before a complete prepared record requires reconciliation. The process bridge
-records its actual language and pinned executable/source configuration; it never
-counts a Node worker as a native Rust rewrite. The local process runner supervises
-trusted code but does not enforce a production security sandbox.
+```text
+snapshot -> candidate collection/Pareto reduction -> hard policy
+         -> bounded exact optimizer or deterministic fallback
+         -> PlanCertificate -> resource reservation
+         -> dependency-wave execution -> independent verification
+         -> durable commit/release
+```
 
-The real broker API requires a caller-supplied, independently verified production
-authority implementation. It checks authority at irreversible boundaries and
-uses the existing gate and cgroup containment. Schema-validated provider output
-does not automatically become an accepted campaign result: workspace mutation,
-scientific validation, prepared-result integration and sequencer acceptance remain
-separate contracts. No universal accept-all authority adapter is installed.
+`PlanCertificateV1` binds the exact snapshot, frontier, hard policy, planner
+policy, objective version, selected IDs, resources, cost, objective, solver mode,
+fallback reason and plan hash. Exact mode reports zero optimality gap; candidate
+sets beyond the exact bound take a deterministic, dependency-aware fallback.
 
-Broker recovery includes a quiesced backup bundle containing the journal and
-durable result sidecars. Restore verifies an independently retained manifest hash
-and requires fresh destinations. Active gates/cgroups and concurrent dispatch
-prevent backup; restored evidence does not restore provider or host authority.
-The older journal-only API rejects actual Codex dispatch history that requires
-the complete bundle.
+The separate orchestration router implements integer-only eligibility, Pareto
+frontier reduction, deterministic scoring and tie-breaking. The resource ledger
+implements hierarchical cumulative limits, generation fencing, prepare/commit/
+finalize/cancel transitions and conservative restart disposition. Canonical
+performance qualification binds source commit/tree, binary, configuration and
+host-profile identities and never grants production authority by itself.
 
-## Shadow, canary and rollback
+## Node compatibility and state boundary
 
-The cutover coordinator binds its journal and enrollment marker to the exact
-database identity. Node's real SQLite store adapter wraps mutating operations in
-the same coordinator lock and generation check used by Rust. An old Node process
-cannot silently refresh its writer generation when the database changes owner.
+Rust reads and verifies the real Node migration-ledger schema through version 25,
+including production-compatible logical hashes. This is used for compatibility,
+migration and immutable archive verification.
 
-Initial enrollment requires maintenance mode, stopped admission and drained old
-writers. A newly installed fence cannot retroactively stop a write already in
-progress in code that never participated in the fence. Once enrolled, writer
-callbacks and handoff share SQLite locking; missing/replaced authority state
-fails closed. Direct database writers outside these adapters are outside this
-cooperative guarantee and must be removed from the deployment's writer set.
+The Rust campaign writer intentionally has a different native schema. Full
+replacement does **not** require keeping a retired Node runtime able to interpret
+arbitrary future Rust-only state. The accepted retirement architecture is:
 
-The Node adapter also prevents scoped transaction callbacks from escaping their
-owner's transaction through `query`, `run` or `execute`. The SQL boundary scanner
-recognizes quoted strings/identifiers, comments, multiple statements and complete
-trigger bodies, then rejects top-level transaction-control statements before
-execution. A rejected statement poisons the entire unit of work even if its
-caller catches the error. Outer migration transactions remain supported.
+1. finish capability and state parity before authority transfer;
+2. drain all legacy runtime work and prove the exact Node database quiescent;
+3. retain the exact schema-25 database as an immutable historical archive;
+4. keep Rust-native read-only inspection for that archive;
+5. atomically transfer writer ownership to the qualified Rust stack;
+6. allow incumbent rollback only before the first authoritative Rust commit;
+7. after the first Rust commit, recover forward from Rust state so no committed
+   Rust record is erased by restoring a stale Node database.
 
-The disposable drill performs actual Node/Rust query comparison, consistent
-backup and restore verification, canary ownership, process reopen, promotion and
-rollback. Rollback changes ownership/epoch and **preserves post-cutover writes**;
-it never replaces the current database with a stale backup.
+`hepta-cutover::retirement` implements the immutable freeze/quiescence receipt and
+encodes this rollback disposition. Cooperative same-database fencing remains the
+mechanical handoff tool while legacy writers are enrolled and drained.
 
-This proves same-database ownership mechanics. It does not establish that every
-Node business table has been translated into the separate Rust campaign schema,
-or that Node can read every new Rust business state after a production rollback.
-Production actions require the signed authorization path and exact database
-preimage; local-mode commands cannot substitute for those requirements.
+## Provider and external-effect boundary
 
-## Reproducible acceptance
+The broker and local service do not contain a permissive production authority
+adapter. Real Codex/provider execution requires separately controlled credential
+custody, target-host identity, gate/containment qualification and live canaries.
+Likewise KMS/HSM/WORM, release, portal and submission actions remain external
+authority facts.
+
+A schema-valid worker response, repository administrator statement or fixture key
+cannot promote itself across those boundaries.
+
+## Reproducible repository-local checks
+
+Representative source checks include:
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml --locked \
-  -p hepta-legacy-compatibility -p hepta-compatibility \
-  -p hepta-readonly-control -p hepta-readonly-store
+  -p hepta-module-platform \
+  -p hepta-orchestration-kernel \
+  -p hepta-control-plane \
+  -p hepta-paper-service
+
 cargo test --manifest-path rust/Cargo.toml --locked \
-  -p hepta-campaign-writer -p hepta-control-plane \
-  -p hepta-paper-service -p hepta-cutover
-node --test paper-core/tests/rust-cutover-fence.test.mjs \
-  paper-core/tests/sqlite-transaction-control-boundary.test.mjs \
-  paper-core/tests/sqlite-store-failure-contract.test.mjs \
-  paper-core/tests/typed-persistence-ports.test.mjs
-cargo run --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
-  --example local_service_drill -- /absolute/new/service-drill
-cargo run --manifest-path rust/Cargo.toml --locked -p hepta-cutover \
-  --example local_cutover_drill -- /absolute/new/cutover-drill
+  -p hepta-legacy-compatibility \
+  -p hepta-readonly-store \
+  -p hepta-campaign-writer \
+  -p hepta-cutover
+
+node docs/tools/validate-development-docs.mjs
+node docs/tools/validate-module-documentation.mjs
+python3 docs/rust/tools/validate-program-truth.py
 ```
 
-The supplemental `rust-migration-acceptance` workflow records exact source and
-runtime identities and retains logs/drill receipts. Existing foundation, supply
-chain, architecture, documentation and qualification policies continue to apply.
-Changes to a workflow update its declared producer file hashes; they do not
-manufacture a successful run, external acceptance or `source_qualified` status.
+The complete exact-head workflow matrix remains authoritative over these local
+commands. A changed candidate needs fresh evidence for its exact immutable head.
 
-The development container cannot exercise some original Unix-listener and
-pre-exec gate tests: socket creation is denied and mounted `/proc` does not match
-the child PID namespace. These failures must remain visible and be rerun on a
-proper Linux host. They are not reasons to bypass containment checks or skip the
-hosted tests. Production cgroup and credential tests still need the real target.
+## Remaining repository-local work versus external gates
 
-## Capability migration and completion criteria
+The source audit distinguishes two classes of remaining work.
 
-| Scope | Current source result | Remaining acceptance |
-|---|---|---|
-| Native database reading and hash generation | Concrete native implementation and actual Node differential tests | Full historical/private corpus and deployed-runtime acceptance |
-| Control and durable commit | Executable local/shadow composition with actual bytes and SQLite | Qualified production composition, live clock and host identity |
-| Native artifact inventory and DB inspection | Small native workers in the service | Business capability-specific inputs, receipts and parity |
-| Author/reviewer, empirical, formal/numerical, build/package, submission | Existing Node behavior remains the baseline; explicit process boundary supports gradual migration | Real Rust implementations and corresponding capability replay, scientific/external-effect authority |
-| Broker provider execution | Concrete supervised dispatch API with mandatory authority callback | Real credential custody, deployment adapter, workspace/result integration and provider canaries |
-| Single-writer control and recovery | Durable same-database local exercise and Node adapter fencing | Node-to-Rust data translation, reverse compatibility, host workloads and signed cutover |
-| Node retirement | Not declared | Full capability equivalence, accepted shadow/canary, recovery/rollback and removal of every Node writer/entrypoint |
+### Repository-local convergence
 
-No percentage based on crate count, documentation count or passing fixture count
-can establish full replacement. `CTL-001` and production activation remain open
-until the complete production service and its independent evidence are accepted.
+- align machine truth and human projections with source that is already present;
+- ensure every native capability is bound into the module/capability evidence map
+  and exact-head tests;
+- run complete parity/replay corpora for the new native business and planning
+  surfaces;
+- prove no production composition path can silently select a Node bridge after
+  the Rust-only cutover configuration is chosen;
+- retain explicit Node-entrypoint retirement inventory and deletion/disable proof
+  as part of the final cutover package.
+
+### Independently controlled production evidence
+
+The repository cannot manufacture these facts:
+
+- current protected-main governance/denial evidence and independent decision;
+- private historical archive replay acknowledgement;
+- target Linux host/systemd/cgroup/listener qualification;
+- destructive storage/reboot/corruption/soak evidence;
+- key lifecycle and compromise drills;
+- authenticated real provider author/reviewer canaries;
+- KMS/HSM/WORM/release/portal/submission receipts;
+- production-shaped shadow/canary/rollback and final writer authority transfer.
+
+Those items remain open until their real owners produce accepted evidence.
+
+## Completion rule
+
+“Rust source replacement complete” means every repository-local production
+capability has a native Rust implementation or an explicitly retired behavior,
+all compatibility/cutover source contracts exist, no hidden Node fallback is
+possible in the Rust-only composition, and the exact candidate passes the full
+source/parity evidence matrix.
+
+“Rust production replacement complete” is stronger: all target-host and external
+authority prerequisites are accepted, production shadow/canary/rollback succeeds,
+writer authority transfers atomically, and every Node writer/production entrypoint
+is disabled or removed with retained evidence. The second state cannot be claimed
+from repository source alone.

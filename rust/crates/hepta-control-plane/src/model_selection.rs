@@ -241,9 +241,7 @@ fn evaluation_safe(
 }
 
 fn calibration_error(report: &CalibrationReportV1) -> u32 {
-    report
-        .p95_duration_error_ppm
-        .max(report.p95_cost_error_ppm)
+    report.p95_duration_error_ppm.max(report.p95_cost_error_ppm)
 }
 
 fn valid_identifier(value: &str) -> bool {
@@ -396,9 +394,6 @@ mod tests {
         )
         .expect("selection");
         assert!(!decision.challenger_promoted);
-        assert_eq!(
-            decision.reason,
-            PlannerSelectionReasonV1::StableIncumbent
-        );
+        assert_eq!(decision.reason, PlannerSelectionReasonV1::StableIncumbent);
     }
 }

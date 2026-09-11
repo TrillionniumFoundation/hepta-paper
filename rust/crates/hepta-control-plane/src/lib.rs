@@ -17,6 +17,7 @@ mod model;
 mod planner;
 mod resource;
 mod runtime;
+mod source_closure;
 
 pub use commit::{
     CommitReceiptV1, CommitRequestV1, CommitSequencerV1, FixtureCommitSequencerV1,
@@ -36,6 +37,11 @@ pub use resource::{
     AdmissionRequestV1, ResourceAccountingReportV1, ResourceAllocatorV1, ResourceReservationV1,
 };
 pub use runtime::{ControlPlaneRunReceiptV1, ControlPlaneV1};
+pub use source_closure::{
+    HierarchicalResourcePolicyV1, PerformanceAssessmentV1, PerformanceBudgetV1,
+    PerformanceSampleV1, ResourceEntitlementV1, SnapshotBuildRequestV1, assess_performance_v1,
+    build_snapshot_v1, contextual_pareto_frontier_v1, route_candidates_v1,
+};
 
 use thiserror::Error;
 
@@ -93,6 +99,9 @@ pub enum ControlPlaneError {
     /// Event cardinality or event-count budget was exceeded.
     #[error("observability budget exceeded")]
     ObservabilityBudgetExceeded,
+    /// Performance/SLO evidence is malformed or cannot be evaluated deterministically.
+    #[error("performance qualification evidence is invalid")]
+    PerformanceQualificationInvalid,
     /// Module-platform validation failed.
     #[error("module-platform contract rejected the subject")]
     ModulePlatformRejected,

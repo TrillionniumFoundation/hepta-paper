@@ -1,0 +1,147 @@
+name: rust-functional-source-closure
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-functional-source-closure-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  RUSTFLAGS: '-Dunsafe-code'
+
+jobs:
+  exact-head:
+    name: rust-functional-source-exact-head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install qualified Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          test "$(node --version)" = v22.23.1
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Verify exact functional source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          tree="$(git rev-parse HEAD^{tree})"
+          export CARGO_TARGET_DIR=/tmp/rust-functional-source-target-head
+          rm -rf "$CARGO_TARGET_DIR"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --evidence docs/system/evidence/rust-functional-source-closure-v1.json \
+            --expected-head "$head" \
+            --expected-tree "$tree" \
+            --execute \
+            --receipt /tmp/rust-functional-source-head.json
+          test -s /tmp/rust-functional-source-head.json
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          sha256sum /tmp/rust-functional-source-head.json
+
+      - name: Retain exact-head functional source receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-functional-source-head-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/rust-functional-source-head.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  prospective-merge:
+    if: github.event_name == 'pull_request'
+    name: rust-functional-source-prospective-merge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out immutable source head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install qualified Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+
+      - name: Build immutable prospective merge and verify functional source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          target="${{ github.event.pull_request.head.sha }}"
+          test "$(git rev-parse HEAD)" = "$target"
+          git cat-file -e "$base^{commit}"
+          git cat-file -e "$target^{commit}"
+          merge_tree="$(git merge-tree --write-tree "$base" "$target")"
+          printf '%s' "$merge_tree" | grep -Eq '^[0-9a-f]{40}$'
+          commit_date="$(git show -s --format=%cI "$target")"
+          merge="$(
+            printf 'Rust functional source prospective merge\n\nbase %s\ntarget %s\n' "$base" "$target" |
+              GIT_AUTHOR_NAME='hepta-source-evidence' \
+              GIT_AUTHOR_EMAIL='source-evidence@invalid.example' \
+              GIT_AUTHOR_DATE="$commit_date" \
+              GIT_COMMITTER_NAME='hepta-source-evidence' \
+              GIT_COMMITTER_EMAIL='source-evidence@invalid.example' \
+              GIT_COMMITTER_DATE="$commit_date" \
+              git commit-tree "$merge_tree" -p "$base" -p "$target"
+          )"
+          git checkout --detach "$merge"
+          tree="$(git rev-parse HEAD^{tree})"
+          test "$tree" = "$merge_tree"
+          export CARGO_TARGET_DIR=/tmp/rust-functional-source-target-merge
+          rm -rf "$CARGO_TARGET_DIR"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --evidence docs/system/evidence/rust-functional-source-closure-v1.json \
+            --expected-head "$merge" \
+            --expected-tree "$tree" \
+            --execute \
+            --receipt /tmp/rust-functional-source-merge.json
+          test -s /tmp/rust-functional-source-merge.json
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          sha256sum /tmp/rust-functional-source-merge.json
+
+      - name: Retain prospective-merge functional source receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-functional-source-merge-${{ github.event.pull_request.head.sha }}
+          path: /tmp/rust-functional-source-merge.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

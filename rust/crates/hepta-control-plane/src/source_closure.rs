@@ -7,8 +7,7 @@ use hepta_module_platform::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ControlPlaneError, ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1,
-    canonical_hash_v1,
+    ControlPlaneError, ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1,
 };
 
 /// Bounded source input for constructing one immutable planning snapshot.
@@ -78,7 +77,10 @@ pub fn route_candidates_v1(
                 entry.insert(candidate);
             }
             Entry::Occupied(entry) => {
-                if entry.get().candidate_hash().map_err(|_| ControlPlaneError::EncodingInvalid)?
+                if entry
+                    .get()
+                    .candidate_hash()
+                    .map_err(|_| ControlPlaneError::EncodingInvalid)?
                     != candidate
                         .candidate_hash()
                         .map_err(|_| ControlPlaneError::EncodingInvalid)?
@@ -114,9 +116,7 @@ struct ParetoContextV1 {
 /// uncertainty demand and no lower utility. Dependency, module, capability, decision-group,
 /// and evidence-tier identity must be identical, so this function never treats local
 /// numeric dominance as proof of cross-context substitutability.
-pub fn contextual_pareto_frontier_v1(
-    candidates: &[ActionCandidateV1],
-) -> Vec<ActionCandidateV1> {
+pub fn contextual_pareto_frontier_v1(candidates: &[ActionCandidateV1]) -> Vec<ActionCandidateV1> {
     let mut groups = BTreeMap::<ParetoContextV1, Vec<&ActionCandidateV1>>::new();
     for candidate in candidates {
         let context = ParetoContextV1 {
@@ -494,7 +494,10 @@ mod tests {
             .get_mut("root")
             .expect("root")
             .parent_domain_id = Some("child".to_owned());
-        assert_eq!(bad.validate(), Err(ControlPlaneError::ResourcePolicyInvalid));
+        assert_eq!(
+            bad.validate(),
+            Err(ControlPlaneError::ResourcePolicyInvalid)
+        );
     }
 
     #[test]

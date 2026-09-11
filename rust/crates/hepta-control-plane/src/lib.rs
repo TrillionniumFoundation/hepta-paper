@@ -33,9 +33,9 @@ pub use execution::{
 pub use execution_filesystem::FilesystemPreparedResultVerifierV1;
 pub use hepta_orchestration_kernel as orchestration_kernel;
 pub use migration_closure::{
-    LegacyCapabilityInventoryEntryV1, LegacyCapabilityInventoryV1,
-    LegacyShadowComparisonReceiptV1, LegacyShadowPolicyV1, LegacyShadowResultV1,
-    MigrationClosureError, build_legacy_capability_inventory_v1, compare_legacy_shadow_v1,
+    LegacyCapabilityInventoryEntryV1, LegacyCapabilityInventoryV1, LegacyShadowComparisonReceiptV1,
+    LegacyShadowPolicyV1, LegacyShadowResultV1, MigrationClosureError,
+    build_legacy_capability_inventory_v1, compare_legacy_shadow_v1,
 };
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
 pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1};

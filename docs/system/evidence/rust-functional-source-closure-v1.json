@@ -1,0 +1,102 @@
+{
+  "$schema": "../schemas/source-implementation-evidence-v1.schema.json",
+  "schemaVersion": 1,
+  "kind": "RepositorySourceImplementationEvidenceV1",
+  "repository": "TrillionniumFoundation/hepta-paper",
+  "subjectPolicy": "current_clean_git_head_tree_and_exact_blobs",
+  "promotionPolicy": "semantic_registry_binding_plus_exact_git_blobs_plus_executable_owner_tests",
+  "registries": {
+    "workItems": "docs/system/truth/work-items.v2.json",
+    "modules": "docs/system/truth/modules.v1.json",
+    "capabilities": "docs/system/truth/capabilities.v1.json"
+  },
+  "bundles": {
+    "orchestration-functional-source": {
+      "description": "Exact Rust snapshot, routing, telemetry, performance and calibration implementations with executable cross-module owner tests.",
+      "files": [
+        {"path":"rust/crates/hepta-orchestration-kernel/src/snapshot.rs","role":"implementation","gitBlob":"112fb45f648bcdfef77bfc8b77217c1409838d43","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"build_planning_snapshot_v1"}]},
+        {"path":"rust/crates/hepta-orchestration-kernel/src/router.rs","role":"implementation","gitBlob":"7adc65eed91ba42110234175c70da51789858fa4","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"route_candidate_v1"}]},
+        {"path":"rust/crates/hepta-orchestration-kernel/src/telemetry.rs","role":"implementation","gitBlob":"5c26b8b626f0d7b0575f758ca6d8015989cf3375","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"TelemetryAggregatorV1"}]},
+        {"path":"rust/crates/hepta-orchestration-kernel/src/performance.rs","role":"implementation","gitBlob":"c7afdc0acdd2a6938bf5512bbdefd1d8d2909bde","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"qualify_performance_v1"}]},
+        {"path":"rust/crates/hepta-orchestration-kernel/src/calibration.rs","role":"implementation","gitBlob":"084829c3ad3b96ac133966f6435bc99c34b5e29d","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"calibrate_predictions_v1"}]},
+        {"path":"rust/crates/hepta-orchestration-kernel/tests/source_closure.rs","role":"test","gitBlob":"332898f36acbb2cacf336eafb644767dfb8f0fcf","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"source_closure_snapshot_router_and_resources_are_deterministic"},{"kind":"test","name":"source_closure_telemetry_performance_and_calibration_fail_closed_without_authority"}]}
+      ],
+      "verificationCommands": [
+        {"program":"cargo","args":["test","--locked","-p","hepta-orchestration-kernel","source_closure_snapshot_router_and_resources_are_deterministic","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-orchestration-kernel/tests/source_closure.rs"]},
+        {"program":"cargo","args":["test","--locked","-p","hepta-orchestration-kernel","source_closure_telemetry_performance_and_calibration_fail_closed_without_authority","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-orchestration-kernel/tests/source_closure.rs"]}
+      ]
+    },
+    "planner-functional-source": {
+      "description": "Exact bounded optimizer, deterministic fallback, certificate recomputation and stale-snapshot rejection implementation.",
+      "files": [
+        {"path":"rust/crates/hepta-control-plane/src/planner.rs","role":"implementation","gitBlob":"e951ffc5795ff718e40ff3f4439d247ef618ad88","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"select_plan_v1"}]},
+        {"path":"rust/crates/hepta-control-plane/tests/planner_source_closure.rs","role":"test","gitBlob":"a27b83cd4250dbc04d9bbf57d493ab93f37062ff","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"source_closure_planner_exact_and_fallback_certificates_are_recomputable"}]}
+      ],
+      "verificationCommands": [
+        {"program":"cargo","args":["test","--locked","-p","hepta-control-plane","source_closure_planner_exact_and_fallback_certificates_are_recomputable","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/planner_source_closure.rs"]}
+      ]
+    },
+    "hierarchical-resource-source": {
+      "description": "Exact hierarchical hard-ceiling, weighted DRF, aging, reconciliation and monotonic-clock allocator implementation.",
+      "files": [
+        {"path":"rust/crates/hepta-control-plane/src/hierarchical_resource.rs","role":"implementation","gitBlob":"cd77c6c2f42fc5e64620f9752bdf4e23c61b3dfd","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"HierarchicalResourceAllocatorV1"}]},
+        {"path":"rust/crates/hepta-control-plane/tests/hierarchical_resource_source_closure.rs","role":"test","gitBlob":"58c23af50873616a3731c0ec97511585909013d1","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"hierarchical_source_closure_enforces_parent_fairness_reconciliation_and_clock_fencing"}]}
+      ],
+      "verificationCommands": [
+        {"program":"cargo","args":["test","--locked","-p","hepta-control-plane","hierarchical_source_closure_enforces_parent_fairness_reconciliation_and_clock_fencing","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/hierarchical_resource_source_closure.rs"]}
+      ]
+    },
+    "production-composition-source": {
+      "description": "Exact Rust-only production composition and Node-free deployment verifier with negative production substitution owner test.",
+      "files": [
+        {"path":"rust/crates/hepta-paper-service/src/production.rs","role":"implementation","gitBlob":"4ba0dcec288c3916b78e3a3e9602e46ba9fc17a9","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"run_production_service_v1"}]},
+        {"path":"rust/crates/hepta-paper-service/src/deployment.rs","role":"implementation","gitBlob":"304b25663d6d4e69e19eed8cf6928f9cdd13c9f2","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"verify_production_deployment_v1"}]},
+        {"path":"rust/crates/hepta-paper-service/tests/durable_service.rs","role":"test","gitBlob":"01ec50c7600d56072c43b9c5e0375cd0cd6e9055","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"production_boolean_and_backend_substitution_rejected"}]}
+      ],
+      "verificationCommands": [
+        {"program":"cargo","args":["test","--locked","-p","hepta-paper-service","production_boolean_and_backend_substitution_rejected","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-paper-service/tests/durable_service.rs"]}
+      ]
+    },
+    "legacy-adapter-functional-source": {
+      "description": "Exact Node legacy adapter planning, prepared-result execution, replay, cancellation and authority-escalation rejection implementation.",
+      "files": [
+        {"path":"rust/crates/hepta-module-platform/src/legacy_adapter.rs","role":"implementation","gitBlob":"e560460538440cf429e208d15d26bedfef1fba35","mode":"100644","language":"rust","symbols":[{"kind":"constant","name":"NODE_LEGACY_ADAPTER_MODULE_ID_V1"}]},
+        {"path":"rust/crates/hepta-module-platform/src/legacy_adapter/model.rs","role":"implementation","gitBlob":"7e8b3c121d67de74fe0a9effa7100ca81d651e7f","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"NodeLegacyAdapterV1"}]},
+        {"path":"rust/crates/hepta-module-platform/src/legacy_adapter/engine.rs","role":"implementation","gitBlob":"e4809b4587186a38658066c63f3455897e8d342f","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"plan"}]},
+        {"path":"rust/crates/hepta-module-platform/src/legacy_adapter/support.rs","role":"implementation","gitBlob":"cb8023c3808e0539b73a82ad5370759e442bf224","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"validate_observation"}]},
+        {"path":"rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs","role":"test","gitBlob":"3a54d2234222596beae9f6b1eefc5dd717657453","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"execution_and_exact_replay_are_idempotent"},{"kind":"test","name":"authority_claims_are_rejected"},{"kind":"test","name":"conflicting_replays_fail_closed"}]}
+      ],
+      "verificationCommands": [
+        {"program":"cargo","args":["test","--locked","-p","hepta-module-platform","legacy_adapter::tests::execution_and_exact_replay_are_idempotent","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"]},
+        {"program":"cargo","args":["test","--locked","-p","hepta-module-platform","legacy_adapter::tests::authority_claims_are_rejected","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"]},
+        {"program":"cargo","args":["test","--locked","-p","hepta-module-platform","legacy_adapter::tests::conflicting_replays_fail_closed","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"]}
+      ]
+    }
+  },
+  "records": {
+    "CTL-001":{"workItemId":"CTL-001","moduleId":"module.rust-control-plane-service","capabilityIds":["CAP-CTL-SNAPSHOT","CAP-CTL-POLICY","CAP-EXE-DISPATCH"],"evidenceTier":"source","bundleIds":["production-composition-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "CTL-002":{"workItemId":"CTL-002","moduleId":"module.snapshot-builder","capabilityIds":["CAP-CTL-SNAPSHOT"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "CTL-004":{"workItemId":"CTL-004","moduleId":"module.candidate-router","capabilityIds":["CAP-MOD-CANDIDATES"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "MIG-001":{"workItemId":"MIG-001","moduleId":"module.node-legacy-adapter","capabilityIds":["CAP-CMP-LEGACY"],"evidenceTier":"source","bundleIds":["legacy-adapter-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "MIG-004":{"workItemId":"MIG-004","moduleId":"module.node-legacy-adapter","capabilityIds":["CAP-CMP-LEGACY"],"evidenceTier":"source","bundleIds":["legacy-adapter-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "MOD-002":{"workItemId":"MOD-002","moduleId":"module.candidate-router","capabilityIds":["CAP-MOD-CANDIDATES"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "OBS-001":{"workItemId":"OBS-001","moduleId":"module.observability","capabilityIds":["CAP-OBS-TELEMETRY"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "OBS-002":{"workItemId":"OBS-002","moduleId":"module.observability","capabilityIds":["CAP-OBS-TELEMETRY"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "PERF-001":{"workItemId":"PERF-001","moduleId":"module.performance-qualification","capabilityIds":["CAP-PERF-QUALIFICATION"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "PERF-002":{"workItemId":"PERF-002","moduleId":"module.performance-qualification","capabilityIds":["CAP-PERF-QUALIFICATION"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "PERF-003":{"workItemId":"PERF-003","moduleId":"module.performance-qualification","capabilityIds":["CAP-PERF-QUALIFICATION"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "RES-001":{"workItemId":"RES-001","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "RES-002":{"workItemId":"RES-002","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "RES-003":{"workItemId":"RES-003","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "RES-004":{"workItemId":"RES-004","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "RES-005":{"workItemId":"RES-005","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "RES-006":{"workItemId":"RES-006","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "RES-007":{"workItemId":"RES-007","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "SCH-001":{"workItemId":"SCH-001","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["planner-functional-source","hierarchical-resource-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "SCH-002":{"workItemId":"SCH-002","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "SCH-003":{"workItemId":"SCH-003","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["planner-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "SCH-005":{"workItemId":"SCH-005","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["orchestration-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "SCH-006":{"workItemId":"SCH-006","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["orchestration-functional-source","planner-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},
+    "SCH-007":{"workItemId":"SCH-007","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["planner-functional-source"],"promotionRequested":true,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}}
+  }
+}

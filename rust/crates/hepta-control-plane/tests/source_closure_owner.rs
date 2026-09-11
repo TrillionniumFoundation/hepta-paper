@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hepta_codex_protocol::Sha256Digest;
 use hepta_control_plane::{
-    HierarchicalAdmissionRequestV1, HierarchicalResourceAllocatorV1, HierarchicalResourcePolicyV1,
-    ObservabilityJournalV1, ObservabilityPolicyV1, PerformanceBudgetV1,
-    PerformanceQualificationRequestV1, PerformanceQualificationSubjectV1, PerformanceSampleV1,
-    ResourceEntitlementV1, SnapshotBuildRequestV1, TelemetryPrivacyClassV1,
+    HardPolicyV1, HierarchicalAdmissionRequestV1, HierarchicalResourceAllocatorV1,
+    HierarchicalResourcePolicyV1, ObservabilityJournalV1, ObservabilityPolicyV1,
+    PerformanceBudgetV1, PerformanceQualificationRequestV1, PerformanceQualificationSubjectV1,
+    PerformanceSampleV1, ResourceEntitlementV1, SnapshotBuildRequestV1, TelemetryPrivacyClassV1,
     TelemetryRetentionClassV1, TelemetrySignalKindV1, TelemetrySignalV1, build_snapshot_v1,
-    qualify_performance_v1, route_candidates_v1, HardPolicyV1,
+    qualify_performance_v1, route_candidates_v1,
 };
 use hepta_module_platform::{
     ActionCandidateV1, ActivationStateV1, AuthorityClassV1, ModuleExecutionV1, ModuleGrantV1,
@@ -130,7 +130,10 @@ fn snapshot_and_candidate_router_bind_exact_registry_and_deduplicate() {
     )
     .expect("routed frontier");
     assert_eq!(frontier.candidates.len(), 1);
-    assert_eq!(frontier.snapshot_hash, snapshot.snapshot_hash().expect("hash"));
+    assert_eq!(
+        frontier.snapshot_hash,
+        snapshot.snapshot_hash().expect("hash")
+    );
 }
 
 #[test]
@@ -253,5 +256,8 @@ fn performance_qualification_binds_exact_subject_without_granting_authority() {
     let receipt = qualify_performance_v1(&request).expect("qualification aggregation");
     assert!(receipt.accepted);
     assert!(!receipt.grants_authority);
-    assert_eq!(receipt.subject_hash, subject.subject_hash().expect("subject hash"));
+    assert_eq!(
+        receipt.subject_hash,
+        subject.subject_hash().expect("subject hash")
+    );
 }

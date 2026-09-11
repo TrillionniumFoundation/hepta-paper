@@ -65,7 +65,8 @@ pub fn evaluate_bound_performance_v1(
     }
     let source_report = evaluate_performance_v1(observations, budget, now_unix_ms)
         .map_err(|_| PerformanceBindingError::EvaluationRejected)?;
-    let subject_hash = canonical_hash_v1(&subject).map_err(|_| PerformanceBindingError::Encoding)?;
+    let subject_hash =
+        canonical_hash_v1(&subject).map_err(|_| PerformanceBindingError::Encoding)?;
     let body = BoundPerformanceBodyV1 {
         version: 1,
         subject_hash: &subject_hash,
@@ -154,8 +155,7 @@ pub fn compare_bound_performance_v1(
     let accepted = baseline.source_report.accepted
         && candidate.source_report.accepted
         && p95_latency_regression_ppm <= u64::from(budget.maximum_p95_latency_regression_ppm)
-        && p99_queue_age_regression_ppm
-            <= u64::from(budget.maximum_p99_queue_age_regression_ppm)
+        && p99_queue_age_regression_ppm <= u64::from(budget.maximum_p99_queue_age_regression_ppm)
         && failure_rate_increase_ppm <= budget.maximum_failure_rate_increase_ppm
         && candidate_zero_tolerance_violations <= budget.maximum_zero_tolerance_violations;
     let body = RegressionBodyV1 {
@@ -294,40 +294,24 @@ mod tests {
 
     #[test]
     fn bound_report_changes_when_binary_identity_changes() {
-        let first = evaluate_bound_performance_v1(
-            subject('1'),
-            &observations(10, 2),
-            &budget(),
-            10_000,
-        )
-        .expect("first");
-        let second = evaluate_bound_performance_v1(
-            subject('2'),
-            &observations(10, 2),
-            &budget(),
-            10_000,
-        )
-        .expect("second");
+        let first =
+            evaluate_bound_performance_v1(subject('1'), &observations(10, 2), &budget(), 10_000)
+                .expect("first");
+        let second =
+            evaluate_bound_performance_v1(subject('2'), &observations(10, 2), &budget(), 10_000)
+                .expect("second");
         assert_ne!(first.subject_hash, second.subject_hash);
         assert_ne!(first.report_hash, second.report_hash);
     }
 
     #[test]
     fn regression_budget_accepts_bounded_change_and_rejects_method_drift() {
-        let baseline = evaluate_bound_performance_v1(
-            subject('1'),
-            &observations(10, 2),
-            &budget(),
-            10_000,
-        )
-        .expect("baseline");
-        let candidate = evaluate_bound_performance_v1(
-            subject('2'),
-            &observations(11, 2),
-            &budget(),
-            10_000,
-        )
-        .expect("candidate");
+        let baseline =
+            evaluate_bound_performance_v1(subject('1'), &observations(10, 2), &budget(), 10_000)
+                .expect("baseline");
+        let candidate =
+            evaluate_bound_performance_v1(subject('2'), &observations(11, 2), &budget(), 10_000)
+                .expect("candidate");
         let regression = compare_bound_performance_v1(
             &baseline,
             &candidate,

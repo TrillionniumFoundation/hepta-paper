@@ -155,6 +155,24 @@ fn build_package_is_order_independent_and_rejects_aliases() {
 }
 
 #[test]
+fn submission_preparation_is_deterministic_and_never_authorizes_delivery() {
+    let job = NativeBusinessJobV1::PrepareSubmission {
+        venue_id: "journal:test".into(),
+        manuscript_artifact: "cas:sha256:abc".into(),
+        cover_letter: "Please consider the attached manuscript.".into(),
+        supplementary_artifacts: vec!["cas:sha256:def".into()],
+        recipient_hint: Some("editorial office".into()),
+    };
+    let first = execute_native_business_v1(job.clone()).expect("prepare submission");
+    let second = execute_native_business_v1(job).expect("deterministic submission");
+    assert_eq!(first, second);
+    assert_eq!(first.evidence["externalEffectAuthorized"], false);
+    let prepared: Value = serde_json::from_slice(&first.artifacts[0]).expect("prepared package");
+    assert_eq!(prepared["externalEffectAuthorized"], false);
+    assert!(prepared["packageSha256"].as_str().expect("hash").starts_with("sha256:"));
+}
+
+#[test]
 fn implementation_hash_binds_every_native_source_file() {
     let hash = native_business_implementation_hash_v1();
     assert!(hash.starts_with("sha256:"));

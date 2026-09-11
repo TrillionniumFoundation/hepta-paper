@@ -116,8 +116,7 @@ pub fn assess_calibration_v1(
     let mut duration_errors = Vec::with_capacity(observations.len());
     let mut cost_errors = Vec::with_capacity(observations.len());
     for observation in observations {
-        if !valid_identifier(&observation.observation_id)
-            || observation.actual_duration_micros == 0
+        if !valid_identifier(&observation.observation_id) || observation.actual_duration_micros == 0
         {
             return Err(ControlPlaneError::PerformanceQualificationInvalid);
         }

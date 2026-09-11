@@ -61,8 +61,8 @@ pub struct ResourceLeaseSnapshotV1 {
     pub snapshot_hash: Sha256Digest,
 }
 
-/// Generation-fenced lease state machine. The state can be snapshotted and
-/// restored by a durable owner; this type itself owns no database authority.
+/// Generation-fenced lease state. Persistence remains the responsibility of a
+/// separately authorized durable owner.
 #[derive(Clone, Debug)]
 pub struct ResourceLeaseRegistryV1 {
     policy: ResourceLeasePolicyV1,
@@ -99,6 +99,7 @@ impl ResourceLeaseRegistryV1 {
         {
             return Err(ControlPlaneError::ReservationInvalid);
         }
+
         let generation = self
             .latest_generation
             .get(&reservation_id)
@@ -149,6 +150,7 @@ impl ResourceLeaseRegistryV1 {
         {
             return Err(ControlPlaneError::ReservationInvalid);
         }
+
         let generation = current
             .fence_generation
             .checked_add(1)
@@ -196,18 +198,7 @@ impl ResourceLeaseRegistryV1 {
         {
             return Err(ControlPlaneError::ReservationInvalid);
         }
-        let released = build_lease(ResourceLeaseBodyV1 {
-            version: current.version,
-            reservation_id: current.reservation_id,
-            reservation_hash: current.reservation_hash,
-            owner_principal: current.owner_principal,
-            fence_generation: current.fence_generation,
-            reserved: current.reserved,
-            issued_at_unix_ms: current.issued_at_unix_ms,
-            expires_at_unix_ms: current.expires_at_unix_ms,
-            renewal_count: current.renewal_count,
-            state: ResourceLeaseStateV1::Released,
-        })?;
+        let released = rebuild_lease(current, ResourceLeaseStateV1::Released)?;
         self.leases
             .insert(reservation_id.to_owned(), released.clone());
         Ok(released)
@@ -232,18 +223,7 @@ impl ResourceLeaseRegistryV1 {
                 .get(reservation_id)
                 .cloned()
                 .ok_or(ControlPlaneError::ReservationInvalid)?;
-            let expired = build_lease(ResourceLeaseBodyV1 {
-                version: current.version,
-                reservation_id: current.reservation_id,
-                reservation_hash: current.reservation_hash,
-                owner_principal: current.owner_principal,
-                fence_generation: current.fence_generation,
-                reserved: current.reserved,
-                issued_at_unix_ms: current.issued_at_unix_ms,
-                expires_at_unix_ms: current.expires_at_unix_ms,
-                renewal_count: current.renewal_count,
-                state: ResourceLeaseStateV1::Expired,
-            })?;
+            let expired = rebuild_lease(current, ResourceLeaseStateV1::Expired)?;
             self.leases.insert(reservation_id.clone(), expired);
         }
         Ok(expired_ids)
@@ -278,6 +258,7 @@ impl ResourceLeaseRegistryV1 {
         if canonical_hash_v1(&body)? != snapshot.snapshot_hash {
             return Err(ControlPlaneError::ReservationInvalid);
         }
+
         let mut leases = BTreeMap::new();
         let mut latest_generation = BTreeMap::new();
         for lease in snapshot.leases {
@@ -315,13 +296,14 @@ pub struct PreemptionPlanV1 {
     pub version: u16,
     pub required: ResourceVectorV1,
     pub selected_reservation_ids: Vec<String>,
+    pub selected_recovery_evidence_hashes: Vec<Sha256Digest>,
     pub reclaimable: ResourceVectorV1,
     pub grants_authority: bool,
     pub plan_hash: Sha256Digest,
 }
 
-/// Selects only explicitly safe, reversible victims. Reservations carrying an
-/// irreversible external action or central-writer turn can never be selected.
+/// Selects only explicitly reversible victims. Work beyond a point of no return,
+/// or carrying external/writer authority, can never be selected.
 pub fn plan_safe_preemption_v1(
     required: ResourceVectorV1,
     mut candidates: Vec<PreemptionCandidateV1>,
@@ -343,8 +325,10 @@ pub fn plan_safe_preemption_v1(
             .cmp(&right.priority_class)
             .then_with(|| left.reservation_id.cmp(&right.reservation_id))
     });
+
     let mut seen = BTreeSet::new();
     let mut selected_reservation_ids = Vec::new();
+    let mut selected_recovery_evidence_hashes = Vec::new();
     let mut reclaimable = ResourceVectorV1::default();
     for candidate in candidates {
         if !seen.insert(candidate.reservation_id.clone()) {
@@ -357,6 +341,7 @@ pub fn plan_safe_preemption_v1(
             .checked_add(candidate.resources)
             .map_err(|_| ControlPlaneError::ResourceDenied)?;
         selected_reservation_ids.push(candidate.reservation_id);
+        selected_recovery_evidence_hashes.push(candidate.recovery_evidence_hash);
         if required.fits_within(reclaimable) {
             break;
         }
@@ -364,10 +349,12 @@ pub fn plan_safe_preemption_v1(
     if !required.fits_within(reclaimable) {
         return Err(ControlPlaneError::ResourceDenied);
     }
+
     let body = PreemptionPlanBodyV1 {
         version: 1,
         required,
         selected_reservation_ids: &selected_reservation_ids,
+        selected_recovery_evidence_hashes: &selected_recovery_evidence_hashes,
         reclaimable,
         grants_authority: false,
     };
@@ -376,6 +363,7 @@ pub fn plan_safe_preemption_v1(
         version: 1,
         required,
         selected_reservation_ids,
+        selected_recovery_evidence_hashes,
         reclaimable,
         grants_authority: false,
         plan_hash,
@@ -389,19 +377,20 @@ pub struct PriorityDependencyV1 {
     pub holder_id: String,
 }
 
-/// Propagates the highest blocked priority through an acyclic dependency graph.
-/// Higher integer values mean higher priority. Cycles fail closed rather than
-/// manufacturing priority or relying on timeout-based recovery.
+/// Propagates the highest blocked priority through an acyclic wait graph. Higher
+/// integer values mean higher priority. Cycles fail closed.
 pub fn inherit_priorities_v1(
     base_priorities: BTreeMap<String, u32>,
     dependencies: Vec<PriorityDependencyV1>,
 ) -> Result<BTreeMap<String, u32>, ControlPlaneError> {
-    if base_priorities.is_empty() || base_priorities.len() > 4_096 || dependencies.len() > 16_384 {
+    if base_priorities.is_empty()
+        || base_priorities.len() > 4_096
+        || dependencies.len() > 16_384
+        || base_priorities.keys().any(|id| !valid_identifier(id))
+    {
         return Err(ControlPlaneError::ResourcePolicyInvalid);
     }
-    if base_priorities.keys().any(|id| !valid_identifier(id)) {
-        return Err(ControlPlaneError::ResourcePolicyInvalid);
-    }
+
     let mut edges = BTreeMap::<String, Vec<String>>::new();
     for dependency in dependencies {
         if dependency.waiter_id == dependency.holder_id
@@ -429,10 +418,10 @@ pub fn inherit_priorities_v1(
                 .get(waiter)
                 .ok_or(ControlPlaneError::ResourcePolicyInvalid)?;
             for holder in holders {
-                let value = effective
+                let holder_priority = effective
                     .get_mut(holder)
                     .ok_or(ControlPlaneError::ResourcePolicyInvalid)?;
-                *value = (*value).max(waiter_priority);
+                *holder_priority = (*holder_priority).max(waiter_priority);
             }
         }
         if effective == before {
@@ -535,6 +524,24 @@ fn build_lease(body: ResourceLeaseBodyV1) -> Result<ResourceLeaseV1, ControlPlan
     })
 }
 
+fn rebuild_lease(
+    current: ResourceLeaseV1,
+    state: ResourceLeaseStateV1,
+) -> Result<ResourceLeaseV1, ControlPlaneError> {
+    build_lease(ResourceLeaseBodyV1 {
+        version: current.version,
+        reservation_id: current.reservation_id,
+        reservation_hash: current.reservation_hash,
+        owner_principal: current.owner_principal,
+        fence_generation: current.fence_generation,
+        reserved: current.reserved,
+        issued_at_unix_ms: current.issued_at_unix_ms,
+        expires_at_unix_ms: current.expires_at_unix_ms,
+        renewal_count: current.renewal_count,
+        state,
+    })
+}
+
 fn validate_lease(lease: &ResourceLeaseV1) -> Result<(), ControlPlaneError> {
     if lease.version != 1
         || !valid_identifier(&lease.reservation_id)
@@ -578,6 +585,7 @@ struct PreemptionPlanBodyV1<'a> {
     version: u16,
     required: ResourceVectorV1,
     selected_reservation_ids: &'a [String],
+    selected_recovery_evidence_hashes: &'a [Sha256Digest],
     reclaimable: ResourceVectorV1,
     grants_authority: bool,
 }
@@ -636,11 +644,7 @@ mod tests {
         );
         assert!(
             registry
-                .release(
-                    "reservation:a",
-                    "principal:a",
-                    renewed.fence_generation,
-                )
+                .release("reservation:a", "principal:a", renewed.fence_generation)
                 .is_ok()
         );
     }
@@ -665,6 +669,7 @@ mod tests {
         let snapshot = registry.snapshot().expect("snapshot");
         let restored = ResourceLeaseRegistryV1::restore(snapshot.clone()).expect("restore");
         assert_eq!(restored.snapshot().expect("snapshot"), snapshot);
+
         let mut tampered = snapshot;
         tampered.leases[0].fence_generation += 1;
         assert_eq!(
@@ -674,7 +679,7 @@ mod tests {
     }
 
     #[test]
-    fn preemption_never_selects_point_of_no_return_or_unsafe_work() {
+    fn preemption_binds_recovery_evidence_and_skips_unsafe_work() {
         let candidates = vec![
             PreemptionCandidateV1 {
                 reservation_id: "unsafe".to_owned(),
@@ -702,7 +707,8 @@ mod tests {
             },
         ];
         let plan = plan_safe_preemption_v1(resources(40), candidates).expect("preemption");
-        assert_eq!(plan.selected_reservation_ids, ["safe"]);
+        assert_eq!(plan.selected_reservation_ids, vec!["safe".to_owned()]);
+        assert_eq!(plan.selected_recovery_evidence_hashes, vec![digest('3')]);
         assert!(!plan.grants_authority);
     }
 

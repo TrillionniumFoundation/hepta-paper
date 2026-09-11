@@ -178,8 +178,7 @@ impl CapabilityMigrationRecordV1 {
             }
             CapabilityMigrationStageV1::RustAuthoritative => {
                 if self.authoritative_owner != CapabilityAuthorityOwnerV1::Rust
-                    || self.recovery_mode
-                        != CapabilityRecoveryModeV1::ForwardOnlyAfterRustAuthority
+                    || self.recovery_mode != CapabilityRecoveryModeV1::ForwardOnlyAfterRustAuthority
                     || self.node_execution_enabled
                     || !self.rust_execution_enabled
                     || self.translation_receipt_hash.is_none()
@@ -198,8 +197,7 @@ impl CapabilityMigrationRecordV1 {
             }
             CapabilityMigrationStageV1::NodeRetired => {
                 if self.authoritative_owner != CapabilityAuthorityOwnerV1::Rust
-                    || self.recovery_mode
-                        != CapabilityRecoveryModeV1::ForwardOnlyAfterRustAuthority
+                    || self.recovery_mode != CapabilityRecoveryModeV1::ForwardOnlyAfterRustAuthority
                     || self.node_execution_enabled
                     || !self.rust_execution_enabled
                     || self.translation_receipt_hash.is_none()

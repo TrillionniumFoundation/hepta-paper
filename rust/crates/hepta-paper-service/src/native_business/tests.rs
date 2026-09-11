@@ -46,9 +46,14 @@ fn formal_kernel_checks_dependency_order_and_goal() {
     let output = execute_native_business_v1(NativeBusinessJobV1::FormalCertificate {
         assumptions: vec![a.clone(), implication.clone()],
         steps: vec![
-            ProofStepV1::Assumption { proposition: implication },
+            ProofStepV1::Assumption {
+                proposition: implication,
+            },
             ProofStepV1::Assumption { proposition: a },
-            ProofStepV1::ModusPonens { implication_step: 0, antecedent_step: 1 },
+            ProofStepV1::ModusPonens {
+                implication_step: 0,
+                antecedent_step: 1,
+            },
         ],
         goal: b,
     })
@@ -60,18 +65,30 @@ fn formal_kernel_checks_dependency_order_and_goal() {
 fn formal_kernel_rejects_forward_references() {
     let result = execute_native_business_v1(NativeBusinessJobV1::FormalCertificate {
         assumptions: vec![atom("A")],
-        steps: vec![ProofStepV1::AndIntroduction { left_step: 0, right_step: 0 }],
+        steps: vec![ProofStepV1::AndIntroduction {
+            left_step: 0,
+            right_step: 0,
+        }],
         goal: atom("A"),
     });
-    assert_eq!(result.expect_err("forward reference must fail"), NativeBusinessError::ProofInvalid);
+    assert_eq!(
+        result.expect_err("forward reference must fail"),
+        NativeBusinessError::ProofInvalid
+    );
 }
 
 #[test]
 fn empirical_and_numerical_results_are_finite() {
     let empirical = execute_native_business_v1(NativeBusinessJobV1::EmpiricalAggregate {
         observations: vec![
-            ObservationV1 { label: "sample-1".into(), value: 1.0 },
-            ObservationV1 { label: "sample-2".into(), value: 3.0 },
+            ObservationV1 {
+                label: "sample-1".into(),
+                value: 1.0,
+            },
+            ObservationV1 {
+                label: "sample-2".into(),
+                value: 3.0,
+            },
         ],
     })
     .expect("empirical aggregate");
@@ -95,22 +112,46 @@ fn numerical_kernel_rejects_singular_systems() {
         rhs: vec![3.0, 6.0],
         tolerance: 1e-12,
     });
-    assert_eq!(result.expect_err("singular system must fail"), NativeBusinessError::SingularMatrix);
+    assert_eq!(
+        result.expect_err("singular system must fail"),
+        NativeBusinessError::SingularMatrix
+    );
 }
 
 #[test]
 fn build_package_is_order_independent_and_rejects_aliases() {
     let entries = vec![
-        BuildEntryV1 { path: "paper/main.md".into(), content: "paper".into(), media_type: "text/markdown".into() },
-        BuildEntryV1 { path: "data/results.json".into(), content: "{}".into(), media_type: "application/json".into() },
+        BuildEntryV1 {
+            path: "paper/main.md".into(),
+            content: "paper".into(),
+            media_type: "text/markdown".into(),
+        },
+        BuildEntryV1 {
+            path: "data/results.json".into(),
+            content: "{}".into(),
+            media_type: "application/json".into(),
+        },
     ];
-    let first = execute_native_business_v1(NativeBusinessJobV1::BuildPackage { entries: entries.clone() }).expect("package");
-    let second = execute_native_business_v1(NativeBusinessJobV1::BuildPackage { entries: entries.into_iter().rev().collect() }).expect("order independent package");
+    let first = execute_native_business_v1(NativeBusinessJobV1::BuildPackage {
+        entries: entries.clone(),
+    })
+    .expect("package");
+    let second = execute_native_business_v1(NativeBusinessJobV1::BuildPackage {
+        entries: entries.into_iter().rev().collect(),
+    })
+    .expect("order independent package");
     assert_eq!(first, second);
     assert_eq!(first.artifacts.len(), 2);
-    assert!(execute_native_business_v1(NativeBusinessJobV1::BuildPackage {
-        entries: vec![BuildEntryV1 { path: "../escape".into(), content: "bad".into(), media_type: "text/plain".into() }],
-    }).is_err());
+    assert!(
+        execute_native_business_v1(NativeBusinessJobV1::BuildPackage {
+            entries: vec![BuildEntryV1 {
+                path: "../escape".into(),
+                content: "bad".into(),
+                media_type: "text/plain".into()
+            }],
+        })
+        .is_err()
+    );
 }
 
 #[test]
@@ -132,34 +173,64 @@ fn submission_package_is_deterministic_bounded_and_non_activating() {
         manuscript_sha256: format!("sha256:{}", "c".repeat(64)),
         artifacts: vec![artifact_b.clone(), artifact_a.clone()],
         metadata: vec![
-            SubmissionMetadataV1 { key: "title".into(), value: "Native Rust Research".into() },
-            SubmissionMetadataV1 { key: "article_type".into(), value: "research".into() },
+            SubmissionMetadataV1 {
+                key: "title".into(),
+                value: "Native Rust Research".into(),
+            },
+            SubmissionMetadataV1 {
+                key: "article_type".into(),
+                value: "research".into(),
+            },
         ],
-    }).expect("submission package");
+    })
+    .expect("submission package");
     let second = execute_native_business_v1(NativeBusinessJobV1::SubmissionPackage {
         venue: "journal.example".into(),
         manuscript_sha256: format!("sha256:{}", "c".repeat(64)),
         artifacts: vec![artifact_a, artifact_b],
         metadata: vec![
-            SubmissionMetadataV1 { key: "article_type".into(), value: "research".into() },
-            SubmissionMetadataV1 { key: "title".into(), value: "Native Rust Research".into() },
+            SubmissionMetadataV1 {
+                key: "article_type".into(),
+                value: "research".into(),
+            },
+            SubmissionMetadataV1 {
+                key: "title".into(),
+                value: "Native Rust Research".into(),
+            },
         ],
-    }).expect("deterministic submission package");
+    })
+    .expect("deterministic submission package");
     assert_eq!(first, second);
     assert_eq!(first.evidence["authority"], "prepared_result_only");
     assert_eq!(first.evidence["externalActionMayHaveStarted"], false);
-    assert_eq!(first.evidence["requiresIndependentSubmissionAuthority"], true);
+    assert_eq!(
+        first.evidence["requiresIndependentSubmissionAuthority"],
+        true
+    );
 
     let duplicate = execute_native_business_v1(NativeBusinessJobV1::SubmissionPackage {
         venue: "journal.example".into(),
         manuscript_sha256: format!("sha256:{}", "d".repeat(64)),
         artifacts: vec![
-            SubmissionArtifactV1 { name: "same".into(), media_type: "text/plain".into(), sha256: format!("sha256:{}", "e".repeat(64)), byte_length: 1 },
-            SubmissionArtifactV1 { name: "same".into(), media_type: "text/plain".into(), sha256: format!("sha256:{}", "f".repeat(64)), byte_length: 1 },
+            SubmissionArtifactV1 {
+                name: "same".into(),
+                media_type: "text/plain".into(),
+                sha256: format!("sha256:{}", "e".repeat(64)),
+                byte_length: 1,
+            },
+            SubmissionArtifactV1 {
+                name: "same".into(),
+                media_type: "text/plain".into(),
+                sha256: format!("sha256:{}", "f".repeat(64)),
+                byte_length: 1,
+            },
         ],
         metadata: Vec::new(),
     });
-    assert_eq!(duplicate.expect_err("duplicate artifacts fail"), NativeBusinessError::Contract);
+    assert_eq!(
+        duplicate.expect_err("duplicate artifacts fail"),
+        NativeBusinessError::Contract
+    );
 }
 
 #[test]

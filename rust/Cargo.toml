@@ -24,6 +24,7 @@ members = [
   "crates/hepta-control-plane",
   "crates/hepta-orchestration-kernel",
   "crates/hepta-paper-service",
+  "crates/hepta-performance-qualification",
 ]
 
 [workspace.package]

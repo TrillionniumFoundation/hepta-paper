@@ -1,7 +1,8 @@
 use crate::{
     ObjectStoreV1, ServiceError,
     native_business::{
-        NativeBusinessJobV1, execute_native_business_v1, native_business_implementation_hash_v1,
+        NativeBusinessJobV1, execute_native_business_for_capability_v1,
+        native_business_implementation_hash_v1,
     },
 };
 use base64ct::{Base64, Encoding};
@@ -166,6 +167,13 @@ impl ServiceExecutorV1 {
         let payload = self.objects.read(&request.candidate.payload_hash)?;
         let job: NativeJobV1 =
             serde_json::from_slice(&payload).map_err(|_| ServiceError::Configuration)?;
+        if matches!(
+            (binding, &job),
+            (WorkerBindingV1::Native, NativeJobV1::Business { job })
+                if job.capability_id() != request.candidate.capability_id
+        ) {
+            return Err(ServiceError::Configuration);
+        }
         self.objects
             .record(&started, identity.to_string().as_bytes())?;
         let (mut artifacts, evidence) = match (binding, job) {
@@ -213,8 +221,11 @@ impl ServiceExecutorV1 {
                 )
             }
             (WorkerBindingV1::Native, NativeJobV1::Business { job }) => {
-                let output =
-                    execute_native_business_v1(job).map_err(|_| ServiceError::Execution)?;
+                let output = execute_native_business_for_capability_v1(
+                    job,
+                    &request.candidate.capability_id,
+                )
+                .map_err(|_| ServiceError::Execution)?;
                 let mut hashes = Vec::with_capacity(output.artifacts.len());
                 for bytes in output.artifacts {
                     hashes.push(self.objects.put(&bytes)?);

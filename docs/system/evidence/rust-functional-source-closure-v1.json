@@ -144,7 +144,7 @@
         {
           "path": "rust/crates/hepta-control-plane/src/planner.rs",
           "role": "implementation",
-          "gitBlob": "e951ffc5795ff718e40ff3f4439d247ef618ad88",
+          "gitBlob": "7c2b8db23d16e4b4e3028195278e8c488882e76e",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -488,6 +488,129 @@
           ]
         }
       ]
+    },
+    "scheduler-boundary-regressions-source": {
+      "description": "Exact Rust hard-rate arithmetic, calibration integrity, dependency-safe Pareto reduction and bounded planner regression tests.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/optimizer_v2.rs",
+          "role": "implementation",
+          "gitBlob": "ab05f9aa0ec5858abd9d65c2ac3caf8e24fec094",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "assess_calibration_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/source_closure.rs",
+          "role": "implementation",
+          "gitBlob": "72304fe626bbbb2ff6f25e382ffb7c802f9ff838",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "assess_performance_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/pareto.rs",
+          "role": "implementation",
+          "gitBlob": "b80ae3617f10c820da7fd38a28ca22123245ae73",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "contextual_pareto_frontier_preserving_dependencies_v2"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/model_selection.rs",
+          "role": "implementation",
+          "gitBlob": "f4c50a8c41f5845e16c95a032779d1dd87e53935",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "select_planner_champion_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs",
+          "role": "test",
+          "gitBlob": "fb7be20fa122f936abb047dc34f4e3ba38b19515",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "hard_failure_rate_matches_exact_rational_comparison"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/tests/calibration_recompute.rs",
+          "role": "test",
+          "gitBlob": "13dd6106c23a01a407bb01b581efc5756cf3dd07",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "calibration_receipt_recomputes_policy_and_observations"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "--test",
+            "source_correctness_regressions",
+            "--",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "--test",
+            "calibration_recompute",
+            "--",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/calibration_recompute.rs"
+          ]
+        }
+      ]
     }
   },
   "records": {
@@ -653,7 +776,8 @@
       ],
       "evidenceTier": "source",
       "bundleIds": [
-        "orchestration-functional-source"
+        "orchestration-functional-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -672,7 +796,8 @@
       ],
       "evidenceTier": "source",
       "bundleIds": [
-        "orchestration-functional-source"
+        "orchestration-functional-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -691,7 +816,8 @@
       ],
       "evidenceTier": "source",
       "bundleIds": [
-        "orchestration-functional-source"
+        "orchestration-functional-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -844,7 +970,8 @@
       "evidenceTier": "source",
       "bundleIds": [
         "planner-functional-source",
-        "hierarchical-resource-source"
+        "hierarchical-resource-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -863,7 +990,8 @@
       ],
       "evidenceTier": "source",
       "bundleIds": [
-        "orchestration-functional-source"
+        "orchestration-functional-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -882,7 +1010,8 @@
       ],
       "evidenceTier": "source",
       "bundleIds": [
-        "planner-functional-source"
+        "planner-functional-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -901,7 +1030,8 @@
       ],
       "evidenceTier": "source",
       "bundleIds": [
-        "orchestration-functional-source"
+        "orchestration-functional-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -921,7 +1051,8 @@
       "evidenceTier": "source",
       "bundleIds": [
         "orchestration-functional-source",
-        "planner-functional-source"
+        "planner-functional-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -940,7 +1071,8 @@
       ],
       "evidenceTier": "source",
       "bundleIds": [
-        "planner-functional-source"
+        "planner-functional-source",
+        "scheduler-boundary-regressions-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {

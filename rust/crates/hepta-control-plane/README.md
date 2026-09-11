@@ -134,3 +134,31 @@ Control errors remain bounded: `SnapshotInvalid` for snapshot/version bindings,
 bad sequencing/request contracts and `PersistenceInvalid` for storage, lease,
 budget or replay conflicts. The writer's detailed error enum is available for
 storage diagnostics. No test result is a production qualification certificate.
+
+## Scheduler arithmetic and evidence boundaries
+
+`PlannerPolicyV1.maximum_exact_candidates = 0` explicitly disables exact enumeration
+and uses the deterministic fallback. The optimizer uses this setting when the
+work budget is one subset evaluation; a one-candidate exact search needs two.
+The plan certificate retains the effective planner-policy hash. Both Pareto entry
+points preserve every incoming dependency target rather than removing it on
+local numeric dominance.
+
+Hard failure-rate and calibration thresholds use ceiling-rounded integer PPM.
+Relative errors above 100% are not clipped to an acceptable threshold. A zero
+actual cost with a positive prediction is rejected by every permitted calibration
+policy; duplicate observation IDs do not count as independent samples. Planner
+promotion compares the improvement by checked subtraction, including near
+`u64::MAX`, rather than weakening the required margin through saturation.
+
+`CalibrationReportV1::validate` recomputes the report hash and checks its internal
+bounds. It is content-integrity checking, not producer authentication. Call
+`verify_observations(policy, observations)` for exact recomputation against the
+caller-selected policy and measurements. V1's summary hash is not a unique dataset
+identity; retain the immutable input/producer binding separately. Model selection
+and optimization reject a mutated report body before consuming its acceptance.
+
+```sh
+cargo test --locked -p hepta-control-plane --test source_correctness_regressions
+cargo test --locked -p hepta-control-plane --test calibration_recompute
+```

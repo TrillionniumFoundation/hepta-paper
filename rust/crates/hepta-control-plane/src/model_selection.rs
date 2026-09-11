@@ -155,12 +155,12 @@ fn compare_safe_planners(
     challenger_calibration: &CalibrationReportV1,
     policy: &PlannerPromotionPolicyV1,
 ) -> (bool, PlannerSelectionReasonV1) {
-    let required_value = champion
+    let improvement = challenger
         .completed_value_micros
-        .saturating_add(policy.minimum_completed_value_improvement_micros);
-    if challenger.completed_value_micros >= required_value
-        && challenger.completed_value_micros > champion.completed_value_micros
-    {
+        .checked_sub(champion.completed_value_micros);
+    if improvement.is_some_and(|value| {
+        value > 0 && value >= policy.minimum_completed_value_improvement_micros
+    }) {
         return (true, PlannerSelectionReasonV1::CompletedValueImproved);
     }
     if challenger.completed_value_micros != champion.completed_value_micros {
@@ -218,6 +218,9 @@ fn validate_evaluation(
     evaluation: &PlannerEvaluationV1,
     calibration: &CalibrationReportV1,
 ) -> Result<(), PlannerSelectionError> {
+    calibration
+        .validate()
+        .map_err(|_| PlannerSelectionError::EvaluationInvalid)?;
     if !valid_identifier(&evaluation.planner_id)
         || evaluation.calibration_report_hash != calibration.report_hash
         || calibration.version != 1
@@ -281,23 +284,21 @@ pub enum PlannerSelectionError {
 mod tests {
     use super::*;
 
-    fn digest(byte: char) -> Sha256Digest {
-        format!("sha256:{}", byte.to_string().repeat(64))
-            .parse()
-            .expect("digest")
-    }
-
     fn calibration(byte: char, error: u32, accepted: bool) -> CalibrationReportV1 {
-        CalibrationReportV1 {
+        let policy = crate::CalibrationPolicyV1 {
             version: 1,
-            sample_count: 100,
-            p50_duration_error_ppm: error / 2,
-            p95_duration_error_ppm: error,
-            p50_cost_error_ppm: error / 2,
-            p95_cost_error_ppm: error,
-            accepted,
-            report_hash: digest(byte),
-        }
+            minimum_samples: 1,
+            maximum_p95_duration_error_ppm: if accepted { error } else { 0 },
+            maximum_p95_cost_error_ppm: if accepted { error } else { 0 },
+        };
+        let observation = crate::CalibrationObservationV1 {
+            observation_id: format!("observation-{byte}"),
+            predicted_duration_micros: 1_000_000 + u64::from(error),
+            actual_duration_micros: 1_000_000,
+            predicted_cost_microusd: 1_000_000 + u64::from(error),
+            actual_cost_microusd: 1_000_000,
+        };
+        crate::assess_calibration_v1(&policy, &[observation]).expect("real calibration")
     }
 
     fn evaluation(id: &str, report_hash: Sha256Digest) -> PlannerEvaluationV1 {

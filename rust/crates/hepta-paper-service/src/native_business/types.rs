@@ -121,3 +121,19 @@ pub struct NativeBusinessOutputV1 {
     pub artifacts: Vec<Vec<u8>>,
     pub evidence: Value,
 }
+
+impl NativeBusinessJobV1 {
+    /// Exact capability implemented by this job; module labels cannot override it.
+    #[must_use]
+    pub fn capability_id(&self) -> &'static str {
+        match self {
+            Self::AuthorDraft { .. } => "CAP-AUTHOR",
+            Self::ReviewerAssessment { .. } => "CAP-REVIEW",
+            Self::FormalCertificate { .. } => "CAP-FORMAL",
+            Self::EmpiricalAggregate { .. } => "CAP-EMPIRICAL",
+            Self::NumericalLinearSolve { .. } => "CAP-NUMERICAL",
+            Self::BuildPackage { .. } => "CAP-BUILD",
+            Self::PrepareSubmission { .. } => "CAP-SUBMIT",
+        }
+    }
+}

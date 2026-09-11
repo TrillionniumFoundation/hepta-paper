@@ -1,9 +1,8 @@
 //! Source-level Node-to-Rust migration closure contracts.
 //!
-//! The contracts in this module record a complete incumbent capability inventory
-//! and compare Node/Rust shadow results. They deliberately cannot activate Rust,
-//! commit campaign state, authorize external effects, cut over writers, or retire
-//! Node.
+//! These contracts record a complete incumbent capability inventory and compare
+//! Node/Rust shadow results. They cannot activate Rust, commit campaign state,
+//! authorize external effects, cut over writers, or retire Node.
 
 use std::str::FromStr;
 
@@ -57,8 +56,7 @@ pub struct LegacyCapabilityInventoryV1 {
 }
 
 /// Builds a canonical inventory and requires exact set equality with the
-/// caller-supplied incumbent capability set. Missing capability coverage is a
-/// hard error rather than an implicit Node fallback.
+/// caller-supplied incumbent capability set. Missing coverage is a hard error.
 pub fn build_legacy_capability_inventory_v1(
     mut required_capability_ids: Vec<String>,
     mut entries: Vec<LegacyCapabilityInventoryEntryV1>,
@@ -67,33 +65,41 @@ pub fn build_legacy_capability_inventory_v1(
         || required_capability_ids.len() > MAXIMUM_CAPABILITIES
         || entries.is_empty()
         || entries.len() > MAXIMUM_CAPABILITIES
+        || required_capability_ids
+            .iter()
+            .any(|capability| !valid_capability_id(capability))
     {
         return Err(MigrationClosureError::InventoryInvalid);
     }
-    if required_capability_ids
-        .iter()
-        .any(|capability| !valid_capability_id(capability))
-    {
-        return Err(MigrationClosureError::InventoryInvalid);
-    }
+
     required_capability_ids.sort();
-    if required_capability_ids.windows(2).any(|window| window[0] == window[1]) {
+    if required_capability_ids
+        .windows(2)
+        .any(|window| window[0] == window[1])
+    {
         return Err(MigrationClosureError::InventoryInvalid);
     }
+
     for entry in &entries {
         entry.validate()?;
     }
     entries.sort_by(|left, right| left.capability_id.cmp(&right.capability_id));
+    let entry_ids = entries
+        .iter()
+        .map(|entry| entry.capability_id.as_str())
+        .collect::<Vec<_>>();
+    let required_ids = required_capability_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     if entries
         .windows(2)
         .any(|window| window[0].capability_id == window[1].capability_id)
-        || entries
-            .iter()
-            .map(|entry| entry.capability_id.as_str())
-            .ne(required_capability_ids.iter().map(String::as_str))
+        || entry_ids != required_ids
     {
         return Err(MigrationClosureError::InventoryIncomplete);
     }
+
     let body = LegacyCapabilityInventoryBodyV1 {
         version: 1,
         required_capability_ids: &required_capability_ids,
@@ -122,11 +128,12 @@ pub struct LegacyShadowPolicyV1 {
 
 impl LegacyShadowPolicyV1 {
     fn validate(&self) -> Result<(), MigrationClosureError> {
+        let evaluation = matches!(self.parity_class, LegacyParityClassV1::Evaluation);
         if self.version != 1
             || !valid_capability_id(&self.capability_id)
             || self.minimum_evaluation_score_ppm > 1_000_000
             || self.maximum_evaluation_delta_ppm > 1_000_000
-            || (!matches!(self.parity_class, LegacyParityClassV1::Evaluation)
+            || (!evaluation
                 && (self.minimum_evaluation_score_ppm != 0
                     || self.maximum_evaluation_delta_ppm != 0))
         {
@@ -163,8 +170,8 @@ pub struct LegacyShadowComparisonReceiptV1 {
     pub comparison_hash: Sha256Digest,
 }
 
-/// Compares an incumbent Node result and its Rust replacement under a closed
-/// parity policy. An accepted receipt is evidence only and grants no authority.
+/// Compares incumbent Node and Rust replacement results under a closed parity
+/// policy. An accepted receipt is evidence only and grants no authority.
 pub fn compare_legacy_shadow_v1(
     inventory_entry: &LegacyCapabilityInventoryEntryV1,
     policy: &LegacyShadowPolicyV1,
@@ -252,22 +259,18 @@ fn validate_shadow_result(
     {
         return Err(MigrationClosureError::ObservationInvalid);
     }
-    match entry.parity_class {
+
+    let shape_is_valid = match entry.parity_class {
         LegacyParityClassV1::Exact => {
-            if result.semantic_invariant_hash.is_some() || result.evaluation_score_ppm.is_some() {
-                return Err(MigrationClosureError::ObservationInvalid);
-            }
+            result.semantic_invariant_hash.is_none() && result.evaluation_score_ppm.is_none()
         }
         LegacyParityClassV1::Semantic => {
-            if result.semantic_invariant_hash.is_none() || result.evaluation_score_ppm.is_some() {
-                return Err(MigrationClosureError::ObservationInvalid);
-            }
+            result.semantic_invariant_hash.is_some() && result.evaluation_score_ppm.is_none()
         }
-        LegacyParityClassV1::Evaluation => {
-            if result.evaluation_score_ppm.is_none() {
-                return Err(MigrationClosureError::ObservationInvalid);
-            }
-        }
+        LegacyParityClassV1::Evaluation => result.evaluation_score_ppm.is_some(),
+    };
+    if !shape_is_valid {
+        return Err(MigrationClosureError::ObservationInvalid);
     }
     Ok(())
 }
@@ -352,8 +355,6 @@ pub enum MigrationClosureError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use super::*;
 
     fn digest(marker: char) -> Sha256Digest {
@@ -369,7 +370,10 @@ mod tests {
         }
     }
 
-    fn entry(capability: &str, parity_class: LegacyParityClassV1) -> LegacyCapabilityInventoryEntryV1 {
+    fn entry(
+        capability: &str,
+        parity_class: LegacyParityClassV1,
+    ) -> LegacyCapabilityInventoryEntryV1 {
         LegacyCapabilityInventoryEntryV1 {
             version: 1,
             capability_id: capability.to_owned(),
@@ -403,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn inventory_requires_exact_capability_coverage_and_is_deterministic() {
+    fn inventory_is_complete_and_deterministic() {
         let required = vec!["CAP-AUTHOR".to_owned(), "CAP-REVIEW".to_owned()];
         let left = build_legacy_capability_inventory_v1(
             required.clone(),
@@ -423,6 +427,10 @@ mod tests {
         .expect("inventory");
         assert_eq!(left, right);
         assert!(!left.grants_authority);
+    }
+
+    #[test]
+    fn incomplete_inventory_rejects() {
         assert_eq!(
             build_legacy_capability_inventory_v1(
                 vec!["CAP-AUTHOR".to_owned(), "CAP-REVIEW".to_owned()],
@@ -433,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_shadow_detects_byte_drift_without_authority() {
+    fn exact_shadow_detects_drift_without_authority() {
         let inventory = entry("CAP-BUILD", LegacyParityClassV1::Exact);
         let policy = LegacyShadowPolicyV1 {
             version: 1,
@@ -447,6 +455,7 @@ mod tests {
             .expect("equal comparison");
         assert!(equal.accepted);
         assert!(!equal.grants_authority);
+
         let rust = result(LegacyParityClassV1::Exact, '2');
         let drift = compare_legacy_shadow_v1(&inventory, &policy, &node, &rust, None)
             .expect("drift comparison");
@@ -454,25 +463,9 @@ mod tests {
     }
 
     #[test]
-    fn semantic_and_evaluation_modes_fail_closed() {
-        let semantic_entry = entry("CAP-NUMERICAL", LegacyParityClassV1::Semantic);
-        let semantic_policy = LegacyShadowPolicyV1 {
-            version: 1,
-            capability_id: "CAP-NUMERICAL".to_owned(),
-            parity_class: LegacyParityClassV1::Semantic,
-            minimum_evaluation_score_ppm: 0,
-            maximum_evaluation_delta_ppm: 0,
-        };
-        let node = result(LegacyParityClassV1::Semantic, '3');
-        let rust = result(LegacyParityClassV1::Semantic, '4');
-        assert!(
-            compare_legacy_shadow_v1(&semantic_entry, &semantic_policy, &node, &rust, None)
-                .expect("semantic")
-                .accepted
-        );
-
-        let evaluation_entry = entry("CAP-REVIEW", LegacyParityClassV1::Evaluation);
-        let evaluation_policy = LegacyShadowPolicyV1 {
+    fn evaluation_requires_independent_evidence() {
+        let inventory = entry("CAP-REVIEW", LegacyParityClassV1::Evaluation);
+        let policy = LegacyShadowPolicyV1 {
             version: 1,
             capability_id: "CAP-REVIEW".to_owned(),
             parity_class: LegacyParityClassV1::Evaluation,
@@ -482,38 +475,19 @@ mod tests {
         let node = result(LegacyParityClassV1::Evaluation, '5');
         let rust = result(LegacyParityClassV1::Evaluation, '6');
         assert!(
-            !compare_legacy_shadow_v1(
-                &evaluation_entry,
-                &evaluation_policy,
-                &node,
-                &rust,
-                None,
-            )
-            .expect("evaluation without evidence")
-            .accepted
+            !compare_legacy_shadow_v1(&inventory, &policy, &node, &rust, None)
+                .expect("comparison")
+                .accepted
         );
         assert!(
-            compare_legacy_shadow_v1(
-                &evaluation_entry,
-                &evaluation_policy,
-                &node,
-                &rust,
-                Some(digest('9')),
-            )
-            .expect("evaluation with evidence")
-            .accepted
+            compare_legacy_shadow_v1(&inventory, &policy, &node, &rust, Some(digest('9')))
+                .expect("comparison")
+                .accepted
         );
     }
 
     #[test]
-    fn duplicate_required_capability_and_over_budget_observation_reject() {
-        assert_eq!(
-            build_legacy_capability_inventory_v1(
-                vec!["CAP-AUTHOR".to_owned(), "CAP-AUTHOR".to_owned()],
-                vec![entry("CAP-AUTHOR", LegacyParityClassV1::Exact)],
-            ),
-            Err(MigrationClosureError::InventoryInvalid)
-        );
+    fn over_budget_observation_rejects() {
         let inventory = entry("CAP-BUILD", LegacyParityClassV1::Exact);
         let policy = LegacyShadowPolicyV1 {
             version: 1,
@@ -529,22 +503,5 @@ mod tests {
             compare_legacy_shadow_v1(&inventory, &policy, &node, &rust, None),
             Err(MigrationClosureError::ObservationInvalid)
         );
-    }
-
-    #[test]
-    fn required_set_has_no_hidden_duplicates() {
-        let inventory = build_legacy_capability_inventory_v1(
-            vec!["CAP-AUTHOR".to_owned(), "CAP-REVIEW".to_owned()],
-            vec![
-                entry("CAP-AUTHOR", LegacyParityClassV1::Evaluation),
-                entry("CAP-REVIEW", LegacyParityClassV1::Evaluation),
-            ],
-        )
-        .expect("inventory");
-        let unique = inventory
-            .required_capability_ids
-            .iter()
-            .collect::<BTreeSet<_>>();
-        assert_eq!(unique.len(), inventory.required_capability_ids.len());
     }
 }

@@ -32,14 +32,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
           node docs/tools/apply-source-promotions.mjs --write | tee /tmp/source-promotion-sync.json
           node docs/tools/validate-development-docs.mjs
           node docs/tools/validate-module-documentation.mjs
           python3 docs/rust/tools/validate-program-truth.py
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --evidence docs/system/evidence/repository-source-implementation-v1.json
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --evidence docs/system/evidence/rust-functional-source-closure-v1.json
           test -n "$(git status --porcelain=v1 --untracked-files=no)"
           git diff --check
           git diff -- docs/system/truth/work-items.v2.json docs/system/truth/modules.v1.json \
@@ -48,6 +45,32 @@ jobs:
             docs/modules/MODULE_DOCUMENTATION_MATRIX.md docs/modules/specs \
             > /tmp/source-promotion.patch
           test -s /tmp/source-promotion.patch
+
+          git config user.name hepta-source-promotion
+          git config user.email source-promotion@invalid.example
+          git add docs/system/truth/work-items.v2.json docs/system/truth/modules.v1.json \
+            docs/system/evidence/repository-source-implementation-v1.json \
+            docs/system/evidence/rust-functional-source-closure-v1.json \
+            docs/modules/MODULE_DOCUMENTATION_MATRIX.md docs/modules/specs
+          GIT_AUTHOR_DATE="$(git show -s --format=%cI "$source_head")" \
+          GIT_COMMITTER_DATE="$(git show -s --format=%cI "$source_head")" \
+            git commit -m 'chore: verify generated source promotion truth'
+          generated_head="$(git rev-parse HEAD)"
+          generated_tree="$(git rev-parse HEAD^{tree})"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --evidence docs/system/evidence/repository-source-implementation-v1.json \
+            --expected-head "$generated_head" \
+            --expected-tree "$generated_tree"
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --evidence docs/system/evidence/rust-functional-source-closure-v1.json \
+            --expected-head "$generated_head" \
+            --expected-tree "$generated_tree"
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
       - name: Retain generated truth and patch
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

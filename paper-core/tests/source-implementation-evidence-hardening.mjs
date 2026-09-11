@@ -129,12 +129,62 @@ function assertMig002Transition(root) {
   if (!equal(baseCapabilities, targetCapabilities)) fail('capability_registry_changed');
 }
 
-function assertPostStageRegistryStability(root, target) {
-  for (const relative of [WORK_ITEMS, MODULES, CAPABILITIES]) {
-    const stage = readJsonAt(root, MIG002_STAGE, relative);
-    const current = readJsonAt(root, target, relative);
-    if (!equal(stage, current)) fail('post_stage_registry_drift', relative);
+function assertPostStageRegistryEvolution(root, target) {
+  const stageWork = readJsonAt(root, MIG002_STAGE, WORK_ITEMS);
+  const targetWork = readJsonAt(root, target, WORK_ITEMS);
+  const targetEvidence = readJsonAt(root, target, EVIDENCE);
+  const expectedWork = structuredClone(stageWork);
+  const promotableModules = new Set();
+
+  for (const [recordId, record] of Object.entries(targetEvidence.records ?? {})) {
+    const stageItem = stageWork?.items?.[recordId];
+    const targetItem = targetWork?.items?.[recordId];
+    if (!stageItem || !targetItem) fail('post_stage_evidence_item_missing', recordId);
+
+    if (equal(stageItem, targetItem)) {
+      if (targetItem.state === 'source_implemented' && targetItem.evidenceTier === 'source') {
+        promotableModules.add(targetItem.moduleId);
+      }
+      continue;
+    }
+
+    const expectedItem = structuredClone(stageItem);
+    if (stageItem.state !== 'design_ready'
+      || stageItem.evidenceTier !== 'design'
+      || targetItem.state !== 'source_implemented'
+      || targetItem.evidenceTier !== 'source'
+      || record.promotionRequested !== false) {
+      fail('post_stage_transition_not_forward_source_promotion', recordId);
+    }
+    expectedItem.state = 'source_implemented';
+    expectedItem.evidenceTier = 'source';
+    if (!equal(expectedItem, targetItem)) fail('post_stage_work_item_scope_drift', recordId);
+    expectedWork.items[recordId] = expectedItem;
+    promotableModules.add(targetItem.moduleId);
   }
+
+  if (!equal(expectedWork, targetWork)) fail('post_stage_registry_drift', WORK_ITEMS);
+
+  const stageModules = readJsonAt(root, MIG002_STAGE, MODULES);
+  const targetModules = readJsonAt(root, target, MODULES);
+  const expectedModules = structuredClone(stageModules);
+  for (const moduleId of promotableModules) {
+    const stageModule = stageModules?.modules?.[moduleId];
+    const targetModule = targetModules?.modules?.[moduleId];
+    if (!stageModule || !targetModule || equal(stageModule, targetModule)) continue;
+    const expectedModule = structuredClone(stageModule);
+    if (stageModule.state !== 'design_ready' || targetModule.state !== 'source_implemented') {
+      fail('post_stage_module_transition_invalid', moduleId);
+    }
+    expectedModule.state = 'source_implemented';
+    if (!equal(expectedModule, targetModule)) fail('post_stage_module_scope_drift', moduleId);
+    expectedModules.modules[moduleId] = expectedModule;
+  }
+  if (!equal(expectedModules, targetModules)) fail('post_stage_registry_drift', MODULES);
+
+  const stageCapabilities = readJsonAt(root, MIG002_STAGE, CAPABILITIES);
+  const targetCapabilities = readJsonAt(root, target, CAPABILITIES);
+  if (!equal(stageCapabilities, targetCapabilities)) fail('post_stage_registry_drift', CAPABILITIES);
 }
 
 function blankRange(chars, start, end) {
@@ -310,7 +360,7 @@ assertAncestor(root, APPROVED_PRODUCT, MIG002_STAGE, 'approved-product-to-mig002
 assertAncestor(root, MIG002_STAGE, targetHead, 'mig002-stage-to-target');
 const runtime = runtimeAttestation();
 assertMig002Transition(root);
-assertPostStageRegistryStability(root, targetHead);
+assertPostStageRegistryEvolution(root, targetHead);
 const evidence = readJsonAt(root, targetHead, EVIDENCE);
 validateEvidenceSemantics(root, evidence, runtime);
 assertClosedCheckout(root);
@@ -321,7 +371,7 @@ const receipt = {
   target: targetHead,
   immutableStages: { mainBase: MAIN_BASE, approvedProduct: APPROVED_PRODUCT, mig002Stage: MIG002_STAGE },
   runtime,
-  registryTransition: 'exact:MIG-002:design_ready/design->source_implemented/source;post-stage-registry-stable',
+  registryTransition: 'exact:MIG-002 historical transition;post-stage evidence-declared forward-only design/source promotions;authority stable',
   sourceSemantics: 'comment-string-aware-unique-symbol-plus-cargo-discovery-binding',
   checkoutPolicy: 'no-untracked-and-no-ignored-repository-inputs',
   productionAuthorized: false,

@@ -4,7 +4,11 @@ use hepta_codex_protocol::Sha256Digest;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{LegacyParityClassV1, hash::canonical_hash, types::{valid_capability_id, valid_module_id}};
+use crate::{
+    LegacyParityClassV1,
+    hash::canonical_hash,
+    types::{valid_capability_id, valid_module_id},
+};
 
 /// Ordered migration stage for one capability.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -287,7 +291,9 @@ impl CapabilityMigrationLedgerV1 {
 }
 
 fn receipt_preserved(current: &Option<Sha256Digest>, next: &Option<Sha256Digest>) -> bool {
-    current.as_ref().is_none_or(|receipt| next.as_ref() == Some(receipt))
+    current
+        .as_ref()
+        .is_none_or(|receipt| next.as_ref() == Some(receipt))
 }
 
 /// Fail-closed capability migration validation failure.

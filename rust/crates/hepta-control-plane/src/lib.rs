@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 mod commit;
+mod durable_resource;
 mod events;
 mod execution;
 mod execution_filesystem;
@@ -26,6 +27,10 @@ mod source_closure;
 pub use commit::{
     CommitReceiptV1, CommitRequestV1, CommitSequencerV1, FixtureCommitSequencerV1,
     SqliteCommitSequencerV1,
+};
+pub use durable_resource::{
+    DurableResourceLeaseLedgerV1, DurableResourceLeaseStateV1, DurableResourceLeaseV1,
+    DurableResourcePrepareV1, ResourceRecoveryReportV1,
 };
 pub use events::{BoundedEventLogV1, ControlPlaneEventKindV1, ControlPlaneEventV1};
 pub(crate) use execution::verification_receipt_hash_v1;
@@ -101,6 +106,9 @@ pub enum ControlPlaneError {
     /// Actual use exceeds the admitted reservation.
     #[error("resource reconciliation exceeds reservation")]
     ReconciliationInvalid,
+    /// Durable resource lease persistence, integrity, or recovery failed.
+    #[error("durable resource ledger is invalid")]
+    ResourcePersistenceInvalid,
     /// Module execution returned an incomplete or mismatched batch.
     #[error("module execution batch is invalid")]
     ExecutionInvalid,

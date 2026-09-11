@@ -1,18 +1,25 @@
 //! Deterministic Rust orchestration primitives used by the production control plane.
 //!
-//! The crate owns five repository-local responsibilities that must not be delegated
+//! The crate owns repository-local responsibilities that must not be delegated
 //! to the legacy Node runtime: transaction-consistent planning snapshots,
 //! deterministic candidate routing, hierarchical resource reservations,
-//! privacy-bounded telemetry, and canonical performance qualification.
+//! privacy-bounded telemetry, canonical performance qualification, and
+//! version-scoped prediction/planner calibration.
 
 #![forbid(unsafe_code)]
 
+pub mod calibration;
 pub mod performance;
 pub mod resource;
 pub mod router;
 pub mod snapshot;
 pub mod telemetry;
 
+pub use calibration::{
+    CalibrationError, CalibrationReceiptV1, ChampionChallengerPolicyV1,
+    ChampionChallengerReceiptV1, ModuleCalibrationSummaryV1, PlannerVariantObservationV1,
+    PredictionObservationV1, calibrate_predictions_v1, compare_planner_variants_v1,
+};
 pub use performance::{
     CanonicalWorkloadV1, PerformanceObservationV1, PerformanceQualificationReceiptV1,
     PerformanceSubjectV1, qualify_performance_v1,

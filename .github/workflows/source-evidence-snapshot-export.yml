@@ -21,7 +21,11 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: source-evidence-snapshot-${{ github.event.pull_request.head.sha }}
-          path: docs/system/evidence/repository-source-implementation-v1.json
+          path: |
+            docs/system/evidence/repository-source-implementation-v1.json
+            docs/system/truth/work-items.v2.json
+            docs/system/truth/modules.v1.json
+            docs/system/truth/capabilities.v1.json
           if-no-files-found: error
           retention-days: 1
           compression-level: 0

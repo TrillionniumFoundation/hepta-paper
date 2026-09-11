@@ -437,7 +437,10 @@ mod tests {
 
     #[test]
     fn calibration_is_version_scoped_and_deterministic() {
-        let observations = vec![prediction("1.0.0", "workload:a"), prediction("2.0.0", "workload:a")];
+        let observations = vec![
+            prediction("1.0.0", "workload:a"),
+            prediction("2.0.0", "workload:a"),
+        ];
         let left = calibrate_predictions_v1(observations.clone()).expect("calibration");
         let right = calibrate_predictions_v1(observations).expect("calibration");
         assert_eq!(left, right);

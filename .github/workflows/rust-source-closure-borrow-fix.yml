@@ -26,34 +26,19 @@ jobs:
           from pathlib import Path
           p = Path('rust/crates/hepta-control-plane/src/hierarchical_resource.rs')
           s = p.read_text()
-          old = '''        let body = PreparedBodyV1 {
-              request: &request,
-              fence_generation: self.next_fence_generation,
-          };
-          let prepared_hash =
-              canonical_hash_v1(&body).map_err(|_| HierarchicalResourceError::Encoding)?;
-          let prepared = PreparedHierarchicalReservationV1 {
-              request,
-              fence_generation: body.fence_generation,
-              prepared_hash,
-          };
-          '''
-          new = '''        let fence_generation = self.next_fence_generation;
-          let body = PreparedBodyV1 {
-              request: &request,
-              fence_generation,
-          };
-          let prepared_hash =
-              canonical_hash_v1(&body).map_err(|_| HierarchicalResourceError::Encoding)?;
-          let prepared = PreparedHierarchicalReservationV1 {
-              request,
-              fence_generation,
-              prepared_hash,
-          };
-          '''
+          marker = '        let body = PreparedBodyV1 {\n'
+          if marker not in s:
+              raise SystemExit('prepared body marker not found')
+          s = s.replace(marker, '        let fence_generation = self.next_fence_generation;\n' + marker, 1)
+          old = '            fence_generation: self.next_fence_generation,\n'
           if old not in s:
-              raise SystemExit('expected ownership-fix subject not found')
-          p.write_text(s.replace(old, new, 1))
+              raise SystemExit('source fence generation marker not found')
+          s = s.replace(old, '            fence_generation,\n', 1)
+          old = '            fence_generation: body.fence_generation,\n'
+          if old not in s:
+              raise SystemExit('prepared fence generation marker not found')
+          s = s.replace(old, '            fence_generation,\n', 1)
+          p.write_text(s)
           PY
       - name: Format and commit fix
         shell: bash

@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 mod commit;
+#[allow(clippy::type_complexity)]
 mod durable_resource;
 mod events;
 mod execution;

@@ -10,7 +10,7 @@ const MAX_RECIPIENT_BYTES: usize = 512;
 /// identifier or send primitive. External delivery remains owned by the separately
 /// qualified submission authority port.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SubmissionPackageV1 {
     pub venue_id: String,
     pub manuscript_artifact: String,
@@ -20,7 +20,7 @@ pub struct SubmissionPackageV1 {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreparedSubmissionV1 {
     pub venue_id: String,
     pub manuscript_artifact: String,
@@ -30,17 +30,27 @@ pub struct PreparedSubmissionV1 {
     pub external_effect_authorized: bool,
 }
 
+fn validate_artifact_reference(value: &str) -> Result<(), NativeBusinessError> {
+    validate_identifier(value, 512)?;
+    if value.starts_with('/')
+        || value.split('/').any(|component| component == "." || component == "..")
+    {
+        return Err(NativeBusinessError::Contract);
+    }
+    Ok(())
+}
+
 pub fn prepare_submission_v1(
     package: SubmissionPackageV1,
 ) -> Result<PreparedSubmissionV1, NativeBusinessError> {
     validate_identifier(&package.venue_id, 128)?;
-    validate_identifier(&package.manuscript_artifact, 512)?;
+    validate_artifact_reference(&package.manuscript_artifact)?;
     validate_body_text(&package.cover_letter)?;
     if package.supplementary_artifacts.len() > MAX_FILES {
         return Err(NativeBusinessError::Contract);
     }
     for artifact in &package.supplementary_artifacts {
-        validate_identifier(artifact, 512)?;
+        validate_artifact_reference(artifact)?;
     }
     if let Some(recipient) = &package.recipient_hint {
         if recipient.is_empty()

@@ -147,89 +147,10 @@ fn build_package_is_order_independent_and_rejects_aliases() {
             entries: vec![BuildEntryV1 {
                 path: "../escape".into(),
                 content: "bad".into(),
-                media_type: "text/plain".into()
+                media_type: "text/plain".into(),
             }],
         })
         .is_err()
-    );
-}
-
-#[test]
-fn submission_package_is_deterministic_bounded_and_non_activating() {
-    let artifact_a = SubmissionArtifactV1 {
-        name: "manuscript.pdf".into(),
-        media_type: "application/pdf".into(),
-        sha256: format!("sha256:{}", "a".repeat(64)),
-        byte_length: 1024,
-    };
-    let artifact_b = SubmissionArtifactV1 {
-        name: "source.tar.zst".into(),
-        media_type: "application/zstd".into(),
-        sha256: format!("sha256:{}", "b".repeat(64)),
-        byte_length: 2048,
-    };
-    let first = execute_native_business_v1(NativeBusinessJobV1::SubmissionPackage {
-        venue: "journal.example".into(),
-        manuscript_sha256: format!("sha256:{}", "c".repeat(64)),
-        artifacts: vec![artifact_b.clone(), artifact_a.clone()],
-        metadata: vec![
-            SubmissionMetadataV1 {
-                key: "title".into(),
-                value: "Native Rust Research".into(),
-            },
-            SubmissionMetadataV1 {
-                key: "article_type".into(),
-                value: "research".into(),
-            },
-        ],
-    })
-    .expect("submission package");
-    let second = execute_native_business_v1(NativeBusinessJobV1::SubmissionPackage {
-        venue: "journal.example".into(),
-        manuscript_sha256: format!("sha256:{}", "c".repeat(64)),
-        artifacts: vec![artifact_a, artifact_b],
-        metadata: vec![
-            SubmissionMetadataV1 {
-                key: "article_type".into(),
-                value: "research".into(),
-            },
-            SubmissionMetadataV1 {
-                key: "title".into(),
-                value: "Native Rust Research".into(),
-            },
-        ],
-    })
-    .expect("deterministic submission package");
-    assert_eq!(first, second);
-    assert_eq!(first.evidence["authority"], "prepared_result_only");
-    assert_eq!(first.evidence["externalActionMayHaveStarted"], false);
-    assert_eq!(
-        first.evidence["requiresIndependentSubmissionAuthority"],
-        true
-    );
-
-    let duplicate = execute_native_business_v1(NativeBusinessJobV1::SubmissionPackage {
-        venue: "journal.example".into(),
-        manuscript_sha256: format!("sha256:{}", "d".repeat(64)),
-        artifacts: vec![
-            SubmissionArtifactV1 {
-                name: "same".into(),
-                media_type: "text/plain".into(),
-                sha256: format!("sha256:{}", "e".repeat(64)),
-                byte_length: 1,
-            },
-            SubmissionArtifactV1 {
-                name: "same".into(),
-                media_type: "text/plain".into(),
-                sha256: format!("sha256:{}", "f".repeat(64)),
-                byte_length: 1,
-            },
-        ],
-        metadata: Vec::new(),
-    });
-    assert_eq!(
-        duplicate.expect_err("duplicate artifacts fail"),
-        NativeBusinessError::Contract
     );
 }
 

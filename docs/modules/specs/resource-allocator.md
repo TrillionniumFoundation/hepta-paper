@@ -163,10 +163,10 @@ Current channel is `authoritative`. A new version progresses through registered/
 
 ## Open blockers
 
-- `RES-001` — `design_ready`
-- `RES-002` — `design_ready`
-- `RES-003` — `design_ready`
-- `RES-004` — `design_ready`
-- `RES-005` — `design_ready`
-- `RES-006` — `design_ready`
-- `RES-007` — `design_ready`
+- `RES-001` — `source_implemented`
+- `RES-002` — `source_implemented`
+- `RES-003` — `source_implemented`
+- `RES-004` — `source_implemented`
+- `RES-005` — `source_implemented`
+- `RES-006` — `source_implemented`
+- `RES-007` — `source_implemented`

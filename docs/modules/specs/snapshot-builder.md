@@ -9,7 +9,7 @@ Registry: [`../../system/truth/modules.v1.json`](../../system/truth/modules.v1.j
 ```text
 moduleId: module.snapshot-builder
 implementationKind: trusted_in_process
-staticImplementationState: design_ready
+staticImplementationState: source_implemented
 staticActivation: disabled
 authorityClass: read_only
 qualificationRequirement: source
@@ -154,4 +154,4 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `CTL-002` — `design_ready`
+- `CTL-002` — `source_implemented`

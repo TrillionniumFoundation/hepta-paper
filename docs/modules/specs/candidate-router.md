@@ -9,7 +9,7 @@ Registry: [`../../system/truth/modules.v1.json`](../../system/truth/modules.v1.j
 ```text
 moduleId: module.candidate-router
 implementationKind: trusted_in_process
-staticImplementationState: design_ready
+staticImplementationState: source_implemented
 staticActivation: disabled
 authorityClass: pure
 qualificationRequirement: source
@@ -197,5 +197,5 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `CTL-004` — `design_ready`
-- `MOD-002` — `design_ready`
+- `CTL-004` — `source_implemented`
+- `MOD-002` — `source_implemented`

@@ -6,6 +6,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const EVIDENCE = 'docs/system/evidence/repository-source-implementation-v1.json';
+const FUNCTIONAL_EVIDENCE = 'docs/system/evidence/rust-functional-source-closure-v1.json';
+const SOURCE_EVIDENCE_MANIFESTS = [EVIDENCE, FUNCTIONAL_EVIDENCE];
 const WORK_ITEMS = 'docs/system/truth/work-items.v2.json';
 const MODULES = 'docs/system/truth/modules.v1.json';
 const CAPABILITIES = 'docs/system/truth/capabilities.v1.json';
@@ -129,14 +131,26 @@ function assertMig002Transition(root) {
   if (!equal(baseCapabilities, targetCapabilities)) fail('capability_registry_changed');
 }
 
+function sourceEvidenceRecordsAt(root, target) {
+  const records = new Map();
+  for (const manifestPath of SOURCE_EVIDENCE_MANIFESTS) {
+    const manifest = readJsonAt(root, target, manifestPath);
+    for (const [recordId, record] of Object.entries(manifest.records ?? {})) {
+      if (records.has(recordId)) fail('duplicate_source_evidence_record', `${recordId}:${manifestPath}`);
+      records.set(recordId, { ...record, manifestPath });
+    }
+  }
+  return records;
+}
+
 function assertPostStageRegistryEvolution(root, target) {
   const stageWork = readJsonAt(root, MIG002_STAGE, WORK_ITEMS);
   const targetWork = readJsonAt(root, target, WORK_ITEMS);
-  const targetEvidence = readJsonAt(root, target, EVIDENCE);
+  const evidenceRecords = sourceEvidenceRecordsAt(root, target);
   const expectedWork = structuredClone(stageWork);
   const promotableModules = new Set();
 
-  for (const [recordId, record] of Object.entries(targetEvidence.records ?? {})) {
+  for (const [recordId, record] of evidenceRecords) {
     const stageItem = stageWork?.items?.[recordId];
     const targetItem = targetWork?.items?.[recordId];
     if (!stageItem || !targetItem) fail('post_stage_evidence_item_missing', recordId);
@@ -154,7 +168,7 @@ function assertPostStageRegistryEvolution(root, target) {
       || targetItem.state !== 'source_implemented'
       || targetItem.evidenceTier !== 'source'
       || record.promotionRequested !== false) {
-      fail('post_stage_transition_not_forward_source_promotion', recordId);
+      fail('post_stage_transition_not_forward_source_promotion', `${recordId}:${record.manifestPath}`);
     }
     expectedItem.state = 'source_implemented';
     expectedItem.evidenceTier = 'source';
@@ -361,8 +375,9 @@ assertAncestor(root, MIG002_STAGE, targetHead, 'mig002-stage-to-target');
 const runtime = runtimeAttestation();
 assertMig002Transition(root);
 assertPostStageRegistryEvolution(root, targetHead);
-const evidence = readJsonAt(root, targetHead, EVIDENCE);
-validateEvidenceSemantics(root, evidence, runtime);
+for (const manifestPath of SOURCE_EVIDENCE_MANIFESTS) {
+  validateEvidenceSemantics(root, readJsonAt(root, targetHead, manifestPath), runtime);
+}
 assertClosedCheckout(root);
 const receipt = {
   schemaVersion: 1,
@@ -370,8 +385,9 @@ const receipt = {
   prBase,
   target: targetHead,
   immutableStages: { mainBase: MAIN_BASE, approvedProduct: APPROVED_PRODUCT, mig002Stage: MIG002_STAGE },
+  sourceEvidenceManifests: SOURCE_EVIDENCE_MANIFESTS,
   runtime,
-  registryTransition: 'exact:MIG-002 historical transition;post-stage evidence-declared forward-only design/source promotions;authority stable',
+  registryTransition: 'exact:MIG-002 historical transition;post-stage multi-manifest evidence-declared forward-only design/source promotions;authority stable',
   sourceSemantics: 'comment-string-aware-unique-symbol-plus-cargo-discovery-binding',
   checkoutPolicy: 'no-untracked-and-no-ignored-repository-inputs',
   productionAuthorized: false,

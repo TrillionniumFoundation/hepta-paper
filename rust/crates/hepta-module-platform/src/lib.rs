@@ -13,6 +13,7 @@ mod error;
 mod hash;
 mod legacy_adapter;
 mod lifecycle;
+mod migration;
 mod protocol;
 mod registry;
 mod sdk;
@@ -33,6 +34,10 @@ pub use legacy_adapter::{
 pub use lifecycle::{
     CircuitBreakerStateV1, DeterminismClassV1, ModuleHealthReportV1, ModuleLifecycleProfileV1,
     RegistryChangeClassV1, RegistryChangeDecisionV1, RolloutChannelV1, classify_registry_change_v1,
+};
+pub use migration::{
+    CapabilityAuthorityOwnerV1, CapabilityMigrationError, CapabilityMigrationLedgerV1,
+    CapabilityMigrationRecordV1, CapabilityMigrationStageV1, CapabilityRecoveryModeV1,
 };
 pub use protocol::{
     CancellationAcknowledgementV1, CancellationDispositionV1, CancellationRequestV1,

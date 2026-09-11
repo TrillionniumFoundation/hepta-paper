@@ -213,10 +213,13 @@ test('implementation projection is deterministic and preserves pending work with
   assert.equal(Object.keys(projection.modules).length, 32);
   const scheduler = projection.modules['module.scheduler-core'];
   assert.equal(scheduler.staticImplementationState, 'source_implemented');
-  assert.ok(scheduler.pendingSourceWorkItemIds.includes('SCH-001'));
+  assert.equal(scheduler.referencedWorkStates['SCH-001'], 'source_implemented');
+  assert.ok(!scheduler.pendingSourceWorkItemIds.includes('SCH-001'));
   assert.equal(scheduler.referencedWorkStates['SCH-004'], 'source_implemented');
   assert.ok(scheduler.codeRoots.includes('rust/crates/hepta-control-plane'));
   assert.ok(scheduler.contractRefs.includes('docs/control-plane/GLOBAL_OPTIMIZATION.md'));
+  const qualification = projection.modules['module.source-qualification'];
+  assert.ok(qualification.pendingSourceWorkItemIds.includes('QUAL-001'));
   const writer = projection.modules['module.commit-sequencer'];
   assert.ok(writer.blockedExternalWorkItemIds.includes('GAP-HOST-002'));
   for (const row of Object.values(projection.modules)) {

@@ -9,7 +9,7 @@ Registry: [`../../system/truth/modules.v1.json`](../../system/truth/modules.v1.j
 ```text
 moduleId: module.rust-control-plane-service
 implementationKind: host_service
-staticImplementationState: design_ready
+staticImplementationState: source_implemented
 staticActivation: disabled
 authorityClass: prepared_result_only
 qualificationRequirement: source
@@ -127,5 +127,5 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `CTL-001` — `design_ready`
+- `CTL-001` — `source_implemented`
 - `CTL-008` — `source_implemented`

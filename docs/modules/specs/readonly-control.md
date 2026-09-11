@@ -121,4 +121,4 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `CTL-002` — `design_ready`
+- `CTL-002` — `source_implemented`

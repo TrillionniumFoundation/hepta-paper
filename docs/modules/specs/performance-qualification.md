@@ -9,7 +9,7 @@ Registry: [`../../system/truth/modules.v1.json`](../../system/truth/modules.v1.j
 ```text
 moduleId: module.performance-qualification
 implementationKind: isolated_process
-staticImplementationState: design_ready
+staticImplementationState: source_implemented
 staticActivation: disabled
 authorityClass: read_only
 qualificationRequirement: target_host
@@ -117,7 +117,7 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `PERF-001` — `design_ready`
-- `PERF-002` — `design_ready`
-- `PERF-003` — `design_ready`
+- `PERF-001` — `source_implemented`
+- `PERF-002` — `source_implemented`
+- `PERF-003` — `source_implemented`
 - Effective `target_host` evidence remains deployment/external-subject specific and cannot be committed as static success.

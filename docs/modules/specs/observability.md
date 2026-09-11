@@ -119,5 +119,5 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `OBS-001` — `design_ready`
-- `OBS-002` — `design_ready`
+- `OBS-001` — `source_implemented`
+- `OBS-002` — `source_implemented`

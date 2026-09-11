@@ -120,10 +120,10 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `SCH-001` — `design_ready`
-- `SCH-002` — `design_ready`
-- `SCH-003` — `design_ready`
+- `SCH-001` — `source_implemented`
+- `SCH-002` — `source_implemented`
+- `SCH-003` — `source_implemented`
 - `SCH-004` — `source_implemented`
-- `SCH-005` — `design_ready`
-- `SCH-006` — `design_ready`
-- `SCH-007` — `design_ready`
+- `SCH-005` — `source_implemented`
+- `SCH-006` — `source_implemented`
+- `SCH-007` — `source_implemented`

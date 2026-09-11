@@ -37,13 +37,16 @@
       ]
     },
     "hierarchical-resource-source": {
-      "description": "Exact hierarchical hard-ceiling, weighted DRF, aging, reconciliation and monotonic-clock allocator implementation.",
+      "description": "Exact hierarchical ceilings, weighted fairness, reconciliation, durable lease recovery and bounded accounting source implementation.",
       "files": [
-        {"path":"rust/crates/hepta-control-plane/src/hierarchical_resource.rs","role":"implementation","gitBlob":"cd77c6c2f42fc5e64620f9752bdf4e23c61b3dfd","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"HierarchicalResourceAllocatorV1"}]},
-        {"path":"rust/crates/hepta-control-plane/tests/hierarchical_resource_source_closure.rs","role":"test","gitBlob":"58c23af50873616a3731c0ec97511585909013d1","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"hierarchical_source_closure_enforces_parent_fairness_reconciliation_and_clock_fencing"}]}
+        {"path":"rust/crates/hepta-control-plane/src/hierarchical_resource.rs","role":"implementation","gitBlob":"0cabe629c3cbde79cadb346dace92da83f5bb19c","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"HierarchicalResourceAllocatorV1"}]},
+        {"path":"rust/crates/hepta-control-plane/src/durable_resource.rs","role":"implementation","gitBlob":"2ca40ca640b2e6c77cf5edbe9e63ca0c1a7f8c19","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"DurableResourceLeaseLedgerV1"}]},
+        {"path":"rust/crates/hepta-control-plane/tests/source_closure_owner.rs","role":"test","gitBlob":"5f9eafb7797581029f4e5bf4fcb9c36c0718513f","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"hierarchical_resource_accounting_is_exact_and_bounded"}]},
+        {"path":"rust/crates/hepta-control-plane/tests/durable_resource_source.rs","role":"test","gitBlob":"9555b1f320ca215f684a16ce713cb3b07501fd45","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"durable_resource_recovery_retains_ambiguous_capacity_until_reconciled"}]}
       ],
       "verificationCommands": [
-        {"program":"cargo","args":["test","--locked","-p","hepta-control-plane","hierarchical_source_closure_enforces_parent_fairness_reconciliation_and_clock_fencing","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/hierarchical_resource_source_closure.rs"]}
+        {"program":"cargo","args":["test","--locked","-p","hepta-control-plane","hierarchical_resource_accounting_is_exact_and_bounded","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_closure_owner.rs"]},
+        {"program":"cargo","args":["test","--locked","-p","hepta-control-plane","durable_resource_recovery_retains_ambiguous_capacity_until_reconciled","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/durable_resource_source.rs"]}
       ]
     },
     "production-composition-source": {

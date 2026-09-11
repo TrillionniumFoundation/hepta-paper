@@ -13,6 +13,7 @@ mod commit;
 mod events;
 mod execution;
 mod execution_filesystem;
+mod hierarchical_resource;
 mod model;
 mod planner;
 mod resource;
@@ -31,6 +32,10 @@ pub use execution::{
 };
 pub use execution_filesystem::FilesystemPreparedResultVerifierV1;
 pub use hepta_orchestration_kernel as orchestration_kernel;
+pub use hierarchical_resource::{
+    HierarchicalAdmissionOutcomeV1, HierarchicalAdmissionRequestV1,
+    HierarchicalResourceAllocatorV1, HierarchicalResourceReservationV1,
+};
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
 pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1};
 pub use resource::{

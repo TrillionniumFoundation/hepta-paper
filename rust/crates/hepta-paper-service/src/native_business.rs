@@ -11,11 +11,12 @@ mod empirical;
 mod formal;
 mod numerical;
 mod reviewer;
+mod submission;
 mod types;
 
 pub use types::{
     BuildEntryV1, ManuscriptSectionV1, NativeBusinessJobV1, NativeBusinessOutputV1, ObservationV1,
-    ProofStepV1, PropositionV1, ReviewPolicyV1,
+    ProofStepV1, PropositionV1, ReviewPolicyV1, SubmissionArtifactV1, SubmissionMetadataV1,
 };
 
 use author::author_draft;
@@ -26,6 +27,7 @@ use numerical::numerical_linear_solve;
 use reviewer::reviewer_assessment;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use submission::prepare_submission;
 use thiserror::Error;
 
 pub(super) const MAX_TEXT_BYTES: usize = 1024 * 1024;
@@ -45,6 +47,7 @@ pub fn native_business_implementation_hash_v1() -> String {
             include_bytes!("native_business/empirical.rs"),
             include_bytes!("native_business/numerical.rs"),
             include_bytes!("native_business/build.rs"),
+            include_bytes!("native_business/submission.rs"),
             include_bytes!("bin/hepta-native-business.rs"),
         ],
     )
@@ -78,6 +81,12 @@ pub fn execute_native_business_v1(
             tolerance,
         } => numerical_linear_solve(matrix, rhs, tolerance)?,
         NativeBusinessJobV1::BuildPackage { entries } => build_package(entries)?,
+        NativeBusinessJobV1::SubmissionPackage {
+            venue,
+            manuscript_sha256,
+            artifacts,
+            metadata,
+        } => prepare_submission(venue, manuscript_sha256, artifacts, metadata)?,
     };
     if output.artifacts.is_empty()
         || output.artifacts.len() > MAX_ARTIFACTS
@@ -158,25 +167,18 @@ fn update_hash(hasher: &mut Sha256, value: &[u8]) {
 /// Native capability contract, proof, numerical, or encoding failure.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum NativeBusinessError {
-    /// Input shape, identity, path, or bound is invalid.
     #[error("native business contract is invalid")]
     Contract,
-    /// Proof certificate is not valid for the supplied assumptions and goal.
     #[error("native formal proof is invalid")]
     ProofInvalid,
-    /// Proof depth, node, or step budget is exceeded.
     #[error("native formal proof exceeds limits")]
     ProofLimit,
-    /// A numeric value is non-finite or arithmetic overflowed.
     #[error("native numeric input or result is invalid")]
     Numeric,
-    /// The supplied linear system is singular within the declared tolerance.
     #[error("native linear system is singular")]
     SingularMatrix,
-    /// Canonical JSON or UTF-8 encoding failed.
     #[error("native business encoding failed")]
     Encoding,
-    /// Produced artifacts exceed the prepared-result envelope.
     #[error("native business output exceeds limits")]
     OutputLimit,
 }

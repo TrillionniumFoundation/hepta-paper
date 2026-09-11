@@ -15,6 +15,7 @@ mod events;
 mod execution;
 mod execution_filesystem;
 mod hierarchical_resource;
+mod hierarchical_runtime;
 mod model;
 mod observability;
 mod performance;
@@ -43,6 +44,9 @@ pub use hierarchical_resource::{
     HierarchicalAccountingReportV1, HierarchicalReservationRequestV1,
     HierarchicalResourceAllocatorV1, HierarchicalResourceError, PreparedHierarchicalReservationV1,
     ResourceLeaseV1, ResourceScopeV1,
+};
+pub use hierarchical_runtime::{
+    HierarchicalControlPlaneRunReceiptV1, HierarchicalControlPlaneV1, ModuleAdmissionBindingV1,
 };
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
 pub use observability::{
@@ -97,6 +101,9 @@ pub enum ControlPlaneError {
     /// Requested resources cannot be admitted.
     #[error("resource admission denied")]
     ResourceDenied,
+    /// Hierarchical resource preparation, fencing, or release failed.
+    #[error("hierarchical resource admission rejected the run")]
+    HierarchicalResourceRejected,
     /// Reservation identity already exists or is unknown.
     #[error("resource reservation identity is invalid")]
     ReservationInvalid,

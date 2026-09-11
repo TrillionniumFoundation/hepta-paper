@@ -169,7 +169,12 @@ fn submission_preparation_is_deterministic_and_never_authorizes_delivery() {
     assert_eq!(first.evidence["externalEffectAuthorized"], false);
     let prepared: Value = serde_json::from_slice(&first.artifacts[0]).expect("prepared package");
     assert_eq!(prepared["externalEffectAuthorized"], false);
-    assert!(prepared["packageSha256"].as_str().expect("hash").starts_with("sha256:"));
+    assert!(
+        prepared["packageSha256"]
+            .as_str()
+            .expect("hash")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]

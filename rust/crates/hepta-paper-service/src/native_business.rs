@@ -11,6 +11,7 @@ mod empirical;
 mod formal;
 mod numerical;
 mod reviewer;
+mod submission;
 mod types;
 
 pub use types::{
@@ -26,6 +27,7 @@ use numerical::numerical_linear_solve;
 use reviewer::reviewer_assessment;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use submission::submission_package;
 use thiserror::Error;
 
 pub(super) const MAX_TEXT_BYTES: usize = 1024 * 1024;
@@ -45,6 +47,7 @@ pub fn native_business_implementation_hash_v1() -> String {
             include_bytes!("native_business/empirical.rs"),
             include_bytes!("native_business/numerical.rs"),
             include_bytes!("native_business/build.rs"),
+            include_bytes!("native_business/submission.rs"),
             include_bytes!("bin/hepta-native-business.rs"),
         ],
     )
@@ -78,6 +81,19 @@ pub fn execute_native_business_v1(
             tolerance,
         } => numerical_linear_solve(matrix, rhs, tolerance)?,
         NativeBusinessJobV1::BuildPackage { entries } => build_package(entries)?,
+        NativeBusinessJobV1::SubmissionPackage {
+            venue,
+            manuscript_hash,
+            supplementary_hashes,
+            metadata,
+            idempotency_key,
+        } => submission_package(
+            venue,
+            manuscript_hash,
+            supplementary_hashes,
+            metadata,
+            idempotency_key,
+        )?,
     };
     if output.artifacts.is_empty()
         || output.artifacts.len() > MAX_ARTIFACTS

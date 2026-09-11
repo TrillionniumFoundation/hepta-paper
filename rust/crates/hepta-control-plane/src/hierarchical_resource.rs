@@ -233,15 +233,16 @@ impl HierarchicalResourceAllocatorV1 {
                 return Err(HierarchicalResourceError::CapacityDenied);
             }
         }
+        let fence_generation = self.next_fence_generation;
         let body = PreparedBodyV1 {
             request: &request,
-            fence_generation: self.next_fence_generation,
+            fence_generation,
         };
         let prepared_hash =
             canonical_hash_v1(&body).map_err(|_| HierarchicalResourceError::Encoding)?;
         let prepared = PreparedHierarchicalReservationV1 {
             request,
-            fence_generation: body.fence_generation,
+            fence_generation,
             prepared_hash,
         };
         for scope_id in &path {

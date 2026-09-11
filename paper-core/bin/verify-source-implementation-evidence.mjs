@@ -336,7 +336,9 @@ function checkedFile(root, entry, globalPaths, bundleLabel) {
   globalPaths.add(relative);
   if (!['implementation', 'test'].includes(entry.role)) fail('file_role_invalid', relative);
   requireString(entry.gitBlob, `${relative}.gitBlob`, SHA1_PATTERN);
-  if (entry.mode !== '100644') fail('file_mode_invalid', `${relative}=${entry.mode}`);
+  if (!['100644', '100755'].includes(entry.mode)) {
+    fail('file_mode_invalid', `${relative}=${entry.mode}`);
+  }
   if (!['javascript', 'json', 'rust', 'shell'].includes(entry.language)) {
     fail('file_language_invalid', `${relative}=${entry.language}`);
   }

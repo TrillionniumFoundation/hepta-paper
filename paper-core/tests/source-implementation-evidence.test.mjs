@@ -205,6 +205,26 @@ test('bundle requires distinct implementation and test roles', () => {
   }, /bundle_roles_incomplete/u);
 });
 
+test('regular executable source scripts are bound by exact Git mode', () => {
+  const fixture = createFixture((evidence, root) => {
+    fs.chmodSync(path.join(root, 'src/feature.mjs'), 0o755);
+    evidence.bundles['example-source'].files[0].mode = '100755';
+  });
+  const receipt = verifyRepositorySourceEvidence({
+    root: fixture.root,
+    execute: false,
+    expectedHead: fixture.head,
+    expectedTree: fixture.tree,
+  });
+  assert.equal(receipt.status, 'repository_source_evidence_verified');
+});
+
+test('unsupported tracked modes remain rejected', () => {
+  assertRejected((evidence) => {
+    evidence.bundles['example-source'].files[0].mode = '100600';
+  }, /file_mode_invalid/u);
+});
+
 test('duplicate canonical paths are rejected', () => {
   assertRejected((evidence) => {
     evidence.bundles['example-source'].files[1] = {

@@ -83,12 +83,18 @@ fn source_closure_snapshot_router_and_resources_are_deterministic() {
 
     let left_route = route_candidate_v1(
         router_policy(),
-        vec![candidate("candidate:b", 20, 20), candidate("candidate:a", 20, 20)],
+        vec![
+            candidate("candidate:b", 20, 20),
+            candidate("candidate:a", 20, 20),
+        ],
     )
     .expect("left route");
     let right_route = route_candidate_v1(
         router_policy(),
-        vec![candidate("candidate:a", 20, 20), candidate("candidate:b", 20, 20)],
+        vec![
+            candidate("candidate:a", 20, 20),
+            candidate("candidate:b", 20, 20),
+        ],
     )
     .expect("right route");
     assert_eq!(left_route.route_hash, right_route.route_hash);
@@ -120,11 +126,16 @@ fn source_closure_snapshot_router_and_resources_are_deterministic() {
         )
         .expect("prepare reservation");
     assert_eq!(ledger.reserved("tenant:one"), Some(resource(30)));
-    ledger.commit("reservation:one", 15).expect("commit reservation");
+    ledger
+        .commit("reservation:one", 15)
+        .expect("commit reservation");
     ledger
         .finalize("reservation:one", resource(20))
         .expect("finalize reservation");
-    assert_eq!(ledger.reserved("tenant:one"), Some(ResourceVectorV1::default()));
+    assert_eq!(
+        ledger.reserved("tenant:one"),
+        Some(ResourceVectorV1::default())
+    );
     assert_eq!(ledger.consumed("tenant:one"), Some(resource(20)));
 }
 

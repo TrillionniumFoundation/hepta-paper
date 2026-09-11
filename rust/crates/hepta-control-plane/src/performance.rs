@@ -87,9 +87,7 @@ pub fn evaluate_performance_v1(
     {
         return Err(PerformanceError::ObservationInvalid);
     }
-    let minimum_observed_at = now_unix_ms
-        .checked_sub(budget.maximum_observation_age_ms)
-        .unwrap_or_default();
+    let minimum_observed_at = now_unix_ms.saturating_sub(budget.maximum_observation_age_ms);
     let mut run_ids = BTreeSet::new();
     let mut latencies = Vec::with_capacity(observations.len());
     let mut queue_ages = Vec::with_capacity(observations.len());

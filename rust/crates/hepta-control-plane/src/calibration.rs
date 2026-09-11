@@ -92,9 +92,7 @@ pub fn calibrate_predictions_v1(
     if !valid_identifier(&first.workload_id) || !valid_identifier(&first.predictor_version) {
         return Err(CalibrationError::SampleInvalid);
     }
-    let minimum_observed_at = now_unix_ms
-        .checked_sub(policy.maximum_sample_age_ms)
-        .unwrap_or_default();
+    let minimum_observed_at = now_unix_ms.saturating_sub(policy.maximum_sample_age_ms);
     let mut duration_errors = Vec::with_capacity(samples.len());
     let mut cost_errors = Vec::with_capacity(samples.len());
     let mut duration_underestimates = 0_u64;

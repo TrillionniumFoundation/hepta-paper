@@ -1,0 +1,67 @@
+name: source-promotion-sync
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  generate:
+    name: source-promotion-generated-truth
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install qualified Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Apply source promotions in isolated checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          node docs/tools/apply-source-promotions.mjs --write | tee /tmp/source-promotion-sync.json
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --evidence docs/system/evidence/repository-source-implementation-v1.json
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --evidence docs/system/evidence/rust-functional-source-closure-v1.json
+          test -n "$(git status --porcelain=v1 --untracked-files=no)"
+          git diff --check
+          git diff -- docs/system/truth/work-items.v2.json docs/system/truth/modules.v1.json \
+            docs/system/evidence/repository-source-implementation-v1.json \
+            docs/system/evidence/rust-functional-source-closure-v1.json \
+            docs/modules/MODULE_DOCUMENTATION_MATRIX.md docs/modules/specs \
+            > /tmp/source-promotion.patch
+          test -s /tmp/source-promotion.patch
+
+      - name: Retain generated truth and patch
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: source-promotion-generated-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/source-promotion-sync.json
+            /tmp/source-promotion.patch
+            docs/system/truth/work-items.v2.json
+            docs/system/truth/modules.v1.json
+            docs/system/evidence/repository-source-implementation-v1.json
+            docs/system/evidence/rust-functional-source-closure-v1.json
+            docs/modules/MODULE_DOCUMENTATION_MATRIX.md
+            docs/modules/specs/*.md
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

@@ -22,7 +22,9 @@ pub struct ReviewPolicyV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PropositionV1 {
-    Atom { name: String },
+    Atom {
+        name: String,
+    },
     And {
         left: Box<PropositionV1>,
         right: Box<PropositionV1>,
@@ -37,10 +39,19 @@ pub enum PropositionV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProofStepV1 {
-    Assumption { proposition: PropositionV1 },
-    AndIntroduction { left_step: usize, right_step: usize },
-    AndEliminationLeft { source_step: usize },
-    AndEliminationRight { source_step: usize },
+    Assumption {
+        proposition: PropositionV1,
+    },
+    AndIntroduction {
+        left_step: usize,
+        right_step: usize,
+    },
+    AndEliminationLeft {
+        source_step: usize,
+    },
+    AndEliminationRight {
+        source_step: usize,
+    },
     ModusPonens {
         implication_step: usize,
         antecedent_step: usize,

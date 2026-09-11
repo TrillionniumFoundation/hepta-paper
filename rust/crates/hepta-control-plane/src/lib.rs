@@ -17,6 +17,7 @@ mod hierarchical_resource;
 mod model;
 mod observability;
 mod optimizer_v2;
+mod pareto;
 mod planner;
 mod resource;
 mod runtime;
@@ -47,6 +48,7 @@ pub use optimizer_v2::{
     CalibrationObservationV1, CalibrationPolicyV1, CalibrationReportV1, OptimizerReceiptV2,
     OptimizerWorkBudgetV2, assess_calibration_v1, optimize_v2,
 };
+pub use pareto::contextual_pareto_frontier_preserving_dependencies_v2;
 pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1};
 pub use resource::{
     AdmissionRequestV1, ResourceAccountingReportV1, ResourceAllocatorV1, ResourceReservationV1,

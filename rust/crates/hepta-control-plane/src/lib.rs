@@ -15,6 +15,7 @@ mod execution;
 mod execution_filesystem;
 mod hierarchical_resource;
 mod model;
+mod observability;
 mod optimizer_v2;
 mod planner;
 mod resource;
@@ -38,6 +39,11 @@ pub use hierarchical_resource::{
     HierarchicalResourceAllocatorV1, HierarchicalResourceReservationV1,
 };
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
+pub use observability::{
+    ObservabilityExportV1, ObservabilityJournalV1, ObservabilityPolicyV1,
+    TelemetryPrivacyClassV1, TelemetryRetentionClassV1, TelemetrySignalKindV1,
+    TelemetrySignalV1,
+};
 pub use optimizer_v2::{
     CalibrationObservationV1, CalibrationPolicyV1, CalibrationReportV1, OptimizerReceiptV2,
     OptimizerWorkBudgetV2, assess_calibration_v1, optimize_v2,
@@ -109,6 +115,9 @@ pub enum ControlPlaneError {
     /// Event cardinality or event-count budget was exceeded.
     #[error("observability budget exceeded")]
     ObservabilityBudgetExceeded,
+    /// A telemetry signal violates schema, privacy, label, or replay policy.
+    #[error("observability signal is invalid")]
+    ObservabilitySignalInvalid,
     /// Performance/SLO evidence is malformed or cannot be evaluated deterministically.
     #[error("performance qualification evidence is invalid")]
     PerformanceQualificationInvalid,

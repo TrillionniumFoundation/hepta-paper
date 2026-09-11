@@ -101,5 +101,11 @@ fn hierarchical_source_closure_enforces_parent_fairness_reconciliation_and_clock
     );
 
     allocator.release(&first.reservation_id).expect("release");
-    assert!(allocator.report().expect("released report").reserved_by_scope.is_empty());
+    assert!(
+        allocator
+            .report()
+            .expect("released report")
+            .reserved_by_scope
+            .is_empty()
+    );
 }

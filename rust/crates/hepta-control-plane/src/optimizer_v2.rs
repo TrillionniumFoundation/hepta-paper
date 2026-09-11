@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ControlPlaneError, ControlPlaneSnapshotV1, HardPolicyV1, PlanCertificateV1, PlannerPolicyV1,
-    PlanningFrontierV1, canonical_hash_v1, contextual_pareto_frontier_v1, select_plan_v1,
+    PlanningFrontierV1, canonical_hash_v1, contextual_pareto_frontier_preserving_dependencies_v2,
+    select_plan_v1,
 };
 
 /// Reproducible solver work budget. It binds decisions to work units rather than host wall time.
@@ -201,7 +202,8 @@ pub fn optimize_v2(
     {
         return Err(ControlPlaneError::PlannerPolicyInvalid);
     }
-    let pareto_candidates = contextual_pareto_frontier_v1(&frontier.candidates);
+    let pareto_candidates =
+        contextual_pareto_frontier_preserving_dependencies_v2(&frontier.candidates);
     let pareto_frontier = PlanningFrontierV1 {
         version: frontier.version,
         snapshot_hash: frontier.snapshot_hash.clone(),

@@ -1,14 +1,12 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 const MAX_OBSERVATIONS: usize = 100_000;
-const PPM: u128 = 1_000_000;
+const PARTS_PER_MILLION: u128 = 1_000_000;
 
-/// One bounded prediction/outcome pair used to calibrate a specific module
-/// version. Raw prompts, manuscript bytes and credentials are intentionally not
-/// part of this contract.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PredictionObservationV1 {
@@ -44,17 +42,21 @@ pub struct CalibrationReceiptV1 {
     pub receipt_hash: String,
 }
 
-/// Aggregates prediction error independently for every exact module version.
+/// Aggregates prediction errors independently for every exact module version.
 pub fn calibrate_predictions_v1(
     observations: Vec<PredictionObservationV1>,
 ) -> Result<CalibrationReceiptV1, CalibrationError> {
     if observations.is_empty() || observations.len() > MAX_OBSERVATIONS {
         return Err(CalibrationError::Contract);
     }
+
     let mut grouped = BTreeMap::<(String, String), CalibrationAccumulatorV1>::new();
     for observation in observations {
         validate_prediction(&observation)?;
-        let key = (observation.module_id.clone(), observation.module_version.clone());
+        let key = (
+            observation.module_id.clone(),
+            observation.module_version.clone(),
+        );
         let accumulator = grouped.entry(key).or_default();
         accumulator.sample_count = accumulator
             .sample_count
@@ -74,7 +76,11 @@ pub fn calibrate_predictions_v1(
                 observation.actual_cost_microusd,
             )?)
             .ok_or(CalibrationError::Arithmetic)?;
-        let actual_success_ppm = if observation.succeeded { 1_000_000_u64 } else { 0_u64 };
+        let actual_success_ppm = if observation.succeeded {
+            1_000_000_u64
+        } else {
+            0_u64
+        };
         accumulator.success_error_ppm = accumulator
             .success_error_ppm
             .checked_add(u64::from(observation.predicted_success_ppm).abs_diff(actual_success_ppm))
@@ -83,22 +89,23 @@ pub fn calibrate_predictions_v1(
 
     let mut summaries = Vec::with_capacity(grouped.len());
     for ((module_id, module_version), accumulator) in grouped {
-        let count = u64::try_from(accumulator.sample_count).map_err(|_| CalibrationError::Arithmetic)?;
+        let count =
+            u64::try_from(accumulator.sample_count).map_err(|_| CalibrationError::Arithmetic)?;
         summaries.push(ModuleCalibrationSummaryV1 {
             module_id,
             module_version,
             sample_count: accumulator.sample_count,
-            mean_duration_absolute_error_ppm: u32::try_from(accumulator.duration_error_ppm / count)
-                .map_err(|_| CalibrationError::Arithmetic)?,
-            mean_cost_absolute_error_ppm: u32::try_from(accumulator.cost_error_ppm / count)
-                .map_err(|_| CalibrationError::Arithmetic)?,
-            mean_success_absolute_error_ppm: u32::try_from(accumulator.success_error_ppm / count)
-                .map_err(|_| CalibrationError::Arithmetic)?,
+            mean_duration_absolute_error_ppm: mean_ppm(accumulator.duration_error_ppm, count)?,
+            mean_cost_absolute_error_ppm: mean_ppm(accumulator.cost_error_ppm, count)?,
+            mean_success_absolute_error_ppm: mean_ppm(accumulator.success_error_ppm, count)?,
         });
     }
+
     let observation_count = summaries
         .iter()
-        .try_fold(0_usize, |total, summary| total.checked_add(summary.sample_count))
+        .try_fold(0_usize, |total, summary| {
+            total.checked_add(summary.sample_count)
+        })
         .ok_or(CalibrationError::Arithmetic)?;
     let body = CalibrationReceiptBodyV1 {
         version: 1,
@@ -154,27 +161,15 @@ pub struct ChampionChallengerReceiptV1 {
     pub receipt_hash: String,
 }
 
-/// Compares two planner variants on exactly the same workload set. Any hard
-/// constraint violation rejects the comparison. A recommendation remains a
-/// source-level planning signal and cannot activate a planner by itself.
+/// Compares planner variants on exactly the same workload set. Hard-constraint
+/// violations reject the evidence set, and a recommendation grants no authority.
 pub fn compare_planner_variants_v1(
     champion_id: String,
     challenger_id: String,
     policy: ChampionChallengerPolicyV1,
     observations: Vec<PlannerVariantObservationV1>,
 ) -> Result<ChampionChallengerReceiptV1, CalibrationError> {
-    if champion_id == challenger_id
-        || !valid_identifier(&champion_id, 128)
-        || !valid_identifier(&challenger_id, 128)
-        || policy.version != 1
-        || policy.minimum_workloads == 0
-        || policy.minimum_workloads > 10_000
-        || policy.maximum_latency_regression_ppm > 10_000_000
-        || observations.is_empty()
-        || observations.len() > MAX_OBSERVATIONS
-    {
-        return Err(CalibrationError::Contract);
-    }
+    validate_comparison_contract(&champion_id, &challenger_id, &policy, &observations)?;
 
     let mut by_workload = BTreeMap::<String, BTreeMap<String, PlannerVariantObservationV1>>::new();
     for observation in observations {
@@ -186,16 +181,20 @@ pub fn compare_planner_variants_v1(
         {
             return Err(CalibrationError::ObservationInvalid);
         }
-        let variants = by_workload.entry(observation.workload_id.clone()).or_default();
+        let variants = by_workload
+            .entry(observation.workload_id.clone())
+            .or_default();
         let variant_id = observation.variant_id.clone();
         if variants.insert(variant_id, observation).is_some() {
             return Err(CalibrationError::ObservationInvalid);
         }
     }
     if by_workload.len() < policy.minimum_workloads
-        || by_workload
-            .values()
-            .any(|variants| variants.len() != 2 || !variants.contains_key(&champion_id) || !variants.contains_key(&challenger_id))
+        || by_workload.values().any(|variants| {
+            variants.len() != 2
+                || !variants.contains_key(&champion_id)
+                || !variants.contains_key(&challenger_id)
+        })
     {
         return Err(CalibrationError::ObservationSetMismatch);
     }
@@ -207,8 +206,12 @@ pub fn compare_planner_variants_v1(
     let mut challenger_total_latency = 0_u64;
     let mut challenger_used_fallback = false;
     for (workload_id, variants) in by_workload {
-        let champion = variants.get(&champion_id).ok_or(CalibrationError::ObservationSetMismatch)?;
-        let challenger = variants.get(&challenger_id).ok_or(CalibrationError::ObservationSetMismatch)?;
+        let champion = variants
+            .get(&champion_id)
+            .ok_or(CalibrationError::ObservationSetMismatch)?;
+        let challenger = variants
+            .get(&challenger_id)
+            .ok_or(CalibrationError::ObservationSetMismatch)?;
         workload_ids.push(workload_id);
         champion_total_objective = champion_total_objective
             .checked_add(champion.objective_micros)
@@ -224,6 +227,7 @@ pub fn compare_planner_variants_v1(
             .ok_or(CalibrationError::Arithmetic)?;
         challenger_used_fallback |= challenger.fallback_used;
     }
+
     let latency_regression = regression_ppm(champion_total_latency, challenger_total_latency)?;
     let objective_improvement = challenger_total_objective
         .checked_sub(champion_total_objective)
@@ -284,13 +288,37 @@ fn validate_prediction(observation: &PredictionObservationV1) -> Result<(), Cali
     Ok(())
 }
 
+fn validate_comparison_contract(
+    champion_id: &str,
+    challenger_id: &str,
+    policy: &ChampionChallengerPolicyV1,
+    observations: &[PlannerVariantObservationV1],
+) -> Result<(), CalibrationError> {
+    if champion_id == challenger_id
+        || !valid_identifier(champion_id, 128)
+        || !valid_identifier(challenger_id, 128)
+        || policy.version != 1
+        || policy.minimum_workloads == 0
+        || policy.minimum_workloads > 10_000
+        || policy.maximum_latency_regression_ppm > 10_000_000
+        || observations.is_empty()
+        || observations.len() > MAX_OBSERVATIONS
+    {
+        return Err(CalibrationError::Contract);
+    }
+    Ok(())
+}
+
+fn mean_ppm(total: u64, count: u64) -> Result<u32, CalibrationError> {
+    u32::try_from(total / count).map_err(|_| CalibrationError::Arithmetic)
+}
+
 fn relative_error_ppm(predicted: u64, actual: u64) -> Result<u64, CalibrationError> {
     if actual == 0 {
         return Ok(if predicted == 0 { 0 } else { 1_000_000 });
     }
-    let difference = u128::from(predicted.abs_diff(actual));
-    let value = difference
-        .checked_mul(PPM)
+    let value = u128::from(predicted.abs_diff(actual))
+        .checked_mul(PARTS_PER_MILLION)
         .ok_or(CalibrationError::Arithmetic)?
         / u128::from(actual);
     u64::try_from(value.min(u128::from(u32::MAX))).map_err(|_| CalibrationError::Arithmetic)
@@ -304,7 +332,7 @@ fn regression_ppm(baseline: u64, observed: u64) -> Result<u32, CalibrationError>
         return Err(CalibrationError::Arithmetic);
     }
     let value = u128::from(observed - baseline)
-        .checked_mul(PPM)
+        .checked_mul(PARTS_PER_MILLION)
         .ok_or(CalibrationError::Arithmetic)?
         / u128::from(baseline);
     u32::try_from(value).map_err(|_| CalibrationError::Arithmetic)
@@ -324,14 +352,17 @@ fn valid_module_id(value: &str) -> bool {
 
 fn valid_semver(value: &str) -> bool {
     let mut parts = value.split('.');
-    let valid = |part: Option<&str>| {
+    let valid_part = |part: Option<&str>| {
         part.is_some_and(|value| {
             !value.is_empty()
                 && (value == "0" || !value.starts_with('0'))
                 && value.bytes().all(|byte| byte.is_ascii_digit())
         })
     };
-    valid(parts.next()) && valid(parts.next()) && valid(parts.next()) && parts.next().is_none()
+    valid_part(parts.next())
+        && valid_part(parts.next())
+        && valid_part(parts.next())
+        && parts.next().is_none()
 }
 
 fn canonical_hash<T: Serialize>(domain: &str, value: &T) -> Result<String, CalibrationError> {
@@ -390,32 +421,23 @@ pub enum CalibrationError {
 mod tests {
     use super::*;
 
+    fn prediction(version: &str, workload: &str) -> PredictionObservationV1 {
+        PredictionObservationV1 {
+            module_id: "module.author-node".to_owned(),
+            module_version: version.to_owned(),
+            workload_id: workload.to_owned(),
+            predicted_duration_ms: 100,
+            actual_duration_ms: 110,
+            predicted_cost_microusd: 100,
+            actual_cost_microusd: 120,
+            predicted_success_ppm: 900_000,
+            succeeded: true,
+        }
+    }
+
     #[test]
     fn calibration_is_version_scoped_and_deterministic() {
-        let observations = vec![
-            PredictionObservationV1 {
-                module_id: "module.author-node".to_owned(),
-                module_version: "1.0.0".to_owned(),
-                workload_id: "workload:a".to_owned(),
-                predicted_duration_ms: 100,
-                actual_duration_ms: 110,
-                predicted_cost_microusd: 100,
-                actual_cost_microusd: 120,
-                predicted_success_ppm: 900_000,
-                succeeded: true,
-            },
-            PredictionObservationV1 {
-                module_id: "module.author-node".to_owned(),
-                module_version: "2.0.0".to_owned(),
-                workload_id: "workload:a".to_owned(),
-                predicted_duration_ms: 80,
-                actual_duration_ms: 80,
-                predicted_cost_microusd: 90,
-                actual_cost_microusd: 90,
-                predicted_success_ppm: 1_000_000,
-                succeeded: true,
-            },
-        ];
+        let observations = vec![prediction("1.0.0", "workload:a"), prediction("2.0.0", "workload:a")];
         let left = calibrate_predictions_v1(observations.clone()).expect("calibration");
         let right = calibrate_predictions_v1(observations).expect("calibration");
         assert_eq!(left, right);

@@ -11,8 +11,10 @@ mod empirical;
 mod formal;
 mod numerical;
 mod reviewer;
+mod submission;
 mod types;
 
+pub use submission::{PreparedSubmissionV1, SubmissionPackageV1, prepare_submission_v1};
 pub use types::{
     BuildEntryV1, ManuscriptSectionV1, NativeBusinessJobV1, NativeBusinessOutputV1, ObservationV1,
     ProofStepV1, PropositionV1, ReviewPolicyV1,
@@ -25,6 +27,7 @@ use formal::formal_certificate;
 use numerical::numerical_linear_solve;
 use reviewer::reviewer_assessment;
 use serde::Serialize;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -45,6 +48,7 @@ pub fn native_business_implementation_hash_v1() -> String {
             include_bytes!("native_business/empirical.rs"),
             include_bytes!("native_business/numerical.rs"),
             include_bytes!("native_business/build.rs"),
+            include_bytes!("native_business/submission.rs"),
             include_bytes!("bin/hepta-native-business.rs"),
         ],
     )
@@ -78,6 +82,30 @@ pub fn execute_native_business_v1(
             tolerance,
         } => numerical_linear_solve(matrix, rhs, tolerance)?,
         NativeBusinessJobV1::BuildPackage { entries } => build_package(entries)?,
+        NativeBusinessJobV1::PrepareSubmission {
+            venue_id,
+            manuscript_artifact,
+            cover_letter,
+            supplementary_artifacts,
+            recipient_hint,
+        } => {
+            let prepared = prepare_submission_v1(SubmissionPackageV1 {
+                venue_id,
+                manuscript_artifact,
+                cover_letter,
+                supplementary_artifacts,
+                recipient_hint,
+            })?;
+            let bytes = serde_json::to_vec(&prepared).map_err(|_| NativeBusinessError::Encoding)?;
+            NativeBusinessOutputV1 {
+                artifacts: vec![bytes],
+                evidence: json!({
+                    "kind": "prepared_submission_v1",
+                    "packageSha256": prepared.package_sha256,
+                    "externalEffectAuthorized": false
+                }),
+            }
+        }
     };
     if output.artifacts.is_empty()
         || output.artifacts.len() > MAX_ARTIFACTS
@@ -155,28 +183,20 @@ fn update_hash(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-/// Native capability contract, proof, numerical, or encoding failure.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum NativeBusinessError {
-    /// Input shape, identity, path, or bound is invalid.
     #[error("native business contract is invalid")]
     Contract,
-    /// Proof certificate is not valid for the supplied assumptions and goal.
     #[error("native formal proof is invalid")]
     ProofInvalid,
-    /// Proof depth, node, or step budget is exceeded.
     #[error("native formal proof exceeds limits")]
     ProofLimit,
-    /// A numeric value is non-finite or arithmetic overflowed.
     #[error("native numeric input or result is invalid")]
     Numeric,
-    /// The supplied linear system is singular within the declared tolerance.
     #[error("native linear system is singular")]
     SingularMatrix,
-    /// Canonical JSON or UTF-8 encoding failed.
     #[error("native business encoding failed")]
     Encoding,
-    /// Produced artifacts exceed the prepared-result envelope.
     #[error("native business output exceeds limits")]
     OutputLimit,
 }

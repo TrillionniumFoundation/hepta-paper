@@ -15,6 +15,7 @@ mod execution;
 mod execution_filesystem;
 mod hierarchical_resource;
 mod model;
+mod optimizer_v2;
 mod planner;
 mod resource;
 mod runtime;
@@ -37,6 +38,10 @@ pub use hierarchical_resource::{
     HierarchicalResourceAllocatorV1, HierarchicalResourceReservationV1,
 };
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
+pub use optimizer_v2::{
+    CalibrationObservationV1, CalibrationPolicyV1, CalibrationReportV1, OptimizerReceiptV2,
+    OptimizerWorkBudgetV2, assess_calibration_v1, optimize_v2,
+};
 pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1};
 pub use resource::{
     AdmissionRequestV1, ResourceAccountingReportV1, ResourceAllocatorV1, ResourceReservationV1,

@@ -16,7 +16,7 @@ concurrency:
 
 env:
   BASE_SHA: c9a19ff74fa88eb335df7c2205bd9e2fc096ca40
-  BRANCH: codex/global-plan-v1.1-internal-source-closure-20260911
+  FINAL_BRANCH: codex/global-plan-v1.1-internal-source-closure-final-20260911
   PATCH_B64_SHA256: 08fd5dd6fe62ec795789f4beb79d1d4a089587c225a848a9dfd83af005483abb
   PATCH_GZIP_SHA256: 16b09722887474d94c73e0443282618829e895aff7f4a39ed1d62adc382c6acb
   PATCH_SHA256: 8e991ca5141b8a8abd99469ad5f4ac6900e7805e5dd43010ab8fdf82decf27a4
@@ -34,13 +34,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Reconstruct one clean source-evidence commit
-        id: source
+      - name: Reconstruct source increment without publishing
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = TrillionniumFoundation/hepta-paper
-          test "$GITHUB_REF" = "refs/heads/$BRANCH"
+          test "$GITHUB_REF" = refs/heads/codex/global-plan-v1.1-internal-source-closure-20260911
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           payload="$RUNNER_TEMP/internal-source-closure.patch.gz.b64"
           archive="$RUNNER_TEMP/internal-source-closure.patch.gz"
@@ -74,12 +73,8 @@ jobs:
           git commit -m 'feat(truth): request internal source-evidence promotions' \
             -m 'Bind ten internal design-ready work items to exact implementation blobs and executable owner tests. Extend tracked source modes only to the closed set 100644/100755. Grant no target-host, external, production, writer-cutover, or Node-retirement authority.' \
             -m 'Signed-off-by: Qian QI <102159240+ProfHepta@users.noreply.github.com>'
-          new_head="$(git rev-parse HEAD)"
-          new_tree="$(git rev-parse HEAD^{tree})"
           test "$(git rev-parse HEAD^)" = "$BASE_SHA"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          echo "head=$new_head" >> "$GITHUB_OUTPUT"
-          echo "tree=$new_tree" >> "$GITHUB_OUTPUT"
 
       - name: Set up pinned Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -96,13 +91,36 @@ jobs:
           test "$(node --version)" = v22.23.1
           test "$(rustc --version | awk '{print $2}')" = 1.98.0
 
+      - name: Format and finalize immutable candidate
+        id: final
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          git diff --check
+          cat > "$RUNNER_TEMP/expected-format-paths" <<'PATHS'
+          rust/crates/hepta-cutover/tests/retirement_source.rs
+          rust/crates/hepta-scientific-evidence/tests/source_evidence.rs
+          PATHS
+          git diff --name-only > "$RUNNER_TEMP/actual-format-paths"
+          diff -u "$RUNNER_TEMP/expected-format-paths" "$RUNNER_TEMP/actual-format-paths"
+          git add rust/crates/hepta-cutover/tests/retirement_source.rs \
+                  rust/crates/hepta-scientific-evidence/tests/source_evidence.rs
+          git commit --amend --no-edit
+          head="$(git rev-parse HEAD)"
+          tree="$(git rev-parse HEAD^{tree})"
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+
       - name: Validate exact evidence and owner tests
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ steps.source.outputs.head }}"
-          test "$(git rev-parse HEAD^{tree})" = "${{ steps.source.outputs.tree }}"
-          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+          test "$(git rev-parse HEAD)" = "${{ steps.final.outputs.head }}"
+          test "$(git rev-parse HEAD^{tree})" = "${{ steps.final.outputs.tree }}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
           node docs/tools/validate-development-docs.mjs
           node docs/tools/validate-module-documentation.mjs
           python3 docs/rust/tools/validate-program-truth.py
@@ -111,30 +129,36 @@ jobs:
           receipt="$RUNNER_TEMP/repository-source-evidence-receipt.json"
           node paper-core/bin/verify-source-implementation-evidence.mjs \
             --execute \
-            --expected-head "${{ steps.source.outputs.head }}" \
-            --expected-tree "${{ steps.source.outputs.tree }}" \
+            --expected-head "${{ steps.final.outputs.head }}" \
+            --expected-tree "${{ steps.final.outputs.tree }}" \
             --receipt "$receipt" > "$RUNNER_TEMP/repository-source-evidence.stdout.json"
           test "$(jq -r '.promotions | length' "$receipt")" = 10
           test "$(jq -c '.promotions | sort' "$receipt")" = '["CTL-005","CTL-006","MIG-003","MIG-005","MIG-006","MOD-003","MOD-004","MOD-005","MOD-006","SYS-005"]'
           test "$(jq '[.authorityClaims[] | select(. != false)] | length' "$receipt")" = 0
-          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
-      - name: Publish the single clean commit
+      - name: Publish new immutable final branch without rewriting bootstrap
         shell: bash
         run: |
           set -euo pipefail
-          git push --force-with-lease="refs/heads/$BRANCH:$GITHUB_SHA" \
-            origin "HEAD:refs/heads/$BRANCH"
+          if git ls-remote --exit-code --heads origin "refs/heads/$FINAL_BRANCH" >/dev/null 2>&1; then
+            echo "final branch already exists" >&2
+            exit 1
+          fi
+          git push origin "HEAD:refs/heads/$FINAL_BRANCH"
+          test "$(git rev-parse HEAD)" = "${{ steps.final.outputs.head }}"
           python3 - <<'PY'
           import json, os, pathlib
           receipt = {
               'schemaVersion': 1,
-              'kind': 'InternalSourceClosureBootstrapReceipt',
+              'kind': 'InternalSourceClosurePublicationReceipt',
               'bootstrapSha': os.environ['GITHUB_SHA'],
               'baseSha': os.environ['BASE_SHA'],
-              'headSha': '${{ steps.source.outputs.head }}',
-              'headTree': '${{ steps.source.outputs.tree }}',
+              'finalBranch': os.environ['FINAL_BRANCH'],
+              'headSha': '${{ steps.final.outputs.head }}',
+              'headTree': '${{ steps.final.outputs.tree }}',
               'promotionRequestedIds': ['CTL-005','CTL-006','MIG-003','MIG-005','MIG-006','MOD-003','MOD-004','MOD-005','MOD-006','SYS-005'],
+              'formattedWithRust': '1.98.0',
               'allOwnerTestsPassed': True,
               'targetHostQualified': False,
               'externalAuthorityGranted': False,
@@ -142,16 +166,16 @@ jobs:
               'writerCutoverAuthorized': False,
               'nodeRetirementAuthorized': False,
           }
-          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'internal-source-closure-bootstrap-receipt.json'
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'internal-source-closure-publication-receipt.json'
           out.write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n', encoding='utf-8')
           PY
 
       - name: Upload verification receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: internal-source-closure-${{ steps.source.outputs.head }}
+          name: internal-source-closure-${{ steps.final.outputs.head }}
           path: |
-            ${{ runner.temp }}/internal-source-closure-bootstrap-receipt.json
+            ${{ runner.temp }}/internal-source-closure-publication-receipt.json
             ${{ runner.temp }}/repository-source-evidence-receipt.json
             ${{ runner.temp }}/repository-source-evidence.stdout.json
           if-no-files-found: error

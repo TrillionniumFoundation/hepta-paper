@@ -37,7 +37,7 @@ pub use lifecycle::{
 };
 pub use migration::{
     CapabilityAuthorityOwnerV1, CapabilityMigrationError, CapabilityMigrationLedgerV1,
-    CapabilityMigrationRecordV1, CapabilityMigrationStageV1,
+    CapabilityMigrationRecordV1, CapabilityMigrationStageV1, CapabilityRecoveryModeV1,
 };
 pub use protocol::{
     CancellationAcknowledgementV1, CancellationDispositionV1, CancellationRequestV1,

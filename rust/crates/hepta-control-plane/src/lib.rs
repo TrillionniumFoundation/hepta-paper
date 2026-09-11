@@ -17,6 +17,7 @@ mod execution;
 mod execution_filesystem;
 mod hierarchical_resource;
 mod model;
+mod model_selection;
 mod observability;
 mod optimizer_v2;
 mod pareto;
@@ -47,6 +48,10 @@ pub use hierarchical_resource::{
     HierarchicalResourceAllocatorV1, HierarchicalResourceReservationV1,
 };
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
+pub use model_selection::{
+    PlannerEvaluationV1, PlannerPromotionPolicyV1, PlannerSelectionDecisionV1,
+    PlannerSelectionError, PlannerSelectionReasonV1, select_planner_champion_v1,
+};
 pub use observability::{
     ObservabilityExportV1, ObservabilityJournalV1, ObservabilityPolicyV1, TelemetryPrivacyClassV1,
     TelemetryRetentionClassV1, TelemetrySignalKindV1, TelemetrySignalV1,

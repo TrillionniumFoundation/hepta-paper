@@ -16,10 +16,12 @@ mod execution;
 mod execution_filesystem;
 mod hierarchical_resource;
 mod model;
+mod observability;
 mod performance;
 mod planner;
 mod resource;
 mod runtime;
+mod snapshot;
 
 pub use calibration::{
     CalibrationError, CalibrationPolicyV1, CalibrationReportV1, CalibrationSampleV1,
@@ -43,6 +45,10 @@ pub use hierarchical_resource::{
     ResourceLeaseV1, ResourceScopeV1,
 };
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
+pub use observability::{
+    ObservabilityError, ObservabilityLedgerV1, ObservabilityPolicyV1, TelemetryCorrelationV1,
+    TelemetryExportV1, TelemetryRetentionClassV1, TelemetrySignalKindV1, TelemetrySignalV1,
+};
 pub use performance::{
     PerformanceBudgetV1, PerformanceError, PerformanceObservationV1,
     PerformanceQualificationReportV1, evaluate_performance_v1,
@@ -52,6 +58,9 @@ pub use resource::{
     AdmissionRequestV1, ResourceAccountingReportV1, ResourceAllocatorV1, ResourceReservationV1,
 };
 pub use runtime::{ControlPlaneRunReceiptV1, ControlPlaneV1};
+pub use snapshot::{
+    SnapshotBuildReceiptV1, SnapshotMaterialV1, SnapshotStateComponentV1, build_snapshot_v1,
+};
 
 use thiserror::Error;
 

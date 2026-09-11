@@ -14,6 +14,7 @@ mod commit;
 mod events;
 mod execution;
 mod execution_filesystem;
+mod hierarchical_resource;
 mod model;
 mod performance;
 mod planner;
@@ -36,6 +37,11 @@ pub use execution::{
 };
 pub use execution_filesystem::FilesystemPreparedResultVerifierV1;
 pub use hepta_orchestration_kernel as orchestration_kernel;
+pub use hierarchical_resource::{
+    HierarchicalAccountingReportV1, HierarchicalReservationRequestV1,
+    HierarchicalResourceAllocatorV1, HierarchicalResourceError,
+    PreparedHierarchicalReservationV1, ResourceLeaseV1, ResourceScopeV1,
+};
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
 pub use performance::{
     PerformanceBudgetV1, PerformanceError, PerformanceObservationV1,

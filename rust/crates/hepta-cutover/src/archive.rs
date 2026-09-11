@@ -1,15 +1,15 @@
-//! Rust-native complete historical projection of the retired Node schema-25 store.
+//! Complete Rust-native historical projection of the retired Node schema-25 store.
 //!
-//! This crate does not migrate or mutate the incumbent database. It opens the
-//! exact Node migration-ledger database read-only, captures every validated
-//! schema object and every typed row through `hepta-readonly-store`, and emits a
-//! self-verifying canonical archive artifact. After authoritative Rust cutover,
-//! historical reads can therefore remain Rust-native without restoring a Node
-//! runtime or granting the retired Node writer any authority.
+//! The cutover remains forward-only: this module never mutates the incumbent
+//! database and never recreates Node write authority. It captures every validated
+//! schema object and every typed row through `hepta-readonly-store`, emits a
+//! self-verifying archive artifact, and lets Rust serve historical reads after
+//! Node retirement.
 
-#![forbid(unsafe_code)]
-
-use std::{collections::{BTreeMap, BTreeSet}, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use hepta_codex_protocol::Sha256Digest;
 use hepta_readonly_control::DatabaseFormatV1;
@@ -17,6 +17,8 @@ use hepta_readonly_store::{LogicalDatabaseSnapshotV1, LogicalTableV1, ReadOnlySt
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::VerifiedLegacyNodeFreezeV1;
 
 const REQUIRED_NODE_SCHEMA_VERSION: u32 = 25;
 const MAXIMUM_ARCHIVE_BYTES: usize = 1024 * 1024 * 1024;
@@ -68,8 +70,7 @@ impl LegacyArchiveProjectionV1 {
     }
 
     /// Encodes the complete archive artifact using deterministic struct and
-    /// BTreeMap ordering. The embedded projection hash is independently checked
-    /// by `decode_json`.
+    /// BTreeMap ordering.
     pub fn encode_json(&self) -> Result<Vec<u8>, LegacyArchiveError> {
         self.validate()?;
         let bytes = serde_json::to_vec(self).map_err(|_| LegacyArchiveError::Encoding)?;
@@ -85,6 +86,21 @@ impl LegacyArchiveProjectionV1 {
         self.table_index
             .get(name)
             .and_then(|index| self.source_snapshot.tables.get(*index))
+    }
+
+    /// Binds this archive to the exact database already accepted by the Node
+    /// quiescence/freeze verifier.
+    pub fn assert_matches_freeze(
+        &self,
+        freeze: &VerifiedLegacyNodeFreezeV1,
+    ) -> Result<(), LegacyArchiveError> {
+        self.validate()?;
+        if &self.source_database_content_hash != freeze.database_content_hash()
+            || &self.source_snapshot.logical_hash != freeze.logical_database_hash()
+        {
+            return Err(LegacyArchiveError::FreezeMismatch);
+        }
+        Ok(())
     }
 
     /// Verifies that no table/schema/row was removed or reordered without
@@ -203,7 +219,10 @@ struct ProjectionBodyV1<'a> {
     total_row_count: u64,
 }
 
-fn hash_serialized<T: Serialize>(domain: &str, value: &T) -> Result<Sha256Digest, LegacyArchiveError> {
+fn hash_serialized<T: Serialize>(
+    domain: &str,
+    value: &T,
+) -> Result<Sha256Digest, LegacyArchiveError> {
     let bytes = serde_json::to_vec(value).map_err(|_| LegacyArchiveError::Encoding)?;
     let mut hasher = Sha256::new();
     update_field(&mut hasher, domain.as_bytes());
@@ -233,6 +252,9 @@ pub enum LegacyArchiveError {
     /// The retained archive does not match its canonical content identity.
     #[error("legacy archive projection hash mismatch")]
     ProjectionHash,
+    /// The archive does not bind the exact database accepted by the freeze receipt.
+    #[error("legacy archive does not match the freeze subject")]
+    FreezeMismatch,
     /// Archive encoding/decoding failed.
     #[error("legacy archive encoding failed")]
     Encoding,

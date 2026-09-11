@@ -13,7 +13,6 @@ members = [
   "crates/hepta-campaign-writer",
   "crates/hepta-cgroup-containment",
   "crates/hepta-legacy-compatibility",
-  "crates/hepta-legacy-archive",
   "crates/hepta-readonly-control",
   "crates/hepta-workspace-authority",
   "crates/hepta-local-vertical",

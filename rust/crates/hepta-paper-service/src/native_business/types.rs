@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+
+use hepta_codex_protocol::Sha256Digest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -154,6 +157,19 @@ pub enum NativeBusinessJobV1 {
     BuildPackage {
         /// Package entries, normalized and sorted by path.
         entries: Vec<BuildEntryV1>,
+    },
+    /// Prepare an immutable submission intent without performing an external action.
+    SubmissionPackage {
+        /// Stable venue/target identifier resolved by the separately qualified connector layer.
+        venue: String,
+        /// Exact immutable manuscript/package object hash.
+        manuscript_hash: Sha256Digest,
+        /// Optional immutable supplementary object hashes.
+        supplementary_hashes: Vec<Sha256Digest>,
+        /// Canonical bounded metadata passed to the external-authority layer.
+        metadata: BTreeMap<String, String>,
+        /// Stable operation identity; conflicting reuse must be rejected by the external port.
+        idempotency_key: String,
     },
 }
 

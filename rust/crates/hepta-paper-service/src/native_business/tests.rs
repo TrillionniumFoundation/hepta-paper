@@ -1,8 +1,16 @@
 use super::*;
+use hepta_codex_protocol::Sha256Digest;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 fn atom(name: &str) -> PropositionV1 {
     PropositionV1::Atom { name: name.into() }
+}
+
+fn digest(byte: char) -> Sha256Digest {
+    format!("sha256:{}", byte.to_string().repeat(64))
+        .parse()
+        .expect("canonical digest")
 }
 
 #[test]
@@ -152,6 +160,55 @@ fn build_package_is_order_independent_and_rejects_aliases() {
         })
         .is_err()
     );
+}
+
+#[test]
+fn submission_package_is_deterministic_and_never_authorizes_delivery() {
+    let metadata = BTreeMap::from([
+        ("title".to_owned(), "Native Rust Submission".to_owned()),
+        ("track".to_owned(), "research".to_owned()),
+    ]);
+    let first = execute_native_business_v1(NativeBusinessJobV1::SubmissionPackage {
+        venue: "venue:test".into(),
+        manuscript_hash: digest('a'),
+        supplementary_hashes: vec![digest('c'), digest('b')],
+        metadata: metadata.clone(),
+        idempotency_key: "submit:campaign-1:revision-7".into(),
+    })
+    .expect("submission package");
+    let second = execute_native_business_v1(NativeBusinessJobV1::SubmissionPackage {
+        venue: "venue:test".into(),
+        manuscript_hash: digest('a'),
+        supplementary_hashes: vec![digest('b'), digest('c')],
+        metadata,
+        idempotency_key: "submit:campaign-1:revision-7".into(),
+    })
+    .expect("order-independent submission package");
+    assert_eq!(first, second);
+    assert_eq!(first.evidence["externalActionAuthorized"], false);
+    assert_eq!(first.evidence["externalActionPerformed"], false);
+    assert_eq!(first.evidence["requiresExternalAuthority"], true);
+    let manifest: Value = serde_json::from_slice(&first.artifacts[0]).expect("manifest");
+    assert_eq!(manifest["externalActionAuthorized"], false);
+    assert_eq!(manifest["externalActionPerformed"], false);
+}
+
+#[test]
+fn submission_package_rejects_duplicate_or_primary_supplements() {
+    let metadata = BTreeMap::from([("title".to_owned(), "Paper".to_owned())]);
+    for supplementary_hashes in [vec![digest('b'), digest('b')], vec![digest('a')]] {
+        let result = execute_native_business_v1(NativeBusinessJobV1::SubmissionPackage {
+            venue: "venue:test".into(),
+            manuscript_hash: digest('a'),
+            supplementary_hashes,
+            metadata: metadata.clone(),
+            idempotency_key: "submit:1".into(),
+        });
+        assert_eq!(
+            result.expect_err("ambiguous artifact set must fail"),
+            NativeBusinessError::Contract
+        );
+    }
 }
 
 #[test]

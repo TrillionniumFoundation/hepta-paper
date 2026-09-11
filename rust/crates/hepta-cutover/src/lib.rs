@@ -3,8 +3,10 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod archive;
 mod durable;
 mod retirement;
+pub use archive::*;
 pub use durable::*;
 pub use retirement::*;
 

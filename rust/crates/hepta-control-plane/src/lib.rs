@@ -9,15 +9,21 @@
 
 #![forbid(unsafe_code)]
 
+mod calibration;
 mod commit;
 mod events;
 mod execution;
 mod execution_filesystem;
 mod model;
+mod performance;
 mod planner;
 mod resource;
 mod runtime;
 
+pub use calibration::{
+    CalibrationError, CalibrationPolicyV1, CalibrationReportV1, CalibrationSampleV1,
+    calibrate_predictions_v1,
+};
 pub use commit::{
     CommitReceiptV1, CommitRequestV1, CommitSequencerV1, FixtureCommitSequencerV1,
     SqliteCommitSequencerV1,
@@ -31,6 +37,10 @@ pub use execution::{
 pub use execution_filesystem::FilesystemPreparedResultVerifierV1;
 pub use hepta_orchestration_kernel as orchestration_kernel;
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
+pub use performance::{
+    PerformanceBudgetV1, PerformanceError, PerformanceObservationV1,
+    PerformanceQualificationReportV1, evaluate_performance_v1,
+};
 pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1};
 pub use resource::{
     AdmissionRequestV1, ResourceAccountingReportV1, ResourceAllocatorV1, ResourceReservationV1,

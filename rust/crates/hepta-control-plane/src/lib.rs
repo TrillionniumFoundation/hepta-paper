@@ -17,6 +17,7 @@ mod execution_filesystem;
 mod hierarchical_resource;
 mod hierarchical_runtime;
 mod model;
+mod model_selection;
 mod observability;
 mod performance;
 mod performance_binding;
@@ -50,6 +51,10 @@ pub use hierarchical_runtime::{
     HierarchicalControlPlaneRunReceiptV1, HierarchicalControlPlaneV1, ModuleAdmissionBindingV1,
 };
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
+pub use model_selection::{
+    PredictorPromotionPolicyV1, PredictorSelectionDecisionV1, PredictorSelectionError,
+    PredictorSelectionReasonV1, select_predictor_v1,
+};
 pub use observability::{
     ObservabilityError, ObservabilityLedgerV1, ObservabilityPolicyV1, TelemetryCorrelationV1,
     TelemetryExportV1, TelemetryRetentionClassV1, TelemetrySignalKindV1, TelemetrySignalV1,

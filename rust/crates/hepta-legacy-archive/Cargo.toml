@@ -1,0 +1,19 @@
+[package]
+name = "hepta-legacy-archive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hepta-codex-protocol = { path = "../hepta-codex-protocol", version = "=0.1.0" }
+hepta-readonly-control = { path = "../hepta-readonly-control", version = "=0.1.0" }
+hepta-readonly-store = { path = "../hepta-readonly-store", version = "=0.1.0" }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

@@ -14,6 +14,7 @@ mod reviewer;
 mod submission;
 mod types;
 
+pub use build::verify_native_build_bundle_v1;
 pub use submission::{PreparedSubmissionV1, SubmissionPackageV1, prepare_submission_v1};
 pub use types::{
     BuildEntryV1, ManuscriptSectionV1, NativeBusinessJobV1, NativeBusinessOutputV1, ObservationV1,
@@ -52,6 +53,18 @@ pub fn native_business_implementation_hash_v1() -> String {
             include_bytes!("bin/hepta-native-business.rs"),
         ],
     )
+}
+
+/// Execute only when the admitted capability matches the typed business job.
+/// This validates routing, not deployment, scientific, or external authority.
+pub fn execute_native_business_for_capability_v1(
+    job: NativeBusinessJobV1,
+    capability_id: &str,
+) -> Result<NativeBusinessOutputV1, NativeBusinessError> {
+    if job.capability_id() != capability_id {
+        return Err(NativeBusinessError::Contract);
+    }
+    execute_native_business_v1(job)
 }
 
 /// Execute one bounded Rust-native business capability.

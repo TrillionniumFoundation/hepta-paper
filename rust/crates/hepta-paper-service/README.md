@@ -76,11 +76,16 @@ return bounded categories without echoing worker stdout, prompts or credentials.
 
 ## Native work and gradual process migration
 
-`NativeJobV1` supports actual artifact inventory and immutable Node-database
-inspection. Database inspection binds expected database bytes and uses the actual
-Node logical hash contract; it does not translate Node business tables into the
-new campaign schema. These jobs are small native migration building blocks, not
-claims that authoring, review, empirical analysis or packaging have been ported.
+`NativeJobV1` supports artifact inventory, immutable Node-database inspection and
+`Business` jobs. The latter dispatch seven Rust kernels: manuscript structuring,
+structural review, propositional proof checking, descriptive aggregation, dense
+linear solving, deterministic packaging and prepared submission. Each typed job
+has exactly one capability ID, checked both in-process and at the native process
+entry point. A mismatched job is rejected before a durable dispatch intent.
+These bounded kernels are not a claim of complete legacy business equivalence,
+model-generated research, general theorem proving or live external submission.
+Database inspection remains read-only and does not itself translate all Node
+business tables into the new campaign schema.
 
 For a process worker, the registry binds executable bytes, fixed argument vector,
 working directory, declared implementation language, timeout, network declaration
@@ -119,3 +124,29 @@ business workers and their capability replay corpora, Node schema translation
 and reverse compatibility, and retained target-host shadow/canary evidence.
 These conditions are tracked in the
 [migration implementation report](../../../docs/rust/RUNTIME_MIGRATION_IMPLEMENTATION.md).
+
+## Native bundle verification
+
+`native_business::verify_native_build_bundle_v1(bytes, expected_sha256)` provides
+Rust-native verification and decoding of `HEPTA-NATIVE-BUNDLE-V1`. The caller must
+obtain the expected digest from an independently selected manifest or CAS record.
+The decoder checks lengths before allocation, bounded entry counts, UTF-8, exact
+end-of-input, canonical ordering, duplicate paths, unsafe path components and
+file/directory prefix collisions. It returns in-memory `BuildEntryV1` values and
+does not extract files, authorize publication or run embedded content. The encoder
+uses the same path and collision rules.
+
+The native numerical worker rejects non-finite products, partial sums and residuals
+before reducing the infinity norm. A NaN cannot be hidden by `f64::max` and emitted
+as a successful finite residual. Numerical V1's tolerance retains its existing
+pivot semantics; this check does not certify a forward-error bound.
+
+```sh
+cargo test --locked -p hepta-paper-service --test native_bundle_and_binding
+cargo test --locked -p hepta-paper-service --test native_business_service
+```
+
+The tests exercise all 49 job/capability combinations, parser truncations and
+corruption, exact bundle round trips, both process and durable-service dispatch,
+and rejection before dispatch-intent creation. Source tests grant no production
+writer, provider, release or submission authority.

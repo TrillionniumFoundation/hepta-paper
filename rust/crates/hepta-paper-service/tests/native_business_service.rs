@@ -203,3 +203,100 @@ fn native_business_runs_through_durable_service_and_replays() {
         replay.commit_receipts[0].result_hash
     );
 }
+
+#[test]
+fn native_business_capability_mismatch_creates_no_dispatch_intent() {
+    let temp = Temp::new();
+    let mut config = build_configuration(&temp);
+    let objects = ObjectStoreV1::open(&temp.0).expect("objects");
+    let wrong_job = NativeJobV1::Business {
+        job: NativeBusinessJobV1::EmpiricalAggregate {
+            observations: vec![hepta_paper_service::native_business::ObservationV1 {
+                label: "observation-1".into(),
+                value: 1.0,
+            }],
+        },
+    };
+    config.frontier.candidates[0].payload_hash = objects
+        .put(&serde_json::to_vec(&wrong_job).expect("job bytes"))
+        .expect("job object");
+    // The manifest and candidate still authorize only CAP-BUILD.
+    assert!(run_service_v1(config).is_err());
+    assert_eq!(
+        fs::read_dir(temp.0.join("attempts"))
+            .expect("attempts")
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn native_process_worker_rejects_capability_substitution() {
+    use hepta_control_plane::{ExecutionRequestV1, ResourceReservationV1};
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let temp = Temp::new();
+    let config = build_configuration(&temp);
+    let candidate = config.frontier.candidates[0].clone();
+    let execution = ExecutionRequestV1 {
+        version: 1,
+        attempt_id: "attempt-process-binding".into(),
+        snapshot_hash: candidate.snapshot_hash.clone(),
+        plan_hash: config.initial_state_hash.clone(),
+        reservation: ResourceReservationV1 {
+            reservation_id: "reservation-process".into(),
+            tenant_id: config.snapshot.campaign_id,
+            module_id: candidate.module_id.clone(),
+            candidate_id: candidate.candidate_id.clone(),
+            reserved: candidate.resources,
+            admission_sequence: 1,
+            reservation_hash: config.initial_state_hash,
+        },
+        candidate,
+    };
+    for (input, accepted) in [
+        (
+            NativeBusinessJobV1::BuildPackage {
+                entries: vec![BuildEntryV1 {
+                    path: "a.md".into(),
+                    content: "content".into(),
+                    media_type: "text/plain".into(),
+                }],
+            },
+            true,
+        ),
+        (
+            NativeBusinessJobV1::EmpiricalAggregate {
+                observations: vec![hepta_paper_service::native_business::ObservationV1 {
+                    label: "one".into(),
+                    value: 1.0,
+                }],
+            },
+            false,
+        ),
+    ] {
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "version": 1, "execution": execution, "input": input,
+        }))
+        .expect("envelope");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_hepta-native-business"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("native process");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(&bytes)
+            .expect("request");
+        let output = child.wait_with_output().expect("result");
+        assert_eq!(output.status.success(), accepted);
+        if !accepted {
+            assert!(output.stdout.is_empty());
+        }
+    }
+}

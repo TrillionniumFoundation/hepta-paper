@@ -796,6 +796,155 @@
           ]
         }
       ]
+    },
+    "native-business-binding-and-bundle-source": {
+      "description": "Native capability routing across library, durable service and process boundaries, with bounded content-addressed bundle decoding and negative parser tests.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business.rs",
+          "role": "implementation",
+          "gitBlob": "c7daf97acc0f710b2e89d498531d0ec582c2b51e",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "execute_native_business_for_capability_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/types.rs",
+          "role": "implementation",
+          "gitBlob": "08f51870ac0ad8f7bee09ba72b4ce7c440398a76",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "type",
+              "name": "NativeBusinessJobV1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/worker.rs",
+          "role": "implementation",
+          "gitBlob": "5b790605eae76ec71408d3ce2dbe573e96a649fd",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "type",
+              "name": "ServiceExecutorV1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-native-business.rs",
+          "role": "implementation",
+          "gitBlob": "72eb26ef7312a4fa09e25ba0c63d4a8f9a80ac3a",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "run_bytes"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/build.rs",
+          "role": "implementation",
+          "gitBlob": "fd3df502af2ba1765ff206a9e4ebefbebf605b93",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "verify_native_build_bundle_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/numerical.rs",
+          "role": "implementation",
+          "gitBlob": "7983ab547cc4710a2a4c076a5f4205f7b1af75c0",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "numerical_linear_solve"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/native_bundle_and_binding.rs",
+          "role": "test",
+          "gitBlob": "91bea5a345cae86b46c59d2bbccfd3b104dc92ca",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "all_seven_native_business_jobs_bind_exactly_one_capability"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/native_business_service.rs",
+          "role": "test",
+          "gitBlob": "4f44cc9fc069ce210a9aac0eed0924a32b0defbf",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "native_business_capability_mismatch_creates_no_dispatch_intent"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "native_bundle_and_binding",
+            "--",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/native_bundle_and_binding.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "native_business_service",
+            "--",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/native_business_service.rs"
+          ]
+        }
+      ]
     }
   },
   "records": {
@@ -807,7 +956,8 @@
       ],
       "evidenceTier": "source",
       "bundleIds": [
-        "native-author-source"
+        "native-author-source",
+        "native-business-binding-and-bundle-source"
       ],
       "promotionRequested": false,
       "authorityClaims": {
@@ -1025,6 +1175,121 @@
         "productionActivated": false,
         "writerCutoverAuthorized": false,
         "nodeRetirementAuthorized": false
+      }
+    },
+    "BUILD-001": {
+      "workItemId": "BUILD-001",
+      "moduleId": "module.build-package",
+      "capabilityIds": [
+        "CAP-BUILD"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "native-business-binding-and-bundle-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "NUM-001": {
+      "workItemId": "NUM-001",
+      "moduleId": "module.numerical-node",
+      "capabilityIds": [
+        "CAP-NUMERICAL"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "native-business-binding-and-bundle-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "REVIEW-001": {
+      "workItemId": "REVIEW-001",
+      "moduleId": "module.reviewer-node",
+      "capabilityIds": [
+        "CAP-REVIEW"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "native-business-binding-and-bundle-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "FORMAL-001": {
+      "workItemId": "FORMAL-001",
+      "moduleId": "module.formal-node",
+      "capabilityIds": [
+        "CAP-FORMAL"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "native-business-binding-and-bundle-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "EMP-001": {
+      "workItemId": "EMP-001",
+      "moduleId": "module.empirical-node",
+      "capabilityIds": [
+        "CAP-EMPIRICAL"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "native-business-binding-and-bundle-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "SUBMIT-001": {
+      "workItemId": "SUBMIT-001",
+      "moduleId": "module.submission-port",
+      "capabilityIds": [
+        "CAP-SUBMIT",
+        "CAP-REL-VERIFY"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "native-business-binding-and-bundle-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
       }
     }
   }

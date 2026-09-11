@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use hepta_codex_protocol::Sha256Digest;
-use hepta_module_platform::{
-    ActionCandidateV1, ModuleRegistryArtifactV1, QualificationTierV1, ResourceVectorV1,
-};
+use hepta_module_platform::{ActionCandidateV1, ModuleRegistryArtifactV1, ResourceVectorV1};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -99,67 +97,10 @@ pub fn route_candidates_v1(
     Ok(frontier)
 }
 
-/// Context signature used to ensure Pareto removal never crosses hard semantic boundaries.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct ParetoContextV1 {
-    decision_group: String,
-    module_id: String,
-    module_version: String,
-    capability_id: String,
-    dependency_candidate_ids: Vec<String>,
-    evidence_tier: QualificationTierV1,
-}
-
-/// Removes only candidates that are dominated inside an identical hard semantic context.
-///
-/// A candidate is removable only when another candidate has no greater resource/cost/
-/// uncertainty demand and no lower utility. Dependency, module, capability, decision-group,
-/// and evidence-tier identity must be identical, so this function never treats local
-/// numeric dominance as proof of cross-context substitutability.
+/// Compatibility entry point for dependency-preserving Pareto reduction.
+/// An incoming dependency pins its target: numeric dominance never rewrites edges.
 pub fn contextual_pareto_frontier_v1(candidates: &[ActionCandidateV1]) -> Vec<ActionCandidateV1> {
-    let mut groups = BTreeMap::<ParetoContextV1, Vec<&ActionCandidateV1>>::new();
-    for candidate in candidates {
-        let context = ParetoContextV1 {
-            decision_group: candidate.decision_group.clone(),
-            module_id: candidate.module_id.clone(),
-            module_version: candidate.module_version.clone(),
-            capability_id: candidate.capability_id.clone(),
-            dependency_candidate_ids: candidate.dependency_candidate_ids.clone(),
-            evidence_tier: candidate.evidence_tier,
-        };
-        groups.entry(context).or_default().push(candidate);
-    }
-
-    let mut retained = Vec::new();
-    for group in groups.into_values() {
-        for candidate in &group {
-            let dominated = group.iter().any(|other| {
-                other.candidate_id != candidate.candidate_id
-                    && dominates_v1(other, candidate)
-                    && (strictly_better_v1(other, candidate)
-                        || other.candidate_id < candidate.candidate_id)
-            });
-            if !dominated {
-                retained.push((*candidate).clone());
-            }
-        }
-    }
-    retained.sort_by(|left, right| left.candidate_id.cmp(&right.candidate_id));
-    retained
-}
-
-fn dominates_v1(left: &ActionCandidateV1, right: &ActionCandidateV1) -> bool {
-    left.utility_micros >= right.utility_micros
-        && left.cost_microusd <= right.cost_microusd
-        && left.uncertainty_ppm <= right.uncertainty_ppm
-        && left.resources.fits_within(right.resources)
-}
-
-fn strictly_better_v1(left: &ActionCandidateV1, right: &ActionCandidateV1) -> bool {
-    left.utility_micros > right.utility_micros
-        || left.cost_microusd < right.cost_microusd
-        || left.uncertainty_ppm < right.uncertainty_ppm
-        || left.resources != right.resources
+    crate::contextual_pareto_frontier_preserving_dependencies_v2(candidates)
 }
 
 /// One node in a strict resource-entitlement hierarchy.
@@ -371,9 +312,9 @@ pub fn assess_performance_v1(
     let p95_latency_micros = percentile_nearest_rank(&latencies, 95)?;
     let p99_latency_micros = percentile_nearest_rank(&latencies, 99)?;
     let failure_ppm_u128 = failures
-        .saturating_mul(1_000_000)
-        .checked_div(operations)
-        .ok_or(ControlPlaneError::PerformanceQualificationInvalid)?;
+        .checked_mul(1_000_000)
+        .ok_or(ControlPlaneError::PerformanceQualificationInvalid)?
+        .div_ceil(operations);
     let failure_ppm = u32::try_from(failure_ppm_u128)
         .map_err(|_| ControlPlaneError::PerformanceQualificationInvalid)?;
     let accepted = p95_latency_micros <= budget.maximum_p95_latency_micros

@@ -24,7 +24,7 @@ pub enum PlanModeV1 {
 pub struct PlannerPolicyV1 {
     /// Contract version.
     pub version: u16,
-    /// Maximum candidate count for exact enumeration.
+    /// Maximum candidate count for exact enumeration; zero forces bounded fallback.
     pub maximum_exact_candidates: usize,
     /// Cost penalty multiplier in parts per million.
     pub cost_weight_ppm: u32,
@@ -38,7 +38,6 @@ impl PlannerPolicyV1 {
     /// Validates bounded solver and integer objective settings.
     pub fn validate(&self) -> Result<(), ControlPlaneError> {
         if self.version != 1
-            || self.maximum_exact_candidates == 0
             || self.maximum_exact_candidates > 20
             || self.cost_weight_ppm > 1_000_000
             || self.maximum_selected_candidates == 0

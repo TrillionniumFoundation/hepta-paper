@@ -78,12 +78,13 @@ pub(super) fn numerical_linear_solve(
     }
     let mut residual_linf = 0.0f64;
     for row in 0..dimension {
-        let computed = original_matrix[row]
-            .iter()
-            .zip(solution.iter())
-            .map(|(coefficient, value)| coefficient * value)
-            .sum::<f64>();
-        residual_linf = residual_linf.max((computed - original_rhs[row]).abs());
+        let computed = finite_dot_product(&original_matrix[row], &solution)?;
+        let residual = (computed - original_rhs[row]).abs();
+        // f64::max ignores NaN. Check before accumulation, never after it.
+        if !residual.is_finite() {
+            return Err(NativeBusinessError::Numeric);
+        }
+        residual_linf = residual_linf.max(residual);
     }
     if !residual_linf.is_finite() {
         return Err(NativeBusinessError::Numeric);
@@ -124,4 +125,27 @@ struct NumericalReportV1 {
     residual_linf: f64,
     tolerance: f64,
     input_hash: String,
+}
+
+fn finite_dot_product(left: &[f64], right: &[f64]) -> Result<f64, NativeBusinessError> {
+    left.iter().zip(right).try_fold(0.0, |sum, (a, b)| {
+        let product = a * b;
+        let next = sum + product;
+        if !product.is_finite() || !next.is_finite() {
+            return Err(NativeBusinessError::Numeric);
+        }
+        Ok(next)
+    })
+}
+
+#[cfg(test)]
+mod residual_tests {
+    use super::*;
+
+    #[test]
+    fn non_finite_residual_terms_cannot_be_hidden_by_max() {
+        assert!(finite_dot_product(&[f64::MAX, -f64::MAX], &[2.0, 2.0]).is_err());
+        assert!(finite_dot_product(&[f64::MAX, f64::MAX], &[1.0, 1.0]).is_err());
+        assert_eq!(finite_dot_product(&[2.0, -2.0], &[3.0, 3.0]), Ok(0.0));
+    }
 }

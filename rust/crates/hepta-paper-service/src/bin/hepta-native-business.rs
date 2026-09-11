@@ -5,7 +5,7 @@
 use base64ct::{Base64, Encoding};
 use hepta_control_plane::ExecutionRequestV1;
 use hepta_paper_service::native_business::{
-    NativeBusinessError, NativeBusinessJobV1, execute_native_business_v1,
+    NativeBusinessError, NativeBusinessJobV1, execute_native_business_for_capability_v1,
     native_business_implementation_hash_v1,
 };
 use serde::{Deserialize, Serialize};
@@ -38,10 +38,16 @@ fn run_bytes(input: &[u8]) -> Result<Vec<u8>, NativeBusinessError> {
     }
     let envelope: WorkerEnvelopeV1 =
         serde_json::from_slice(input).map_err(|_| NativeBusinessError::Encoding)?;
-    if envelope.version != 1 {
+    if envelope.version != 1
+        || envelope.execution.version != 1
+        || envelope.execution.snapshot_hash != envelope.execution.candidate.snapshot_hash
+    {
         return Err(NativeBusinessError::Contract);
     }
-    let output = execute_native_business_v1(envelope.input)?;
+    let output = execute_native_business_for_capability_v1(
+        envelope.input,
+        &envelope.execution.candidate.capability_id,
+    )?;
     let artifacts = output
         .artifacts
         .iter()

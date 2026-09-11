@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use hepta_codex_protocol::Sha256Digest;
 use hepta_module_platform::ModuleRegistryArtifactV1;
 use serde::{Deserialize, Serialize};
@@ -43,7 +45,7 @@ impl OptimizerWorkBudgetV2 {
             }
             bound = next;
         }
-        bound.max(1)
+        bound
     }
 }
 
@@ -99,6 +101,49 @@ pub struct CalibrationReportV1 {
     pub report_hash: Sha256Digest,
 }
 
+impl CalibrationReportV1 {
+    /// Checks the report body/hash and internal bounds, not producer authenticity.
+    /// Use `verify_observations` to bind acceptance to the exact policy and data.
+    pub fn validate(&self) -> Result<(), ControlPlaneError> {
+        if self.version != 1
+            || self.sample_count == 0
+            || self.sample_count > 1_000_000
+            || self.p50_duration_error_ppm > self.p95_duration_error_ppm
+            || self.p50_cost_error_ppm > self.p95_cost_error_ppm
+            || (self.accepted
+                && (self.p95_duration_error_ppm > 1_000_000 || self.p95_cost_error_ppm > 1_000_000))
+        {
+            return Err(ControlPlaneError::PerformanceQualificationInvalid);
+        }
+        let body = CalibrationReportBodyV1 {
+            version: self.version,
+            sample_count: self.sample_count,
+            p50_duration_error_ppm: self.p50_duration_error_ppm,
+            p95_duration_error_ppm: self.p95_duration_error_ppm,
+            p50_cost_error_ppm: self.p50_cost_error_ppm,
+            p95_cost_error_ppm: self.p95_cost_error_ppm,
+            accepted: self.accepted,
+        };
+        if canonical_hash_v1(&body)? != self.report_hash {
+            return Err(ControlPlaneError::PerformanceQualificationInvalid);
+        }
+        Ok(())
+    }
+
+    /// Recomputes all measurements and acceptance from the supplied exact inputs.
+    pub fn verify_observations(
+        &self,
+        policy: &CalibrationPolicyV1,
+        observations: &[CalibrationObservationV1],
+    ) -> Result<(), ControlPlaneError> {
+        self.validate()?;
+        if *self != assess_calibration_v1(policy, observations)? {
+            return Err(ControlPlaneError::PerformanceQualificationInvalid);
+        }
+        Ok(())
+    }
+}
+
 /// Evaluates deterministic integer calibration without host-dependent floating point.
 pub fn assess_calibration_v1(
     policy: &CalibrationPolicyV1,
@@ -116,8 +161,11 @@ pub fn assess_calibration_v1(
     }
     let mut duration_errors = Vec::with_capacity(observations.len());
     let mut cost_errors = Vec::with_capacity(observations.len());
+    let mut observation_ids = BTreeSet::new();
     for observation in observations {
-        if !valid_identifier(&observation.observation_id) || observation.actual_duration_micros == 0
+        if !valid_identifier(&observation.observation_id)
+            || !observation_ids.insert(observation.observation_id.as_str())
+            || observation.actual_duration_micros == 0
         {
             return Err(ControlPlaneError::PerformanceQualificationInvalid);
         }
@@ -202,6 +250,9 @@ pub fn optimize_v2(
     {
         return Err(ControlPlaneError::PlannerPolicyInvalid);
     }
+    if let Some(report) = calibration {
+        report.validate()?;
+    }
     let pareto_candidates =
         contextual_pareto_frontier_preserving_dependencies_v2(&frontier.candidates);
     let pareto_frontier = PlanningFrontierV1 {
@@ -267,14 +318,14 @@ struct OptimizerReceiptBodyV2 {
 }
 
 fn relative_error_ppm(predicted: u64, actual: u64) -> Result<u32, ControlPlaneError> {
-    let denominator = actual.max(1);
-    let delta = predicted.abs_diff(actual);
-    let ppm = u128::from(delta)
-        .saturating_mul(1_000_000)
-        .checked_div(u128::from(denominator))
-        .ok_or(ControlPlaneError::PerformanceQualificationInvalid)?;
-    u32::try_from(ppm.min(1_000_000))
-        .map_err(|_| ControlPlaneError::PerformanceQualificationInvalid)
+    if actual == 0 {
+        return Ok(if predicted == 0 { 0 } else { u32::MAX });
+    }
+    // A hard maximum must never accept a rational error just above its limit.
+    // u64::MAX * 1_000_000 fits u128. Saturation is above every legal policy
+    // threshold, not at 100%, so even unrepresentable errors remain rejected.
+    let ppm = (u128::from(predicted.abs_diff(actual)) * 1_000_000).div_ceil(u128::from(actual));
+    Ok(u32::try_from(ppm).unwrap_or(u32::MAX))
 }
 
 fn percentile(values: &[u32], percentile: usize) -> Result<u32, ControlPlaneError> {

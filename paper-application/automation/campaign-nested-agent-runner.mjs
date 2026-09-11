@@ -1,3 +1,4 @@
+import { addAbortListener as subscribeAbort } from 'node:events';
 import {
   campaignInfrastructureControlError,
 } from './campaign-node-infrastructure-control.mjs';
@@ -18,20 +19,22 @@ export function campaignExecutionAbortError(
   return error;
 }
 
-function bindResourceLeaseLoss(release, controller) {
+export function bindCampaignResourceLeaseLoss(release, controller) {
   const lostSignal = release?.lostSignal;
-  if (!lostSignal || typeof lostSignal.addEventListener !== 'function') return () => {};
+  if (!lostSignal) return () => {};
   const onLost = () => abortCampaignExecution(
     controller,
     lostSignal.reason || 'resource_lease_lost',
   );
+  let subscription = null;
   if (lostSignal.aborted) onLost();
-  else lostSignal.addEventListener('abort', onLost, { once: true });
+  else subscription = subscribeAbort(lostSignal, onLost);
   let detached = false;
   return () => {
     if (detached) return;
     detached = true;
-    lostSignal.removeEventListener?.('abort', onLost);
+    subscription?.[Symbol.dispose]();
+    subscription = null;
   };
 }
 
@@ -58,8 +61,9 @@ export function createCampaignNestedAgentRunner({
     let operationError = null;
     let localReleaseError = null;
     let globalReleaseError = null;
-    const detachNestedLeaseLoss = bindResourceLeaseLoss(releaseNestedGlobal, controller);
+    let detachNestedLeaseLoss = () => {};
     try {
+      detachNestedLeaseLoss = bindCampaignResourceLeaseLoss(releaseNestedGlobal, controller);
       if (controller.signal.aborted) {
         throw campaignExecutionAbortError(controller.signal, 'resource_lease_lost');
       }
@@ -113,6 +117,7 @@ export function createCampaignNestedAgentRunner({
         latestForOperation = latest;
       };
       const executeNested = async ({ externalActionId = null } = {}) => {
+        if (controller.signal.aborted) throw campaignExecutionAbortError(controller.signal);
         const latest = latestForOperation || campaignStore.getCampaign(campaignId);
         return operation({
           remainingTokenCount: Math.max(

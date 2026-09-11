@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ModuleManifestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "moduleId",
+    "moduleVersion",
+    "implementationKind",
+    "capabilityIds",
+    "protocolRange",
+    "authorityClass",
+    "sideEffectClasses",
+    "determinismClass",
+    "owners",
+    "resourceProfile",
+    "qualificationRequirements",
+    "rollout"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "ModuleManifestV1"
+    },
+    "moduleId": {
+      "type": "string",
+      "pattern": "^module\\.[a-z0-9.-]+$"
+    },
+    "moduleVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "implementationKind": {
+      "enum": [
+        "pure_library",
+        "trusted_in_process",
+        "isolated_process",
+        "host_service",
+        "external_service",
+        "legacy_adapter",
+        "legacy_in_process"
+      ]
+    },
+    "capabilityIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "protocolRange": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "authorityClass": {
+      "enum": [
+        "pure",
+        "read_only",
+        "workspace_local_write",
+        "prepared_result_only",
+        "central_state_write",
+        "external_effect"
+      ]
+    },
+    "sideEffectClasses": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "determinismClass": {
+      "enum": [
+        "deterministic",
+        "seeded",
+        "bounded_nondeterministic",
+        "external_observation"
+      ]
+    },
+    "owners": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primaryTeam",
+        "secondaryTeam",
+        "independentReviewerTeam"
+      ],
+      "properties": {
+        "primaryTeam": {
+          "type": "string",
+          "minLength": 1
+        },
+        "secondaryTeam": {
+          "type": "string",
+          "minLength": 1
+        },
+        "independentReviewerTeam": {
+          "type": "string",
+          "minLength": 1
+        },
+        "securityReviewerTeam": {
+          "type": "string",
+          "minLength": 1
+        },
+        "escalationOwner": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "resourceProfile": {
+      "type": "object"
+    },
+    "qualificationRequirements": {
+      "type": "array"
+    },
+    "rollout": {
+      "type": "object"
+    },
+    "compatibleStateVersions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "compatibleSchemaVersions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "retirementCondition": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

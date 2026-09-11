@@ -16,6 +16,7 @@ import {
 import {
   buildDeterministicPdfFixture,
 } from '../support/deterministic-pdf-fixture.mjs';
+export { buildDeterministicPdfFixture };
 
 function contentHash(content) {
   return `sha256:${createHash('sha256').update(content).digest('hex')}`;

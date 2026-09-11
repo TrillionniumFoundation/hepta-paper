@@ -67,7 +67,36 @@ function inspectAsset(repositoryRoot, asset) {
     const contained = identityPath === sourceRoot
       || identityPath.startsWith(`${sourceRoot}${path.sep}`);
     if (!contained) blockers.push('repository_asset_identity_outside_source');
-    else {
+    else if (asset?.migrationStatus === 'externalized') {
+      const restoredIdentity = asset?.externalReference?.restoreDrillReceipt
+        ?.restoredIdentitySha256;
+      observedIdentitySha256 = SHA256.test(String(restoredIdentity || ''))
+        ? restoredIdentity : null;
+      if (observedIdentitySha256 !== asset.expectedIdentitySha256) {
+        blockers.push('repository_asset_identity_hash_mismatch');
+      }
+      try {
+        if (fs.existsSync(sourceRoot)) {
+          const sourceStat = fs.lstatSync(sourceRoot);
+          if (sourceStat.isSymbolicLink() || !sourceStat.isDirectory()) {
+            blockers.push('repository_asset_source_not_regular_directory');
+          }
+        }
+        if (fs.existsSync(identityPath)) {
+          const identityStat = fs.lstatSync(identityPath);
+          if (identityStat.isSymbolicLink() || !identityStat.isFile()) {
+            blockers.push('repository_asset_identity_not_regular_file');
+          } else {
+            const localIdentity = hashBytes(fs.readFileSync(identityPath));
+            if (localIdentity !== asset.expectedIdentitySha256) {
+              blockers.push('repository_asset_identity_hash_mismatch');
+            }
+          }
+        }
+      } catch {
+        blockers.push('repository_asset_identity_unreadable');
+      }
+    } else {
       try {
         const sourceStat = fs.lstatSync(sourceRoot);
         const identityStat = fs.lstatSync(identityPath);

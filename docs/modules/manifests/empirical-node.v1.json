@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "kind": "ModuleDocumentationManifestV1",
+  "moduleId": "module.empirical-node",
+  "registryRef": "docs/system/truth/modules.v1.json#/modules/module.empirical-node",
+  "specPath": "docs/modules/specs/empirical-node.md",
+  "runbookPath": "docs/modules/specs/empirical-node.md#operational-runbook",
+  "implementationPaths": ["paper-application/automation","paper-adapters/runtime"],
+  "capabilityIds": ["CAP-EMPIRICAL"],
+  "authorityClass": "prepared_result_only",
+  "ownerTeams": ["TEAM-EMPIRICAL","TEAM-NUMERICAL","TEAM-EVIDENCE"],
+  "dependencyModuleIds": ["module.node-control-plane"],
+  "workItemIds": ["EMP-001"],
+  "qualificationRequirement": "source",
+  "protocolRange": {"minimum":1,"maximum":1},
+  "sideEffectClasses": ["local_ephemeral","workspace_mutation","prepared_result"],
+  "determinismClass": "seeded",
+  "resourceProfile": {"sourceContract":"bounded","deploymentProfileRequired":true,"implicitCapacityAllowed":false,"unboundedChildConcurrencyAllowed":false},
+  "sloProfile": {"status":"source_contract_defined","canonicalWorkloadsRequired":true,"zeroToleranceSafetyCountersRequired":true},
+  "rollout": {"currentStaticActivation":"authoritative","automaticActivation":false,"productionActivation":false,"rollbackTargetRequired":true,"mutualExclusionRequired":false},
+  "documentationStatus": "complete",
+  "effectiveQualification": "derived_only"
+}

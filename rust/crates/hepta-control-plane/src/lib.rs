@@ -40,9 +40,8 @@ pub use hierarchical_resource::{
 };
 pub use model::{ControlPlaneSnapshotV1, HardPolicyV1, PlanningFrontierV1, canonical_hash_v1};
 pub use observability::{
-    ObservabilityExportV1, ObservabilityJournalV1, ObservabilityPolicyV1,
-    TelemetryPrivacyClassV1, TelemetryRetentionClassV1, TelemetrySignalKindV1,
-    TelemetrySignalV1,
+    ObservabilityExportV1, ObservabilityJournalV1, ObservabilityPolicyV1, TelemetryPrivacyClassV1,
+    TelemetryRetentionClassV1, TelemetrySignalKindV1, TelemetrySignalV1,
 };
 pub use optimizer_v2::{
     CalibrationObservationV1, CalibrationPolicyV1, CalibrationReportV1, OptimizerReceiptV2,

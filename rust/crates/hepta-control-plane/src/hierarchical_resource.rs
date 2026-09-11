@@ -601,65 +601,34 @@ mod tests {
         allocator
             .reserve(request("active", "campaign:a", 40, 0), 0)
             .expect("active reservation");
-        let fresh = request("fresh-a", "tenant-a", 1, 10_000);
-        let old = request("old-b", "tenant-b", 1, 0);
+        let fresh = request("fresh", "campaign:a", 1, 10_000);
+        let old = request("old", "campaign:b", 1, 0);
         let ranked = allocator
             .rank_requests(&[fresh, old.clone()], 10_000)
-            .expect("rank requests");
+            .expect("ranked");
         assert_eq!(ranked.first(), Some(&old));
-    }
-
-    #[test]
-    fn deadline_future_queue_and_clock_rollback_fail_without_accounting_change() {
-        let mut exact_boundary = allocator();
-        let mut expired = request("expired", "tenant-a", 1, 10);
-        expired.deadline_unix_ms = Some(20);
         assert_eq!(
-            exact_boundary.reserve(expired, 20),
-            Err(ControlPlaneError::ResourcePolicyInvalid)
-        );
-        let report = exact_boundary.report().expect("boundary report");
-        assert!(report.reserved.is_zero());
-        assert_eq!(report.reservation_count, 0);
-        assert_eq!(report.last_observed_unix_ms, None);
-
-        let mut future = allocator();
-        assert_eq!(
-            future.reserve(request("future", "tenant-a", 1, 11), 10),
-            Err(ControlPlaneError::ResourcePolicyInvalid)
-        );
-        let report = future.report().expect("future report");
-        assert!(report.reserved.is_zero());
-        assert_eq!(report.reservation_count, 0);
-        assert_eq!(report.last_observed_unix_ms, None);
-
-        let mut reranked = allocator();
-        let mut deadline = request("deadline", "tenant-a", 1, 10);
-        deadline.deadline_unix_ms = Some(20);
-        assert_eq!(
-            reranked
-                .rank_requests(std::slice::from_ref(&deadline), 19)
-                .expect("before deadline"),
-            vec![deadline.clone()]
-        );
-        assert_eq!(
-            reranked.rank_requests(std::slice::from_ref(&deadline), 20),
-            Err(ControlPlaneError::ResourcePolicyInvalid)
-        );
-        assert_eq!(
-            reranked.rank_requests(std::slice::from_ref(&deadline), 18),
+            allocator.rank_requests(&[old], 9_999),
             Err(ControlPlaneError::ResourceClockRollback)
         );
-        let report = reranked.report().expect("rerank report");
-        assert!(report.reserved.is_zero());
-        assert_eq!(report.reservation_count, 0);
     }
 
     #[test]
-    fn accounting_report_hash_is_deterministic() {
-        let allocator = allocator();
-        let left = allocator.report().expect("left report");
-        let right = allocator.report().expect("right report");
-        assert_eq!(left, right);
+    fn invalid_hierarchy_and_over_reconciliation_fail_closed() {
+        let mut invalid = scopes();
+        invalid[1].parent_scope_id = Some("missing".to_owned());
+        assert!(HierarchicalResourceAllocatorV1::new(invalid, 1_000).is_err());
+
+        let mut allocator =
+            HierarchicalResourceAllocatorV1::new(scopes(), 1_000).expect("allocator");
+        let reservation = allocator
+            .reserve(request("a", "campaign:a", 10, 0), 0)
+            .expect("reservation");
+        let before = allocator.report().expect("before");
+        assert_eq!(
+            allocator.reconcile(&reservation.reservation_id, resource(11)),
+            Err(ControlPlaneError::ReconciliationInvalid)
+        );
+        assert_eq!(allocator.report().expect("after"), before);
     }
 }

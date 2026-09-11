@@ -157,18 +157,18 @@ impl HierarchicalResourceAllocatorV1 {
         let Some(head) = ranked.into_iter().next() else {
             return Ok(None);
         };
-        let starvation_bound_reached = now_unix_ms.saturating_sub(head.queued_at_unix_ms)
-            >= self.policy.starvation_bound_ms;
+        let starvation_bound_reached =
+            now_unix_ms.saturating_sub(head.queued_at_unix_ms) >= self.policy.starvation_bound_ms;
         match self.reserve(head.clone(), now_unix_ms) {
             Ok(reservation) => Ok(Some(HierarchicalAdmissionOutcomeV1::Admitted {
                 reservation,
             })),
-            Err(ControlPlaneError::ResourceDenied) => Ok(Some(
-                HierarchicalAdmissionOutcomeV1::CapacityBlocked {
+            Err(ControlPlaneError::ResourceDenied) => {
+                Ok(Some(HierarchicalAdmissionOutcomeV1::CapacityBlocked {
                     reservation_id: head.reservation_id,
                     starvation_bound_reached,
-                },
-            )),
+                }))
+            }
             Err(error) => Err(error),
         }
     }
@@ -471,7 +471,12 @@ mod tests {
         }
     }
 
-    fn request(id: &str, domain: &str, cpu: u64, queued_at_unix_ms: u64) -> HierarchicalAdmissionRequestV1 {
+    fn request(
+        id: &str,
+        domain: &str,
+        cpu: u64,
+        queued_at_unix_ms: u64,
+    ) -> HierarchicalAdmissionRequestV1 {
         HierarchicalAdmissionRequestV1 {
             reservation_id: id.to_owned(),
             domain_id: domain.to_owned(),

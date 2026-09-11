@@ -4,7 +4,10 @@ use hepta_control_plane::{
     select_plan_v1,
 };
 use hepta_module_platform::{ActionCandidateV1, QualificationTierV1, ResourceVectorV1};
-use std::{collections::{BTreeMap, BTreeSet}, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
 
 fn digest(marker: char) -> Sha256Digest {
     Sha256Digest::from_str(&format!("sha256:{}", marker.to_string().repeat(64)))
@@ -71,7 +74,10 @@ fn candidate(
         module_version: "1.0.0".into(),
         capability_id: capability_id.into(),
         snapshot_hash,
-        dependency_candidate_ids: dependencies.iter().map(|value| (*value).to_owned()).collect(),
+        dependency_candidate_ids: dependencies
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
         resources: ResourceVectorV1 {
             cpu_millis,
             ..ResourceVectorV1::default()
@@ -92,30 +98,85 @@ fn source_closure_planner_exact_and_fallback_certificates_are_recomputable() {
         version: 1,
         snapshot_hash: exact_hash.clone(),
         candidates: vec![
-            candidate("a-large", "a", "CAP-A", exact_hash.clone(), 100, 8, &[]),
-            candidate("a-small", "a", "CAP-A", exact_hash.clone(), 70, 4, &[]),
+            candidate(
+                "a-large",
+                "a",
+                "CAP-A",
+                exact_hash.clone(),
+                100,
+                8,
+                &[],
+            ),
+            candidate(
+                "a-small",
+                "a",
+                "CAP-A",
+                exact_hash.clone(),
+                70,
+                4,
+                &[],
+            ),
             candidate("b", "b", "CAP-B", exact_hash, 60, 6, &[]),
         ],
     };
     let exact_policy = planner_policy(20);
-    let exact = select_plan_v1(&exact_snapshot, &exact_frontier, &hard_policy(), &exact_policy)
-        .expect("exact plan");
+    let exact = select_plan_v1(
+        &exact_snapshot,
+        &exact_frontier,
+        &hard_policy(),
+        &exact_policy,
+    )
+    .expect("exact plan");
     assert_eq!(exact.mode, PlanModeV1::ExactOptimum);
-    assert_eq!(exact.selected_candidate_ids, vec!["a-small".to_owned(), "b".to_owned()]);
+    assert_eq!(
+        exact.selected_candidate_ids,
+        vec!["a-small".to_owned(), "b".to_owned()]
+    );
     assert_eq!(exact.optimality_gap_micros, Some(0));
     exact
-        .validate(&exact_snapshot, &exact_frontier, &hard_policy(), &exact_policy)
+        .validate(
+            &exact_snapshot,
+            &exact_frontier,
+            &hard_policy(),
+            &exact_policy,
+        )
         .expect("exact certificate validates");
 
     let fallback_snapshot = snapshot(&["CAP-A", "CAP-B"], 100);
-    let fallback_hash = fallback_snapshot.snapshot_hash().expect("fallback snapshot hash");
+    let fallback_hash = fallback_snapshot
+        .snapshot_hash()
+        .expect("fallback snapshot hash");
     let fallback_frontier = PlanningFrontierV1 {
         version: 1,
         snapshot_hash: fallback_hash.clone(),
         candidates: vec![
-            candidate("a", "a", "CAP-A", fallback_hash.clone(), 10, 1, &[]),
-            candidate("b", "b", "CAP-B", fallback_hash.clone(), 20, 1, &["a"]),
-            candidate("c", "c", "CAP-A", fallback_hash.clone(), 1, 1, &[]),
+            candidate(
+                "a",
+                "a",
+                "CAP-A",
+                fallback_hash.clone(),
+                10,
+                1,
+                &[],
+            ),
+            candidate(
+                "b",
+                "b",
+                "CAP-B",
+                fallback_hash.clone(),
+                20,
+                1,
+                &["a"],
+            ),
+            candidate(
+                "c",
+                "c",
+                "CAP-A",
+                fallback_hash.clone(),
+                1,
+                1,
+                &[],
+            ),
             candidate("d", "d", "CAP-B", fallback_hash, 1, 1, &[]),
         ],
     };

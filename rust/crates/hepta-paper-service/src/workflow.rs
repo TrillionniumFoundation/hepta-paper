@@ -467,10 +467,7 @@ fn payload(
     let job: NativeJobV1 = serde_json::from_value(value).map_err(|_| WorkflowError::Definition)?;
     match (&definition.template.workers[&step.module_id], &job) {
         (WorkerBindingV1::Native, NativeJobV1::Business { job })
-            if job.capability_id() == step.capability_id =>
-        {
-            ()
-        }
+            if job.capability_id() == step.capability_id => {}
         (
             WorkerBindingV1::Native,
             NativeJobV1::ArtifactInventory { .. } | NativeJobV1::InspectNodeDatabase { .. },

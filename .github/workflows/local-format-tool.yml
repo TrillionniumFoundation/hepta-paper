@@ -14,13 +14,13 @@ jobs:
         run: |
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          root="$(dirname "$(dirname "$(rustup which --toolchain 1.98.0 rustfmt)")")"
           mkdir -p "$RUNNER_TEMP/pinned-formatter"
-          cp "$(rustup which --toolchain 1.98.0 rustfmt)" "$RUNNER_TEMP/pinned-formatter/rustfmt"
-          chmod 755 "$RUNNER_TEMP/pinned-formatter/rustfmt"
-          "$RUNNER_TEMP/pinned-formatter/rustfmt" --version > "$RUNNER_TEMP/pinned-formatter/version.txt"
-          ldd "$RUNNER_TEMP/pinned-formatter/rustfmt" > "$RUNNER_TEMP/pinned-formatter/linkage.txt"
+          "$root/bin/rustfmt" --version > "$RUNNER_TEMP/pinned-formatter/version.txt"
+          ldd "$root/bin/rustfmt" > "$RUNNER_TEMP/pinned-formatter/linkage.txt"
+          tar -czf "$RUNNER_TEMP/pinned-formatter/tool.tar.gz" -C "$root" bin/rustfmt lib
           cd "$RUNNER_TEMP/pinned-formatter"
-          sha256sum rustfmt > SHA256SUMS
+          sha256sum tool.tar.gz > SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pinned-rustfmt-1.98.0-${{ github.sha }}

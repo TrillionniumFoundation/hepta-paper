@@ -12,8 +12,9 @@ jobs:
     env:
       CARGO_TERM_COLOR: never
       CARGO_INCREMENTAL: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
       RUSTFLAGS: '-Dunsafe-code'
-      CARGO_TARGET_DIR: ${{ runner.temp }}/hepta-candidate-${{ github.sha }}-${{ github.run_attempt }}
+      CARGO_TARGET_DIR: /tmp/hepta-candidate-${{ github.sha }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -74,7 +75,8 @@ jobs:
           test ! -e "$CARGO_TARGET_DIR"
           cargo test --manifest-path rust/Cargo.toml --target-dir "$CARGO_TARGET_DIR" --locked -p hepta-control-plane --test source_correctness_regressions -- --test-threads=1 --nocapture 2>&1 | tee /tmp/hepta-exact-evidence/candidate-regressions.log
           grep -F 'test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' /tmp/hepta-exact-evidence/candidate-regressions.log
-          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane --test calibration_recompute -p hepta-paper-service --test native_bundle_and_binding --test native_business_service 2>&1 | tee /tmp/hepta-exact-evidence/candidate-native.log
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane --test calibration_recompute 2>&1 | tee /tmp/hepta-exact-evidence/candidate-calibration.log
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test native_bundle_and_binding --test native_business_service 2>&1 | tee /tmp/hepta-exact-evidence/candidate-native.log
       - name: Validate documentation without modifying source
         if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
         shell: bash

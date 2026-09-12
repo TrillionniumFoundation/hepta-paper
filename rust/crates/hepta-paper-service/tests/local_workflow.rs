@@ -1204,3 +1204,289 @@ fn sigkill_after_amendment_commit_recovers_one_budget_increase_and_one_definitio
     assert_eq!(done.budget_remaining_microusd, 143);
     assert_eq!(done.committed_steps, 7);
 }
+
+#[test]
+fn documented_inspection_queries_validate_real_history_without_writes() {
+    let (temp, hash) = fixture();
+    operate_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowActionV1::Advance { through_steps: 2 },
+        1100,
+    )
+    .unwrap();
+    let before = fs::read(temp.state().join("campaign.sqlite")).unwrap();
+    let attempts = attempt_count(&temp);
+    let requests: Vec<WorkflowInspectionRequestV1> = serde_json::from_slice(include_bytes!(
+        "../../../../docs/modules/examples/local-inspection-requests.v1.json"
+    ))
+    .unwrap();
+    for request in requests {
+        assert_inspection_schema(
+            include_str!(
+                "../../../../docs/modules/schemas/local-workflow-inspection-request-v1.schema.json"
+            ),
+            &request,
+        );
+        let response = inspect_local_workflow_v1(&temp.state(), &hash, request).unwrap();
+        assert_inspection_schema(
+            include_str!(
+                "../../../../docs/modules/schemas/local-workflow-inspection-response-v1.schema.json"
+            ),
+            &response,
+        );
+        assert_eq!(response.version, 1);
+        assert!(!response.production_activation);
+        assert!(!response.node_retirement_verified);
+        let wire = serde_json::to_string(&response).unwrap();
+        assert!(!wire.contains("local-writer-token"));
+        assert!(!wire.contains(temp.state().to_str().unwrap()));
+        match response.data {
+            WorkflowInspectionDataV1::Events { page } => {
+                assert_eq!(page.events.len(), 2);
+                assert!(page.next_cursor.is_some());
+            }
+            WorkflowInspectionDataV1::Logs {
+                entries,
+                next_offset,
+            } => {
+                assert_eq!(entries.len(), 2);
+                assert_eq!(next_offset, None);
+                assert_eq!(entries[0].step_id, steps()[0].id);
+                assert_eq!(entries[1].actual_cost_microusd, steps()[1].cost_microusd);
+            }
+            WorkflowInspectionDataV1::Slo { counters } => {
+                assert_eq!(counters.committed_steps, 2);
+                assert_eq!(counters.remaining_steps, 5);
+                assert!(!counters.production_slo_qualified);
+                assert_eq!(
+                    counters.spent_microusd,
+                    steps()[..2].iter().map(|s| s.cost_microusd).sum::<u64>()
+                );
+            }
+        }
+    }
+    assert_eq!(
+        before,
+        fs::read(temp.state().join("campaign.sqlite")).unwrap()
+    );
+    assert_eq!(attempts, attempt_count(&temp));
+}
+
+#[test]
+fn local_events_cursor_freezes_prefix_and_rejects_forged_anchors() {
+    let (temp, hash) = fixture();
+    operate_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowActionV1::Advance { through_steps: 1 },
+        1100,
+    )
+    .unwrap();
+    let response = inspect_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowInspectionRequestV1::Events {
+            cursor: None,
+            limit: 1,
+        },
+    )
+    .unwrap();
+    let WorkflowInspectionDataV1::Events { page: first } = response.data else {
+        panic!("event page")
+    };
+    let cursor = first.next_cursor.unwrap();
+    operate_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowActionV1::Advance { through_steps: 2 },
+        1200,
+    )
+    .unwrap();
+    let read = |c| {
+        inspect_local_workflow_v1(
+            &temp.state(),
+            &hash,
+            WorkflowInspectionRequestV1::Events {
+                cursor: Some(c),
+                limit: 256,
+            },
+        )
+    };
+    let next = read(cursor.clone()).unwrap();
+    let WorkflowInspectionDataV1::Events { page } = next.data else {
+        panic!("event page")
+    };
+    assert_eq!(page.snapshot_sequence, first.snapshot_sequence);
+    assert!(
+        page.events
+            .iter()
+            .all(|e| e.sequence <= first.snapshot_sequence)
+    );
+    assert!(page.next_cursor.is_none());
+    let mut wrong = cursor.clone();
+    wrong.campaign_id = "another-campaign".into();
+    assert!(read(wrong).is_err());
+    let mut wrong = cursor.clone();
+    wrong.after_event_hash = format!("sha256:{}", "0".repeat(64)).parse().unwrap();
+    assert!(read(wrong).is_err());
+    let mut wrong = cursor.clone();
+    wrong.snapshot_event_hash = format!("sha256:{}", "0".repeat(64)).parse().unwrap();
+    assert!(read(wrong).is_err());
+    let mut wrong = cursor;
+    wrong.after_sequence = u64::MAX;
+    assert!(read(wrong).is_err());
+}
+
+#[test]
+fn local_inspection_bounds_unknown_fields_and_missing_state_fail_closed() {
+    let (temp, hash) = fixture();
+    for request in [
+        WorkflowInspectionRequestV1::Events {
+            cursor: None,
+            limit: 0,
+        },
+        WorkflowInspectionRequestV1::Events {
+            cursor: None,
+            limit: 257,
+        },
+        WorkflowInspectionRequestV1::Logs {
+            offset: 0,
+            limit: 0,
+        },
+        WorkflowInspectionRequestV1::Logs {
+            offset: usize::MAX,
+            limit: 1,
+        },
+        WorkflowInspectionRequestV1::Logs {
+            offset: 1,
+            limit: 1,
+        },
+    ] {
+        assert!(inspect_local_workflow_v1(&temp.state(), &hash, request).is_err());
+    }
+    assert!(
+        serde_json::from_str::<WorkflowInspectionRequestV1>(
+            r#"{"action":"slo","sql":"DELETE FROM campaigns"}"#
+        )
+        .is_err()
+    );
+    let missing = temp.0.join("missing");
+    assert!(
+        inspect_local_workflow_v1(&missing, &hash, WorkflowInspectionRequestV1::Slo {}).is_err()
+    );
+    assert!(!missing.exists());
+}
+
+#[test]
+fn local_list_uses_explicit_roots_and_rejects_duplicates_and_stale_hashes() {
+    let (temp, hash) = fixture();
+    let reference = WorkflowReferenceV1 {
+        state_directory: temp.state(),
+        definition_hash: hash,
+    };
+    let result = list_local_workflows_v1(WorkflowListRequestV1 {
+        version: 1,
+        workflows: vec![reference.clone()],
+    })
+    .unwrap();
+    assert_eq!(result.entries.len(), 1);
+    assert!(!result.atomic_across_workflows);
+    assert!(
+        list_local_workflows_v1(WorkflowListRequestV1 {
+            version: 1,
+            workflows: vec![reference.clone(), reference.clone()]
+        })
+        .is_err()
+    );
+    let mut bad = reference;
+    bad.definition_hash = format!("sha256:{}", "0".repeat(64)).parse().unwrap();
+    assert!(
+        list_local_workflows_v1(WorkflowListRequestV1 {
+            version: 1,
+            workflows: vec![bad]
+        })
+        .is_err()
+    );
+    assert!(
+        list_local_workflows_v1(WorkflowListRequestV1 {
+            version: 1,
+            workflows: vec![]
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn local_read_commands_execute_actual_binary_and_reject_wrong_query() {
+    let (temp, hash) = fixture();
+    let binary = env!("CARGO_BIN_EXE_hepta-local-workflow");
+    let request = temp.0.join("events.json");
+    fs::write(&request, r#"{"action":"events","cursor":null,"limit":1}"#).unwrap();
+    let run = |arguments: &[&str]| Command::new(binary).args(arguments).output().unwrap();
+    let state = temp.state();
+    let state = state.to_str().unwrap();
+    for argv in [
+        vec!["events", state, hash.as_str(), request.to_str().unwrap()],
+        vec!["logs", state, hash.as_str(), "0", "1"],
+        vec!["slo", state, hash.as_str()],
+    ] {
+        let output = run(&argv);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["productionActivation"], false);
+    }
+    let listing = temp.0.join("list.json");
+    fs::write(
+        &listing,
+        serde_json::to_vec(&WorkflowListRequestV1 {
+            version: 1,
+            workflows: vec![WorkflowReferenceV1 {
+                state_directory: temp.state(),
+                definition_hash: hash.clone(),
+            }],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(run(&["list", listing.to_str().unwrap()]).status.success());
+    fs::write(&request, r#"{"action":"slo"}"#).unwrap();
+    let rejected = run(&["events", state, hash.as_str(), request.to_str().unwrap()]);
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    assert!(
+        !run(&["logs", state, hash.as_str(), "0", "257"])
+            .status
+            .success()
+    );
+}
+
+fn assert_inspection_schema<T: serde::Serialize>(schema: &str, value: &T) {
+    let validator = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../docs/rust/tools/strict_json_schema.py");
+    let input = serde_json::to_vec(&serde_json::json!([{
+        "name": "actual-local-inspection-v1", "schema": schema,
+        "instance": serde_json::to_string(value).unwrap(),
+    }]))
+    .unwrap();
+    let mut child = Command::new("python3")
+        .arg(validator)
+        .arg("--batch-stdin")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), &input).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "schema rejected real output: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

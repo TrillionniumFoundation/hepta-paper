@@ -123,4 +123,4 @@ Current channel is `authoritative`. A new version progresses through registered/
 
 ## Open blockers
 
-- `MOD-006` — `design_ready`
+- `MOD-006` — `source_implemented`

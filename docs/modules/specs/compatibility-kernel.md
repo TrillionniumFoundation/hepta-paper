@@ -122,4 +122,4 @@ Current channel is `disabled`. A new version progresses through registered/contr
 ## Open blockers
 
 - `LEGACY-REPLAY-001` — `blocked_external`
-- `MIG-003` — `design_ready`
+- `MIG-003` — `source_implemented`

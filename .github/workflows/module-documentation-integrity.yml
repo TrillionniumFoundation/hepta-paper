@@ -53,7 +53,7 @@ jobs:
       - name: Validate one-to-one module specifications
         run: node docs/tools/validate-module-documentation.mjs
       - name: Run hostile documentation and impact tests
-        run: node --test --test-concurrency=1 paper-core/tests/module-documentation-integrity.test.mjs paper-core/tests/change-impact-summary.test.mjs
+        run: node --test --test-concurrency=1 paper-core/tests/module-documentation-integrity.test.mjs paper-core/tests/module-work-state-projection.test.mjs paper-core/tests/change-impact-summary.test.mjs
       - name: Generate pull-request impact summary
         if: github.event_name == 'pull_request'
         run: node docs/tools/generate-change-impact.mjs --base '${{ github.event.pull_request.base.sha }}' --head '${{ github.event.pull_request.head.sha }}' --output change-impact-summary.v1.json

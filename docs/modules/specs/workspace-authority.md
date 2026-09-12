@@ -119,6 +119,6 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `MIG-003` — `design_ready`
+- `MIG-003` — `source_implemented`
 - `GAP-HOST-002` — `blocked_external`
 - Effective `target_host` evidence remains deployment/external-subject specific and cannot be committed as static success.

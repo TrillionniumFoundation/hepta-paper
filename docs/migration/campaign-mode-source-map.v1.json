@@ -9,11 +9,37 @@
   "modes": [
     {
       "nodeAction": "list",
-      "scope": "unmapped",
-      "rustCommand": null,
-      "callChain": [],
-      "tests": [],
-      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow list REQUEST",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "list_local_workflows_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "inspect_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "read_local_workflow_snapshot"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_list_uses_explicit_roots_and_rejects_duplicates_and_stale_hashes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_read_commands_execute_actual_binary_and_reject_wrong_query"
+        }
+      ],
+      "remaining": "Explicit bounded local roots, each checked separately; no global production-store discovery or cross-database snapshot."
     },
     {
       "nodeAction": "status",
@@ -43,19 +69,67 @@
     },
     {
       "nodeAction": "events",
-      "scope": "unmapped",
-      "rustCommand": null,
-      "callChain": [],
-      "tests": [],
-      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow events STATE HASH REQUEST",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "inspect_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "read_local_workflow_snapshot"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/inspection.rs",
+          "symbol": "read_local_event_page"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_events_cursor_freezes_prefix_and_rejects_forged_anchors"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_read_commands_execute_actual_binary_and_reject_wrong_query"
+        }
+      ],
+      "remaining": "Hash-only local SQLite event pages; no Node production event format parity or independent event provenance."
     },
     {
       "nodeAction": "logs",
-      "scope": "unmapped",
-      "rustCommand": null,
-      "callChain": [],
-      "tests": [],
-      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow logs STATE HASH OFFSET LIMIT",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "inspect_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "read_local_workflow_snapshot"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "documented_inspection_queries_validate_real_history_without_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_read_commands_execute_actual_binary_and_reject_wrong_query"
+        }
+      ],
+      "remaining": "Committed result metadata only; no raw worker stdout, model transcripts or Node log-filter parity."
     },
     {
       "nodeAction": "pause",
@@ -283,11 +357,33 @@
     },
     {
       "nodeAction": "slo",
-      "scope": "unmapped",
-      "rustCommand": null,
-      "callChain": [],
-      "tests": [],
-      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow slo STATE HASH",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "inspect_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "read_local_workflow_snapshot"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "documented_inspection_queries_validate_real_history_without_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_read_commands_execute_actual_binary_and_reject_wrong_query"
+        }
+      ],
+      "remaining": "Local progress and cost counters only; no production latency, availability, percentile or error-budget qualification."
     },
     {
       "nodeAction": "retention-recovery-readiness",

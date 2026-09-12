@@ -35,6 +35,16 @@ independent review. Inspect exact two-tree changes; GitHub's merge-base compare
 alone cannot prove another branch has no unique behavior. Retain disposition
 records and bind their digest to the qualification subject.
 
+The same audit accepts `--dispositions PLAN --require-dispositions` for a
+closed `BranchDispositionPlanV1` bound to the exact candidate commit/tree and
+`reportSha256`. Every divergent/descendant/unrelated branch needs its exact tip,
+complete two-tree `changes`, an absorb/supersede/retain_reference/reject decision,
+owner, rationale and review-evidence digest. Missing plans exit 2; stale subjects,
+new refs, missing paths, duplicates, unknown fields and boolean approvals fail.
+This checks source bindings only: `independentReviewVerified=false` remains false
+until the external review process verifies that evidence. No tool merges refs or
+reclassifies divergent branches as accepted from a digest-shaped string.
+
 Qualification CI must read the committed tree, never create a new commit, rewrite
 work-item status, or push its own generated tree back to the candidate. Bind
 base/head/prospective-merge, workflow blobs, lockfiles, compiler/runtime identities,

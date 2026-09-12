@@ -118,4 +118,4 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `CTL-006` — `design_ready`
+- `CTL-006` — `source_implemented`

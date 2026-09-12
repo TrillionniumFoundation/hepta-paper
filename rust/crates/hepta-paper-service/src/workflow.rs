@@ -33,7 +33,13 @@ use std::{
 use thiserror::Error;
 
 mod amendment;
+mod inspection;
 pub use amendment::{WorkflowAmendmentReceiptV1, WorkflowAmendmentV1, amend_local_workflow_v1};
+pub use inspection::{
+    WorkflowCommitLogV1, WorkflowCountersV1, WorkflowInspectionDataV1, WorkflowInspectionRequestV1,
+    WorkflowInspectionV1, WorkflowListRequestV1, WorkflowListV1, WorkflowReferenceV1,
+    inspect_local_workflow_v1, list_local_workflows_v1,
+};
 
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_STEPS: usize = 128;

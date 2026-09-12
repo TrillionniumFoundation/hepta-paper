@@ -159,3 +159,60 @@ in [WORKFLOW_AMENDMENT_HANDOFF.md](WORKFLOW_AMENDMENT_HANDOFF.md). They retain t
 original immutable definition and all committed results. They do not provide live
 model author/reviewer integration, in-flight cancellation, production resource
 metering or automatic business equivalence.
+
+
+## Local operational read commands
+
+These commands project the existing local-only database and verified CAS history;
+they do not introduce another campaign registry, writer or log database:
+
+```sh
+hepta-local-workflow list LIST_REQUEST
+hepta-local-workflow events STATE HASH EVENTS_REQUEST
+hepta-local-workflow logs STATE HASH OFFSET LIMIT
+hepta-local-workflow slo STATE HASH
+```
+
+`list_local_workflows_v1` accepts version 1 and 1–128 explicit `{stateDirectory,
+definitionHash}` references. Roots must be distinct canonical private directories.
+A missing, busy, aliased, corrupted or stale entry rejects the entire response.
+Entries retain request order, omit host paths and writer tokens, and are separately
+consistent; `atomicAcrossWorkflows=false`. There is no host-wide discovery.
+
+`inspect_local_workflow_v1` verifies the original definition, amendments, saved
+plans, receipts and actual CAS bytes under the existing cooperative workflow lock.
+It does not acquire a writer lease. Inspection remains available after lease
+expiry. It never recreates missing artifacts or performs lifecycle recovery.
+
+| Command | Input | Output and boundary |
+|---|---|---|
+| `events` | Closed JSON `{action:"events", cursor:null, limit:2}`; limit 1–256. Supply the returned `nextCursor` for another page. | Hash-only SQLite event metadata. Cursor binds campaign, last delivered global sequence/hash and frozen snapshot sequence/hash. Events appended later stay outside that page series. Altered/deleted anchors or a corrupt chain fail closed. Filtering a campaign can leave global sequence gaps. Full-chain verification is capped at 100000 events, not a production retention strategy. |
+| `logs` | Absolute zero-based committed-step offset 0–128 and limit 1–256. Offset beyond current committed history fails. | Actual result/committed-state/artifact hashes and charges; `nextOffset` is null at end. No raw worker stdout, prompts, manuscript text or Node log-filter equivalence. |
+| `slo` | Exact active definition hash; no extra arguments. | Verified progress, spent/remaining budget, pending plan, structural gate and amendment counts. `productionSloQualified=false`: no invented uptime, latency percentile or production error-budget claim. |
+
+The closed [inspection request schema](schemas/local-workflow-inspection-request-v1.schema.json),
+[response schema](schemas/local-workflow-inspection-response-v1.schema.json),
+[list request schema](schemas/local-workflow-list-request-v1.schema.json), and
+[executable requests](examples/local-inspection-requests.v1.json) are part of this
+version. JSON uses snake_case action/kind values and camelCase object fields.
+Commands read at most 16 MiB of request bytes and reject unknown fields, links at
+the request leaf, invalid limits and mismatched query kinds. Filesystem, busy,
+definition and history errors use the existing redacted `WorkflowError` classes;
+CLI rejection emits no partial JSON or user-supplied diagnostic text.
+
+SQLite can coordinate existing WAL readers; read-only does not mean immutable
+sidecar bytes. Same-UID arbitrary writers remain within the existing trusted
+local boundary. These projections are not authenticated event provenance,
+production monitoring or independently accepted Node parity.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-campaign-writer local_event_
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+node --test paper-core/tests/module-work-state-projection.test.mjs
+```
+
+The workflow tests import the exact documented requests, execute real kernels
+and SQLite operations, validate real responses against the committed schemas,
+and invoke the actual CLI binary. Storage tests include cursor filtering,
+corruption, sequence relabeling, marker denial and unsafe paths. No activation,
+cutover, full parity or Node-retirement state is advanced by these tests.

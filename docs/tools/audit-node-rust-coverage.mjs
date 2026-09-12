@@ -108,7 +108,12 @@ export function auditCampaignModeMappings() {
   if (JSON.stringify(map.modes.map((row) => row.nodeAction).sort(compare)) !== JSON.stringify(actions)) {
     throw new Error('campaign action mapping missing, duplicated or drifted');
   }
-  const sources = new Set([relative, map.nodeEntrypoint]);
+  const sources = new Set([relative, map.nodeEntrypoint,
+    'docs/modules/examples/local-inspection-requests.v1.json',
+    'docs/modules/schemas/local-workflow-inspection-request-v1.schema.json',
+    'docs/modules/schemas/local-workflow-inspection-response-v1.schema.json',
+    'docs/modules/schemas/local-workflow-list-request-v1.schema.json',
+  ]);
   for (const row of map.modes) {
     if (!['partial_local_source', 'unmapped'].includes(row.scope) || !row.remaining) throw new Error('invalid mapping');
     if (row.scope === 'partial_local_source' && (!row.rustCommand || !row.callChain.length || !row.tests.length)) throw new Error('missing source mapping');

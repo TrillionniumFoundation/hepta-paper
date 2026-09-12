@@ -195,6 +195,37 @@ function validateSpec(moduleId, record, source, headings, failures) {
   }
 }
 
+
+// All work-state rows are current projections, including source-implemented rows
+// under the historical "Open blockers" heading. Never let prose grant a state.
+export function validateWorkStateProjection(moduleId, record, source, workItems) {
+  const failures = [];
+  const sections = sectionsOf(source);
+  const rows = sections.get('Open blockers');
+  if (!rows || rows.length !== 1) return [`${moduleId}: missing unique work-state projection`];
+  const seen = new Set();
+  for (const line of rows[0]) {
+    if (!line.trim() || !/^\s*-\s*`[A-Z][A-Z0-9-]*-\d/.test(line)) continue;
+    const match = /^- `([A-Z][A-Z0-9-]*-\d{3})` — `([a-z_]+)`$/.exec(line);
+    if (!match) {
+      failures.push(`${moduleId}: malformed work-state projection row`);
+      continue;
+    }
+    const [, id, claimed] = match;
+    if (seen.has(id)) failures.push(`${moduleId}: duplicate projected work item ${id}`);
+    seen.add(id);
+    if (!record.workItemIds.includes(id) || !Object.hasOwn(workItems, id)) {
+      failures.push(`${moduleId}: unrelated or unknown projected work item ${id}`);
+    } else if (workItems[id].state !== claimed) {
+      failures.push(`${moduleId}: projected ${id} state ${claimed} differs from ${workItems[id].state}`);
+    }
+  }
+  for (const id of record.workItemIds) {
+    if (!seen.has(id)) failures.push(`${moduleId}: missing projected work item ${id}`);
+  }
+  return failures;
+}
+
 function validateManifest(moduleId, record, entry, manifest, failures) {
   const scalarChecks = {
     moduleId, specPath: entry.specPath, authorityClass: record.authority,
@@ -287,6 +318,7 @@ export function validateModuleDocumentation(options = {}) {
     const entry = documented[moduleId];
     const spec = readText(root, entry.specPath, failures);
     validateSpec(moduleId, record, spec, index.value.requiredSections, failures);
+    failures.push(...validateWorkStateProjection(moduleId, record, spec, work.value.items));
     validateManifest(moduleId, record, entry, manifests.get(moduleId), failures);
     for (const configuredPath of record.paths) {
       try { canonicalPath(root, configuredPath); }

@@ -1,4 +1,6 @@
 import importlib.util
+import copy
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -71,6 +73,95 @@ class BranchAuditTests(unittest.TestCase):
             module.audit(self.root, "--help", "refs/heads/")
         with self.assertRaises(ValueError):
             module.audit(self.root, self.candidate, "--all")
+
+
+    def plan(self):
+        report = self.report()
+        side = next(row for row in report["branches"] if row["requiresDisposition"])
+        return report, {"kind": "BranchDispositionPlanV1", "schemaVersion": 1,
+            "candidateCommit": report["candidateCommit"], "candidateTree": report["candidateTree"],
+            "auditSha256": report["reportSha256"], "decisions": [{
+                "ref": side["ref"], "commit": side["commit"], "changes": side["changes"],
+                "decision": "retain_reference", "owner": "fixture-owner", "rationale": "Fixture source binding only",
+                "reviewEvidenceSha256": "sha256:" + "1" * 64}]}
+
+    def test_complete_disposition_bindings_never_manufacture_independent_review(self):
+        report, plan = self.plan()
+        result = module.validate_disposition_plan(report, plan)
+        self.assertTrue(result["dispositionBindingsComplete"])
+        self.assertFalse(result["independentReviewVerified"])
+        self.assertFalse(result["automaticMerge"])
+        self.assertEqual(report["unresolvedBranchCount"], 1)
+
+    def test_missing_disposition_stays_unplanned(self):
+        report, plan = self.plan()
+        plan["decisions"] = []
+        result = module.validate_disposition_plan(report, plan)
+        self.assertFalse(result["dispositionBindingsComplete"])
+        self.assertEqual(result["unplannedRefs"], ["refs/heads/side"])
+
+    def test_stale_subject_tip_paths_and_refset_are_rejected(self):
+        report, plan = self.plan()
+        variants = []
+        for key in ("candidateCommit", "candidateTree", "auditSha256"):
+            bad = copy.deepcopy(plan)
+            bad[key] = "0" * 40
+            variants.append(bad)
+        bad = copy.deepcopy(plan)
+        bad["decisions"][0]["changes"] = []
+        variants.append(bad)
+        bad = copy.deepcopy(plan)
+        bad["decisions"][0]["commit"] = self.base
+        variants.append(bad)
+        for bad in variants:
+            with self.assertRaises(ValueError):
+                module.validate_disposition_plan(report, bad)
+        self.command("branch", "new-branch")
+        with self.assertRaises(ValueError):
+            module.validate_disposition_plan(self.report(), plan)
+
+    def test_duplicate_dispositions_unknown_fields_and_boolean_approval_rejected(self):
+        report, plan = self.plan()
+        variants = []
+        bad = copy.deepcopy(plan)
+        bad["decisions"] *= 2
+        variants.append(bad)
+        bad = copy.deepcopy(plan)
+        bad["productionActivation"] = True
+        variants.append(bad)
+        bad = copy.deepcopy(plan)
+        bad["decisions"][0]["reviewEvidenceSha256"] = True
+        variants.append(bad)
+        bad = copy.deepcopy(plan)
+        bad["decisions"][0]["decision"] = "auto_merge"
+        variants.append(bad)
+        for bad in variants:
+            with self.assertRaises(ValueError):
+                module.validate_disposition_plan(report, bad)
+
+    def test_plan_json_rejects_duplicate_keys_nonfinite_values_and_symlinks(self):
+        plan = self.root / "plan.json"
+        for text in ('{"kind":1,"kind":2}', '{"value":NaN}'):
+            plan.write_text(text)
+            with self.assertRaises(ValueError):
+                module.read_disposition_plan(plan)
+        alias = self.root / "alias.json"
+        alias.symlink_to(plan)
+        with self.assertRaises(OSError):
+            module.read_disposition_plan(alias)
+
+    def test_cli_requires_dispositions_without_modifying_refs(self):
+        args = ["python3", str(Path(module.__file__)), "--root", str(self.root),
+                "--candidate", self.candidate, "--ref-prefix", "refs/heads/", "--require-dispositions"]
+        result = subprocess.run(args, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 2)
+        report, plan = self.plan()
+        path = self.root / "plan.json"
+        path.write_text(json.dumps(plan))
+        result = subprocess.run([*args, "--dispositions", str(path)], capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(json.loads(result.stdout)["dispositions"]["independentReviewVerified"])
+        self.assertEqual(self.command("rev-parse", "HEAD"), report["candidateCommit"])
 
 
 if __name__ == "__main__":

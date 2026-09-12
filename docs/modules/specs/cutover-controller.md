@@ -126,5 +126,5 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `MIG-005` — `design_ready`
-- `MIG-006` — `design_ready`
+- `MIG-005` — `source_implemented`
+- `MIG-006` — `source_implemented`

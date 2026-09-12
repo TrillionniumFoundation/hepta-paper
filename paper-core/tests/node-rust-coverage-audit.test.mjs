@@ -63,7 +63,7 @@ test('all declared campaign action modes retain source mapping or explicit gaps'
   assert.equal(modes.productionActivation, false);
   assert.equal(modes.nodeRetirement, false);
   assert.equal(modes.modes.length, 15);
-  assert.equal(modes.modes.filter((row) => row.scope === 'partial_local_source').length, 7);
+  assert.equal(modes.modes.filter((row) => row.scope === 'partial_local_source').length, 11);
   assert.equal(new Set(modes.modes.map((row) => row.nodeAction)).size, modes.modes.length);
   assert.ok(modes.modes.find((row) => row.nodeAction === 'cancel-node').scope === 'unmapped');
   assert.ok(modes.modes.find((row) => row.nodeAction === 'resume').remaining.includes('not equivalent'));

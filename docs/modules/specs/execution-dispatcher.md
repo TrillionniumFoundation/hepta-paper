@@ -125,5 +125,5 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `CTL-005` — `design_ready`
-- `MOD-003` — `design_ready`
+- `CTL-005` — `source_implemented`
+- `MOD-003` — `source_implemented`

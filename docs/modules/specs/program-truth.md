@@ -122,5 +122,5 @@ Current channel is `disabled`. A new version progresses through registered/contr
 - `SYS-002` — `source_implemented`
 - `SYS-003` — `source_implemented`
 - `SYS-004` — `source_implemented`
-- `SYS-005` — `design_ready`
+- `SYS-005` — `source_implemented`
 - `SYS-006` — `source_implemented`

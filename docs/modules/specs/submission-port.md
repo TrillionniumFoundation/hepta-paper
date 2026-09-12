@@ -121,7 +121,9 @@ composition boundary. The operator performs source preflight before allocating
 its verification context, and closes its returned persistence context and owned
 temporary root in a `finally` path. Executable identity is checked for local
 byte drift only; an observed hash is not an authorized companion version or a
-proof of the transitive dependency graph. Issue #55 retains that requirement.
+proof of the transitive dependency graph. Issue #55 closed the repository-local
+technical-companion reproducibility scope on 2026-09-10; live credentials,
+remote reconciliation and external authority remain under #17, #21 and #22.
 
 The shared direct-child invocation has a 10,000 ms default/maximum timeout,
 SIGKILL timeout signal, no shell, 65,536-byte stdout/stderr capture bounds, and
@@ -177,4 +179,4 @@ Current channel is `disabled`. Promotion follows disabled → shadow/read-only c
 
 - `SUBMIT-001` — `source_implemented`
 - Effective `external_authority` evidence remains deployment/external-subject specific and cannot be committed as static success.
-- Provider sandbox dependency reproducibility remains open in issue #55: an accessible authoritative companion, immutable source/dependency identity, explicit provisioning, and current-head real integration evidence are still required. Lifecycle regression success does not close this blocker.
+- Production provider qualification remains open under #17, #21 and #22. The repository-local technical companion covered by closed issue #55 is deterministic and non-authorizing; it is not evidence of real credentials, remote reconciliation or submission authority.

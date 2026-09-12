@@ -4,6 +4,10 @@
 mod workflow_amendment;
 use workflow_amendment::LOCAL_WORKFLOW_AMENDMENT_SCHEMA_V1;
 
+#[path = "inspection.rs"]
+mod inspection;
+pub use inspection::{LocalEventCursorV1, LocalEventPageV1, LocalEventV1};
+
 use std::collections::BTreeSet;
 
 use super::*;

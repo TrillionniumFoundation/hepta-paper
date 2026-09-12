@@ -104,15 +104,98 @@ def audit(root, candidate="HEAD", prefix="refs/remotes/origin/"):
     return result
 
 
+
+def validate_disposition_plan(report, plan):
+    """Validate exact source bindings, NOT the truth/independence of a review.
+
+    The audit stays unresolved until external review accepts the dispositions.
+    A digest-shaped reference, owner name or complete plan cannot grant approval.
+    """
+    required = {"kind", "schemaVersion", "candidateCommit", "candidateTree", "auditSha256", "decisions"}
+    if not isinstance(plan, dict) or set(plan) != required:
+        raise ValueError("closed disposition plan required")
+    if plan["kind"] != "BranchDispositionPlanV1" or type(plan["schemaVersion"]) is not int or plan["schemaVersion"] != 1:
+        raise ValueError("invalid disposition plan version")
+    for field, actual in (("candidateCommit", report["candidateCommit"]), ("candidateTree", report["candidateTree"]), ("auditSha256", report["reportSha256"])):
+        if plan[field] != actual:
+            raise ValueError("stale disposition subject: " + field)
+    decisions = plan["decisions"]
+    if not isinstance(decisions, list) or len(decisions) > 4096:
+        raise ValueError("disposition plan exceeds bound")
+    expected = {row["ref"]: row for row in report["branches"] if row["requiresDisposition"]}
+    seen = set()
+    fields = {"ref", "commit", "decision", "changes", "owner", "rationale", "reviewEvidenceSha256"}
+    for row in decisions:
+        if not isinstance(row, dict) or set(row) != fields:
+            raise ValueError("closed disposition record required")
+        name = row["ref"]
+        if not isinstance(name, str) or name not in expected or name in seen:
+            raise ValueError("unknown, duplicate or unnecessary branch disposition")
+        seen.add(name)
+        baseline = expected[name]
+        if row["commit"] != baseline["commit"] or row["changes"] != baseline["changes"]:
+            raise ValueError("disposition must bind exact tip and all two-tree changes")
+        if row["decision"] not in ("absorb", "supersede", "retain_reference", "reject"):
+            raise ValueError("unknown disposition decision")
+        for key, limit in (("owner", 128), ("rationale", 8192)):
+            value = row[key]
+            if not isinstance(value, str) or not value.strip() or len(value.encode("utf-8")) > limit or any(ord(c) < 32 for c in value):
+                raise ValueError("invalid disposition " + key)
+        evidence = row["reviewEvidenceSha256"]
+        if not isinstance(evidence, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", evidence):
+            raise ValueError("review evidence digest required, not a boolean approval")
+    return {"kind": "BranchDispositionBindingCheckV1", "boundDecisionCount": len(seen),
+            "unplannedRefs": sorted(set(expected) - seen),
+            "dispositionBindingsComplete": set(expected) == seen,
+            "independentReviewVerified": False, "automaticMerge": False,
+            "productionActivationVerified": False}
+
+
+def read_disposition_plan(path):
+    import os
+    import stat
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_BYTES:
+            raise ValueError("invalid disposition plan file")
+        raw = stream.read(MAX_BYTES + 1)
+        after = os.fstat(stream.fileno())
+        if len(raw) > MAX_BYTES or (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError("disposition plan changed while reading")
+    def pairs(values):
+        result = {}
+        for key, value in values:
+            if key in result:
+                raise ValueError("duplicate JSON key in disposition plan")
+            result[key] = value
+        return result
+    def constant(_):
+        raise ValueError("non-finite JSON value in disposition plan")
+    return json.loads(raw.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".")
     parser.add_argument("--candidate", default="HEAD")
     parser.add_argument("--ref-prefix", default="refs/remotes/origin/", choices=("refs/remotes/origin/", "refs/heads/"))
+    parser.add_argument("--dispositions", help="external exact-audit disposition plan; no review authority inferred")
+    parser.add_argument("--require-dispositions", action="store_true", help="exit 2 if source disposition bindings are incomplete")
     args = parser.parse_args()
     try:
-        print(json.dumps(audit(args.root, args.candidate, args.ref_prefix), indent=2))
-    except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+        report = audit(args.root, args.candidate, args.ref_prefix)
+        binding = validate_disposition_plan(report, read_disposition_plan(args.dispositions)) if args.dispositions else {
+            "kind": "BranchDispositionBindingCheckV1", "boundDecisionCount": 0,
+            "unplannedRefs": [row["ref"] for row in report["branches"] if row["requiresDisposition"]],
+            "dispositionBindingsComplete": report["unresolvedBranchCount"] == 0,
+            "independentReviewVerified": False, "automaticMerge": False,
+            "productionActivationVerified": False,
+        }
+        print(json.dumps({"audit": report, "dispositions": binding} if args.dispositions or args.require_dispositions else report, indent=2))
+        if args.require_dispositions and not binding["dispositionBindingsComplete"]:
+            return 2
+    except (ValueError, OSError, subprocess.TimeoutExpired, RecursionError) as error:
         print("branch-audit: " + str(error), file=sys.stderr)
         return 1
     return 0

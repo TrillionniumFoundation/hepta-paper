@@ -120,8 +120,8 @@ Current channel is `disabled`. A new version progresses through registered/contr
 ## Open blockers
 
 - `MOD-001` — `source_implemented`
-- `MOD-004` — `design_ready`
-- `MOD-005` — `design_ready`
+- `MOD-004` — `source_implemented`
+- `MOD-005` — `source_implemented`
 - `MOD-007` — `blocked_external`
 - `MOD-008` — `source_implemented`
 - `ORG-001` — `design_ready`

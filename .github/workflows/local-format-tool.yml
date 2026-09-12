@@ -7,20 +7,29 @@ permissions:
 jobs:
   formatter:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Materialize the repository-pinned formatter without repository mutation
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Retain only public pinned toolchain and crates without credential files
         shell: bash
+        env:
+          CARGO_HOME: ${{ runner.temp }}/public-cargo-inputs
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
           root="$(dirname "$(dirname "$(rustup which --toolchain 1.98.0 rustfmt)")")"
           mkdir -p "$RUNNER_TEMP/pinned-formatter"
           "$root/bin/rustfmt" --version > "$RUNNER_TEMP/pinned-formatter/version.txt"
+          "$root/bin/rustc" --version --verbose > "$RUNNER_TEMP/pinned-formatter/rustc.txt"
           ldd "$root/bin/rustfmt" > "$RUNNER_TEMP/pinned-formatter/linkage.txt"
-          tar -czf "$RUNNER_TEMP/pinned-formatter/tool.tar.gz" -C "$root" bin/rustfmt lib
+          RUSTC="$root/bin/rustc" "$root/bin/cargo" fetch --manifest-path rust/Cargo.toml --locked
+          tar -czf "$RUNNER_TEMP/pinned-formatter/tool.tar.gz" -C "$root" bin lib
+          tar -czf "$RUNNER_TEMP/pinned-formatter/public-registry.tar.gz" -C "$CARGO_HOME" registry
           cd "$RUNNER_TEMP/pinned-formatter"
-          sha256sum tool.tar.gz > SHA256SUMS
+          sha256sum tool.tar.gz public-registry.tar.gz > SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pinned-rustfmt-1.98.0-${{ github.sha }}

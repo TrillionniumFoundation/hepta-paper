@@ -580,10 +580,8 @@ impl CommitSequencerV1 for SqliteCommitSequencerV1 {
 pub fn replay_control_log_v1(
     log: &hepta_campaign_writer::DurableControlLogV1,
 ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError> {
-    let mut state = FixtureCommitSequencerV1::new(
-        log.initial_state_hash.clone(),
-        log.verifier_hash.clone(),
-    );
+    let mut state =
+        FixtureCommitSequencerV1::new(log.initial_state_hash.clone(), log.verifier_hash.clone());
     let mut receipts = Vec::with_capacity(log.entries.len());
     let mut attempts = BTreeSet::new();
     for entry in &log.entries {
@@ -592,7 +590,8 @@ pub fn replay_control_log_v1(
                 .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
         let expected: CommitReceiptV1 = serde_json::from_str(&entry.receipt_json)
             .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
-        let result_hash = result.result_hash()
+        let result_hash = result
+            .result_hash()
             .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
         if entry.sequence != state.next_sequence
             || entry.result_hash != result_hash
@@ -614,7 +613,8 @@ pub fn replay_control_log_v1(
             verification_receipt_hash,
             artifact_contents_verified: false,
         };
-        let actual = state.apply_commit(&CommitRequestV1::new(entry.plan_hash.clone(), verified)?)?;
+        let actual =
+            state.apply_commit(&CommitRequestV1::new(entry.plan_hash.clone(), verified)?)?;
         if actual != expected || !actual.newly_committed {
             return Err(ControlPlaneError::PersistenceInvalid);
         }

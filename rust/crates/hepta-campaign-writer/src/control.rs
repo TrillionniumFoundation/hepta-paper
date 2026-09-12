@@ -88,7 +88,8 @@ impl CampaignWriterStoreV1 {
         let log = load_log(&connection, campaign_id)?;
         let clock_floor = from_i64(connection.query_row(
             "SELECT updated_at_unix_ms FROM campaigns WHERE campaign_id=?1",
-            [campaign_id], |row| row.get(0),
+            [campaign_id],
+            |row| row.get(0),
         )?)?;
         connection.execute_batch("COMMIT;")?;
         let after = fs::symlink_metadata(path.as_ref())

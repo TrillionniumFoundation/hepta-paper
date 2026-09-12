@@ -41,6 +41,12 @@ jobs:
           git rev-parse HEAD > /tmp/hepta-exact-evidence/head.txt
           git rev-parse HEAD^{tree} > /tmp/hepta-exact-evidence/tree.txt
           git archive --format=tar.gz HEAD > /tmp/hepta-exact-evidence/source.tar.gz
+          # Only public repository refs/objects, never credentials or worktree inputs.
+          git for-each-ref --format='%(objectname) %(refname)' refs/remotes/origin > /tmp/hepta-exact-evidence/public-ref-heads.txt
+          test -s /tmp/hepta-exact-evidence/public-ref-heads.txt
+          git bundle create /tmp/hepta-exact-evidence/public-branches.bundle --remotes=origin
+          git bundle verify /tmp/hepta-exact-evidence/public-branches.bundle > /tmp/hepta-exact-evidence/public-bundle-verification.log 2>&1
+          sha256sum /tmp/hepta-exact-evidence/public-branches.bundle > /tmp/hepta-exact-evidence/public-branches.sha256
           rustc --version --verbose > /tmp/hepta-exact-evidence/rustc.txt
           cargo --version --verbose > /tmp/hepta-exact-evidence/cargo.txt
           node --version > /tmp/hepta-exact-evidence/node.txt

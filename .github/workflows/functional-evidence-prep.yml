@@ -82,6 +82,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-campaign-writer workflow_amendment -- --nocapture 2>&1 | tee /tmp/hepta-exact-evidence/workflow-amendment-storage.log
           cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow -- --nocapture 2>&1 | tee /tmp/hepta-exact-evidence/local-workflow.log
       - name: Validate documentation without modifying source
         if: ${{ !cancelled() && steps.subject.outcome == 'success' }}

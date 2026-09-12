@@ -781,3 +781,426 @@ fn symlinked_definition_and_contending_process_lock_are_rejected() {
     std::os::unix::fs::symlink(&moved, definition).unwrap();
     assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Status, 0).is_err());
 }
+
+fn amendment(revision: u64) -> WorkflowAmendmentV1 {
+    let mut request: WorkflowAmendmentV1 = serde_json::from_str(include_str!(
+        "../../../../docs/modules/examples/workflow-amendment.v1.json"
+    ))
+    .unwrap();
+    request.expected_revision = revision;
+    request
+}
+
+#[test]
+fn budget_and_lease_amendment_replay_is_exact_and_history_survives_old_expiry() {
+    let (temp, hash) = fixture();
+    let before = operate_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowActionV1::Advance { through_steps: 3 },
+        1100,
+    )
+    .unwrap();
+    let frozen = fs::read(temp.state().join("workflow.json")).unwrap();
+    let request = amendment(before.campaign_revision);
+    let applied = amend_local_workflow_v1(&temp.state(), &hash, request.clone(), 1200).unwrap();
+    assert_eq!(applied.committed_steps, 3);
+    assert_eq!(applied.applied_revision, before.campaign_revision + 1);
+    assert_eq!(
+        amend_local_workflow_v1(&temp.state(), &hash, request.clone(), 900_000).unwrap(),
+        applied
+    );
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Status, 0).is_err());
+    let now = status(&temp, &applied.definition_hash);
+    assert_eq!(now.budget_remaining_microusd, 147);
+    assert_eq!(now.artifacts_by_step, before.artifacts_by_step);
+    let mut conflict = request;
+    conflict.additional_budget_microusd += 1;
+    assert!(amend_local_workflow_v1(&temp.state(), &hash, conflict, 1300).is_err());
+    let done = operate_local_workflow_v1(
+        &temp.state(),
+        &applied.definition_hash,
+        WorkflowActionV1::Advance { through_steps: 7 },
+        150_000,
+    )
+    .unwrap();
+    assert_eq!(done.budget_remaining_microusd, 143);
+    assert_eq!(done.campaign_state, CampaignStateV1::Completed);
+    assert_eq!(
+        fs::read(temp.state().join("workflow.json")).unwrap(),
+        frozen
+    );
+    let public = serde_json::to_string(&applied).unwrap();
+    assert!(!public.contains("local-writer-token") && !public.contains("jobTemplate"));
+    assert!(
+        !applied.production_activation
+            && !applied.scientific_acceptance
+            && !applied.node_retirement_verified
+    );
+}
+
+#[test]
+fn appended_step_executes_once_without_replaying_committed_prefix() {
+    let (temp, hash) = fixture();
+    let before = operate_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowActionV1::Advance { through_steps: 3 },
+        1100,
+    )
+    .unwrap();
+    let mut request = amendment(before.campaign_revision);
+    let mut extra = steps()[0].clone();
+    extra.id = "extra-measurement".into();
+    request.steps.push(extra);
+    let applied = amend_local_workflow_v1(&temp.state(), &hash, request, 1200).unwrap();
+    let done = operate_local_workflow_v1(
+        &temp.state(),
+        &applied.definition_hash,
+        WorkflowActionV1::Advance { through_steps: 8 },
+        1300,
+    )
+    .unwrap();
+    assert_eq!(done.total_steps, 8);
+    assert_eq!(done.committed_steps, 8);
+    assert_eq!(done.budget_remaining_microusd, 142);
+    for (id, values) in before.artifacts_by_step {
+        assert_eq!(done.artifacts_by_step[&id], values);
+    }
+    let count = attempt_count(&temp);
+    let replay = operate_local_workflow_v1(
+        &temp.state(),
+        &applied.definition_hash,
+        WorkflowActionV1::Advance { through_steps: 8 },
+        1400,
+    )
+    .unwrap();
+    assert_eq!(replay.campaign_revision, done.campaign_revision);
+    assert_eq!(attempt_count(&temp), count);
+}
+
+#[test]
+fn amendments_preserve_pause_and_reject_stale_terminal_expired_and_pending_subjects() {
+    let (temp, hash) = fixture();
+    let paused = operate_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowActionV1::Pause {
+            expected_revision: 0,
+        },
+        1100,
+    )
+    .unwrap();
+    assert!(amend_local_workflow_v1(&temp.state(), &hash, amendment(0), 1200).is_err());
+    assert!(
+        amend_local_workflow_v1(
+            &temp.state(),
+            &hash,
+            amendment(paused.campaign_revision),
+            100_001
+        )
+        .is_err()
+    );
+    let applied = amend_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        amendment(paused.campaign_revision),
+        1200,
+    )
+    .unwrap();
+    let now = status(&temp, &applied.definition_hash);
+    assert_eq!(now.campaign_state, CampaignStateV1::Paused);
+    assert!(
+        operate_local_workflow_v1(
+            &temp.state(),
+            &applied.definition_hash,
+            WorkflowActionV1::Advance { through_steps: 1 },
+            1300
+        )
+        .is_err()
+    );
+    let cancelled = operate_local_workflow_v1(
+        &temp.state(),
+        &applied.definition_hash,
+        WorkflowActionV1::Cancel {
+            expected_revision: now.campaign_revision,
+        },
+        1300,
+    )
+    .unwrap();
+    let mut request = amendment(cancelled.campaign_revision);
+    request.operation_id = "another".into();
+    assert!(
+        amend_local_workflow_v1(&temp.state(), &applied.definition_hash, request, 1400).is_err()
+    );
+    let (pending, pending_hash) = fixture();
+    fs::write(
+        pending.state().join("step-0000.json"),
+        b"interrupted intent",
+    )
+    .unwrap();
+    assert!(matches!(
+        amend_local_workflow_v1(&pending.state(), &pending_hash, amendment(0), 1100),
+        Err(WorkflowError::Reconciliation)
+    ));
+    assert_eq!(
+        status(&pending, &pending_hash).budget_remaining_microusd,
+        100
+    );
+}
+
+fn rejected_fixture() -> (Temp, hepta_codex_protocol::Sha256Digest) {
+    let temp = Temp::new();
+    let mut def = definition(&temp);
+    def.steps[3].job_template["job"]["title"] = serde_json::json!("FORBIDDEN");
+    def.steps[4].job_template["job"]["policy"]["forbiddenMarkers"] =
+        serde_json::json!(["FORBIDDEN"]);
+    let hash = initialize_local_workflow_v1(def).unwrap();
+    assert!(matches!(
+        operate_local_workflow_v1(
+            &temp.state(),
+            &hash,
+            WorkflowActionV1::Advance { through_steps: 7 },
+            1100
+        ),
+        Err(WorkflowError::GateRejected)
+    ));
+    (temp, hash)
+}
+fn repair_request(revision: u64) -> WorkflowAmendmentV1 {
+    let mut request = amendment(revision);
+    request.repair_rejected_review = true;
+    let mut suffix = steps()[3..].to_vec();
+    suffix[0].id = "author-revised".into();
+    suffix[1].id = "reviewer-revised".into();
+    suffix[1].job_template["job"]["policy"]["forbiddenMarkers"] = serde_json::json!(["FORBIDDEN"]);
+    for step in &mut suffix {
+        for binding in &mut step.bindings {
+            if binding.from_step == "author" {
+                binding.from_step = "author-revised".into();
+            }
+            if binding.from_step == "reviewer" {
+                binding.from_step = "reviewer-revised".into();
+            }
+        }
+        if let Some(gate) = &mut step.gate {
+            gate.subject_step = "author-revised".into();
+        }
+    }
+    request.steps = suffix;
+    request
+}
+
+#[test]
+fn rejected_review_can_be_repaired_only_by_fresh_bound_author_and_same_policy_review() {
+    let (temp, hash) = rejected_fixture();
+    let before = status(&temp, &hash);
+    assert_eq!(before.committed_steps, 5);
+    assert!(before.gate_rejected);
+    let request = repair_request(before.campaign_revision);
+    let applied = amend_local_workflow_v1(&temp.state(), &hash, request, 1200).unwrap();
+    let author = operate_local_workflow_v1(
+        &temp.state(),
+        &applied.definition_hash,
+        WorkflowActionV1::Advance { through_steps: 6 },
+        1300,
+    )
+    .unwrap();
+    assert!(author.gate_rejected); // Repair input alone does not clear rejection.
+    assert!(!author.artifacts_by_step.contains_key("build"));
+    let done = operate_local_workflow_v1(
+        &temp.state(),
+        &applied.definition_hash,
+        WorkflowActionV1::Advance { through_steps: 9 },
+        1400,
+    )
+    .unwrap();
+    assert_eq!(done.committed_steps, 9);
+    assert!(!done.gate_rejected);
+    assert_eq!(done.budget_remaining_microusd, 141);
+    assert_ne!(
+        done.artifacts_by_step["author"],
+        done.artifacts_by_step["author-revised"]
+    );
+    for (id, values) in before.artifacts_by_step {
+        assert_eq!(done.artifacts_by_step[&id], values);
+    }
+    assert!(!done.scientific_acceptance);
+}
+
+#[test]
+fn repair_cannot_weaken_rubric_bypass_review_or_package_rejected_manuscript() {
+    let (temp, hash) = rejected_fixture();
+    let before = status(&temp, &hash);
+    for mutation in 0..4 {
+        let mut request = repair_request(before.campaign_revision);
+        match mutation {
+            0 => {
+                request.steps[1].job_template["job"]["policy"]["forbiddenMarkers"] =
+                    serde_json::json!([])
+            }
+            1 => {
+                request.steps.remove(1);
+            }
+            2 => request.steps[2].bindings[0].from_step = "author".into(),
+            _ => request.steps[1].bindings[0].from_step = "author".into(),
+        }
+        assert!(amend_local_workflow_v1(&temp.state(), &hash, request, 1200).is_err());
+        assert_eq!(
+            status(&temp, &hash).campaign_revision,
+            before.campaign_revision
+        );
+    }
+    assert!(
+        amend_local_workflow_v1(
+            &temp.state(),
+            &hash,
+            amendment(before.campaign_revision),
+            1200
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn another_negative_review_blocks_packaging_and_keeps_both_rejections() {
+    let (temp, hash) = rejected_fixture();
+    let before = status(&temp, &hash);
+    let mut request = repair_request(before.campaign_revision);
+    request.steps[0].job_template["job"]["title"] = serde_json::json!("Still FORBIDDEN");
+    let applied = amend_local_workflow_v1(&temp.state(), &hash, request, 1200).unwrap();
+    assert!(matches!(
+        operate_local_workflow_v1(
+            &temp.state(),
+            &applied.definition_hash,
+            WorkflowActionV1::Advance { through_steps: 9 },
+            1300
+        ),
+        Err(WorkflowError::GateRejected)
+    ));
+    let stopped = status(&temp, &applied.definition_hash);
+    assert_eq!(stopped.committed_steps, 7);
+    assert!(stopped.gate_rejected);
+    assert!(!stopped.artifacts_by_step.contains_key("build"));
+    assert!(
+        stopped.artifacts_by_step.contains_key("reviewer")
+            && stopped.artifacts_by_step.contains_key("reviewer-revised")
+    );
+}
+
+#[test]
+fn local_amend_cli_has_bounded_redacted_output_and_rejects_unknown_fields() {
+    let (temp, hash) = fixture();
+    let file = temp.0.join("amend.json");
+    fs::write(&file, serde_json::to_vec(&amendment(0)).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-local-workflow"))
+        .args([
+            "amend",
+            temp.state().to_str().unwrap(),
+            hash.as_str(),
+            file.to_str().unwrap(),
+            "1100",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let receipt: WorkflowAmendmentReceiptV1 = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        !String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("local-writer-token")
+    );
+    assert_eq!(
+        status(&temp, &receipt.definition_hash).budget_remaining_microusd,
+        150
+    );
+    let mut invalid = serde_json::to_value(amendment(receipt.applied_revision)).unwrap();
+    invalid["productionActivation"] = serde_json::json!(true);
+    fs::write(&file, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    assert!(
+        !Command::new(env!("CARGO_BIN_EXE_hepta-local-workflow"))
+            .args([
+                "amend",
+                temp.state().to_str().unwrap(),
+                receipt.definition_hash.as_str(),
+                file.to_str().unwrap(),
+                "1200"
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+#[test]
+fn amendment_subprocess_waits_after_commit() {
+    let Ok(root) = std::env::var("HEPTA_AMEND_TEST_ROOT") else {
+        return;
+    };
+    let hash = std::env::var("HEPTA_AMEND_TEST_HASH")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let request: WorkflowAmendmentV1 = serde_json::from_slice(
+        &fs::read(Path::new(&root).parent().unwrap().join("request.json")).unwrap(),
+    )
+    .unwrap();
+    let receipt = amend_local_workflow_v1(Path::new(&root), &hash, request, 1200).unwrap();
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    loop {
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
+#[test]
+fn sigkill_after_amendment_commit_recovers_one_budget_increase_and_one_definition() {
+    let (temp, hash) = fixture();
+    let before = operate_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowActionV1::Advance { through_steps: 3 },
+        1100,
+    )
+    .unwrap();
+    let request = amendment(before.campaign_revision);
+    fs::write(
+        temp.0.join("request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "amendment_subprocess_waits_after_commit",
+            "--nocapture",
+        ])
+        .env("HEPTA_AMEND_TEST_ROOT", temp.state())
+        .env("HEPTA_AMEND_TEST_HASH", hash.as_str())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let receipt = loop {
+        let mut line = String::new();
+        assert!(reader.read_line(&mut line).unwrap() > 0);
+        if let Ok(value) = serde_json::from_str::<WorkflowAmendmentReceiptV1>(&line) {
+            break value;
+        }
+    };
+    child.kill().unwrap();
+    assert!(!child.wait().unwrap().success());
+    assert_eq!(
+        amend_local_workflow_v1(&temp.state(), &hash, request, 1300).unwrap(),
+        receipt
+    );
+    let done = operate_local_workflow_v1(
+        &temp.state(),
+        &receipt.definition_hash,
+        WorkflowActionV1::Advance { through_steps: 7 },
+        1400,
+    )
+    .unwrap();
+    assert_eq!(done.budget_remaining_microusd, 143);
+    assert_eq!(done.committed_steps, 7);
+}

@@ -32,6 +32,9 @@ use std::{
 };
 use thiserror::Error;
 
+mod amendment;
+pub use amendment::{WorkflowAmendmentReceiptV1, WorkflowAmendmentV1, amend_local_workflow_v1};
+
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_STEPS: usize = 128;
 
@@ -122,6 +125,8 @@ pub struct WorkflowProgressV1 {
     pub artifacts_by_step: BTreeMap<String, Vec<Sha256Digest>>,
     pub pending_step: bool,
     pub gate_rejected: bool,
+    pub amendment_count: usize,
+    pub repair_allowed_through_steps: Option<usize>,
     pub production_activation: bool,
     pub scientific_acceptance: bool,
     pub node_retirement_verified: bool,
@@ -148,7 +153,7 @@ pub enum WorkflowError {
     Service(#[from] ServiceError),
 }
 
-fn bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, WorkflowError> {
+fn bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, WorkflowError> {
     let value = serde_json::to_vec(value).map_err(|_| WorkflowError::Definition)?;
     if value.len() > MAX_BYTES {
         return Err(WorkflowError::Definition);
@@ -576,6 +581,9 @@ struct History {
     receipts: Vec<CommitReceiptV1>,
     rejected: bool,
     clock_floor: u64,
+    repair_end: Option<usize>,
+    active_definition: LocalWorkflowV1,
+    changes: Vec<amendment::AppliedLocalWorkflowChangeV1>,
 }
 fn history(
     definition: &LocalWorkflowV1,
@@ -583,13 +591,30 @@ fn history(
     objects: &ObjectStoreV1,
 ) -> Result<History, WorkflowError> {
     let t = &definition.template;
-    let (campaign, log, clock_floor) = CampaignWriterStoreV1::read_local_control_snapshot(
-        t.state_directory.join("campaign.sqlite"),
-        CampaignWriterPolicyV1::strict(owner),
-        &t.snapshot.campaign_id,
-    )
-    .map_err(|_| WorkflowError::History)?;
-    if log.entries.len() > definition.steps.len()
+    let (campaign, log, clock_floor, changes) =
+        CampaignWriterStoreV1::read_local_workflow_snapshot(
+            t.state_directory.join("campaign.sqlite"),
+            CampaignWriterPolicyV1::strict(owner),
+            &t.snapshot.campaign_id,
+        )
+        .map_err(|_| WorkflowError::History)?;
+    let changes = changes
+        .iter()
+        .map(|text| {
+            serde_json::from_str::<amendment::AppliedLocalWorkflowChangeV1>(text)
+                .map_err(|_| WorkflowError::History)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut versions = vec![definition.clone()];
+    for record in &changes {
+        if record.applied_revision > campaign.revision || record.recorded_at_unix_ms > clock_floor {
+            return Err(WorkflowError::History);
+        }
+        let next =
+            amendment::validate_transition(versions.last().ok_or(WorkflowError::History)?, record)?;
+        versions.push(next);
+    }
+    if log.entries.len() > versions.last().ok_or(WorkflowError::History)?.steps.len()
         || log.initial_state_hash != t.initial_state_hash
         || log.verifier_hash != t.verifier_hash
     {
@@ -600,13 +625,29 @@ fn history(
     let mut prior = t.initial_state_hash.clone();
     let mut budget = t.snapshot.budget_microusd;
     let mut rejected = false;
+    let mut repair_end = None;
+    let mut applied = 0usize;
     for (index, entry) in log.entries.iter().enumerate() {
-        if rejected {
-            return Err(WorkflowError::History);
-        }
         let saved: ServiceRunV1 =
             serde_json::from_slice(&read_record(&plan_path(&t.state_directory, index), owner)?)
                 .map_err(|_| WorkflowError::History)?;
+        while applied < changes.len()
+            && changes[applied].applied_revision < saved.snapshot.campaign_revision
+        {
+            amendment::apply_history_change(
+                &versions,
+                &changes,
+                &mut applied,
+                index,
+                &mut budget,
+                rejected,
+                &mut repair_end,
+            )?;
+        }
+        if rejected && repair_end.is_none_or(|end| index >= end) {
+            return Err(WorkflowError::History);
+        }
+        let definition = &versions[applied];
         let job = payload(definition, index, &results, objects)?;
         // A missing payload is corruption. Read-only status never recreates it.
         objects.read(
@@ -655,7 +696,23 @@ fn history(
             .ok_or(WorkflowError::History)?;
         prior = receipts[index].committed_state_hash.clone();
         results.push(result);
-        rejected = !gate_passes(definition, index, &results, objects)?;
+        if definition.steps[index].gate.is_some() {
+            rejected = !gate_passes(definition, index, &results, objects)?;
+            if !rejected {
+                repair_end = None;
+            }
+        }
+    }
+    while applied < changes.len() {
+        amendment::apply_history_change(
+            &versions,
+            &changes,
+            &mut applied,
+            log.entries.len(),
+            &mut budget,
+            rejected,
+            &mut repair_end,
+        )?;
     }
     if campaign.budget_remaining_microusd != budget {
         return Err(WorkflowError::History);
@@ -666,6 +723,9 @@ fn history(
         receipts,
         rejected,
         clock_floor,
+        repair_end,
+        active_definition: versions.pop().ok_or(WorkflowError::History)?,
+        changes,
     })
 }
 
@@ -690,6 +750,10 @@ fn progress(
         pending_step: plan_path(&definition.template.state_directory, history.results.len())
             .exists(),
         gate_rejected: history.rejected,
+        amendment_count: history.changes.len(),
+        repair_allowed_through_steps: history
+            .repair_end
+            .filter(|end| history.results.len() < *end),
         production_activation: false,
         scientific_acceptance: false,
         node_retirement_verified: false,
@@ -732,7 +796,7 @@ pub fn operate_local_workflow_v1(
         serde_json::from_slice(&read_record(&root.join("workflow.json"), owner)?)
             .map_err(|_| WorkflowError::Definition)?;
     definition.validate()?;
-    if &hash(&definition)? != expected_definition || definition.template.state_directory != root {
+    if definition.template.state_directory != root {
         return Err(WorkflowError::Definition);
     }
     // Existing child directories must exist. Status does not initialize/repair them.
@@ -740,6 +804,11 @@ pub fn operate_local_workflow_v1(
     private_root(&root.join("attempts"))?;
     let objects = ObjectStoreV1::open(root)?;
     let mut observed = history(&definition, owner, &objects)?;
+    let original = definition;
+    let definition = observed.active_definition.clone();
+    if &hash(&definition)? != expected_definition {
+        return Err(WorkflowError::Definition);
+    }
     if !matches!(action, WorkflowActionV1::Status)
         && (now < observed.clock_floor
             || now >= definition.template.writer_lease.expires_at_unix_ms)
@@ -752,7 +821,11 @@ pub fn operate_local_workflow_v1(
             if through_steps == 0 || through_steps > definition.steps.len() {
                 return Err(WorkflowError::Definition);
             }
-            if observed.rejected {
+            if observed.rejected
+                && observed
+                    .repair_end
+                    .is_none_or(|end| observed.results.len() >= end)
+            {
                 return Err(WorkflowError::GateRejected);
             }
             while observed.results.len() < through_steps {
@@ -794,11 +867,15 @@ pub fn operate_local_workflow_v1(
                 }
                 config.observed_at_unix_ms = now;
                 run_service_v1(config)?;
-                observed = history(&definition, owner, &objects)?;
+                observed = history(&original, owner, &objects)?;
                 if observed.results.len() != index + 1 {
                     return Err(WorkflowError::History);
                 }
-                if observed.rejected {
+                if observed.rejected
+                    && observed
+                        .repair_end
+                        .is_none_or(|end| observed.results.len() >= end)
+                {
                     return Err(WorkflowError::GateRejected);
                 }
             }
@@ -845,7 +922,7 @@ pub fn operate_local_workflow_v1(
             }
         }
     }
-    let observed = history(&definition, owner, &objects)?;
+    let observed = history(&original, owner, &objects)?;
     Ok(progress(
         &definition,
         expected_definition.clone(),

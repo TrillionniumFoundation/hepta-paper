@@ -1,5 +1,9 @@
 //! Crash-durable control-plane result journal in the campaign writer transaction.
 
+#[path = "workflow_amendment.rs"]
+mod workflow_amendment;
+use workflow_amendment::LOCAL_WORKFLOW_AMENDMENT_SCHEMA_V1;
+
 use std::collections::BTreeSet;
 
 use super::*;
@@ -70,6 +74,19 @@ impl CampaignWriterStoreV1 {
         policy: CampaignWriterPolicyV1,
         campaign_id: &str,
     ) -> Result<(CampaignSnapshotV1, DurableControlLogV1, u64), CampaignWriterError> {
+        let (campaign, log, clock, _) =
+            Self::read_local_workflow_snapshot(path, policy, campaign_id)?;
+        Ok((campaign, log, clock))
+    }
+
+    /// Consistent local snapshot including event-bound workflow amendments.
+    #[allow(clippy::type_complexity)]
+    pub fn read_local_workflow_snapshot(
+        path: impl AsRef<Path>,
+        policy: CampaignWriterPolicyV1,
+        campaign_id: &str,
+    ) -> Result<(CampaignSnapshotV1, DurableControlLogV1, u64, Vec<String>), CampaignWriterError>
+    {
         let policy = policy.validate()?;
         validate_identifier(campaign_id)?;
         inspect_database_file(path.as_ref(), policy)?;
@@ -91,13 +108,17 @@ impl CampaignWriterStoreV1 {
             [campaign_id],
             |row| row.get(0),
         )?)?;
+        let changes = workflow_amendment::load_changes(&connection, campaign_id)?
+            .iter()
+            .map(|r| serde_json::to_string(r).map_err(|_| CampaignWriterError::Serialization))
+            .collect::<Result<Vec<_>, _>>()?;
         connection.execute_batch("COMMIT;")?;
         let after = fs::symlink_metadata(path.as_ref())
             .map_err(|error| CampaignWriterError::Filesystem("local_read", error.kind()))?;
         if !same_database_identity(&before, &after) {
             return Err(CampaignWriterError::DatabasePreimageChanged);
         }
-        Ok((campaign, log, clock_floor))
+        Ok((campaign, log, clock_floor, changes))
     }
 
     /// Creates a NEW disposable/local database, durably marked non-production.
@@ -324,7 +345,7 @@ impl CampaignWriterStoreV1 {
     }
 }
 
-fn assert_local_marker(connection: &Connection) -> Result<(), CampaignWriterError> {
+pub(crate) fn assert_local_marker(connection: &Connection) -> Result<(), CampaignWriterError> {
     let marker = connection
         .query_row(
             "SELECT purpose FROM local_writer_identity_v1 WHERE singleton=1",
@@ -360,6 +381,16 @@ pub(crate) fn verify_known_schema(connection: &Connection) -> Result<(), Campaig
     )?;
     if local_count == 1 {
         expected.execute_batch(LOCAL_WRITER_SCHEMA_V1)?;
+    }
+    let workflow_count: i64 = connection.query_row(
+        "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='local_workflow_amendments_v1'",
+        [], |row| row.get(0),
+    )?;
+    if workflow_count == 1 {
+        if local_count != 1 || control_count != 2 {
+            return Err(CampaignWriterError::SchemaMismatch);
+        }
+        expected.execute_batch(LOCAL_WORKFLOW_AMENDMENT_SCHEMA_V1)?;
     }
     if schema_rows(connection)? != schema_rows(&expected)? {
         return Err(CampaignWriterError::SchemaMismatch);

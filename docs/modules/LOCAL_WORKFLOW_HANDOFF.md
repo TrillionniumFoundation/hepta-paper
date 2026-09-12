@@ -115,8 +115,10 @@ advance is running. This API does not promise immediate in-flight cancellation.
 The core sequencer now rejects paused/cancelled/completed campaigns at begin_run,
 before any new executor dispatch; late SQL rejection alone is insufficient.
 A rejected review cannot be resumed into a passing review by toggling lifecycle.
-Changing inputs, adding revision rounds, renewing leases or increasing budgets
-requires a separately designed amendment protocol; this V1 does not implement it.
+Appending steps, adding a structural revision round, renewing an unexpired local
+lease or increasing budget now requires the explicit, event-bound amendment API
+in [WORKFLOW_AMENDMENT_HANDOFF.md](WORKFLOW_AMENDMENT_HANDOFF.md). Lifecycle toggles
+alone never alter the definition or clear a rejection.
 
 ## Verification and scope of evidence
 
@@ -137,14 +139,23 @@ never creates a production verified-result capability or writer grant.
 
 The closest existing Node surface is `operator campaign`, but only local progress,
 status, pause/resume/cancel semantics are source candidates here. The CLI syntax,
-active schema, role evaluation, amendment/extension, runtime scheduling and
+active schema, role evaluation, runtime scheduling and
 external effects are not claimed equivalent. No per-command parity row is promoted.
 The original 57 command routes and all argument-dependent modes remain the audit
 inventory, not seven local-kernel jobs.
 
 Next implementation work is actual authorized author/reviewer broker integration,
-versioned revision and repair rounds, experiment/runtime and manuscript compilation
+model-driven revision and repair rounds, experiment/runtime and manuscript compilation
 adapters, full operator/maintenance mapping and accepted capability replay. Remote
 credentials, target-host isolation, private historical corpus, storage soak,
 release/submission receipts, production shadow/canary, writer transfer and Node
 retirement remain independently controlled requirements.
+
+
+## Explicit amendments and structural revision rounds
+
+The current local extension/renewal/budget and structural repair APIs are specified
+in [WORKFLOW_AMENDMENT_HANDOFF.md](WORKFLOW_AMENDMENT_HANDOFF.md). They retain the
+original immutable definition and all committed results. They do not provide live
+model author/reviewer integration, in-flight cancellation, production resource
+metering or automatic business equivalence.

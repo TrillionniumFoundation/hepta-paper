@@ -1,0 +1,309 @@
+{
+  "schemaVersion": 1,
+  "kind": "NodeCampaignModeSourceMapV1",
+  "nodeEntrypoint": "paper-core/bin/paper-campaign.mjs",
+  "scope": "source_call_chain_not_parity_acceptance",
+  "acceptedParity": false,
+  "productionActivation": false,
+  "nodeRetirement": false,
+  "modes": [
+    {
+      "nodeAction": "list",
+      "scope": "unmapped",
+      "rustCommand": null,
+      "callChain": [],
+      "tests": [],
+      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+    },
+    {
+      "nodeAction": "status",
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow status STATE HASH",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "read_local_workflow_snapshot"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "status_is_read_only_and_corrupt_or_missing_artifacts_are_not_repaired"
+        }
+      ],
+      "remaining": "One known local workflow only; not Node production-store status or a global listing."
+    },
+    {
+      "nodeAction": "events",
+      "scope": "unmapped",
+      "rustCommand": null,
+      "callChain": [],
+      "tests": [],
+      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+    },
+    {
+      "nodeAction": "logs",
+      "scope": "unmapped",
+      "rustCommand": null,
+      "callChain": [],
+      "tests": [],
+      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+    },
+    {
+      "nodeAction": "pause",
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow pause STATE HASH REVISION NOW",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "set_state"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+          "symbol": "set_campaign_state"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "pause_resume_and_absolute_progress_retry_preserve_commits"
+        }
+      ],
+      "remaining": "Cooperative between-step lifecycle only; no in-flight pause or provider cancellation."
+    },
+    {
+      "nodeAction": "resume",
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow resume STATE HASH REVISION NOW; amend STATE HASH REQUEST NOW",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
+          "symbol": "amend_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
+          "symbol": "apply_local_workflow_change"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "set_state"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+          "symbol": "set_campaign_state"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "budget_and_lease_amendment_replay_is_exact_and_history_survives_old_expiry"
+        }
+      ],
+      "remaining": "Explicit local budget addition/renewal and resume. Node operational-stop and live-provider semantics are not equivalent."
+    },
+    {
+      "nodeAction": "extend",
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow amend STATE HASH REQUEST NOW",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
+          "symbol": "amend_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
+          "symbol": "apply_local_workflow_change"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "appended_step_executes_once_without_replaying_committed_prefix"
+        }
+      ],
+      "remaining": "Append before terminal completion. A rejected native structural review can receive an explicitly supplied same-rubric repair suffix, not an autonomous model round."
+    },
+    {
+      "nodeAction": "cancel",
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow cancel STATE HASH REVISION NOW",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "set_state"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+          "symbol": "set_campaign_state"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "cancel_is_terminal_and_stale_or_rollback_commands_do_not_dispatch"
+        }
+      ],
+      "remaining": "Terminal local cancellation between steps; no immediate child kill or remote reconciliation."
+    },
+    {
+      "nodeAction": "cancel-node",
+      "scope": "unmapped",
+      "rustCommand": null,
+      "callChain": [],
+      "tests": [],
+      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+    },
+    {
+      "nodeAction": "retry",
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow advance STATE HASH ABSOLUTE_THROUGH NOW",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "history"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "payload"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "configuration"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/lib.rs",
+          "symbol": "run_service_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "append_control_batch"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "pause_resume_and_absolute_progress_retry_preserve_commits"
+        }
+      ],
+      "remaining": "Exact completed/prepared retry only. Ambiguous started work is not re-executed; arbitrary failed-node retry remains absent."
+    },
+    {
+      "nodeAction": "work",
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-workflow advance STATE HASH ABSOLUTE_THROUGH NOW",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "history"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "payload"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "configuration"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/lib.rs",
+          "symbol": "run_service_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "append_control_batch"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "actual_artifacts_flow_through_all_seven_documented_steps"
+        }
+      ],
+      "remaining": "Only the selected local/shadow native or trusted process chain. No real model/experimental research or external delivery claim."
+    },
+    {
+      "nodeAction": "gc",
+      "scope": "unmapped",
+      "rustCommand": null,
+      "callChain": [],
+      "tests": [],
+      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+    },
+    {
+      "nodeAction": "slo",
+      "scope": "unmapped",
+      "rustCommand": null,
+      "callChain": [],
+      "tests": [],
+      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+    },
+    {
+      "nodeAction": "retention-recovery-readiness",
+      "scope": "unmapped",
+      "rustCommand": null,
+      "callChain": [],
+      "tests": [],
+      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+    },
+    {
+      "nodeAction": "provision-retention-recovery",
+      "scope": "unmapped",
+      "rustCommand": null,
+      "callChain": [],
+      "tests": [],
+      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+    }
+  ]
+}

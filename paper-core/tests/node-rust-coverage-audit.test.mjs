@@ -56,3 +56,16 @@ test('completion mode rejects an inventory without independent acceptance', () =
   assert.equal(result.status, 2);
   assert.equal(JSON.parse(result.stdout).fullReplacementEstablished, false);
 });
+
+test('all declared campaign action modes retain source mapping or explicit gaps', () => {
+  const modes = report.campaignModeMappings;
+  assert.equal(modes.acceptedParity, false);
+  assert.equal(modes.productionActivation, false);
+  assert.equal(modes.nodeRetirement, false);
+  assert.equal(modes.modes.length, 15);
+  assert.equal(modes.modes.filter((row) => row.scope === 'partial_local_source').length, 7);
+  assert.equal(new Set(modes.modes.map((row) => row.nodeAction)).size, modes.modes.length);
+  assert.ok(modes.modes.find((row) => row.nodeAction === 'cancel-node').scope === 'unmapped');
+  assert.ok(modes.modes.find((row) => row.nodeAction === 'resume').remaining.includes('not equivalent'));
+  assert.equal(report.acceptedParityRows, 0);
+});

@@ -93,6 +93,38 @@ export function buildCoverageInventory(routes, catalog, globalCapabilities, modu
   };
 }
 
+export function auditCampaignModeMappings() {
+  const relative = 'docs/migration/campaign-mode-source-map.v1.json';
+  const map = JSON.parse(fs.readFileSync(path.join(ROOT, relative), 'utf8'));
+  if (map.schemaVersion !== 1 || map.kind !== 'NodeCampaignModeSourceMapV1'
+      || map.scope !== 'source_call_chain_not_parity_acceptance'
+      || map.acceptedParity !== false || map.productionActivation !== false || map.nodeRetirement !== false) {
+    throw new Error('invalid campaign mode mapping scope');
+  }
+  const entry = fs.readFileSync(path.join(ROOT, map.nodeEntrypoint), 'utf8');
+  const match = /--action <name>\s+([^'\n]+)/.exec(entry);
+  if (!match) throw new Error('campaign action inventory changed');
+  const actions = match[1].split('|').sort(compare);
+  if (JSON.stringify(map.modes.map((row) => row.nodeAction).sort(compare)) !== JSON.stringify(actions)) {
+    throw new Error('campaign action mapping missing, duplicated or drifted');
+  }
+  const sources = new Set([relative, map.nodeEntrypoint]);
+  for (const row of map.modes) {
+    if (!['partial_local_source', 'unmapped'].includes(row.scope) || !row.remaining) throw new Error('invalid mapping');
+    if (row.scope === 'partial_local_source' && (!row.rustCommand || !row.callChain.length || !row.tests.length)) throw new Error('missing source mapping');
+    if (row.scope === 'unmapped' && (row.rustCommand !== null || row.callChain.length || row.tests.length)) throw new Error('unmapped row claims implementation');
+    for (const reference of [...row.callChain, ...row.tests]) {
+      readSource(reference.path);
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(reference.symbol)
+          || !fs.readFileSync(path.join(ROOT, reference.path), 'utf8').includes(`fn ${reference.symbol}(`)) {
+        throw new Error('mapped source symbol missing');
+      }
+      sources.add(reference.path);
+    }
+  }
+  return { ...map, sourceBindings: [...sources].sort(compare).map(readSource) };
+}
+
 export function auditCurrentCoverage() {
   const globalFile = 'docs/system/truth/capabilities.v1.json';
   const moduleFile = 'docs/system/truth/modules.v1.json';
@@ -116,6 +148,8 @@ export function auditCurrentCoverage() {
     sources.add(row.rustCandidate.executableExample);
     sources.add(row.rustCandidate.testTarget);
   }
+  report.campaignModeMappings = auditCampaignModeMappings();
+  for (const binding of report.campaignModeMappings.sourceBindings) sources.add(binding.path);
   report.sourceBindings = [...sources].sort(compare).map(readSource);
   report.inventorySha256 = sha256(JSON.stringify(report));
   return report;

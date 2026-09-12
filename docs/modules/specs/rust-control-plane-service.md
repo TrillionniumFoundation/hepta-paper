@@ -119,7 +119,9 @@ The module documentation validator additionally proves one-to-one registry/spec/
 
 The executable source is now in `rust/crates/hepta-paper-service`. See [runtime migration implementation and commands](../../rust/RUNTIME_MIGRATION_IMPLEMENTATION.md), the [control-plane contract](../../../rust/crates/hepta-control-plane/README.md), and the [durable campaign writer contract](../../../rust/crates/hepta-campaign-writer/README.md) for concrete request fields, persisted state, exact replay, shadow inspection, local execution and verification commands.
 
-The static module state intentionally remains `design_ready` and activation remains `disabled`: executable local/shadow paths do not satisfy production composition. `CTL-001` remains blocked on real qualified runtime composition, independent host/evidence authority, complete Node business coverage and rollout acceptance. No local command generates production qualification or activation.
+The static module state is `source_implemented`, matching the Identity section and module registry; activation remains `disabled`. Implemented local/shadow and guarded production API source do not establish accepted production composition. `CTL-001` source implementation and its separate effective qualification must not be conflated. Real runtime identity, independent host/evidence authority, complete Node business coverage and rollout acceptance remain required. No local command generates production qualification or activation.
+
+The [native business handoff](../NATIVE_BUSINESS_HANDOFF.md) defines the seven bounded kernels, actual wire examples, output contracts and executable documentation tests. These kernels must not be counted as full Node business-role parity. The [full replacement acceptance contract](../../migration/FULL_REPLACEMENT_ACCEPTANCE.md) defines the remaining command, capability, branch and operational evidence chain.
 
 ## Rollout and rollback
 

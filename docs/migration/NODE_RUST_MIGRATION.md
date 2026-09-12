@@ -94,9 +94,12 @@ This is a migration observation primitive, not the complete strangler adapter
 described above. It never launches Node, translates a common command, owns a
 durable campaign journal, performs provider work, commits campaign state,
 proves production shadow/canary parity, transfers writer authority, or retires a
-Node path. Consequently the registered `MIG-001`, `MIG-002`, and `MIG-004` work
-items remain `design_ready` until those larger contracts and their qualification
-evidence are implemented.
+Node path. The separate `rust/crates/hepta-module-platform/src/legacy_adapter/` implements
+a bounded protocol adapter beyond this observation primitive. Current implementation states
+come from `docs/system/truth/work-items.v2.json`, not this historical description.
+A `source_implemented` migration item does not establish production parity,
+writer transfer, or retirement. The [full replacement acceptance contract](FULL_REPLACEMENT_ACCEPTANCE.md)
+requires command/mode and capability-specific evidence before those transitions.
 
 Adapters are temporary and have retirement work items.
 

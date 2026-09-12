@@ -27,7 +27,7 @@ jobs:
       - name: Install pinned Rust
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
           rustup default 1.98.0
       - name: Bind immutable source before execution
         id: subject
@@ -85,6 +85,27 @@ jobs:
           node docs/tools/validate-development-docs.mjs | tee /tmp/hepta-exact-evidence/docs.log
           node docs/tools/validate-module-documentation.mjs | tee /tmp/hepta-exact-evidence/modules.log
           python3 docs/rust/tools/validate-program-truth.py | tee /tmp/hepta-exact-evidence/program.log
+      - name: Audit complete command inventory and fetched branch differences
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test paper-core/tests/node-rust-coverage-audit.test.mjs 2>&1 | tee /tmp/hepta-exact-evidence/coverage-tests.log
+          python3 -B docs/tools/test_branch_convergence.py 2>&1 | tee /tmp/hepta-exact-evidence/branch-tests.log
+          node docs/tools/audit-node-rust-coverage.mjs > /tmp/hepta-exact-evidence/coverage-inventory.json
+          python3 -B docs/tools/audit-branch-convergence.py --candidate "$GITHUB_SHA" > /tmp/hepta-exact-evidence/branch-convergence.json
+          set +e
+          node docs/tools/audit-node-rust-coverage.mjs --require-complete > /tmp/hepta-exact-evidence/completion-denial.json
+          status=$?
+          set -e
+          test "$status" -eq 2
+      - name: Execute documented native examples and check Rust formatting
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business 2>&1 | tee /tmp/hepta-exact-evidence/documented-native.log
+          cargo fmt --manifest-path rust/Cargo.toml --all --check 2>&1 | tee /tmp/hepta-exact-evidence/rust-format.log
       - name: Execute committed repository evidence
         if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
         shell: bash

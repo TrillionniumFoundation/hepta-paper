@@ -137,3 +137,11 @@ and external packages; accepted shadow/canary and recovery; unique writer
 transfer; and mechanically verified Node retirement. Until then report separate
 source, documentation, parity, qualification and activation states. Never derive
 an overall completion percentage from crate, document or fixture counts.
+
+## Current local multi-step implementation
+
+The [local workflow handoff](../modules/LOCAL_WORKFLOW_HANDOFF.md) binds an executable
+seven-step artifact chain and recovery/lifecycle tests. It is a source candidate
+for bounded local orchestration, not full `operator campaign` or autonomous
+research equivalence. All command/capability acceptance denominators and external
+requirements above remain unchanged.

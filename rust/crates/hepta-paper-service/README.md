@@ -150,3 +150,11 @@ The tests exercise all 49 job/capability combinations, parser truncations and
 corruption, exact bundle round trips, both process and durable-service dispatch,
 and rejection before dispatch-intent creation. Source tests grant no production
 writer, provider, release or submission authority.
+
+## Multi-step local workflow
+
+`workflow` and the `hepta-local-workflow` executable add immutable output-bound
+steps, SQLite-derived progress, absolute-target retries and between-step
+pause/resume/cancel. See [the workflow engineering handoff](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md).
+This is local/shadow orchestration with real artifacts, not complete Node command
+parity, live-model scientific acceptance or production activation.

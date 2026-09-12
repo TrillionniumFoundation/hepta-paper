@@ -463,6 +463,11 @@ impl CommitSequencerV1 for SqliteCommitSequencerV1 {
             .store
             .load_campaign(&self.campaign_id)
             .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+        // Reject before dispatch, not merely at SQL COMMIT after a worker ran.
+        // Read-only history inspection remains available through replay_control_log_v1.
+        if campaign.state != hepta_campaign_writer::CampaignStateV1::Running {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
         if !self.known_snapshots.contains(&snapshot_hash)
             && (&snapshot.state_hash != self.state.current_state_hash()
                 || snapshot.campaign_revision
@@ -568,4 +573,55 @@ impl CommitSequencerV1 for SqliteCommitSequencerV1 {
         }
         Ok(receipts)
     }
+}
+
+/// Recompute an entire persisted control chain without opening a writer or
+/// minting a prepared-result authority. Returned receipts are read-only history.
+pub fn replay_control_log_v1(
+    log: &hepta_campaign_writer::DurableControlLogV1,
+) -> Result<Vec<CommitReceiptV1>, ControlPlaneError> {
+    let mut state = FixtureCommitSequencerV1::new(
+        log.initial_state_hash.clone(),
+        log.verifier_hash.clone(),
+    );
+    let mut receipts = Vec::with_capacity(log.entries.len());
+    let mut attempts = BTreeSet::new();
+    for entry in &log.entries {
+        let result: hepta_module_platform::PreparedResultV1 =
+            serde_json::from_str(&entry.result_json)
+                .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+        let expected: CommitReceiptV1 = serde_json::from_str(&entry.receipt_json)
+            .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+        let result_hash = result.result_hash()
+            .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+        if entry.sequence != state.next_sequence
+            || entry.result_hash != result_hash
+            || entry.attempt_id != result.attempt_id
+            || !attempts.insert(result.attempt_id.clone())
+            || entry.plan_hash != result.plan_hash
+            || entry.actual_cost_microusd != result.actual_cost_microusd
+            || result.status != hepta_module_platform::PreparedResultStatusV1::Prepared
+            || result.external_action_may_have_started
+        {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        let verification_receipt_hash =
+            verification_receipt_hash_v1(&result_hash, &log.verifier_hash)?;
+        let verified = VerifiedPreparedResultV1 {
+            result,
+            result_hash,
+            verifier_hash: log.verifier_hash.clone(),
+            verification_receipt_hash,
+            artifact_contents_verified: false,
+        };
+        let actual = state.apply_commit(&CommitRequestV1::new(entry.plan_hash.clone(), verified)?)?;
+        if actual != expected || !actual.newly_committed {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        receipts.push(actual);
+    }
+    if state.next_sequence != log.next_sequence {
+        return Err(ControlPlaneError::PersistenceInvalid);
+    }
+    Ok(receipts)
 }

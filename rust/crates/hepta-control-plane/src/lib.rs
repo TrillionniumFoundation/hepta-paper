@@ -29,7 +29,7 @@ mod source_closure;
 
 pub use commit::{
     CommitReceiptV1, CommitRequestV1, CommitSequencerV1, FixtureCommitSequencerV1,
-    SqliteCommitSequencerV1,
+    SqliteCommitSequencerV1, replay_control_log_v1,
 };
 pub use durable_resource::{
     DurableResourceLeaseLedgerV1, DurableResourceLeaseStateV1, DurableResourceLeaseV1,

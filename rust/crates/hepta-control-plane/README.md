@@ -162,3 +162,11 @@ and optimization reject a mutated report body before consuming its acceptance.
 cargo test --locked -p hepta-control-plane --test source_correctness_regressions
 cargo test --locked -p hepta-control-plane --test calibration_recompute
 ```
+
+## Stopped-campaign dispatch boundary
+
+`begin_run` rejects paused, cancelled and completed campaign states before executor
+dispatch. Use `replay_control_log_v1` for pure historical chain inspection instead
+of executing a stopped campaign. Replay returns ordinary receipts, not a writer
+or a verified production result capability. SQL still independently rejects new
+commits for non-running campaigns.

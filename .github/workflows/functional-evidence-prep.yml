@@ -77,6 +77,12 @@ jobs:
           grep -F 'test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' /tmp/hepta-exact-evidence/candidate-regressions.log
           cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane --test calibration_recompute 2>&1 | tee /tmp/hepta-exact-evidence/candidate-calibration.log
           cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test native_bundle_and_binding --test native_business_service 2>&1 | tee /tmp/hepta-exact-evidence/candidate-native.log
+      - name: Execute durable workflow and recovery acceptance
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow -- --nocapture 2>&1 | tee /tmp/hepta-exact-evidence/local-workflow.log
       - name: Validate documentation without modifying source
         if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
         shell: bash

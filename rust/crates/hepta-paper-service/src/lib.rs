@@ -11,6 +11,7 @@ pub mod native_business;
 mod objects;
 mod production;
 mod worker;
+pub mod workflow;
 
 use hepta_campaign_writer::{CampaignWriterPolicyV1, CampaignWriterStoreV1, WriterLeaseV1};
 use hepta_codex_protocol::Sha256Digest;

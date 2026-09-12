@@ -1,0 +1,389 @@
+use hepta_campaign_writer::{CampaignStateV1, WriterLeaseV1};
+use hepta_control_plane::{ControlPlaneSnapshotV1, HardPolicyV1, PlannerPolicyV1, PlanningFrontierV1};
+use hepta_module_platform::*;
+use hepta_paper_service::*;
+use hepta_paper_service::workflow::*;
+use sha2::{Digest, Sha256};
+use std::{collections::{BTreeMap, BTreeSet}, fs, io::{BufRead, BufReader}, os::unix::fs::PermissionsExt, path::{Path, PathBuf}, process::{Command, Stdio}, sync::atomic::{AtomicU64, Ordering}, thread, time::Duration};
+
+static NEXT: AtomicU64 = AtomicU64::new(1);
+struct Temp(PathBuf);
+impl Temp {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!("hepta-workflow-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        Self(root)
+    }
+    fn state(&self) -> PathBuf { self.0.join("state") }
+}
+impl Drop for Temp { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+fn steps() -> Vec<WorkflowStepV1> {
+    serde_json::from_slice(include_bytes!("../../../../docs/modules/examples/local-workflow-steps.v1.json")).unwrap()
+}
+fn definition(temp: &Temp) -> LocalWorkflowV1 {
+    LocalWorkflowV1 { version: 1, template: template(&temp.state(), WorkerBindingV1::Native).unwrap(), steps: steps() }
+}
+fn fixture() -> (Temp, hepta_codex_protocol::Sha256Digest) {
+    let temp = Temp::new();
+    let hash = initialize_local_workflow_v1(definition(&temp)).unwrap();
+    (temp, hash)
+}
+fn status(temp: &Temp, hash: &hepta_codex_protocol::Sha256Digest) -> WorkflowProgressV1 {
+    operate_local_workflow_v1(&temp.state(), hash, WorkflowActionV1::Status, 0).unwrap()
+}
+fn attempt_count(temp: &Temp) -> usize { fs::read_dir(temp.state().join("attempts")).unwrap().count() }
+fn template(state: &Path, binding: WorkerBindingV1) -> Result<ServiceRunV1, Box<dyn std::error::Error>> {
+    let source: hepta_codex_protocol::Sha256Digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111".parse()?;
+    let cap = ["CAP-AUTHOR", "CAP-REVIEW", "CAP-FORMAL", "CAP-EMPIRICAL", "CAP-NUMERICAL", "CAP-BUILD", "CAP-SUBMIT"].into_iter().map(str::to_owned).collect::<BTreeSet<_>>();
+    let mut registry = ModuleRegistryV1::new(RegistryPolicyV1 {
+        version: 1,
+        protocol_version: 1,
+        central_writer_module_id: "module.commit-sequencer".into(),
+        grants: BTreeMap::from([(
+            "module.local-native".into(),
+            ModuleGrantV1 {
+                module_version: "1.0.0".into(),
+                authority: AuthorityClassV1::PreparedResultOnly,
+                minimum_qualification: QualificationTierV1::Source,
+                activation: ActivationStateV1::Shadow,
+                capability_ids: cap.clone(),
+            },
+        )]),
+    })?;
+    registry.register(ModuleManifestV1 {
+        version: 1,
+        module_id: "module.local-native".into(),
+        module_version: "1.0.0".into(),
+        protocol_min: 1,
+        protocol_max: 1,
+        module_kind: if matches!(binding, WorkerBindingV1::Native) { ModuleKindV1::TrustedInProcess } else { ModuleKindV1::IsolatedProcess },
+        requested_authority: AuthorityClassV1::PreparedResultOnly,
+        qualification: QualificationTierV1::Source,
+        requested_activation: ActivationStateV1::Shadow,
+        capability_ids: cap.iter().cloned().collect(),
+        dependencies: vec![],
+        primary_owner: "TEAM-KERNEL".into(),
+        secondary_owner: "TEAM-RUNTIME".into(),
+        independent_reviewer: "TEAM-EVIDENCE".into(),
+        rollback_version: "0.9.0".into(),
+        execution: match &binding {
+            WorkerBindingV1::Native => ModuleExecutionV1::InProcess { implementation_hash: native_implementation_hash_v1()? },
+            WorkerBindingV1::Process { executable_hash, network_declared, .. } => ModuleExecutionV1::IsolatedProcess {
+                executable_hash: executable_hash.clone(), configuration_hash: hepta_control_plane::canonical_hash_v1(&binding)?, network_declared: *network_declared,
+            },
+        },
+    })?;
+    let registry = registry.finish()?;
+    let hard = HardPolicyV1 {
+        version: 1,
+        policy_id: "local-shadow-v1".into(),
+        registry_policy_hash: registry.policy_hash().clone(),
+        forbidden_module_ids: BTreeSet::new(),
+        minimum_evidence_by_capability: BTreeMap::new(),
+        external_actions_authorized: false,
+        maximum_central_writer_turns: 0,
+        maximum_candidates_per_decision_group: 4,
+    };
+    let capacity = ResourceVectorV1 {
+        cpu_millis: 100,
+        memory_bytes: 1024 * 1024,
+        tokens: 100,
+        ..ResourceVectorV1::default()
+    };
+    let snapshot = ControlPlaneSnapshotV1 {
+        version: 1,
+        campaign_id: "campaign-service".into(),
+        campaign_revision: 1,
+        state_hash: source.clone(),
+        registry_hash: registry.registry_hash().clone(),
+        registry_policy_hash: registry.policy_hash().clone(),
+        objective_version: "build-v1".into(),
+        constraint_set_hash: hard.policy_hash()?,
+        resource_limit: capacity,
+        budget_microusd: 100,
+        required_capability_ids: cap,
+        random_seed: None,
+    };
+    let frontier = PlanningFrontierV1 {
+        version: 1,
+        snapshot_hash: snapshot.snapshot_hash()?,
+        candidates: vec![],
+    };
+    Ok(ServiceRunV1 {
+        version: 1,
+        production_activation: false,
+        state_directory: state.to_path_buf(),
+        registry_json: serde_json::to_string(&registry)?,
+        hard_policy: hard,
+        planner_policy: PlannerPolicyV1 {
+            version: 1,
+            maximum_exact_candidates: 16,
+            cost_weight_ppm: 0,
+            uncertainty_weight_micros_per_ppm: 0,
+            maximum_selected_candidates: 16,
+        },
+        snapshot,
+        frontier,
+        verifier_hash: source.clone(),
+        initial_state_hash: source,
+        writer_lease: WriterLeaseV1 {
+            generation: 1,
+            token: "local-writer-token-unique-001".into(),
+            expires_at_unix_ms: 100_000,
+        },
+        observed_at_unix_ms: 1_000,
+        workers: BTreeMap::from([("module.local-native".into(), binding)]),
+    })
+}
+
+
+#[test]
+fn actual_artifacts_flow_through_all_seven_documented_steps() {
+    let (temp, hash) = fixture();
+    let done = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1100).unwrap();
+    assert_eq!(done.committed_steps, 7);
+    assert_eq!(done.campaign_state, CampaignStateV1::Completed);
+    assert_eq!(done.budget_remaining_microusd, 93);
+    assert!(!done.production_activation && !done.scientific_acceptance && !done.node_retirement_verified);
+    let objects = ObjectStoreV1::open(&temp.state()).unwrap();
+    let manuscript = objects.read(&done.artifacts_by_step["author"][0]).unwrap();
+    let empirical = objects.read(&done.artifacts_by_step["empirical"][0]).unwrap();
+    assert!(String::from_utf8(manuscript.clone()).unwrap().contains(std::str::from_utf8(&empirical).unwrap()));
+    let mut found = false;
+    for digest in &done.artifacts_by_step["build"] {
+        let bytes = objects.read(digest).unwrap();
+        if bytes.starts_with(b"HEPTA-NATIVE-BUNDLE-V1") {
+            let entries = native_business::verify_native_build_bundle_v1(&bytes, digest.as_str()).unwrap();
+            assert_eq!(entries.len(), 5);
+            assert_eq!(entries.iter().find(|e| e.path == "manuscript.md").unwrap().content.as_bytes(), manuscript);
+            found = true;
+        }
+    }
+    assert!(found);
+    let count = attempt_count(&temp);
+    let replay = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1200).unwrap();
+    assert_eq!(replay.budget_remaining_microusd, 93);
+    assert_eq!(attempt_count(&temp), count);
+}
+
+#[test]
+fn pause_resume_and_absolute_progress_retry_preserve_commits() {
+    let (temp, hash) = fixture();
+    let first = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 2 }, 1100).unwrap();
+    assert_eq!(first.committed_steps, 2);
+    let retry = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 2 }, 1101).unwrap();
+    assert_eq!(retry.campaign_revision, first.campaign_revision);
+    let pause = WorkflowActionV1::Pause { expected_revision: first.campaign_revision };
+    let paused = operate_local_workflow_v1(&temp.state(), &hash, pause, 1200).unwrap();
+    let duplicate = operate_local_workflow_v1(&temp.state(), &hash, pause, 1201).unwrap();
+    assert_eq!(duplicate.campaign_revision, paused.campaign_revision);
+    let attempts = attempt_count(&temp);
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 3 }, 1202).is_err());
+    assert_eq!(attempt_count(&temp), attempts);
+    operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Resume { expected_revision: paused.campaign_revision }, 1300).unwrap();
+    let done = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1400).unwrap();
+    assert_eq!(done.campaign_state, CampaignStateV1::Completed);
+    assert_eq!(done.budget_remaining_microusd, 93);
+}
+
+#[test]
+fn cancel_is_terminal_and_stale_or_rollback_commands_do_not_dispatch() {
+    let (temp, hash) = fixture();
+    let cancelled = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Cancel { expected_revision: 0 }, 1200).unwrap();
+    assert_eq!(cancelled.campaign_state, CampaignStateV1::Cancelled);
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Resume { expected_revision: 1 }, 1300).is_err());
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 1 }, 1100).is_err());
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 1 }, 1300).is_err());
+    assert_eq!(attempt_count(&temp), 0);
+}
+
+#[test]
+fn service_rejects_paused_cancelled_and_completed_before_dispatch() {
+    for state in [CampaignStateV1::Paused, CampaignStateV1::Cancelled, CampaignStateV1::Completed] {
+        let (temp, hash) = fixture();
+        let end = if state == CampaignStateV1::Completed { 7 } else { 1 };
+        let progress = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: end }, 1100).unwrap();
+        if state != CampaignStateV1::Completed {
+            let action = if state == CampaignStateV1::Paused { WorkflowActionV1::Pause { expected_revision: progress.campaign_revision } } else { WorkflowActionV1::Cancel { expected_revision: progress.campaign_revision } };
+            operate_local_workflow_v1(&temp.state(), &hash, action, 1200).unwrap();
+        }
+        let mut config: ServiceRunV1 = serde_json::from_slice(&fs::read(temp.state().join("step-0000.json")).unwrap()).unwrap();
+        config.observed_at_unix_ms = 1300;
+        config.frontier.candidates[0].candidate_id = "unexpected-after-stop".into();
+        let before = attempt_count(&temp);
+        assert!(run_service_v1(config).is_err());
+        assert_eq!(attempt_count(&temp), before);
+    }
+}
+
+#[test]
+fn rejection_is_persisted_and_cannot_be_bypassed_by_resume_or_retry() {
+    let temp = Temp::new();
+    let mut def = definition(&temp);
+    def.steps[4].job_template["job"]["policy"]["minimumWordCount"] = serde_json::json!(1_000_000);
+    let hash = initialize_local_workflow_v1(def).unwrap();
+    assert!(matches!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1100), Err(WorkflowError::GateRejected)));
+    let before = status(&temp, &hash);
+    assert_eq!(before.committed_steps, 5);
+    assert!(before.gate_rejected);
+    assert!(!temp.state().join("step-0005.json").exists());
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1200).is_err());
+    let paused = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Pause { expected_revision: before.campaign_revision }, 1300).unwrap();
+    operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Resume { expected_revision: paused.campaign_revision }, 1400).unwrap();
+    assert!(matches!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1500), Err(WorkflowError::GateRejected)));
+    assert_eq!(status(&temp, &hash).committed_steps, 5);
+}
+
+#[test]
+fn status_is_read_only_and_corrupt_or_missing_artifacts_are_not_repaired() {
+    let (temp, hash) = fixture();
+    operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 1 }, 1100).unwrap();
+    let db = temp.state().join("campaign.sqlite");
+    let before = fs::read(&db).unwrap();
+    let observed = status(&temp, &hash);
+    assert_eq!(fs::read(&db).unwrap(), before);
+    let artifact = &observed.artifacts_by_step["empirical"][0];
+    let object = temp.state().join("objects").join(artifact.as_str().trim_start_matches("sha256:"));
+    fs::remove_file(&object).unwrap();
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Status, 0).is_err());
+    assert!(!object.exists());
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 2 }, 1200).is_err());
+    assert!(!temp.state().join("step-0001.json").exists());
+}
+
+#[test]
+fn definition_bindings_and_aggregate_limits_fail_before_state_creation() {
+    let temp = Temp::new();
+    let base = definition(&temp);
+    let mut invalid = Vec::new();
+    let mut d = base.clone(); d.steps[3].bindings[0].from_step = "submission".into(); invalid.push(d);
+    let mut d = base.clone(); d.steps[3].bindings[0].target_pointer = "/job/kind".into(); invalid.push(d);
+    let mut d = base.clone(); let duplicate = d.steps[3].bindings[0].clone(); d.steps[3].bindings.push(duplicate); invalid.push(d);
+    let mut d = base.clone(); d.steps[0].resources.cpu_millis = u64::MAX; invalid.push(d);
+    let mut d = base.clone(); d.steps[0].cost_microusd = 101; invalid.push(d);
+    let mut d = base.clone(); d.template.production_activation = true; invalid.push(d);
+    let mut d = base; d.steps[0].resources.external_actions = 1; invalid.push(d);
+    for def in invalid { assert!(initialize_local_workflow_v1(def).is_err()); assert!(!temp.state().exists()); }
+}
+
+#[test]
+fn changed_definition_plan_and_wrong_subject_gate_are_rejected() {
+    let (temp, hash) = fixture();
+    operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 1 }, 1100).unwrap();
+    let file = temp.state().join("step-0000.json");
+    let mut saved: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    saved["frontier"]["candidates"][0]["costMicrousd"] = serde_json::json!(0);
+    fs::write(file, serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Status, 0).is_err());
+    let temp = Temp::new();
+    let mut def = definition(&temp);
+    def.steps[4].gate.as_mut().unwrap().subject_step = "formal".into();
+    let hash = initialize_local_workflow_v1(def).unwrap();
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1100).is_err());
+    assert!(!temp.state().join("step-0005.json").exists());
+}
+
+fn process_binding(executable: PathBuf, cwd: PathBuf, arguments: Vec<String>) -> WorkerBindingV1 {
+    WorkerBindingV1::Process { executable_hash: format!("sha256:{}", hex::encode(Sha256::digest(fs::read(&executable).unwrap()))).parse().unwrap(), executable,
+        arguments, code_files: BTreeMap::new(), working_directory: cwd, implementation_language: "rust".into(), timeout_ms: 10_000, network_declared: false }
+}
+
+#[test]
+fn actual_rust_process_workers_consume_dynamic_bound_artifacts() {
+    let temp = Temp::new();
+    let binding = process_binding(fs::canonicalize(env!("CARGO_BIN_EXE_hepta-native-business")).unwrap(), temp.0.clone(), vec![]);
+    let mut def = LocalWorkflowV1 { version: 1, template: template(&temp.state(), binding).unwrap(), steps: steps() };
+    for step in &mut def.steps {
+        step.job_template = serde_json::json!({"kind":"process", "input":step.job_template["job"]});
+        for binding in &mut step.bindings { binding.target_pointer = binding.target_pointer.replacen("/job/", "/input/", 1); }
+    }
+    let hash = initialize_local_workflow_v1(def).unwrap();
+    let result = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1100).unwrap();
+    assert_eq!(result.committed_steps, 7);
+    assert!(!result.scientific_acceptance);
+}
+
+#[test]
+fn crashing_worker_process() {
+    let cwd = std::env::current_dir().unwrap();
+    if cwd.file_name().and_then(|s| s.to_str()) != Some("crash-child") { return; }
+    let marker = cwd.join("invocations");
+    let count = fs::read_to_string(&marker).unwrap_or_default().parse::<usize>().unwrap_or(0);
+    fs::write(marker, (count + 1).to_string()).unwrap();
+    std::process::exit(23);
+}
+
+#[test]
+fn ambiguous_process_start_is_not_reexecuted_on_retry() {
+    let temp = Temp::new();
+    let cwd = temp.0.join("crash-child"); fs::create_dir(&cwd).unwrap();
+    fs::set_permissions(&cwd, fs::Permissions::from_mode(0o700)).unwrap();
+    let binding = process_binding(std::env::current_exe().unwrap(), cwd.clone(), vec!["--exact".into(), "crashing_worker_process".into(), "--nocapture".into()]);
+    let mut def = LocalWorkflowV1 { version: 1, template: template(&temp.state(), binding).unwrap(), steps: steps() };
+    def.steps.truncate(1);
+    def.steps[0].job_template = serde_json::json!({"kind":"process","input":{}});
+    let hash = initialize_local_workflow_v1(def).unwrap();
+    for now in [1100, 1200] { assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 1 }, now).is_err()); }
+    assert_eq!(fs::read_to_string(cwd.join("invocations")).unwrap(), "1");
+    let observed = status(&temp, &hash);
+    assert!(observed.pending_step);
+    assert_eq!(observed.committed_steps, 0);
+    assert_eq!(observed.budget_remaining_microusd, 100);
+}
+
+#[test]
+fn subprocess_stops_after_committed_step() {
+    let Ok(root) = std::env::var("HEPTA_WORKFLOW_TEST_ROOT") else { return; };
+    let hash = std::env::var("HEPTA_WORKFLOW_TEST_HASH").unwrap().parse().unwrap();
+    operate_local_workflow_v1(Path::new(&root), &hash, WorkflowActionV1::Advance { through_steps: 3 }, 1100).unwrap();
+    println!("WORKFLOW_COMMITTED");
+    use std::io::Write;
+    std::io::stdout().flush().unwrap();
+    thread::sleep(Duration::from_secs(30));
+}
+
+#[test]
+fn process_death_after_commit_preserves_history_and_resumes_remaining_work() {
+    let (temp, hash) = fixture();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "subprocess_stops_after_committed_step", "--nocapture"])
+        .env("HEPTA_WORKFLOW_TEST_ROOT", temp.state()).env("HEPTA_WORKFLOW_TEST_HASH", hash.to_string())
+        .stdout(Stdio::piped()).spawn().unwrap();
+    let reader = BufReader::new(child.stdout.take().unwrap());
+    let committed = reader.lines().map(|s| s.unwrap()).any(|line| line.contains("WORKFLOW_COMMITTED"));
+    child.kill().unwrap(); child.wait().unwrap();
+    assert!(committed);
+    assert_eq!(status(&temp, &hash).committed_steps, 3);
+    let completed = operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 7 }, 1200).unwrap();
+    assert_eq!(completed.budget_remaining_microusd, 93);
+    assert_eq!(completed.committed_steps, 7);
+}
+
+#[test]
+fn cli_is_bounded_closed_and_status_works_after_lease_expiry() {
+    let (temp, hash) = fixture();
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-local-workflow"))
+        .args(["advance", temp.state().to_str().unwrap(), hash.as_str(), "1", "1100"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["committedSteps"], 1);
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Advance { through_steps: 2 }, 100_000).is_err());
+    assert_eq!(status(&temp, &hash).committed_steps, 1);
+    assert!(serde_json::from_str::<WorkflowActionV1>(r#"{"action":"advance","through_steps":1,"productionActivation":true}"#).is_err());
+    let out = Command::new(env!("CARGO_BIN_EXE_hepta-local-workflow")).arg("production").output().unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
+fn symlinked_definition_and_contending_process_lock_are_rejected() {
+    let (temp, hash) = fixture();
+    let file = fs::OpenOptions::new().read(true).write(true).open(temp.state().join("workflow.lock")).unwrap();
+    let guard = nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusiveNonblock).unwrap();
+    assert!(matches!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Status, 0), Err(WorkflowError::Busy)));
+    drop(guard);
+    let definition = temp.state().join("workflow.json");
+    let moved = temp.0.join("moved.json"); fs::rename(&definition, &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, definition).unwrap();
+    assert!(operate_local_workflow_v1(&temp.state(), &hash, WorkflowActionV1::Status, 0).is_err());
+}

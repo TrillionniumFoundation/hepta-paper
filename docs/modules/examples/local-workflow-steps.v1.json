@@ -1,0 +1,344 @@
+[
+  {
+    "id": "empirical",
+    "moduleId": "module.local-native",
+    "capabilityId": "CAP-EMPIRICAL",
+    "resources": {
+      "cpuMillis": 1,
+      "gpuMillis": 0,
+      "memoryBytes": 4096,
+      "storageBytes": 0,
+      "tokens": 0,
+      "providerCalls": 0,
+      "externalActions": 0,
+      "centralWriterTurns": 0
+    },
+    "costMicrousd": 1,
+    "jobTemplate": {
+      "kind": "business",
+      "job": {
+        "kind": "empirical_aggregate",
+        "observations": [
+          {
+            "label": "a",
+            "value": 2
+          },
+          {
+            "label": "b",
+            "value": 4
+          }
+        ]
+      }
+    },
+    "bindings": [],
+    "gate": null
+  },
+  {
+    "id": "formal",
+    "moduleId": "module.local-native",
+    "capabilityId": "CAP-FORMAL",
+    "resources": {
+      "cpuMillis": 1,
+      "gpuMillis": 0,
+      "memoryBytes": 4096,
+      "storageBytes": 0,
+      "tokens": 0,
+      "providerCalls": 0,
+      "externalActions": 0,
+      "centralWriterTurns": 0
+    },
+    "costMicrousd": 1,
+    "jobTemplate": {
+      "kind": "business",
+      "job": {
+        "kind": "formal_certificate",
+        "assumptions": [
+          {
+            "kind": "atom",
+            "name": "P"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "assumption",
+            "proposition": {
+              "kind": "atom",
+              "name": "P"
+            }
+          }
+        ],
+        "goal": {
+          "kind": "atom",
+          "name": "P"
+        }
+      }
+    },
+    "bindings": [],
+    "gate": null
+  },
+  {
+    "id": "numerical",
+    "moduleId": "module.local-native",
+    "capabilityId": "CAP-NUMERICAL",
+    "resources": {
+      "cpuMillis": 1,
+      "gpuMillis": 0,
+      "memoryBytes": 4096,
+      "storageBytes": 0,
+      "tokens": 0,
+      "providerCalls": 0,
+      "externalActions": 0,
+      "centralWriterTurns": 0
+    },
+    "costMicrousd": 1,
+    "jobTemplate": {
+      "kind": "business",
+      "job": {
+        "kind": "numerical_linear_solve",
+        "matrix": [
+          [
+            2.0,
+            0.0
+          ],
+          [
+            0.0,
+            4.0
+          ]
+        ],
+        "rhs": [
+          6.0,
+          8.0
+        ],
+        "tolerance": 1e-12
+      }
+    },
+    "bindings": [],
+    "gate": null
+  },
+  {
+    "id": "author",
+    "moduleId": "module.local-native",
+    "capabilityId": "CAP-AUTHOR",
+    "resources": {
+      "cpuMillis": 1,
+      "gpuMillis": 0,
+      "memoryBytes": 4096,
+      "storageBytes": 0,
+      "tokens": 0,
+      "providerCalls": 0,
+      "externalActions": 0,
+      "centralWriterTurns": 0
+    },
+    "costMicrousd": 1,
+    "jobTemplate": {
+      "kind": "business",
+      "job": {
+        "kind": "author_draft",
+        "title": "Local bounded computation report",
+        "abstract_text": "A source-only example using actual computed artifacts; no novelty or scientific acceptance claim.",
+        "sections": [
+          {
+            "heading": "Empirical",
+            "body": ""
+          },
+          {
+            "heading": "Formal",
+            "body": ""
+          },
+          {
+            "heading": "Numerical",
+            "body": ""
+          }
+        ],
+        "reference_keys": []
+      }
+    },
+    "bindings": [
+      {
+        "fromStep": "empirical",
+        "artifactIndex": 0,
+        "targetPointer": "/job/sections/0/body",
+        "encoding": "utf8"
+      },
+      {
+        "fromStep": "formal",
+        "artifactIndex": 0,
+        "targetPointer": "/job/sections/1/body",
+        "encoding": "utf8"
+      },
+      {
+        "fromStep": "numerical",
+        "artifactIndex": 0,
+        "targetPointer": "/job/sections/2/body",
+        "encoding": "utf8"
+      }
+    ],
+    "gate": null
+  },
+  {
+    "id": "reviewer",
+    "moduleId": "module.local-native",
+    "capabilityId": "CAP-REVIEW",
+    "resources": {
+      "cpuMillis": 1,
+      "gpuMillis": 0,
+      "memoryBytes": 4096,
+      "storageBytes": 0,
+      "tokens": 0,
+      "providerCalls": 0,
+      "externalActions": 0,
+      "centralWriterTurns": 0
+    },
+    "costMicrousd": 1,
+    "jobTemplate": {
+      "kind": "business",
+      "job": {
+        "kind": "reviewer_assessment",
+        "manuscript": "",
+        "policy": {
+          "minimumWordCount": 1,
+          "requiredHeadings": [
+            "Empirical",
+            "Formal",
+            "Numerical"
+          ],
+          "forbiddenMarkers": [
+            "MISSING_EVIDENCE"
+          ]
+        }
+      }
+    },
+    "bindings": [
+      {
+        "fromStep": "author",
+        "artifactIndex": 0,
+        "targetPointer": "/job/manuscript",
+        "encoding": "utf8"
+      }
+    ],
+    "gate": {
+      "acceptedPointer": "/accepted",
+      "subjectStep": "author",
+      "subjectArtifactIndex": 0,
+      "subjectHashPointer": "/manuscriptHash"
+    }
+  },
+  {
+    "id": "build",
+    "moduleId": "module.local-native",
+    "capabilityId": "CAP-BUILD",
+    "resources": {
+      "cpuMillis": 1,
+      "gpuMillis": 0,
+      "memoryBytes": 4096,
+      "storageBytes": 0,
+      "tokens": 0,
+      "providerCalls": 0,
+      "externalActions": 0,
+      "centralWriterTurns": 0
+    },
+    "costMicrousd": 1,
+    "jobTemplate": {
+      "kind": "business",
+      "job": {
+        "kind": "build_package",
+        "entries": [
+          {
+            "path": "manuscript.md",
+            "content": "",
+            "mediaType": "text/markdown"
+          },
+          {
+            "path": "empirical.json",
+            "content": "",
+            "mediaType": "application/json"
+          },
+          {
+            "path": "formal.json",
+            "content": "",
+            "mediaType": "application/json"
+          },
+          {
+            "path": "numerical.json",
+            "content": "",
+            "mediaType": "application/json"
+          },
+          {
+            "path": "review.json",
+            "content": "",
+            "mediaType": "application/json"
+          }
+        ]
+      }
+    },
+    "bindings": [
+      {
+        "fromStep": "author",
+        "artifactIndex": 0,
+        "targetPointer": "/job/entries/0/content",
+        "encoding": "utf8"
+      },
+      {
+        "fromStep": "empirical",
+        "artifactIndex": 0,
+        "targetPointer": "/job/entries/1/content",
+        "encoding": "utf8"
+      },
+      {
+        "fromStep": "formal",
+        "artifactIndex": 0,
+        "targetPointer": "/job/entries/2/content",
+        "encoding": "utf8"
+      },
+      {
+        "fromStep": "numerical",
+        "artifactIndex": 0,
+        "targetPointer": "/job/entries/3/content",
+        "encoding": "utf8"
+      },
+      {
+        "fromStep": "reviewer",
+        "artifactIndex": 0,
+        "targetPointer": "/job/entries/4/content",
+        "encoding": "utf8"
+      }
+    ],
+    "gate": null
+  },
+  {
+    "id": "submission",
+    "moduleId": "module.local-native",
+    "capabilityId": "CAP-SUBMIT",
+    "resources": {
+      "cpuMillis": 1,
+      "gpuMillis": 0,
+      "memoryBytes": 4096,
+      "storageBytes": 0,
+      "tokens": 0,
+      "providerCalls": 0,
+      "externalActions": 0,
+      "centralWriterTurns": 0
+    },
+    "costMicrousd": 1,
+    "jobTemplate": {
+      "kind": "business",
+      "job": {
+        "kind": "prepare_submission",
+        "venue_id": "local-prepared-only",
+        "manuscript_artifact": "",
+        "cover_letter": "Prepared locally. No external delivery is permitted.",
+        "supplementary_artifacts": [],
+        "recipient_hint": null
+      }
+    },
+    "bindings": [
+      {
+        "fromStep": "author",
+        "artifactIndex": 0,
+        "targetPointer": "/job/manuscript_artifact",
+        "encoding": "digest"
+      }
+    ],
+    "gate": null
+  }
+]

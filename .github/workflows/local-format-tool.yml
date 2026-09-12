@@ -1,0 +1,29 @@
+name: pinned-offline-format-tool
+on:
+  push:
+    branches: [codex/rust-functional-evidence-prep-20260912]
+permissions:
+  contents: read
+jobs:
+  formatter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Materialize the repository-pinned formatter without repository mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          mkdir -p "$RUNNER_TEMP/pinned-formatter"
+          cp "$(rustup which --toolchain 1.98.0 rustfmt)" "$RUNNER_TEMP/pinned-formatter/rustfmt"
+          chmod 755 "$RUNNER_TEMP/pinned-formatter/rustfmt"
+          "$RUNNER_TEMP/pinned-formatter/rustfmt" --version > "$RUNNER_TEMP/pinned-formatter/version.txt"
+          ldd "$RUNNER_TEMP/pinned-formatter/rustfmt" > "$RUNNER_TEMP/pinned-formatter/linkage.txt"
+          cd "$RUNNER_TEMP/pinned-formatter"
+          sha256sum rustfmt > SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pinned-rustfmt-1.98.0-${{ github.sha }}
+          path: ${{ runner.temp }}/pinned-formatter
+          if-no-files-found: error
+          retention-days: 1

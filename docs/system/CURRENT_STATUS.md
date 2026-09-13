@@ -86,10 +86,10 @@ backlog and machine projection rather than becoming a second global status sourc
 | Rust broker/runtime/workspace/writer components | source implemented | fresh exact-subject requalification required | disabled |
 | global machine truth and documentation controls | source implemented | fresh exact-subject qualification required | disabled as governance authority |
 | module protocol, registry, SDK and conformance | typed policy-owned registry and prepared-effect source slice implemented; full SDK/conformance pending | fresh exact-subject qualification required | disabled |
-| Rust central composition root | runnable local/shadow CLI and durable plan-to-commit composition; module remains `design_ready`; qualified production composition absent | fresh exact-subject and host/capability qualification required | disabled |
+| Rust central composition root | runnable local/shadow CLI and durable plan-to-commit composition; module is `source_implemented`; qualified production composition absent | fresh exact-subject and host/capability qualification required | disabled |
 | global scheduler/optimizer | bounded exact selection, deterministic fallback and replayable certificate source implemented; full optimizer port/calibration pending | fresh exact-subject qualification required | disabled |
 | hierarchical DRF/aging/reservation model | current Node governor plus Rust weighted dominant-share, aging and exact reservation/accounting source slice | full canonical workload qualification pending | disabled for Rust control |
-| performance qualification | design ready | no exact-host baseline | disabled |
+| performance qualification | source implemented; exact-host baseline absent | no exact-host baseline | disabled |
 | team-scale ownership | design ready | real GitHub teams not provisioned | current single-reviewer policy retained |
 | release/submission verification ports | source implemented | external packages absent | external actions disabled |
 

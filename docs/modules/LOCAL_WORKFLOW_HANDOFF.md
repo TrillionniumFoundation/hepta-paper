@@ -145,8 +145,9 @@ The original 57 command routes and all argument-dependent modes remain the audit
 inventory, not seven local-kernel jobs.
 
 Next implementation work is actual authorized author/reviewer broker integration,
-model-driven revision and repair rounds, experiment/runtime and manuscript compilation
-adapters, full operator/maintenance mapping and accepted capability replay. Remote
+model-driven revision and repair rounds, qualification of scientific/runtime and
+manuscript compilation adapters, full operator/maintenance mapping and accepted
+capability replay. Remote
 credentials, target-host isolation, private historical corpus, storage soak,
 release/submission receipts, production shadow/canary, writer transfer and Node
 retirement remain independently controlled requirements.
@@ -216,3 +217,20 @@ and SQLite operations, validate real responses against the committed schemas,
 and invoke the actual CLI binary. Storage tests include cursor filtering,
 corruption, sequence relabeling, marker denial and unsafe paths. No activation,
 cutover, full parity or Node-retirement state is advanced by these tests.
+
+## Exact scientific programs and named output bindings
+
+The [scientific runtime handoff](SCIENTIFIC_RUNTIME_HANDOFF.md) adds actual trusted
+local tool execution through the existing process-worker boundary. An optional
+`artifactName` selects a named file from a closed, content-verified scientific
+manifest; `artifactIndex` must then be zero. The resolver checks the entire named
+output set against the prior committed result and actual CAS bytes. Missing or
+changed bytes stop downstream dispatch, not the historical experiment's replay.
+Omitting the optional field preserves serialization of existing definitions.
+
+The source supports Python/R empirical and numerical programs, Lean compilation
+and one-to-three-pass pdfLaTeX compilation; runtime support is not independent
+scientific acceptance. Python and tool-equipped LaTeX scenarios are executed by
+the new tests; R/Lean are not claimed as runtime-qualified. None of this supplies
+live model author/reviewer integration, a hostile-code sandbox, a second writer,
+production deployment or complete Node command parity.

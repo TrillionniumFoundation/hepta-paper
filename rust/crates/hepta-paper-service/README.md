@@ -158,3 +158,15 @@ steps, SQLite-derived progress, absolute-target retries and between-step
 pause/resume/cancel. See [the workflow engineering handoff](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md).
 This is local/shadow orchestration with real artifacts, not complete Node command
 parity, live-model scientific acceptance or production activation.
+
+## Actual scientific programs and manuscript compilation
+
+`scientific_runtime` and `hepta-scientific-worker` add a first-party Rust adapter
+for exact, operator-selected Python/R/Lean/pdfLaTeX programs. The existing service
+owns reservation, durable dispatch/prepared replay and SQLite commit. Named
+scientific output manifests support `ArtifactBindingV1.artifactName`, avoiding
+reliance on CAS hash order when wiring an actual result into a later step.
+See [the executable runtime handoff](../../../docs/modules/SCIENTIFIC_RUNTIME_HANDOFF.md)
+for profiles, limits, error/recovery contracts, tests and the trusted-local ceiling.
+External scientific tools remain external; this is not a Node bridge or full
+business/runtime qualification. No production or retirement authority is added.

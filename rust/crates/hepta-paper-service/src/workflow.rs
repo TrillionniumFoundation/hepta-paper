@@ -61,6 +61,10 @@ pub struct LocalWorkflowV1 {
 pub struct ArtifactBindingV1 {
     pub from_step: String,
     pub artifact_index: usize,
+    /// Optional exact name in a closed scientific manifest. When present,
+    /// artifact_index must be zero and is not used as a CAS ordering selector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_name: Option<String>,
     pub target_pointer: String,
     pub encoding: ArtifactEncodingV1,
 }
@@ -264,6 +268,10 @@ impl LocalWorkflowV1 {
                 let p = &binding.target_pointer;
                 if !seen.contains(&binding.from_step)
                     || binding.artifact_index >= 256
+                    || binding.artifact_name.as_ref().is_some_and(|name| {
+                        !crate::scientific_runtime::safe_relative(name)
+                            || binding.artifact_index != 0
+                    })
                     || !pointer(p)
                     || !(p.starts_with("/job/")
                         || p.starts_with("/input/")
@@ -456,11 +464,22 @@ fn payload(
             .iter()
             .position(|s| s.id == binding.from_step)
             .ok_or(WorkflowError::Definition)?;
-        let digest = results
-            .get(source)
-            .and_then(|r| r.artifact_hashes.get(binding.artifact_index))
-            .ok_or(WorkflowError::History)?;
-        let data = objects.read(digest)?;
+        let result = results.get(source).ok_or(WorkflowError::History)?;
+        let digest = match &binding.artifact_name {
+            Some(name) => crate::scientific_runtime::resolve_scientific_output_v1(
+                objects,
+                &result.artifact_hashes,
+                name,
+                &definition.steps[source].capability_id,
+            )
+            .map_err(|_| WorkflowError::History)?,
+            None => result
+                .artifact_hashes
+                .get(binding.artifact_index)
+                .ok_or(WorkflowError::History)?
+                .clone(),
+        };
+        let data = objects.read(&digest)?;
         let replacement = match binding.encoding {
             ArtifactEncodingV1::Utf8 => {
                 Value::String(String::from_utf8(data).map_err(|_| WorkflowError::Definition)?)

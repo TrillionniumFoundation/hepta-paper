@@ -10,6 +10,7 @@ mod deployment;
 pub mod native_business;
 mod objects;
 mod production;
+pub mod scientific_runtime;
 mod worker;
 pub mod workflow;
 

@@ -1,4 +1,4 @@
-name: development-node-oracle-bundle
+name: development-lint-dependency-bundle
 on:
   push:
     branches: [codex/rust-delivery-implementation-20260913]
@@ -10,27 +10,33 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.1'
-      - name: Export exact public Node executable only
+      - name: Export public locked lint dependencies only
         shell: bash
         run: |
           set -euo pipefail
           test "$(node --version)" = "v22.23.1"
-          root=/tmp/hepta-node-oracle
+          npm ci --ignore-scripts --no-audit --no-fund
+          root=/tmp/hepta-lint-dependencies
           mkdir -p "$root"
-          cp "$(readlink -f "$(command -v node)")" "$root/node"
-          node --input-type=module -e 'console.log(JSON.stringify({node:process.version,versions:process.versions,collator:new Intl.Collator().resolvedOptions()}))' > "$root/runtime.json"
-          printf '%s\n' 'Public development runtime only; no source qualification, provider, production, writer transfer or Node retirement claim.' > "$root/SCOPE.txt"
-          tar -czf /tmp/hepta-node-oracle.tar.gz -C "$root" .
-          sha256sum /tmp/hepta-node-oracle.tar.gz > /tmp/hepta-node-oracle.sha256
+          cp -a node_modules "$root/node_modules"
+          sha256sum package.json package-lock.json > "$root/locks.sha256"
+          npm --version > "$root/npm-version.txt"
+          printf '%s\n' 'Public locked development dependencies only; no source qualification, provider, production, writer transfer or Node retirement claim.' > "$root/SCOPE.txt"
+          tar -czf /tmp/hepta-lint-dependencies.tar.gz -C "$root" .
+          sha256sum /tmp/hepta-lint-dependencies.tar.gz > /tmp/hepta-lint-dependencies.sha256
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: offline-node-oracle-${{ github.sha }}
+          name: offline-lint-dependencies-${{ github.sha }}
           path: |
-            /tmp/hepta-node-oracle.tar.gz
-            /tmp/hepta-node-oracle.sha256
+            /tmp/hepta-lint-dependencies.tar.gz
+            /tmp/hepta-lint-dependencies.sha256
           if-no-files-found: error
           retention-days: 1
           compression-level: 0

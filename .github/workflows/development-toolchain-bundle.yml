@@ -1,0 +1,42 @@
+name: development-toolchain-bundle
+on:
+  push:
+    branches: [codex/rust-delivery-implementation-20260913]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Export public compiler and locked dependency sources only
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          root=/tmp/hepta-offline-development
+          mkdir -p "$root"
+          rustup run 1.98.0 cargo vendor --locked --manifest-path rust/Cargo.toml "$root/vendor" > "$root/vendor-config.toml"
+          compiler=$(rustup which --toolchain 1.98.0 rustc)
+          toolchain=$(dirname "$(dirname "$compiler")")
+          cp -a "$toolchain" "$root/toolchain"
+          rustup run 1.98.0 rustc --version --verbose > "$root/rustc.txt"
+          rustup run 1.98.0 cargo --version --verbose > "$root/cargo.txt"
+          sha256sum rust/Cargo.lock > "$root/lock.sha256"
+          git rev-parse HEAD > "$root/source-head.txt"
+          printf '%s\n' 'Development compiler/dependency export only; no test, source qualification, provider, production, writer transfer or Node retirement claim.' > "$root/SCOPE.txt"
+          tar -czf /tmp/hepta-offline-development.tar.gz -C "$root" .
+          sha256sum /tmp/hepta-offline-development.tar.gz > /tmp/hepta-offline-development.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: offline-rust-development-${{ github.sha }}
+          path: |
+            /tmp/hepta-offline-development.tar.gz
+            /tmp/hepta-offline-development.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

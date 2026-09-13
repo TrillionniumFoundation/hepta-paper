@@ -1,0 +1,151 @@
+name: functional-evidence-prep
+on:
+  push:
+    branches: [codex/rust-functional-evidence-prep-20260912]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper' && github.ref == 'refs/heads/codex/rust-functional-evidence-prep-20260912'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUSTFLAGS: '-Dunsafe-code'
+      CARGO_TARGET_DIR: /tmp/hepta-candidate-${{ github.sha }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt
+          rustup default 1.98.0
+      - name: Bind immutable source before execution
+        id: subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hepta-exact-evidence
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git ls-files --others --ignored --exclude-standard)"
+          git rev-parse HEAD > /tmp/hepta-exact-evidence/head.txt
+          git rev-parse HEAD^{tree} > /tmp/hepta-exact-evidence/tree.txt
+          git archive --format=tar.gz HEAD > /tmp/hepta-exact-evidence/source.tar.gz
+          # Only public repository refs/objects, never credentials or worktree inputs.
+          git for-each-ref --format='%(objectname) %(refname)' refs/remotes/origin > /tmp/hepta-exact-evidence/public-ref-heads.txt
+          test -s /tmp/hepta-exact-evidence/public-ref-heads.txt
+          git bundle create /tmp/hepta-exact-evidence/public-branches.bundle --remotes=origin
+          git bundle verify /tmp/hepta-exact-evidence/public-branches.bundle > /tmp/hepta-exact-evidence/public-bundle-verification.log 2>&1
+          sha256sum /tmp/hepta-exact-evidence/public-branches.bundle > /tmp/hepta-exact-evidence/public-branches.sha256
+          rustc --version --verbose > /tmp/hepta-exact-evidence/rustc.txt
+          cargo --version --verbose > /tmp/hepta-exact-evidence/cargo.txt
+          node --version > /tmp/hepta-exact-evidence/node.txt
+          sha256sum rust/Cargo.lock rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs > /tmp/hepta-exact-evidence/source-inputs.sha256
+      - name: Prove predecessor regression failures in an isolated build
+        if: steps.subject.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          lane="$(mktemp -d "$RUNNER_TEMP/hepta-baseline.XXXXXX")"
+          baseline="$lane/source"
+          target="$lane/target"
+          test "$target" != "$CARGO_TARGET_DIR"
+          git worktree add --detach "$baseline" c615e0979381091e986723b02800b4475389e3c8
+          cp rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs "$baseline/rust/crates/hepta-control-plane/tests/"
+          git -C "$baseline" diff --binary > /tmp/hepta-exact-evidence/baseline-test-overlay.patch
+          printf '%s\n' c615e0979381091e986723b02800b4475389e3c8 > /tmp/hepta-exact-evidence/baseline-head.txt
+          set +e
+          cargo test --manifest-path "$baseline/rust/Cargo.toml" --target-dir "$target" --locked -p hepta-control-plane --test source_correctness_regressions -- --test-threads=1 --nocapture > /tmp/hepta-exact-evidence/baseline-red.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/hepta-exact-evidence/baseline-red.log
+          test "$status" -eq 101
+          grep -F 'test result: FAILED. 0 passed; 9 failed; 0 ignored; 0 measured; 0 filtered out;' /tmp/hepta-exact-evidence/baseline-red.log
+          git worktree remove --force "$baseline"
+      - name: Test actual candidate with no predecessor build reuse
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test ! -e "$CARGO_TARGET_DIR"
+          cargo test --manifest-path rust/Cargo.toml --target-dir "$CARGO_TARGET_DIR" --locked -p hepta-control-plane --test source_correctness_regressions -- --test-threads=1 --nocapture 2>&1 | tee /tmp/hepta-exact-evidence/candidate-regressions.log
+          grep -F 'test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' /tmp/hepta-exact-evidence/candidate-regressions.log
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane --test calibration_recompute 2>&1 | tee /tmp/hepta-exact-evidence/candidate-calibration.log
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test native_bundle_and_binding --test native_business_service 2>&1 | tee /tmp/hepta-exact-evidence/candidate-native.log
+      - name: Execute durable workflow and recovery acceptance
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-campaign-writer workflow_amendment -- --nocapture 2>&1 | tee /tmp/hepta-exact-evidence/workflow-amendment-storage.log
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow -- --nocapture 2>&1 | tee /tmp/hepta-exact-evidence/local-workflow.log
+      - name: Validate documentation without modifying source
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node docs/tools/validate-development-docs.mjs | tee /tmp/hepta-exact-evidence/docs.log
+          node docs/tools/validate-module-documentation.mjs | tee /tmp/hepta-exact-evidence/modules.log
+          python3 docs/rust/tools/validate-program-truth.py | tee /tmp/hepta-exact-evidence/program.log
+      - name: Audit complete command inventory and fetched branch differences
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test paper-core/tests/node-rust-coverage-audit.test.mjs 2>&1 | tee /tmp/hepta-exact-evidence/coverage-tests.log
+          python3 -B docs/tools/test_branch_convergence.py 2>&1 | tee /tmp/hepta-exact-evidence/branch-tests.log
+          node docs/tools/audit-node-rust-coverage.mjs > /tmp/hepta-exact-evidence/coverage-inventory.json
+          python3 -B docs/tools/audit-branch-convergence.py --candidate "$GITHUB_SHA" > /tmp/hepta-exact-evidence/branch-convergence.json
+          set +e
+          node docs/tools/audit-node-rust-coverage.mjs --require-complete > /tmp/hepta-exact-evidence/completion-denial.json
+          status=$?
+          set -e
+          test "$status" -eq 2
+      - name: Execute documented native examples and check Rust formatting
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business 2>&1 | tee /tmp/hepta-exact-evidence/documented-native.log
+          cargo fmt --manifest-path rust/Cargo.toml --all --check 2>&1 | tee /tmp/hepta-exact-evidence/rust-format.log
+      - name: Execute committed repository evidence
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node paper-core/bin/verify-source-implementation-evidence.mjs --evidence docs/system/evidence/repository-source-implementation-v1.json --expected-head "$GITHUB_SHA" --expected-tree "$(git rev-parse HEAD^{tree})" --execute --receipt /tmp/hepta-exact-evidence/repository-source.receipt.json 2>&1 | tee /tmp/hepta-exact-evidence/repository-source.log
+      - name: Execute committed functional evidence
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node paper-core/bin/verify-source-implementation-evidence.mjs --evidence docs/system/evidence/rust-functional-source-closure-v1.json --expected-head "$GITHUB_SHA" --expected-tree "$(git rev-parse HEAD^{tree})" --execute --receipt /tmp/hepta-exact-evidence/functional-source.receipt.json 2>&1 | tee /tmp/hepta-exact-evidence/functional-source.log
+      - name: Reject postflight source mutation
+        if: ${{ !cancelled() && steps.subject.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$(cat /tmp/hepta-exact-evidence/tree.txt)"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git ls-files --others --ignored --exclude-standard)"
+      - name: Retain exact-subject results including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-exact-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: /tmp/hepta-exact-evidence
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

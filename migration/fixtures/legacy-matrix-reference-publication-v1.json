@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "kind": "LegacyMatrixReferencePublication",
+  "canonicalManifestPath": "migration/fixtures/legacy-matrix-reference-v1.json",
+  "canonicalArchiveBasename": "paper-factory-control-plane-reference.tar.gz",
+  "canonicalArchiveSha256": "sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d",
+  "matrix": {
+    "path": "migration/legacy-semantic-migration-matrix.json",
+    "sha256": "sha256:59446f5e96cc5f086b27266f0fb0604d4f7f0e5bf1f62cb1a90933208a0f162a",
+    "sourceFileCount": 263
+  },
+  "archiveInventory": {
+    "memberCount": 1031,
+    "regularFiles": 1006,
+    "directories": 23,
+    "symlinks": 2
+  },
+  "custody": {
+    "repository": "TrillionniumFoundation/hepta-paper-legacy-reference",
+    "repositoryUrl": "https://github.com/TrillionniumFoundation/hepta-paper-legacy-reference",
+    "visibility": "private",
+    "commit": "e275812d279007a87be536df6af3d5d6e9d84955",
+    "tree": "bac3af789c1a5a1466eea722aa16a522bec56532",
+    "tag": "legacy-reference-v0.6.0-e431c4c7-r1",
+    "releaseTag": "legacy-reference-v0.6.0-e431c4c7",
+    "releaseUrl": "https://github.com/TrillionniumFoundation/hepta-paper-legacy-reference/releases/tag/legacy-reference-v0.6.0-e431c4c7",
+    "releaseId": 379268751,
+    "archivePath": "archives/0.6.0/paper-factory-control-plane-reference.tar.gz",
+    "archiveBytes": 22506525,
+    "releaseAssetId": 536563599,
+    "releaseAssetName": "paper-factory-control-plane-reference.tar.gz",
+    "releaseAssetDigest": "sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d",
+    "releaseAssetBytes": 22506525,
+    "releaseAssetState": "uploaded",
+    "releasePlatformImmutable": false,
+    "transport": "git-lfs",
+    "lfsOid": "e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d",
+    "publicationManifestPath": "PUBLICATION_MANIFEST.v1.json",
+    "publicationManifestSha256": "sha256:115aafed5c630be6fdc12c45d175ae8f2d2dbd515996530c0465c69e9425107a"
+  },
+  "provenance": {
+    "packageVersion": "0.6.0",
+    "sourceCommit": "d99cf3eec338398c4fdb37790dbb4667dad5ab9e",
+    "treeDirty": false,
+    "readOnlyReceiptSha256": "sha256:5502f40e7428f356f8f5aa45d1670f44090f27cdd235264dff65ccc1ce0ede60",
+    "readOnlySignatureSha256": "sha256:f9a22965e32b3f0fb086947d28900ff0e4b3c2afcf25cfec884079bd40d8c653",
+    "authorityLimit": "build_and_archive_integrity_only_not_owner_academic_referee_or_submission_authority"
+  },
+  "custodyPolicy": {
+    "owner": "TrillionniumFoundation",
+    "reviewer": "hepta-paper migration audit",
+    "retention": "retain indefinitely; do not rewrite or delete the tagged object; corrections require a new version and digest",
+    "access": "private least-privilege access; never expose the archive to public forks or untrusted CI"
+  },
+  "authority": "archive_integrity_only; publication does not grant runtime, parity, release, submission, academic, or reviewer authority"
+}

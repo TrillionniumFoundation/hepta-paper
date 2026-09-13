@@ -1,0 +1,128 @@
+name: rust-plan-v3-external-contracts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate harness syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n docs/rust/qualification/hepta-broker-host-qualification-v2.sh
+          bash -n docs/rust/qualification/hepta-cgroup-v2-target-host-qualification.sh
+
+      - name: Validate strict external qualification contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          root = Path('docs/rust/qualification')
+          expected = {
+              'EXT-GOV-MAIN-001': ('GAP-GOV-003', 'protected-main-ruleset-evidence-v1.schema.json'),
+              'EXT-HOST-CGROUP-001': ('GAP-HOST-001', 'independent-linux-review-v1.schema.json'),
+              'EXT-HOST-STORAGE-001': ('GAP-HOST-002', 'external-host-storage-package-v1.schema.json'),
+              'EXT-KEY-OWNER-001': ('GAP-KEY-001', 'external-key-owner-drill-v1.schema.json'),
+              'EXT-CODEX-ROLE-001': ('GAP-CODEX-001', 'authenticated-codex-role-canary-v1.schema.json'),
+              'EXT-CUTOVER-SOAK-001': ('GAP-REL-001', 'production-cutover-soak-v1.schema.json'),
+              'EXT-AUTHORITY-SET-001': ('GAP-REL-001', 'external-authority-set-v1.schema.json'),
+          }
+          support = {
+              'hepta-broker-qualification-evidence-v1.schema.json',
+              'external-qualification-closure-request-v1.schema.json',
+              'external-qualification-closure-receipt-v1.schema.json',
+              'qualification-trust-store-v1.schema.json',
+          }
+          schemas = {}
+          for name in sorted({v[1] for v in expected.values()} | support):
+              value = json.loads((root / name).read_text(encoding='utf-8'))
+              schemas[name] = value
+              assert value['$schema'] == 'https://json-schema.org/draft/2020-12/schema', name
+              assert value['type'] == 'object', name
+              assert value['additionalProperties'] is False, name
+              version = value['properties'].get('schemaVersion', value['properties'].get('version'))
+              assert version and version.get('const') == 1, name
+              assert value['required'], name
+          for package_id, (_, name) in expected.items():
+              schema = schemas[name]
+              assert schema['properties']['packageId'].get('const') == package_id, name
+              assert schema['properties']['decision'] == {'const': 'approved'}, name
+
+          truth = json.loads(Path('docs/rust/current-status.v1.json').read_text(encoding='utf-8'))
+          external_gaps = {r['id']: r['issue'] for r in truth['gaps'] if r.get('external') is True}
+          mapping = json.loads((root / 'external-package-map.v1.json').read_text(encoding='utf-8'))
+          assert set(mapping) == {'schemaVersion', 'program', 'status', 'packages'}
+          assert mapping['schemaVersion'] == 1
+          assert mapping['program'] == 'hepta-paper-rust-rewrite'
+          assert mapping['status'] == 'canonical_external_package_map'
+          rows = mapping['packages']
+          assert len(rows) == 7 and {r['packageId'] for r in rows} == set(expected)
+          covered = set()
+          for row in rows:
+              gap, schema = expected[row['packageId']]
+              assert set(row) == {'gapId', 'issue', 'packageId', 'schemas', 'executor', 'automaticActivation'}
+              assert row['gapId'] == gap and row['gapId'] in external_gaps
+              assert row['issue'] == external_gaps[gap]
+              assert row['schemas'] == [schema]
+              assert re.fullmatch(r'[a-z][a-z0-9_]{2,127}', row['executor'])
+              assert row['automaticActivation'] is False
+              covered.add(gap)
+          assert covered == set(external_gaps)
+
+          runtime = Path('rust/crates/hepta-qualification-ingest/src/lib.rs').read_text(encoding='utf-8')
+          assert set(re.findall(r'=> "(EXT-[A-Z0-9-]+)"', runtime)) == set(expected)
+          closure = Path('rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs').read_text(encoding='utf-8')
+          for token in [
+              'payload_semantics: "strict_package_v1"',
+              'replay_protection: "durable_sqlite_v2"',
+              'automatic_activation: false',
+              'production_activation: false',
+              'source_status_unchanged: true',
+              'replay_ledger_committed: true',
+              'system_unix_ms()',
+          ]:
+              assert token in closure, token
+          assert 'durable_sqlite_v1' not in closure
+          assert 'request.now_unix_ms' not in closure
+
+          protocol = Path('docs/qualification/EXTERNAL_AUTHORITY.md').read_text(encoding='utf-8')
+          model = Path('docs/qualification/QUALIFICATION_MODEL.md').read_text(encoding='utf-8')
+          for row in rows:
+              assert row['packageId'] in protocol
+              assert row['gapId'] in protocol
+              assert row['schemas'][0] in protocol
+          for token in ['strict_package_v1', 'durable_sqlite_v2', 'automaticActivation', 'productionActivation', 'derived_only']:
+              assert token in protocol or token in model, token
+          PY
+
+      - name: Prove harness is fail-closed without acknowledgement
+        shell: bash
+        run: |
+          set -euo pipefail
+          if sudo env -u HEPTA_CGROUP_QUALIFICATION_ACK \
+              HEPTA_CGROUP_ROOT=/sys/fs/cgroup \
+              HEPTA_EVIDENCE_DIR="$RUNNER_TEMP/forbidden-evidence" \
+              docs/rust/qualification/hepta-cgroup-v2-target-host-qualification.sh; then
+            echo 'cgroup qualification unexpectedly ran without explicit acknowledgement' >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/forbidden-evidence"

@@ -1,0 +1,141 @@
+name: audit-rust-rc-pr-subject
+
+on:
+  push:
+    branches:
+      - codex/rust-full-replacement-rc-20260908
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: audit-rust-rc-pr-subject-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-complete-matrix:
+    if: github.actor != 'hepta-paper-automation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Verify the exact-head required workflow matrix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          repository = os.environ['REPOSITORY']
+          head_sha = os.environ['HEAD_SHA']
+          token = os.environ['GH_TOKEN']
+          required = {
+              'hepta-paper-ci',
+              'rust-foundation',
+              'rust-migration-acceptance',
+              'rust-broker-installed-qualification',
+              'rust-broker-installed-qualification-v2',
+              'rust-supply-chain',
+              'workflow-lint',
+              'module-documentation-integrity',
+              'rust-program-truth',
+              'rust-qualification-artifacts',
+              'rust-qualification-subject-v3',
+              'rust-effective-source-qualification',
+              'exact-head-source-validation',
+              'rust-source-snapshot',
+              'rust-plan-v3-external-contracts',
+          }
+
+          def get_json(path):
+              request = urllib.request.Request(
+                  f'https://api.github.com/repos/{repository}{path}',
+                  headers={
+                      'Accept': 'application/vnd.github+json',
+                      'Authorization': f'Bearer {token}',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                      'User-Agent': 'hepta-paper-exact-subject-audit',
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          latest = {}
+          for _ in range(80):
+              payload = get_json(f'/actions/runs?head_sha={head_sha}&per_page=100')
+              latest = {}
+              for run in payload.get('workflow_runs', []):
+                  name = run.get('name')
+                  if name not in required:
+                      continue
+                  previous = latest.get(name)
+                  if previous is None or run.get('created_at', '') > previous.get('created_at', ''):
+                      latest[name] = run
+              failed = sorted(
+                  name for name, run in latest.items()
+                  if run.get('status') == 'completed' and run.get('conclusion') != 'success'
+              )
+              if failed:
+                  raise SystemExit(f'exact-head required workflows failed: {failed}')
+              missing = sorted(required.difference(latest))
+              incomplete = sorted(
+                  name for name, run in latest.items()
+                  if run.get('status') != 'completed'
+              )
+              if not missing and not incomplete:
+                  break
+              time.sleep(30)
+          else:
+              raise SystemExit(
+                  f'exact-head matrix incomplete; missing={missing} incomplete={incomplete}'
+              )
+
+          pull_requests = get_json(f'/commits/{head_sha}/pulls')
+          matches = [
+              pr for pr in pull_requests
+              if pr.get('number') == 110
+              and pr.get('state') == 'open'
+              and pr.get('head', {}).get('sha') == head_sha
+              and pr.get('base', {}).get('ref') == 'main'
+          ]
+          if len(matches) != 1:
+              raise SystemExit(f'exact_pull_request_subject_invalid:{len(matches)}')
+
+          matrix = {
+              name: {
+                  'id': latest[name]['id'],
+                  'status': latest[name]['status'],
+                  'conclusion': latest[name]['conclusion'],
+              }
+              for name in sorted(required)
+          }
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
+              output.write('## Read-only exact-head audit\n\n')
+              output.write(f'- head: `{head_sha}`\n')
+              output.write('- pull request: `#110` (open, base `main`, exact head matched)\n')
+              output.write('- mutation authority: `none`\n\n')
+              output.write('| workflow | run | conclusion |\n|---|---:|---|\n')
+              for name, value in matrix.items():
+                  output.write(
+                      f"| `{name}` | `{value['id']}` | `{value['conclusion']}` |\n"
+                  )
+          PY
+
+      - name: Assert this candidate-controlled workflow cannot promote itself
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+
+          This workflow is intentionally read-only. It cannot edit the pull request,
+          request reviews, change draft state, push refs, create releases or produce
+          external-authority receipts. Those actions remain separately controlled.
+          EOF

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "files": {
+    "main.py": "import json\nfrom pathlib import Path\nfrom statistics import mean, variance\nvalues = json.loads(Path(\"observations.json\").read_text())[\"values\"]\nresult = {\"count\": len(values), \"mean\": mean(values), \"sampleVariance\": variance(values)}\nPath(\"result.json\").write_text(json.dumps(result, sort_keys=True, allow_nan=False))\n",
+    "observations.json": "{\"values\":[2,4,6,8]}\n"
+  },
+  "outputs": [
+    {
+      "path": "result.json",
+      "format": "json"
+    }
+  ]
+}

@@ -96,4 +96,12 @@ export default [
     },
     rules: correctnessRules,
   },
+  {
+    files: ['paper-core/bin/verify-source-implementation-evidence.mjs'],
+    rules: {
+      // The strict JSON grammar intentionally matches the four RFC 8259
+      // whitespace code points and rejects every other control character.
+      'no-control-regex': 'off',
+    },
+  },
 ];

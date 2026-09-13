@@ -1,0 +1,165 @@
+name: rust-qualification-artifacts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-qualification-artifacts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate scripts and strict evidence schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n docs/rust/qualification/hepta-broker-host-qualification-v2.sh
+          bash -n docs/rust/qualification/hepta-cgroup-v2-target-host-qualification.sh
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('docs/rust/qualification')
+          package_schemas = [
+              'protected-main-ruleset-evidence-v1.schema.json',
+              'independent-linux-review-v1.schema.json',
+              'external-host-storage-package-v1.schema.json',
+              'external-key-owner-drill-v1.schema.json',
+              'authenticated-codex-role-canary-v1.schema.json',
+              'production-cutover-soak-v1.schema.json',
+              'external-authority-set-v1.schema.json',
+          ]
+          schemas = [
+              'hepta-broker-qualification-evidence-v1.schema.json',
+              'external-qualification-closure-request-v1.schema.json',
+              'external-qualification-closure-receipt-v1.schema.json',
+              'qualification-trust-store-v1.schema.json',
+              *package_schemas,
+          ]
+          for name in schemas:
+              decoded = json.loads((root / name).read_text(encoding='utf-8'))
+              assert decoded['$schema'] == (
+                  'https://json-schema.org/draft/2020-12/schema'
+              ), name
+              assert decoded['type'] == 'object', name
+              assert decoded['additionalProperties'] is False, name
+              version = decoded['properties'].get('schemaVersion')
+              if version is None:
+                  version = decoded['properties'].get('version')
+              assert version is not None and version.get('const') == 1, name
+              assert decoded['required'], name
+              if name in package_schemas:
+                  assert decoded['properties']['decision'] == {
+                      'const': 'approved'
+                  }, name
+
+          receipt = json.loads((
+              root / 'external-qualification-closure-receipt-v1.schema.json'
+          ).read_text(encoding='utf-8'))
+          assert receipt['properties']['payloadSemantics'] == {
+              'const': 'strict_package_v1'
+          }
+          assert receipt['properties']['replayProtection'] == {
+              'const': 'durable_sqlite_v2'
+          }
+          assert receipt['properties']['clockRollbackProtection'] == {
+              'const': True
+          }
+          assert receipt['properties']['replayLedgerSchemaVersion'] == {
+              'const': 2
+          }
+
+          mapping = json.loads((
+              root / 'external-package-map.v1.json'
+          ).read_text(encoding='utf-8'))
+          by_id = {row['packageId']: row for row in mapping['packages']}
+          assert len(by_id) == 7
+          assert by_id['EXT-HOST-STORAGE-001']['schemas'] == [
+              'external-host-storage-package-v1.schema.json'
+          ]
+
+          closure = Path(
+              'rust/crates/hepta-qualification-ingest/src/bin/'
+              'hepta-qualification-closure.rs'
+          ).read_text(encoding='utf-8')
+          payload = Path(
+              'rust/crates/hepta-qualification-ingest/src/package_payload.rs'
+          ).read_text(encoding='utf-8')
+          for required in [
+              'validate_external_package_payload_v1(',
+              'payload_semantics: "strict_package_v1"',
+              'replay_protection: "durable_sqlite_v2"',
+              'clock_rollback_protection: true',
+              'replay_ledger_schema_version: 2',
+              'VERIFIER_CLOCK_STATE_SCHEMA',
+              'ClockRollback',
+              'normalize_sql',
+          ]:
+              assert required in closure, required
+          for required in [
+              'DecisionNotApproved',
+              'AuthorityMismatch',
+              'REQUIRED_GOVERNANCE_DENIALS',
+              'REQUIRED_HOST_CGROUP_DRILLS',
+              'REQUIRED_STORAGE_FAULTS',
+              'REQUIRED_KEY_DRILLS',
+              'REQUIRED_AUTHORITY_KINDS',
+          ]:
+              assert required in payload, required
+          assert 'durable_sqlite_v1' not in closure
+          PY
+
+      - name: Build, lint, test, and smoke qualification CLIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --bin hepta-broker-journal-preflight \
+            --bin hepta-trust-bundle-preflight \
+            --locked
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest \
+            --bin hepta-qualification-closure \
+            --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --bin hepta-broker-journal-preflight \
+            --bin hepta-trust-bundle-preflight \
+            --locked -- -D warnings
+          cargo clippy --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest \
+            --all-targets --all-features \
+            --locked -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest \
+            --all-features --locked
+
+          if rust/target/debug/hepta-broker-journal-preflight; then exit 1; fi
+          if rust/target/debug/hepta-trust-bundle-preflight; then exit 1; fi
+          if rust/target/debug/hepta-qualification-closure; then exit 1; fi
+          rust/target/debug/hepta-qualification-closure --help
+
+          fixture=$(mktemp -d)
+          chmod 0700 "$fixture"
+          owner_uid=$(stat -c %u "$fixture")
+          rust/target/debug/hepta-broker-journal-preflight \
+            "$fixture/broker.sqlite" "$owner_uid"
+          rust/target/debug/hepta-broker-journal-preflight \
+            "$fixture/broker.sqlite" "$owner_uid"
+          test "$(stat -c %a "$fixture/broker.sqlite")" = 600
+          rm -rf "$fixture"

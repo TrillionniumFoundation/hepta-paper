@@ -1,0 +1,550 @@
+{
+  "schemaVersion": 1,
+  "workloads": [
+    {
+      "workloadId": "PERF-WL-001",
+      "version": 1,
+      "purpose": "one campaign, 100-node mixed DAG",
+      "coreAssertions": [
+        "readiness",
+        "critical path",
+        "bounded concurrency",
+        "deterministic plan"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE",
+        "TEAM-SCHEDULER"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-SCH-PLAN",
+        "CAP-EXE-DISPATCH",
+        "CAP-STATE-COMMIT"
+      ],
+      "relatedMilestoneIds": [
+        "G3",
+        "G4"
+      ],
+      "metrics": [
+        "plan_latency_ms",
+        "maximum_observed_concurrency",
+        "completion_count"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-002",
+      "version": 1,
+      "purpose": "32 campaigns, 10,000 nodes",
+      "coreAssertions": [
+        "scheduler/allocator/state throughput and memory bounds"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE",
+        "TEAM-SCHEDULER"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-SCH-PLAN",
+        "CAP-RES-ALLOCATE",
+        "CAP-STATE-COMMIT"
+      ],
+      "relatedMilestoneIds": [
+        "G4",
+        "G7"
+      ],
+      "metrics": [
+        "throughput_nodes_per_second",
+        "peak_memory_bytes",
+        "queue_latency_ms"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-003",
+      "version": 1,
+      "purpose": "sustained small GPU jobs plus one large GPU job",
+      "coreAssertions": [
+        "aging/reservation prevents starvation"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-RES-ALLOCATE"
+      ],
+      "relatedMilestoneIds": [
+        "G4"
+      ],
+      "metrics": [
+        "large_job_wait_ms",
+        "small_job_bypass_count"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-004",
+      "version": 1,
+      "purpose": "mixed CPU/GPU/memory dominant shares",
+      "coreAssertions": [
+        "DRF and weighted fairness"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE",
+        "TEAM-SCHEDULER"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-RES-ALLOCATE",
+        "CAP-SCH-PLAN"
+      ],
+      "relatedMilestoneIds": [
+        "G4"
+      ],
+      "metrics": [
+        "dominant_share_deviation",
+        "resource_utilization"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-005",
+      "version": 1,
+      "purpose": "provider quota and worst-case cost exhaustion",
+      "coreAssertions": [
+        "no over-admission or unknown-as-zero settlement"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-RES-ALLOCATE",
+        "CAP-EXE-BROKER"
+      ],
+      "relatedMilestoneIds": [
+        "G4"
+      ],
+      "metrics": [
+        "quota_rejection_count",
+        "reserved_vs_actual_cost_error"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-006",
+      "version": 1,
+      "purpose": "broker connection burst/slow clients",
+      "coreAssertions": [
+        "bounded queue",
+        "busy response",
+        "no thread/FD leak"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-EXE-BROKER",
+        "CAP-EXE-DISPATCH"
+      ],
+      "relatedMilestoneIds": [
+        "G3",
+        "G7"
+      ],
+      "metrics": [
+        "admission_rate",
+        "busy_rate",
+        "open_fd_count"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-007",
+      "version": 1,
+      "purpose": "writer commit burst",
+      "coreAssertions": [
+        "short transactions",
+        "queue bound",
+        "idempotency",
+        "fsync latency"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-STATE-COMMIT"
+      ],
+      "relatedMilestoneIds": [
+        "G3",
+        "G7"
+      ],
+      "metrics": [
+        "commit_latency_ms",
+        "fsync_latency_ms",
+        "commit_queue_depth"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-008",
+      "version": 1,
+      "purpose": "process and control-plane crash storm",
+      "coreAssertions": [
+        "deterministic reconciliation and no duplicate effects"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-EXE-DISPATCH",
+        "CAP-EXE-BROKER",
+        "CAP-STATE-COMMIT"
+      ],
+      "relatedMilestoneIds": [
+        "G3",
+        "G7"
+      ],
+      "metrics": [
+        "reconciliation_latency_ms",
+        "duplicate_effect_count",
+        "unclassified_residue_count"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-009",
+      "version": 1,
+      "purpose": "prepared-result replay after restart",
+      "coreAssertions": [
+        "no provider rerun; exactly-once commit"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-STATE-COMMIT",
+        "CAP-EXE-BROKER"
+      ],
+      "relatedMilestoneIds": [
+        "G3"
+      ],
+      "metrics": [
+        "prepared_replay_latency_ms",
+        "provider_rerun_count"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-010",
+      "version": 1,
+      "purpose": "module version rolling shadow/canary",
+      "coreAssertions": [
+        "compatibility",
+        "routing",
+        "rollback",
+        "no mixed semantics"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-MOD-REGISTRY",
+        "CAP-MIG-CUTOVER"
+      ],
+      "relatedMilestoneIds": [
+        "G5",
+        "G9"
+      ],
+      "metrics": [
+        "mixed_version_rejection_count",
+        "rollback_latency_ms"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-011",
+      "version": 1,
+      "purpose": "candidate explosion/adversarial duplicates",
+      "coreAssertions": [
+        "byte/count caps and deterministic Pareto reduction"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE",
+        "TEAM-SCHEDULER"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-MOD-CANDIDATES",
+        "CAP-SCH-PLAN"
+      ],
+      "relatedMilestoneIds": [
+        "G2",
+        "G6"
+      ],
+      "metrics": [
+        "candidate_reduction_ratio",
+        "candidate_validation_latency_ms"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-012",
+      "version": 1,
+      "purpose": "solver timeout/invalid plan",
+      "coreAssertions": [
+        "safe deterministic fallback and hard-constraint preservation"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE",
+        "TEAM-SCHEDULER"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-SCH-PLAN"
+      ],
+      "relatedMilestoneIds": [
+        "G6"
+      ],
+      "metrics": [
+        "fallback_latency_ms",
+        "fallback_feasibility"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-013",
+      "version": 1,
+      "purpose": "snapshot/resource drift during solve",
+      "coreAssertions": [
+        "stale plan rejected/replanned before dispatch/commit"
+      ],
+      "requiredEvidenceTier": "source",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE",
+        "TEAM-SCHEDULER"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-CTL-SNAPSHOT",
+        "CAP-SCH-PLAN",
+        "CAP-STATE-COMMIT"
+      ],
+      "relatedMilestoneIds": [
+        "G3",
+        "G6"
+      ],
+      "metrics": [
+        "stale_plan_rejection_count",
+        "replan_latency_ms"
+      ],
+      "inputDeterminism": "fixed_seed_and_hash_bound_inputs",
+      "minimumRepetitions": 5,
+      "maximumDurationSeconds": 3600
+    },
+    {
+      "workloadId": "PERF-WL-014",
+      "version": 1,
+      "purpose": "target-host storage pressure",
+      "coreAssertions": [
+        "disk-full/corruption/reboot recovery; external issue #12"
+      ],
+      "requiredEvidenceTier": "target_host",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-STATE-COMMIT",
+        "CAP-WS-AUTHORITY"
+      ],
+      "relatedMilestoneIds": [
+        "G8"
+      ],
+      "metrics": [
+        "recovery_time_ms",
+        "data_loss_count",
+        "integrity_failure_count"
+      ],
+      "inputDeterminism": "externally_observed_exact_subject",
+      "minimumRepetitions": 1,
+      "maximumDurationSeconds": 259200
+    },
+    {
+      "workloadId": "PERF-WL-015",
+      "version": 1,
+      "purpose": "live author/reviewer provider path",
+      "coreAssertions": [
+        "separated credentials",
+        "quality/cost; external issue #21"
+      ],
+      "requiredEvidenceTier": "target_host",
+      "immutableByIdVersion": true,
+      "zeroToleranceCounters": [
+        "duplicate_external_effects",
+        "stale_generation_commits",
+        "unreserved_resource_use",
+        "authority_bypass",
+        "plan_hash_nondeterminism"
+      ],
+      "ownerTeamIds": [
+        "TEAM-SRE"
+      ],
+      "relatedCapabilityIds": [
+        "CAP-EXE-BROKER",
+        "CAP-AUTHOR",
+        "CAP-REVIEW"
+      ],
+      "relatedMilestoneIds": [
+        "G8"
+      ],
+      "metrics": [
+        "role_isolation_failures",
+        "provider_success_rate",
+        "cost_error"
+      ],
+      "inputDeterminism": "externally_observed_exact_subject",
+      "minimumRepetitions": 1,
+      "maximumDurationSeconds": 21600
+    }
+  ]
+}

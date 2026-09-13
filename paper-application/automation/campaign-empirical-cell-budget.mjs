@@ -82,6 +82,10 @@ export function createCampaignEmpiricalCellRunner({
         );
       }
     };
+    const executeCell = (identity = {}) => {
+      if (controller.signal.aborted) throw abortError(controller.signal);
+      return operation({ ...identity, signal: controller.signal });
+    };
     let result;
     if (assertExternalSideEffectReady?.run) {
       const action = `campaign_empirical_cell_execute:${nodeAttempt?.nodeId || campaignId}`;
@@ -93,7 +97,7 @@ export function createCampaignEmpiricalCellRunner({
       };
       result = await assertExternalSideEffectReady.run(
         request,
-        ({ externalActionId }) => operation({
+        ({ externalActionId }) => executeCell({
           signal: controller.signal,
           externalActionId,
           idempotencyKey: externalActionId,
@@ -113,7 +117,7 @@ export function createCampaignEmpiricalCellRunner({
         assertExternalSideEffectReady.assertCurrent?.(request);
         await assertExternalSideEffectReady.markStarted?.(request);
       }
-      result = await operation({ signal: controller.signal });
+      result = await executeCell();
     }
     if (controller.signal.aborted) throw abortError(controller.signal);
     return result;

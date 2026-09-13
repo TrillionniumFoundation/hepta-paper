@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "kind": "ProviderExternalCompanionTargetHostProfileV1",
+  "status": "profile_unbound_external_host_required",
+  "operatingSystem": {
+    "family": "linux",
+    "dedicatedNonRootIdentity": true,
+    "immutableImageDigestRequired": true
+  },
+  "process": {
+    "shell": false,
+    "newPrivileges": false,
+    "processGroupIsolation": true,
+    "descendantReaping": true,
+    "seccompRequired": true
+  },
+  "filesystem": {
+    "privateRuntimeDirectory": true,
+    "inputNoFollow": true,
+    "singleLinkInput": true,
+    "exclusiveOutput": true,
+    "outputMode": "0600",
+    "readOnlySource": true
+  },
+  "environment": {
+    "inheritAmbient": false,
+    "allowedNames": [
+      "HOME",
+      "LANG",
+      "LC_ALL",
+      "PATH",
+      "TMPDIR"
+    ],
+    "forbiddenNamePatterns": [
+      "AUTH_*",
+      "AWS_*",
+      "AZURE_*",
+      "GITHUB_*",
+      "GOOGLE_*",
+      "NODE_OPTIONS",
+      "NPM_CONFIG_*",
+      "SSH_*"
+    ]
+  },
+  "network": {
+    "mode": "deny_all",
+    "permittedDestinations": [],
+    "kernelEvidenceRequired": true
+  },
+  "credentials": {
+    "credentialFree": true,
+    "secretMounts": false,
+    "agentSockets": false,
+    "cloudMetadataAccess": false
+  },
+  "limits": {
+    "wallTimeMs": 10000,
+    "stdoutBytes": 65536,
+    "stderrBytes": 65536,
+    "requestBytes": 65536,
+    "responseBytes": 65536,
+    "processCount": 8,
+    "openFiles": 32
+  },
+  "evidence": {
+    "hostIdentity": "required",
+    "imageDigest": "required",
+    "kernelPolicy": "required",
+    "networkNamespace": "required",
+    "resourceLimits": "required",
+    "cleanupReceipt": "required",
+    "independentSigner": "required"
+  },
+  "authority": {
+    "externalAuthorityClaimed": false,
+    "productionAuthorized": false,
+    "providerCredentialGranted": false,
+    "releaseAuthorized": false,
+    "submissionAuthorized": false
+  }
+}

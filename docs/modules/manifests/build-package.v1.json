@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "kind": "ModuleDocumentationManifestV1",
+  "moduleId": "module.build-package",
+  "registryRef": "docs/system/truth/modules.v1.json#/modules/module.build-package",
+  "specPath": "docs/modules/specs/build-package.md",
+  "runbookPath": "docs/modules/specs/build-package.md#operational-runbook",
+  "implementationPaths": ["paper-application","paper-adapters/artifacts"],
+  "capabilityIds": ["CAP-BUILD"],
+  "authorityClass": "prepared_result_only",
+  "ownerTeams": ["TEAM-BUILD","TEAM-WORKSPACE","TEAM-EVIDENCE"],
+  "dependencyModuleIds": ["module.node-control-plane"],
+  "workItemIds": ["BUILD-001"],
+  "qualificationRequirement": "source",
+  "protocolRange": {"minimum":1,"maximum":1},
+  "sideEffectClasses": ["local_ephemeral","workspace_mutation","prepared_result"],
+  "determinismClass": "seeded",
+  "resourceProfile": {"sourceContract":"bounded","deploymentProfileRequired":true,"implicitCapacityAllowed":false,"unboundedChildConcurrencyAllowed":false},
+  "sloProfile": {"status":"source_contract_defined","canonicalWorkloadsRequired":true,"zeroToleranceSafetyCountersRequired":true},
+  "rollout": {"currentStaticActivation":"authoritative","automaticActivation":false,"productionActivation":false,"rollbackTargetRequired":true,"mutualExclusionRequired":false},
+  "documentationStatus": "complete",
+  "effectiveQualification": "derived_only"
+}

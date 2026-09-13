@@ -1,0 +1,71 @@
+name: audit-rust-replacement-rc
+
+on:
+  push:
+    branches:
+      - codex/rust-full-replacement-rc-20260908
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-rust-replacement-rc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-exact-head:
+    if: github.actor != 'hepta-paper-automation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Check out exact RC head without persistent credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the orchestration closure is part of the actual workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s docs/rust/qualification/ORCHESTRATION_SOURCE_CLOSURE.md
+          grep -F '"crates/hepta-orchestration-kernel"' rust/Cargo.toml
+          grep -F 'hepta-orchestration-kernel = { path = "../hepta-orchestration-kernel", version = "=0.1.0" }' rust/crates/hepta-control-plane/Cargo.toml
+          grep -F 'pub use hepta_orchestration_kernel as orchestration_kernel;' rust/crates/hepta-control-plane/src/lib.rs
+          test -s rust/crates/hepta-orchestration-kernel/src/snapshot.rs
+          test -s rust/crates/hepta-orchestration-kernel/src/router.rs
+          test -s rust/crates/hepta-orchestration-kernel/src/resource.rs
+          test -s rust/crates/hepta-orchestration-kernel/src/telemetry.rs
+          test -s rust/crates/hepta-orchestration-kernel/src/performance.rs
+          if find .github/workflows -maxdepth 1 -type f \( -name '*-once.yml' -o -name '*-once.yaml' \) -print -quit | grep -q .; then
+            echo 'temporary one-shot workflow remains in the RC tree' >&2
+            find .github/workflows -maxdepth 1 -type f \( -name '*-once.yml' -o -name '*-once.yaml' \) -print >&2
+            exit 1
+          fi
+
+      - name: Re-run the newly admitted Rust facade
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo test --manifest-path rust/Cargo.toml -p hepta-orchestration-kernel -p hepta-control-plane --all-features --locked
+          cargo clippy --manifest-path rust/Cargo.toml -p hepta-orchestration-kernel -p hepta-control-plane --all-targets --all-features --locked -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path rust/Cargo.toml -p hepta-orchestration-kernel -p hepta-control-plane --all-features --no-deps --locked
+
+      - name: Record the non-authoritative boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Read-only RC audit
+
+          This workflow validates repository-local source only. It intentionally has no
+          permission or code path to mutate pull requests, refs, readiness state, reviews,
+          issues, releases, deployments, environments, or external evidence.
+
+          Promotion remains a separately controlled human decision after exact-head CI,
+          CodeQL, independent review, and all required external-authority receipts close.
+          EOF

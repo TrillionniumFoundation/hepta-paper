@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { validateModuleDocumentation, validateProseStateClaims } from '../../docs/tools/validate-module-documentation.mjs';
+import { validateModuleDocumentation, validateProseStateClaims, validateProseAuthorityClaims } from '../../docs/tools/validate-module-documentation.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const WRITER_SPEC = 'docs/modules/specs/commit-sequencer.md';
@@ -72,4 +72,37 @@ test('valid identity cannot hide a contradictory state in the specification body
     assert.equal(result.ok, false);
     assert.match(result.failures.join('\n'), /contradictory prose static state/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test('activation and authority claims cannot silently promote a module in prose', () => {
+  const record = { activation: 'disabled', authority: 'prepared_result_only' };
+  for (const source of [
+    'Current static activation: `authoritative`.',
+    'Current channel is\n`canary`.',
+    'staticActivation: authoritative',
+    'Maximum authority class: `central_state_write`.',
+    'authorityClass: external_effect',
+  ]) {
+    assert.equal(validateProseAuthorityClaims('module.example', record, source).length, 1, source);
+  }
+  assert.deepEqual(validateProseAuthorityClaims('module.example', record,
+    'Current static activation: `disabled`.\n\nCurrent channel is `disabled`.\n\nMaximum authority class: `prepared_result_only`.'), []);
+  assert.deepEqual(validateProseAuthorityClaims('module.example', record,
+    'A future independently qualified version may become authoritative; no current activation is claimed.'), []);
+});
+
+test('valid identity cannot hide rollout activation or central-writer overclaims', () => {
+  for (const [claim, expected] of [
+    ['Current channel is `authoritative`.', /contradictory prose activation/],
+    ['Maximum authority class: `external_effect`.', /contradictory prose authority/],
+  ]) {
+    const root = createFixture();
+    try {
+      fs.appendFileSync(path.join(root, WRITER_SPEC), `\n\n${claim}\n`);
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, false);
+      assert.match(result.failures.join('\n'), expected);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
 });

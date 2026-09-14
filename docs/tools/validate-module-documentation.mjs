@@ -219,6 +219,30 @@ export function validateProseStateClaims(moduleId, record, source) {
 }
 
 
+// Check explicit current activation/authority declarations throughout a spec,
+// including its rollout prose. This is deliberately not natural-language proof
+// and never treats a requested ceiling as an effective authorization.
+export function validateProseAuthorityClaims(moduleId, record, source) {
+  const failures = [];
+  const declarations = [
+    ['activation', record.activation, /\b(?:current\s+static\s+activation|staticActivation)\s*:\s*`?([a-z_]+)\b/gi],
+    ['activation', record.activation, /\bcurrent\s+channel\s+is\s+`?([a-z_]+)\b/gi],
+    ['authority', record.authority, /\b(?:maximum\s+authority\s+class|authorityClass)\s*:\s*`?([a-z_]+)\b/gi],
+  ];
+  for (const paragraph of source.split(/\n\s*\n/)) {
+    const text = paragraph.replace(/\r?\n/g, ' ');
+    for (const [kind, expected, pattern] of declarations) {
+      for (const match of text.matchAll(pattern)) {
+        if (match[1] !== expected) {
+          failures.push(`${moduleId}: contradictory prose ${kind} ${match[1]} differs from ${expected}`);
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+
 // All work-state rows are current projections, including source-implemented rows
 // under the historical "Open blockers" heading. Never let prose grant a state.
 export function validateWorkStateProjection(moduleId, record, source, workItems) {
@@ -342,6 +366,7 @@ export function validateModuleDocumentation(options = {}) {
     const spec = readText(root, entry.specPath, failures);
     validateSpec(moduleId, record, spec, index.value.requiredSections, failures);
     failures.push(...validateProseStateClaims(moduleId, record, spec));
+    failures.push(...validateProseAuthorityClaims(moduleId, record, spec));
     failures.push(...validateWorkStateProjection(moduleId, record, spec, work.value.items));
     validateManifest(moduleId, record, entry, manifests.get(moduleId), failures);
     for (const configuredPath of record.paths) {

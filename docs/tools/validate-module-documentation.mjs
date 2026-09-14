@@ -196,6 +196,29 @@ function validateSpec(moduleId, record, source, headings, failures) {
 }
 
 
+// Current module specifications may not contradict their Identity in prose.
+// This deliberately checks explicit static-state claims, not arbitrary natural
+// language or historical/effective-qualification assertions. Keep those scopes
+// separately named; the gate is not a semantic proof of the whole document.
+export function validateProseStateClaims(moduleId, record, source) {
+  const failures = [];
+  const states = 'not_started|design_ready|source_implemented|source_qualified|hosted_installed_qualified|target_host_qualified|external_authority_qualified|blocked_external|retired';
+  const pattern = new RegExp(
+    `\\b(?:static(?:\\s+(?:module|implementation))?\\s+state|staticImplementationState)\\b[^.\\n]{0,160}?(?:\\s|:|\x60)+(${states})\\b`, 'gi',
+  );
+  // Join wrapped prose within paragraphs but never join separate sections.
+  for (const paragraph of source.split(/\n\s*\n/)) {
+    const text = paragraph.replace(/\r?\n/g, ' ');
+    for (const match of text.matchAll(pattern)) {
+      if (match[1] !== record.state) {
+        failures.push(`${moduleId}: contradictory prose static state ${match[1]} differs from ${record.state}`);
+      }
+    }
+  }
+  return failures;
+}
+
+
 // All work-state rows are current projections, including source-implemented rows
 // under the historical "Open blockers" heading. Never let prose grant a state.
 export function validateWorkStateProjection(moduleId, record, source, workItems) {
@@ -318,6 +341,7 @@ export function validateModuleDocumentation(options = {}) {
     const entry = documented[moduleId];
     const spec = readText(root, entry.specPath, failures);
     validateSpec(moduleId, record, spec, index.value.requiredSections, failures);
+    failures.push(...validateProseStateClaims(moduleId, record, spec));
     failures.push(...validateWorkStateProjection(moduleId, record, spec, work.value.items));
     validateManifest(moduleId, record, entry, manifests.get(moduleId), failures);
     for (const configuredPath of record.paths) {

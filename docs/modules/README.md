@@ -77,3 +77,7 @@ vocabulary support. Run the adversarial suite with:
 python3 docs/rust/tools/test-plan-v4-qualification.py
 python3 docs/rust/tools/test_strict_json_schema_contract.py
 ```
+
+## Code-level implementation handoff
+
+[Module implementation handoff](IMPLEMENTATION_HANDOFF.md) maps every registered module to concrete API/type definitions, its engineering contract and a focused validation command. It explicitly separates incumbent Node roles, bounded Rust kernels and qualified production replacements. The handoff and the actual Rust command table are checked by `paper-core/tests/module-development-handoff.test.mjs`; navigation completeness is not full business parity.

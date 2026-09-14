@@ -182,14 +182,16 @@ malformed numbers, accessor and Proxy failure classification, sparse/cyclic
 inputs, count/byte limits, request-hash sensitivity and post-call mutation.
 These are source controls, not registry authentication, external currentness,
 source qualification or accepted MOD-002/CTL-004 evidence. The static module
-state therefore remains `design_ready` pending isolated-input composition,
-current exact-source qualification, consumer integration and independent review.
+state is `source_implemented`, matching the registry and work-item projection.
+Isolated-input production composition, exact-source qualification, consumer
+rollout and independent review are separate acceptance obligations; none is
+established by this static implementation state.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ### Runtime migration implementation details
 
-The actual JavaScript source path is `paper-application/orchestration/candidate-router.mjs` in the registry, manifest and implementation roots above. The static state remains `design_ready`; this registration repairs source inventory and confers no currentness or activation authority.
+The actual JavaScript source path is `paper-application/orchestration/candidate-router.mjs` in the registry, manifest and implementation roots above. The static state is `source_implemented`; this registration describes existing source and confers no currentness or activation authority.
 
 ## Rollout and rollback
 

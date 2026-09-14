@@ -1,0 +1,53 @@
+name: replacement-development-source
+
+on:
+  push:
+    branches: [codex/rust-replacement-convergence-20260914]
+    paths: [.github/workflows/replacement-development-source.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  export-public-source:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper' && github.ref == 'refs/heads/codex/rust-replacement-convergence-20260914'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Read exact public source and history without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export immutable public Git objects, not HOME or repository configuration
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          out="$RUNNER_TEMP/replacement-development-source"
+          mkdir -p "$out"
+          date -u +%Y-%m-%dT%H:%M:%SZ > "$out/observed-at.txt"
+          git ls-remote --heads origin | LC_ALL=C sort > "$out/remote-before.tsv"
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git for-each-ref --format='%(objectname)%09%(refname)' refs/remotes/origin | LC_ALL=C sort > "$out/fetched-refs.tsv"
+          git rev-parse HEAD > "$out/source-head.txt"
+          git rev-parse 'HEAD^{tree}' > "$out/source-tree.txt"
+          git bundle create "$out/source.bundle" --all
+          git bundle verify "$out/source.bundle"
+          git ls-remote --heads origin | LC_ALL=C sort > "$out/remote-after.tsv"
+          cmp "$out/remote-before.tsv" "$out/remote-after.tsv"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          printf '%s\n' 'Public development source only. No tests, parity, independent review, deployment, production activation or Node retirement are certified. Git configuration, HOME and credentials are excluded.' > "$out/SCOPE.txt"
+          (cd "$out" && sha256sum source.bundle source-head.txt source-tree.txt fetched-refs.tsv remote-before.tsv remote-after.tsv observed-at.txt SCOPE.txt > SHA256SUMS)
+      - name: Retain source for offline development
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: replacement-development-source-${{ github.sha }}
+          path: ${{ runner.temp }}/replacement-development-source
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

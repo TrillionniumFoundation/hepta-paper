@@ -1,0 +1,51 @@
+name: replacement-source-inputs
+
+on:
+  push:
+    branches: [codex/docs-rust-replacement-20260914]
+    paths: [.github/workflows/replacement-source-inputs.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Capture immutable source and remote branch graph
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          output="$RUNNER_TEMP/replacement-source-inputs"
+          mkdir -p "$output"
+          date -u +%FT%TZ > "$output/fetched-at.txt"
+          git ls-remote --heads origin | LC_ALL=C sort > "$output/remote-heads-before.txt"
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git ls-remote --heads origin | LC_ALL=C sort > "$output/remote-heads-after.txt"
+          cmp "$output/remote-heads-before.txt" "$output/remote-heads-after.txt"
+          git rev-parse HEAD > "$output/commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$output/tree.txt"
+          git for-each-ref --format='%(objectname) %(refname)' refs/remotes/origin > "$output/local-refs.txt"
+          git bundle create "$output/repository.bundle" --all HEAD
+          git bundle verify "$output/repository.bundle"
+          git archive --format=tar HEAD | gzip -n > "$output/source.tar.gz"
+          printf '%s\n' 'Public source and Git objects only. No Git configuration, credentials, authority, test result or production qualification.' > "$output/SCOPE.txt"
+          (cd "$output" && sha256sum repository.bundle source.tar.gz commit.txt tree.txt remote-heads-before.txt remote-heads-after.txt local-refs.txt > SHA256SUMS)
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: replacement-source-inputs-${{ github.sha }}
+          path: ${{ runner.temp }}/replacement-source-inputs
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error

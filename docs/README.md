@@ -65,3 +65,14 @@ The development-document validator rejects invalid schemas, unknown or nonrecipr
 - Git history, pull-request discussions, issues, and retained CI/external artifacts preserve historical evidence.
 
 A deleted historical document may be recovered for audit from Git, but it must not be copied back into current documentation without a new current subject, owner, manifest decision, and review.
+
+
+## Explicit prose-state regression checks
+
+The module-documentation gate compares explicit implementation-state, current
+activation/channel and maximum-authority declarations in specification prose
+against the same module registry used by the Identity and manifest checks.
+Wrapped rollout text cannot silently promote a disabled module or grant writer
+rights. This is a bounded declaration-consistency check, not general semantic
+proof or production authorization. Regression tests inject contradictory prose
+with otherwise valid Identity records and require the actual validator to reject it.

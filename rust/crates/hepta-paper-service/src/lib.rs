@@ -10,6 +10,8 @@ mod deployment;
 pub mod native_business;
 mod objects;
 mod production;
+pub mod maintenance;
+mod state_access;
 pub mod scientific_runtime;
 mod worker;
 pub mod workflow;
@@ -156,6 +158,8 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
         }
     }
     let objects = ObjectStoreV1::open(&config.state_directory)?;
+    // Outlive both executor and SQLite sequencer, irrespective of their field drop order.
+    let _state_access = objects.clone();
     let owner = fs::metadata(&config.state_directory)
         .map_err(|_| ServiceError::Filesystem)?
         .uid();

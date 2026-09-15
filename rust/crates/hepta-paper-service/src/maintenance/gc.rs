@@ -66,7 +66,7 @@ fn scan_digests(data: &[u8], found: &mut BTreeSet<Sha256Digest>) {
     }
 }
 
-fn directory(path: &Path, owner: u32) -> Result<File, ServiceError> {
+pub(super) fn directory(path: &Path, owner: u32) -> Result<File, ServiceError> {
     let before = private_root(path)?;
     let file = OpenOptions::new()
         .read(true)
@@ -79,7 +79,7 @@ fn directory(path: &Path, owner: u32) -> Result<File, ServiceError> {
     }
     Ok(file)
 }
-fn directory_current(file: &File, path: &Path, owner: u32) -> Result<(), ServiceError> {
+pub(super) fn directory_current(file: &File, path: &Path, owner: u32) -> Result<(), ServiceError> {
     let opened = file.metadata().map_err(|_| ServiceError::Filesystem)?;
     let named = private_root(path)?;
     if opened.uid() != owner || !unchanged(&opened, &named) {
@@ -89,7 +89,7 @@ fn directory_current(file: &File, path: &Path, owner: u32) -> Result<(), Service
 }
 
 impl LocalMaintenanceSessionV1 {
-    fn gc_roots(
+    pub(super) fn gc_roots(
         &self,
         expected: &Sha256Digest,
         pins: &BTreeSet<Sha256Digest>,
@@ -186,7 +186,7 @@ impl LocalMaintenanceSessionV1 {
         })
     }
 
-    fn validate_quarantine(&self, path: &Path) -> Result<(), ServiceError> {
+    pub(super) fn validate_quarantine(&self, path: &Path) -> Result<(), ServiceError> {
         let parent = path.parent().ok_or(ServiceError::Configuration)?;
         if !path.is_absolute()
             || path.file_name().is_none()

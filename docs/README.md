@@ -93,6 +93,8 @@ artifacts from failed captures must not be accepted as a complete inventory.
 
 The [local maintenance contract](../rust/crates/hepta-paper-service/MAINTENANCE.md)
 and [service README](../rust/crates/hepta-paper-service/README.md) document the
-cooperative lock and byte-backup implementation. Its inspect/backup/verify paths
-are not semantic recovery, restore, GC deletion, full command parity or production
+cooperative lock and byte-backup implementation, separate immutable local recovery
+and no-overwrite restore, native-only quarantine and explicit purge, and cache-only
+prepared-result integration. The V1 inspect/backup/verify byte paths still do not
+establish semantic recovery. None establishes full command parity or production
 activation. All existing module and capability state dimensions remain separate.

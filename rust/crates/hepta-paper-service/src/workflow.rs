@@ -33,7 +33,7 @@ use std::{
 use thiserror::Error;
 
 mod recovery;
-pub(crate) use recovery::recovery_facts_at;
+pub(crate) use recovery::{prepared_recovery_facts_at, recovery_facts_at};
 mod amendment;
 mod inspection;
 pub use amendment::{WorkflowAmendmentReceiptV1, WorkflowAmendmentV1, amend_local_workflow_v1};

@@ -81,9 +81,11 @@ impl StateAccessGuardV1 {
         let path = root.join(LOCK_NAME);
         let flags = (OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK).bits();
         if !exclusive {
-            match fs::symlink_metadata(root.join("gc-pending-v1.json")) {
-                Err(e) if e.kind() == ErrorKind::NotFound => (),
-                _ => return Err(ServiceError::Persistence),
+            for marker in ["gc-pending-v1.json", "purge-pending-v1.json"] {
+                match fs::symlink_metadata(root.join(marker)) {
+                    Err(e) if e.kind() == ErrorKind::NotFound => (),
+                    _ => return Err(ServiceError::Persistence),
+                }
             }
         }
         if enroll {
@@ -139,9 +141,11 @@ impl StateAccessGuardV1 {
     pub(crate) fn validate(&self) -> Result<(), ServiceError> {
         reject_restore_residue(&self.root)?;
         if !self.exclusive {
-            match fs::symlink_metadata(self.root.join("gc-pending-v1.json")) {
-                Err(e) if e.kind() == ErrorKind::NotFound => (),
-                _ => return Err(ServiceError::Persistence),
+            for marker in ["gc-pending-v1.json", "purge-pending-v1.json"] {
+                match fs::symlink_metadata(self.root.join(marker)) {
+                    Err(e) if e.kind() == ErrorKind::NotFound => (),
+                    _ => return Err(ServiceError::Persistence),
+                }
             }
         }
         let root = private_root(&self.root)?;

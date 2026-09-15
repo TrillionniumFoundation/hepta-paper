@@ -1,7 +1,7 @@
 use super::*;
 use hepta_paper_service::maintenance::{LocalGcPlanV1, LocalMaintenanceSessionV1};
 
-fn paused() -> (
+pub(super) fn paused() -> (
     Temp,
     hepta_codex_protocol::Sha256Digest,
     hepta_codex_protocol::Sha256Digest,

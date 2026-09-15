@@ -2,9 +2,14 @@
 //!
 //! A verified backup proves file identities, not semantic recovery, scientific
 //! acceptance, writer authority or permission to retire Node. This module never
-//! deletes CAS data, restores over state, refreshes leases or starts a worker.
+//! deletes live CAS data, restores over state, refreshes leases or starts a worker.
+//! A separately requested purge may unlink verified quarantined native-local objects.
 mod gc;
 pub use gc::{LocalGcPlanV1, LocalGcReceiptV1};
+mod purge;
+pub use purge::{LocalPurgePlanV1, LocalPurgePolicyV1, LocalPurgeReceiptV1};
+mod reconcile;
+pub use reconcile::{PreparedReconciliationPlanV1, PreparedReconciliationReceiptV1};
 mod recovery;
 pub use recovery::{
     LocalRecoveryReportV1, restore_local_backup_v1, verify_local_backup_recovery_v1,
@@ -188,6 +193,13 @@ fn inventory_filtered(
     owner: u32,
     pending_gc: bool,
 ) -> Result<Vec<LocalBackupFileV1>, ServiceError> {
+    inventory_ignoring(root, owner, pending_gc.then_some("gc-pending-v1.json"))
+}
+fn inventory_ignoring(
+    root: &Path,
+    owner: u32,
+    ignored_marker: Option<&str>,
+) -> Result<Vec<LocalBackupFileV1>, ServiceError> {
     let before = private_root(root)?;
     if before.uid() != owner {
         return Err(ServiceError::Artifact);
@@ -196,7 +208,7 @@ fn inventory_filtered(
     let mut paths = Vec::new();
     let mut child_directories = Vec::new();
     for name in &top {
-        if pending_gc && name == "gc-pending-v1.json" {
+        if ignored_marker == Some(name.as_str()) {
             continue;
         }
         if matches!(name.as_str(), "objects" | "attempts") {

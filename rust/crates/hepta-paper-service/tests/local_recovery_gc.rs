@@ -194,3 +194,9 @@ mod recovery;
 
 #[path = "workflow_extensions/gc.rs"]
 mod gc;
+
+#[path = "workflow_extensions/purge.rs"]
+mod purge;
+
+#[path = "workflow_extensions/reconcile.rs"]
+mod reconcile;

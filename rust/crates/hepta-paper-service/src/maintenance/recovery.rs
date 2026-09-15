@@ -36,9 +36,11 @@ impl LocalMaintenanceSessionV1 {
         self.validate()?;
         // A pending GC binds exact database bytes. Even a journal-mode change
         // would destroy that recovery preimage; only gc-resume may proceed.
-        match fs::symlink_metadata(self.state.join("gc-pending-v1.json")) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            _ => return Err(ServiceError::Persistence),
+        for marker in ["gc-pending-v1.json", "purge-pending-v1.json"] {
+            match fs::symlink_metadata(self.state.join(marker)) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                _ => return Err(ServiceError::Persistence),
+            }
         }
         for suffix in ["-wal", "-shm", "-journal"] {
             let path = self.state.join(format!("campaign.sqlite{suffix}"));

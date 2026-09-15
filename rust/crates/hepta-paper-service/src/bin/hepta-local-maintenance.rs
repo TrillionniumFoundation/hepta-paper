@@ -1,8 +1,9 @@
-//! Explicit local maintenance. Restore never overwrites state; GC quarantines.
+//! Explicit local maintenance. Purge is a separate hash-bound operation.
 use hepta_codex_protocol::Sha256Digest;
 use hepta_paper_service::maintenance::{
-    LocalGcPlanV1, LocalMaintenanceSessionV1, restore_local_backup_v1,
-    verify_local_backup_recovery_v1, verify_local_backup_v1,
+    LocalGcPlanV1, LocalMaintenanceSessionV1, LocalPurgePlanV1, LocalPurgePolicyV1,
+    PreparedReconciliationPlanV1, restore_local_backup_v1, verify_local_backup_recovery_v1,
+    verify_local_backup_v1,
 };
 use std::{collections::BTreeSet, env, io::Read, os::unix::fs::OpenOptionsExt, path::Path};
 
@@ -93,6 +94,46 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
             &LocalMaintenanceSessionV1::acquire(Path::new(state))?
                 .resume_gc(Path::new(quarantine), &expected.parse()?)?,
         )?,
+        [cmd, state, quarantine, gc_hash, policy] if cmd == "purge-plan" => {
+            let policy: LocalPurgePolicyV1 = read(policy)?;
+            let plan = LocalMaintenanceSessionV1::acquire(Path::new(state))?.plan_purge(
+                Path::new(quarantine),
+                &gc_hash.parse()?,
+                policy,
+            )?;
+            print(&serde_json::json!({"planHash":plan.plan_hash()?, "plan":plan}))?;
+        }
+        [cmd, state, plan, expected, now] if cmd == "purge-apply" => {
+            let plan: LocalPurgePlanV1 = read(plan)?;
+            print(
+                &LocalMaintenanceSessionV1::acquire(Path::new(state))?.apply_purge(
+                    &plan,
+                    &expected.parse()?,
+                    now.parse()?,
+                )?,
+            )?;
+        }
+        [cmd, state, quarantine, expected, now] if cmd == "purge-resume" => {
+            print(
+                &LocalMaintenanceSessionV1::acquire(Path::new(state))?.resume_purge(
+                    Path::new(quarantine),
+                    &expected.parse()?,
+                    now.parse()?,
+                )?,
+            )?;
+        }
+        [cmd, state, definition] if cmd == "prepared-plan" => {
+            let plan = LocalMaintenanceSessionV1::acquire(Path::new(state))?
+                .plan_prepared_reconciliation(&definition.parse()?)?;
+            print(&serde_json::json!({"requestHash":plan.request_hash()?,"plan":plan}))?;
+        }
+        [cmd, state, plan, expected, now] if cmd == "prepared-commit" => {
+            let plan: PreparedReconciliationPlanV1 = read(plan)?;
+            print(
+                &LocalMaintenanceSessionV1::acquire(Path::new(state))?
+                    .apply_prepared_reconciliation(&plan, &expected.parse()?, now.parse()?)?,
+            )?;
+        }
         _ => return Err("unsupported maintenance command or arguments".into()),
     }
     Ok(())

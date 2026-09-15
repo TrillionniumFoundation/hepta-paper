@@ -1,0 +1,284 @@
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -98,3 +98,12 @@
+ prepared-result integration. The V1 inspect/backup/verify byte paths still do not
+ establish semantic recovery. None establishes full command parity or production
+ activation. All existing module and capability state dimensions remain separate.
++
++## Native decision, analysis and SLO implementation
++
++The [native parity handoff](modules/NATIVE_PARITY_HANDOFF.md) describes the bounded
++Rust campaign decisions, resource predictions, paired statistics and SLO report
++computation. It links the actual source, executable examples and Node differential
++oracles. These are function-level source ports, not accepted parity for all
++57 command routes, production activation or Node retirement. Validate their
++static source bindings with `node docs/tools/validate-native-function-ports.mjs`.
+--- a/docs/modules/IMPLEMENTATION_HANDOFF.md
++++ b/docs/modules/IMPLEMENTATION_HANDOFF.md
+@@ -112,7 +112,11 @@
+ 
+ ## module.node-control-plane
+ 
+-**Implementation scope:** Incumbent Node implementation.
++**Implementation scope:** Incumbent Node implementation plus additive pure Rust decision/SLO ports.
++
++The [native parity handoff](NATIVE_PARITY_HANDOFF.md) links `campaign_policy.rs`,
++`campaign_slo.rs` and their actual Node differential tests. These functions do
++not replace the campaign engine, its writer, or in-flight process cancellation.
+ 
+ **API and concrete types:** [paper-application/automation/campaign-engine.mjs](../../paper-application/automation/campaign-engine.mjs). **Engineering contract:** [NODE_RUST_MIGRATION.md](../migration/NODE_RUST_MIGRATION.md). **Module specification:** [node-control-plane](specs/node-control-plane.md).
+ 
+@@ -234,7 +238,11 @@
+ 
+ ## module.empirical-node
+ 
+-**Implementation scope:** Rust aggregation plus trusted external scientific execution.
++**Implementation scope:** Rust aggregation, bounded paired-analysis statistics and trusted external scientific execution.
++
++The [paired-analysis contract](NATIVE_PARITY_HANDOFF.md) binds the native
++`empirical_inference` variant to real Node statistical exports and the existing
++durable service. It does not establish data provenance or independent replication.
+ 
+ **API and concrete types:** [rust/crates/hepta-paper-service/src/native_business/empirical.rs](../../rust/crates/hepta-paper-service/src/native_business/empirical.rs). **Engineering contract:** [SCIENTIFIC_RUNTIME_HANDOFF.md](SCIENTIFIC_RUNTIME_HANDOFF.md). **Module specification:** [empirical-node](specs/empirical-node.md).
+ 
+--- a/docs/modules/NATIVE_BUSINESS_HANDOFF.md
++++ b/docs/modules/NATIVE_BUSINESS_HANDOFF.md
+@@ -108,3 +108,13 @@
+ runtime call chain, independent verification, resource/cost settlement,
+ crash/ambiguity recovery and external authority where applicable. Keep the
+ bounded kernel guarantee distinct from those additional guarantees.
++
++## Paired-analysis extension
++
++The seven original kernels above remain unchanged. The additional
++`empirical_inference` job is a bounded paired-statistics computation sharing
++`CAP-EMPIRICAL`, not a newly accepted full empirical business role. The
++[native parity handoff](NATIVE_PARITY_HANDOFF.md) and
++[executable request](examples/paired-analysis.v1.json) document its closed fields,
++resampling work limits, source-bound Node oracle, finite arithmetic, durable
++service integration and scientific/provenance exclusions.
+--- a/rust/Cargo.lock
++++ b/rust/Cargo.lock
+@@ -480,6 +480,7 @@
+  "hepta-codex-runtime",
+  "hepta-control-plane",
+  "hepta-cutover",
++ "hepta-legacy-compatibility",
+  "hepta-module-platform",
+  "hepta-qualification-ingest",
+  "hepta-readonly-store",
+--- a/rust/crates/hepta-legacy-compatibility/src/production.rs
++++ b/rust/crates/hepta-legacy-compatibility/src/production.rs
+@@ -45,6 +45,28 @@
+         .map_err(Clone::clone)
+ }
+ 
++/// Borrow the pinned production collation profile for ordered legacy projections.
++/// This only compares valid Rust Unicode strings, never unpaired UTF-16 surrogates.
++/// Construction verifies the immutable data blob before comparison is available.
++pub struct ProductionCollationV1 {
++    collator: CollatorBorrowed<'static>,
++}
++
++impl ProductionCollationV1 {
++    /// Load and verify the same en-US profile used by production record hashing.
++    pub fn load() -> Result<Self, CompatibilityError> {
++        Ok(Self {
++            collator: production_collator()?,
++        })
++    }
++
++    /// Compare strings without a lexical fallback that could silently change order.
++    #[must_use]
++    pub fn compare(&self, left: &str, right: &str) -> Ordering {
++        self.collator.compare(left, right)
++    }
++}
++
+ /// Qualified historical production runtime. Other runtimes require fresh qualification.
+ pub const PRODUCTION_NODE_PROFILE_V1: &str = "node22.23.1-icu78.2-cldr48-en-US-v1";
+ /// Frozen identity of the actual Node source; changing it requires requalification.
+--- a/rust/crates/hepta-paper-service/README.md
++++ b/rust/crates/hepta-paper-service/README.md
+@@ -195,3 +195,14 @@
+ a lease or grant production/Node-retirement authority. Three former unmapped
+ maintenance modes now have partial local source mappings; `cancel-node` remains
+ unmapped. None is an accepted full Node parity decision.
++
++## Native incumbent-function ports
++
++`campaign_policy` and `campaign_slo` add a pure closed JSON command surface via
++`hepta-campaign-policy`; no state writer, provider or Node process is invoked.
++`NativeBusinessJobV1::EmpiricalInference` adds bounded paired-analysis statistics
++under `CAP-EMPIRICAL` and the existing durable service pipeline. The seven original
++jobs retain their meaning. See the [native parity handoff](../../../docs/modules/NATIVE_PARITY_HANDOFF.md)
++for exact input domains, limits, Node source/profile oracles, errors, tests and
++rollback exclusions. A dependency-set decision is not in-flight cancellation;
++computed SLOs and p-values are not independently qualified observations.
+--- a/rust/crates/hepta-paper-service/src/lib.rs
++++ b/rust/crates/hepta-paper-service/src/lib.rs
+@@ -6,6 +6,8 @@
+ 
+ #![forbid(unsafe_code)]
+ 
++pub mod campaign_policy;
++pub mod campaign_slo;
+ mod deployment;
+ pub mod maintenance;
+ pub mod native_business;
+--- a/rust/crates/hepta-paper-service/src/native_business.rs
++++ b/rust/crates/hepta-paper-service/src/native_business.rs
+@@ -9,6 +9,7 @@
+ mod build;
+ mod empirical;
+ mod formal;
++pub mod inference;
+ mod numerical;
+ mod reviewer;
+ mod submission;
+@@ -47,6 +48,7 @@
+             include_bytes!("native_business/reviewer.rs"),
+             include_bytes!("native_business/formal.rs"),
+             include_bytes!("native_business/empirical.rs"),
++            include_bytes!("native_business/inference.rs"),
+             include_bytes!("native_business/numerical.rs"),
+             include_bytes!("native_business/build.rs"),
+             include_bytes!("native_business/submission.rs"),
+@@ -89,6 +91,9 @@
+         NativeBusinessJobV1::EmpiricalAggregate { observations } => {
+             empirical_aggregate(observations)?
+         }
++        NativeBusinessJobV1::EmpiricalInference { request } => {
++            inference::empirical_inference(request)?
++        }
+         NativeBusinessJobV1::NumericalLinearSolve {
+             matrix,
+             rhs,
+--- a/rust/crates/hepta-paper-service/src/native_business/types.rs
++++ b/rust/crates/hepta-paper-service/src/native_business/types.rs
+@@ -97,6 +97,10 @@
+     EmpiricalAggregate {
+         observations: Vec<ObservationV1>,
+     },
++    /// Paired statistical analysis of supplied observations, not scientific acceptance.
++    EmpiricalInference {
++        request: super::inference::AnalysisInferenceRequestV1,
++    },
+     NumericalLinearSolve {
+         matrix: Vec<Vec<f64>>,
+         rhs: Vec<f64>,
+@@ -130,7 +134,7 @@
+             Self::AuthorDraft { .. } => "CAP-AUTHOR",
+             Self::ReviewerAssessment { .. } => "CAP-REVIEW",
+             Self::FormalCertificate { .. } => "CAP-FORMAL",
+-            Self::EmpiricalAggregate { .. } => "CAP-EMPIRICAL",
++            Self::EmpiricalAggregate { .. } | Self::EmpiricalInference { .. } => "CAP-EMPIRICAL",
+             Self::NumericalLinearSolve { .. } => "CAP-NUMERICAL",
+             Self::BuildPackage { .. } => "CAP-BUILD",
+             Self::PrepareSubmission { .. } => "CAP-SUBMIT",
+--- a/rust/crates/hepta-paper-service/Cargo.toml
++++ b/rust/crates/hepta-paper-service/Cargo.toml
+@@ -9,6 +9,7 @@
+ workspace = true
+ 
+ [dependencies]
++hepta-legacy-compatibility = { path = "../hepta-legacy-compatibility", version = "=0.1.0" }
+ hepta-codex-protocol = { path = "../hepta-codex-protocol", version = "=0.1.0" }
+ hepta-codex-runtime = { path = "../hepta-codex-runtime", version = "=0.1.0" }
+ hepta-module-platform = { path = "../hepta-module-platform", version = "=0.1.0" }
+--- a/rust/crates/hepta-paper-service/tests/native_business_service.rs
++++ b/rust/crates/hepta-paper-service/tests/native_business_service.rs
+@@ -45,25 +45,30 @@
+ }
+ 
+ fn build_configuration(temp: &Temp) -> ServiceRunV1 {
++    configuration_for_job(
++        temp,
++        NativeBusinessJobV1::BuildPackage {
++            entries: vec![BuildEntryV1 {
++                path: "manuscript/main.md".into(),
++                content: "# Rust-native package\n".into(),
++                media_type: "text/markdown".into(),
++            }],
++        },
++    )
++}
++fn configuration_for_job(temp: &Temp, business_job: NativeBusinessJobV1) -> ServiceRunV1 {
++    let capability = business_job.capability_id().to_owned();
+     let objects = ObjectStoreV1::open(&temp.0).expect("object store");
+     let initial = objects
+         .put(b"native business initial state\n")
+         .expect("initial object");
+     let payload = objects
+         .put(
+-            &serde_json::to_vec(&NativeJobV1::Business {
+-                job: NativeBusinessJobV1::BuildPackage {
+-                    entries: vec![BuildEntryV1 {
+-                        path: "manuscript/main.md".into(),
+-                        content: "# Rust-native package\n".into(),
+-                        media_type: "text/markdown".into(),
+-                    }],
+-                },
+-            })
+-            .expect("native business payload"),
++            &serde_json::to_vec(&NativeJobV1::Business { job: business_job })
++                .expect("payload bytes"),
+         )
+         .expect("payload object");
+-    let capabilities = BTreeSet::from(["CAP-BUILD".to_owned()]);
++    let capabilities = BTreeSet::from([capability.clone()]);
+     let module_id = "module.native-business".to_owned();
+     let mut registry = ModuleRegistryV1::new(RegistryPolicyV1 {
+         version: 1,
+@@ -144,7 +149,7 @@
+             decision_group: "native-build".into(),
+             module_id: module_id.clone(),
+             module_version: "1.0.0".into(),
+-            capability_id: "CAP-BUILD".into(),
++            capability_id: capability,
+             snapshot_hash: snapshot.snapshot_hash().expect("snapshot hash"),
+             dependency_candidate_ids: vec![],
+             resources: ResourceVectorV1 {
+@@ -300,3 +305,42 @@
+         }
+     }
+ }
++
++#[test]
++fn paired_analysis_flows_through_real_cas_verifier_sqlite_and_replay() {
++    use hepta_paper_service::native_business::inference::AnalysisInferenceRequestV1;
++    let temp = Temp::new();
++    let request: AnalysisInferenceRequestV1 = serde_json::from_slice(include_bytes!(
++        "../../../../docs/modules/examples/paired-analysis.v1.json"
++    ))
++    .expect("documented input");
++    let config = configuration_for_job(&temp, NativeBusinessJobV1::EmpiricalInference { request });
++    let first = run_service_v1(config.clone()).expect("native inference through real service");
++    assert_eq!(first.commit_receipts.len(), 1);
++    assert!(first.commit_receipts[0].newly_committed);
++    let replay = run_service_v1(config).expect("durable replay");
++    assert!(!replay.commit_receipts[0].newly_committed);
++    assert_eq!(
++        first.commit_receipts[0].result_hash,
++        replay.commit_receipts[0].result_hash
++    );
++    let objects = ObjectStoreV1::open(&temp.0).expect("objects");
++    let mut reports = 0;
++    for entry in fs::read_dir(temp.0.join("objects")).expect("objects directory") {
++        let name = entry
++            .expect("entry")
++            .file_name()
++            .into_string()
++            .expect("hash name");
++        let digest = format!("sha256:{name}").parse().expect("digest");
++        let bytes = objects.read(&digest).expect("actual content verification");
++        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
++            && value["kind"] == "NativePairedAnalysisReportV1"
++        {
++            assert_eq!(value["mean"], 4.0);
++            assert_eq!(value["scientificAcceptance"], false);
++            reports += 1;
++        }
++    }
++    assert_eq!(reports, 1);
++}

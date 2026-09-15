@@ -112,7 +112,11 @@ The [native business examples](NATIVE_BUSINESS_HANDOFF.md), [local workflow](LOC
 
 ## module.node-control-plane
 
-**Implementation scope:** Incumbent Node implementation.
+**Implementation scope:** Incumbent Node implementation plus additive pure Rust decision/SLO ports.
+
+The [native parity handoff](NATIVE_PARITY_HANDOFF.md) links `campaign_policy.rs`,
+`campaign_slo.rs` and their actual Node differential tests. These functions do
+not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **API and concrete types:** [paper-application/automation/campaign-engine.mjs](../../paper-application/automation/campaign-engine.mjs). **Engineering contract:** [NODE_RUST_MIGRATION.md](../migration/NODE_RUST_MIGRATION.md). **Module specification:** [node-control-plane](specs/node-control-plane.md).
 
@@ -234,7 +238,11 @@ The [native business examples](NATIVE_BUSINESS_HANDOFF.md), [local workflow](LOC
 
 ## module.empirical-node
 
-**Implementation scope:** Rust aggregation plus trusted external scientific execution.
+**Implementation scope:** Rust aggregation, bounded paired-analysis statistics and trusted external scientific execution.
+
+The [paired-analysis contract](NATIVE_PARITY_HANDOFF.md) binds the native
+`empirical_inference` variant to real Node statistical exports and the existing
+durable service. It does not establish data provenance or independent replication.
 
 **API and concrete types:** [rust/crates/hepta-paper-service/src/native_business/empirical.rs](../../rust/crates/hepta-paper-service/src/native_business/empirical.rs). **Engineering contract:** [SCIENTIFIC_RUNTIME_HANDOFF.md](SCIENTIFIC_RUNTIME_HANDOFF.md). **Module specification:** [empirical-node](specs/empirical-node.md).
 

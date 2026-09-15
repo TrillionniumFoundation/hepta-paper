@@ -195,3 +195,14 @@ data or reclaim disk. Historical recovery reports do not qualify a runtime, rene
 a lease or grant production/Node-retirement authority. Three former unmapped
 maintenance modes now have partial local source mappings; `cancel-node` remains
 unmapped. None is an accepted full Node parity decision.
+
+## Native incumbent-function ports
+
+`campaign_policy` and `campaign_slo` add a pure closed JSON command surface via
+`hepta-campaign-policy`; no state writer, provider or Node process is invoked.
+`NativeBusinessJobV1::EmpiricalInference` adds bounded paired-analysis statistics
+under `CAP-EMPIRICAL` and the existing durable service pipeline. The seven original
+jobs retain their meaning. See the [native parity handoff](../../../docs/modules/NATIVE_PARITY_HANDOFF.md)
+for exact input domains, limits, Node source/profile oracles, errors, tests and
+rollback exclusions. A dependency-set decision is not in-flight cancellation;
+computed SLOs and p-values are not independently qualified observations.

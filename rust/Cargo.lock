@@ -480,6 +480,7 @@ dependencies = [
  "hepta-codex-runtime",
  "hepta-control-plane",
  "hepta-cutover",
+ "hepta-legacy-compatibility",
  "hepta-module-platform",
  "hepta-qualification-ingest",
  "hepta-readonly-store",

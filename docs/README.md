@@ -98,3 +98,12 @@ and no-overwrite restore, native-only quarantine and explicit purge, and cache-o
 prepared-result integration. The V1 inspect/backup/verify byte paths still do not
 establish semantic recovery. None establishes full command parity or production
 activation. All existing module and capability state dimensions remain separate.
+
+## Native decision, analysis and SLO implementation
+
+The [native parity handoff](modules/NATIVE_PARITY_HANDOFF.md) describes the bounded
+Rust campaign decisions, resource predictions, paired statistics and SLO report
+computation. It links the actual source, executable examples and Node differential
+oracles. These are function-level source ports, not accepted parity for all
+57 command routes, production activation or Node retirement. Validate their
+static source bindings with `node docs/tools/validate-native-function-ports.mjs`.

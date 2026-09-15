@@ -9,6 +9,7 @@ mod author;
 mod build;
 mod empirical;
 mod formal;
+pub mod inference;
 mod numerical;
 mod reviewer;
 mod submission;
@@ -47,6 +48,7 @@ pub fn native_business_implementation_hash_v1() -> String {
             include_bytes!("native_business/reviewer.rs"),
             include_bytes!("native_business/formal.rs"),
             include_bytes!("native_business/empirical.rs"),
+            include_bytes!("native_business/inference.rs"),
             include_bytes!("native_business/numerical.rs"),
             include_bytes!("native_business/build.rs"),
             include_bytes!("native_business/submission.rs"),
@@ -88,6 +90,9 @@ pub fn execute_native_business_v1(
         } => formal_certificate(assumptions, steps, goal)?,
         NativeBusinessJobV1::EmpiricalAggregate { observations } => {
             empirical_aggregate(observations)?
+        }
+        NativeBusinessJobV1::EmpiricalInference { request } => {
+            inference::empirical_inference(request)?
         }
         NativeBusinessJobV1::NumericalLinearSolve {
             matrix,

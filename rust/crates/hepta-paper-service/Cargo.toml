@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hepta-legacy-compatibility = { path = "../hepta-legacy-compatibility", version = "=0.1.0" }
 hepta-codex-protocol = { path = "../hepta-codex-protocol", version = "=0.1.0" }
 hepta-codex-runtime = { path = "../hepta-codex-runtime", version = "=0.1.0" }
 hepta-module-platform = { path = "../hepta-module-platform", version = "=0.1.0" }

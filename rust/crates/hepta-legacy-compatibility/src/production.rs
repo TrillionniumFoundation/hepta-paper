@@ -45,6 +45,28 @@ fn production_collator() -> Result<CollatorBorrowed<'static>, CompatibilityError
         .map_err(Clone::clone)
 }
 
+/// Borrow the pinned production collation profile for ordered legacy projections.
+/// This only compares valid Rust Unicode strings, never unpaired UTF-16 surrogates.
+/// Construction verifies the immutable data blob before comparison is available.
+pub struct ProductionCollationV1 {
+    collator: CollatorBorrowed<'static>,
+}
+
+impl ProductionCollationV1 {
+    /// Load and verify the same en-US profile used by production record hashing.
+    pub fn load() -> Result<Self, CompatibilityError> {
+        Ok(Self {
+            collator: production_collator()?,
+        })
+    }
+
+    /// Compare strings without a lexical fallback that could silently change order.
+    #[must_use]
+    pub fn compare(&self, left: &str, right: &str) -> Ordering {
+        self.collator.compare(left, right)
+    }
+}
+
 /// Qualified historical production runtime. Other runtimes require fresh qualification.
 pub const PRODUCTION_NODE_PROFILE_V1: &str = "node22.23.1-icu78.2-cldr48-en-US-v1";
 /// Frozen identity of the actual Node source; changing it requires requalification.

@@ -97,6 +97,10 @@ pub enum NativeBusinessJobV1 {
     EmpiricalAggregate {
         observations: Vec<ObservationV1>,
     },
+    /// Paired statistical analysis of supplied observations, not scientific acceptance.
+    EmpiricalInference {
+        request: super::inference::AnalysisInferenceRequestV1,
+    },
     NumericalLinearSolve {
         matrix: Vec<Vec<f64>>,
         rhs: Vec<f64>,
@@ -130,7 +134,7 @@ impl NativeBusinessJobV1 {
             Self::AuthorDraft { .. } => "CAP-AUTHOR",
             Self::ReviewerAssessment { .. } => "CAP-REVIEW",
             Self::FormalCertificate { .. } => "CAP-FORMAL",
-            Self::EmpiricalAggregate { .. } => "CAP-EMPIRICAL",
+            Self::EmpiricalAggregate { .. } | Self::EmpiricalInference { .. } => "CAP-EMPIRICAL",
             Self::NumericalLinearSolve { .. } => "CAP-NUMERICAL",
             Self::BuildPackage { .. } => "CAP-BUILD",
             Self::PrepareSubmission { .. } => "CAP-SUBMIT",

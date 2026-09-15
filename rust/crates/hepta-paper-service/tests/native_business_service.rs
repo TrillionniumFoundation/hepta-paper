@@ -45,25 +45,30 @@ impl Drop for Temp {
 }
 
 fn build_configuration(temp: &Temp) -> ServiceRunV1 {
+    configuration_for_job(
+        temp,
+        NativeBusinessJobV1::BuildPackage {
+            entries: vec![BuildEntryV1 {
+                path: "manuscript/main.md".into(),
+                content: "# Rust-native package\n".into(),
+                media_type: "text/markdown".into(),
+            }],
+        },
+    )
+}
+fn configuration_for_job(temp: &Temp, business_job: NativeBusinessJobV1) -> ServiceRunV1 {
+    let capability = business_job.capability_id().to_owned();
     let objects = ObjectStoreV1::open(&temp.0).expect("object store");
     let initial = objects
         .put(b"native business initial state\n")
         .expect("initial object");
     let payload = objects
         .put(
-            &serde_json::to_vec(&NativeJobV1::Business {
-                job: NativeBusinessJobV1::BuildPackage {
-                    entries: vec![BuildEntryV1 {
-                        path: "manuscript/main.md".into(),
-                        content: "# Rust-native package\n".into(),
-                        media_type: "text/markdown".into(),
-                    }],
-                },
-            })
-            .expect("native business payload"),
+            &serde_json::to_vec(&NativeJobV1::Business { job: business_job })
+                .expect("payload bytes"),
         )
         .expect("payload object");
-    let capabilities = BTreeSet::from(["CAP-BUILD".to_owned()]);
+    let capabilities = BTreeSet::from([capability.clone()]);
     let module_id = "module.native-business".to_owned();
     let mut registry = ModuleRegistryV1::new(RegistryPolicyV1 {
         version: 1,
@@ -144,7 +149,7 @@ fn build_configuration(temp: &Temp) -> ServiceRunV1 {
             decision_group: "native-build".into(),
             module_id: module_id.clone(),
             module_version: "1.0.0".into(),
-            capability_id: "CAP-BUILD".into(),
+            capability_id: capability,
             snapshot_hash: snapshot.snapshot_hash().expect("snapshot hash"),
             dependency_candidate_ids: vec![],
             resources: ResourceVectorV1 {
@@ -299,4 +304,43 @@ fn native_process_worker_rejects_capability_substitution() {
             assert!(output.stdout.is_empty());
         }
     }
+}
+
+#[test]
+fn paired_analysis_flows_through_real_cas_verifier_sqlite_and_replay() {
+    use hepta_paper_service::native_business::inference::AnalysisInferenceRequestV1;
+    let temp = Temp::new();
+    let request: AnalysisInferenceRequestV1 = serde_json::from_slice(include_bytes!(
+        "../../../../docs/modules/examples/paired-analysis.v1.json"
+    ))
+    .expect("documented input");
+    let config = configuration_for_job(&temp, NativeBusinessJobV1::EmpiricalInference { request });
+    let first = run_service_v1(config.clone()).expect("native inference through real service");
+    assert_eq!(first.commit_receipts.len(), 1);
+    assert!(first.commit_receipts[0].newly_committed);
+    let replay = run_service_v1(config).expect("durable replay");
+    assert!(!replay.commit_receipts[0].newly_committed);
+    assert_eq!(
+        first.commit_receipts[0].result_hash,
+        replay.commit_receipts[0].result_hash
+    );
+    let objects = ObjectStoreV1::open(&temp.0).expect("objects");
+    let mut reports = 0;
+    for entry in fs::read_dir(temp.0.join("objects")).expect("objects directory") {
+        let name = entry
+            .expect("entry")
+            .file_name()
+            .into_string()
+            .expect("hash name");
+        let digest = format!("sha256:{name}").parse().expect("digest");
+        let bytes = objects.read(&digest).expect("actual content verification");
+        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
+            && value["kind"] == "NativePairedAnalysisReportV1"
+        {
+            assert_eq!(value["mean"], 4.0);
+            assert_eq!(value["scientificAcceptance"], false);
+            reports += 1;
+        }
+    }
+    assert_eq!(reports, 1);
 }

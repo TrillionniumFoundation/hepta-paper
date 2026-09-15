@@ -108,3 +108,13 @@ kernel into a complete business role, separately implement and test the model or
 runtime call chain, independent verification, resource/cost settlement,
 crash/ambiguity recovery and external authority where applicable. Keep the
 bounded kernel guarantee distinct from those additional guarantees.
+
+## Paired-analysis extension
+
+The seven original kernels above remain unchanged. The additional
+`empirical_inference` job is a bounded paired-statistics computation sharing
+`CAP-EMPIRICAL`, not a newly accepted full empirical business role. The
+[native parity handoff](NATIVE_PARITY_HANDOFF.md) and
+[executable request](examples/paired-analysis.v1.json) document its closed fields,
+resampling work limits, source-bound Node oracle, finite arithmetic, durable
+service integration and scientific/provenance exclusions.

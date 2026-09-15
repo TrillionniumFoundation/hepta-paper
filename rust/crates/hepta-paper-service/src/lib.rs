@@ -6,6 +6,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod campaign_policy;
+pub mod campaign_slo;
 mod deployment;
 pub mod maintenance;
 pub mod native_business;

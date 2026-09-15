@@ -63,9 +63,16 @@ test('all declared campaign action modes retain source mapping or explicit gaps'
   assert.equal(modes.productionActivation, false);
   assert.equal(modes.nodeRetirement, false);
   assert.equal(modes.modes.length, 15);
-  assert.equal(modes.modes.filter((row) => row.scope === 'partial_local_source').length, 11);
+  assert.equal(modes.modes.filter((row) => row.scope === 'partial_local_source').length, 14);
   assert.equal(new Set(modes.modes.map((row) => row.nodeAction)).size, modes.modes.length);
-  assert.ok(modes.modes.find((row) => row.nodeAction === 'cancel-node').scope === 'unmapped');
+  for (const action of ['gc', 'retention-recovery-readiness', 'provision-retention-recovery']) {
+    const row = modes.modes.find((entry) => entry.nodeAction === action);
+    assert.equal(row.scope, 'partial_local_source');
+    assert.ok(row.callChain.length > 0 && row.tests.length > 0);
+    assert.ok(row.remaining.length > 80);
+  }
+  assert.equal(modes.modes.filter((row) => row.scope === 'unmapped').length, 1);
+  assert.equal(modes.modes.find((row) => row.nodeAction === 'cancel-node').scope, 'unmapped');
   assert.ok(modes.modes.find((row) => row.nodeAction === 'resume').remaining.includes('not equivalent'));
   assert.equal(report.acceptedParityRows, 0);
 });

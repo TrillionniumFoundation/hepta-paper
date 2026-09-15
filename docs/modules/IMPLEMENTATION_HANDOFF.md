@@ -130,6 +130,8 @@ The [native business examples](NATIVE_BUSINESS_HANDOFF.md), [local workflow](LOC
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service`.
 
+**Local maintenance extension:** [MAINTENANCE.md](../../rust/crates/hepta-paper-service/MAINTENANCE.md) binds immutable local recovery, explicit native-only purge and cached-result-only commit to `local_recovery_gc` regressions. Purge never selects live CAS; reconciliation never dispatches a worker. These are partial local scopes, not accepted command or production parity.
+
 ## module.node-legacy-adapter
 
 **Implementation scope:** Rust translation of explicitly labelled Node work.

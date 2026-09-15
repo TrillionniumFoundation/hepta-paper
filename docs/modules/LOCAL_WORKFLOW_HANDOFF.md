@@ -234,3 +234,13 @@ scientific acceptance. Python and tool-equipped LaTeX scenarios are executed by
 the new tests; R/Lean are not claimed as runtime-qualified. None of this supplies
 live model author/reviewer integration, a hostile-code sandbox, a second writer,
 production deployment or complete Node command parity.
+
+## Scoped maintenance and recovery
+
+See the [maintenance/recovery contract](../../rust/crates/hepta-paper-service/MAINTENANCE.md)
+for immutable event/projection replay, exact original-path backup restoration and
+native-only GC quarantine. Ordinary workflow `cancel` remains a between-step
+lifecycle command; this source tree does not implement in-flight `cancel-node`.
+Pending starts and unclassified attempt residue block semantic recovery and GC;
+they cannot become completed work or permission for an automatic retry. Partial
+local source mappings are not accepted full Node operator semantics.

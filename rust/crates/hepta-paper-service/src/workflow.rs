@@ -32,6 +32,8 @@ use std::{
 };
 use thiserror::Error;
 
+mod recovery;
+pub(crate) use recovery::{prepared_recovery_facts_at, recovery_facts_at};
 mod amendment;
 mod inspection;
 pub use amendment::{WorkflowAmendmentReceiptV1, WorkflowAmendmentV1, amend_local_workflow_v1};
@@ -616,13 +618,30 @@ fn history(
     objects: &ObjectStoreV1,
 ) -> Result<History, WorkflowError> {
     let t = &definition.template;
-    let (campaign, log, clock_floor, changes) =
-        CampaignWriterStoreV1::read_local_workflow_snapshot(
-            t.state_directory.join("campaign.sqlite"),
-            CampaignWriterPolicyV1::strict(owner),
-            &t.snapshot.campaign_id,
-        )
-        .map_err(|_| WorkflowError::History)?;
+    let snapshot = CampaignWriterStoreV1::read_local_workflow_snapshot(
+        t.state_directory.join("campaign.sqlite"),
+        CampaignWriterPolicyV1::strict(owner),
+        &t.snapshot.campaign_id,
+    )
+    .map_err(|_| WorkflowError::History)?;
+    history_from_snapshot(definition, owner, objects, &t.state_directory, snapshot)
+}
+
+type StoredHistory = (
+    CampaignSnapshotV1,
+    hepta_campaign_writer::DurableControlLogV1,
+    u64,
+    Vec<String>,
+);
+fn history_from_snapshot(
+    definition: &LocalWorkflowV1,
+    owner: u32,
+    objects: &ObjectStoreV1,
+    physical_root: &Path,
+    snapshot: StoredHistory,
+) -> Result<History, WorkflowError> {
+    let t = &definition.template;
+    let (campaign, log, clock_floor, changes) = snapshot;
     let changes = changes
         .iter()
         .map(|text| {
@@ -654,7 +673,7 @@ fn history(
     let mut applied = 0usize;
     for (index, entry) in log.entries.iter().enumerate() {
         let saved: ServiceRunV1 =
-            serde_json::from_slice(&read_record(&plan_path(&t.state_directory, index), owner)?)
+            serde_json::from_slice(&read_record(&plan_path(physical_root, index), owner)?)
                 .map_err(|_| WorkflowError::History)?;
         while applied < changes.len()
             && changes[applied].applied_revision < saved.snapshot.campaign_revision

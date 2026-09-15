@@ -76,3 +76,25 @@ Wrapped rollout text cannot silently promote a disabled module or grant writer
 rights. This is a bounded declaration-consistency check, not general semantic
 proof or production authorization. Regression tests inject contradictory prose
 with otherwise valid Identity records and require the actual validator to reject it.
+
+
+## Branch convergence and local maintenance evidence
+
+The supplemental `branch-convergence-inventory` workflow fetches every public
+head and runs `docs/tools/audit-branch-convergence.py` on the exact candidate.
+`docs/tools/bind-branch-observation.py` checks remote-head stability before/after
+collection, exact one-to-one local audit coverage, the candidate head and the
+audit digest. Run its regressions with
+`python3 -B docs/tools/test_branch_observation.py`. Retained artifacts contain
+every two-tree changed path; they do not approve branch dispositions, transfer
+CI/reviews, authorize merging or establish later-time freshness. The observer
+excludes fork PRs. Existing required source checks are unchanged. Partial
+artifacts from failed captures must not be accepted as a complete inventory.
+
+The [local maintenance contract](../rust/crates/hepta-paper-service/MAINTENANCE.md)
+and [service README](../rust/crates/hepta-paper-service/README.md) document the
+cooperative lock and byte-backup implementation, separate immutable local recovery
+and no-overwrite restore, native-only quarantine and explicit purge, and cache-only
+prepared-result integration. The V1 inspect/backup/verify byte paths still do not
+establish semantic recovery. None establishes full command parity or production
+activation. All existing module and capability state dimensions remain separate.

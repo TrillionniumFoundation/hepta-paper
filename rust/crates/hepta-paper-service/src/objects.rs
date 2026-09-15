@@ -1,4 +1,4 @@
-use crate::ServiceError;
+use crate::{ServiceError, state_access::StateAccessGuardV1};
 use hepta_codex_protocol::Sha256Digest;
 use hepta_control_plane::FilesystemPreparedResultVerifierV1;
 use sha2::{Digest, Sha256};
@@ -7,6 +7,7 @@ use std::{
     io::Write,
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// Private content-addressed objects and fsynced attempt records.
@@ -14,17 +15,43 @@ use std::{
 pub struct ObjectStoreV1 {
     root: PathBuf,
     attempts: PathBuf,
+    access: Arc<StateAccessGuardV1>,
+    writable: bool,
 }
 
 impl ObjectStoreV1 {
     /// Open/create private state subdirectories without following symlinks.
     pub fn open(state: &Path) -> Result<Self, ServiceError> {
         private_directory(state)?;
+        let access = Arc::new(StateAccessGuardV1::shared(state)?);
         let root = state.join("objects");
         let attempts = state.join("attempts");
         private_directory(&root)?;
         private_directory(&attempts)?;
-        Ok(Self { root, attempts })
+        access.validate()?;
+        Ok(Self {
+            root,
+            attempts,
+            access,
+            writable: true,
+        })
+    }
+    /// Reuse an existing exclusive guard without opening a second flock or
+    /// creating state. Only maintenance code can construct this read-only view.
+    pub(crate) fn readonly_under_guard(
+        state: &Path,
+        access: Arc<StateAccessGuardV1>,
+    ) -> Result<Self, ServiceError> {
+        access.validate_for(state)?;
+        for path in [state.join("objects"), state.join("attempts")] {
+            crate::state_access::private_root(&path)?;
+        }
+        Ok(Self {
+            root: state.join("objects"),
+            attempts: state.join("attempts"),
+            access,
+            writable: false,
+        })
     }
     /// Object root used by the independent verifier.
     #[must_use]
@@ -38,6 +65,10 @@ impl ObjectStoreV1 {
     }
     /// Durably insert exact bytes; an existing corrupt object is never replaced.
     pub fn put(&self, bytes: &[u8]) -> Result<Sha256Digest, ServiceError> {
+        self.access.validate()?;
+        if !self.writable {
+            return Err(ServiceError::Configuration);
+        }
         if bytes.len() as u64 > self.maximum_object_bytes() {
             return Err(ServiceError::Artifact);
         }
@@ -58,6 +89,7 @@ impl ObjectStoreV1 {
     }
     /// Recompute the digest rather than trusting a filename or cached worker claim.
     pub fn read(&self, hash: &Sha256Digest) -> Result<Vec<u8>, ServiceError> {
+        self.access.validate()?;
         FilesystemPreparedResultVerifierV1::new(
             &self.root,
             hash.clone(),
@@ -75,6 +107,10 @@ impl ObjectStoreV1 {
         ))
     }
     pub(crate) fn record(&self, path: &Path, bytes: &[u8]) -> Result<(), ServiceError> {
+        self.access.validate()?;
+        if !self.writable {
+            return Err(ServiceError::Configuration);
+        }
         write_new(path, bytes)?;
         sync_directory(&self.attempts)
     }

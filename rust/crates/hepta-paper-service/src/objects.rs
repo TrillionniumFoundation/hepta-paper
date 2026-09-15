@@ -28,7 +28,11 @@ impl ObjectStoreV1 {
         private_directory(&root)?;
         private_directory(&attempts)?;
         access.validate()?;
-        Ok(Self { root, attempts, access })
+        Ok(Self {
+            root,
+            attempts,
+            access,
+        })
     }
     /// Object root used by the independent verifier.
     #[must_use]

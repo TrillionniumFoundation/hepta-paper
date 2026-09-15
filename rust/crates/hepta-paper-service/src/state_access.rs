@@ -132,7 +132,10 @@ mod tests {
     use super::*;
     use std::{
         os::unix::fs::{DirBuilderExt, PermissionsExt, symlink},
-        sync::{Arc, atomic::{AtomicU64, Ordering}},
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
     };
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -140,15 +143,21 @@ mod tests {
     impl Scratch {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
-                "hepta-state-access-{}-{}", std::process::id(),
+                "hepta-state-access-{}-{}",
+                std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-            fs::DirBuilder::new().mode(0o700).create(&path).expect("fresh root");
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&path)
+                .expect("fresh root");
             Self(fs::canonicalize(path).expect("canonical root"))
         }
     }
     impl Drop for Scratch {
-        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]

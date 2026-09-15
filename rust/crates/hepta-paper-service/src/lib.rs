@@ -7,12 +7,12 @@
 #![forbid(unsafe_code)]
 
 mod deployment;
+pub mod maintenance;
 pub mod native_business;
 mod objects;
 mod production;
-pub mod maintenance;
-mod state_access;
 pub mod scientific_runtime;
+mod state_access;
 mod worker;
 pub mod workflow;
 

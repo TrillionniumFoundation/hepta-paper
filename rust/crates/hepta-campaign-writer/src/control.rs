@@ -11,6 +11,9 @@ pub use inspection::{LocalEventCursorV1, LocalEventPageV1, LocalEventV1};
 use std::collections::BTreeSet;
 
 use super::*;
+#[path = "local_recovery.rs"]
+mod local_recovery;
+pub use local_recovery::{LocalRecoverySeedV1, LocalRecoverySnapshotV1};
 
 /// Exact optional schema for the durable control stream and result group.
 pub const CONTROL_STREAM_SCHEMA_V1: &str = r#"

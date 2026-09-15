@@ -178,8 +178,20 @@ business/runtime qualification. No production or retirement authority is added.
 The [maintenance contract](MAINTENANCE.md) specifies shared service-state access,
 exclusive maintenance sessions, bounded byte inventories, manifest-last backups
 and independently digest-bound verification. `hepta-local-maintenance` exposes
-`inspect`, `backup` and `verify`; no restore or GC-delete command is installed.
+`inspect`, `backup` and `verify` byte operations; recovery and quarantine commands
+are specified separately below. No permanent GC-delete command is installed.
 The seven lock tests and fifteen integration tests exercise actual files, SQLite
 and the CLI. Byte identity never implies valid workflow recovery, fresh leases,
 Node command parity, production qualification or Node retirement. Old binaries
 and direct database writers must be drained before lock enrollment.
+
+## Immutable local recovery and quarantine GC
+
+The [maintenance contract](MAINTENANCE.md) now separates byte backups from immutable
+semantic replay, absent original-path no-overwrite restoration and native-only
+mark/quarantine GC. These paths reuse the existing service/writer and require
+explicit quiescence, source identity and reconciliation. Quarantine does not purge
+data or reclaim disk. Historical recovery reports do not qualify a runtime, renew
+a lease or grant production/Node-retirement authority. Three former unmapped
+maintenance modes now have partial local source mappings; `cancel-node` remains
+unmapped. None is an accepted full Node parity decision.

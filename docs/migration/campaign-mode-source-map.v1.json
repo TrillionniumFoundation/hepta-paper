@@ -349,11 +349,33 @@
     },
     {
       "nodeAction": "gc",
-      "scope": "unmapped",
-      "rustCommand": null,
-      "callChain": [],
-      "tests": [],
-      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-maintenance gc-plan STATE DEFINITION_HASH REVISION PINS_JSON QUARANTINE; gc-apply STATE PLAN_JSON PLAN_HASH; gc-resume STATE QUARANTINE PLAN_HASH",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+          "symbol": "plan_gc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+          "symbol": "apply_gc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+          "symbol": "resume_gc"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs",
+          "symbol": "gc_moves_only_unreferenced_object_and_preserves_workflow_resume"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs",
+          "symbol": "interrupted_gc_fences_service_and_reconciles_both_sides_of_move"
+        }
+      ],
+      "remaining": "Native-only quiesced local mark/quarantine with explicit pins and exact inventory; no permanent deletion/disk reclamation, opaque-process reachability or production retention/lease acceptance."
     },
     {
       "nodeAction": "slo",
@@ -387,19 +409,59 @@
     },
     {
       "nodeAction": "retention-recovery-readiness",
-      "scope": "unmapped",
-      "rustCommand": null,
-      "callChain": [],
-      "tests": [],
-      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-maintenance quiesce STATE; recovery-readiness STATE DEFINITION_HASH NOW; verify-recovery BUNDLE MANIFEST_HASH DEFINITION_HASH NOW",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/recovery.rs",
+          "symbol": "verify_recovery"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/recovery.rs",
+          "symbol": "recovery_facts_at"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/local_recovery.rs",
+          "symbol": "read_immutable_local_recovery"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "recovery_replays_real_partial_history_and_creates_no_sidecars"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "materialized_state_and_revision_tampering_are_detected"
+        }
+      ],
+      "remaining": "One sidecar-free local workflow only; rejects unresolved starts/cancellation residue; historical correctness is not current runtime, production recovery or authenticated custody qualification."
     },
     {
       "nodeAction": "provision-retention-recovery",
-      "scope": "unmapped",
-      "rustCommand": null,
-      "callChain": [],
-      "tests": [],
-      "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+      "scope": "partial_local_source",
+      "rustCommand": "hepta-local-maintenance backup STATE ABSENT_DESTINATION; restore BUNDLE ORIGINAL_DEST STAGE MANIFEST_HASH DEFINITION_HASH REVISION NOW",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance.rs",
+          "symbol": "backup"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/recovery.rs",
+          "symbol": "restore_local_backup_v1"
+        }
+      ],
+      "tests": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "original_path_restore_preserves_replay_and_next_commit"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "restore_does_not_overwrite_post_backup_history"
+        }
+      ],
+      "remaining": "Local backup/absent original-path restore primitive only, not Node infrastructure provisioning. Latest revision is externally selected, not authenticated here. No stale overwrite, lease renewal, production retention setup or forward/reverse writer migration acceptance."
     }
   ]
 }

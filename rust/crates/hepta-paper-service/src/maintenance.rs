@@ -3,6 +3,13 @@
 //! A verified backup proves file identities, not semantic recovery, scientific
 //! acceptance, writer authority or permission to retire Node. This module never
 //! deletes CAS data, restores over state, refreshes leases or starts a worker.
+mod gc;
+pub use gc::{LocalGcPlanV1, LocalGcReceiptV1};
+mod recovery;
+pub use recovery::{
+    LocalRecoveryReportV1, restore_local_backup_v1, verify_local_backup_recovery_v1,
+};
+
 use crate::{
     ServiceError,
     state_access::{LOCK_NAME, StateAccessGuardV1, private_root},
@@ -17,6 +24,7 @@ use std::{
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 const MAX_FILES: usize = 4096;
@@ -67,7 +75,7 @@ pub struct LocalBackupReceiptV1 {
 pub struct LocalMaintenanceSessionV1 {
     state: PathBuf,
     owner: u32,
-    access: StateAccessGuardV1,
+    access: Arc<StateAccessGuardV1>,
     workflow_lock: Flock<File>,
 }
 
@@ -173,6 +181,13 @@ fn entries(path: &Path) -> Result<Vec<String>, ServiceError> {
 }
 
 fn inventory(root: &Path, owner: u32) -> Result<Vec<LocalBackupFileV1>, ServiceError> {
+    inventory_filtered(root, owner, false)
+}
+fn inventory_filtered(
+    root: &Path,
+    owner: u32,
+    pending_gc: bool,
+) -> Result<Vec<LocalBackupFileV1>, ServiceError> {
     let before = private_root(root)?;
     if before.uid() != owner {
         return Err(ServiceError::Artifact);
@@ -181,6 +196,9 @@ fn inventory(root: &Path, owner: u32) -> Result<Vec<LocalBackupFileV1>, ServiceE
     let mut paths = Vec::new();
     let mut child_directories = Vec::new();
     for name in &top {
+        if pending_gc && name == "gc-pending-v1.json" {
+            continue;
+        }
         if matches!(name.as_str(), "objects" | "attempts") {
             let directory = root.join(name);
             if private_root(&directory)?.uid() != owner {
@@ -282,7 +300,7 @@ impl LocalMaintenanceSessionV1 {
     /// new database, missing-directory creation or WAL checkpoint is performed.
     pub fn acquire(state: &Path) -> Result<Self, ServiceError> {
         let owner = private_root(state)?.uid();
-        let access = StateAccessGuardV1::exclusive(state)?;
+        let access = Arc::new(StateAccessGuardV1::exclusive(state)?);
         let path = state.join("workflow.lock");
         if !read_private(&path, owner, 0)?.is_empty() {
             return Err(ServiceError::Artifact);

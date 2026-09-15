@@ -24,7 +24,8 @@ mod cutover;
 
 pub use control::{
     CONTROL_STREAM_SCHEMA_V1, DurableControlEntryV1, DurableControlLogV1, LOCAL_WRITER_SCHEMA_V1,
-    LocalEventCursorV1, LocalEventPageV1, LocalEventV1,
+    LocalEventCursorV1, LocalEventPageV1, LocalEventV1, LocalRecoverySeedV1,
+    LocalRecoverySnapshotV1,
 };
 
 pub use cutover::{

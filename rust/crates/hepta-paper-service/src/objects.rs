@@ -16,6 +16,7 @@ pub struct ObjectStoreV1 {
     root: PathBuf,
     attempts: PathBuf,
     access: Arc<StateAccessGuardV1>,
+    writable: bool,
 }
 
 impl ObjectStoreV1 {
@@ -32,6 +33,24 @@ impl ObjectStoreV1 {
             root,
             attempts,
             access,
+            writable: true,
+        })
+    }
+    /// Reuse an existing exclusive guard without opening a second flock or
+    /// creating state. Only maintenance code can construct this read-only view.
+    pub(crate) fn readonly_under_guard(
+        state: &Path,
+        access: Arc<StateAccessGuardV1>,
+    ) -> Result<Self, ServiceError> {
+        access.validate_for(state)?;
+        for path in [state.join("objects"), state.join("attempts")] {
+            crate::state_access::private_root(&path)?;
+        }
+        Ok(Self {
+            root: state.join("objects"),
+            attempts: state.join("attempts"),
+            access,
+            writable: false,
         })
     }
     /// Object root used by the independent verifier.
@@ -47,6 +66,9 @@ impl ObjectStoreV1 {
     /// Durably insert exact bytes; an existing corrupt object is never replaced.
     pub fn put(&self, bytes: &[u8]) -> Result<Sha256Digest, ServiceError> {
         self.access.validate()?;
+        if !self.writable {
+            return Err(ServiceError::Configuration);
+        }
         if bytes.len() as u64 > self.maximum_object_bytes() {
             return Err(ServiceError::Artifact);
         }
@@ -86,6 +108,9 @@ impl ObjectStoreV1 {
     }
     pub(crate) fn record(&self, path: &Path, bytes: &[u8]) -> Result<(), ServiceError> {
         self.access.validate()?;
+        if !self.writable {
+            return Err(ServiceError::Configuration);
+        }
         write_new(path, bytes)?;
         sync_directory(&self.attempts)
     }

@@ -1,58 +1,178 @@
-# Local maintenance and byte-backup contract
+# Local recovery and maintenance contract
 
-This is an additive implementation under `module.rust-control-plane-service`, not a new global module or status authority. Source delivery is separate from executed tests, exact-head qualification, semantic recovery and production operation. This increment does not close the legacy `gc`, `retention-recovery-readiness`, `provision-retention-recovery` or `cancel-node` parity rows.
+This implementation belongs to `module.rust-control-plane-service`; it introduces
+no new global module, status authority or production permission. Three legacy
+maintenance modes now have partial local call-chain mappings, not accepted Node
+parity. The in-flight `cancel-node` mode remains unmapped in this source tree. Full recovery after ambiguous provider work, permanent retention deletion,
+remote cancellation/cost reconciliation and production retirement remain separate.
 
-## Implemented call chain
+## Exact source and callable contracts
 
-`hepta-local-maintenance` calls `LocalMaintenanceSessionV1::acquire`, then `inspect` or `backup`. `verify` calls `verify_local_backup_v1` with an independently retained manifest digest. The implementation lives in `src/maintenance.rs`; cooperative locking lives in `src/state_access.rs` and is held by `ObjectStoreV1` clones. `run_service_v1` retains an additional clone until after both executor and SQLite sequencer teardown.
+`src/maintenance.rs` retains V1 byte backup and inventory. Its `recovery.rs` child
+implements semantic verification, explicit SQLite quiescence and original-path
+no-overwrite restore; its `gc.rs` child implements reviewed-plan quarantine and
+resume. `src/workflow/recovery.rs` reuses actual workflow replay, not a duplicate
+pretend workflow. `hepta-campaign-writer/src/local_recovery.rs` independently
+checks the immutable SQLite projection against its event payloads and initial
+workflow inputs. This source increment does not change process supervision.
 
-This is byte preservation only. The archive may preserve an invalid database, an unresolved attempt, an expired local lease or invalid workflow bytes. Neither successful copying nor a matching hash establishes a valid workflow or permission to resume it. Every receipt keeps `semanticRecoveryVerified`, `productionActivation` and `nodeRetirementVerified` false.
+The byte, recovery and GC reports are distinct types. A successful
+byte report never changes `semanticRecoveryVerified` to true. Every report keeps
+production/retirement authority absent; no boolean can activate a deployment.
 
-## Exclusion and enrollment
+## Exclusion, filesystem identity and enrollment
 
-Updated service code holds shared `state-access-v1.lock` access for the object-store lifetime. Maintenance requires exclusive nonblocking access and the existing exclusive `workflow.lock`. Readers may coexist; an exclusive maintenance session conflicts with readers and other maintenance sessions. Missing, nonempty, linked, replaced, wrongly owned or publicly readable lock files are denied. Clone lifetime retains the shared lock.
+Service objects retain shared `state-access-v1.lock` access through clone and
+SQLite teardown. Maintenance needs exclusive nonblocking state access and the
+existing exclusive `workflow.lock`. Read-only recovery reuses the held exclusive
+state guard without creating directories or acquiring a second lock.
+Missing, replaced, linked, nonempty, wrongly owned or nonprivate locks fail.
 
-These are cooperative locks, not a hostile-process sandbox or production writer lease. Before the first updated service opens an existing root, independently stop and drain old binaries, direct database writers and external filesystem tools. They do not participate in the new lock. The maintenance API does not create a missing lock, kill writers, install services or change ownership. Lock acquisition failure is a bounded persistence rejection, not permission to bypass it.
+These are cooperative locks. Independently stop/drain old binaries, direct SQL
+writers and external file tools before enrollment or immutable reading. They do
+not participate in this protocol. No command grants a production writer lease.
+`restore-incomplete-v1` blocks normal access. `gc-pending-v1.json` blocks normal
+shared access until its exact quarantine transaction is reconciled.
 
-## Inventory and filesystem contract
+Roots are canonical absolute private directories. Reads are bounded, no-follow
+and nonblocking, with regular-file, owner, mode, link, size, inode/device and
+change-timestamp checks. The byte inventory admits only campaign/workflow files,
+empty locks, `step-NNNN.json`, flat SHA-256 objects, and exact attempt suffixes
+`started` and `prepared`. Unknown files, links,
+corrupt CAS hashes and SQLite sidecars are not silently omitted. Limits are
+4,096 files, 256 MiB per file, 1 GiB total and a 1 MiB manifest. They are safety
+bounds, not measured capacity or SLO values.
 
-Roots must be canonical absolute private directories with a consistent owner. Files must be regular, private, singly linked and unchanged across no-follow/nonblocking descriptor reads. Root and child-directory identity and entry sets are rechecked. Reads are bounded and compare size, inode, device, owner, permissions, link count and modification/change timestamps.
+## Quiescence and byte backup
 
-The closed file inventory admits only `campaign.sqlite`, `workflow.json`, the two empty lock files, `step-NNNN.json`, flat `objects/<64-lowercase-hex>` entries and flat `attempts/<64-lowercase-hex>.started|.prepared` records. CAS bytes must match the filename hash. Both child directories and the four fixed files must exist. Unknown files, nested children, symlinks, hardlinks and SQLite WAL/SHM/journal sidecars fail closed. Maintenance never checkpoints or repairs the source. Stop the normal owner cleanly to produce a consistent closed copy; do not delete a WAL merely to pass this gate.
+`quiesce` is explicit and mutating: under both locks it asks a normal SQLite
+connection to checkpoint WAL and transition to DELETE journaling. It checks the
+local marker, schema, event chain and SQLite integrity, and requires sidecars to
+be removed by SQLite itself. It never manually unlinks WAL/SHM, renews leases or
+changes campaign state. A rollback journal is refused. Stop uncooperative writers
+first; running `quiesce` without excluding them is not a safety guarantee.
 
-Limits: 4,096 files, 256 MiB per file, 1 GiB total retained bytes and a 1 MiB manifest. These are implementation safety bounds, not measured capacity or production SLO claims. Oversized inputs fail rather than being silently omitted.
+`inspect`, `backup` and immutable verification remain separate operations. The
+backup destination must be absent and outside the source under a same-owner
+private parent. Exclusive creates, file/directory synchronization and repeated
+source/payload inventories precede manifest-last publication. Partial failed
+bundles are retained and never adopted. Verify requires a separately retained
+SHA-256 of the exact manifest bytes. Hashes copied from an untrusted bundle do
+not establish independent authority. Keep all payloads private: workflow and
+attempt bytes may contain confidential text or local lease material.
 
-## Backup and verification
+## Immutable semantic recovery
 
-The destination must be absent, outside the source, below a canonical private parent owned by the same owner. A source-root ancestor or descendant is rejected. Every payload file is created exclusively with mode 0600; directories use mode 0700. Files and directories are synchronized. Source bytes are rehashed during copying and the source and destination inventories must match. `manifest.json` is published last. Failed partial destinations are retained for investigation and are never adopted by a retry.
+`verify_recovery` / `verify_local_backup_recovery_v1` require a quiesced,
+sidecar-free local-only database. The reader uses SQLite `mode=ro&immutable=1`,
+checks bytes/identity before and after, and never creates WAL/SHM. An immutable
+URI is safe only while every writer is excluded; a URI flag is not a lock.
 
-A bundle contains exactly `manifest.json` and `payload/`. `LocalBackupManifestV1` is closed camelCase JSON: `version`, `kind`, `sourceDirectory`, `files`, `totalBytes`, `semanticRecoveryVerified`, `productionActivation`, `nodeRetirementVerified`. The kind is `HeptaLocalByteBackupV1`; version is 1. Each sorted unique file row contains `path`, `bytes` and `sha256`. The expected manifest digest binds exact encoded bytes, not a reparsed/reordered JSON document. Verification rejects mismatched hashes, unknown fields, invalid paths, duplicate/unsorted entries, incorrect totals, extra/missing files, changed payloads and self-asserted acceptance fields.
+The supported denominator is one sequential local workflow: exactly one campaign,
+one control stream, one writer lease, no node-table work, at most 128 committed
+results (64 MiB encoded bodies/receipts) and 4,096 events. Verification replays
+creation, control-result, state-transition and amendment events into the actual
+revision, state, budget, clock and lease projection; unknown events, wrong writer
+generations and foreign campaigns are rejected. It then replays all historical
+workflow versions, plans, result/receipt bytes, routing gates and actual artifact
+and evidence bytes. Prepared caches and dispatch identities must match committed
+history exactly. Missing files, extra/uncommitted plans, unmatched starts and
+cancellation residue cause rejection rather than unsafe automatic retry.
 
-Keep bundle contents private: workflow files and attempt records may include confidential content or local lease material. The receipt contains counts and hashes, not payload bytes. An expected digest copied from an untrusted bundle is not an independent trust anchor. Byte verification is not an immutable-storage custody, fsync-fault or 72-hour-soak proof.
+`LocalRecoveryReportV1` contains version, definition/inventory hashes, revision,
+state, committed/total steps, event count, remaining budget, clock floor,
+`historyVerified`, `artifactBytesVerified`, `pendingExecution`, `leaseCurrent`,
+`historyAllowsLocalResume`, `productionActivation` and `nodeRetirementVerified`.
+The last two remain false. Historical validity does not renew an expired lease.
+`historyAllowsLocalResume` describes only history/lifecycle/clock admissibility,
+not installed-runtime identity, scientific acceptance, credentials or authority.
+Actual execution still passes the normal registry, source and runtime checks.
 
-## Build, commands and tests
+## Atomic original-path restoration
 
-Use the repository-pinned toolchain and lockfile from the repository root:
+`restore_local_backup_v1` takes the bundle, ABSENT original destination, ABSENT
+same-parent staging path, independent manifest/definition hashes, expected latest
+campaign revision and explicit time. It validates the source bundle semantically,
+copies exact bytes into a private incomplete-marked staging tree, synchronizes,
+verifies that tree while retaining the original logical path, then publishes with
+Linux `renameat2(RENAME_NOREPLACE)`. There is no overwrite or unsafe rename fallback.
+
+The source path may be missing; the original path binding inside configuration and
+hashes is never rewritten to disguise a different deployment. Existing destination
+state always wins: post-backup writes cannot be overwritten. The externally
+selected latest revision must equal the recovered revision. That supplied number
+is NOT an authenticated external high-water mark; independent custody is required
+to know it is latest. The command restores historical bytes, not writer authority,
+and must not be used as a production rollback. There is no lease renewal. A crash
+before publication leaves the destination absent and retained staging; a crash
+after rename but before parent fsync has an ambiguous publication outcome which
+must be inspected, not blindly retried. Interrupted staging is not auto-adopted.
+
+## Native-local mark and quarantine
+
+GC requires a quiesced Paused/Completed/Cancelled native-only local workflow,
+exact current definition/revision, explicit pins (including an explicit empty
+set), and an absent same-parent quarantine destination. Opaque process-worker and
+Node-database jobs are refused. Roots include all historical/current definitions,
+input-inventory hashes, committed payloads/results/evidence, explicit pins and
+conservatively every SHA-256 token in retained object bytes. Over-retention and
+cycles are safe leaks, not proof of a minimal live set.
+
+`LocalGcPlanV1` is closed camelCase JSON with version, state/quarantine directories,
+definition hash, campaign revision, pins, complete source inventory, selected
+quarantine rows, and false production/permanent-deletion flags. The plan hash is
+domain-bound and applying it recomputes the exact plan. A stale source, missing pin
+or changed selection fails before moving data. `gc-plan` emits `{planHash,plan}`;
+store the `plan` member as the input file for `gc-apply`, and retain `planHash`
+separately. The wrapper is not the raw plan schema.
+
+The exact plan is synchronized in quarantine and source before any move. Each
+object moves with no-overwrite descriptor-relative rename and both directories
+are fsynced. A pending marker blocks service use after a crash. `gc-resume` checks
+that every original file exists exactly once in source or its selected quarantine,
+with exact bytes, and rechecks semantic roots before completing. It publishes a
+receipt before removing the pending marker. Duplicate, missing, corrupt or foreign
+files keep the state fenced. No object is permanently deleted, so quarantine does
+not reclaim disk space. A reviewed retention/purge protocol and complete external
+pin/lease inventory are still needed for general production GC.
+
+## Unresolved execution and cancellation
+
+Between-step workflow cancellation remains the existing lifecycle operation.
+This source tree does not add in-flight `cancel-node`, process termination,
+budget settlement or remote-effect reconciliation. Unmatched started work and
+unknown attempt residue are preserved and reject semantic recovery and GC. A
+successful backup is not permission to repeat an ambiguous external action.
+
+## Commands, errors and executable regression
+
+From the root, build/test with the pinned toolchain and unchanged Cargo.lock:
 
 ```sh
 cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --bins
-cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service state_access::tests
-cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_maintenance
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow --test local_recovery_gc --test local_maintenance
 cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
 cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 ```
 
-Commands, using a built binary and operator-selected private paths:
-
 ```text
 hepta-local-maintenance inspect STATE
+hepta-local-maintenance quiesce STATE
 hepta-local-maintenance backup STATE ABSENT_DESTINATION
 hepta-local-maintenance verify BUNDLE EXPECTED_MANIFEST_HASH
+hepta-local-maintenance recovery-readiness STATE DEFINITION_HASH NOW
+hepta-local-maintenance verify-recovery BUNDLE MANIFEST_HASH DEFINITION_HASH NOW
+hepta-local-maintenance restore BUNDLE ORIGINAL_DEST STAGE MANIFEST_HASH DEFINITION_HASH REVISION NOW
+hepta-local-maintenance gc-plan STATE DEFINITION_HASH REVISION PINS_JSON QUARANTINE
+hepta-local-maintenance gc-apply STATE PLAN_JSON PLAN_HASH
+hepta-local-maintenance gc-resume STATE QUARANTINE PLAN_HASH
 ```
 
-No restore, GC-delete, production or cutover command exists. Errors exit nonzero and do not echo file contents or parser diagnostics. Tests include actual local SQLite files, actual CAS bytes, actual CLI calls, clone/exclusion behavior, corruption, links, WAL refusal, unknown-file refusal, missing manifests, no-overwrite behavior and authority-overclaim rejection. Test source presence is not a passing run; acceptance must retain exact-head execution results.
-
-## Remaining work before broader maintenance parity
-
-Semantic recovery must validate the complete local workflow/amendment/plan/result/receipt/budget history and every referenced artifact, then exercise a fresh recovery without replaying ambiguous work. Restoration needs atomic no-overwrite publication, original-path/config binding, enrollment and incomplete-restore fencing, retained post-backup history and qualified forward/reverse recovery rules. GC requires a complete pin/root/lease inventory and durable reviewed mark/sweep semantics; this implementation deletes nothing. In-flight node cancellation still needs child lifecycle and ambiguity reconciliation. Production host, external authority, writer transfer and Node retirement remain under their existing independent gates.
+Errors are the existing closed ServiceError/WorkflowError categories; CLI exits
+nonzero without echoing private input or parser diagnostics. Tests under
+`tests/workflow_extensions` execute real workflows, SQLite event/projection
+corruption, actual original-path continuation, no-overwrite refusal, GC move/crash
+resumption and actual maintenance CLI commands. Simulated crash residues
+are not target-host power-loss/72-hour-soak qualification. There is no source-state,
+production, independent-review or Node-retirement promotion from these tests.

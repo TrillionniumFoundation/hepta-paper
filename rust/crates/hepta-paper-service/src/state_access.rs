@@ -17,6 +17,7 @@ pub(crate) struct StateAccessGuardV1 {
     file: Flock<File>,
     root: PathBuf,
     identity: Metadata,
+    exclusive: bool,
 }
 
 impl std::fmt::Debug for StateAccessGuardV1 {
@@ -35,6 +36,13 @@ pub(crate) fn private_root(path: &Path) -> Result<Metadata, ServiceError> {
         return Err(ServiceError::Artifact);
     }
     Ok(metadata)
+}
+
+fn reject_restore_residue(root: &Path) -> Result<(), ServiceError> {
+    match fs::symlink_metadata(root.join("restore-incomplete-v1")) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        _ => Err(ServiceError::Persistence),
+    }
 }
 
 fn same_node(left: &Metadata, right: &Metadata) -> bool {
@@ -59,19 +67,26 @@ fn validate_lock(metadata: &Metadata, owner: u32) -> Result<(), ServiceError> {
 impl StateAccessGuardV1 {
     /// The caller must retain this guard through its final SQLite/file commit.
     pub(crate) fn shared(root: &Path) -> Result<Self, ServiceError> {
-        Self::acquire(root, false)
+        Self::acquire(root, false, true)
     }
 
     /// Exclusive access never enrolls a missing lock or repairs damaged state.
     pub(crate) fn exclusive(root: &Path) -> Result<Self, ServiceError> {
-        Self::acquire(root, true)
+        Self::acquire(root, true, false)
     }
 
-    fn acquire(root: &Path, exclusive: bool) -> Result<Self, ServiceError> {
+    fn acquire(root: &Path, exclusive: bool, enroll: bool) -> Result<Self, ServiceError> {
         let identity = private_root(root)?;
+        reject_restore_residue(root)?;
         let path = root.join(LOCK_NAME);
         let flags = (OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK).bits();
         if !exclusive {
+            match fs::symlink_metadata(root.join("gc-pending-v1.json")) {
+                Err(e) if e.kind() == ErrorKind::NotFound => (),
+                _ => return Err(ServiceError::Persistence),
+            }
+        }
+        if enroll {
             match OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -108,12 +123,27 @@ impl StateAccessGuardV1 {
             file: Flock::lock(file, mode).map_err(|_| ServiceError::Persistence)?,
             root: root.to_path_buf(),
             identity,
+            exclusive,
         };
         guard.validate()?;
         Ok(guard)
     }
 
+    pub(crate) fn validate_for(&self, root: &Path) -> Result<(), ServiceError> {
+        if self.root != root {
+            return Err(ServiceError::Artifact);
+        }
+        self.validate()
+    }
+
     pub(crate) fn validate(&self) -> Result<(), ServiceError> {
+        reject_restore_residue(&self.root)?;
+        if !self.exclusive {
+            match fs::symlink_metadata(self.root.join("gc-pending-v1.json")) {
+                Err(e) if e.kind() == ErrorKind::NotFound => (),
+                _ => return Err(ServiceError::Persistence),
+            }
+        }
         let root = private_root(&self.root)?;
         let opened = self.file.metadata().map_err(|_| ServiceError::Filesystem)?;
         let named = fs::symlink_metadata(self.root.join(LOCK_NAME))

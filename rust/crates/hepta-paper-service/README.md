@@ -171,3 +171,15 @@ See [the executable runtime handoff](../../../docs/modules/SCIENTIFIC_RUNTIME_HA
 for profiles, limits, error/recovery contracts, tests and the trusted-local ceiling.
 External scientific tools remain external; this is not a Node bridge or full
 business/runtime qualification. No production or retirement authority is added.
+
+
+## Cooperative local byte backups
+
+The [maintenance contract](MAINTENANCE.md) specifies shared service-state access,
+exclusive maintenance sessions, bounded byte inventories, manifest-last backups
+and independently digest-bound verification. `hepta-local-maintenance` exposes
+`inspect`, `backup` and `verify`; no restore or GC-delete command is installed.
+The seven lock tests and fifteen integration tests exercise actual files, SQLite
+and the CLI. Byte identity never implies valid workflow recovery, fresh leases,
+Node command parity, production qualification or Node retirement. Old binaries
+and direct database writers must be drained before lock enrollment.

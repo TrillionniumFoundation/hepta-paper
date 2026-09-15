@@ -226,10 +226,10 @@ fn inventory(root: &Path, owner: u32) -> Result<Vec<LocalBackupFileV1>, ServiceE
             return Err(ServiceError::Artifact);
         }
         let sha256 = digest(&data)?;
-        if let Some(raw) = relative.strip_prefix("objects/") {
-            if sha256.as_str().strip_prefix("sha256:") != Some(raw) {
-                return Err(ServiceError::Artifact);
-            }
+        if let Some(raw) = relative.strip_prefix("objects/")
+            && sha256.as_str().strip_prefix("sha256:") != Some(raw)
+        {
+            return Err(ServiceError::Artifact);
         }
         if matches!(relative.as_str(), "workflow.lock" | LOCK_NAME) && !data.is_empty() {
             return Err(ServiceError::Artifact);

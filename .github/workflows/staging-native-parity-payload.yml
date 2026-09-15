@@ -30,16 +30,16 @@ jobs:
               .github/native-parity-payload/part02 .github/native-parity-payload/part03 \
             | base64 -d > "$payload"
           test "$(sha256sum "$payload" | awk '{print $1}')" = '27755bcf98949b73dbbeb94d069f9cd878a8ed7b717af1bb034020d55db74113'
-          cat > "$RUNNER_TEMP/expected-files" <<'EOF'
-          paper-core/tests/native-function-ports.test.mjs
-          rust/crates/hepta-paper-service/src/campaign_policy.rs
-          rust/crates/hepta-paper-service/src/campaign_slo.rs
-          rust/crates/hepta-paper-service/src/native_business/inference.rs
-          rust/crates/hepta-paper-service/tests/analysis_inference_parity.rs
-          rust/crates/hepta-paper-service/tests/campaign_policy_parity.rs
-          rust/crates/hepta-paper-service/tests/campaign_slo_parity.rs
-          rust/crates/hepta-paper-service/tests/common/native_oracle.rs
-          EOF
+          printf '%s\n' \
+            'paper-core/tests/native-function-ports.test.mjs' \
+            'rust/crates/hepta-paper-service/src/campaign_policy.rs' \
+            'rust/crates/hepta-paper-service/src/campaign_slo.rs' \
+            'rust/crates/hepta-paper-service/src/native_business/inference.rs' \
+            'rust/crates/hepta-paper-service/tests/analysis_inference_parity.rs' \
+            'rust/crates/hepta-paper-service/tests/campaign_policy_parity.rs' \
+            'rust/crates/hepta-paper-service/tests/campaign_slo_parity.rs' \
+            'rust/crates/hepta-paper-service/tests/common/native_oracle.rs' \
+            | LC_ALL=C sort > "$RUNNER_TEMP/expected-files"
           tar -tzf "$payload" | LC_ALL=C sort > "$RUNNER_TEMP/actual-files"
           diff -u "$RUNNER_TEMP/expected-files" "$RUNNER_TEMP/actual-files"
           while IFS= read -r file; do test ! -e "$file"; done < "$RUNNER_TEMP/expected-files"

@@ -2,8 +2,8 @@
 
 > Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. This ledger records closure work; it does not grant parity, production activation, or Node retirement.
 
-- Inventory binding: `sha256:dfab6d5e4fad6aee36a13efc14575d35d4a3ffbce25efde2cf7256e5f70a7afd`
-- Unmapped commands: **42**
+- Inventory binding: `sha256:50c156e93cd2dcc68f949b13decb2554305c0cf64c9d0de7558fd52106065dc0`
+- Unmapped commands: **41**
 - Accepted parity: `false`
 - Production activation: `false`
 - Node retirement: `false`
@@ -13,7 +13,6 @@
 | `maintenance/autonomous-online-schema-transition` | `node` `paper-core/bin/autonomous-research-online-schema-transition.mjs` | external authority / target host | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain first, then target-host/external authority qualification, recovery evidence, and writer/credential ownership. |
 | `maintenance/autonomous-state-partial-root-maintenance` | `node` `paper-core/bin/autonomous-research-state-partial-root-maintenance.mjs` | full Rust business call chain | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain covering every argument mode, state transition, lease, retry, crash, cancellation, and external-effect boundary. |
 | `maintenance/autonomous-state-provision` | `node` `paper-core/bin/autonomous-research-state-provision.mjs` | full Rust business call chain | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain covering every argument mode, state transition, lease, retry, crash, cancellation, and external-effect boundary. |
-| `maintenance/command-surface-sync` | `node` `paper-core/bin/command-surface.mjs` `--write-package` | local tooling | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust-owned deterministic generator with byte-compatible outputs, negative tests, and no Node execution dependency. |
 | `maintenance/release-attest` | `node` `paper-core/bin/release-evidence.mjs` `--execute` | external authority / target host | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain first, then target-host/external authority qualification, recovery evidence, and writer/credential ownership. |
 | `maintenance/release-integrity-key` | `node` `paper-core/bin/release-integrity-key.mjs` | external authority / target host | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain first, then target-host/external authority qualification, recovery evidence, and writer/credential ownership. |
 | `operator/advanced-numerical-plugin` | `node` `paper-core/bin/advanced-numerical-plugin.mjs` | full Rust business call chain | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain covering every argument mode, state transition, lease, retry, crash, cancellation, and external-effect boundary. |

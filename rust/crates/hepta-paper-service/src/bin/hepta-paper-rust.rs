@@ -1,7 +1,8 @@
 //! Bounded JSON command interface for the durable Rust composition.
 use hepta_paper_service::{
-    LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1, migrate_node_store_v1,
-    native_implementation_hash_v1,
+    LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1,
+    command_surface::synchronize_command_surface_v1,
+    migrate_node_store_v1, native_implementation_hash_v1,
     repository_assets::{
         build_repository_asset_externalization_handoff_v1,
         inspect_repository_asset_externalization_v1,
@@ -100,13 +101,27 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             };
             println!("{}", serde_json::to_string(&value)?);
         }
+        Some("command-surface") if args.len() == 2 || args.len() == 3 => {
+            let write = args.get(2).map(String::as_str) == Some("--write-package");
+            if args.len() == 3 && !write {
+                return Err("command-surface accepts only --write-package".into());
+            }
+            println!(
+                "{}",
+                serde_json::to_string(&synchronize_command_surface_v1(
+                    &PathBuf::from(&args[1]),
+                    write
+                )?)?
+            );
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
                 "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
                 "store-migrate NODE_DB [TARGET_VERSION] | ",
-                "repository-assets ROOT MANIFEST [--handoff]"
+                "repository-assets ROOT MANIFEST [--handoff]",
+                " | command-surface ROOT [--write-package]"
             )
             .into());
         }

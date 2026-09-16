@@ -8,6 +8,7 @@
 
 pub mod campaign_policy;
 pub mod campaign_slo;
+pub mod command_surface;
 mod deployment;
 pub mod maintenance;
 pub mod native_business;

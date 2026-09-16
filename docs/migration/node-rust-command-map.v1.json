@@ -438,13 +438,19 @@
     },
     {
       "id": "maintenance/command-surface-sync",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
+      "rustEntrypoint": "hepta-paper-rust command-surface ROOT [--write-package]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
       "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/command_surface_parity.rs"
+      ],
+      "remaining": "Rust owns deterministic package-script synchronization and matches the Node oracle for the reviewed check/write path; exact JSON formatting, full command-registry classification, and independent acceptance remain to be qualified.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/command_surface.rs",
+        "rust/oracle/command-surface-v1.mjs"
+      ]
     },
     {
       "id": "verify/architecture",

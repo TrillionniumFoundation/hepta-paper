@@ -89,3 +89,23 @@ fn applies_the_complete_embedded_migration_catalog() {
     assert_eq!(receipt.applied_versions.first(), Some(&1));
     assert_eq!(receipt.applied_versions.last(), Some(&25));
 }
+
+#[test]
+fn rejects_migration_when_a_live_job_lease_is_present() {
+    let temp = Temp::new();
+    let path = temp.database();
+    migrate_node_store_v1(&path, Some(2)).expect("initial migrations");
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO jobs(job_id,deduplication_key,kind,status,spec_json,created_at,updated_at)
+             VALUES ('job-1','dedupe-1','test','running','{}','now','now')",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    assert!(matches!(
+        migrate_node_store_v1(&path, Some(3)),
+        Err(NodeMigrationError::ActiveLease)
+    ));
+}

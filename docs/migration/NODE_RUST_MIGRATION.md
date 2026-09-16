@@ -106,7 +106,7 @@ keeps all registered command routes bound to either a reviewed Rust candidate or
 an explicit unmapped decision. Its `partial_local_source` rows are source
 call-chain candidates only; they do not grant parity, production activation or
 Node retirement. The map is checked by `docs/tools/audit-node-rust-coverage.mjs`
-and currently records 13 candidates and 44 explicit gaps.
+and currently records 14 candidates and 43 explicit gaps.
 
 The `operator/store-migrate` candidate is implemented as the bounded local
 command `hepta-paper-rust store-migrate NODE_DB [TARGET_VERSION]`. It embeds

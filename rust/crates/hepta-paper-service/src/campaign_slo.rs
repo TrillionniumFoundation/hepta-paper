@@ -63,6 +63,8 @@ pub struct CampaignSloRequestV1 {
 pub enum CampaignSloError {
     #[error("invalid SLO request")]
     Invalid,
+    #[error("production Node collation profile unavailable")]
+    Collation,
 }
 
 fn percentile(values: &mut [f64], fraction: f64) -> Option<f64> {
@@ -100,32 +102,25 @@ fn histogram(values: &[f64], bounds: &[f64]) -> Value {
     out.push(json!({"le":"+Inf","count":s.len()}));
     Value::Array(out)
 }
-fn canonical_string(v: &Value) -> String {
+fn canonical_string(v: &Value, collator: &hepta_legacy_compatibility::ProductionCollationV1) -> String {
     match v {
         Value::Array(a) => format!(
             "[{}]",
-            a.iter().map(canonical_string).collect::<Vec<_>>().join(",")
+            a.iter()
+                .map(|value| canonical_string(value, collator))
+                .collect::<Vec<_>>()
+                .join(",")
         ),
         Value::Object(o) => {
             let mut keys = o.keys().collect::<Vec<_>>();
-            keys.sort_by(|left, right| {
-                // Node's en-US localeCompare places the shorter lowercase
-                // "objectives" key before the capital-S variant.
-                if left.as_str() == "objectives" && right.as_str() == "objectiveStates" {
-                    std::cmp::Ordering::Less
-                } else if left.as_str() == "objectiveStates" && right.as_str() == "objectives" {
-                    std::cmp::Ordering::Greater
-                } else {
-                    left.cmp(right)
-                }
-            });
+            keys.sort_by(|left, right| collator.compare(left, right));
             format!(
                 "{{{}}}",
                 keys.into_iter()
                     .map(|key| format!(
                         "{}:{}",
                         serde_json::to_string(key).unwrap(),
-                        canonical_string(&o[key])
+                        canonical_string(&o[key], collator)
                     ))
                     .collect::<Vec<_>>()
                     .join(",")
@@ -147,12 +142,14 @@ fn canonical_string(v: &Value) -> String {
         Value::Null => "null".to_owned(),
     }
 }
-fn hash_report(v: &Value) -> String {
+fn hash_report(v: &Value) -> Result<String, CampaignSloError> {
+    let collator = hepta_legacy_compatibility::ProductionCollationV1::load()
+        .map_err(|_| CampaignSloError::Collation)?;
     let envelope = json!({"kind":"CampaignSloReport","value":v});
-    let bytes = canonical_string(&envelope).into_bytes();
+    let bytes = canonical_string(&envelope, &collator).into_bytes();
     let mut h = Sha256::new();
     h.update(bytes);
-    format!("sha256:{}", hex::encode(h.finalize()))
+    Ok(format!("sha256:{}", hex::encode(h.finalize())))
 }
 
 /// `JSON.stringify` writes integral IEEE-754 values without a trailing `.0`.
@@ -162,12 +159,9 @@ fn hash_report(v: &Value) -> String {
 /// compare mathematically equal.
 fn normalize_json_numbers(value: Value) -> Value {
     match value {
-        Value::Array(values) => Value::Array(
-            values
-                .into_iter()
-                .map(normalize_json_numbers)
-                .collect(),
-        ),
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(normalize_json_numbers).collect())
+        }
         Value::Object(values) => Value::Object(
             values
                 .into_iter()
@@ -314,8 +308,10 @@ pub fn build_campaign_slo_report_v1(r: &CampaignSloRequestV1) -> Result<Value, C
         .unwrap()
         .values()
         .all(|v| v.as_bool() == Some(true));
-    let payload = normalize_json_numbers(json!({"version":2,"kind":"CampaignSloReport","status":if met{"campaign_slos_met"}else{"campaign_slos_not_met"},"targets":targets,"observed":observed,"objectives":obj,"objectiveStates":states}));
+    let payload = normalize_json_numbers(
+        json!({"version":2,"kind":"CampaignSloReport","status":if met{"campaign_slos_met"}else{"campaign_slos_not_met"},"targets":targets,"observed":observed,"objectives":obj,"objectiveStates":states}),
+    );
     Ok(
-        json!({"version":2,"kind":"CampaignSloReport","status":payload["status"],"targets":payload["targets"],"observed":payload["observed"],"objectives":payload["objectives"],"objectiveStates":payload["objectiveStates"],"campaignSloReportHash":hash_report(&payload)}),
+        json!({"version":2,"kind":"CampaignSloReport","status":payload["status"],"targets":payload["targets"],"observed":payload["observed"],"objectives":payload["objectives"],"objectiveStates":payload["objectiveStates"],"campaignSloReportHash":hash_report(&payload)?}),
     )
 }

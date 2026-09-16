@@ -255,12 +255,16 @@ pub fn evaluate_analysis_inference_v1(
         }
         json!({"method":"exact-paired-sign-flip-enumeration-v1","pValue":exceed as f64/draws as f64,"draws":draws,"monteCarloStandardError":0.0})
     } else {
+        // The incumbent creates a fresh deterministic generator for the sign
+        // flip procedure.  Do not continue the bootstrap stream: doing so
+        // changes every Monte Carlo draw while leaving the same seed/salt.
+        let mut sign_rng = rand(r.seed, &r.salt);
         let mut exceed = 0_u64;
         for _ in 0..r.sign_flip_draws {
             let signed: Vec<f64> = r
                 .values
                 .iter()
-                .map(|value| if rng() < 0.5 { -*value } else { *value })
+                .map(|value| if sign_rng() < 0.5 { -*value } else { *value })
                 .collect();
             if arithmetic_mean(&signed) >= obs {
                 exceed += 1;

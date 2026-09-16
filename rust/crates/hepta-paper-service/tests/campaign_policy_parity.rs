@@ -90,6 +90,9 @@ fn bounded_corpus_matches_the_production_node_oracle() {
         {"kind":"resource_budget","nodes":[
             {"nodeId":"r","kind":"research-plan","status":"queued","maxAttempts":2,"dependencies":[]},
             {"nodeId":"f","kind":"formal-verify","status":"queued","maxAttempts":1,"dependencies":[]},
+            {"nodeId":"rr","kind":"revision-referee-2","status":"queued","maxAttempts":2,"dependencies":[]},
+            {"nodeId":"rf","kind":"referee-review","status":"queued","maxAttempts":2,"dependencies":[]},
+            {"nodeId":"c","kind":"coder","status":"queued","maxAttempts":2,"dependencies":[]},
             {"nodeId":"e","kind":"empirical-reproduce","status":"queued","maxAttempts":1,"requiresGpu":true,"dependencies":[]}
         ],"selector":{"selectorType":"authorized_dataset_mount","seedCount":2,"minimumRepetitions":3}},
         {"kind":"empirical_profiles","languages":["python","lean","latex","gpu"],"requires_gpu":false,"exclude_lean":true}

@@ -124,6 +124,20 @@ fn done(s: &str) -> bool {
 fn js_default_compare(left: &str, right: &str) -> std::cmp::Ordering {
     left.encode_utf16().cmp(right.encode_utf16())
 }
+
+fn planned_agent_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "research-plan" | "writer" | "theorem-spec" | "manuscript-integrate" | "revise"
+    ) || kind == "coder"
+        || kind.starts_with("coder-")
+        || {
+            let candidate = kind.strip_prefix("revision-").unwrap_or(kind);
+            candidate.strip_prefix("referee-").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        }
+}
 pub fn evaluate_campaign_policy_v1(
     r: CampaignPolicyRequestV1,
 ) -> Result<Value, CampaignPolicyError> {
@@ -136,7 +150,7 @@ pub fn evaluate_campaign_policy_v1(
   CampaignPolicyRequestV1::FutureRound{nodes,after_round}=>{let mut ids=nodes.into_iter().filter(|n|n.round_index>after_round&&!CONVERGENCE.contains(&n.kind.as_str())&&n.status=="queued").map(|n|n.node_id).collect::<Vec<_>>();ids.sort_by(|left,right|js_default_compare(left,right));ids.dedup();json!(ids)},
   CampaignPolicyRequestV1::Command{campaign_status,command}=>{let (apply,next)=match command.as_str(){"pause"=>(campaign_status=="running","paused"),"resume"=>(matches!(campaign_status.as_str(),"paused"|"stopped"),"running"),"cancel"=>(!CAMPAIGN_TERMINAL_STATUSES_V1.contains(&campaign_status.as_str()),"cancelled"),"fail"=>(!CAMPAIGN_TERMINAL_STATUSES_V1.contains(&campaign_status.as_str()),"failed"),"stop"=>(!CAMPAIGN_SETTLED_STATUSES_V1.contains(&campaign_status.as_str()),"stopped"),_=>return Err(CampaignPolicyError::Invalid)};json!({"apply":apply,"nextStatus":next})},
   CampaignPolicyRequestV1::ManualRetry{node}=>json!({"apply":node.status=="failed_terminal","nextStatus":"queued"}),
-  CampaignPolicyRequestV1::ResourceBudget{nodes,selector}=>{let agent=nodes.iter().map(|n|{let planned=["research-plan","writer","theorem-spec","manuscript-integrate","revise"].contains(&n.kind.as_str())||n.kind.starts_with("coder-")||n.kind.starts_with("referee-");(if planned{n.max_attempts.max(1)}else{0})+if n.kind=="formal-verify"{6*n.max_attempts.max(1)}else{0}}).sum::<u64>();let mut cpu=0;let mut gpu=0;if let Some(s)=selector{let processes=if s.selector_type=="authorized_dataset_mount"{s.seed_count*s.minimum_repetitions*3}else{3};for n in nodes{if n.kind.starts_with("empirical")||n.kind.starts_with("revalidate-empirical"){let jobs=processes*n.max_attempts.max(1)*if n.kind.contains("reproduce"){2}else{3};cpu+=jobs;if n.requires_gpu{gpu+=jobs}}}}json!({"agentCalls":agent,"benchmarkJobs":{"cpu":cpu,"gpu":gpu}})},
+  CampaignPolicyRequestV1::ResourceBudget{nodes,selector}=>{let agent=nodes.iter().map(|n|{let planned=planned_agent_node(&n.kind);(if planned{n.max_attempts.max(1)}else{0})+if n.kind=="formal-verify"{6*n.max_attempts.max(1)}else{0}}).sum::<u64>();let mut cpu=0;let mut gpu=0;if let Some(s)=selector{let processes=if s.selector_type=="authorized_dataset_mount"{s.seed_count*s.minimum_repetitions*3}else{3};for n in nodes{if n.kind.starts_with("empirical")||n.kind.starts_with("revalidate-empirical"){let jobs=processes*n.max_attempts.max(1)*if n.kind.contains("reproduce"){2}else{3};cpu+=jobs;if n.requires_gpu{gpu+=jobs}}}}json!({"agentCalls":agent,"benchmarkJobs":{"cpu":cpu,"gpu":gpu}})},
   CampaignPolicyRequestV1::EmpiricalProfiles{languages,requires_gpu,exclude_lean}=>json!(languages.into_iter().filter(|x|x!="latex"&&(!exclude_lean||x!="lean")).map(|label|json!({"label":label,"language":if label=="gpu"{"python"}else{label.as_str()},"requiresGpu":label=="gpu"||(requires_gpu&&label=="python")})).collect::<Vec<_>>()),
   CampaignPolicyRequestV1::Slo{request}=>serde_json::to_value(crate::campaign_slo::build_campaign_slo_report_v1(&request).map_err(|_|CampaignPolicyError::Invalid)?).map_err(|_|CampaignPolicyError::Invalid)?
  };

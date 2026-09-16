@@ -421,7 +421,10 @@ fn cancellation_after_release_cleans_up_and_prevents_retry() {
     let cancel = cancelled.clone();
     let marker = fixture.workspace.join("started");
     let handle = thread::spawn(move || {
-        for _ in 0..400 {
+        // The full workspace suite can be CPU saturated while a real target
+        // process is admitted. Keep the assertion bounded but avoid turning
+        // scheduler variance into a false negative.
+        for _ in 0..4000 {
             if marker.exists() {
                 cancel.store(true, Ordering::Release);
                 return;

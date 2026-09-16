@@ -62,7 +62,10 @@ fn profile(temp: &Temp, job: &ScientificJobV1) -> ScientificRuntimeProfileV1 {
 fn python(script: &str) -> ScientificJobV1 {
     ScientificJobV1 {
         version: 1,
-        files: BTreeMap::from([("main.py".into(), script.into())]),
+        files: BTreeMap::from([(
+            "main.py".into(),
+            format!("import os\nos.umask(0o077)\n{script}"),
+        )]),
         outputs: vec![ScientificOutputV1 {
             path: "result.json".into(),
             format: ScientificOutputFormatV1::Json,
@@ -183,6 +186,20 @@ fn missing_invalid_empty_or_oversized_outputs_are_rejected() {
     }
 }
 #[test]
+fn scientific_outputs_with_group_or_other_write_permission_remain_rejected() {
+    for mode in [0o620, 0o602, 0o666] {
+        let temp = Temp::new();
+        let job = python(&format!(
+            "open('result.json','w').write('{{}}')\nos.chmod('result.json', {mode})\n"
+        ));
+        let policy = profile(&temp, &job);
+        assert!(matches!(
+            execute_scientific_job_v1(&policy, job, "CAP-EMPIRICAL"),
+            Err(ScientificRuntimeError::Output)
+        ));
+    }
+}
+#[test]
 fn symlink_hardlink_directory_and_fifo_outputs_fail_without_blocking() {
     for script in [
         "import os\nos.symlink('/etc/passwd','result.json')",
@@ -241,6 +258,7 @@ fn profile_is_exact_hash_bound_and_rejects_unsafe_runtime_or_root() {
     let path = temp.0.join("profile.json");
     let bytes = serde_json::to_vec(&p).unwrap();
     fs::write(&path, &bytes).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     assert!(read_scientific_profile_v1(&path, &hash(&bytes)).is_ok());
     assert!(read_scientific_profile_v1(&path, &hash(b"other")).is_err());
     let link = temp.0.join("runtime");
@@ -257,7 +275,7 @@ fn cumulative_output_budget_is_enforced() {
     let mut job = python("pass");
     job.files.insert(
         "main.py".into(),
-        "open('result.json','w').write(' '*700+'{}')\nopen('second.json','w').write(' '*700+'{}')"
+        "import os\nos.umask(0o077)\nopen('result.json','w').write(' '*700+'{}')\nopen('second.json','w').write(' '*700+'{}')"
             .into(),
     );
     job.outputs.push(ScientificOutputV1 {

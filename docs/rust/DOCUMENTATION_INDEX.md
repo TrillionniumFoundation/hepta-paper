@@ -23,6 +23,8 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | external blocker closure steps | `qualification/EXTERNAL_BLOCKER_CLOSURE_RUNBOOK.md` |
 | confidential legacy replay | `LEGACY_MATRIX_REFERENCE_PUBLICATION.md` |
 | supply-chain policy | `security/SUPPLY_CHAIN_POLICY.md` |
+| native authority and owner inspection | `../modules/NATIVE_AUTHORITY_INSPECTION_HANDOFF.md` |
+| complete command gap ledger | `../migration/NODE_RUST_GAP_CLOSURE.md` |
 
 Cross-subsystem current contracts:
 
@@ -47,20 +49,19 @@ qualification/protected-main-ruleset-evidence-v1.schema.json
 qualification/legacy-matrix-replay-closure-v1.schema.json
 ```
 
-The V2 collector/derivation remains the active implementation until
-Qualification Subject V3 is implemented atomically across schemas, tools,
-workflows, tests, producer digests, fresh artifacts, and latest-head review. A
-design document cannot silently change the evidence protocol.
+Qualification Subject V3 source is present in the collector, integrity validator,
+V3-bound effective artifact wrapper and live currentness verifier. V2 required
+check evidence remains an intermediate input. The V3 source implementation does
+not establish successful current-head execution, retained artifacts or independent
+acceptance. See `CURRENT_STATUS.md` for the source chain and qualification boundary.
 
 ## Current known qualification gap
 
-The latest RC cannot be accepted as source-qualified while either condition
-remains:
-
-1. exact base repository/ref/commit/tree and tested merge commit/tree are not
-   completely bound to eligibility, schema, snapshot and revalidation;
-2. mutation of an older eligible workflow run may be ignored after a newer run
-   ID exists.
+The candidate cannot be accepted as source-qualified without retained current
+V3 evidence binding the exact base/head/tested-merge identities and complete
+eligible run-attempt histories. Tests for the historical identity and run-history
+defects are present; static source cannot certify that the current candidate's
+hosted workflow and independent review have completed successfully.
 
 The G0 work items `QUAL-001` through `QUAL-005` own closure. Historical green
 artifacts and superseded approval cannot be reused.

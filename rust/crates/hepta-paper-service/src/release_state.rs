@@ -179,27 +179,25 @@ fn inspect_tags(
     all: Option<&Value>,
 ) -> Value {
     let mut errors = Vec::new();
-    let head = head.and_then(Value::as_array);
-    let all = all.and_then(Value::as_array);
-    if head.is_none() || head.is_some_and(|values| values.iter().any(|value| !value.is_string())) {
+    let strings = |value: Option<&Value>| {
+        value.and_then(Value::as_array).and_then(|values| {
+            values
+                .iter()
+                .map(|value| value.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+        })
+    };
+    let head = strings(head);
+    let all = strings(all);
+    if head.is_none() {
         errors.push("head_tag_snapshot_invalid".to_owned());
     }
-    if all.is_none() || all.is_some_and(|values| values.iter().any(|value| !value.is_string())) {
+    if all.is_none() {
         errors.push("repository_tag_snapshot_invalid".to_owned());
     }
-    if !errors.is_empty() {
+    let (Some(head), Some(all)) = (head, all) else {
         return json!({"currentTag": format!("v{version_text}"), "isTaggedRelease": false, "currentTagExists": false, "errors": errors});
-    }
-    let head: Vec<String> = head
-        .unwrap()
-        .iter()
-        .map(|value| value.as_str().unwrap().to_owned())
-        .collect();
-    let all: Vec<String> = all
-        .unwrap()
-        .iter()
-        .map(|value| value.as_str().unwrap().to_owned())
-        .collect();
+    };
     for tag in duplicate_values(&head) {
         errors.push(format!("head_tag_snapshot_duplicate:{tag}"));
     }

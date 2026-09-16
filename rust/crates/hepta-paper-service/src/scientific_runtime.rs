@@ -5,6 +5,9 @@
 //! credentials are inherited,
 //! no shell is used and no campaign writer is opened. The service owns admission,
 //! durable dispatch intent, ambiguity handling, CAS insertion and commit.
+//! The standalone worker establishes a private child-process umask. Library
+//! callers must make their admitted programs create outputs without group or
+//! other write permission; this API never mutates the host process's umask.
 
 use hepta_codex_protocol::Sha256Digest;
 use hepta_codex_runtime::{

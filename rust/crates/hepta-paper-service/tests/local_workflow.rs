@@ -556,6 +556,13 @@ fn changed_definition_plan_and_wrong_subject_gate_are_rejected() {
 }
 
 fn process_binding(executable: PathBuf, cwd: PathBuf, arguments: Vec<String>) -> WorkerBindingV1 {
+    // Cargo output inherits the caller's umask and may be group-writable.
+    // Pin a private read/execute-only fixture instead of weakening the service
+    // executable policy or changing a shared Cargo artifact in place.
+    let private_executable = cwd.join("pinned-worker");
+    fs::copy(&executable, &private_executable).unwrap();
+    fs::set_permissions(&private_executable, fs::Permissions::from_mode(0o500)).unwrap();
+    let executable = fs::canonicalize(private_executable).unwrap();
     WorkerBindingV1::Process {
         executable_hash: format!(
             "sha256:{}",

@@ -44,15 +44,19 @@ The prior release-candidate branch `codex/rust-plan-v4-rc1-20260831` and its
 lineage. They do not identify the current implementation candidate:
 
 ```text
-implementation branch  codex/rust-production-migration-20260908
-source baseline        6e56a3508e871018e1b4e0c5a573b50818032e38
-stage                  executable local/shadow runtime migration
+implementation branch  codex/full-rust-replacement-progress-20260916
+integration baseline   9570cec7bba9211099b24cb185abad907a591e0f
+stage                  native command and local/shadow runtime migration
 exact head/tree        read live; never substituted by a historical audit digest
 ```
 
 The current implementation map, reproducible commands and remaining production
 boundaries are in
 [`RUNTIME_MIGRATION_IMPLEMENTATION.md`](RUNTIME_MIGRATION_IMPLEMENTATION.md).
+Command-by-command remaining work, including partially implemented commands, is
+tracked in [`../migration/NODE_RUST_GAP_CLOSURE.md`](../migration/NODE_RUST_GAP_CLOSURE.md).
+The command inventory currently consumes no independent parity acceptance
+receipts; its counts must not be presented as a project completion percentage.
 Each changed candidate still needs a producer-authenticated non-empty matrix,
 retained fully schema-valid artifacts, live V3 revalidation and independent
 review. Local execution does not qualify a branch or authorize a deployment.
@@ -78,8 +82,8 @@ review. Local execution does not qualify a branch or authorize a deployment.
 | Release/KMS/WORM/submission | `blocked_external` | real external authority receipts remain absent | none |
 
 The static table preserves the declared component projection. The separate
-`module.rust-control-plane-service` registry entry remains `design_ready`:
-local/shadow execution exists, while production composition, adapters, complete
+`module.rust-control-plane-service` registry entry is `source_implemented`:
+local/shadow execution exists, while qualified production composition, adapters, complete
 capability parity and host acceptance remain open. A successful,
 artifact-retained exact-head run may derive `source_qualified` for eligible
 repository-local rows without editing this file. External rows never

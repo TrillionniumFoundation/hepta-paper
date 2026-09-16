@@ -133,9 +133,9 @@ export function auditCampaignModeMappings() {
 // This map is deliberately separate from acceptance.  It records only reviewed
 // Rust command candidates (or an explicit unmapped decision), so that command
 // coverage cannot silently disappear while the migration is in progress.
-export function auditNodeRustCommandMap(routes) {
+export function auditNodeRustCommandMap(routes, suppliedMap = null) {
   const relative = 'docs/migration/node-rust-command-map.v1.json';
-  const map = JSON.parse(fs.readFileSync(path.join(ROOT, relative), 'utf8'));
+  const map = suppliedMap ?? JSON.parse(fs.readFileSync(path.join(ROOT, relative), 'utf8'));
   if (map.schemaVersion !== 1 || map.kind !== 'NodeRustCommandCompatibilityMapV1'
       || map.scope !== 'source_call_chain_mapping_not_parity_acceptance'
       || map.acceptedParity !== false || map.productionActivation !== false
@@ -152,15 +152,19 @@ export function auditNodeRustCommandMap(routes) {
     if (!['partial_local_source', 'unmapped'].includes(row.scope)
         || !['candidate', 'unmapped'].includes(row.compatibilityDecision)
         || typeof row.remaining !== 'string' || row.remaining.length < 20
-        || !Array.isArray(row.tests) || !Array.isArray(row.rustSources)) {
+        || !Array.isArray(row.tests) || !Array.isArray(row.rustSources)
+        || !Array.isArray(row.callChain) || !Array.isArray(row.testCases)) {
       throw new Error(`invalid Node/Rust command map row: ${row.id}`);
     }
-    if (row.scope === 'unmapped' && (row.rustEntrypoint !== null || row.tests.length || row.rustSources.length)) {
+    if (row.scope === 'unmapped' && (row.compatibilityDecision !== 'unmapped'
+        || row.rustEntrypoint !== null || row.tests.length || row.rustSources.length
+        || row.callChain.length || row.testCases.length)) {
       throw new Error(`unmapped command claims Rust source: ${row.id}`);
     }
     if (row.scope === 'partial_local_source'
         && (!row.rustEntrypoint || row.compatibilityDecision !== 'candidate'
-          || row.tests.length === 0 || row.rustSources.length === 0)) {
+          || row.tests.length === 0 || row.rustSources.length === 0
+          || row.callChain.length === 0 || row.testCases.length === 0)) {
       throw new Error(`partial command is missing Rust candidate, source, or test binding: ${row.id}`);
     }
     for (const test of row.tests) {
@@ -171,11 +175,36 @@ export function auditNodeRustCommandMap(routes) {
       if (!source || typeof source !== 'string') throw new Error(`invalid Rust source: ${row.id}`);
       readSource(source);
     }
+    // Bounded source-symbol binding, not a call-graph or parity proof. A path
+    // alone must not let a removed implementation retain a mapped status.
+    for (const [references, paths, isTest] of [
+      [row.callChain, row.rustSources, false], [row.testCases, row.tests, true],
+    ]) {
+      const seen = new Set();
+      for (const reference of references) {
+        if (!reference || typeof reference !== 'object' || Array.isArray(reference)
+            || Object.keys(reference).sort().join(',') !== 'path,symbol'
+            || !paths.includes(reference.path) || !reference.path.endsWith('.rs')
+            || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(reference.symbol)) {
+          throw new Error(`invalid command symbol binding: ${row.id}`);
+        }
+        const identity = `${reference.path}:${reference.symbol}`;
+        if (seen.has(identity)) throw new Error(`duplicate command symbol binding: ${row.id}`);
+        seen.add(identity);
+        const text = fs.readFileSync(path.join(ROOT, reference.path), 'utf8');
+        const prefix = isTest ? '#\\[test\\]\\s*' : '^\\s*(?:pub(?:\\([^\\r\\n)]*\\))?\\s+)?';
+        const declaration = new RegExp(`${prefix}(?:async\\s+)?fn\\s+${reference.symbol}\\s*(?:<[^\\r\\n]*>)?\\s*\\(`, 'm');
+        if (!declaration.test(text)) throw new Error(`mapped command symbol missing: ${identity}`);
+      }
+    }
   }
   return {
     ...map,
     mappedCommands: map.commands.filter((row) => row.scope === 'partial_local_source').length,
     unmappedCommands: map.commands.filter((row) => row.scope === 'unmapped').length,
+    sourceSymbolsValidated: true,
+    callGraphVerified: false,
+    testsExecutedByThisValidator: false,
     sourceBindings: [relative, ...map.commands.flatMap((row) => [...row.tests, ...row.rustSources])]
       .filter((value, index, values) => values.indexOf(value) === index)
       .sort(compare).map(readSource),

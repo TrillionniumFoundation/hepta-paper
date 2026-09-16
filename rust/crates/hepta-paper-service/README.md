@@ -37,6 +37,7 @@ clock and local writer token. It is not a deployment configuration.
 | `run CONFIG` | Decode one closed `ServiceRunV1` JSON document and emit its run receipt. |
 | `serve` | Read one bounded JSON configuration per stdin line; emit one receipt per completed request. EOF shuts down. An invalid request exits nonzero. |
 | `inspect-db IMMUTABLE_DB` | Validate a real Node migration database and print the production-compatible logical report. |
+| `store-migrate NODE_DB [TARGET_VERSION]` | Apply the embedded Node schema migrations to a private local database, validating historical migration hashes and rejecting live leases/SQLite sidecars. Optional target is 1–25; this does not authorize a production write or retire Node. |
 | `verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE` | Read and validate an already drained immutable Node database against the exact source subject; print the freeze receipt. It does not drain the live database, activate a Rust writer, authorize rollback or retire Node. |
 | `repository-assets ROOT MANIFEST [--handoff]` | Verify repository asset identities, pinned external references, restore-drill receipts and gitlink bindings; `--handoff` emits a non-authorizing migration handoff. |
 | `command-surface ROOT [--write-package]` | Inspect or synchronize the local `package.json` command-script registry without invoking Node; `--write-package` performs the deterministic local rewrite. |
@@ -45,6 +46,11 @@ clock and local writer token. It is not a deployment configuration.
 | `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input; composite release verification remains separate. |
 | `retirement-status REQUEST` | Inspect the read-only legacy archive retirement status for explicit roots and version; destructive identity-bound execution remains disabled. |
 | `runtime-r-source-cas REPOSITORY_ROOT` | Verify the R lock closure, source-CAS manifest, indexes and archive hashes without network acquisition; acquisition remains separate. |
+
+Separate native binaries inspect operational proof, owner acceptance, nested
+runtime qualification and journal connector coverage. Their inputs, signature
+validation, failure behavior and parity boundaries are documented in the
+[authority inspection handoff](../../../docs/modules/NATIVE_AUTHORITY_INSPECTION_HANDOFF.md).
 
 `ServiceRunV1` uses camelCase, rejects unknown fields, and binds a version, state
 directory, `registryJson`, hard policy, planner policy, frozen snapshot, frontier,

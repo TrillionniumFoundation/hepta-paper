@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { auditCurrentCoverage, buildCoverageInventory } from '../../docs/tools/audit-node-rust-coverage.mjs';
+import { auditCurrentCoverage, auditNodeRustCommandMap, buildCoverageInventory } from '../../docs/tools/audit-node-rust-coverage.mjs';
 import { COMMAND_REGISTRY_ROUTES } from '../src/command-registry-routes.mjs';
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 
@@ -55,6 +55,36 @@ test('partial command mappings bind both concrete Rust sources and tests', () =>
   assert.equal(partial.length, report.commandMappings.mappedCommands);
   assert.ok(partial.every((row) => row.rustEntrypoint && row.rustSources.length > 0 && row.tests.length > 0));
   assert.ok(report.commandMappings.commands.filter((row) => row.scope === 'unmapped').some((row) => row.id === 'verify/full'));
+});
+
+test('command source inventory rejects removed, empty, duplicated or falsely scoped bindings', () => {
+  const mutations = [
+    [row => { row.callChain = []; }, /missing Rust candidate/],
+    [row => { row.testCases = []; }, /missing Rust candidate/],
+    [row => { row.callChain[0].symbol = 'removed_rust_implementation'; }, /mapped command symbol missing/],
+    [row => { row.testCases[0].symbol = 'not_an_executable_test'; }, /mapped command symbol missing/],
+    [row => { row.callChain.push({ ...row.callChain[0] }); }, /duplicate command symbol binding/],
+    [row => { row.callChain[0].path = row.tests[0]; }, /invalid command symbol binding/],
+    [row => { row.compatibilityDecision = 'unmapped'; }, /missing Rust candidate/],
+    [row => { row.scope = 'unmapped'; row.compatibilityDecision = 'unmapped'; }, /unmapped command claims Rust source/],
+    [row => { row.rustSources[0] = 'rust/removed-source-that-does-not-exist.rs'; }, /ENOENT/],
+  ];
+  for (const [mutate, expected] of mutations) {
+    const map = structuredClone(report.commandMappings);
+    mutate(map.commands.find(row => row.scope === 'partial_local_source'));
+    assert.throws(() => auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, map), expected);
+  }
+});
+
+test('source inventory does not confuse symbol existence with execution or call graph proof', () => {
+  assert.equal(report.commandMappings.sourceSymbolsValidated, true);
+  assert.equal(report.commandMappings.callGraphVerified, false);
+  assert.equal(report.commandMappings.testsExecutedByThisValidator, false);
+  const map = structuredClone(report.commandMappings);
+  const row = map.commands.find(value => value.scope === 'partial_local_source');
+  row.tests = [...row.rustSources];
+  row.testCases = [{ ...row.callChain[0] }];
+  assert.throws(() => auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, map), /mapped command symbol missing/);
 });
 
 test('completion mode rejects an inventory without independent acceptance', () => {

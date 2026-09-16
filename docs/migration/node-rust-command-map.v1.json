@@ -11,7 +11,16 @@
       "rustEntrypoint": "hepta-paper-rust inspect-db IMMUTABLE_DB",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-readonly-store/src/lib.rs",
+          "symbol": "node_logical_snapshot"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/durable_service.rs"
       ],
@@ -19,6 +28,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-readonly-store/src/lib.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/durable_service.rs",
+          "symbol": "native_database_inspection_pins_bytes_and_replays_the_historical_input"
+        }
       ]
     },
     {
@@ -26,7 +41,16 @@
       "rustEntrypoint": "hepta-paper-rust inspect-db IMMUTABLE_DB",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-readonly-store/src/lib.rs",
+          "symbol": "node_logical_snapshot"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/durable_service.rs"
       ],
@@ -34,6 +58,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-readonly-store/src/lib.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/durable_service.rs",
+          "symbol": "native_database_inspection_pins_bytes_and_replays_the_historical_input"
+        }
       ]
     },
     {
@@ -41,7 +71,16 @@
       "rustEntrypoint": "hepta-paper-rust store-migrate NODE_DB [TARGET_VERSION]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_migration.rs",
+          "symbol": "migrate_node_store_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/node_migration.rs"
       ],
@@ -49,6 +88,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/node_migration.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/node_migration.rs",
+          "symbol": "applies_the_complete_embedded_migration_catalog"
+        }
       ]
     },
     {
@@ -56,7 +101,16 @@
       "rustEntrypoint": "hepta-local-maintenance backup STATE DESTINATION",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance.rs",
+          "symbol": "backup"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs"
       ],
@@ -64,6 +118,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
         "rust/crates/hepta-paper-service/src/maintenance.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "maintenance_cli_verifies_restores_and_continues_real_workflow"
+        }
       ]
     },
     {
@@ -74,7 +134,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/external-authority-intake",
@@ -84,7 +145,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/research-capability-matrix",
@@ -94,7 +156,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/personal-gpu-operational-gate",
@@ -104,7 +167,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/personal-self-hosted-readiness",
@@ -114,17 +178,91 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/journal-connector-coverage",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustEntrypoint": "hepta-journal-connector-coverage [OPTIONS]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-journal-connector-coverage.rs",
+          "symbol": "main"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/journal_connector_coverage.rs",
+          "symbol": "journal_connector_coverage_cli_v2"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/journal_connector_coverage.rs",
+          "symbol": "build_journal_connector_coverage_v2"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/journal_connector_coverage.rs",
+          "symbol": "build_journal_submission_target_registry_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/journal_connector_coverage.rs",
+          "symbol": "build_submission_connector_family_registry_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/journal_connector_coverage.rs",
+          "symbol": "journal_connector_coverage_cli_at_v2"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification.rs",
+          "symbol": "inspect_portal_target_qualification_registry_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification.rs",
+          "symbol": "apply_inspected_portal_target_qualifications_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification_authority.rs",
+          "symbol": "verify_authority"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/journal_connector_coverage_parity.rs",
+        "rust/crates/hepta-paper-service/tests/journal_qualification_parity.rs"
+      ],
+      "remaining": "Native discovery for all 98 venues and signed qualification registry inspection/application, pins, freshness, typed evidence, Ed25519/SPKI and organization independence are implemented. Standard Ed25519 SPKI PEM is covered; additional OpenSSL key containers/encodings and full independent command acceptance remain unqualified. Real portal qualification and human live-commit authorization are not supplied by local tests.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-journal-connector-coverage.rs",
+        "rust/crates/hepta-paper-service/src/data/journal-profiles.v2.json",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage.rs",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification.rs",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification_authority.rs",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification_json.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/journal_connector_coverage_parity.rs",
+          "symbol": "complete_profiles_families_targets_and_coverage_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/journal_connector_coverage_parity.rs",
+          "symbol": "cli_every_venue_and_all_readiness_gates_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/journal_connector_coverage_parity.rs",
+          "symbol": "shipped_rust_cli_preserves_json_stdout_error_stderr_and_exit_status"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/journal_qualification_parity.rs",
+          "symbol": "signed_qualification_full_inspection_and_applied_hashes_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/journal_qualification_parity.rs",
+          "symbol": "pins_freshness_and_secure_file_boundaries_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/journal_qualification_parity.rs",
+          "symbol": "qualified_real_cli_flags_environment_counts_and_gates_match_node"
+        }
+      ]
     },
     {
       "id": "operator/portal-target-qualification",
@@ -134,7 +272,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/generic-domain-capability-evidence",
@@ -144,7 +283,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/autonomous-supervisor-health",
@@ -154,17 +294,71 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/nested-runtime-platform-qualification",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustEntrypoint": "hepta-nested-runtime-qualification [NODE_OPTIONS] | --request ABSOLUTE_JSON_PATH",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-nested-runtime-qualification.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/nested_runtime_qualification.rs",
+          "symbol": "verify_nested_runtime_platform_qualification_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/nested_runtime_qualification.rs",
+          "symbol": "verify_nested_runtime_platform_qualification_file_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/nested_runtime_cli.rs",
+          "symbol": "nested_runtime_qualification_cli_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/nested_runtime_qualification_parity.rs",
+        "rust/crates/hepta-paper-service/tests/nested_runtime_cli.rs"
+      ],
+      "remaining": "Native CPU/GPU exact-Pod qualification, startup conformance, independent Ed25519 authority chain, all 18 incumbent flag/environment bindings, help and exit-status behavior are implemented. Canonical clock, public-key encoding, duplicate-key/file identity restrictions and platform I/O error details require compatibility review. Independent command acceptance and real target-host observations remain open.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-nested-runtime-qualification.rs",
+        "rust/crates/hepta-paper-service/src/nested_runtime_qualification.rs",
+        "rust/crates/hepta-paper-service/src/nested_runtime_qualification/authority.rs",
+        "rust/crates/hepta-paper-service/src/nested_runtime_qualification/subjects.rs",
+        "rust/crates/hepta-paper-service/src/nested_runtime_qualification/support.rs",
+        "rust/crates/hepta-paper-service/src/nested_runtime_cli.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/nested_runtime_qualification_parity.rs",
+          "symbol": "complete_signed_current_pod_chain_matches_node_and_is_read_only"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/nested_runtime_qualification_parity.rs",
+          "symbol": "declared_gpu_profile_and_device_proof_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/nested_runtime_qualification_parity.rs",
+          "symbol": "real_invalid_signatures_revocations_and_independence_fail_with_node_parity"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/nested_runtime_cli.rs",
+          "symbol": "every_flag_and_environment_default_runs_the_actual_node_command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/nested_runtime_cli.rs",
+          "symbol": "malformed_cli_arguments_match_incumbent_error_precedence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/nested_runtime_cli.rs",
+          "symbol": "live_rust_binary_preserves_native_flags_and_exit_status"
+        }
+      ]
     },
     {
       "id": "operator/autonomous-intake-authority-rotation",
@@ -174,7 +368,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/autonomous-state-backup",
@@ -184,7 +379,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/runtime-image-reproducibility",
@@ -194,14 +390,24 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/runtime-r-source-cas",
       "rustEntrypoint": "hepta-paper-rust runtime-r-source-cas REPOSITORY_ROOT",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
+          "symbol": "inspect_runtime_source_cas_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_parity.rs"
       ],
@@ -210,6 +416,12 @@
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
         "rust/oracle/runtime-r-source-cas-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_parity.rs",
+          "symbol": "source_cas_verifier_matches_node_for_verified_and_tampered_archives"
+        }
       ]
     },
     {
@@ -220,7 +432,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/autonomous-research",
@@ -230,7 +443,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/autonomous-research-one-shot-campaign-attempt",
@@ -240,7 +454,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/local-golden-dataset-provision",
@@ -250,7 +465,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/strict-full-auto-acceptance",
@@ -260,7 +476,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/autonomous-empirical-plugin-release",
@@ -270,7 +487,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/advanced-numerical-plugin",
@@ -280,7 +498,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/autonomous-submission-dispatcher",
@@ -290,7 +509,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/autonomous-submission-dispatcher-challenge",
@@ -300,7 +520,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/autonomous-supervisor",
@@ -310,14 +531,24 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/reconcile",
       "rustEntrypoint": "hepta-local-maintenance prepared-plan STATE HASH",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
+          "symbol": "plan_prepared_reconciliation"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs"
       ],
@@ -325,6 +556,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
         "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
+          "symbol": "prepared_reconciliation_commits_actual_cached_output_once_without_execution"
+        }
       ]
     },
     {
@@ -332,7 +569,16 @@
       "rustEntrypoint": "hepta-local-maintenance prepared-commit STATE PLAN HASH NOW",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
+          "symbol": "apply_prepared_reconciliation"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs"
       ],
@@ -340,6 +586,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
         "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
+          "symbol": "prepared_commit_cli_consumes_a_hash_bound_raw_plan"
+        }
       ]
     },
     {
@@ -347,7 +599,16 @@
       "rustEntrypoint": "hepta-local-workflow {list|status|events|logs|pause|resume|amend|cancel} ...",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/local_workflow.rs"
       ],
@@ -355,6 +616,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_read_commands_execute_actual_binary_and_reject_wrong_query"
+        }
       ]
     },
     {
@@ -362,7 +629,16 @@
       "rustEntrypoint": "hepta-local-workflow advance STATE HASH ABSOLUTE_THROUGH NOW",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/local_workflow.rs"
       ],
@@ -370,6 +646,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "actual_artifacts_flow_through_all_seven_documented_steps"
+        }
       ]
     },
     {
@@ -380,14 +662,24 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/gc",
       "rustEntrypoint": "hepta-local-maintenance gc-plan/gc-resume ...",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+          "symbol": "plan_gc"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs"
       ],
@@ -395,6 +687,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
         "rust/crates/hepta-paper-service/src/maintenance/gc.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs",
+          "symbol": "actual_gc_cli_uses_exact_raw_plan_and_retains_quarantine_bytes"
+        }
       ]
     },
     {
@@ -402,7 +700,16 @@
       "rustEntrypoint": "hepta-local-maintenance gc-apply STATE PLAN HASH",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+          "symbol": "apply_gc"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs"
       ],
@@ -410,6 +717,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
         "rust/crates/hepta-paper-service/src/maintenance/gc.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs",
+          "symbol": "gc_moves_only_unreferenced_object_and_preserves_workflow_resume"
+        }
       ]
     },
     {
@@ -420,7 +733,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "maintenance/autonomous-state-partial-root-maintenance",
@@ -430,7 +744,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "maintenance/autonomous-online-schema-transition",
@@ -440,14 +755,24 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "maintenance/command-surface-sync",
       "rustEntrypoint": "hepta-paper-rust command-surface ROOT [--write-package]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/command_surface.rs",
+          "symbol": "synchronize_command_surface_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/command_surface_parity.rs"
       ],
@@ -456,21 +781,24 @@
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/command_surface.rs",
         "rust/oracle/command-surface-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/command_surface_parity.rs",
+          "symbol": "package_surface_check_and_write_match_node_oracle"
+        }
       ]
     },
     {
       "id": "verify/architecture",
-      "rustEntrypoint": "cargo test -p hepta-paper-service --test durable_service",
-      "scope": "partial_local_source",
-      "compatibilityDecision": "candidate",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
       "callChain": [],
-      "tests": [
-        "rust/crates/hepta-paper-service/tests/durable_service.rs"
-      ],
-      "remaining": "Rust architecture tests are bounded crate checks; Node architecture conformance remains unimplemented.",
-      "rustSources": [
-        "rust/crates/hepta-paper-service/tests/durable_service.rs"
-      ]
+      "tests": [],
+      "remaining": "Rust durable-service tests are not an implementation of the Node architecture-conformance command. A native checker for the complete incumbent boundary/import contract and its argument modes is required.",
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "verify/critical",
@@ -480,14 +808,24 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "verify/store",
       "rustEntrypoint": "hepta-paper-rust inspect-db IMMUTABLE_DB",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-readonly-store/src/lib.rs",
+          "symbol": "node_logical_snapshot"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-readonly-store/tests/node_production_parity.rs"
       ],
@@ -495,6 +833,12 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-readonly-store/src/lib.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-readonly-store/tests/node_production_parity.rs",
+          "symbol": "all_twenty_five_actual_node_stores_match_production_integrity_hashes_and_remain_immutable"
+        }
       ]
     },
     {
@@ -502,7 +846,16 @@
       "rustEntrypoint": "hepta-paper-rust repository-assets ROOT MANIFEST [--handoff]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/repository_assets.rs",
+          "symbol": "inspect_repository_asset_externalization_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs"
       ],
@@ -511,6 +864,12 @@
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/repository_assets.rs",
         "rust/oracle/repository-assets-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs",
+          "symbol": "repository_asset_inspection_and_handoff_match_node_oracle"
+        }
       ]
     },
     {
@@ -521,7 +880,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "operator/submission-handoff-export",
@@ -531,14 +891,24 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "verify/release",
       "rustEntrypoint": "hepta-paper-rust release-state REQUEST",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_state.rs",
+          "symbol": "inspect_release_state_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/release_state_parity.rs"
       ],
@@ -547,6 +917,12 @@
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/release_state.rs",
         "rust/oracle/release-state-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_state_parity.rs",
+          "symbol": "release_state_contract_matches_node_oracle"
+        }
       ]
     },
     {
@@ -554,7 +930,16 @@
       "rustEntrypoint": "hepta-paper-rust release-trust-gate REQUEST",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_trust_gate.rs",
+          "symbol": "build_release_trust_layer_gate_from_values_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/release_trust_gate_parity.rs"
       ],
@@ -563,27 +948,119 @@
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/release_trust_gate.rs",
         "rust/oracle/release-trust-gate-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_trust_gate_parity.rs",
+          "symbol": "release_trust_gate_matches_node_oracle"
+        }
       ]
     },
     {
       "id": "verify/operational",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustEntrypoint": "hepta-operational-proof-status --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH --asset-root ABSOLUTE_PATH",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-operational-proof-status.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/operational_status.rs",
+          "symbol": "capability_operational_proof_status_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/operational_status/provenance.rs",
+          "symbol": "current_operational_code_provenance_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/operational_status/authority.rs",
+          "symbol": "verify"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/operational_status_parity.rs"
+      ],
+      "remaining": "Native Ed25519 verification, all 16 capabilities, source-bound replay validation and sealed hydrated-submodule closure are implemented. Explicit-root CLI differs from incumbent environment defaults; independent complete-mode acceptance and real external operational evidence remain open.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-operational-proof-status.rs",
+        "rust/crates/hepta-paper-service/src/operational_status.rs",
+        "rust/crates/hepta-paper-service/src/operational_status/authority.rs",
+        "rust/crates/hepta-paper-service/src/operational_status/conformance.rs",
+        "rust/crates/hepta-paper-service/src/operational_status/files.rs",
+        "rust/crates/hepta-paper-service/src/operational_status/ordered.rs",
+        "rust/crates/hepta-paper-service/src/operational_status/provenance.rs",
+        "rust/crates/hepta-paper-service/src/operational_status/sealed.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/operational_status_parity.rs",
+          "symbol": "verified_operational_and_conformance_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/operational_status_parity.rs",
+          "symbol": "malformed_untrusted_and_replayed_proofs_match_node_fail_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/operational_status_parity.rs",
+          "symbol": "hydrated_readonly_closure_matches_node_and_runs_sealed_binary"
+        }
+      ]
     },
     {
       "id": "verify/owner",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustEntrypoint": "hepta-owner-acceptance-status --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-owner-acceptance-status.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/owner_status.rs",
+          "symbol": "inspect_owner_acceptance_status_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/owner_status.rs",
+          "symbol": "owner_acceptance_status_from_values_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/owner_status.rs",
+          "symbol": "build_owner_acceptance_families_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/operational_status/authority.rs",
+          "symbol": "verify"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/owner_status_parity.rs"
+      ],
+      "remaining": "Native current-matrix family rebuilding and v1/v2 signed owner acceptance status match Node fixtures. Explicit-root CLI and stronger no-alias input restrictions require compatibility review; real independent owner acceptance and retirement authority remain absent.",
+      "rustSources": [
+        "migration/legacy-semantic-migration-matrix.json",
+        "paper-domain/governance/legacy-owner-acceptance-family-manifest.v1.json",
+        "rust/crates/hepta-paper-service/src/bin/hepta-owner-acceptance-status.rs",
+        "rust/crates/hepta-paper-service/src/operational_status/authority.rs",
+        "rust/crates/hepta-paper-service/src/owner_status.rs",
+        "rust/crates/hepta-paper-service/src/owner_status/reader.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/owner_status_parity.rs",
+          "symbol": "signed_owner_acceptance_and_every_family_hash_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/owner_status_parity.rs",
+          "symbol": "changed_source_or_disposition_cannot_reuse_a_signed_manifest"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/owner_status_parity.rs",
+          "symbol": "actual_owner_cli_is_read_only_and_emits_current_node_equivalent_status"
+        }
+      ]
     },
     {
       "id": "maintenance/release-attest",
@@ -593,7 +1070,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "maintenance/release-integrity-key",
@@ -603,7 +1081,8 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "verify/full",
@@ -613,14 +1092,24 @@
       "callChain": [],
       "tests": [],
       "remaining": "Rust workspace tests do not execute or certify the Node full test suite; parity acceptance remains unimplemented.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "retirement/status",
       "rustEntrypoint": "hepta-paper-rust retirement-status REQUEST",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/retirement_status.rs",
+          "symbol": "inspect_retirement_status_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs"
       ],
@@ -629,6 +1118,12 @@
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/retirement_status.rs",
         "rust/oracle/retirement-status-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
+          "symbol": "retirement_status_matches_node_for_missing_and_archive_states"
+        }
       ]
     },
     {
@@ -636,7 +1131,16 @@
       "rustEntrypoint": "hepta-paper-rust retirement-reference ROOT",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/retirement_reference.rs",
+          "symbol": "verify_retirement_reference_v1"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/retirement_reference_parity.rs"
       ],
@@ -645,6 +1149,12 @@
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/retirement_reference.rs",
         "rust/oracle/retirement-reference-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_reference_parity.rs",
+          "symbol": "retirement_reference_matches_node_for_verified_and_blocked_receipts"
+        }
       ]
     },
     {
@@ -655,35 +1165,44 @@
       "callChain": [],
       "tests": [],
       "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "rustSources": [],
+      "testCases": []
     },
     {
       "id": "retirement/drill",
-      "rustEntrypoint": "cargo run -p hepta-cutover --example local_cutover_drill",
+      "rustEntrypoint": "cargo run -p hepta-cutover --example local_cutover_drill -- ABSENT_DIRECTORY",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
-      "callChain": [],
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-cutover/examples/local_cutover_drill.rs",
+          "symbol": "main"
+        }
+      ],
       "tests": [
         "rust/crates/hepta-cutover/tests/durable_cutover.rs"
       ],
       "remaining": "Local cutover drill only; protected production retirement evidence remains unimplemented.",
       "rustSources": [
         "rust/crates/hepta-cutover/examples/local_cutover_drill.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-cutover/tests/durable_cutover.rs",
+          "symbol": "backup_shadow_canary_restart_and_rollback_preserve_committed_records"
+        }
       ]
     },
     {
       "id": "retirement/drill-attest",
-      "rustEntrypoint": "cargo run -p hepta-cutover --example local_cutover_drill -- --attest",
-      "scope": "partial_local_source",
-      "compatibilityDecision": "candidate",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
       "callChain": [],
-      "tests": [
-        "rust/crates/hepta-cutover/tests/durable_cutover.rs"
-      ],
-      "remaining": "Local cutover drill only; protected production retirement evidence remains unimplemented.",
-      "rustSources": [
-        "rust/crates/hepta-cutover/examples/local_cutover_drill.rs"
-      ]
+      "tests": [],
+      "remaining": "The local_cutover_drill example requires an absent directory and does not implement --attest. Independent attestation generation/verification and the actual Node command contract remain unmapped.",
+      "rustSources": [],
+      "testCases": []
     }
   ]
 }

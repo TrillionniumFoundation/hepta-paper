@@ -87,6 +87,10 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 fn main() {
+    // This binary is the isolated worker process, before it creates threads or
+    // launches any tool. Never set a process-global umask in the library API.
+    // The private mask is inherited by Python, R, Lean and LaTeX children.
+    nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o077));
     if execute().is_err() {
         eprintln!("scientific worker rejected; retain private attempt state for reconciliation");
         std::process::exit(1);

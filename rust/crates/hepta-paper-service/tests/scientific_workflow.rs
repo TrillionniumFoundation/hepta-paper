@@ -178,6 +178,12 @@ fn definition(temp: &Temp, fail: bool) -> LocalWorkflowV1 {
         "../../../../docs/modules/examples/scientific-python-job.v1.json"
     ))
     .unwrap();
+    // The process worker must establish the output policy itself. Direct
+    // library fixtures include a script-level umask; remove it on this route.
+    job.files
+        .get_mut("main.py")
+        .unwrap()
+        .replace_range(.."import os\nos.umask(0o077)\n".len(), "");
     if fail {
         job.files.insert(
             "main.py".into(),
@@ -203,8 +209,12 @@ fn definition(temp: &Temp, fail: bool) -> LocalWorkflowV1 {
     let profile_path = temp.0.join("science-profile.json");
     let profile_bytes = serde_json::to_vec(&profile).unwrap();
     fs::write(&profile_path, &profile_bytes).unwrap();
+    fs::set_permissions(&profile_path, fs::Permissions::from_mode(0o600)).unwrap();
     let profile_hash = digest(&profile_bytes);
-    let worker = fs::canonicalize(env!("CARGO_BIN_EXE_hepta-scientific-worker")).unwrap();
+    let worker = temp.0.join("pinned-scientific-worker");
+    fs::copy(env!("CARGO_BIN_EXE_hepta-scientific-worker"), &worker).unwrap();
+    fs::set_permissions(&worker, fs::Permissions::from_mode(0o500)).unwrap();
+    let worker = fs::canonicalize(worker).unwrap();
     let binding = WorkerBindingV1::Process {
         executable_hash: digest(&fs::read(&worker).unwrap()),
         executable: worker,
@@ -359,6 +369,20 @@ fn real_experiment_named_result_reaches_manuscript_bundle_and_sqlite_exactly_onc
     }
     assert!(bundle_seen);
     assert_eq!(scratch_count(&temp), 1);
+    let attempt = fs::read_dir(temp.0.join("scratch"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert_eq!(
+        fs::metadata(attempt.join("result.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
     let replay = operate_local_workflow_v1(
         &temp.state(),
         &hash,

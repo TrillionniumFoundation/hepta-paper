@@ -64,6 +64,17 @@ Tests import this exact file with `include_str!`; they do not maintain a separat
 copy of the documented program. Its result is count 4, mean 5 and sample variance
 20/3. These are test data, not evidence of a real scientific discovery.
 
+The standalone scientific worker sets `umask 0077` in its own process before
+launching tools, so newly created tool outputs default to mode 0600 even when
+the service's parent shell uses a permissive mask. The library API never changes
+the host process's global umask. Programs invoked directly through that API must
+create private outputs themselves; the documented Python program sets its own
+mask for this reason. Output admission still rejects group- or other-writable
+files, symlinks and hardlinks. Profile files must also be installed with mode
+0600 (or another accepted non-writable-by-group/other mode), and executable
+fixtures must be copied and pinned with safe permissions rather than modifying
+shared Cargo build outputs.
+
 `ScientificRuntimeProfileV1` is closed camelCase JSON with these required fields:
 
 | Field | Contract |

@@ -71,7 +71,7 @@ fn percentile(values: &mut [f64], fraction: f64) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     Some(
         values[((values.len() as f64 * fraction).ceil() as usize)
             .saturating_sub(1)
@@ -83,7 +83,11 @@ fn counts(items: impl IntoIterator<Item = String>) -> Value {
     for item in items {
         *out.entry(item).or_insert(0_u64) += 1;
     }
-    serde_json::to_value(out).unwrap()
+    Value::Object(
+        out.into_iter()
+            .map(|(key, count)| (key, Value::from(count)))
+            .collect(),
+    )
 }
 fn finite(values: impl IntoIterator<Item = Option<f64>>) -> Vec<f64> {
     values
@@ -94,7 +98,7 @@ fn finite(values: impl IntoIterator<Item = Option<f64>>) -> Vec<f64> {
 }
 fn histogram(values: &[f64], bounds: &[f64]) -> Value {
     let mut s = values.to_vec();
-    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mut out = bounds
         .iter()
         .map(|b| json!({"le":b,"count":s.iter().filter(|v|**v<=*b).count()}))
@@ -105,13 +109,13 @@ fn histogram(values: &[f64], bounds: &[f64]) -> Value {
 fn canonical_string(
     v: &Value,
     collator: &hepta_legacy_compatibility::ProductionCollationV1,
-) -> String {
-    match v {
+) -> Result<String, CampaignSloError> {
+    Ok(match v {
         Value::Array(a) => format!(
             "[{}]",
             a.iter()
                 .map(|value| canonical_string(value, collator))
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()?
                 .join(",")
         ),
         Value::Object(o) => {
@@ -120,12 +124,12 @@ fn canonical_string(
             format!(
                 "{{{}}}",
                 keys.into_iter()
-                    .map(|key| format!(
+                    .map(|key| Ok(format!(
                         "{}:{}",
-                        serde_json::to_string(key).unwrap(),
-                        canonical_string(&o[key], collator)
-                    ))
-                    .collect::<Vec<_>>()
+                        serde_json::to_string(key).map_err(|_| CampaignSloError::Invalid)?,
+                        canonical_string(&o[key], collator)?
+                    )))
+                    .collect::<Result<Vec<_>, CampaignSloError>>()?
                     .join(",")
             )
         }
@@ -136,20 +140,22 @@ fn canonical_string(
                 && value.fract() == 0.0
                 && value.abs() <= i64::MAX as f64
             {
-                return (value as i64).to_string();
+                return Ok((value as i64).to_string());
             }
             number.to_string()
         }
-        Value::String(value) => serde_json::to_string(value).unwrap(),
+        Value::String(value) => {
+            serde_json::to_string(value).map_err(|_| CampaignSloError::Invalid)?
+        }
         Value::Bool(value) => value.to_string(),
         Value::Null => "null".to_owned(),
-    }
+    })
 }
 fn hash_report(v: &Value) -> Result<String, CampaignSloError> {
     let collator = hepta_legacy_compatibility::ProductionCollationV1::load()
         .map_err(|_| CampaignSloError::Collation)?;
     let envelope = json!({"kind":"CampaignSloReport","value":v});
-    let bytes = canonical_string(&envelope, &collator).into_bytes();
+    let bytes = canonical_string(&envelope, &collator)?.into_bytes();
     let mut h = Sha256::new();
     h.update(bytes);
     Ok(format!("sha256:{}", hex::encode(h.finalize())))
@@ -194,7 +200,20 @@ pub fn build_campaign_slo_report_v1(r: &CampaignSloRequestV1) -> Result<Value, C
     {
         return Err(CampaignSloError::Invalid);
     }
-    let targets = json!({"minimumTerminalNodeSuccessRate":r.targets.minimum_terminal_node_success_rate.unwrap_or(0.95),"maximumQueueWaitP95Ms":r.targets.maximum_queue_wait_p95_ms.unwrap_or(900000.0),"maximumRecoveryP95Ms":r.targets.maximum_recovery_p95_ms.unwrap_or(300000.0),"maximumRuntimeBytes":r.targets.maximum_runtime_bytes.unwrap_or(10*1024*1024*1024)});
+    let minimum_success = r.targets.minimum_terminal_node_success_rate.unwrap_or(0.95);
+    let maximum_queue = r.targets.maximum_queue_wait_p95_ms.unwrap_or(900000.0);
+    let maximum_recovery = r.targets.maximum_recovery_p95_ms.unwrap_or(300000.0);
+    let maximum_runtime = r
+        .targets
+        .maximum_runtime_bytes
+        .unwrap_or(10 * 1024 * 1024 * 1024);
+    if [minimum_success, maximum_queue, maximum_recovery]
+        .iter()
+        .any(|value| !value.is_finite())
+    {
+        return Err(CampaignSloError::Invalid);
+    }
+    let targets = json!({"minimumTerminalNodeSuccessRate":minimum_success,"maximumQueueWaitP95Ms":maximum_queue,"maximumRecoveryP95Ms":maximum_recovery,"maximumRuntimeBytes":maximum_runtime});
     let mut by_node: HashMap<String, Vec<(String, u64)>> = HashMap::new();
     let mut completed = HashMap::new();
     for e in &r.events {
@@ -220,7 +239,7 @@ pub fn build_campaign_slo_report_v1(r: &CampaignSloRequestV1) -> Result<Value, C
             .filter_map(|d| completed.get(d).copied())
             .collect::<Vec<_>>();
         let ready = if deps.len() == n.dependencies.len() && !deps.is_empty() {
-            deps.into_iter().max().unwrap()
+            deps.into_iter().max().ok_or(CampaignSloError::Invalid)?
         } else {
             n.created_at_unix_ms.unwrap_or(0)
         };
@@ -305,13 +324,14 @@ pub fn build_campaign_slo_report_v1(r: &CampaignSloRequestV1) -> Result<Value, C
     let observed = json!({"campaignCounts":counts(r.campaigns.iter().map(|x|x.status.clone())),"nodeCounts":counts(r.nodes.iter().map(|x|x.status.clone())),"terminalNodeSuccessRate":success,"queueWaitP50Ms":percentile(&mut q50,0.5),"queueWaitP95Ms":percentile(&mut q95,0.95),"recoveryP50Ms":percentile(&mut r50,0.5),"recoveryP95Ms":percentile(&mut r95,0.95),"sampleCounts":{"queueWait":queue.len(),"recovery":recovery.len(),"telemetry":r.telemetry_samples.len(),"lockWait":locks.len(),"queueContention":contention.len()},"phaseTimingP95Ms":phase_p95,"lockWaitP95Ms":lock_p95,"lockWaitHistogram":histogram(&locks,&[0.0,1.0,5.0,10.0,50.0,100.0,500.0,1000.0]),"queueContentionHistogram":histogram(&contention,&[0.0,1.0,2.0,5.0,10.0]),"retryEventCount":retry_count,"uniqueChildSessionCount":unique_sessions,"totalAgentCalls":r.campaigns.iter().map(|x|x.agent_call_count).sum::<u64>(),"totalCpuJobs":r.campaigns.iter().map(|x|x.cpu_job_count).sum::<u64>(),"totalGpuJobs":r.campaigns.iter().map(|x|x.gpu_job_count).sum::<u64>(),"totalTokens":r.campaigns.iter().map(|x|x.token_count).sum::<u64>(),"unknownCostCampaignCount":unknown,"runtimeBytes":r.runtime_bytes});
     let q = observed["queueWaitP95Ms"].as_f64();
     let rec = observed["recoveryP95Ms"].as_f64();
-    let obj = json!({"terminalNodeSuccessRate":success.is_some_and(|x|x>=targets["minimumTerminalNodeSuccessRate"].as_f64().unwrap()),"queueWaitP95":q.is_some_and(|x|x<=targets["maximumQueueWaitP95Ms"].as_f64().unwrap()),"recoveryP95":rec.is_some_and(|x|x<=targets["maximumRecoveryP95Ms"].as_f64().unwrap()),"runtimeQuota":r.runtime_bytes<=targets["maximumRuntimeBytes"].as_u64().unwrap(),"costsAuditable":unknown==0});
-    let states = json!({"terminalNodeSuccessRate":if success.is_none(){"insufficient_data"}else if obj["terminalNodeSuccessRate"].as_bool().unwrap(){"met"}else{"not_met"},"queueWaitP95":if q.is_none(){"insufficient_data"}else if obj["queueWaitP95"].as_bool().unwrap(){"met"}else{"not_met"},"recoveryP95":if rec.is_none(){"insufficient_data"}else if obj["recoveryP95"].as_bool().unwrap(){"met"}else{"not_met"},"runtimeQuota":if obj["runtimeQuota"].as_bool().unwrap(){"met"}else{"not_met"},"costsAuditable":if obj["costsAuditable"].as_bool().unwrap(){"met"}else{"not_met"}});
-    let met = obj
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|v| v.as_bool() == Some(true));
+    let success_met = success.is_some_and(|value| value >= minimum_success);
+    let queue_met = q.is_some_and(|value| value <= maximum_queue);
+    let recovery_met = rec.is_some_and(|value| value <= maximum_recovery);
+    let runtime_met = r.runtime_bytes <= maximum_runtime;
+    let costs_met = unknown == 0;
+    let obj = json!({"terminalNodeSuccessRate":success_met,"queueWaitP95":queue_met,"recoveryP95":recovery_met,"runtimeQuota":runtime_met,"costsAuditable":costs_met});
+    let states = json!({"terminalNodeSuccessRate":if success.is_none(){"insufficient_data"}else if success_met{"met"}else{"not_met"},"queueWaitP95":if q.is_none(){"insufficient_data"}else if queue_met{"met"}else{"not_met"},"recoveryP95":if rec.is_none(){"insufficient_data"}else if recovery_met{"met"}else{"not_met"},"runtimeQuota":if runtime_met{"met"}else{"not_met"},"costsAuditable":if costs_met{"met"}else{"not_met"}});
+    let met = success_met && queue_met && recovery_met && runtime_met && costs_met;
     let payload = normalize_json_numbers(
         json!({"version":2,"kind":"CampaignSloReport","status":if met{"campaign_slos_met"}else{"campaign_slos_not_met"},"targets":targets,"observed":observed,"objectives":obj,"objectiveStates":states}),
     );

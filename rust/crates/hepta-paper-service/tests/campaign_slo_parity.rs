@@ -89,3 +89,22 @@ fn bounded_corpus_matches_the_production_node_oracle() {
         assert_eq!(rust, oracle["results"][index], "corpus case {index}");
     }
 }
+
+#[test]
+fn nonfinite_programmatic_slo_targets_return_a_contract_error() {
+    let request: CampaignSloRequestV1 = serde_json::from_str(include_str!(
+        "../../../../docs/modules/examples/campaign-slo.v1.json"
+    ))
+    .expect("documented request");
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let mut invalid = request.clone();
+        invalid.targets.minimum_terminal_node_success_rate = Some(value);
+        assert!(build_campaign_slo_report_v1(&invalid).is_err());
+        invalid = request.clone();
+        invalid.targets.maximum_queue_wait_p95_ms = Some(value);
+        assert!(build_campaign_slo_report_v1(&invalid).is_err());
+        invalid = request.clone();
+        invalid.targets.maximum_recovery_p95_ms = Some(value);
+        assert!(build_campaign_slo_report_v1(&invalid).is_err());
+    }
+}

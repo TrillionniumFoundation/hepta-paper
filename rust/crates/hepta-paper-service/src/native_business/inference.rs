@@ -103,7 +103,7 @@ pub fn quantile(v: &[f64], p: f64) -> f64 {
         return f64::NAN;
     }
     let mut s = v.to_vec();
-    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let z = p * (s.len() - 1) as f64;
     let l = z.floor() as usize;
     let u = z.ceil() as usize;
@@ -162,10 +162,10 @@ pub fn inverse_normal_cdf_v1(p: f64) -> f64 {
     (((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q
         / (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1.0)
 }
-fn rand(seed: u64, salt: &str) -> impl FnMut() -> f64 {
+fn rand(seed: u64, salt: &str) -> Result<impl FnMut() -> f64, NativeBusinessError> {
     use sha2::Digest;
     let mut h = sha2::Sha256::new();
-    let salt_json = serde_json::to_string(salt).unwrap();
+    let salt_json = serde_json::to_string(salt).map_err(|_| NativeBusinessError::Encoding)?;
     let payload = format!(
         "{{\"kind\":\"AnalysisProtocolDeterministicRandomSeed\",\"value\":{{\"salt\":{salt_json},\"seed\":{seed}}}}}"
     );
@@ -175,12 +175,12 @@ fn rand(seed: u64, salt: &str) -> impl FnMut() -> f64 {
     if x == 0 {
         x = 0x6d2b79f5
     }
-    move || {
+    Ok(move || {
         x ^= x << 13;
         x ^= x >> 17;
         x ^= x << 5;
         x as f64 / 4294967296.
-    }
+    })
 }
 pub fn evaluate_analysis_inference_v1(
     r: &AnalysisInferenceRequestV1,
@@ -221,7 +221,7 @@ pub fn evaluate_analysis_inference_v1(
     let lo = quantile(&r.values, r.winsor_lower_probability);
     let hi = quantile(&r.values, r.winsor_upper_probability);
     let winsorized = r.values.iter().map(|x| x.max(lo).min(hi)).collect();
-    let mut rng = rand(r.seed, &r.salt);
+    let mut rng = rand(r.seed, &r.salt)?;
     let mut means = Vec::new();
     for _ in 0..r.bootstrap_resamples {
         let mut x = Vec::new();
@@ -258,7 +258,7 @@ pub fn evaluate_analysis_inference_v1(
         // The incumbent creates a fresh deterministic generator for the sign
         // flip procedure.  Do not continue the bootstrap stream: doing so
         // changes every Monte Carlo draw while leaving the same seed/salt.
-        let mut sign_rng = rand(r.seed, &r.salt);
+        let mut sign_rng = rand(r.seed, &r.salt)?;
         let mut exceed = 0_u64;
         for _ in 0..r.sign_flip_draws {
             let signed: Vec<f64> = r
@@ -277,7 +277,7 @@ pub fn evaluate_analysis_inference_v1(
     hs.sort_by(|a, b| {
         a.p_value
             .partial_cmp(&b.p_value)
-            .unwrap()
+            .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.hypothesis_id.cmp(&b.hypothesis_id))
     });
     let mut previous_adjusted = 0.0;

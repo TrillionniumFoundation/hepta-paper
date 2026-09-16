@@ -529,13 +529,19 @@
     },
     {
       "id": "verify/release",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
+      "rustEntrypoint": "hepta-paper-rust release-state REQUEST",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
       "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/release_state_parity.rs"
+      ],
+      "remaining": "Rust matches the pure Node package/document/tag consistency contract; npm security audit, complete release verification suite, target-host release authority and production publication remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/release_state.rs",
+        "rust/oracle/release-state-v1.mjs"
+      ]
     },
     {
       "id": "verify/trust",

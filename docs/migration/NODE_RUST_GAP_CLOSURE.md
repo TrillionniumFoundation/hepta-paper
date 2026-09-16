@@ -2,8 +2,8 @@
 
 > Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. This ledger records closure work; it does not grant parity, production activation, or Node retirement.
 
-- Inventory binding: `sha256:47bcfb776e1f85fca45d45528b0cab138fba33e2d8945b5c5558cdad16586e84`
-- Unmapped commands: **39**
+- Inventory binding: `sha256:06586a87ec25f333a245d88dd976ad17d70753a8172564a576d0ab55a2462725`
+- Unmapped commands: **38**
 - Accepted parity: `false`
 - Production activation: `false`
 - Node retirement: `false`
@@ -48,6 +48,5 @@
 | `verify/full` | `npm` `test` | local parity acceptance | Rust workspace tests do not execute or certify the Node full test suite; parity acceptance remains unimplemented. | Rust implementation of the complete Node test surface, argument modes, failure matrix, and independent acceptance evidence. |
 | `verify/operational` | `node` `paper-core/bin/operational-proof-status.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 | `verify/owner` | `node` `paper-core/bin/owner-acceptance-status.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
-| `verify/release` | `npm` `run` `release:verify` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 
 The ledger is intentionally closed by evidence, not by changing a status token. A route moves out of this file only when its command-map row binds a real Rust entrypoint, complete call chain, executable tests, and the required qualification package.

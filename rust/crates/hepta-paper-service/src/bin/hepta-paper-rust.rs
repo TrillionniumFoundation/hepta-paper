@@ -3,6 +3,7 @@ use hepta_paper_service::{
     LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1,
     command_surface::synchronize_command_surface_v1,
     migrate_node_store_v1, native_implementation_hash_v1,
+    release_state::inspect_release_state_v1,
     release_trust_gate::build_release_trust_layer_gate_from_values_v1,
     repository_assets::{
         build_repository_asset_externalization_handoff_v1,
@@ -131,6 +132,13 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&build_release_trust_layer_gate_from_values_v1(&input)?)?
             );
         }
+        Some("release-state") if args.len() == 2 => {
+            let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
+            println!(
+                "{}",
+                serde_json::to_string(&inspect_release_state_v1(&input)?)?
+            );
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
@@ -140,7 +148,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "repository-assets ROOT MANIFEST [--handoff]",
                 " | command-surface ROOT [--write-package]",
                 " | retirement-reference ROOT",
-                " | release-trust-gate REQUEST"
+                " | release-trust-gate REQUEST",
+                " | release-state REQUEST"
             )
             .into());
         }

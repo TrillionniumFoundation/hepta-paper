@@ -42,6 +42,7 @@ clock and local writer token. It is not a deployment configuration.
 | `command-surface ROOT [--write-package]` | Inspect or synchronize the local `package.json` command-script registry without invoking Node; `--write-package` performs the deterministic local rewrite. |
 | `retirement-reference ROOT` | Verify retirement snapshot receipts and archive hashes without consulting or mutating a live legacy runtime. |
 | `release-trust-gate REQUEST` | Evaluate the pure release trust-layer count gate from JSON input; it never creates external signatures or activates production. |
+| `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input; composite release verification remains separate. |
 
 `ServiceRunV1` uses camelCase, rejects unknown fields, and binds a version, state
 directory, `registryJson`, hard policy, planner policy, frozen snapshot, frontier,

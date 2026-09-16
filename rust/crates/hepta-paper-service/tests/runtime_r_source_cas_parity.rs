@@ -96,18 +96,34 @@ fn oracle(requests: &Value) -> Value {
 fn source_cas_verifier_matches_node_for_verified_and_tampered_archives() {
     let (valid_root, _valid_archive) = fixture("valid");
     let (tampered_root, tampered_archive) = fixture("tampered");
+    let (extra_root, _extra_archive) = fixture("extra-field");
     fs::write(&tampered_archive, vec![b'y'; 128]).expect("tamper");
+    let manifest_path = extra_root.join("runtime-images/r-scientific/source-cas/manifest.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("manifest read"))
+            .expect("manifest JSON");
+    manifest["packages"][0]["unexpected"] = Value::Bool(true);
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&manifest).expect("manifest write"),
+    )
+    .expect("manifest update");
     let requests = serde_json::json!([
         {"repositoryRoot": valid_root},
-        {"repositoryRoot": tampered_root}
+        {"repositoryRoot": tampered_root},
+        {"repositoryRoot": extra_root}
     ]);
     let expected = oracle(&requests);
     let valid =
         inspect_runtime_source_cas_v1(requests[0]["repositoryRoot"].as_str().unwrap().as_ref());
     let tampered =
         inspect_runtime_source_cas_v1(requests[1]["repositoryRoot"].as_str().unwrap().as_ref());
+    let extra =
+        inspect_runtime_source_cas_v1(requests[2]["repositoryRoot"].as_str().unwrap().as_ref());
     assert_eq!(valid, expected["results"][0]["value"]);
     assert_eq!(tampered, expected["results"][1]["value"]);
+    assert_eq!(extra, expected["results"][2]["value"]);
     let _ = fs::remove_dir_all(valid_root);
     let _ = fs::remove_dir_all(tampered_root);
+    let _ = fs::remove_dir_all(extra_root);
 }

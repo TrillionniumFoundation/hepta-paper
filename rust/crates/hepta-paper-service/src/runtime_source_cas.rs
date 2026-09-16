@@ -47,6 +47,26 @@ fn valid_version(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-'))
 }
 
+fn exact_keys(value: &Value, expected: &[&str]) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let mut actual = object.keys().map(String::as_str).collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    actual == expected
+}
+
+fn valid_sha256(value: Option<&Value>) -> bool {
+    let Some(value) = value.and_then(Value::as_str) else {
+        return false;
+    };
+    value
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 fn read_lock(path: &Path) -> Result<(Vec<Value>, String), String> {
     let bytes =
         fs::read(path).map_err(|error| format!("r_runtime_source_cas_unavailable:{error}"))?;
@@ -204,13 +224,66 @@ pub fn inspect_runtime_source_cas_v1(repository_root: &Path) -> Value {
             })
         })
         .collect();
+    let entries_valid = packages.iter().all(|entry| {
+        exact_keys(
+            entry,
+            &["bytes", "file", "package", "sha256", "url", "version"],
+        ) && entry
+            .get("package")
+            .and_then(Value::as_str)
+            .is_some_and(valid_package)
+            && entry
+                .get("version")
+                .and_then(Value::as_str)
+                .is_some_and(valid_version)
+            && entry.get("file").and_then(Value::as_str)
+                == Some(&format!(
+                    "{}_{}.tar.gz",
+                    entry
+                        .get("package")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    entry
+                        .get("version")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                ))
+            && entry.get("url").and_then(Value::as_str)
+                == Some(&format!(
+                    "{SNAPSHOT}/src/contrib/{}",
+                    entry
+                        .get("file")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                ))
+            && entry
+                .get("bytes")
+                .and_then(Value::as_u64)
+                .is_some_and(|bytes| bytes >= 100)
+            && valid_sha256(entry.get("sha256"))
+    });
+    let packages_sorted = packages.windows(2).all(|pair| {
+        pair[0]
+            .get("package")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            < pair[1]
+                .get("package")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+    });
     if object.get("version") != Some(&json!(1))
         || object.get("kind").and_then(Value::as_str) != Some("RRuntimeSourceCasManifest")
         || object.get("status").and_then(Value::as_str) != Some("r_runtime_source_cas_complete")
         || object.get("snapshot").and_then(Value::as_str) != Some(SNAPSHOT)
+        || object.get("exactLockClosure") != Some(&Value::Bool(true))
+        || object.get("allSourceArchivesContentHashed") != Some(&Value::Bool(true))
+        || object.get("offlineRestoreRequired") != Some(&Value::Bool(true))
         || object.get("lockfileHash").and_then(Value::as_str) != Some(lockfile_hash.as_str())
         || object.get("packageCount").and_then(Value::as_u64) != Some(expected.len() as u64)
         || metadata != expected
+        || !entries_valid
+        || !packages_sorted
         || manifest_hash(&manifest).is_none()
     {
         return blocked("r_runtime_source_cas_manifest_drift");

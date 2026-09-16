@@ -86,3 +86,17 @@ python3 docs/rust/tools/test_strict_json_schema_contract.py
 documents the operational, owner-acceptance, nested-platform and journal discovery
 commands, including input ownership, signed evidence, error behavior, tests and
 remaining compatibility/qualification limits.
+
+[Release-integrity key handoff](RELEASE_INTEGRITY_KEY_HANDOFF.md) documents native
+status, create-once provisioning, key custody limits and crash/race behavior.
+[Portal target qualification handoff](PORTAL_TARGET_QUALIFICATION_HANDOFF.md)
+covers signed preflight, import planning, atomic import and registry ownership.
+[Runtime image reproducibility handoff](RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md)
+covers active plugin resolution, pinned verifier processes, signed OCI evidence
+and durable receipt publication. These implementations belong to the existing
+Rust control-plane module; their presence does not add qualified modules.
+
+[SQLite mutation coordinator handoff](SQLITE_MUTATION_COORDINATOR_HANDOFF.md)
+documents fixed statement ownership, actual SQLite changeset checks, pinned
+external authority, lease-fenced commits and recovery. Production runtime
+activation remains a separate verified contract.

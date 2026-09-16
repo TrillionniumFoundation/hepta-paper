@@ -266,14 +266,84 @@
     },
     {
       "id": "operator/portal-target-qualification",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-portal-target-qualification --action status|preflight|import-plan|import-execute [incumbent flags]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-portal-target-qualification.rs",
+          "symbol": "main"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/portal_target_qualification/cli.rs",
+          "symbol": "portal_target_qualification_cli_at_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+          "symbol": "inspect_portal_target_qualification_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+          "symbol": "preflight_portal_target_qualification_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+          "symbol": "plan_portal_target_qualification_import_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+          "symbol": "execute_portal_target_qualification_import_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs"
+      ],
+      "remaining": "Rust implements all four modes, actual signature/pin/freshness checks, expected target bindings, successor/revocation rules, exact import-plan hashes, and one locked atomic local registry write. Differential fixtures cover complete reports and installed bytes, CLI errors and gates, concurrency, rollback and process-crash refusal. Real independent target qualification packages, extended OpenSSL key encodings, deliberate filesystem safety tightenings and independent command acceptance remain unqualified. No portal request, credential use or live commit permit is provided.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-portal-target-qualification.rs",
+        "rust/crates/hepta-paper-service/src/data/journal-profiles.v2.json",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage.rs",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification.rs",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification/operator_support.rs",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification_authority.rs",
+        "rust/crates/hepta-paper-service/src/journal_connector_coverage/qualification_json.rs",
+        "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+        "rust/crates/hepta-paper-service/src/portal_target_qualification/cli.rs",
+        "rust/crates/hepta-paper-service/src/portal_target_qualification/files.rs",
+        "rust/crates/hepta-paper-service/src/portal_target_qualification/preflight.rs",
+        "rust/oracle/journal-qualification-fixtures-v1.mjs",
+        "rust/oracle/portal-target-qualification-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+          "symbol": "four_mode_readonly_contracts_match_signed_node_corpus"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+          "symbol": "preflight_pins_bindings_missing_inputs_and_expiration_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+          "symbol": "initial_and_successor_atomic_import_match_node_bytes_and_receipts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+          "symbol": "failed_and_concurrent_imports_never_clobber_registry_or_other_files"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+          "symbol": "strict_cli_flags_environment_bindings_and_exit_gates_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+          "symbol": "unsafe_local_inputs_and_readonly_preflight_cannot_become_ready"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+          "symbol": "preflight_authority_diagnostics_match_actual_node_verifiers"
+        }
+      ]
     },
     {
       "id": "operator/generic-domain-capability-evidence",
@@ -384,14 +454,128 @@
     },
     {
       "id": "operator/runtime-image-reproducibility",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-runtime-image-reproducibility --action status|request|verify|publish [--config PATH] [--receipt PATH] [--runtime-root PATH] [--root PATH]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-runtime-image-reproducibility.rs",
+          "symbol": "main"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/workflow.rs",
+          "symbol": "runtime_image_reproducibility_report_v2"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/plugin.rs",
+          "symbol": "resolve_runtime_image_plugin_authority_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/process.rs",
+          "symbol": "read_runtime_image_reproducibility_process_configuration_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/contract.rs",
+          "symbol": "build_runtime_image_reproducibility_request_v2"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/process.rs",
+          "symbol": "invoke_with_directory"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/contract.rs",
+          "symbol": "verify_runtime_image_reproducibility_response_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/publication.rs",
+          "symbol": "publish_runtime_image_reproducibility_offline_v2"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs"
+      ],
+      "remaining": "Rust implements native status/request/verify/offline-publish, recomputed builtin/dynamic signed plugin scopes, source/input closure, two pinned verifier processes, actual Ed25519 OCI attestations, SQLite monotonic CAS and recoverable derived mirror. Online fenced publication and its activated coordinator/epoch/mirror-permit lifecycle remain unwired; real R source-CAS and two independently qualified rebuild services/evidence remain external. Resource/encoding/filesystem bounds and independent command acceptance remain unqualified. Synthetic signed proofs do not prove real image rebuilds.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-runtime-image-reproducibility.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/context.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/contract.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/plugin-inputs.v1.json",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/plugin.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/process.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/process/identity.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/publication.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/support.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/workflow.rs",
+        "rust/oracle/runtime-image-isolated-verifier-v1.mjs",
+        "rust/oracle/runtime-image-reproducibility-v2.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "request_scope_context_crypto_and_configuration_match_real_node_algorithms"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "signed_invalid_oci_proof_and_signature_mutations_match_node_rejections"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "time_current_inputs_trust_and_source_policy_drift_are_rechecked"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "actual_isolated_verifier_subprocesses_return_signed_attestations_read_only"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "subprocess_timeout_nonzero_duplicate_json_and_output_limits_fail_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "command_credential_and_context_changes_are_rejected_before_execution"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "offline_sqlite_authority_readonly_status_and_crash_recovery_are_real"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "invalid_publish_has_no_writes_and_duplicate_json_is_rejected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "publication_rejects_path_aliases_before_creation_and_generation_overflow"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "publication_cas_rejects_previously_valid_older_receipt_without_mutation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "current_release_binding_tracks_actual_git_and_uncommitted_source_bytes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "env_shebang_pins_actual_path_selected_node_interpreter"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "builtin_plugin_raw_sources_recompile_and_verify_real_repository_signature"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "external_plugin_signature_lifetime_role_and_package_bindings_are_recomputed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "full_cli_request_verify_publish_status_with_dynamic_signed_scope_and_real_test_processes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "cli_missing_configuration_is_readonly_blocked_and_flag_errors_match_node"
+        }
+      ]
     },
     {
       "id": "operator/runtime-r-source-cas",
@@ -1076,14 +1260,105 @@
     },
     {
       "id": "maintenance/release-integrity-key",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-release-integrity-key --action status|provision [--runtime-root PATH] [--execute]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-release-integrity-key.rs",
+          "symbol": "main"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_integrity_key.rs",
+          "symbol": "release_integrity_key_cli_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_integrity_key.rs",
+          "symbol": "inspect_local_release_integrity_key_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_integrity_key.rs",
+          "symbol": "provision_local_release_integrity_key_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_integrity_key/storage.rs",
+          "symbol": "publish"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs"
+      ],
+      "remaining": "Rust implements status, create-once provisioning, existing-key loading, real Ed25519 PKCS8/SPKI, independent locks, no-clobber publication, identity-bound cleanup and crash refusal. Tested CLI, Node interoperability and error/race matrices pass. Final pair snapshots intentionally reject races accepted by the incumbent. Extended OpenSSL containers, exact malformed-encoding error strings, relocated executable layout and independent command acceptance remain unqualified; local integrity keys do not establish external key custody or release authority.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-release-integrity-key.rs",
+        "rust/crates/hepta-paper-service/src/release_integrity_key.rs",
+        "rust/crates/hepta-paper-service/src/release_integrity_key/crypto.rs",
+        "rust/crates/hepta-paper-service/src/release_integrity_key/layout.rs",
+        "rust/crates/hepta-paper-service/src/release_integrity_key/storage.rs",
+        "rust/oracle/release-integrity-key-v1.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "status_and_cli_arguments_are_readonly_and_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "native_provision_and_node_provision_interoperate_without_rotation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "invalid_existing_pairs_and_unsafe_paths_remain_unchanged"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "isolation_decoupling_and_explicit_execution_prevent_key_access"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "read_races_bind_directory_and_file_identities_without_deleting_concurrent_bytes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "publication_failures_roll_back_only_owned_files_and_never_overwrite"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "independent_locks_serialize_same_root_and_allow_other_roots"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "abrupt_crash_leaves_partial_or_multilink_pair_blocked_and_lock_intact"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "public_and_private_loading_and_non_ed25519_pairs_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "valid_directory_substitution_is_rejected_by_status_and_public_loader"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "staging_and_cleanup_substitutions_preserve_concurrent_objects"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "shipped_binary_matches_readonly_cli_and_provisions_without_node_runtime"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "concurrent_processes_respect_the_same_lock_without_blocking_other_roots"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "malformed_pem_fails_closed_with_explicit_native_encoding_diagnostics"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+          "symbol": "final_pair_snapshot_rejects_private_mutation_while_public_is_read"
+        }
+      ]
     },
     {
       "id": "verify/full",

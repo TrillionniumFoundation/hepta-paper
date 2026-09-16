@@ -24,6 +24,10 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | confidential legacy replay | `LEGACY_MATRIX_REFERENCE_PUBLICATION.md` |
 | supply-chain policy | `security/SUPPLY_CHAIN_POLICY.md` |
 | native authority and owner inspection | `../modules/NATIVE_AUTHORITY_INSPECTION_HANDOFF.md` |
+| local release-integrity key lifecycle | `../modules/RELEASE_INTEGRITY_KEY_HANDOFF.md` |
+| portal qualification registry import | `../modules/PORTAL_TARGET_QUALIFICATION_HANDOFF.md` |
+| runtime image reproducibility | `../modules/RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md` |
+| externally fenced SQLite mutation | `../modules/SQLITE_MUTATION_COORDINATOR_HANDOFF.md` |
 | complete command gap ledger | `../migration/NODE_RUST_GAP_CLOSURE.md` |
 
 Cross-subsystem current contracts:

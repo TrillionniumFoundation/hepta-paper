@@ -12,6 +12,7 @@ workspace = true
 ed25519-dalek = { workspace = true, features = ["pem", "pkcs8"] }
 getrandom = "=0.3.4"
 zeroize = "=1.9.0"
+regex = "=1.13.1"
 hepta-legacy-compatibility = { path = "../hepta-legacy-compatibility", version = "=0.1.0" }
 hepta-codex-protocol = { path = "../hepta-codex-protocol", version = "=0.1.0" }
 hepta-codex-runtime = { path = "../hepta-codex-runtime", version = "=0.1.0" }

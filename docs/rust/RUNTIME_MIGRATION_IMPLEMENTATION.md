@@ -1,9 +1,11 @@
 # Executable Rust migration: implementation and acceptance boundaries
 
-This document describes the source implementation added on top of
-`6e56a3508e871018e1b4e0c5a573b50818032e38`, the canonical planning-provider replay
-development baseline. It is a technical implementation record, not a qualification
-receipt, deployment authorization, or declaration that Node is retired.
+This document describes the current source on
+`codex/full-rust-replacement-progress-20260916`, whose integration baseline is
+`9570cec7bba9211099b24cb185abad907a591e0f`. Earlier planning-provider replay work
+used `6e56a3508e871018e1b4e0c5a573b50818032e38`; that historical digest does not
+identify this candidate. This is a technical implementation record, not a
+qualification receipt, deployment authorization, or declaration that Node is retired.
 
 ## Implementation map
 
@@ -16,6 +18,11 @@ receipt, deployment authorization, or declaration that Node is retired.
 | Runnable service | CLI/stdin composition, CAS, dispatch intent, native jobs and pinned process workers | [Service](../../rust/crates/hepta-paper-service/README.md) |
 | Real broker dispatch | Authenticated request, role invocation, pre-exec gate, cgroup containment, output-schema validation, durable recovery | [Broker dispatch](../../rust/crates/hepta-codex-broker/DISPATCH.md) |
 | Cooperative single writer | Durable journal, Node adapter fencing, backup/restore and same-database handoff/rollback | [Cutover](../../rust/crates/hepta-cutover/README.md) |
+| Native authority inspection | Operational and owner evidence, nested-runtime qualification, journal discovery and signed target registries | [Authority inspection](../modules/NATIVE_AUTHORITY_INSPECTION_HANDOFF.md) |
+| Local integrity-key lifecycle | Read-only status/loading and create-once Ed25519 provisioning, locking and crash-safe no-clobber publication | [Integrity keys](../modules/RELEASE_INTEGRITY_KEY_HANDOFF.md) |
+| Portal registry import | Status, preflight, import-plan and local atomic import-execute, with real signed evidence verification | [Portal qualification](../modules/PORTAL_TARGET_QUALIFICATION_HANDOFF.md) |
+| Image reproducibility | Signed active plugin resolution, input closure, two pinned verifier processes, OCI attestations and offline SQLite publication | [Image reproducibility](../modules/RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md) |
+| Online SQLite mutation protocol | Fixed SQL ownership, actual Session changesets, signed head/reserve/finalize/abort/resolution and persisted recovery | [SQLite coordination](../modules/SQLITE_MUTATION_COORDINATOR_HANDOFF.md) |
 
 The module registry, manifests and module specifications link these roots.
 Documentation coverage and source implementation remain separate from capability
@@ -132,11 +139,11 @@ chain, architecture, documentation and qualification policies continue to apply.
 Changes to a workflow update its declared producer file hashes; they do not
 manufacture a successful run, external acceptance or `source_qualified` status.
 
-The development container cannot exercise some original Unix-listener and
-pre-exec gate tests: socket creation is denied and mounted `/proc` does not match
-the child PID namespace. These failures must remain visible and be rerun on a
-proper Linux host. They are not reasons to bypass containment checks or skip the
-hosted tests. Production cgroup and credential tests still need the real target.
+Historical container socket and PID-namespace restrictions do not describe every
+current validation host. Record the actual test outcomes and runtime identity for
+each candidate, including any explicit host-dependent tests. Passing local or
+hosted Linux tests still does not qualify the production cgroup configuration,
+credential custody or workload; those require the actual target host.
 
 ## Capability migration and completion criteria
 
@@ -145,7 +152,9 @@ hosted tests. Production cgroup and credential tests still need the real target.
 | Native database reading and hash generation | Concrete native implementation and actual Node differential tests | Full historical/private corpus and deployed-runtime acceptance |
 | Control and durable commit | Executable local/shadow composition with actual bytes and SQLite | Qualified production composition, live clock and host identity |
 | Native artifact inventory and DB inspection | Small native workers in the service | Business capability-specific inputs, receipts and parity |
-| Author/reviewer, empirical, formal/numerical, build/package, submission | Existing Node behavior remains the baseline; explicit process boundary supports gradual migration | Real Rust implementations and corresponding capability replay, scientific/external-effect authority |
+| Author/reviewer, empirical, formal/numerical, build/package, submission | Native business kernels, function-level Node oracles and scientific process orchestration exist; their supported input domains are documented | Complete Node business call chains, historical/capability replay, scientific evidence and external-effect authority |
+| Evidence/operator commands | Native status and bounded mutation paths listed above have complete source chains for their documented modes | Deliberate compatibility restrictions, production composition and independent command/mode acceptance |
+| External SQLite coordinator | Authenticated protocol client, exclusive callback connection ownership and durable local commit/recovery are implemented | Activated runtime/epoch composition, every required writer, real linearizable authority and target-host qualification |
 | Broker provider execution | Concrete supervised dispatch API with mandatory authority callback | Real credential custody, deployment adapter, workspace/result integration and provider canaries |
 | Single-writer control and recovery | Durable same-database local exercise and Node adapter fencing | Node-to-Rust data translation, reverse compatibility, host workloads and signed cutover |
 | Node retirement | Not declared | Full capability equivalence, accepted shadow/canary, recovery/rollback and removal of every Node writer/entrypoint |

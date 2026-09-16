@@ -1,6 +1,7 @@
 //! Local verification of pinned, independently signed qualification registries.
 //! The opaque inspection can only be constructed after the complete verification
 //! chain. It never produces a live-commit permit or performs a network action.
+pub(crate) mod operator_support;
 use super::qualification_authority::{AuthorityVerification, verify_authority};
 use super::qualification_json::Json;
 use super::{

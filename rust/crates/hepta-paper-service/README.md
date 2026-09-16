@@ -11,6 +11,11 @@ provider, scientific, external-effect or writer-cutover authorization.
 Use the repository-pinned Rust toolchain. Production compatibility checks also
 require Node 22.23.1 with its pinned ICU/CLDR profile.
 
+The SQLite Session extension is built from the locked bundled SQLite source.
+Its binding generator needs a C compiler and a discoverable `libclang` shared
+library at build time (local validation uses Clang 18). These tools are build
+dependencies; native service execution does not invoke Node or Clang.
+
 ```sh
 cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
 cargo run --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
@@ -51,6 +56,13 @@ Separate native binaries inspect operational proof, owner acceptance, nested
 runtime qualification and journal connector coverage. Their inputs, signature
 validation, failure behavior and parity boundaries are documented in the
 [authority inspection handoff](../../../docs/modules/NATIVE_AUTHORITY_INSPECTION_HANDOFF.md).
+
+Additional native operator commands are documented in the
+[release-integrity key handoff](../../../docs/modules/RELEASE_INTEGRITY_KEY_HANDOFF.md),
+[portal qualification handoff](../../../docs/modules/PORTAL_TARGET_QUALIFICATION_HANDOFF.md)
+and [runtime image handoff](../../../docs/modules/RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md).
+Each describes its complete argument interface, actual Node differential tests,
+write ownership, crash behavior and remaining acceptance boundaries.
 
 `ServiceRunV1` uses camelCase, rejects unknown fields, and binds a version, state
 directory, `registryJson`, hard policy, planner policy, frozen snapshot, frontier,

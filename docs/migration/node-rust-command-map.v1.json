@@ -780,7 +780,8 @@
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/command_surface.rs",
-        "rust/oracle/command-surface-v1.mjs"
+        "rust/oracle/command-surface-v1.mjs",
+        "rust/crates/hepta-paper-service/src/data/legacy-command-script-registry.v1.json"
       ],
       "testCases": [
         {

@@ -62,9 +62,12 @@ fn valid_sha256(value: Option<&Value>) -> bool {
     let Some(value) = value.and_then(Value::as_str) else {
         return false;
     };
-    value
-        .strip_prefix("sha256:")
-        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
 }
 
 fn read_lock(path: &Path) -> Result<(Vec<Value>, String), String> {

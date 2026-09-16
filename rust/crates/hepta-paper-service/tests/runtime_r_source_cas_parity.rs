@@ -97,6 +97,7 @@ fn source_cas_verifier_matches_node_for_verified_and_tampered_archives() {
     let (valid_root, _valid_archive) = fixture("valid");
     let (tampered_root, tampered_archive) = fixture("tampered");
     let (extra_root, _extra_archive) = fixture("extra-field");
+    let (uppercase_root, _uppercase_archive) = fixture("uppercase-hash");
     fs::write(&tampered_archive, vec![b'y'; 128]).expect("tamper");
     let manifest_path = extra_root.join("runtime-images/r-scientific/source-cas/manifest.json");
     let mut manifest: Value =
@@ -108,10 +109,36 @@ fn source_cas_verifier_matches_node_for_verified_and_tampered_archives() {
         serde_json::to_vec(&manifest).expect("manifest write"),
     )
     .expect("manifest update");
+    let uppercase_manifest_path =
+        uppercase_root.join("runtime-images/r-scientific/source-cas/manifest.json");
+    let mut uppercase_manifest: Value =
+        serde_json::from_slice(&fs::read(&uppercase_manifest_path).expect("manifest read"))
+            .expect("manifest JSON");
+    let original_hash = uppercase_manifest["packages"][0]["sha256"]
+        .as_str()
+        .expect("archive hash");
+    uppercase_manifest["packages"][0]["sha256"] = Value::String(format!(
+        "sha256:{}",
+        original_hash.trim_start_matches("sha256:").to_uppercase()
+    ));
+    uppercase_manifest
+        .as_object_mut()
+        .expect("manifest object")
+        .remove("rRuntimeSourceCasManifestHash");
+    let rebound_hash = production_hash_record_v1("RRuntimeSourceCasManifest", &uppercase_manifest)
+        .expect("rebound manifest hash");
+    uppercase_manifest["rRuntimeSourceCasManifestHash"] =
+        Value::String(rebound_hash.as_str().to_owned());
+    fs::write(
+        &uppercase_manifest_path,
+        serde_json::to_vec(&uppercase_manifest).expect("manifest write"),
+    )
+    .expect("uppercase manifest update");
     let requests = serde_json::json!([
         {"repositoryRoot": valid_root},
         {"repositoryRoot": tampered_root},
-        {"repositoryRoot": extra_root}
+        {"repositoryRoot": extra_root},
+        {"repositoryRoot": uppercase_root}
     ]);
     let expected = oracle(&requests);
     let valid =
@@ -123,7 +150,15 @@ fn source_cas_verifier_matches_node_for_verified_and_tampered_archives() {
     assert_eq!(valid, expected["results"][0]["value"]);
     assert_eq!(tampered, expected["results"][1]["value"]);
     assert_eq!(extra, expected["results"][2]["value"]);
+    let uppercase =
+        inspect_runtime_source_cas_v1(requests[3]["repositoryRoot"].as_str().unwrap().as_ref());
+    assert_eq!(uppercase, expected["results"][3]["value"]);
+    assert_eq!(
+        uppercase["blockers"][0],
+        "r_runtime_source_cas_manifest_drift"
+    );
     let _ = fs::remove_dir_all(valid_root);
     let _ = fs::remove_dir_all(tampered_root);
     let _ = fs::remove_dir_all(extra_root);
+    let _ = fs::remove_dir_all(uppercase_root);
 }

@@ -155,6 +155,39 @@ fn hash_report(v: &Value) -> String {
     format!("sha256:{}", hex::encode(h.finalize()))
 }
 
+/// `JSON.stringify` writes integral IEEE-754 values without a trailing `.0`.
+/// Rust's `json!(f64)` preserves that distinction in `serde_json::Value`, so
+/// normalize the report tree before returning it.  The distinction is visible
+/// to byte-level Node/Rust differential tests even though the numeric values
+/// compare mathematically equal.
+fn normalize_json_numbers(value: Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(normalize_json_numbers)
+                .collect(),
+        ),
+        Value::Object(values) => Value::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, normalize_json_numbers(value)))
+                .collect(),
+        ),
+        Value::Number(number) => {
+            let Some(value) = number.as_f64() else {
+                return Value::Number(number);
+            };
+            if value.is_finite() && value.fract() == 0.0 && value.abs() <= i64::MAX as f64 {
+                Value::Number((value as i64).into())
+            } else {
+                Value::Number(number)
+            }
+        }
+        other => other,
+    }
+}
+
 pub fn build_campaign_slo_report_v1(r: &CampaignSloRequestV1) -> Result<Value, CampaignSloError> {
     if (r.version != 0 && r.version != 1)
         || r.nodes.len() > 4096
@@ -281,7 +314,7 @@ pub fn build_campaign_slo_report_v1(r: &CampaignSloRequestV1) -> Result<Value, C
         .unwrap()
         .values()
         .all(|v| v.as_bool() == Some(true));
-    let payload = json!({"version":2,"kind":"CampaignSloReport","status":if met{"campaign_slos_met"}else{"campaign_slos_not_met"},"targets":targets,"observed":observed,"objectives":obj,"objectiveStates":states});
+    let payload = normalize_json_numbers(json!({"version":2,"kind":"CampaignSloReport","status":if met{"campaign_slos_met"}else{"campaign_slos_not_met"},"targets":targets,"observed":observed,"objectives":obj,"objectiveStates":states}));
     Ok(
         json!({"version":2,"kind":"CampaignSloReport","status":payload["status"],"targets":payload["targets"],"observed":payload["observed"],"objectives":payload["objectives"],"objectiveStates":payload["objectiveStates"],"campaignSloReportHash":hash_report(&payload)}),
     )

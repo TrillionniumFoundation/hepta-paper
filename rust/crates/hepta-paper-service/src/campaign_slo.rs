@@ -299,6 +299,7 @@ pub fn build_campaign_slo_report_v1(r: &CampaignSloRequestV1) -> Result<Value, C
         .nodes
         .iter()
         .filter_map(|n| n.child_session_id.as_ref())
+        .filter(|session| !session.is_empty())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
     let observed = json!({"campaignCounts":counts(r.campaigns.iter().map(|x|x.status.clone())),"nodeCounts":counts(r.nodes.iter().map(|x|x.status.clone())),"terminalNodeSuccessRate":success,"queueWaitP50Ms":percentile(&mut q50,0.5),"queueWaitP95Ms":percentile(&mut q95,0.95),"recoveryP50Ms":percentile(&mut r50,0.5),"recoveryP95Ms":percentile(&mut r95,0.95),"sampleCounts":{"queueWait":queue.len(),"recovery":recovery.len(),"telemetry":r.telemetry_samples.len(),"lockWait":locks.len(),"queueContention":contention.len()},"phaseTimingP95Ms":phase_p95,"lockWaitP95Ms":lock_p95,"lockWaitHistogram":histogram(&locks,&[0.0,1.0,5.0,10.0,50.0,100.0,500.0,1000.0]),"queueContentionHistogram":histogram(&contention,&[0.0,1.0,2.0,5.0,10.0]),"retryEventCount":retry_count,"uniqueChildSessionCount":unique_sessions,"totalAgentCalls":r.campaigns.iter().map(|x|x.agent_call_count).sum::<u64>(),"totalCpuJobs":r.campaigns.iter().map(|x|x.cpu_job_count).sum::<u64>(),"totalGpuJobs":r.campaigns.iter().map(|x|x.gpu_job_count).sum::<u64>(),"totalTokens":r.campaigns.iter().map(|x|x.token_count).sum::<u64>(),"unknownCostCampaignCount":unknown,"runtimeBytes":r.runtime_bytes});

@@ -45,7 +45,10 @@ fn bounded_corpus_matches_the_production_node_oracle() {
             {"status":"é","costKnown":true,"agentCallCount":0,"cpuJobCount":0,"gpuJobCount":0,"tokenCount":0},
             {"status":"雪","costKnown":true,"agentCallCount":0,"cpuJobCount":0,"gpuJobCount":0,"tokenCount":0}
         ],
-        "nodes": [],
+        "nodes": [
+            {"nodeId":"empty-session","status":"queued","createdAtUnixMs":0,"dependencies":[],"childSessionId":""},
+            {"nodeId":"session","status":"queued","createdAtUnixMs":0,"dependencies":[],"childSessionId":"s"}
+        ],
         "events": [],
         "telemetrySamples": [],
         "runtimeBytes": 0,

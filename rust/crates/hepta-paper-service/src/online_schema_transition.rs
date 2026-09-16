@@ -8,8 +8,9 @@ use crate::{
         authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1},
         clock::{MutationClockV1, iso},
         contracts::schema_transition::schema_transition_receipt_hash_v1,
-        error, hash,
+        error, hash, int,
         manifest::writer_manifest_hash_v1,
+        timestamp,
     },
     state_database_inventory::ObservedStateDatabaseInventoryV1,
 };
@@ -26,6 +27,7 @@ pub struct VerifiedSchemaTransitionReadinessV1 {
     inventory_hash: String,
     authority_configuration_hash: String,
     audit: files::AuditSnapshot,
+    checked_at: i64,
 }
 impl VerifiedSchemaTransitionReadinessV1 {
     pub fn value(&self) -> &Value {
@@ -40,6 +42,12 @@ impl VerifiedSchemaTransitionReadinessV1 {
         authority: &PinnedMutationAuthorityV1<T>,
         clock: &mut dyn MutationClockV1,
     ) -> Result<()> {
+        let before = clock.now_millis()?;
+        if before < self.checked_at {
+            return Err(error(
+                "autonomous_research_online_schema_transition_readiness_clock_invalid",
+            ));
+        }
         inventory.assert_current()?;
         self.audit.assert_current()?;
         if inventory.value()["inventoryHash"] != self.inventory_hash
@@ -50,13 +58,39 @@ impl VerifiedSchemaTransitionReadinessV1 {
                 "autonomous_research_online_schema_transition_readiness_subject_changed",
             ));
         }
-        authority.verify_schema_transition_observation(
+        authority.verify_schema_transition_observation(&self.observation, &self.request, before)?;
+        // Signature verification also reopens pinned files. No I/O follows this
+        // last clock sample: an earlier timestamp cannot cover that work.
+        assert_readiness_time(
             &self.observation,
-            &self.request,
+            authority.trust(),
+            before,
             clock.now_millis()?,
-        )?;
-        Ok(())
+        )
     }
+}
+fn assert_readiness_time(
+    observation: &Value,
+    trust: &Value,
+    before: i64,
+    after: i64,
+) -> Result<()> {
+    if after < before {
+        return Err(error(
+            "autonomous_research_online_schema_transition_readiness_clock_invalid",
+        ));
+    }
+    let observed = timestamp(&observation["observedAt"]);
+    let expires = timestamp(&observation["expiresAt"]);
+    let age = int(trust, "maximumObservationAgeMs")?;
+    if observed.is_none_or(|at| at > after.saturating_add(5000) || after.saturating_sub(at) > age)
+        || expires.is_none_or(|at| after >= at)
+    {
+        return Err(error(
+            "autonomous_research_online_schema_transition_observation_invalid",
+        ));
+    }
+    Ok(())
 }
 fn nonce() -> Result<String> {
     let mut bytes = [0u8; 16];
@@ -91,6 +125,7 @@ pub fn inspect_online_schema_transition_readiness_v1<T: MutationAuthorityTranspo
     authority: &mut PinnedMutationAuthorityV1<T>,
     clock: &mut dyn MutationClockV1,
 ) -> Result<VerifiedSchemaTransitionReadinessV1> {
+    let started = clock.now_millis()?;
     inventory.assert_current()?;
     let inventory_value = inventory.value();
     if runtime_root != inventory.runtime_root()
@@ -117,8 +152,14 @@ pub fn inspect_online_schema_transition_readiness_v1<T: MutationAuthorityTranspo
         &manifest_hash,
         authority,
     )?;
-    let request = observe_request(&receipt, inventory_value, &iso(clock.now_millis()?)?)?;
-    let observation = authority.observe_schema_transition(&request, clock.now_millis()?)?;
+    let requested = clock.now_millis()?;
+    if requested < started {
+        return Err(error(
+            "autonomous_research_online_schema_transition_readiness_clock_invalid",
+        ));
+    }
+    let request = observe_request(&receipt, inventory_value, &iso(requested)?)?;
+    let observation = authority.observe_schema_transition(&request, requested)?;
     inventory.assert_current()?;
     audit.assert_current()?;
     let observation = observation.value().clone();
@@ -135,7 +176,11 @@ pub fn inspect_online_schema_transition_readiness_v1<T: MutationAuthorityTranspo
         .to_owned();
     // The inventory check can rehash/reinspect large snapshots. Read the clock
     // only after that work and after computing the output, not before it.
-    authority.verify_schema_transition_observation(&observation, &request, clock.now_millis()?)?;
+    let checked = clock.now_millis()?;
+    assert_readiness_time(&observation, authority.trust(), requested, checked)?;
+    authority.verify_schema_transition_observation(&observation, &request, checked)?;
+    let completed = clock.now_millis()?;
+    assert_readiness_time(&observation, authority.trust(), checked, completed)?;
     Ok(VerifiedSchemaTransitionReadinessV1 {
         value,
         request,
@@ -143,5 +188,6 @@ pub fn inspect_online_schema_transition_readiness_v1<T: MutationAuthorityTranspo
         inventory_hash,
         authority_configuration_hash: authority.configuration_hash().into(),
         audit,
+        checked_at: completed,
     })
 }

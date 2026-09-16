@@ -48,11 +48,15 @@ fn expected_instances(inventory: &Value) -> Result<Value> {
     Ok(json!(rows))
 }
 fn same_head(current: &Value, challenge: &Value, scope: &Value) -> bool {
-    current["globalSequence"] == challenge["globalSequence"]
-        && current["globalSequence"] == scope["globalSequence"]
+    current["globalSequence"].as_f64() == challenge["globalSequence"].as_f64()
+        && current["globalSequence"].as_f64() == scope["globalSequence"].as_f64()
         && current["globalHash"] == challenge["globalHash"]
         && current["globalHash"] == scope["globalHash"]
-        && current["databaseHeads"] == challenge["databaseHeads"]
+        && hepta_legacy_compatibility::production_stable_json_v1(&current["databaseHeads"])
+            .is_ok_and(|a| {
+                hepta_legacy_compatibility::production_stable_json_v1(&challenge["databaseHeads"])
+                    .is_ok_and(|b| a == b)
+            })
 }
 /// Private construction requires an actual source scan and three pinned real
 /// authority observations. No Deserialize or raw-JSON constructor is provided.
@@ -206,6 +210,11 @@ pub fn refresh_online_authority_evidence_v1<T: MutationAuthorityTransportV1>(
         )?;
         static_evidence.assert_current()?;
         let receipt = json!({"version":1,"kind":"AutonomousResearchOnlineMutationActiveRefreshReceipt","status":"autonomous_research_online_mutation_active_refresh_complete","externalActionPerformed":true,"linearizationAttemptCount":attempt,"globalSequence":current.value()["globalSequence"],"globalHash":current.value()["globalHash"],"currentHeadReceiptHash":online_mutation_receipt_hash_v1(current.value())?,"activeChallengeReceiptHash":online_mutation_receipt_hash_v1(challenge.value())?,"brokerScopeReceiptHash":online_mutation_receipt_hash_v1(scope.value())?,"authorityEvidence":{"currentHead":{"role":"current-head","request":current_request,"receipt":current.value()},"activeChallenge":{"role":"active-challenge","request":challenge_request,"receipt":challenge.value()},"brokerScope":{"role":"broker-scope","request":scope_request,"receipt":scope.value()}},"journalRecorded":false,"journalReceipt":null,"recordedAt":recorded});
+        let receipt = serde_json::from_slice(
+            &hepta_legacy_compatibility::production_stable_json_v1(&receipt)
+                .map_err(|e| error(e.to_string()))?,
+        )
+        .map_err(|e| error(e.to_string()))?;
         return Ok(VerifiedActiveAuthorityEvidenceV1{receipt,authority_configuration_hash:authority.configuration_hash().into(),inventory_hash:inventory["inventoryHash"].as_str().ok_or_else(||error("autonomous_research_online_mutation_active_refresh_inventory_required"))?.into(),static_inspection_hash:static_inspection["astGateReceiptHash"].as_str().ok_or_else(||error("autonomous_research_online_mutation_active_refresh_static_coverage_required"))?.into(),expected_instances:expected});
     }
     Err(error(

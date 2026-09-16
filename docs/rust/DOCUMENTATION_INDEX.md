@@ -40,6 +40,10 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | private deployment environment overlay | `../modules/DEPLOYMENT_ENVIRONMENT_HANDOFF.md` |
 | passive authority evidence cache and verified write | `../modules/ONLINE_AUTHORITY_EVIDENCE_CACHE_HANDOFF.md` |
 | concrete backup, replay and recoverability controller | `../modules/STATE_RECOVERABILITY_HANDOFF.md` |
+| active/passive signed authority inspection | `../modules/ONLINE_AUTHORITY_INSPECTION_HANDOFF.md` |
+| state safety diagnostic projection | `../modules/STATE_SAFETY_PROJECTION_HANDOFF.md` |
+| actual pristine runtime database baseline | `../modules/PRISTINE_RUNTIME_STATE_HANDOFF.md` |
+| native five-mode state backup command | `../modules/STATE_BACKUP_CLI_HANDOFF.md` |
 | complete command gap ledger | `../migration/NODE_RUST_GAP_CLOSURE.md` |
 
 Cross-subsystem current contracts:

@@ -221,6 +221,27 @@ impl MutationAuthorityTransportV1 for Broker {
                 }
             }
         }
+        if self.mode == "numeric" {
+            fn numeric(v: &mut Value) {
+                match v {
+                    Value::Number(n) => {
+                        *v = json!(n.as_f64().unwrap());
+                    }
+                    Value::Object(o) => {
+                        for v in o.values_mut() {
+                            numeric(v);
+                        }
+                    }
+                    Value::Array(a) => {
+                        for v in a {
+                            numeric(v);
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            numeric(&mut value);
+        }
         value["signature"] = json!(Base64::encode_string(
             &self
                 .key
@@ -512,4 +533,463 @@ fn verified_cache_write_requires_actual_inventory_signed_evidence_and_current_so
             .assert_current(&authority, &evidence, &inventory, &source, &mut || Ok(NOW))
             .is_err()
     );
+}
+
+fn actual_inspection_fixture() -> (
+    Fixture,
+    hepta_paper_service::state_database_inventory::ObservedStateDatabaseInventoryV1,
+) {
+    use hepta_paper_service::state_database_inventory::observe_state_database_inventory_v1;
+    let mut f = Fixture::new();
+    let state_manifest: Value = serde_json::from_slice(
+        &fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../paper-core/config/autonomous-research-state-databases.v1.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    for definition in state_manifest["databases"].as_array().unwrap() {
+        let path = f.root.join(definition["relativePath"].as_str().unwrap());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE fixture_records(id TEXT PRIMARY KEY,value TEXT); INSERT INTO fixture_records VALUES('one','before');").unwrap();
+        for object in definition["requiredSchemaObjects"].as_array().unwrap() {
+            let (kind, name) = object.as_str().unwrap().split_once(':').unwrap();
+            let sql = match kind {
+                "table" => format!("CREATE TABLE \"{name}\"(id TEXT PRIMARY KEY,value TEXT)"),
+                "index" => format!("CREATE INDEX \"{name}\" ON fixture_records(value)"),
+                "trigger" => format!(
+                    "CREATE TRIGGER \"{name}\" BEFORE UPDATE ON fixture_records BEGIN SELECT 1; END"
+                ),
+                "view" => format!("CREATE VIEW \"{name}\" AS SELECT * FROM fixture_records"),
+                _ => panic!("unknown fixture schema object"),
+            };
+            db.execute_batch(&sql).unwrap();
+        }
+        drop(db);
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let inventory = observe_state_database_inventory_v1(&f.root, &state_manifest).unwrap();
+    f.inventory = inventory.value().clone();
+    let mut configuration: Value =
+        serde_json::from_slice(&fs::read(&f.configuration).unwrap()).unwrap();
+    configuration["databaseScopeHash"] = f.inventory["databaseScopeHash"].clone();
+    fs::write(&f.configuration, configuration.to_string()).unwrap();
+    f.pin = bytehash(&fs::read(&f.configuration).unwrap());
+    (f, inventory)
+}
+
+#[test]
+fn native_passive_and_active_inspection_verify_real_signed_evidence_and_match_node() {
+    use hepta_paper_service::online_authority_evidence_cache::{
+        record_passive_authority_evidence_cache_v1,
+        verified::record_verified_authority_evidence_cache_v1,
+    };
+    use hepta_paper_service::online_authority_inspection::{
+        OnlineAuthorityInspectionInputV1, inspect_active_online_authority_v1,
+        inspect_passive_online_authority_v1,
+    };
+    let (f, inventory) = actual_inspection_fixture();
+    let source = verify_online_writer_static_coverage_v1(&f.root, &f.manifest).unwrap();
+    let (mut authority, calls) = f.authority("success", Arc::new(AtomicI64::new(NOW)));
+    let active = refresh_online_authority_evidence_v1(
+        &f.inventory,
+        &f.manifest,
+        &mut authority,
+        &source,
+        &mut || Ok(NOW),
+        3,
+    )
+    .unwrap();
+    record_verified_authority_evidence_cache_v1(
+        &f.root,
+        &authority,
+        &active,
+        &inventory,
+        &source,
+        &mut || Ok(NOW),
+    )
+    .unwrap();
+    let statuses = [
+        Value::Null,
+        json!({"implemented":true,"status":"externally_fenced_sqlite_mutation_coordinator_configured","coveredDatabaseRoles":f.manifest["coverage"]["coveredDatabaseRoles"],"blockers":["autonomous_research_online_mutation_runtime_activation_required"]}),
+        json!({"implemented":true,"status":"externally_fenced_sqlite_mutation_coordinator_ready","coveredDatabaseRoles":f.manifest["coverage"]["coveredDatabaseRoles"],"blockers":[]}),
+    ];
+    let no_rpc = calls.lock().unwrap().len();
+    for status in &statuses {
+        let passive = inspect_passive_online_authority_v1(
+            &authority,
+            &inventory,
+            &source,
+            &f.manifest,
+            status,
+            &mut || Ok(NOW),
+        )
+        .unwrap();
+        let inspected = inspect_active_online_authority_v1(
+            OnlineAuthorityInspectionInputV1 {
+                authority: &authority,
+                inventory: &inventory,
+                source: &source,
+                manifest: &f.manifest,
+                coordinator: status,
+            },
+            &active,
+            &mut || Ok(NOW),
+        )
+        .unwrap();
+        for (mode, native) in [("active", inspected.value()), ("passive", passive.value())] {
+            let node = oracle(
+                "online-authority-inspection-v1.mjs",
+                &json!({"mode":mode,"workspaceRoot":f.root,"runtimeRoot":f.root,"inventory":f.inventory,"authorityConfigurationPath":f.configuration,"now":iso(NOW).unwrap(),"coordinatorStatus":status,"manifest":f.manifest,"activeRefreshReceipt":active.value()}),
+            );
+            assert_eq!(*native, node, "{mode} {status}");
+        }
+        passive
+            .assert_current(&authority, &inventory, &source, &mut || Ok(NOW + 1))
+            .unwrap();
+        assert!(
+            passive
+                .assert_current(&authority, &inventory, &source, &mut || Ok(NOW + 60000))
+                .is_err()
+        );
+        let mut times = vec![NOW, NOW - 1].into_iter();
+        assert!(
+            passive
+                .assert_current(&authority, &inventory, &source, &mut || Ok(times
+                    .next()
+                    .unwrap()))
+                .is_err()
+        );
+    }
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        no_rpc,
+        "all passive/inspection checks use no external RPC"
+    );
+    let mut late = vec![NOW, NOW, NOW, NOW + 60000].into_iter();
+    assert!(
+        inspect_passive_online_authority_v1(
+            &authority,
+            &inventory,
+            &source,
+            &f.manifest,
+            &Value::Null,
+            &mut || Ok(late.next().unwrap())
+        )
+        .is_err(),
+        "expiry sampled after source and file validation must reject"
+    );
+    let proof = inspect_passive_online_authority_v1(
+        &authority,
+        &inventory,
+        &source,
+        &f.manifest,
+        &Value::Null,
+        &mut || Ok(NOW),
+    )
+    .unwrap();
+    let cache = f
+        .root
+        .join("automation-cache/online-authority-evidence-v1/current.json");
+    fs::remove_file(&cache).unwrap();
+    let mut fake = active.value().clone();
+    fake["authorityEvidence"]["currentHead"]["receipt"]["signature"] =
+        json!(Base64::encode_string(&[0u8; 64]));
+    record_passive_authority_evidence_cache_v1(
+        &f.root,
+        &fake,
+        f.inventory["databaseScopeHash"].as_str().unwrap(),
+        authority.trust()["writerManifestHash"].as_str().unwrap(),
+        &iso(NOW + 60000).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        inspect_passive_online_authority_v1(
+            &authority,
+            &inventory,
+            &source,
+            &f.manifest,
+            &Value::Null,
+            &mut || Ok(NOW)
+        )
+        .is_err(),
+        "valid cache hash never replaces actual authority signature verification"
+    );
+    assert!(
+        proof
+            .assert_current(&authority, &inventory, &source, &mut || Ok(NOW))
+            .is_err()
+    );
+    fs::remove_file(&cache).unwrap();
+    let mut split = active.value().clone();
+    let challenge = &mut split["authorityEvidence"]["activeChallenge"]["receipt"];
+    challenge["databaseHeads"][0]["hash"] = json!(hash("signed-equivocation", &json!({})));
+    let signature = f.key.sign(
+        online_mutation_signed_payload_v1(challenge)
+            .unwrap()
+            .as_bytes(),
+    );
+    challenge["signature"] = json!(Base64::encode_string(&signature.to_bytes()));
+    split["activeChallengeReceiptHash"]=json!(hepta_paper_service::sqlite_mutation_coordinator::contracts::online_mutation_receipt_hash_v1(&split["authorityEvidence"]["activeChallenge"]["receipt"]).unwrap());
+    record_passive_authority_evidence_cache_v1(
+        &f.root,
+        &split,
+        f.inventory["databaseScopeHash"].as_str().unwrap(),
+        authority.trust()["writerManifestHash"].as_str().unwrap(),
+        &iso(NOW + 60000).unwrap(),
+    )
+    .unwrap();
+    let denied = inspect_passive_online_authority_v1(
+        &authority,
+        &inventory,
+        &source,
+        &f.manifest,
+        &statuses[2],
+        &mut || Ok(NOW),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        denied.code,
+        "autonomous_research_online_mutation_passive_evidence_binding_invalid"
+    );
+    let node = oracle(
+        "online-authority-inspection-v1.mjs",
+        &json!({"mode":"passive","workspaceRoot":f.root,"runtimeRoot":f.root,"inventory":f.inventory,"authorityConfigurationPath":f.configuration,"now":iso(NOW).unwrap(),"coordinatorStatus":statuses[2],"manifest":f.manifest}),
+    );
+    assert_eq!(
+        node["status"], "autonomous_research_online_anti_rollback_ready",
+        "incumbent only compares global head; native additionally rejects genuinely signed contradictory per-database heads"
+    );
+    assert_eq!(calls.lock().unwrap().len(), no_rpc);
+}
+
+#[test]
+fn state_safety_projection_matches_node_canonical_inventory_restore_and_all_receipt_fields() {
+    use hepta_paper_service::online_authority_inspection::{
+        OnlineAuthorityInspectionInputV1, inspect_active_online_authority_v1,
+    };
+    use hepta_paper_service::state_safety::evaluate_state_safety_readiness_v1;
+    let (f, inventory) = actual_inspection_fixture();
+    let source = verify_online_writer_static_coverage_v1(&f.root, &f.manifest).unwrap();
+    let (mut authority, _calls) = f.authority("success", Arc::new(AtomicI64::new(NOW)));
+    let active = refresh_online_authority_evidence_v1(
+        &f.inventory,
+        &f.manifest,
+        &mut authority,
+        &source,
+        &mut || Ok(NOW),
+        3,
+    )
+    .unwrap();
+    let status = json!({"implemented":true,"status":"externally_fenced_sqlite_mutation_coordinator_ready","coveredDatabaseRoles":f.manifest["coverage"]["coveredDatabaseRoles"],"blockers":[]});
+    let inspected = inspect_active_online_authority_v1(
+        OnlineAuthorityInspectionInputV1 {
+            authority: &authority,
+            inventory: &inventory,
+            source: &source,
+            manifest: &f.manifest,
+            coordinator: &status,
+        },
+        &active,
+        &mut || Ok(NOW),
+    )
+    .unwrap();
+    // Projection fixture only: these source metadata claims deliberately do not
+    // construct VerifiedStoredRestoreSourceV1 or any activation capability.
+    let instances = f.inventory["instances"].as_array().unwrap();
+    let restore = json!({"version":1,"kind":"AutonomousResearchStateBackupSourcesInspection","status":"autonomous_research_state_backup_sources_ready","bundlePath":"/fixture/metadata-only","manifestId":f.inventory["manifestId"],"manifestHash":f.inventory["manifestHash"],"bundleManifestHash":hash("fixture-bundle",&json!({})),"snapshotContentHash":hash("fixture-content",&json!({})),"snapshotCreatedAt":iso(NOW).unwrap(),"inventoryHash":f.inventory["inventoryHash"],"databaseScopeHash":f.inventory["databaseScopeHash"],"databaseInstanceIds":instances.iter().map(|i|i["instanceId"].clone()).collect::<Vec<_>>(),"restoreDrillReceiptHash":hash("fixture-drill",&json!({})),"restoreDrillPerformedAt":iso(NOW).unwrap(),"authorityId":"backup:fixture","keyId":"key:fixture","headSequence":0,"headHash":hash("head",&json!({})),"sources":instances.iter().map(|i|json!({"role":format!("autonomous_state_database:{}",i["instanceId"].as_str().unwrap())})).collect::<Vec<_>>(),"skippedCandidates":[],"blockers":[]});
+    let base = json!({"inventory":f.inventory,"latestRestoreDrill":restore,"onlineAntiRollback":inspected.value(),"now":NOW});
+    assert_eq!(
+        evaluate_state_safety_readiness_v1(
+            &base["inventory"],
+            &base["latestRestoreDrill"],
+            Some(&base["onlineAntiRollback"]),
+            NOW
+        )
+        .unwrap()["ready"],
+        true
+    );
+    let mut cases = vec![base.clone(), json!({"now":NOW})];
+    fn scalar_paths(value: &Value, prefix: &str, paths: &mut Vec<String>) {
+        if let Some(o) = value.as_object() {
+            for (k, v) in o {
+                let p = format!("{prefix}/{k}");
+                if v.is_object() {
+                    scalar_paths(v, &p, paths);
+                } else if !v.is_array() {
+                    paths.push(p);
+                }
+            }
+        }
+    }
+    let mut paths = Vec::new();
+    for root in ["inventory", "latestRestoreDrill", "onlineAntiRollback"] {
+        scalar_paths(&base[root], &format!("/{root}"), &mut paths);
+    }
+    for path in paths {
+        for replacement in [Value::Null, json!(false), json!("invalid"), json!(1.0)] {
+            // The native protocol has canonical UTC string timestamps. Numeric
+            // Date.parse coercion is an explicit compatibility boundary below.
+            if path.ends_with("At") && replacement.is_number() {
+                continue;
+            }
+            let mut changed = base.clone();
+            *changed.pointer_mut(&path).unwrap() = replacement;
+            cases.push(changed);
+        }
+    }
+    for delta in [-1, 60_000, 86_400_000, 86_400_001] {
+        let mut value = base.clone();
+        value["now"] = json!(NOW + delta);
+        cases.push(value);
+    }
+    for root in ["inventory", "latestRestoreDrill", "onlineAntiRollback"] {
+        for b in [
+            json!([]),
+            json!(["fixture_blocked"]),
+            json!(["autonomous_research_online_anti_rollback_coordinator_not_implemented"]),
+            json!([""]),
+        ] {
+            let mut value = base.clone();
+            value[root]["blockers"] = b;
+            cases.push(value);
+        }
+    }
+    let mut noncanonical = base.clone();
+    noncanonical["latestRestoreDrill"]["restoreDrillPerformedAt"] = json!(1.0);
+    let native_date = evaluate_state_safety_readiness_v1(
+        &noncanonical["inventory"],
+        &noncanonical["latestRestoreDrill"],
+        Some(&noncanonical["onlineAntiRollback"]),
+        NOW,
+    )
+    .unwrap();
+    let node_date = oracle("state-safety-v1.mjs", &noncanonical);
+    assert_eq!(native_date["ready"], false);
+    assert!(native_date["latestRestoreDrill"]["restoreDrillPerformedAt"].is_null());
+    assert!(
+        node_date["latestRestoreDrill"]["restoreDrillPerformedAt"].is_string(),
+        "the original coerces numeric dates; this explicit difference remains documented"
+    );
+    let node = oracle("state-safety-v1.mjs", &json!(cases));
+    for (index, input) in cases.iter().enumerate() {
+        let native = evaluate_state_safety_readiness_v1(
+            &input["inventory"],
+            &input["latestRestoreDrill"],
+            input.get("onlineAntiRollback"),
+            input["now"].as_i64().unwrap(),
+        )
+        .unwrap_or_else(|e| json!({"error":e.code}));
+        if native != node[index] {
+            fs::write(
+                "/tmp/hepta-safety-mismatch.json",
+                json!({"input":input,"native":native,"node":node[index]}).to_string(),
+            )
+            .unwrap();
+            panic!("state safety mismatch case {index}; details /tmp/hepta-safety-mismatch.json");
+        }
+    }
+}
+
+#[test]
+fn real_signed_numeric_active_receipts_preserve_original_node_number_semantics() {
+    let f = Fixture::new();
+    let source = verify_online_writer_static_coverage_v1(&f.root, &f.manifest).unwrap();
+    let (mut authority, calls) = f.authority("numeric", Arc::new(AtomicI64::new(NOW)));
+    let proof = refresh_online_authority_evidence_v1(
+        &f.inventory,
+        &f.manifest,
+        &mut authority,
+        &source,
+        &mut || Ok(NOW),
+        3,
+    )
+    .unwrap();
+    assert_eq!(*proof.value(), f.replay(&calls.lock().unwrap(), 3));
+    proof
+        .assert_current(&authority, &f.inventory, &source, NOW)
+        .unwrap();
+}
+
+#[test]
+fn observation_age_crossed_only_after_inspection_io_rejects_still_unexpired_signatures() {
+    use hepta_paper_service::online_authority_evidence_cache::verified::record_verified_authority_evidence_cache_v1;
+    use hepta_paper_service::online_authority_inspection::{
+        OnlineAuthorityInspectionInputV1, inspect_active_online_authority_v1,
+        inspect_passive_online_authority_v1,
+    };
+    let (mut f, inventory) = actual_inspection_fixture();
+    let mut config: Value = serde_json::from_slice(&fs::read(&f.configuration).unwrap()).unwrap();
+    config["maximumObservationAgeMs"] = json!(1000);
+    fs::write(&f.configuration, config.to_string()).unwrap();
+    f.pin = bytehash(&fs::read(&f.configuration).unwrap());
+    let source = verify_online_writer_static_coverage_v1(&f.root, &f.manifest).unwrap();
+    let (mut authority, calls) = f.authority("success", Arc::new(AtomicI64::new(NOW)));
+    let active = refresh_online_authority_evidence_v1(
+        &f.inventory,
+        &f.manifest,
+        &mut authority,
+        &source,
+        &mut || Ok(NOW),
+        3,
+    )
+    .unwrap();
+    record_verified_authority_evidence_cache_v1(
+        &f.root,
+        &authority,
+        &active,
+        &inventory,
+        &source,
+        &mut || Ok(NOW),
+    )
+    .unwrap();
+    let before = calls.lock().unwrap().len();
+    let proof = inspect_passive_online_authority_v1(
+        &authority,
+        &inventory,
+        &source,
+        &f.manifest,
+        &Value::Null,
+        &mut || Ok(NOW + 1000),
+    )
+    .unwrap();
+    let mut times = vec![NOW + 1000, NOW + 1001].into_iter();
+    assert!(
+        proof
+            .assert_current(&authority, &inventory, &source, &mut || Ok(times
+                .next()
+                .unwrap()))
+            .is_err()
+    );
+    let mut times = vec![NOW, NOW, NOW, NOW + 1001].into_iter();
+    assert!(
+        inspect_passive_online_authority_v1(
+            &authority,
+            &inventory,
+            &source,
+            &f.manifest,
+            &Value::Null,
+            &mut || Ok(times.next().unwrap())
+        )
+        .is_err()
+    );
+    let mut times = vec![NOW, NOW, NOW, NOW + 1001].into_iter();
+    assert!(
+        inspect_active_online_authority_v1(
+            OnlineAuthorityInspectionInputV1 {
+                authority: &authority,
+                inventory: &inventory,
+                source: &source,
+                manifest: &f.manifest,
+                coordinator: &Value::Null
+            },
+            &active,
+            &mut || Ok(times.next().unwrap())
+        )
+        .is_err()
+    );
+    assert_eq!(calls.lock().unwrap().len(), before);
 }

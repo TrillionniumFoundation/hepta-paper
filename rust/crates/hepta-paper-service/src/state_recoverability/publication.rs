@@ -24,6 +24,18 @@ fn same(a: &fs::Metadata, b: &fs::Metadata) -> bool {
         && a.mode() == b.mode()
         && a.nlink() == b.nlink()
 }
+fn same_directory(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    // Directory link counts change when unrelated children are added/removed.
+    // They are not inode identity. Regular-file hardlink checks keep `same`.
+    a.is_dir()
+        && b.is_dir()
+        && a.dev() == b.dev()
+        && a.ino() == b.ino()
+        && a.uid() == b.uid()
+        && a.gid() == b.gid()
+        && a.mode() == b.mode()
+}
+
 pub(super) struct Directory {
     pub path: PathBuf,
     pub held: File,
@@ -96,7 +108,7 @@ impl Directory {
         {
             let m = fs::symlink_metadata(path).map_err(|_| failure())?;
             let h = held.metadata().map_err(|_| failure())?;
-            if !m.is_dir() || m.is_symlink() || !same(&m, &h) {
+            if !m.is_dir() || m.is_symlink() || !same_directory(&m, &h) {
                 return Err(failure());
             }
         }
@@ -168,7 +180,7 @@ impl Directory {
         let final_path = self.path.join(name);
         let actual = fs::symlink_metadata(&final_path).map_err(|_| failure())?;
         ensure(
-            same(&actual, &staging.held.metadata().map_err(|_| failure())?),
+            same_directory(&actual, &staging.held.metadata().map_err(|_| failure())?),
             "autonomous_research_state_backup_publication_path_changed_or_unsafe",
         )?;
         Ok(final_path)
@@ -311,3 +323,6 @@ fn publish_locked(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod directory_identity_tests;

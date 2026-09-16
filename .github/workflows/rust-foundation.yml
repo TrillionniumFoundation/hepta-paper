@@ -23,7 +23,9 @@ jobs:
   validate:
     name: format, lint, test, docs
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Native ten-database CLI/replay and real history differentials increase
+    # full-suite time; allow the complete suite without reducing coverage.
+    timeout-minutes: 60
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

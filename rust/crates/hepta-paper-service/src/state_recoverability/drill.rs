@@ -15,11 +15,75 @@ use crate::state_backup_authority::{
 };
 use rusqlite::{Connection, OpenFlags};
 use std::{collections::BTreeSet, fs, path::Path};
+/// Computed historical evidence retains every source file until atomic publish.
+/// Construction is private; a controller may compare live effective state
+/// before this object is allowed to replace the persisted receipt.
+pub(super) struct PreparedRestoreDrillV1 {
+    receipt: Value,
+    directory: Directory,
+    manifest: ObservedFile,
+    databases: Vec<ObservedFile>,
+    expected_restore: Option<String>,
+}
+impl PreparedRestoreDrillV1 {
+    pub(super) fn receipt(&self) -> &Value {
+        &self.receipt
+    }
+    pub(super) fn publish(self) -> Result<Value> {
+        let bundle_hash = self.receipt["bundleManifestHash"].clone();
+        let head_hash = self.receipt["authorityCurrentHeadReceiptHash"].clone();
+        self.publish_inner().map_err(|mut cause| {
+            cause.details["bundleManifestHash"] = bundle_hash;
+            cause.details["authorityCurrentHeadReceiptHash"] = head_hash;
+            cause
+        })
+    }
+    fn publish_inner(self) -> Result<Value> {
+        self.manifest.assert_current()?;
+        self.directory.assert_current()?;
+        for database in &self.databases {
+            database.assert_current()?;
+            super::files::no_sidecars(&database.path)?;
+        }
+        super::publication::publish_receipt(
+            &self.directory,
+            "RESTORE_DRILL_RECEIPT.json",
+            &self.receipt,
+            self.expected_restore.as_deref(),
+        )?;
+        Ok(self.receipt)
+    }
+}
 pub(super) fn run<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>(
     service: &mut BackupRecoveryServiceV1<B, O>,
     bundle_path: &Path,
     clock: &mut dyn MutationClockV1,
 ) -> Result<Value> {
+    prepare(service, bundle_path, clock)?.publish()
+}
+#[derive(Default)]
+struct FailureContext {
+    bundle_hash: Value,
+    head_hash: Value,
+}
+pub(super) fn prepare<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>(
+    service: &mut BackupRecoveryServiceV1<B, O>,
+    bundle_path: &Path,
+    clock: &mut dyn MutationClockV1,
+) -> Result<PreparedRestoreDrillV1> {
+    let mut context = FailureContext::default();
+    prepare_inner(service, bundle_path, clock, &mut context).map_err(|mut cause| {
+        cause.details["bundleManifestHash"] = context.bundle_hash;
+        cause.details["authorityCurrentHeadReceiptHash"] = context.head_hash;
+        cause
+    })
+}
+fn prepare_inner<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>(
+    service: &mut BackupRecoveryServiceV1<B, O>,
+    bundle_path: &Path,
+    clock: &mut dyn MutationClockV1,
+    context: &mut FailureContext,
+) -> Result<PreparedRestoreDrillV1> {
     ensure(
         bundle_path.parent() == Some(service.options.backup_root.as_path()),
         "autonomous_research_state_backup_bundle_path_unsafe",
@@ -33,6 +97,7 @@ pub(super) fn run<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransp
         &manifest_file.bytes(64 * 1024 * 1024)?,
         "autonomous_research_state_backup_bundle_manifest_hash_invalid",
     )?;
+    context.bundle_hash = bundle["bundleManifestHash"].clone();
     crate::state_backup_authority::restore_source::validate_bundle(
         &bundle,
         &service.options.state_database_manifest,
@@ -79,6 +144,7 @@ pub(super) fn run<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransp
         service
             .backup
             .verify_current_head(raw_head.value(), &request, clock_now(clock)?.0)?;
+    context.head_hash = state_backup_authority_receipt_hash_v1(head.value())?.into();
     let initial_sequence = int(&bundle["authorityFinalization"], "headSequence")?;
     let live_sequence = int(head.value(), "headSequence")?;
     let initial_hash = &bundle["authorityFinalization"]["headHash"];
@@ -276,7 +342,7 @@ pub(super) fn run<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransp
     }
     manifest_file.assert_current()?;
     directory.assert_current()?;
-    for file in retained {
+    for file in &retained {
         file.assert_current()?;
         super::files::no_sidecars(&file.path)?;
     }
@@ -313,11 +379,11 @@ pub(super) fn run<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransp
     .into();
     receipt["restoreDrillReceiptHash"] =
         hash("AutonomousResearchStateRestoreDrillReceipt", &receipt)?.into();
-    super::publication::publish_receipt(
-        &directory,
-        "RESTORE_DRILL_RECEIPT.json",
-        &receipt,
-        expected_restore.as_deref(),
-    )?;
-    Ok(receipt)
+    Ok(PreparedRestoreDrillV1 {
+        receipt,
+        directory,
+        manifest: manifest_file,
+        databases: retained,
+        expected_restore,
+    })
 }

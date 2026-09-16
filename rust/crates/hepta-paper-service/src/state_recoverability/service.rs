@@ -39,6 +39,7 @@ pub(super) struct CurrentRestoreSourcesV1 {
     pub source: VerifiedStoredRestoreSourceV1,
     pub inventory: ObservedStateDatabaseInventoryV1,
     pub inspection: Value,
+    pub current_replay: Option<super::history::VerifiedCurrentReplayV1>,
 }
 impl CurrentRestoreSourcesV1 {
     pub fn assert_current(&self, now: i64) -> Result<()> {
@@ -126,7 +127,6 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
             &self.options.runtime_root,
             &self.options.state_database_manifest,
         )
-        .map_err(|e| error(e.to_string()))
     }
     pub(super) fn selected(
         &self,
@@ -164,9 +164,47 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
             .map_err(|e| error(e.to_string()))?;
         Ok(CurrentRestoreSourcesV1 {
             inspection: source.inspection().clone(),
+            current_replay: None,
             source,
             inventory,
         })
+    }
+    /// Controller authorization, unlike a historical source report, must prove
+    /// that all current effective rows are exactly recovered by the signed log.
+    pub(super) fn assert_source_effective_state(
+        &self,
+        sources: &mut CurrentRestoreSourcesV1,
+        now: i64,
+    ) -> Result<()> {
+        sources.assert_current(now)?;
+        if let Some(proof) = &sources.current_replay {
+            return proof.assert_matches(&sources.inventory, sources.source.inspection());
+        }
+        let path = Path::new(text(sources.source.inspection(), "bundlePath")?);
+        let restore = super::files::ObservedFile::open(
+            &path.join("RESTORE_DRILL_RECEIPT.json"),
+            256 * 1024 * 1024,
+        )?;
+        let restore_value = crate::sqlite_mutation_coordinator::authority::files::parse(
+            &restore.bytes(256 * 1024 * 1024)?,
+            "autonomous_research_state_backup_restore_drill_receipt_invalid",
+        )?;
+        ensure(
+            restore_value["restoreDrillReceiptHash"]
+                == sources.source.inspection()["restoreDrillReceiptHash"],
+            "autonomous_research_state_backup_restore_drill_receipt_hash_invalid",
+        )?;
+        let proof = super::history::verify_journal_source_current_state(
+            self,
+            path,
+            &sources.inventory,
+            &restore_value,
+            now,
+        )?;
+        restore.assert_current()?;
+        sources.assert_current(now)?;
+        sources.current_replay = proof;
+        Ok(())
     }
     pub(super) fn sources(&self, now: i64) -> Result<CurrentRestoreSourcesV1> {
         if matches!(fs::symlink_metadata(&self.options.backup_root),Err(e) if e.kind()==std::io::ErrorKind::NotFound)

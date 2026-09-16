@@ -38,7 +38,10 @@ historical signatures, generates a fresh random observation nonce, obtains a
 live signed observation, then rechecks actual inventory and audit identity.
 `VerifiedSchemaTransitionReadinessV1` has private fields and no Deserialize or
 claim constructor; `.assert_current` rechecks subject, files, trust and expiry
-using a clock read after the full inventory/file verification. Current readiness
+using a clock read after the full inventory/file verification. A final memory-only
+check follows the pinned authority-file rechecks and signature verification; it
+enforces inclusive maximum observation age, exclusive expiry, and clock monotonicity.
+The retained proof also rejects clocks earlier than its successful construction. Current readiness
 requires pinned trust for the target writer manifest, while historical rebind
 contracts continue to accept source or target trust.
 It cannot construct an active runtime capability.
@@ -84,10 +87,15 @@ migration with genuinely signed receipts, and holds a signing authority in its
 process memory for fresh challenge responses. No production key or database is
 read, modified or printed.
 
-`tests/online_schema_transition_parity.rs` contains five integration tests:
-
-All five passed against pinned Node 22.23.1 after the clock and numeric-spelling
-review fixes (81.21 seconds, zero failures). The oracle also passes ESLint.
+`tests/online_schema_transition_parity.rs` contains six integration groups. The
+latest actual-workspace run passed all six (199.26 seconds, zero failures). The
+additional real-signature regression first failed against the earlier source:
+that source accepted an observation whose 1000 ms age limit was crossed only
+after the final pinned-file verification. The corrected implementation accepts
+exactly 1000 ms, rejects 1001 ms before a still-future receipt expiry, and rejects
+clock rollback during construction or retained-proof reuse. Retained checks
+perform no authority transport call. These tests use actual ten-database inventory
+and the original isolated signing process. The oracle also passes ESLint.
 
 - `schema_transition_v1_and_pristine_rebind_v2_contracts_match_real_node_signatures`
   compares all 83 independently generated signed cases, including exact request

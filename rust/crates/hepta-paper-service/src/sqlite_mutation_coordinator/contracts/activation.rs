@@ -127,7 +127,7 @@ pub fn verify_active_challenge_v1(
         ));
     }
     Ok(keys(receipt, CHALLENGE_RECEIPT_KEYS)
-        && receipt["version"] == 1
+        && receipt["version"].as_f64() == Some(1.0)
         && receipt["kind"] == "AutonomousResearchOnlineMutationActiveChallengeReceipt"
         && receipt["status"] == "autonomous_research_online_mutation_active_challenge_verified"
         && receipt["requestHash"]
@@ -188,7 +188,7 @@ pub fn verify_scope_receipt_v1(
 ) -> Result<bool> {
     assert_scope_request_v1(request, trust)?;
     Ok(keys(receipt, SCOPE_RECEIPT_KEYS)
-        && receipt["version"] == 1
+        && receipt["version"].as_f64() == Some(1.0)
         && receipt["kind"] == "AutonomousResearchOnlineMutationScopeReceipt"
         && receipt["status"] == "autonomous_research_online_mutation_scope_observed"
         && receipt["requestHash"] == hash("AutonomousResearchOnlineMutationScopeRequest", request)?
@@ -311,17 +311,17 @@ pub fn verify_unresolved_list_v1(
     let (Some(observed), Some(expires), Some(age)) = (
         timestamp(&receipt["observedAt"]),
         timestamp(&receipt["expiresAt"]),
-        trust["maximumObservationAgeMs"].as_i64(),
+        int(trust, "maximumObservationAgeMs").ok(),
     ) else {
         return Ok(false);
     };
-    Ok(trust["version"] == 1
+    Ok(trust["version"].as_f64() == Some(1.0)
         && trust["kind"] == "AutonomousResearchOnlineMutationAuthorityTrust"
         && safe(&trust["authorityId"])
         && safe(&trust["keyId"])
         && integer(&trust["maximumObservationAgeMs"], 1000)
         && keys(receipt, LIST_RECEIPT_KEYS)
-        && receipt["version"] == 1
+        && receipt["version"].as_f64() == Some(1.0)
         && receipt["kind"] == "AutonomousResearchOnlineUnresolvedReservationListReceipt"
         && receipt["status"] == "autonomous_research_online_unresolved_reservations_observed"
         && receipt["authorityId"] == trust["authorityId"]
@@ -332,7 +332,7 @@ pub fn verify_unresolved_list_v1(
                 request,
             )?
         && matches(receipt, request, &LIST_REQUEST_KEYS[2..])
-        && receipt["unresolvedReservationCount"] == json!(entries.len())
+        && receipt["unresolvedReservationCount"].as_f64() == Some(entries.len() as f64)
         && sha(&receipt["unresolvedReservationSetHash"])
         && receipt["unresolvedReservationSetHash"]
             == unresolved_reservation_set_hash_v1(&receipt["unresolvedReservations"])?

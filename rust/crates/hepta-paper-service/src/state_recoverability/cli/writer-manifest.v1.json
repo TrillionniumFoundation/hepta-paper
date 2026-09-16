@@ -1,0 +1,2187 @@
+{
+  "version": 1,
+  "kind": "AutonomousResearchOnlineWriterCoverageManifest",
+  "manifestId": "hepta-paper-autonomous-research-online-writer-operations-v1",
+  "protocol": "external-linearizable-reserve-apply-finalize-v1",
+  "requiredDatabaseRoles": [
+    "external-qualification",
+    "full-research-qualification-publication",
+    "machine-intake",
+    "native-store",
+    "resident-instance",
+    "runtime-reproducibility-publication",
+    "runtime-reproducibility-refresh",
+    "submission-handoff",
+    "supervisor-state",
+    "topic-producer"
+  ],
+  "writers": [
+    {
+      "writerId": "writer:native-store:campaign-persistence:v1",
+      "databaseRoles": [
+        "native-store"
+      ],
+      "operationIds": [
+        "native-store.campaign-lease.cancelNodeInfrastructureDeferred.v1",
+        "native-store.campaign-lease.claimReady.v1",
+        "native-store.campaign-lease.completeNodeExternalAction.v1",
+        "native-store.campaign-lease.failNode.v1",
+        "native-store.campaign-lease.markNodeExternalActionStarted.v1",
+        "native-store.campaign-lease.recoverExpiredLeases.v1",
+        "native-store.campaign-lease.renewNodeLease.v1",
+        "native-store.campaign-lease.reserveNodeInfrastructureUsage.v1",
+        "native-store.campaign-lease.startNode.v1",
+        "native-store.campaign-lifecycle.cancelCampaign.v1",
+        "native-store.campaign-lifecycle.cancelNode.v1",
+        "native-store.campaign-lifecycle.createCampaign.v1",
+        "native-store.campaign-lifecycle.createCampaignExclusive.v1",
+        "native-store.campaign-lifecycle.extendCampaign.v1",
+        "native-store.campaign-lifecycle.failCampaign.v1",
+        "native-store.campaign-lifecycle.pauseCampaign.v1",
+        "native-store.campaign-lifecycle.recordUsage.v1",
+        "native-store.campaign-lifecycle.resumeCampaign.v1",
+        "native-store.campaign-lifecycle.retryNode.v1",
+        "native-store.campaign-lifecycle.skipFutureRounds.v1",
+        "native-store.campaign-lifecycle.stopCampaign.v1",
+        "native-store.campaign-prepared-integration.beginNodeResultIntegration.v1",
+        "native-store.campaign-prepared-integration.completeNode.v1",
+        "native-store.campaign-prepared-integration.markNodeResultIntegrated.v1",
+        "native-store.campaign-prepared-integration.prepareNodeResult.v1",
+        "native-store.campaign-store.assertLiveNodeAttempt.v1"
+      ],
+      "implementationHash": "sha256:6e38c1f92d182f177c12717d2cf5124eaf44e6b627b4bdc821a02901bc70769d",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:native-store:ledger-job-workflow:v1",
+      "databaseRoles": [
+        "native-store"
+      ],
+      "operationIds": [
+        "native-store.job-receipt-store.acquireLease.v1",
+        "native-store.job-receipt-store.completeJob.v1",
+        "native-store.job-receipt-store.createJob.v1",
+        "native-store.job-receipt-store.failJob.v1",
+        "native-store.job-receipt-store.recordAttempt.v1",
+        "native-store.job-receipt-store.renewAttemptLease.v1",
+        "native-store.receipt-ledger-qualification.qualify.v1",
+        "native-store.receipt-ledger.record.v1",
+        "native-store.workflow-state-store.put.v1"
+      ],
+      "implementationHash": "sha256:430f100b95449123e4ecb5d9493b12a6b3593990125167afe321110c986a027f",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:native-store:resource-workspace-automation:v1",
+      "databaseRoles": [
+        "native-store"
+      ],
+      "operationIds": [
+        "native-store.resource-governor.acquire.v1",
+        "native-store.resource-governor.createSqliteResourceGovernor.v1",
+        "native-store.resource-governor.reapDeadOwners.v1",
+        "native-store.resource-governor.release.v1",
+        "native-store.resource-governor.renewLeaseHeartbeat.v1",
+        "native-store.workspace-registry.qualifyForRetention.v1",
+        "native-store.workspace-registry.recordSnapshot.v1",
+        "native-store.workspace-registry.register.v1",
+        "native-store.workspace-registry.transition.v1"
+      ],
+      "implementationHash": "sha256:3f9e8e63e938911e77c9fcec6cfb18983d031e54c3710270b97990cf8fb43dd4",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:native-store:campaign-telemetry-operations:v1",
+      "databaseRoles": [
+        "native-store"
+      ],
+      "operationIds": [
+        "native-store.campaign-telemetry-operations.recordTelemetry.v1"
+      ],
+      "implementationHash": "sha256:1f5926cfccadad61572d5d5258ef21f25cc321fb8ee31bcce902bab83a8bd19e",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:native-store:automation-runtime-reconciler:v1",
+      "databaseRoles": [
+        "native-store"
+      ],
+      "operationIds": [
+        "native-store.automation-runtime-reconciler.executeAutomationRuntimeReconciliation.v1",
+        "native-store.legacy-terminal-active-residue-settlement.executeLegacyTerminalActiveResidueSettlement.v1"
+      ],
+      "implementationHash": "sha256:dc7afccd0d89faea88010260f6ff1ec5fbf1a5807b20b35822e7852300db3a70",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:native-store:quality-release:v1",
+      "databaseRoles": [
+        "native-store"
+      ],
+      "operationIds": [
+        "native-store.campaign-release-authority-repository.promoteCompletedRelease.v1",
+        "native-store.theorem-quality-revision-sink.record.v1"
+      ],
+      "implementationHash": "sha256:f67b559f7009274a19a874ef73add280cae4896d5305b9708e89a6f5df27f4de",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:native-store:submission-delivery:v1",
+      "databaseRoles": [
+        "native-store"
+      ],
+      "operationIds": [
+        "native-store.delivery-consumption-operations.advanceResponseCursor.v1",
+        "native-store.delivery-consumption-operations.claimNextResponse.v1",
+        "native-store.delivery-consumption-operations.completeResponseConsumption.v1",
+        "native-store.delivery-consumption-operations.release.v1",
+        "native-store.delivery-outbox-operations.acquireReleaseLock.v1",
+        "native-store.delivery-outbox-operations.beginAutonomousSubmissionAttempt.v1",
+        "native-store.delivery-outbox-operations.claimPending.v1",
+        "native-store.delivery-outbox-operations.enqueue.v1",
+        "native-store.delivery-outbox-operations.enqueueAuthorized.v1",
+        "native-store.delivery-outbox-operations.heartbeatClaim.v1",
+        "native-store.delivery-outbox-operations.prepareAutonomousSubmission.v1",
+        "native-store.delivery-outbox-operations.recordAutonomousSubmissionOutcome.v1",
+        "native-store.delivery-outbox-operations.recoverPending.v1",
+        "native-store.delivery-outbox-operations.registerProviderCapability.v1",
+        "native-store.delivery-redrive-operations.deadLetter.v1",
+        "native-store.delivery-redrive-operations.enqueueRedrive.v1",
+        "native-store.delivery-redrive-operations.reviewAmbiguousResult.v1",
+        "native-store.delivery-redrive-operations.scheduleRedrive.v1",
+        "native-store.delivery-response-operations.quarantineInvalidIntake.v1",
+        "native-store.delivery-response-operations.recordResponse.v1"
+      ],
+      "implementationHash": "sha256:fbed84499d285ff5d68c0c0dbf48622971282fc7cda5d88cc30a2fb3b746ce4a",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:submission-handoff:delivery:v1",
+      "databaseRoles": [
+        "submission-handoff"
+      ],
+      "operationIds": [
+        "submission-handoff.delivery-outbox-operations.beginAutonomousSubmissionAttempt.v1",
+        "submission-handoff.delivery-outbox-operations.prepareAutonomousSubmission.v1",
+        "submission-handoff.delivery-outbox-operations.recordAutonomousSubmissionOutcome.v1"
+      ],
+      "implementationHash": "sha256:2ac5c6cc0c5545b47a721b84994fadb5b71c3c6724db42807b600e437103df62",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:resident-instance:supervisor-instance-repository:v1",
+      "databaseRoles": [
+        "resident-instance"
+      ],
+      "operationIds": [
+        "resident-instance.supervisor-instance-repository.acquireInstanceLease.v1",
+        "resident-instance.supervisor-instance-repository.heartbeatInstanceLease.v1",
+        "resident-instance.supervisor-instance-repository.markMachineIntakeReconciled.v1",
+        "resident-instance.supervisor-instance-repository.markMachineIntakeReconciliationFailed.v1",
+        "resident-instance.supervisor-instance-repository.markStartupReconciled.v1",
+        "resident-instance.supervisor-instance-repository.releaseInstanceLease.v1"
+      ],
+      "implementationHash": "sha256:57adb83eb36ef699071ace1e23c4af7ead56aa7ac73a7007393d0b220805af4a",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:runtime-reproducibility-refresh:runtime-refresh-state-repository:v1",
+      "databaseRoles": [
+        "runtime-reproducibility-refresh"
+      ],
+      "operationIds": [
+        "runtime-reproducibility-refresh.runtime-refresh-state-repository.completeRefreshAttempt.v1",
+        "runtime-reproducibility-refresh.runtime-refresh-state-repository.failRefreshAttempt.v1",
+        "runtime-reproducibility-refresh.runtime-refresh-state-repository.reconcileStaleRefreshLease.v1",
+        "runtime-reproducibility-refresh.runtime-refresh-state-repository.releaseRefreshLease.v1",
+        "runtime-reproducibility-refresh.runtime-refresh-state-repository.renewRefreshLease.v1",
+        "runtime-reproducibility-refresh.runtime-refresh-state-repository.reserveRefreshAttempt.v1",
+        "runtime-reproducibility-refresh.runtime-refresh-state-repository.tryAcquireRefreshLease.v1"
+      ],
+      "implementationHash": "sha256:4fbd9200355fb94a8f1e035666e86e70ab75f649f405ec565bd6d4e28240e7ea",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:machine-intake:machine-intake-repository:v1",
+      "databaseRoles": [
+        "machine-intake"
+      ],
+      "operationIds": [
+        "machine-intake.machine-intake-repository.appendIntake.v1",
+        "machine-intake.machine-intake-repository.deferIntake.v1",
+        "machine-intake.machine-intake-repository.markEnqueuedIntakeInvalid.v1",
+        "machine-intake.machine-intake-repository.markIntakeEnqueued.v1",
+        "machine-intake.machine-intake-repository.reconcileExpiredIntakeLeases.v1",
+        "machine-intake.machine-intake-repository.releaseIntakeLease.v1",
+        "machine-intake.machine-intake-repository.renewIntakeLease.v1",
+        "machine-intake.machine-intake-repository.tryAcquireIntakeLease.v1"
+      ],
+      "implementationHash": "sha256:fbc14194ceba644dd24f349a4b6b38ca74d37375bb6b1a4a23a61a8ea5b43505",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:topic-producer:topic-producer-repository:v1",
+      "databaseRoles": [
+        "topic-producer"
+      ],
+      "operationIds": [
+        "topic-producer.topic-producer-repository.beginProviderCanaryAction.v1",
+        "topic-producer.topic-producer-repository.completeGeneration.v1",
+        "topic-producer.topic-producer-repository.failGeneration.v1",
+        "topic-producer.topic-producer-repository.finishProviderCanaryAction.v1",
+        "topic-producer.topic-producer-repository.issueAppendAuthorization.v1",
+        "topic-producer.topic-producer-repository.prepareGeneration.v1",
+        "topic-producer.topic-producer-repository.recoverCommittedGeneration.v1",
+        "topic-producer.topic-producer-repository.releaseLease.v1",
+        "topic-producer.topic-producer-repository.renewLease.v1",
+        "topic-producer.topic-producer-repository.tryAcquireLease.v1"
+      ],
+      "implementationHash": "sha256:353253dc15c4279f2a3f5ccce1f23ec9047f8882c389fff64c098d23040095a9",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:supervisor-state:supervisor-state-repository:v1",
+      "databaseRoles": [
+        "supervisor-state"
+      ],
+      "operationIds": [
+        "supervisor-state.supervisor-external-action-repository-support.beginExternalActionAttempt.v1",
+        "supervisor-state.supervisor-external-action-repository-support.cancelInfrastructureDeferred.v1",
+        "supervisor-state.supervisor-external-action-repository-support.finishExternalActionAttempt.v1",
+        "supervisor-state.supervisor-external-action-repository-support.recordExternalActionProgress.v1",
+        "supervisor-state.supervisor-provider-canary-state-operations.beginProviderCanary.v1",
+        "supervisor-state.supervisor-provider-canary-state-operations.cancelProviderCanaryInfrastructureDeferred.v1",
+        "supervisor-state.supervisor-provider-canary-state-operations.finishProviderCanary.v1",
+        "supervisor-state.supervisor-state-repository.beginDispatch.v1",
+        "supervisor-state.supervisor-state-repository.cancelDispatchInfrastructureDeferred.v1",
+        "supervisor-state.supervisor-state-repository.finishDispatch.v1",
+        "supervisor-state.supervisor-state-repository.finishDispatchFailureFallback.v1",
+        "supervisor-state.supervisor-state-repository.markDispatchStarted.v1",
+        "supervisor-state.supervisor-state-repository.reconcileStaleLeases.v1",
+        "supervisor-state.supervisor-state-repository.registerCampaign.v1",
+        "supervisor-state.supervisor-state-repository.releaseCampaignLease.v1",
+        "supervisor-state.supervisor-state-repository.renewCampaignLease.v1",
+        "supervisor-state.supervisor-state-repository.resolveExternalActionRecovery.v1",
+        "supervisor-state.supervisor-state-repository.tryAcquireCampaignLease.v1"
+      ],
+      "implementationHash": "sha256:25bc41e8d1d434d20ae816ec8347d45cd1e60fad46ac96af8bce47100e49479d",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:runtime-reproducibility-publication:receipt-repository:v1",
+      "databaseRoles": [
+        "runtime-reproducibility-publication"
+      ],
+      "operationIds": [
+        "runtime-reproducibility-publication.receipt-repository.publish.v1"
+      ],
+      "implementationHash": "sha256:28c42dadbc9796829c6e4aaf4c3a5b51b933a5d1b82d1cb2be990bc22c0fc7df",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:full-research-qualification-publication:receipt-pointer-repository:v1",
+      "databaseRoles": [
+        "full-research-qualification-publication"
+      ],
+      "operationIds": [
+        "full-research-qualification-publication.receipt-pointer-repository.publish.v1",
+        "full-research-qualification-publication.receipt-pointer-repository.releasePublicationLease.v1",
+        "full-research-qualification-publication.receipt-pointer-repository.renewPublicationLease.v1",
+        "full-research-qualification-publication.receipt-pointer-repository.tryAcquirePublicationLease.v1"
+      ],
+      "implementationHash": "sha256:70b6e23845aa8a365d85326236a082359e5f3059ed6f714b3224d021fa298db3",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    },
+    {
+      "writerId": "writer:external-qualification:qualification-state-repository:v1",
+      "databaseRoles": [
+        "external-qualification"
+      ],
+      "operationIds": [
+        "external-qualification.qualification-state-repository.cancelQualificationAttemptInfrastructureDeferred.v1",
+        "external-qualification.qualification-state-repository.compareAndSwapExternalQualificationState.v1",
+        "external-qualification.qualification-state-repository.markQualificationAttemptExternalActionStarted.v1",
+        "external-qualification.qualification-state-repository.reconcileStaleQualificationAttemptLease.v1",
+        "external-qualification.qualification-state-repository.reconcileStaleQualificationAttemptReservation.v1",
+        "external-qualification.qualification-state-repository.releaseQualificationAttemptLease.v1",
+        "external-qualification.qualification-state-repository.renewQualificationAttemptLease.v1",
+        "external-qualification.qualification-state-repository.tryAcquireQualificationAttemptLease.v1"
+      ],
+      "implementationHash": "sha256:d8ecd791324df439177b2220cdb941500f6bb15442995f861ec4720332616351",
+      "protocol": "external-linearizable-reserve-apply-finalize-v1"
+    }
+  ],
+  "operations": [
+    {
+      "operationId": "native-store.store-runtime.openSqliteDatabase.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-store-runtime.mjs",
+      "entrypoint": "openSqliteDatabase",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.store-provider.applyStoreMigrations.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/store-provider.mjs",
+      "entrypoint": "applyStoreMigrations",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.store-provider.createDefaultPaperStore.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/store-provider.mjs",
+      "entrypoint": "createDefaultPaperStore",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.store-provider.openExistingWritablePaperStore.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/store-provider.mjs",
+      "entrypoint": "openExistingWritablePaperStore",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.automation-runtime-reconciler.executeAutomationRuntimeReconciliation.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/automation-runtime-reconciler.mjs",
+      "entrypoint": "executeAutomationRuntimeReconciliation",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.legacy-terminal-active-residue-settlement.executeLegacyTerminalActiveResidueSettlement.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs",
+      "entrypoint": "executeLegacyTerminalActiveResidueSettlement",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.resource-governor.createSqliteResourceGovernor.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/sqlite-resource-governor.mjs",
+      "entrypoint": "createSqliteResourceGovernor",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.resource-governor.reapDeadOwners.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/sqlite-resource-governor.mjs",
+      "entrypoint": "reapDeadOwners",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.resource-governor.acquire.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/sqlite-resource-governor.mjs",
+      "entrypoint": "acquire",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.resource-governor.renewLeaseHeartbeat.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/sqlite-resource-governor.mjs",
+      "entrypoint": "renewLeaseHeartbeat",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.resource-governor.release.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/sqlite-resource-governor.mjs",
+      "entrypoint": "release",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.theorem-quality-revision-sink.moduleSchemaProvisioning.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/theorem-quality-revision-sink.mjs",
+      "entrypoint": "moduleSchemaProvisioning",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.theorem-quality-revision-sink.record.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/theorem-quality-revision-sink.mjs",
+      "entrypoint": "record",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.workspace-registry.register.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/workspace-registry.mjs",
+      "entrypoint": "register",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.workspace-registry.transition.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/workspace-registry.mjs",
+      "entrypoint": "transition",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.workspace-registry.recordSnapshot.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/workspace-registry.mjs",
+      "entrypoint": "recordSnapshot",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.workspace-registry.qualifyForRetention.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/workspace-registry.mjs",
+      "entrypoint": "qualifyForRetention",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.legacy-history-translator-repository.persistLegacyNativeTranslations.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/legacy-history-translator-repository.mjs",
+      "entrypoint": "persistLegacyNativeTranslations",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.createCampaign.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-creation-operations.mjs",
+      "entrypoint": "createCampaign",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.createCampaignExclusive.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-creation-operations.mjs",
+      "entrypoint": "createCampaignExclusive",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.skipFutureRounds.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs",
+      "entrypoint": "skipFutureRounds",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.pauseCampaign.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs",
+      "entrypoint": "pauseCampaign",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.resumeCampaign.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs",
+      "entrypoint": "resumeCampaign",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.extendCampaign.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs",
+      "entrypoint": "extendCampaign",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.cancelCampaign.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs",
+      "entrypoint": "cancelCampaign",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.cancelNode.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs",
+      "entrypoint": "cancelNode",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.retryNode.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs",
+      "entrypoint": "retryNode",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.recordUsage.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs",
+      "entrypoint": "recordUsage",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.failCampaign.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs",
+      "entrypoint": "failCampaign",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lifecycle.stopCampaign.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs",
+      "entrypoint": "stopCampaign",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.recoverExpiredLeases.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lease-operations.mjs",
+      "entrypoint": "recoverExpiredLeases",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.renewNodeLease.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lease-operations.mjs",
+      "entrypoint": "renewNodeLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.claimReady.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-lease-operations.mjs",
+      "entrypoint": "claimReady",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.startNode.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-node-attempt-operations.mjs",
+      "entrypoint": "startNode",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.failNode.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-node-attempt-operations.mjs",
+      "entrypoint": "failNode",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.cancelNodeInfrastructureDeferred.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-node-infrastructure-operations.mjs",
+      "entrypoint": "cancelNodeInfrastructureDeferred",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.reserveNodeInfrastructureUsage.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-node-infrastructure-operations.mjs",
+      "entrypoint": "reserveNodeInfrastructureUsage",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.markNodeExternalActionStarted.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-node-external-action-operations.mjs",
+      "entrypoint": "markNodeExternalActionStarted",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-lease.completeNodeExternalAction.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-node-external-action-operations.mjs",
+      "entrypoint": "completeNodeExternalAction",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-prepared-integration.prepareNodeResult.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-prepared-integration-operations.mjs",
+      "entrypoint": "prepareNodeResult",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-prepared-integration.beginNodeResultIntegration.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-prepared-integration-operations.mjs",
+      "entrypoint": "beginNodeResultIntegration",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-prepared-integration.markNodeResultIntegrated.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-prepared-integration-operations.mjs",
+      "entrypoint": "markNodeResultIntegrated",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-prepared-integration.completeNode.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-prepared-integration-operations.mjs",
+      "entrypoint": "completeNode",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-telemetry-operations.recordTelemetry.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-telemetry-operations.mjs",
+      "entrypoint": "recordTelemetry",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-release-authority-repository.promoteCompletedRelease.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-release-authority-repository.mjs",
+      "entrypoint": "promoteCompletedRelease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.campaign-store.assertLiveNodeAttempt.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-campaign-store.mjs",
+      "entrypoint": "assertLiveNodeAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.job-receipt-store.createJob.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-job-receipt-store.mjs",
+      "entrypoint": "createJob",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.job-receipt-store.acquireLease.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-job-receipt-store.mjs",
+      "entrypoint": "acquireLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.job-receipt-store.recordAttempt.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-job-receipt-store.mjs",
+      "entrypoint": "recordAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.job-receipt-store.renewAttemptLease.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-job-receipt-store.mjs",
+      "entrypoint": "renewAttemptLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.job-receipt-store.completeJob.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-job-receipt-store.mjs",
+      "entrypoint": "completeJob",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.job-receipt-store.failJob.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-job-receipt-store.mjs",
+      "entrypoint": "failJob",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.receipt-ledger.record.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-receipt-ledger.mjs",
+      "entrypoint": "record",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.receipt-ledger-qualification.qualify.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs",
+      "entrypoint": "qualify",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.workflow-state-store.put.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/persistence/sqlite-workflow-state-store.mjs",
+      "entrypoint": "put",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.enqueueAuthorized.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-outbox-operations.mjs",
+      "entrypoint": "enqueueAuthorized",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.enqueue.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-outbox-operations.mjs",
+      "entrypoint": "enqueue",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.registerProviderCapability.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-outbox-operations.mjs",
+      "entrypoint": "registerProviderCapability",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.claimPending.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-outbox-operations.mjs",
+      "entrypoint": "claimPending",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.heartbeatClaim.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-outbox-operations.mjs",
+      "entrypoint": "heartbeatClaim",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.acquireReleaseLock.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-outbox-operations.mjs",
+      "entrypoint": "acquireReleaseLock",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.recoverPending.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-outbox-operations.mjs",
+      "entrypoint": "recoverPending",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.prepareAutonomousSubmission.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/autonomous-submission-outbox-repository.mjs",
+      "entrypoint": "prepareAutonomousSubmission",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.beginAutonomousSubmissionAttempt.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/autonomous-submission-outbox-repository.mjs",
+      "entrypoint": "beginAutonomousSubmissionAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-outbox-operations.recordAutonomousSubmissionOutcome.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/autonomous-submission-outbox-repository.mjs",
+      "entrypoint": "recordAutonomousSubmissionOutcome",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "submission-handoff.delivery-outbox-operations.prepareAutonomousSubmission.v1",
+      "databaseRole": "submission-handoff",
+      "sourceFile": "paper-adapters/automation/autonomous-submission-outbox-repository.mjs",
+      "entrypoint": "prepareAutonomousSubmission",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "submission-handoff.delivery-outbox-operations.beginAutonomousSubmissionAttempt.v1",
+      "databaseRole": "submission-handoff",
+      "sourceFile": "paper-adapters/automation/autonomous-submission-outbox-repository.mjs",
+      "entrypoint": "beginAutonomousSubmissionAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "submission-handoff.delivery-outbox-operations.recordAutonomousSubmissionOutcome.v1",
+      "databaseRole": "submission-handoff",
+      "sourceFile": "paper-adapters/automation/autonomous-submission-outbox-repository.mjs",
+      "entrypoint": "recordAutonomousSubmissionOutcome",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-response-operations.recordResponse.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-response-operations.mjs",
+      "entrypoint": "recordResponse",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-response-operations.quarantineInvalidIntake.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-response-operations.mjs",
+      "entrypoint": "quarantineInvalidIntake",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-redrive-operations.scheduleRedrive.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-redrive-operations.mjs",
+      "entrypoint": "scheduleRedrive",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-redrive-operations.reviewAmbiguousResult.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-redrive-operations.mjs",
+      "entrypoint": "reviewAmbiguousResult",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-redrive-operations.enqueueRedrive.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-redrive-operations.mjs",
+      "entrypoint": "enqueueRedrive",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-redrive-operations.deadLetter.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-redrive-operations.mjs",
+      "entrypoint": "deadLetter",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-consumption-operations.release.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-consumption-operations.mjs",
+      "entrypoint": "release",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-consumption-operations.advanceResponseCursor.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-consumption-operations.mjs",
+      "entrypoint": "advanceResponseCursor",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-consumption-operations.claimNextResponse.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-consumption-operations.mjs",
+      "entrypoint": "claimNextResponse",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.delivery-consumption-operations.completeResponseConsumption.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/submission/sqlite-delivery-consumption-operations.mjs",
+      "entrypoint": "completeResponseConsumption",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "native-store.runtime-hygiene.moduleSchemaProvisioning.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/runtime-hygiene.mjs",
+      "entrypoint": "moduleSchemaProvisioning",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.hepta-store.moduleSchemaProvisioning.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/hepta-store.mjs",
+      "entrypoint": "moduleSchemaProvisioning",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.hepta-store.runSql.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/hepta-store.mjs",
+      "entrypoint": "runSql",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.hepta-store.initialize.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/hepta-store.mjs",
+      "entrypoint": "initialize",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.hepta-store.backup.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/hepta-store.mjs",
+      "entrypoint": "backup",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.hepta-store.restoreDrill.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/hepta-store.mjs",
+      "entrypoint": "restoreDrill",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository-open.openAutonomousResearchMachineIntakeRepository.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository-open.mjs",
+      "entrypoint": "openAutonomousResearchMachineIntakeRepository",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository-support.createMachineIntakeSchema.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository-support.mjs",
+      "entrypoint": "createMachineIntakeSchema",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository-support.migrateLegacyMachineIntakeSchema.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository-support.mjs",
+      "entrypoint": "migrateLegacyMachineIntakeSchema",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-authority.bindMachineIntakeAuthorityGenesis.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-authority.mjs",
+      "entrypoint": "bindMachineIntakeAuthorityGenesis",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-authority.bindConfiguredSourceAuthorityHash.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-authority.mjs",
+      "entrypoint": "bindConfiguredSourceAuthorityHash",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-authority.bindAuthorizedMachineProducerProfileHash.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-authority.mjs",
+      "entrypoint": "bindAuthorizedMachineProducerProfileHash",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.appendIntake.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "appendIntake",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.tryAcquireIntakeLease.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "tryAcquireIntakeLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.renewIntakeLease.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "renewIntakeLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.releaseIntakeLease.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "releaseIntakeLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.deferIntake.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "deferIntake",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.markIntakeEnqueued.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "markIntakeEnqueued",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.markEnqueuedIntakeInvalid.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "markEnqueuedIntakeInvalid",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.reconcileExpiredIntakeLeases.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "reconcileExpiredIntakeLeases",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "machine-intake.machine-intake-repository.createAutonomousResearchMachineIntakeRepository.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-repository.mjs",
+      "entrypoint": "createAutonomousResearchMachineIntakeRepository",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-authority-rotation.applyRotation.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-authority-rotation.mjs",
+      "entrypoint": "applyRotation",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-authority-rotation.applyAutonomousResearchMachineIntakeAuthorityRotation.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-authority-rotation.mjs",
+      "entrypoint": "applyAutonomousResearchMachineIntakeAuthorityRotation",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-authority-rotation-state.attachExisting.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-adapters/automation/autonomous-research-machine-intake-authority-rotation-state.mjs",
+      "entrypoint": "attachExisting",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository-support.markLegacyOutstandingProviderCanaries.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-repository-support.mjs",
+      "entrypoint": "markLegacyOutstandingProviderCanaries",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository-support.createTopicProducerSchema.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-repository-support.mjs",
+      "entrypoint": "createTopicProducerSchema",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.createAutonomousResearchTopicProducerRepository.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-repository.mjs",
+      "entrypoint": "createAutonomousResearchTopicProducerRepository",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.completeGeneration.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-repository.mjs",
+      "entrypoint": "completeGeneration",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.issueAppendAuthorization.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-repository.mjs",
+      "entrypoint": "issueAppendAuthorization",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.prepareGeneration.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-repository.mjs",
+      "entrypoint": "prepareGeneration",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.recoverCommittedGeneration.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-repository.mjs",
+      "entrypoint": "recoverCommittedGeneration",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.tryAcquireLease.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-lease-operations.mjs",
+      "entrypoint": "tryAcquireLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.renewLease.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-lease-operations.mjs",
+      "entrypoint": "renewLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.releaseLease.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-lease-operations.mjs",
+      "entrypoint": "releaseLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.beginProviderCanaryAction.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-canary-journal-operations.mjs",
+      "entrypoint": "beginProviderCanaryAction",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.finishProviderCanaryAction.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-canary-journal-operations.mjs",
+      "entrypoint": "finishProviderCanaryAction",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "topic-producer.topic-producer-repository.failGeneration.v1",
+      "databaseRole": "topic-producer",
+      "sourceFile": "paper-adapters/automation/autonomous-research-topic-producer-canary-journal-operations.mjs",
+      "entrypoint": "failGeneration",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.createAutonomousResearchSupervisorStateRepository.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs",
+      "entrypoint": "createAutonomousResearchSupervisorStateRepository",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.registerCampaign.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs",
+      "entrypoint": "registerCampaign",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.reconcileStaleLeases.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs",
+      "entrypoint": "reconcileStaleLeases",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.tryAcquireCampaignLease.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs",
+      "entrypoint": "tryAcquireCampaignLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.renewCampaignLease.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs",
+      "entrypoint": "renewCampaignLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.releaseCampaignLease.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs",
+      "entrypoint": "releaseCampaignLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.resolveExternalActionRecovery.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs",
+      "entrypoint": "resolveExternalActionRecovery",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.beginDispatch.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-dispatch-state-operations.mjs",
+      "entrypoint": "beginDispatch",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.markDispatchStarted.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-dispatch-state-operations.mjs",
+      "entrypoint": "markDispatchStarted",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.cancelDispatchInfrastructureDeferred.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-dispatch-state-operations.mjs",
+      "entrypoint": "cancelDispatchInfrastructureDeferred",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.finishDispatch.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-dispatch-state-operations.mjs",
+      "entrypoint": "finishDispatch",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-state-repository.finishDispatchFailureFallback.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-dispatch-state-operations.mjs",
+      "entrypoint": "finishDispatchFailureFallback",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-external-action-repository-support.installAutonomousResearchSupervisorExternalActionJournalSchema.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-external-action-journal-storage.mjs",
+      "entrypoint": "installAutonomousResearchSupervisorExternalActionJournalSchema",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "supervisor-state.supervisor-external-action-repository-support.beginExternalActionAttempt.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-external-action-repository-support.mjs",
+      "entrypoint": "beginExternalActionAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-external-action-repository-support.cancelInfrastructureDeferred.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-external-action-repository-support.mjs",
+      "entrypoint": "cancelInfrastructureDeferred",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-external-action-repository-support.finishExternalActionAttempt.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-external-action-repository-support.mjs",
+      "entrypoint": "finishExternalActionAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-external-action-repository-support.recordExternalActionProgress.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-external-action-repository-support.mjs",
+      "entrypoint": "recordExternalActionProgress",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-provider-canary-state-operations.beginProviderCanary.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-provider-canary-state-operations.mjs",
+      "entrypoint": "beginProviderCanary",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-provider-canary-state-operations.cancelProviderCanaryInfrastructureDeferred.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-provider-canary-state-operations.mjs",
+      "entrypoint": "cancelProviderCanaryInfrastructureDeferred",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "supervisor-state.supervisor-provider-canary-state-operations.finishProviderCanary.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-provider-canary-state-operations.mjs",
+      "entrypoint": "finishProviderCanary",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "resident-instance.supervisor-instance-repository.createAutonomousResearchSupervisorInstanceRepository.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-instance-repository.mjs",
+      "entrypoint": "createAutonomousResearchSupervisorInstanceRepository",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "resident-instance.supervisor-instance-repository.acquireInstanceLease.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-instance-repository.mjs",
+      "entrypoint": "acquireInstanceLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "resident-instance.supervisor-instance-repository.markStartupReconciled.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-instance-repository.mjs",
+      "entrypoint": "markStartupReconciled",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "resident-instance.supervisor-instance-repository.markMachineIntakeReconciled.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-instance-repository.mjs",
+      "entrypoint": "markMachineIntakeReconciled",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "resident-instance.supervisor-instance-repository.markMachineIntakeReconciliationFailed.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-instance-repository.mjs",
+      "entrypoint": "markMachineIntakeReconciliationFailed",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "resident-instance.supervisor-instance-repository.heartbeatInstanceLease.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-instance-repository.mjs",
+      "entrypoint": "heartbeatInstanceLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "resident-instance.supervisor-instance-repository.releaseInstanceLease.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-supervisor-instance-repository.mjs",
+      "entrypoint": "releaseInstanceLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "resident-instance.resident-cycle-intent-repository.complete.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-resident-cycle-intent-repository.mjs",
+      "entrypoint": "complete",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "resident-instance.resident-cycle-intent-repository.completeAutonomousResearchResidentCycleIntent.v1",
+      "databaseRole": "resident-instance",
+      "sourceFile": "paper-adapters/automation/autonomous-research-resident-cycle-intent-repository.mjs",
+      "entrypoint": "completeAutonomousResearchResidentCycleIntent",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "runtime-reproducibility-refresh.runtime-refresh-state-repository.createAutonomousResearchRuntimeRefreshStateRepository.v1",
+      "databaseRole": "runtime-reproducibility-refresh",
+      "sourceFile": "paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs",
+      "entrypoint": "createAutonomousResearchRuntimeRefreshStateRepository",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "runtime-reproducibility-refresh.runtime-refresh-state-repository.reconcileStaleRefreshLease.v1",
+      "databaseRole": "runtime-reproducibility-refresh",
+      "sourceFile": "paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs",
+      "entrypoint": "reconcileStaleRefreshLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "runtime-reproducibility-refresh.runtime-refresh-state-repository.tryAcquireRefreshLease.v1",
+      "databaseRole": "runtime-reproducibility-refresh",
+      "sourceFile": "paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs",
+      "entrypoint": "tryAcquireRefreshLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "runtime-reproducibility-refresh.runtime-refresh-state-repository.renewRefreshLease.v1",
+      "databaseRole": "runtime-reproducibility-refresh",
+      "sourceFile": "paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs",
+      "entrypoint": "renewRefreshLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "runtime-reproducibility-refresh.runtime-refresh-state-repository.releaseRefreshLease.v1",
+      "databaseRole": "runtime-reproducibility-refresh",
+      "sourceFile": "paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs",
+      "entrypoint": "releaseRefreshLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "runtime-reproducibility-refresh.runtime-refresh-state-repository.reserveRefreshAttempt.v1",
+      "databaseRole": "runtime-reproducibility-refresh",
+      "sourceFile": "paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs",
+      "entrypoint": "reserveRefreshAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "runtime-reproducibility-refresh.runtime-refresh-state-repository.completeRefreshAttempt.v1",
+      "databaseRole": "runtime-reproducibility-refresh",
+      "sourceFile": "paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs",
+      "entrypoint": "completeRefreshAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "runtime-reproducibility-refresh.runtime-refresh-state-repository.failRefreshAttempt.v1",
+      "databaseRole": "runtime-reproducibility-refresh",
+      "sourceFile": "paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs",
+      "entrypoint": "failRefreshAttempt",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.createAutonomousResearchQualificationStateRepository.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-state-repository.mjs",
+      "entrypoint": "createAutonomousResearchQualificationStateRepository",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.compareAndSwapExternalQualificationState.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-state-repository.mjs",
+      "entrypoint": "compareAndSwapExternalQualificationState",
+      "mutationClass": "business-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.tryAcquireQualificationAttemptLease.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-state-repository.mjs",
+      "entrypoint": "tryAcquireQualificationAttemptLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.renewQualificationAttemptLease.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-state-repository.mjs",
+      "entrypoint": "renewQualificationAttemptLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.releaseQualificationAttemptLease.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-state-repository.mjs",
+      "entrypoint": "releaseQualificationAttemptLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.reconcileStaleQualificationAttemptLease.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-state-repository.mjs",
+      "entrypoint": "reconcileStaleQualificationAttemptLease",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.markQualificationAttemptExternalActionStarted.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-attempt-infrastructure-operations.mjs",
+      "entrypoint": "markQualificationAttemptExternalActionStarted",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.cancelQualificationAttemptInfrastructureDeferred.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-attempt-infrastructure-operations.mjs",
+      "entrypoint": "cancelQualificationAttemptInfrastructureDeferred",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "external-qualification.qualification-state-repository.reconcileStaleQualificationAttemptReservation.v1",
+      "databaseRole": "external-qualification",
+      "sourceFile": "paper-adapters/automation/autonomous-research-qualification-attempt-infrastructure-operations.mjs",
+      "entrypoint": "reconcileStaleQualificationAttemptReservation",
+      "mutationClass": "lease-or-budget-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "runtime-reproducibility-publication.receipt-repository.ensureSchema.v1",
+      "databaseRole": "runtime-reproducibility-publication",
+      "sourceFile": "paper-adapters/automation/runtime-image-reproducibility-receipt-repository.mjs",
+      "entrypoint": "ensureSchema",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "runtime-reproducibility-publication.receipt-repository.openWritableDatabase.v1",
+      "databaseRole": "runtime-reproducibility-publication",
+      "sourceFile": "paper-adapters/automation/runtime-image-reproducibility-receipt-repository.mjs",
+      "entrypoint": "openWritableDatabase",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "runtime-reproducibility-publication.receipt-repository.provisionDatabase.v1",
+      "databaseRole": "runtime-reproducibility-publication",
+      "sourceFile": "paper-adapters/automation/runtime-image-reproducibility-receipt-repository.mjs",
+      "entrypoint": "provisionDatabase",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "runtime-reproducibility-publication.receipt-repository.publish.v1",
+      "databaseRole": "runtime-reproducibility-publication",
+      "sourceFile": "paper-adapters/automation/runtime-image-reproducibility-receipt-repository.mjs",
+      "entrypoint": "publish",
+      "mutationClass": "publication-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "runtime-reproducibility-publication.receipt-repository.recoverPendingPublication.v1",
+      "databaseRole": "runtime-reproducibility-publication",
+      "sourceFile": "paper-adapters/automation/runtime-image-reproducibility-receipt-repository.mjs",
+      "entrypoint": "recoverPendingPublication",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "full-research-qualification-publication.receipt-pointer-repository.writableDatabase.v1",
+      "databaseRole": "full-research-qualification-publication",
+      "sourceFile": "paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs",
+      "entrypoint": "writableDatabase",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "full-research-qualification-publication.receipt-pointer-repository.provisionDatabase.v1",
+      "databaseRole": "full-research-qualification-publication",
+      "sourceFile": "paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs",
+      "entrypoint": "provisionDatabase",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "full-research-qualification-publication.receipt-pointer-repository.ensureSchema.v1",
+      "databaseRole": "full-research-qualification-publication",
+      "sourceFile": "paper-adapters/automation/full-research-qualification-receipt-pointer-repository-support.mjs",
+      "entrypoint": "ensureSchema",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "full-research-qualification-publication.receipt-pointer-repository.tryAcquirePublicationLease.v1",
+      "databaseRole": "full-research-qualification-publication",
+      "sourceFile": "paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs",
+      "entrypoint": "tryAcquirePublicationLease",
+      "mutationClass": "publication-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "full-research-qualification-publication.receipt-pointer-repository.renewPublicationLease.v1",
+      "databaseRole": "full-research-qualification-publication",
+      "sourceFile": "paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs",
+      "entrypoint": "renewPublicationLease",
+      "mutationClass": "publication-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "full-research-qualification-publication.receipt-pointer-repository.releasePublicationLease.v1",
+      "databaseRole": "full-research-qualification-publication",
+      "sourceFile": "paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs",
+      "entrypoint": "releasePublicationLease",
+      "mutationClass": "publication-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "full-research-qualification-publication.receipt-pointer-repository.publish.v1",
+      "databaseRole": "full-research-qualification-publication",
+      "sourceFile": "paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs",
+      "entrypoint": "publish",
+      "mutationClass": "publication-dml",
+      "protocolStatus": "coordinator-integrated-reserve-apply-finalize-v1",
+      "coordinatorIntegrated": true
+    },
+    {
+      "operationId": "full-research-qualification-publication.receipt-pointer-repository.recoverPendingPublication.v1",
+      "databaseRole": "full-research-qualification-publication",
+      "sourceFile": "paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs",
+      "entrypoint": "recoverPendingPublication",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "machine-intake.machine-intake-composition.composeAutonomousResearchMachineIntakePlane.v1",
+      "databaseRole": "machine-intake",
+      "sourceFile": "paper-composition/automation/autonomous-research-machine-intake-composition.mjs",
+      "entrypoint": "composeAutonomousResearchMachineIntakePlane",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "supervisor-state.supervisor-composition.composeAutonomousResearchSupervisor.v1",
+      "databaseRole": "supervisor-state",
+      "sourceFile": "paper-composition/automation/autonomous-research-supervisor-composition.mjs",
+      "entrypoint": "composeAutonomousResearchSupervisor",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.automation-reconcile.moduleSchemaProvisioning.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/automation-reconcile.mjs",
+      "entrypoint": "moduleSchemaProvisioning",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.hepta-store.writableStore.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/hepta-store.mjs",
+      "entrypoint": "writableStore",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.repair-receipt-ledger-integrity.moduleSchemaProvisioning.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-core/bin/repair-receipt-ledger-integrity.mjs",
+      "entrypoint": "moduleSchemaProvisioning",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.state-backup-repository.drillDatabaseCopiesWithReplay.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/autonomous-research-state-backup-journal-replay.mjs",
+      "entrypoint": "drillDatabaseCopiesWithReplay",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.state-backup-repository.insertReplayedAuthorityRecords.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "paper-adapters/automation/autonomous-research-state-backup-journal-replay.mjs",
+      "entrypoint": "insertReplayedAuthorityRecords",
+      "mutationClass": "cross-database-maintenance",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.001_initial.migration001_initial.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/001_initial.sql",
+      "entrypoint": "migration001_initial",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.002_runtime_ledger.migration002_runtime_ledger.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/002_runtime_ledger.sql",
+      "entrypoint": "migration002_runtime_ledger",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.003_evidence_isolation.migration003_evidence_isolation.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/003_evidence_isolation.sql",
+      "entrypoint": "migration003_evidence_isolation",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.004_automation_campaigns.migration004_automation_campaigns.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/004_automation_campaigns.sql",
+      "entrypoint": "migration004_automation_campaigns",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.005_automation_operations.migration005_automation_operations.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/005_automation_operations.sql",
+      "entrypoint": "migration005_automation_operations",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.006_multiprocess_automation.migration006_multiprocess_automation.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/006_multiprocess_automation.sql",
+      "entrypoint": "migration006_multiprocess_automation",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.007_campaign_lineage_backfill.migration007_campaign_lineage_backfill.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/007_campaign_lineage_backfill.sql",
+      "entrypoint": "migration007_campaign_lineage_backfill",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.008_reviewer_identity_backfill.migration008_reviewer_identity_backfill.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/008_reviewer_identity_backfill.sql",
+      "entrypoint": "migration008_reviewer_identity_backfill",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.009_resource_admission_queue.migration009_resource_admission_queue.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/009_resource_admission_queue.sql",
+      "entrypoint": "migration009_resource_admission_queue",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.010_resource_admission_metadata.migration010_resource_admission_metadata.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/010_resource_admission_metadata.sql",
+      "entrypoint": "migration010_resource_admission_metadata",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.011_workspace_lineage.migration011_workspace_lineage.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/011_workspace_lineage.sql",
+      "entrypoint": "migration011_workspace_lineage",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.012_schema_metadata_consistency.migration012_schema_metadata_consistency.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/012_schema_metadata_consistency.sql",
+      "entrypoint": "migration012_schema_metadata_consistency",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.013_campaign_telemetry.migration013_campaign_telemetry.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/013_campaign_telemetry.sql",
+      "entrypoint": "migration013_campaign_telemetry",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.014_legacy_native_lineage.migration014_legacy_native_lineage.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/014_legacy_native_lineage.sql",
+      "entrypoint": "migration014_legacy_native_lineage",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.015_submission_boundary_hardening.migration015_submission_boundary_hardening.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/015_submission_boundary_hardening.sql",
+      "entrypoint": "migration015_submission_boundary_hardening",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.016_submission_delivery_leases.migration016_submission_delivery_leases.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/016_submission_delivery_leases.sql",
+      "entrypoint": "migration016_submission_delivery_leases",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.017_trusted_evidence_and_response_consumption.migration017_trusted_evidence_and_response_consumption.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/017_trusted_evidence_and_response_consumption.sql",
+      "entrypoint": "migration017_trusted_evidence_and_response_consumption",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.018_append_only_receipt_ledger.migration018_append_only_receipt_ledger.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/018_append_only_receipt_ledger.sql",
+      "entrypoint": "migration018_append_only_receipt_ledger",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.019_effective_receipt_ledger.migration019_effective_receipt_ledger.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/019_effective_receipt_ledger.sql",
+      "entrypoint": "migration019_effective_receipt_ledger",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.020_monotonic_receipt_qualification.migration020_monotonic_receipt_qualification.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/020_monotonic_receipt_qualification.sql",
+      "entrypoint": "migration020_monotonic_receipt_qualification",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.021_job_lease_fencing.migration021_job_lease_fencing.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/021_job_lease_fencing.sql",
+      "entrypoint": "migration021_job_lease_fencing",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.022_campaign_attempt_fencing.migration022_campaign_attempt_fencing.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/022_campaign_attempt_fencing.sql",
+      "entrypoint": "migration022_campaign_attempt_fencing",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.023_workspace_retention_qualification.migration023_workspace_retention_qualification.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/023_workspace_retention_qualification.sql",
+      "entrypoint": "migration023_workspace_retention_qualification",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.024_submission_outbox_delivery_kind.migration024_submission_outbox_delivery_kind.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/024_submission_outbox_delivery_kind.sql",
+      "entrypoint": "migration024_submission_outbox_delivery_kind",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    },
+    {
+      "operationId": "native-store.025_external_autonomous_submission_handoff.migration025_external_autonomous_submission_handoff.v1",
+      "databaseRole": "native-store",
+      "sourceFile": "store/migrations/025_external_autonomous_submission_handoff.sql",
+      "entrypoint": "migration025_external_autonomous_submission_handoff",
+      "mutationClass": "schema-or-genesis-ddl",
+      "protocolStatus": "uncovered-no-coordinator-integration",
+      "coordinatorIntegrated": false
+    }
+  ],
+  "coverage": {
+    "requiredRoleCount": 10,
+    "coveredRoleCount": 10,
+    "coveredDatabaseRoles": [
+      "external-qualification",
+      "full-research-qualification-publication",
+      "machine-intake",
+      "native-store",
+      "resident-instance",
+      "runtime-reproducibility-publication",
+      "runtime-reproducibility-refresh",
+      "submission-handoff",
+      "supervisor-state",
+      "topic-producer"
+    ],
+    "percent": 100
+  }
+}

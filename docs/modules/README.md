@@ -130,3 +130,18 @@ components alone establishes full runtime activation or command acceptance.
 actual SQLite backup, durable pending finalization, replay into isolated copies,
 resident leases and current epoch evidence. CLI assembly and external durability
 qualification remain separate gaps.
+
+[Authority inspection](ONLINE_AUTHORITY_INSPECTION_HANDOFF.md) covers actual active
+and passive signature verification, retained currentness and diagnostic status.
+[State safety projection](STATE_SAFETY_PROJECTION_HANDOFF.md) documents complete
+canonical-input report comparison and the remaining noncanonical date boundary.
+Neither diagnostic report constructs a runtime activation capability.
+
+[Pristine runtime baseline](PRISTINE_RUNTIME_STATE_HANDOFF.md) covers actual
+ten-database preconditions, migration state, machine-genesis verification and
+immutable receipt-ledger validation. Full schema transition orchestration remains
+a separate integration step.
+
+[Native state backup command](STATE_BACKUP_CLI_HANDOFF.md) documents all five
+operator modes, concrete process clients, independent renewal, actual failure
+reports and deliberate input/SQLite compatibility differences.

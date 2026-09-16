@@ -531,3 +531,111 @@ fn actual_schema_readiness_rejects_spliced_signatures_raw_member_drift_filesyste
         );
     }
 }
+
+#[test]
+fn real_schema_readiness_checks_final_pinned_io_age_and_clock_without_extra_rpc() {
+    use hepta_paper_service::{
+        online_schema_transition::inspect_online_schema_transition_readiness_v1,
+        state_database_inventory::observe_state_database_inventory_v1,
+    };
+    use sha2::{Digest, Sha256};
+    let root = Temp::new();
+    let (fixture, server) = actual_runtime(&root);
+    let runtime = Path::new(fixture["runtimeRoot"].as_str().unwrap());
+    let inventory =
+        observe_state_database_inventory_v1(runtime, &fixture["stateDatabaseManifest"]).unwrap();
+    // Pin a real stricter trust document: all historical and live receipts are
+    // still produced and signed by the original authority in its own process.
+    let path = Path::new(fixture["configurationPath"].as_str().unwrap());
+    let mut configuration: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    configuration["maximumObservationAgeMs"] = json!(1000);
+    let bytes = serde_json::to_vec(&configuration).unwrap();
+    fs::write(path, &bytes).unwrap();
+    let pin = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+    let last = Arc::new(std::sync::Mutex::new(None));
+    let mut authority = PinnedMutationAuthorityV1::load(
+        path,
+        &pin,
+        LiveTransport {
+            server: server.clone(),
+            last_request: last.clone(),
+            bad_signature: false,
+            change_audit: None,
+        },
+    )
+    .unwrap();
+    let now = canonical_instant_millis(fixture["now"].as_str().unwrap()).unwrap();
+    let ready = inspect_online_schema_transition_readiness_v1(
+        runtime,
+        &inventory,
+        &fixture["writerManifest"],
+        &mut authority,
+        &mut || Ok(now),
+    )
+    .unwrap();
+    let expires = canonical_instant_millis(ready.value()["expiresAt"].as_str().unwrap()).unwrap();
+    assert!(expires > now + 1001, "age rejection must precede expiry");
+    ready
+        .assert_current(&inventory, &authority, &mut || Ok(now + 1000))
+        .unwrap();
+    let prior_request = last.lock().unwrap().clone();
+    for (values, code) in [
+        (
+            [now + 1000, now + 1001],
+            "autonomous_research_online_schema_transition_observation_invalid",
+        ),
+        (
+            [now + 1, now],
+            "autonomous_research_online_schema_transition_readiness_clock_invalid",
+        ),
+        (
+            [now - 1, now - 1],
+            "autonomous_research_online_schema_transition_readiness_clock_invalid",
+        ),
+    ] {
+        let mut samples = values.into_iter();
+        let error = ready
+            .assert_current(&inventory, &authority, &mut || {
+                Ok(samples.next().unwrap_or(values[1]))
+            })
+            .expect_err("late or rolling-back proof must fail");
+        assert_eq!(error.code, code);
+        assert_eq!(
+            *last.lock().unwrap(),
+            prior_request,
+            "retained checks invoke no transport"
+        );
+    }
+    for (values, code) in [
+        (
+            [now, now, now + 1000, now + 1001],
+            "autonomous_research_online_schema_transition_observation_invalid",
+        ),
+        (
+            [now, now, now + 1, now],
+            "autonomous_research_online_schema_transition_readiness_clock_invalid",
+        ),
+        (
+            [now, now - 1, now - 1, now - 1],
+            "autonomous_research_online_schema_transition_readiness_clock_invalid",
+        ),
+    ] {
+        *last.lock().unwrap() = None;
+        let mut samples = values.into_iter();
+        let error = inspect_online_schema_transition_readiness_v1(
+            runtime,
+            &inventory,
+            &fixture["writerManifest"],
+            &mut authority,
+            &mut || Ok(samples.next().unwrap_or(values[3])),
+        )
+        .err()
+        .expect("final construction must reject stale or rolling-back evidence");
+        assert_eq!(error.code, code);
+        assert_eq!(
+            last.lock().unwrap().is_some(),
+            values[1] >= values[0],
+            "rollback before RPC has zero external action"
+        );
+    }
+}

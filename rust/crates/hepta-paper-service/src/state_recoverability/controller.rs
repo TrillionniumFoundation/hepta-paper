@@ -311,7 +311,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
     fn ready(
         &mut self,
         mode: &str,
-        sources: CurrentRestoreSourcesV1,
+        mut sources: CurrentRestoreSourcesV1,
         observation: LiveBackupHeadObservationV1,
         required: i64,
     ) -> Result<Value> {
@@ -362,6 +362,11 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
                 return Err(self.enter_fatal(vec![suffix("verified_head_rollback")]));
             }
         }
+        // A newer signed head already deferred above. Its legitimately newer
+        // rows must not be compared against an older range as a fatal mismatch.
+        self.service
+            .assert_source_effective_state(&mut sources, now.0)?;
+        let s = sources.source.inspection();
         // Take the authorization clock sample after every file, SQLite and
         // signature operation. These final validity checks are memory-only.
         let completed = self.now()?;
@@ -507,3 +512,5 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1> Recove
         self.reconcile_with_validity(0)
     }
 }
+
+mod heartbeat;

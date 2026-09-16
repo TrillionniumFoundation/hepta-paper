@@ -59,12 +59,22 @@ fn release_state_contract_matches_node_oracle() {
     mismatch["allTags"] = serde_json::json!(["v0.21.0", "v0.22.0"]);
     let mut invalid = finalized.clone();
     invalid["packageJson"]["packageManager"] = "npm@9".into();
+    let mut numeric_version = base.clone();
+    numeric_version["packageJson"]["version"] = 1.into();
+    numeric_version["packageLock"]["version"] = 1.into();
+    numeric_version["packageLock"]["packages"][""]["version"] = 1.into();
+    let mut array_version = base.clone();
+    array_version["packageJson"]["version"] = serde_json::json!(["0.21.0"]);
+    array_version["packageLock"]["version"] = serde_json::json!(["0.21.0"]);
+    array_version["packageLock"]["packages"][""]["version"] = serde_json::json!(["0.21.0"]);
     let requests = serde_json::json!([
         development,
         finalized,
         released,
         mismatch,
         invalid,
+        numeric_version,
+        array_version,
         Value::Null
     ]);
     let expected = oracle(&requests);

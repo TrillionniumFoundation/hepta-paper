@@ -12,7 +12,7 @@ pub enum ReleaseStateError {
 }
 
 fn version(value: Option<&Value>) -> Option<[u64; 3]> {
-    let value = value?.as_str()?;
+    let value = javascript_string_or_empty(value);
     let mut parts = value.split('.');
     let parsed: Vec<u64> = parts
         .by_ref()
@@ -30,7 +30,57 @@ fn version(value: Option<&Value>) -> Option<[u64; 3]> {
 }
 
 fn text(value: Option<&Value>) -> String {
-    value.and_then(Value::as_str).unwrap_or_default().to_owned()
+    javascript_string_or_empty(value)
+}
+
+fn javascript_string(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_owned(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| match value {
+                Value::Null => String::new(),
+                _ => javascript_string(value),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Object(_) => "[object Object]".to_owned(),
+    }
+}
+
+fn javascript_string_or_empty(value: Option<&Value>) -> String {
+    value
+        .filter(|value| javascript_truthy(value))
+        .map(javascript_string)
+        .unwrap_or_default()
+}
+
+fn javascript_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(value) => value.as_f64().is_some_and(|value| value != 0.0),
+        Value::String(value) => !value.is_empty(),
+        // Arrays and objects are truthy in JavaScript, including empty ones.
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
+fn javascript_strict_equal(left: Option<&Value>, right: Option<&Value>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(Value::Null), Some(Value::Null)) => true,
+        (Some(Value::Bool(left)), Some(Value::Bool(right))) => left == right,
+        (Some(Value::Number(left)), Some(Value::Number(right))) => left.as_f64() == right.as_f64(),
+        (Some(Value::String(left)), Some(Value::String(right))) => left == right,
+        // Distinct JSON object/array locations are distinct JavaScript references.
+        (Some(Value::Array(left)), Some(Value::Array(right))) => std::ptr::eq(left, right),
+        (Some(Value::Object(left)), Some(Value::Object(right))) => std::ptr::eq(left, right),
+        _ => false,
+    }
 }
 
 fn exact_line_count(document: &str, expected: &str) -> usize {
@@ -200,34 +250,34 @@ pub fn inspect_release_state_v1(input: &Value) -> Result<Value, ReleaseStateErro
     }
     let package = input.get("packageJson");
     let lock = input.get("packageLock");
-    let version_text = text(package.and_then(|value| value.get("version")));
-    let parsed = version(package.and_then(|value| value.get("version")));
+    let package_version = package.and_then(|value| value.get("version"));
+    let version_text = text(package_version);
+    let parsed = version(package_version);
     let mut errors = Vec::new();
     if parsed.is_none() {
         errors.push("package_version_must_be_plain_semver".to_owned());
     }
-    if lock.and_then(|value| value.get("version")) != package.and_then(|value| value.get("version"))
-    {
+    if !javascript_strict_equal(lock.and_then(|value| value.get("version")), package_version) {
         errors.push("package_lock_version_mismatch".to_owned());
     }
-    if lock
-        .and_then(|value| value.get("packages"))
-        .and_then(|value| value.get(""))
-        .and_then(|value| value.get("version"))
-        != package.and_then(|value| value.get("version"))
-    {
+    if !javascript_strict_equal(
+        lock.and_then(|value| value.get("packages"))
+            .and_then(|value| value.get(""))
+            .and_then(|value| value.get("version")),
+        package_version,
+    ) {
         errors.push("package_lock_root_version_mismatch".to_owned());
     }
     let package_name = package.and_then(|value| value.get("name"));
-    if lock.and_then(|value| value.get("name")) != package_name {
+    if !javascript_strict_equal(lock.and_then(|value| value.get("name")), package_name) {
         errors.push("package_lock_name_mismatch".to_owned());
     }
-    if lock
-        .and_then(|value| value.get("packages"))
-        .and_then(|value| value.get(""))
-        .and_then(|value| value.get("name"))
-        != package_name
-    {
+    if !javascript_strict_equal(
+        lock.and_then(|value| value.get("packages"))
+            .and_then(|value| value.get(""))
+            .and_then(|value| value.get("name")),
+        package_name,
+    ) {
         errors.push("package_lock_root_name_mismatch".to_owned());
     }
     if package
@@ -306,7 +356,11 @@ pub fn inspect_release_state_v1(input: &Value) -> Result<Value, ReleaseStateErro
             _ => {}
         }
     }
+    let output_version = package_version
+        .filter(|value| javascript_truthy(value))
+        .cloned()
+        .unwrap_or(Value::Null);
     Ok(
-        json!({"ok": errors.is_empty(), "kind":"ReleaseStateConsistency", "contractVersion":2, "version": if version_text.is_empty() { Value::Null } else { Value::String(version_text) }, "state": state, "documentationProfile": profile, "errors": errors}),
+        json!({"ok": errors.is_empty(), "kind":"ReleaseStateConsistency", "contractVersion":2, "version": output_version, "state": state, "documentationProfile": profile, "errors": errors}),
     )
 }

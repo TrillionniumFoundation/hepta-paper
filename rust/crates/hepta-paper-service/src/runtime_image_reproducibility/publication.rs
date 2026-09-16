@@ -29,7 +29,7 @@ fn canonical_output(path: &Path) -> Result<()> {
         "runtime_reproducibility_receipt_path_invalid",
     )
 }
-fn private_parent(path: &Path, create: bool) -> Result<File> {
+pub(super) fn private_parent(path: &Path, create: bool) -> Result<File> {
     canonical_output(path)?;
     let parent = path
         .parent()
@@ -98,7 +98,7 @@ fn leaf(path: &Path) -> Result<&Path> {
         .map(Path::new)
         .ok_or_else(|| "runtime_reproducibility_receipt_path_invalid".into())
 }
-fn open_leaf(parent: &File, path: &Path, flags: OFlag) -> Result<File> {
+pub(super) fn open_leaf(parent: &File, path: &Path, flags: OFlag) -> Result<File> {
     openat(
         parent.as_fd(),
         leaf(path)?,
@@ -118,7 +118,7 @@ fn safe_metadata(metadata: &fs::Metadata) -> Result<()> {
         "runtime_reproducibility_receipt_file_invalid",
     )
 }
-fn verify_database(path: &Path, parent: &File, held: &File) -> Result<()> {
+pub(super) fn verify_database(path: &Path, parent: &File, held: &File) -> Result<()> {
     verify_parent(path, parent)?;
     let current = open_leaf(parent, path, OFlag::O_RDONLY)?;
     let a = held.metadata()?;
@@ -130,14 +130,14 @@ fn verify_database(path: &Path, parent: &File, held: &File) -> Result<()> {
         "runtime_reproducibility_receipt_database_changed",
     )
 }
-struct Authority {
-    receipt: Value,
-    bytes: Vec<u8>,
-    content_hash: String,
-    receipt_hash: String,
-    generation: i64,
+pub(super) struct Authority {
+    pub(super) receipt: Value,
+    pub(super) bytes: Vec<u8>,
+    pub(super) content_hash: String,
+    pub(super) receipt_hash: String,
+    pub(super) generation: i64,
 }
-fn paths(receipt_path: &Path) -> Result<PathBuf> {
+pub(super) fn paths(receipt_path: &Path) -> Result<PathBuf> {
     canonical_output(receipt_path)?;
     let parent = receipt_path
         .parent()
@@ -174,7 +174,7 @@ fn paths(receipt_path: &Path) -> Result<PathBuf> {
     }
     Ok(db)
 }
-fn authority(db: &Connection) -> Result<Option<Authority>> {
+pub(super) fn authority(db: &Connection) -> Result<Option<Authority>> {
     let row:Option<(String,String,String,String,String,i64)>=db.query_row(&format!("SELECT receipt_json,receipt_content_hash,receipt_hash,issued_at,expires_at,publication_generation FROM {TABLE} WHERE singleton_id=1"),[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?;
     let Some((text, content_hash, receipt_hash, issued, expires, generation)) = row else {
         return Ok(None);
@@ -205,7 +205,7 @@ fn authority(db: &Connection) -> Result<Option<Authority>> {
         generation,
     }))
 }
-fn schema(db: &Connection) -> Result<()> {
+pub(super) fn schema(db: &Connection) -> Result<()> {
     db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF; CREATE TABLE IF NOT EXISTS runtime_image_reproducibility_receipt(singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),receipt_json TEXT NOT NULL,receipt_content_hash TEXT NOT NULL,receipt_hash TEXT NOT NULL,issued_at TEXT NOT NULL,expires_at TEXT NOT NULL,publication_generation INTEGER NOT NULL CHECK(publication_generation>=1),updated_at TEXT NOT NULL) STRICT;")?;
     Ok(())
 }
@@ -267,7 +267,7 @@ fn optional_leaf(parent: &File, path: &Path) -> Result<Option<File>> {
         Err(_) => Err("runtime_reproducibility_receipt_file_invalid".into()),
     }
 }
-fn durable_mirror(path: &Path, parent: &File, bytes: &[u8]) -> Result<()> {
+pub(super) fn durable_mirror(path: &Path, parent: &File, bytes: &[u8]) -> Result<()> {
     durable_mirror_with_hook(path, parent, bytes, &mut |_, _| {})
 }
 fn durable_mirror_with_hook(

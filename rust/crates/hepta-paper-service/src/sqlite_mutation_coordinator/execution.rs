@@ -99,6 +99,15 @@ impl<T: MutationAuthorityTransportV1> SqliteMutationCoordinatorV1<T> {
         blockers.push("autonomous_research_online_mutation_runtime_activation_required");
         json!({"version":1,"kind":"ExternallyFencedSqliteMutationCoordinatorStatus","status":if complete{"externally_fenced_sqlite_mutation_coordinator_configured"}else{"externally_fenced_sqlite_mutation_coordinator_partial"},"implemented":true,"coveredDatabaseRoles":self.manifest["coverage"]["coveredDatabaseRoles"],"blockers":blockers})
     }
+    /// Authenticate the latest local finalized journal entry. This is a
+    /// historical proof, not current global-head or runtime activation evidence.
+    pub fn verify_latest_finalized_mutation(
+        &self,
+        database: &Connection,
+        instance: &str,
+    ) -> Result<VerifiedMutationReceiptV1> {
+        super::finalized::verify_latest_finalized_mutation(database, &self.authority, instance)
+    }
     pub fn recover_pending_mutations(&mut self, database: &mut Connection) -> Result<Value> {
         let result = super::recovery::recover_sqlite_mutations_v1(
             database,

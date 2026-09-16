@@ -100,3 +100,18 @@ Rust control-plane module; their presence does not add qualified modules.
 documents fixed statement ownership, actual SQLite changeset checks, pinned
 external authority, lease-fenced commits and recovery. Production runtime
 activation remains a separate verified contract.
+
+[Research capability matrix handoff](RESEARCH_CAPABILITY_MATRIX_HANDOFF.md)
+documents the native ten-capability projection, exact evidence ceilings and the
+remaining environment/observer/CLI boundary.
+
+[Online startup recovery](ONLINE_MUTATION_STARTUP_HANDOFF.md),
+[finalized-head inspection](ONLINE_FINALIZED_HEAD_INSPECTION_HANDOFF.md),
+[activation foundations and active authority](ONLINE_RUNTIME_ACTIVATION_HANDOFF.md),
+and [backup authority and stored restore sources](STATE_BACKUP_AUTHORITY_RESTORE_SOURCE_HANDOFF.md)
+describe the verified native dependency chains and the remaining production
+activation boundaries.
+
+[Native writer source inspection](ONLINE_WRITER_STATIC_HANDOFF.md) covers the
+actual JavaScript parser/scope analysis, source pins and verified inspection type
+consumed by active authority refresh.

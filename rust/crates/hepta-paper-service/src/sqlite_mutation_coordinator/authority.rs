@@ -1,6 +1,7 @@
 //! Independently pinned public authority verification. Raw transport responses
 //! acquire no authority until exact contract and Ed25519 validation succeed.
-mod files;
+mod activation;
+pub(crate) mod files;
 mod process;
 use super::{contracts::*, *};
 use base64ct::{Base64, Encoding};

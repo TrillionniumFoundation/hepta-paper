@@ -11,7 +11,7 @@ use std::{
     os::{fd::AsFd, unix::fs::MetadataExt},
     path::{Component, PathBuf},
 };
-pub(super) struct Snapshot {
+pub(crate) struct Snapshot {
     pub path: PathBuf,
     pub file: File,
     bytes: Vec<u8>,
@@ -142,6 +142,9 @@ impl Snapshot {
         }
         Ok(())
     }
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
     pub fn json(&self, code: &str) -> Result<Value> {
         parse(&self.bytes, code)
     }
@@ -149,7 +152,7 @@ impl Snapshot {
         self.metadata.mode() & 0o111 != 0
     }
 }
-pub(super) fn parse(bytes: &[u8], code: &str) -> Result<Value> {
+pub(crate) fn parse(bytes: &[u8], code: &str) -> Result<Value> {
     let Strict(value) = serde_json::from_slice(bytes).map_err(|_| error(code))?;
     Ok(value)
 }

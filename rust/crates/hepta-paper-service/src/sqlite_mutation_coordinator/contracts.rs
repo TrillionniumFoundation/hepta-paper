@@ -1,3 +1,4 @@
+pub mod activation;
 use super::*;
 use base64ct::{Base64, Encoding};
 pub(super) const RESERVE_REQUEST_KEYS: &[&str] = &[

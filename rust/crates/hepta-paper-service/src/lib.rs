@@ -265,3 +265,12 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
 pub fn service_configuration_hash_v1(config: &ServiceRunV1) -> Result<Sha256Digest, ServiceError> {
     canonical_hash_v1(config).map_err(|_| ServiceError::Configuration)
 }
+
+pub mod online_finalized_head_inspection;
+pub mod online_runtime_activation;
+
+pub mod research_capability_matrix;
+
+pub mod state_backup_authority;
+
+pub mod online_writer_static;

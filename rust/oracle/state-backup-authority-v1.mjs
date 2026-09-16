@@ -1,0 +1,62 @@
+// Ephemeral synthetic signers only. No private key is written or returned.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {productionOracleProfile} from './production-record-hash-v1.mjs';
+import {hashBytes,hashRecord} from '../../workflow-kernel/record-hash.mjs';
+import {createAutonomousResearchStateBackupAuthorityProcessClient,autonomousResearchStateBackupAuthoritySignaturePayload as payload,verifyAutonomousResearchStateBackupAuthorityReservation as reserve,verifyAutonomousResearchStateBackupAuthorityFinalization as finalize,verifyAutonomousResearchStateBackupAuthorityCurrentHead as head,verifyAutonomousResearchStateBackupAuthorityJournalRange as journal} from '../../paper-adapters/automation/autonomous-research-state-backup-authority.mjs';
+const H=label=>hashRecord('StateBackupAuthorityRustTestOnly',{label});
+function fixture(root,version=2){
+ if(!root.startsWith('/tmp/hepta-sqlite-authority-rust-backup-'))throw new Error('isolated_fixture_required');
+ const online=JSON.parse(execFileSync(process.execPath,[path.join(import.meta.dirname,'sqlite-mutation-authority-v1.mjs')],{input:JSON.stringify([{operation:'fixture',root}]),maxBuffer:64*1024*1024})).results[0].value;
+ const onlineConfig=JSON.parse(fs.readFileSync(online.configurationPath,'utf8'));
+ const pair=crypto.generateKeyPairSync('ed25519');
+ const sign=value=>{const unsigned=Object.fromEntries(Object.entries(value).filter(([key])=>key!=='signature'));return{...unsigned,signature:crypto.sign(null,Buffer.from(payload(unsigned)),pair.privateKey).toString('base64')};};
+ const write=(name,value,mode=0o600)=>{const selected=path.join(root,name);fs.writeFileSync(selected,typeof value==='string'?value:JSON.stringify(value),{mode});fs.chmodSync(selected,mode);return selected;};
+ const publicPath=write('backup-public.json',{version:1,kind:'AutonomousResearchStateBackupAuthorityPublicKey',authorityId:'backup:authority',keyId:'backup:key',algorithm:'ed25519',publicKeyPem:pair.publicKey.export({type:'spki',format:'pem'})});
+ const now=online.now,expires='2026-09-16T12:01:00.000Z';
+ const ids=online.expectedInstances.map(v=>v.databaseInstanceId).sort();
+ const reserveRequest={version:1,kind:'AutonomousResearchStateBackupAuthorityReserveRequest',inventoryHash:H('inventory'),databaseScopeHash:onlineConfig.databaseScopeHash,databaseInstanceIds:ids,requestedAt:now,maximumLeaseMs:60000};
+ const reservation=sign({version:1,kind:'AutonomousResearchStateBackupAuthorityReservation',status:'autonomous_research_state_backup_authority_reserved',authorityId:'backup:authority',keyId:'backup:key',requestHash:hashRecord(reserveRequest.kind,reserveRequest),reservationId:'backup:reservation',inventoryHash:reserveRequest.inventoryHash,databaseScopeHash:reserveRequest.databaseScopeHash,databaseInstanceIds:ids,headSequence:0,headHash:online.base.reserve.request.globalPreviousHash,issuedAt:now,expiresAt:expires,mutationFenceProtocol:'external-linearizable-reserve-apply-finalize-v1',allRegisteredMutationsFenced:true});
+ const finalizeRequest={version:1,kind:'AutonomousResearchStateBackupAuthorityFinalizeRequest',reservationId:reservation.reservationId,inventoryHash:reservation.inventoryHash,databaseScopeHash:reservation.databaseScopeHash,snapshotContentHash:H('snapshot'),requestedAt:now};
+ const finalization=sign({version:1,kind:'AutonomousResearchStateBackupAuthorityFinalization',status:'autonomous_research_state_backup_authority_finalized',authorityId:'backup:authority',keyId:'backup:key',requestHash:hashRecord(finalizeRequest.kind,finalizeRequest),reservationId:reservation.reservationId,inventoryHash:reservation.inventoryHash,databaseScopeHash:reservation.databaseScopeHash,snapshotContentHash:finalizeRequest.snapshotContentHash,headSequence:reservation.headSequence,headHash:reservation.headHash,finalizedAt:now,allRegisteredMutationsFencedThroughFinalize:true});
+ const headRequest={version:1,kind:'AutonomousResearchStateBackupAuthorityCurrentHeadRequest',reservationId:reservation.reservationId,databaseScopeHash:reservation.databaseScopeHash,snapshotContentHash:finalizeRequest.snapshotContentHash,requestedAt:now,maximumLeaseMs:60000};
+ const currentHead=sign({version:1,kind:'AutonomousResearchStateBackupAuthorityCurrentHead',status:'autonomous_research_state_backup_authority_head_observed',authorityId:'backup:authority',keyId:'backup:key',requestHash:hashRecord(headRequest.kind,headRequest),reservationId:reservation.reservationId,databaseScopeHash:reservation.databaseScopeHash,headSequence:1,headHash:online.base.reserve.receipt.globalHash,observedAt:now,expiresAt:expires,mutationFenceProtocol:'external-linearizable-restore-validation-v1',allRegisteredMutationsFenced:true});
+ const rangeRequest={version:1,kind:'AutonomousResearchStateBackupAuthorityJournalRangeRequest',reservationId:reservation.reservationId,databaseScopeHash:reservation.databaseScopeHash,snapshotContentHash:finalizeRequest.snapshotContentHash,onlineAuthorityId:onlineConfig.authorityId,onlineKeyId:onlineConfig.keyId,scopeId:onlineConfig.scopeId,writerManifestHash:onlineConfig.writerManifestHash,fromGlobalSequence:0,fromGlobalHash:reservation.headHash,toGlobalSequence:1,toGlobalHash:currentHead.headHash,requestedAt:now,maximumLeaseMs:60000,maximumEntries:1};
+ const r=online.base.reserve.receipt;
+ const databaseHeads=[{databaseRole:r.databaseRole,databaseInstanceId:r.databaseInstanceId,sequence:r.databaseSequence,hash:r.databaseHash,schemaHash:r.schemaHash,stateHash:r.postStateHash}];
+ const entries=[{reserveRequest:online.base.reserve.request,reservationReceipt:r,finalizeRequest:online.base.finalize.request,finalizationReceipt:online.base.finalize.receipt}];
+ const range=sign({version:1,kind:'AutonomousResearchStateBackupAuthorityJournalRange',status:'autonomous_research_state_backup_authority_journal_range_complete',authorityId:'backup:authority',keyId:'backup:key',requestHash:hashRecord(rangeRequest.kind,rangeRequest),...Object.fromEntries(['reservationId','databaseScopeHash','snapshotContentHash','onlineAuthorityId','onlineKeyId','scopeId','writerManifestHash','fromGlobalSequence','fromGlobalHash','toGlobalSequence','toGlobalHash'].map(k=>[k,rangeRequest[k]])),databaseHeads,entries,observedAt:now,expiresAt:expires,mutationFenceProtocol:'external-linearizable-finalized-mutation-journal-v1',completeFinalizedMutationJournal:true});
+ const base={reserve:{request:reserveRequest,receipt:reservation},finalize:{request:finalizeRequest,receipt:finalization},head:{request:headRequest,receipt:currentHead},journal:{request:rangeRequest,receipt:range}};
+ const cases=[];const add=(action,label,change=()=>{},resign=true)=>{const c=structuredClone(base[action]);change(c);if(resign)c.receipt=sign(c.receipt);cases.push({action,label,...c,reservation,now});};
+ for(const action of Object.keys(base)){add(action,`${action}-valid`);add(action,`${action}-wrong-signer`,c=>c.receipt.authorityId='backup:other');add(action,`${action}-invalid-signature`,c=>c.receipt.signature='invalid',false);add(action,`${action}-extra-field`,c=>c.receipt.extra=true);add(action,`${action}-request-drift`,c=>c.request.requestedAt='2026-09-16T12:00:01.000Z');}
+ add('reserve','wrong-instances',c=>c.receipt.databaseInstanceIds.reverse());
+ add('reserve','expired',c=>c.receipt.expiresAt=now);
+ add('reserve','lease-expanded',c=>c.receipt.expiresAt='2026-09-16T12:02:00.000Z');
+ add('reserve','unfenced',c=>c.receipt.allRegisteredMutationsFenced=false);
+ add('reserve','unpadded',c=>c.receipt.signature=c.receipt.signature.replaceAll('=',''),false);
+ add('reserve','tail-bits',c=>{const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';const raw=c.receipt.signature.replaceAll('=','');c.receipt.signature=raw.slice(0,-1)+alphabet[alphabet.indexOf(raw.at(-1))|1]+'==';},false);
+ add('finalize','after-expiry',c=>c.receipt.finalizedAt='2026-09-16T12:01:00.001Z');
+ add('finalize','snapshot-drift',c=>c.receipt.snapshotContentHash=H('wrong'));
+ add('head','stale',c=>c.receipt.observedAt='2026-09-16T11:58:00.000Z');
+ add('head','future',c=>c.receipt.observedAt='2026-09-16T12:00:05.001Z');
+ add('head','wrong-scope',c=>c.receipt.databaseScopeHash=H('other-scope'));
+ add('journal','incomplete',c=>c.receipt.completeFinalizedMutationJournal=false);
+ add('journal','entry-count',c=>c.receipt.entries=[]);
+ add('journal','duplicate-database-head',c=>c.receipt.databaseHeads.push(c.receipt.databaseHeads[0]));
+ add('journal','wrong-range-end',c=>c.receipt.toGlobalSequence=2);
+ add('journal','too-many-entries',c=>c.request.maximumEntries=4097);
+ const causal=[];const chain=(label,change)=>{const c=structuredClone(base.journal);change(c);c.receipt.requestHash=hashRecord(c.request.kind,c.request);c.receipt=sign(c.receipt);causal.push({label,...c});};
+ chain('valid',()=>{});chain('nested-bad-signature',c=>c.receipt.entries[0].reservationReceipt.signature='invalid');chain('global-gap',c=>{c.request.fromGlobalHash=H('gap');c.receipt.fromGlobalHash=c.request.fromGlobalHash;});chain('wrong-online-subject',c=>{c.request.onlineAuthorityId='authority:other';c.receipt.onlineAuthorityId=c.request.onlineAuthorityId;});chain('final-head-drift',c=>c.receipt.databaseHeads[0].stateHash=H('drift'));chain('entry-extra-field',c=>c.receipt.entries[0].extra=true);
+ const replies=Object.fromEntries(Object.values(base).map(v=>[v.request.kind,v.receipt]));
+ const commandPath=write('backup-broker.py','#!/usr/bin/python3\nimport json,sys\nreplies=json.loads('+JSON.stringify(JSON.stringify(replies))+')\nrequest=json.load(sys.stdin)\nprint(json.dumps(replies.get(request.get("kind"))))\n',0o700);
+ const configuration={version,kind:'AutonomousResearchStateBackupAuthorityProcessConfiguration',authorityId:'backup:authority',keyId:'backup:key',commandPath,commandSha256:hashBytes(fs.readFileSync(commandPath)),publicKeyPath:publicPath,publicKeySha256:hashBytes(fs.readFileSync(publicPath)),fixedArguments:[],timeoutMs:1000,maximumReservationLeaseMs:60000,maximumHeadObservationAgeMs:60000};
+ if(version===2)Object.assign(configuration,{onlineMutationAuthorityConfigurationPath:online.configurationPath,onlineMutationAuthorityConfigurationSha256:online.configurationFileHash});
+ const configurationPath=write('backup-configuration.json',configuration);
+ return{configurationPath,configurationFileHash:hashBytes(fs.readFileSync(configurationPath)),commandPath,publicPath,now,base,cases,causal};
+}
+function verify(input){const loaded=createAutonomousResearchStateBackupAuthorityProcessClient({configurationPath:input.configurationPath});const c=input.case;return ({reserve,finalize,head,journal})[c.action]({receipt:c.receipt,request:c.request,reservation:c.reservation,trust:loaded.trust,now:new Date(c.now)});}
+const requests=JSON.parse(fs.readFileSync(0,'utf8'));
+const results=requests.map(input=>{try{if(input.operation==='fixture')return{ok:true,value:fixture(input.root,input.version)};if(input.operation==='verify')return{ok:true,accepted:verify(input)};if(input.operation==='process'){const loaded=createAutonomousResearchStateBackupAuthorityProcessClient({configurationPath:input.configurationPath});const method={reserve:'reserveSnapshot',finalize:'finalizeSnapshot',head:'observeCurrentHead',journal:'readFinalizedMutationJournal'}[input.case.action];return{ok:true,value:loaded.client[method](input.case.request)};}throw new Error('unknown_operation');}catch(error){return{ok:false,error:error.message};}});
+process.stdout.write(JSON.stringify({profile:productionOracleProfile(),results}));

@@ -3,6 +3,21 @@ use rusqlite::{
     Connection,
     types::{Value as SqlValue, ValueRef},
 };
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod tests;
+
+#[derive(Clone, Copy)]
+struct RowLimits {
+    rows: usize,
+    cell_bytes: usize,
+    total_bytes: usize,
+}
+const DEFAULT_ROW_LIMITS: RowLimits = RowLimits {
+    rows: 100_000,
+    cell_bytes: 32 * 1024 * 1024,
+    total_bytes: 256 * 1024 * 1024,
+};
 pub(super) const SYSTEM_TABLES: &[&str] = &[
     "autonomous_research_online_mutation_authority_metadata",
     "autonomous_research_online_mutation_authority_marker",
@@ -24,34 +39,70 @@ impl From<crate::sqlite_mutation_plan::SqliteMutationPlanError> for SqliteMutati
     }
 }
 pub(super) fn rows(database: &Connection, sql: &str, params: &[SqlValue]) -> Result<Vec<Value>> {
+    rows_bounded(
+        database,
+        sql,
+        params,
+        DEFAULT_ROW_LIMITS,
+        "externally_fenced_sqlite_mutation_storage_resource_limit",
+    )
+}
+fn rows_bounded(
+    database: &Connection,
+    sql: &str,
+    params: &[SqlValue],
+    limits: RowLimits,
+    code: &str,
+) -> Result<Vec<Value>> {
     let mut statement = database.prepare(sql)?;
+    // Bound names before cloning them as well: SELECT * must not materialize an
+    // attacker-expanded schema before its exact schema hash has been checked.
+    if statement.column_count() > 256 || statement.column_names().iter().any(|n| n.len() > 512) {
+        return Err(error(code));
+    }
     let names = statement
         .column_names()
         .iter()
         .map(|s| (*s).to_owned())
         .collect::<Vec<_>>();
-    let values = statement
-        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
-            let mut result = serde_json::Map::new();
-            for (index, name) in names.iter().enumerate() {
-                let value = match row.get_ref(index)? {
-                    ValueRef::Null => Value::Null,
-                    ValueRef::Integer(v) => json!(v),
-                    ValueRef::Real(v) => json!(v),
-                    ValueRef::Text(v) => Value::String(String::from_utf8_lossy(v).into_owned()),
-                    ValueRef::Blob(_) => {
-                        return Err(rusqlite::Error::InvalidColumnType(
-                            index,
-                            name.clone(),
-                            rusqlite::types::Type::Blob,
-                        ));
+    let mut cursor = statement.query(rusqlite::params_from_iter(params.iter()))?;
+    let mut values = Vec::new();
+    let mut total_bytes = 0usize;
+    while let Some(row) = cursor.next()? {
+        if values.len() >= limits.rows {
+            return Err(error(code));
+        }
+        let mut result = serde_json::Map::new();
+        for (index, name) in names.iter().enumerate() {
+            let value = match row.get_ref(index)? {
+                ValueRef::Null => Value::Null,
+                ValueRef::Integer(v) => json!(v),
+                ValueRef::Real(v) => json!(v),
+                ValueRef::Text(v) => {
+                    total_bytes = total_bytes
+                        .checked_add(v.len())
+                        .ok_or_else(|| error(code))?;
+                    if v.len() > limits.cell_bytes || total_bytes > limits.total_bytes {
+                        return Err(error(code));
                     }
-                };
-                result.insert(name.clone(), value);
-            }
-            Ok(Value::Object(result))
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+                    let text = std::str::from_utf8(v).map_err(|_| {
+                        error("externally_fenced_sqlite_mutation_storage_utf8_invalid")
+                    })?;
+                    Value::String(text.to_owned())
+                }
+                ValueRef::Blob(_) => {
+                    return Err(rusqlite::Error::InvalidColumnType(
+                        index,
+                        name.clone(),
+                        rusqlite::types::Type::Blob,
+                    )
+                    .into());
+                }
+            };
+            result.insert(name.clone(), value);
+        }
+        values.push(Value::Object(result));
+    }
     Ok(values)
 }
 pub fn exact_schema_hash_v1(database: &Connection) -> Result<String> {
@@ -65,10 +116,16 @@ pub fn exact_schema_hash_v1(database: &Connection) -> Result<String> {
     )
 }
 pub(super) fn metadata(database: &Connection) -> Result<Value> {
-    let mut rows = rows(
+    let mut rows = rows_bounded(
         database,
         "SELECT * FROM autonomous_research_online_mutation_authority_metadata WHERE singleton=1;",
         &[],
+        RowLimits {
+            rows: 2,
+            cell_bytes: 4096,
+            total_bytes: 64 * 1024,
+        },
+        "externally_fenced_sqlite_mutation_metadata_resource_limit",
     )?;
     if rows.len() != 1 {
         return Err(error("externally_fenced_sqlite_mutation_metadata_required"));
@@ -152,16 +209,9 @@ pub(super) fn record_finalization(
     receipt: &Value,
     recorded_at: &str,
 ) -> Result<()> {
-    let receipt_hash = contracts::online_mutation_receipt_hash_v1(receipt)?;
     database.execute_batch("BEGIN IMMEDIATE;")?;
     let result = (|| {
-        database.execute("INSERT INTO autonomous_research_online_mutation_finalization_receipt(reservation_id,finalization_receipt_hash,finalization_receipt_json,side_effect_permit_hash,finalized_at,recorded_at) VALUES(?,?,?,?,?,?) ON CONFLICT(reservation_id) DO NOTHING;",rusqlite::params![text(receipt,"reservationId")?,receipt_hash,receipt.to_string(),text(receipt,"sideEffectPermitHash")?,text(receipt,"finalizedAt")?,recorded_at])?;
-        let stored:String=database.query_row("SELECT finalization_receipt_hash FROM autonomous_research_online_mutation_finalization_receipt WHERE reservation_id=?;",[text(receipt,"reservationId")?],|row|row.get(0))?;
-        if stored != receipt_hash {
-            return Err(error(
-                "externally_fenced_sqlite_mutation_finalization_receipt_conflict",
-            ));
-        }
+        record_finalization_in_transaction(database, receipt, recorded_at)?;
         database.execute_batch("COMMIT;")?;
         Ok(())
     })();
@@ -169,4 +219,53 @@ pub(super) fn record_finalization(
         database.execute_batch("ROLLBACK;")?;
     }
     result
+}
+
+/// Write only while the caller owns the transaction and its current marker.
+pub(super) fn record_finalization_in_transaction(
+    database: &Connection,
+    receipt: &Value,
+    recorded_at: &str,
+) -> Result<()> {
+    if database.is_autocommit() {
+        return Err(error(
+            "externally_fenced_sqlite_mutation_finalization_transaction_required",
+        ));
+    }
+    let receipt_hash = contracts::online_mutation_receipt_hash_v1(receipt)?;
+    database.execute("INSERT INTO autonomous_research_online_mutation_finalization_receipt(reservation_id,finalization_receipt_hash,finalization_receipt_json,side_effect_permit_hash,finalized_at,recorded_at) VALUES(?,?,?,?,?,?) ON CONFLICT(reservation_id) DO NOTHING;",rusqlite::params![text(receipt,"reservationId")?,receipt_hash,receipt.to_string(),text(receipt,"sideEffectPermitHash")?,text(receipt,"finalizedAt")?,recorded_at])?;
+    let stored:String=database.query_row("SELECT finalization_receipt_hash FROM autonomous_research_online_mutation_finalization_receipt WHERE reservation_id=?;",[text(receipt,"reservationId")?],|row|row.get(0))?;
+    if stored != receipt_hash {
+        return Err(error(
+            "externally_fenced_sqlite_mutation_finalization_receipt_conflict",
+        ));
+    }
+    Ok(())
+}
+
+/// Caller must hold a read transaction across bound checking and row loading.
+pub(super) fn pending_markers_bounded(database: &Connection, code: &str) -> Result<Vec<Value>> {
+    if database.is_autocommit() {
+        return Err(error(
+            "externally_fenced_sqlite_mutation_pending_snapshot_required",
+        ));
+    }
+    // Bound rows and aggregate serialized bytes before materializing hostile
+    // persisted JSON. Legitimate over-limit history requires operator review.
+    let limits:(i64,i64,i64)=database.query_row("SELECT count(*),coalesce(sum(length(CAST(marker.reserve_request_json AS BLOB))+length(CAST(marker.reservation_receipt_json AS BLOB))),0),coalesce(max(max(length(CAST(marker.reserve_request_json AS BLOB)),length(CAST(marker.reservation_receipt_json AS BLOB)))),0) FROM autonomous_research_online_mutation_authority_marker marker LEFT JOIN autonomous_research_online_mutation_finalization_receipt finalized ON finalized.reservation_id=marker.reservation_id WHERE finalized.reservation_id IS NULL;",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+    if limits.0 > 4096 || limits.1 > 64 * 1024 * 1024 || limits.2 > 32 * 1024 * 1024 {
+        return Err(error(code));
+    }
+    let rows = rows_bounded(
+        database,
+        "SELECT marker.* FROM autonomous_research_online_mutation_authority_marker marker LEFT JOIN autonomous_research_online_mutation_finalization_receipt finalized ON finalized.reservation_id=marker.reservation_id WHERE finalized.reservation_id IS NULL ORDER BY marker.database_sequence LIMIT 4097;",
+        &[],
+        RowLimits {
+            rows: 4096,
+            cell_bytes: 32 * 1024 * 1024,
+            total_bytes: 64 * 1024 * 1024,
+        },
+        code,
+    )?;
+    Ok(rows)
 }

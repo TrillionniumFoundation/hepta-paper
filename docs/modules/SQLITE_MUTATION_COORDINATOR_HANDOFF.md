@@ -303,3 +303,11 @@ Explicit limits remain:
   marker. Consumers needing a latest finalized proof must verify that separate
   row/request/reservation/finalization chain; arbitrary stored JSON or a permit
   hash must not be treated as an opaque verified action permit.
+
+## Native startup and bounded recovery additions
+
+See [online mutation startup](ONLINE_MUTATION_STARTUP_HANDOFF.md) for signed
+unresolved-list reconciliation, proven remote-only abort, retained confirmation
+freshness, bounded strict JSON, and the IMMEDIATE lock held across recovery
+finalization and local receipt publication. These changes preserve unknown-commit
+semantics and do not create a production activation capability.

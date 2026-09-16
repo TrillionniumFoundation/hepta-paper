@@ -150,14 +150,33 @@
     },
     {
       "id": "operator/research-capability-matrix",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "build_research_capability_matrix_v2(readiness) [library; observer/CLI pending]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/research_capability_matrix.rs",
+          "symbol": "build_research_capability_matrix_v2"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/research_capability_matrix_parity.rs"
+      ],
+      "remaining": "Native pure projection covers all ten capabilities, strict boolean gates, four evidence levels, actual registry inputs, Unicode blocker ordering and recomputed production hashes. More than 700 real Node cases pass. Environment composition, live readiness observations, full CLI/exit behavior and independent command acceptance remain unimplemented; descriptive JSON never grants authority.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/research_capability_matrix.rs",
+        "rust/crates/hepta-paper-service/src/research_capability_matrix/registry-inputs.v1.json"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_capability_matrix_parity.rs",
+          "symbol": "actual_research_capability_matrix_projection_and_hash_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_capability_matrix_parity.rs",
+          "symbol": "malformed_blocker_shapes_cannot_panic_or_authorize_any_action"
+        }
+      ]
     },
     {
       "id": "operator/personal-gpu-operational-gate",
@@ -443,14 +462,47 @@
     },
     {
       "id": "operator/autonomous-state-backup",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "verify_stored_restore_source_v1(options, authority, now) [library; full backup CLI pending]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source.rs",
+          "symbol": "verify_stored_restore_source_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_backup_authority/manifest.rs",
+          "symbol": "assert_state_database_manifest_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/state_backup_authority_parity.rs",
+        "rust/crates/hepta-paper-service/tests/state_backup_restore_source_parity.rs"
+      ],
+      "remaining": "Native pinned backup authority verifies actual Ed25519 reserve/finalize/head/journal receipts and online nested chains. Stored restore-source verification checks ten actual SQLite snapshot byte hashes and private-copy inspection, required objects, inventory/manifest scope, age, member order, source identity and aggregate resource bounds; real re-signed cross-snapshot splices are rejected. Live inventory, actual backup/drill/replay/renewal production services, resident lease/epoch controller, every CLI mode and independent acceptance remain unimplemented. Historical stored source evidence never grants runtime activation.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/state_backup_authority.rs",
+        "rust/crates/hepta-paper-service/src/state_backup_authority/contracts.rs",
+        "rust/crates/hepta-paper-service/src/state_backup_authority/manifest.rs",
+        "rust/crates/hepta-paper-service/src/state_backup_authority/process.rs",
+        "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source.rs",
+        "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source/validation.rs",
+        "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source/private_sqlite.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_backup_restore_source_parity.rs",
+          "symbol": "actual_ten_database_snapshot_and_signed_journal_sources_match_node_read_only"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_backup_restore_source_parity.rs",
+          "symbol": "real_signed_splice_cannot_claim_another_snapshot_and_raw_member_order_is_preserved"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_backup_restore_source_parity.rs",
+          "symbol": "declared_aggregate_size_is_rejected_before_any_database_open"
+        }
+      ]
     },
     {
       "id": "operator/runtime-image-reproducibility",
@@ -494,7 +546,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs"
       ],
-      "remaining": "Rust implements native status/request/verify/offline-publish, recomputed builtin/dynamic signed plugin scopes, source/input closure, two pinned verifier processes, actual Ed25519 OCI attestations, SQLite monotonic CAS and recoverable derived mirror. Online fenced publication and its activated coordinator/epoch/mirror-permit lifecycle remain unwired; real R source-CAS and two independently qualified rebuild services/evidence remain external. Resource/encoding/filesystem bounds and independent command acceptance remain unqualified. Synthetic signed proofs do not prove real image rebuilds.",
+      "remaining": "Rust implements native status/request/verify/offline-publish, recomputed builtin/dynamic signed plugin scopes, source/input closure, two pinned verifier processes, actual Ed25519 OCI attestations, SQLite monotonic CAS and recoverable derived mirror. Online fenced publication and its activated coordinator/epoch/mirror-permit lifecycle remain unwired; real R source-CAS and two independently qualified rebuild services/evidence remain external. Resource/encoding/filesystem bounds and independent command acceptance remain unqualified. Synthetic signed proofs do not prove real image rebuilds. Native online publication and latest-finalization adapters are now tested as library components, but the real verified activation constructor and CLI integration remain absent.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-runtime-image-reproducibility.rs",
         "rust/crates/hepta-paper-service/src/runtime_image_reproducibility.rs",
@@ -508,7 +560,9 @@
         "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/support.rs",
         "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/workflow.rs",
         "rust/oracle/runtime-image-isolated-verifier-v1.mjs",
-        "rust/oracle/runtime-image-reproducibility-v2.mjs"
+        "rust/oracle/runtime-image-reproducibility-v2.mjs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/online_publication.rs",
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/finalized.rs"
       ],
       "testCases": [
         {

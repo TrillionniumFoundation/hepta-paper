@@ -28,6 +28,12 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | portal qualification registry import | `../modules/PORTAL_TARGET_QUALIFICATION_HANDOFF.md` |
 | runtime image reproducibility | `../modules/RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md` |
 | externally fenced SQLite mutation | `../modules/SQLITE_MUTATION_COORDINATOR_HANDOFF.md` |
+| research capability projection | `../modules/RESEARCH_CAPABILITY_MATRIX_HANDOFF.md` |
+| startup mutation recovery | `../modules/ONLINE_MUTATION_STARTUP_HANDOFF.md` |
+| finalized-head inspection | `../modules/ONLINE_FINALIZED_HEAD_INSPECTION_HANDOFF.md` |
+| native activation dependencies | `../modules/ONLINE_RUNTIME_ACTIVATION_HANDOFF.md` |
+| native writer source inspection | `../modules/ONLINE_WRITER_STATIC_HANDOFF.md` |
+| backup authority and stored restore sources | `../modules/STATE_BACKUP_AUTHORITY_RESTORE_SOURCE_HANDOFF.md` |
 | complete command gap ledger | `../migration/NODE_RUST_GAP_CLOSURE.md` |
 
 Cross-subsystem current contracts:

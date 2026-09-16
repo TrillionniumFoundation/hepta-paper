@@ -8,12 +8,21 @@ fn checked_marker<T: MutationAuthorityTransportV1>(
     metadata: &Value,
     authority: &PinnedMutationAuthorityV1<T>,
 ) -> Result<(VerifiedMutationReceiptV1, Value)> {
-    let reservation: Value =
-        serde_json::from_str(row["reservation_receipt_json"].as_str().unwrap_or(""))
-            .map_err(|_| error("externally_fenced_sqlite_mutation_recovery_reservation_invalid"))?;
-    let reserve: Value =
-        serde_json::from_str(row["reserve_request_json"].as_str().unwrap_or(""))
-            .map_err(|_| error("externally_fenced_sqlite_mutation_recovery_request_invalid"))?;
+    let parse = |field: &str, code: &str| -> Result<Value> {
+        let bytes = row[field]
+            .as_str()
+            .filter(|v| v.len() <= 32 * 1024 * 1024)
+            .ok_or_else(|| error(code))?;
+        authority::files::parse(bytes.as_bytes(), code)
+    };
+    let reservation = parse(
+        "reservation_receipt_json",
+        "externally_fenced_sqlite_mutation_recovery_reservation_invalid",
+    )?;
+    let reserve = parse(
+        "reserve_request_json",
+        "externally_fenced_sqlite_mutation_recovery_request_invalid",
+    )?;
     let request_hash = hash("AutonomousResearchOnlineMutationReserveRequest", &reserve)?;
     let receipt_hash = contracts::online_mutation_receipt_hash_v1(&reservation)?;
     let exact = row["reserve_request_hash"] == request_hash
@@ -75,8 +84,9 @@ pub fn recover_sqlite_mutations_v1<T: MutationAuthorityTransportV1>(
             "externally_fenced_sqlite_mutation_recovery_database_invalid",
         ));
     }
-    let meta = storage::metadata(database)?;
-    let schema = storage::exact_schema_hash_v1(database)?;
+    let snapshot = database.transaction()?;
+    let meta = storage::metadata(&snapshot)?;
+    let schema = storage::exact_schema_hash_v1(&snapshot)?;
     let trust = authority.trust();
     if meta["protocol"] != ONLINE_MUTATION_PROTOCOL
         || meta["database_scope_hash"] != trust["databaseScopeHash"]
@@ -87,18 +97,45 @@ pub fn recover_sqlite_mutations_v1<T: MutationAuthorityTransportV1>(
             "externally_fenced_sqlite_mutation_recovery_metadata_mismatch",
         ));
     }
-    let pending = storage::rows(
-        database,
-        "SELECT marker.* FROM autonomous_research_online_mutation_authority_marker marker LEFT JOIN autonomous_research_online_mutation_finalization_receipt finalized ON finalized.reservation_id=marker.reservation_id WHERE finalized.reservation_id IS NULL ORDER BY marker.database_sequence;",
-        &[],
+    let pending = storage::pending_markers_bounded(
+        &snapshot,
+        "externally_fenced_sqlite_mutation_recovery_journal_limit",
     )?;
+    snapshot.rollback()?;
     let mut recovered = Vec::new();
     let mut heads = Vec::new();
     for row in pending {
+        // Keep the current local marker, metadata and schema locked from their
+        // final recheck across external finalization and the durable local write.
+        let transaction =
+            database.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let current_meta = storage::metadata(&transaction)?;
+        let current_schema = storage::exact_schema_hash_v1(&transaction)?;
+        let current = storage::rows(
+            &transaction,
+            "SELECT * FROM autonomous_research_online_mutation_authority_marker WHERE reservation_id=? LIMIT 2;",
+            &[rusqlite::types::Value::Text(
+                text(&row, "reservation_id")?.into(),
+            )],
+        )?;
+        if current_meta != meta
+            || current_schema != schema
+            || current.len() != 1
+            || current[0] != row
+        {
+            return Err(error(
+                "externally_fenced_sqlite_mutation_recovery_local_state_changed",
+            ));
+        }
         let (reservation, request) = checked_marker(&row, &meta, authority)?;
         let receipt =
             authority.finalize_mutation(&request, &reservation, clock::observe(clock)?.0)?;
-        storage::record_finalization(database, receipt.value(), &clock::observe(clock)?.1)?;
+        storage::record_finalization_in_transaction(
+            &transaction,
+            receipt.value(),
+            &clock::observe(clock)?.1,
+        )?;
+        transaction.commit()?;
         recovered.push(reservation.value()["reservationId"].clone());
         heads.push(json!({"reservationId":reservation.value()["reservationId"],"globalSequence":receipt.value()["globalSequence"],"globalHash":receipt.value()["globalHash"]}));
     }

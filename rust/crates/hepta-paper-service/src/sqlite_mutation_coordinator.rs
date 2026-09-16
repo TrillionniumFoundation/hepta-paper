@@ -4,11 +4,13 @@ pub mod authority;
 pub mod clock;
 pub mod contracts;
 pub mod execution;
+mod finalized;
 pub mod recovery;
 pub use execution::{
     RecoverabilityEpochFenceV1, SqliteMutationCoordinatorOptionsV1, SqliteMutationCoordinatorV1,
 };
 pub mod manifest;
+pub mod startup;
 pub mod storage;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

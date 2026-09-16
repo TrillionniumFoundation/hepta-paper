@@ -7,6 +7,7 @@
 //! does not itself authorize production activation or online fenced publication.
 mod context;
 mod contract;
+pub mod online_publication;
 mod plugin;
 mod process;
 mod publication;

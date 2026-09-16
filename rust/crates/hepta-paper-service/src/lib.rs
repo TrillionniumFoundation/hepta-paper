@@ -15,6 +15,7 @@ pub mod native_business;
 pub mod node_migration;
 mod objects;
 mod production;
+pub mod release_trust_gate;
 pub mod repository_assets;
 pub mod retirement_reference;
 pub mod scientific_runtime;

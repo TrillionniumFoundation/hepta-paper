@@ -539,13 +539,19 @@
     },
     {
       "id": "verify/trust",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
+      "rustEntrypoint": "hepta-paper-rust release-trust-gate REQUEST",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
       "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/release_trust_gate_parity.rs"
+      ],
+      "remaining": "Rust matches the pure Node release trust-layer gate and hash; runtime capability-proof loading, external owner signatures, release authority and production activation remain unimplemented and must stay fail-closed.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/release_trust_gate.rs",
+        "rust/oracle/release-trust-gate-v1.mjs"
+      ]
     },
     {
       "id": "verify/operational",

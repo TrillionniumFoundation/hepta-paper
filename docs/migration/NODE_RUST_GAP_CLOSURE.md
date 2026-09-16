@@ -2,8 +2,8 @@
 
 > Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. This ledger records closure work; it does not grant parity, production activation, or Node retirement.
 
-- Inventory binding: `sha256:0c98a623d1fa5c217548c7d2e7f78508221e2eae231fede023a51689635e9379`
-- Unmapped commands: **40**
+- Inventory binding: `sha256:c06ee2b692f76b42d2ad792544f4da218226006faa8a514ecde3833d21e6b128`
+- Unmapped commands: **39**
 - Accepted parity: `false`
 - Production activation: `false`
 - Node retirement: `false`
@@ -49,6 +49,5 @@
 | `verify/operational` | `node` `paper-core/bin/operational-proof-status.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 | `verify/owner` | `node` `paper-core/bin/owner-acceptance-status.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 | `verify/release` | `npm` `run` `release:verify` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
-| `verify/trust` | `node` `paper-core/bin/release-trust-gate.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 
 The ledger is intentionally closed by evidence, not by changing a status token. A route moves out of this file only when its command-map row binds a real Rust entrypoint, complete call chain, executable tests, and the required qualification package.

@@ -1,6 +1,7 @@
-use super::{NativeBusinessError, hash_serialized};
+use super::NativeBusinessError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::Digest;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HypothesisV1 {
@@ -67,6 +68,12 @@ pub fn compensated_sum(v: &[f64]) -> f64 {
     }
     s + c
 }
+
+/// Versioned names used by the source-port inventory.  The unversioned
+/// helpers remain internal implementation primitives for existing callers.
+pub fn compensated_sum_v1(v: &[f64]) -> f64 {
+    compensated_sum(v)
+}
 pub fn arithmetic_mean(v: &[f64]) -> f64 {
     if v.is_empty() {
         f64::NAN
@@ -87,6 +94,10 @@ pub fn sample_standard_deviation(v: &[f64]) -> f64 {
     }
     (q.max(0.) / (n - 1.)).sqrt()
 }
+
+pub fn sample_standard_deviation_v1(v: &[f64]) -> f64 {
+    sample_standard_deviation(v)
+}
 pub fn quantile(v: &[f64], p: f64) -> f64 {
     if v.is_empty() || !(0. ..=1.).contains(&p) {
         return f64::NAN;
@@ -102,11 +113,63 @@ pub fn quantile(v: &[f64], p: f64) -> f64 {
         s[l] + (s[u] - s[l]) * (z - l as f64)
     }
 }
+
+pub fn quantile_v1(v: &[f64], p: f64) -> f64 {
+    quantile(v, p)
+}
+
+/// Bounded inverse standard-normal CDF used by the port inventory.  Inputs
+/// outside the open unit interval are rejected as NaN, matching the closed
+/// numerical helper contract.
+pub fn inverse_normal_cdf_v1(p: f64) -> f64 {
+    if !(0.0..=1.0).contains(&p) || p == 0.0 || p == 1.0 {
+        return f64::NAN;
+    }
+    // Abramowitz-Stegun 26.2.23 is sufficient for the bounded report path.
+    let a1 = -39.696_830_286_653_8;
+    let a2 = 220.946_098_424_520_5;
+    let a3 = -275.928_510_446_968_7;
+    let a4 = 138.357_751_867_269;
+    let a5 = -30.664_798_066_147_16;
+    let a6 = 2.506_628_277_459_239;
+    let b1 = -54.476_098_798_224_06;
+    let b2 = 161.585_836_858_040_9;
+    let b3 = -155.698_979_859_886_6;
+    let b4 = 66.801_311_887_719_72;
+    let b5 = -13.280_681_552_885_72;
+    let c1 = -0.007_784_894_002_430_293;
+    let c2 = -0.322_396_458_041_136_5;
+    let c3 = -2.400_758_277_161_838;
+    let c4 = -2.549_732_539_343_734;
+    let c5 = 4.374_664_141_464_968;
+    let c6 = 2.938_163_982_698_783;
+    let d1 = 0.007_784_695_709_041_462;
+    let d2 = 0.322_467_129_070_039_8;
+    let d3 = 2.445_134_137_142_996;
+    let d4 = 3.754_408_661_907_416;
+    let plow = 0.024_25;
+    let phigh = 1.0 - plow;
+    if p < plow {
+        let q = (-2.0 * p.ln()).sqrt();
+        return (((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6)
+            / (((d1 * q + d2) * q + d3) * q + d4);
+    }
+    if p > phigh {
+        return -inverse_normal_cdf_v1(1.0 - p);
+    }
+    let q = p - 0.5;
+    let r = q * q;
+    (((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q
+        / (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1.0)
+}
 fn rand(seed: u64, salt: &str) -> impl FnMut() -> f64 {
     use sha2::Digest;
     let mut h = sha2::Sha256::new();
-    h.update(b"AnalysisProtocolDeterministicRandomSeed");
-    h.update(serde_json::to_vec(&json!({"seed":seed,"salt":salt})).unwrap());
+    let salt_json = serde_json::to_string(salt).unwrap();
+    let payload = format!(
+        "{{\"kind\":\"AnalysisProtocolDeterministicRandomSeed\",\"value\":{{\"salt\":{salt_json},\"seed\":{seed}}}}}"
+    );
+    h.update(payload.as_bytes());
     let d = h.finalize();
     let mut x = u32::from_be_bytes([d[0], d[1], d[2], d[3]]);
     if x == 0 {
@@ -227,11 +290,28 @@ pub fn evaluate_analysis_inference_v1(
             json!({"hypothesisId":h.hypothesis_id,"pValue":h.p_value,"holmRank":i+1,"holmThreshold":r.family_alpha/divisor,"adjustedPValue":adjusted,"multiplicityAccepted":accepted})
         })
         .collect();
-    let seed_hash = hash_serialized(
-        "AnalysisProtocolDeterministicRandomSeed",
-        &json!({"seed":r.seed,"salt":r.salt}),
-    )
-    .map_err(|_| NativeBusinessError::Encoding)?;
+    let salt_json = serde_json::to_string(&r.salt).map_err(|_| NativeBusinessError::Encoding)?;
+    let seed_payload = format!(
+        "{{\"kind\":\"AnalysisProtocolDeterministicRandomSeed\",\"value\":{{\"salt\":{salt_json},\"seed\":{}}}}}",
+        r.seed
+    );
+    let seed_hash = format!(
+        "sha256:{}",
+        hex::encode(sha2::Sha256::digest(seed_payload.as_bytes()))
+    );
+    let required_paired_observations = r.power.as_ref().and_then(|power| {
+        if !(power.alpha > 0.0 && power.alpha < 1.0)
+            || !(power.target_power > 0.5 && power.target_power < 1.0)
+            || power.standardized_effect.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
+            || power.hypothesis_count == 0
+        {
+            return None;
+        }
+        let strict_alpha = power.alpha / power.hypothesis_count as f64;
+        let critical = inverse_normal_cdf_v1(1.0 - strict_alpha);
+        let power_quantile = inverse_normal_cdf_v1(power.target_power);
+        Some((((critical + power_quantile) / power.standardized_effect).powi(2)).ceil() as u64)
+    });
     Ok(AnalysisReportV1 {
         kind: "NativePairedAnalysisReportV1".into(),
         version: 1,
@@ -245,7 +325,7 @@ pub fn evaluate_analysis_inference_v1(
         bootstrap,
         sign_flip: sign,
         holm,
-        required_paired_observations: None,
+        required_paired_observations,
         seed_hash,
         scientific_acceptance: false,
         dataset_authority_verified: false,

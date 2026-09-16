@@ -39,15 +39,15 @@ pub fn build_codex_invocation(
     // A mutable workspace may have ordinary workspace permissions, so a
     // control path inside it must be rejected as such rather than reported as
     // an unrelated parent-permission error.
-    if let Ok(schema_path) = std::fs::canonicalize(request.output_schema_path) {
-        if schema_path.starts_with(&workspace) {
-            return Err(CodexInvocationError::SchemaInsideWorkspace);
-        }
+    if let Ok(schema_path) = std::fs::canonicalize(request.output_schema_path)
+        && schema_path.starts_with(&workspace)
+    {
+        return Err(CodexInvocationError::SchemaInsideWorkspace);
     }
-    if let Ok(output_path) = std::fs::canonicalize(request.output_last_message_path) {
-        if output_path.starts_with(&workspace) {
-            return Err(CodexInvocationError::OutputInsideWorkspace);
-        }
+    if let Ok(output_path) = std::fs::canonicalize(request.output_last_message_path)
+        && output_path.starts_with(&workspace)
+    {
+        return Err(CodexInvocationError::OutputInsideWorkspace);
     }
 
     let schema_parent_path = request

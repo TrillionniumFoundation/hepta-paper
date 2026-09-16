@@ -57,7 +57,7 @@ pub enum CampaignSloError {
     #[error("invalid SLO request")]
     Invalid,
 }
-fn pct(v: &mut Vec<f64>, p: f64) -> Option<f64> {
+fn pct(v: &mut [f64], p: f64) -> Option<f64> {
     if v.is_empty() {
         None
     } else {
@@ -81,15 +81,15 @@ pub fn build_campaign_slo_report_v1(r: &CampaignSloRequestV1) -> Result<Value, C
             if e.kind == "campaign_node_started" {
                 started.insert(id.clone(), t);
             }
-            if e.kind == "campaign_node_retry_queued" || e.kind == "campaign_node_manually_retried"
-            {
-                if let Some(s) = r.events.iter().find(|x| {
+            if (e.kind == "campaign_node_retry_queued"
+                || e.kind == "campaign_node_manually_retried")
+                && let Some(s) = r.events.iter().find(|x| {
                     x.node_id.as_ref() == Some(id)
                         && x.kind == "campaign_node_started"
                         && x.at_unix_ms.unwrap_or(0) >= t
-                }) {
-                    rec.push((s.at_unix_ms.unwrap() - t) as f64);
-                }
+                })
+            {
+                rec.push((s.at_unix_ms.unwrap() - t) as f64);
             }
         }
     }

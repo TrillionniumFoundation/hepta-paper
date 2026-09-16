@@ -28,6 +28,44 @@ fn bounded_count(
     Ok(value)
 }
 
+fn js_integer(value: Option<&Value>, label: &'static str) -> Result<u64, ReleaseTrustGateError> {
+    let value = value.ok_or(ReleaseTrustGateError::CountInvalid(label))?;
+    let number = match value {
+        Value::Null => 0.0,
+        Value::Bool(value) => u8::from(*value) as f64,
+        Value::Number(value) => value
+            .as_f64()
+            .ok_or(ReleaseTrustGateError::CountInvalid(label))?,
+        Value::String(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                0.0
+            } else if let Some(hex) = value
+                .strip_prefix("0x")
+                .or_else(|| value.strip_prefix("0X"))
+            {
+                u64::from_str_radix(hex, 16)
+                    .map_err(|_| ReleaseTrustGateError::CountInvalid(label))? as f64
+            } else {
+                value
+                    .parse::<f64>()
+                    .map_err(|_| ReleaseTrustGateError::CountInvalid(label))?
+            }
+        }
+        // JavaScript converts [] to 0 and [x] through String(x). Other objects
+        // become NaN; keep the same fail-closed result for those cases.
+        Value::Array(values) if values.is_empty() => 0.0,
+        Value::Array(values) if values.len() == 1 => js_integer(values.first(), label)? as f64,
+        Value::Array(_) | Value::Object(_) => {
+            return Err(ReleaseTrustGateError::CountInvalid(label));
+        }
+    };
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > u64::MAX as f64 {
+        return Err(ReleaseTrustGateError::CountInvalid(label));
+    }
+    Ok(number as u64)
+}
+
 /// Build the same gate payload and content hash as the Node implementation.
 pub fn build_release_trust_layer_gate_v1(
     release_commit: &str,
@@ -78,4 +116,24 @@ pub fn build_release_trust_layer_gate_v1(
             Value::String(hash.to_string()),
         );
     Ok(result)
+}
+
+/// JSON-facing variant preserving the Node `Number(...)` coercion boundary.
+pub fn build_release_trust_layer_gate_from_values_v1(
+    input: &Value,
+) -> Result<Value, ReleaseTrustGateError> {
+    let release_commit = input
+        .get("releaseCommit")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    build_release_trust_layer_gate_v1(
+        release_commit,
+        js_integer(input.get("capabilityCount"), "capability")?,
+        js_integer(input.get("implementationVerified"), "implementation")?,
+        js_integer(input.get("releaseBoundConformanceVerified"), "conformance")?,
+        js_integer(
+            input.get("independentProductionOperationalVerified"),
+            "operational",
+        )?,
+    )
 }

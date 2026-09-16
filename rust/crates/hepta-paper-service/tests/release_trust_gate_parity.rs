@@ -1,6 +1,6 @@
 //! Differential corpus for the pure release trust-layer gate.
 
-use hepta_paper_service::release_trust_gate::build_release_trust_layer_gate_v1;
+use hepta_paper_service::release_trust_gate::build_release_trust_layer_gate_from_values_v1;
 use serde_json::Value;
 use std::{
     io::Write,
@@ -35,19 +35,7 @@ fn oracle(requests: &Value) -> Value {
 }
 
 fn rust_result(request: &Value) -> Value {
-    let result = build_release_trust_layer_gate_v1(
-        request["releaseCommit"].as_str().unwrap_or_default(),
-        request["capabilityCount"].as_u64().unwrap_or_default(),
-        request["implementationVerified"]
-            .as_u64()
-            .unwrap_or_default(),
-        request["releaseBoundConformanceVerified"]
-            .as_u64()
-            .unwrap_or_default(),
-        request["independentProductionOperationalVerified"]
-            .as_u64()
-            .unwrap_or_default(),
-    );
+    let result = build_release_trust_layer_gate_from_values_v1(request);
     match result {
         Ok(value) => serde_json::json!({"ok": true, "value": value}),
         Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}),
@@ -60,7 +48,9 @@ fn release_trust_gate_matches_node_oracle() {
         {"releaseCommit":"commit-a","capabilityCount":14,"implementationVerified":14,"releaseBoundConformanceVerified":0,"independentProductionOperationalVerified":14},
         {"releaseCommit":"commit-a","capabilityCount":14,"implementationVerified":14,"releaseBoundConformanceVerified":14,"independentProductionOperationalVerified":0},
         {"releaseCommit":"","capabilityCount":14,"implementationVerified":14,"releaseBoundConformanceVerified":14,"independentProductionOperationalVerified":0},
-        {"releaseCommit":"commit-a","capabilityCount":14,"implementationVerified":15,"releaseBoundConformanceVerified":14,"independentProductionOperationalVerified":0}
+        {"releaseCommit":"commit-a","capabilityCount":14,"implementationVerified":15,"releaseBoundConformanceVerified":14,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"14","implementationVerified":"14","releaseBoundConformanceVerified":null,"independentProductionOperationalVerified":false},
+        {"releaseCommit":"commit-a","capabilityCount":14,"implementationVerified":[],"releaseBoundConformanceVerified":[14],"independentProductionOperationalVerified":0}
     ]);
     let expected = oracle(&requests);
     for (index, request) in requests.as_array().unwrap().iter().enumerate() {

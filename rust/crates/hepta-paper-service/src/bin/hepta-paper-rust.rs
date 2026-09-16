@@ -3,7 +3,7 @@ use hepta_paper_service::{
     LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1,
     command_surface::synchronize_command_surface_v1,
     migrate_node_store_v1, native_implementation_hash_v1,
-    release_trust_gate::build_release_trust_layer_gate_v1,
+    release_trust_gate::build_release_trust_layer_gate_from_values_v1,
     repository_assets::{
         build_repository_asset_externalization_handoff_v1,
         inspect_repository_asset_externalization_v1,
@@ -126,27 +126,9 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("release-trust-gate") if args.len() == 2 => {
             let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
-            let string = |name: &str| {
-                input
-                    .get(name)
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| format!("missing {name}"))
-            };
-            let number = |name: &str| {
-                input
-                    .get(name)
-                    .and_then(serde_json::Value::as_u64)
-                    .ok_or_else(|| format!("missing {name}"))
-            };
             println!(
                 "{}",
-                serde_json::to_string(&build_release_trust_layer_gate_v1(
-                    string("releaseCommit")?,
-                    number("capabilityCount")?,
-                    number("implementationVerified")?,
-                    number("releaseBoundConformanceVerified")?,
-                    number("independentProductionOperationalVerified")?,
-                )?)?
+                serde_json::to_string(&build_release_trust_layer_gate_from_values_v1(&input)?)?
             );
         }
         _ => {

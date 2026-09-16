@@ -8,6 +8,7 @@ import { auditCurrentCoverage } from './audit-node-rust-coverage.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUTPUT = path.join(ROOT, 'docs/migration/NODE_RUST_GAP_CLOSURE.md');
+const CHECK_ONLY = process.argv.includes('--check');
 
 function classify(row, route) {
   const id = row.id;
@@ -64,5 +65,14 @@ for (const row of rows) {
   lines.push(`| \`${row.id}\` | ${argv} | ${category} | ${remaining} | ${criterion(category)} |`);
 }
 lines.push('', 'The ledger is intentionally closed by evidence, not by changing a status token. A route moves out of this file only when its command-map row binds a real Rust entrypoint, complete call chain, executable tests, and the required qualification package.');
-fs.writeFileSync(OUTPUT, `${lines.join('\n')}\n`, { mode: 0o644 });
-process.stdout.write(`generated ${path.relative(ROOT, OUTPUT)} rows=${rows.length}\n`);
+const content = `${lines.join('\n')}\n`;
+if (CHECK_ONLY) {
+  const current = fs.readFileSync(OUTPUT, 'utf8');
+  if (current !== content) {
+    process.stderr.write(`stale ${path.relative(ROOT, OUTPUT)}\n`);
+    process.exitCode = 1;
+  } else process.stdout.write(`checked ${path.relative(ROOT, OUTPUT)} rows=${rows.length}\n`);
+} else {
+  fs.writeFileSync(OUTPUT, content, { mode: 0o644 });
+  process.stdout.write(`generated ${path.relative(ROOT, OUTPUT)} rows=${rows.length}\n`);
+}

@@ -14,6 +14,7 @@ use std::{
 };
 
 use hepta_codex_protocol::Sha256Digest;
+use hepta_readonly_control::DatabaseFormatV1;
 use hepta_readonly_store::{
     LogicalDatabaseSnapshotV1, LogicalSqlValueV1, LogicalTableV1, ReadOnlyStoreV1,
 };
@@ -171,6 +172,9 @@ pub fn verify_legacy_node_snapshot_v1(
         return Err(LegacyNodeFreezeError::SchemaVersionInvalid(
             snapshot.schema.schema_version,
         ));
+    }
+    if snapshot.schema.format != DatabaseFormatV1::NodeMigrationLedger {
+        return Err(LegacyNodeFreezeError::DatabaseFormatInvalid);
     }
     let tables = snapshot
         .tables
@@ -587,6 +591,9 @@ pub enum LegacyNodeFreezeError {
     /// The inspected database is not the exact supported Node schema.
     #[error("legacy Node schema version is unsupported: {0}")]
     SchemaVersionInvalid(u32),
+    /// The snapshot uses the Rust writer format rather than the Node ledger.
+    #[error("legacy snapshot database format is unsupported")]
+    DatabaseFormatInvalid,
     /// A required critical table is absent.
     #[error("required legacy runtime table is missing: {0}")]
     RequiredTableMissing(String),
@@ -741,6 +748,16 @@ mod tests {
                 .iter()
                 .all(|item| item.active_row_count == 0)
         );
+    }
+
+    #[test]
+    fn rust_writer_snapshot_cannot_be_used_for_node_freeze() {
+        let mut snapshot = snapshot(false);
+        snapshot.schema.format = DatabaseFormatV1::RustCampaignWriter;
+        assert!(matches!(
+            verify_legacy_node_snapshot_v1(subject(), digest('6'), snapshot),
+            Err(LegacyNodeFreezeError::DatabaseFormatInvalid)
+        ));
     }
 
     #[test]

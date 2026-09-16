@@ -2,8 +2,8 @@
 
 > Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. This ledger records closure work; it does not grant parity, production activation, or Node retirement.
 
-- Inventory binding: `sha256:769cbad5dcc2745c342b71cfdf59f4e35ba4fc7fdffbcb591139ccdf6c2b492b`
-- Unmapped commands: **37**
+- Inventory binding: `sha256:0e1992f16b0ee4ce55b650991e854c5ecbc12da8e116440ded2075a5571671a9`
+- Unmapped commands: **36**
 - Accepted parity: `false`
 - Production activation: `false`
 - Node retirement: `false`
@@ -38,7 +38,6 @@
 | `operator/research-capability-matrix` | `node` `paper-core/bin/research-capability-matrix.mjs` | full Rust business call chain | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain covering every argument mode, state transition, lease, retry, crash, cancellation, and external-effect boundary. |
 | `operator/research-readiness` | `node` `paper-core/bin/automation-status.mjs` `--require-full-research` `--live-provider-canary` `--live-release-attestor` | external authority / target host | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain first, then target-host/external authority qualification, recovery evidence, and writer/credential ownership. |
 | `operator/runtime-image-reproducibility` | `node` `paper-core/bin/runtime-image-reproducibility.mjs` | external authority / target host | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain first, then target-host/external authority qualification, recovery evidence, and writer/credential ownership. |
-| `operator/runtime-r-source-cas` | `node` `paper-core/bin/runtime-r-source-cas.mjs` | external authority / target host | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain first, then target-host/external authority qualification, recovery evidence, and writer/credential ownership. |
 | `operator/strict-full-auto-acceptance` | `node` `paper-core/bin/strict-full-auto-acceptance.mjs` | external authority / target host | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain first, then target-host/external authority qualification, recovery evidence, and writer/credential ownership. |
 | `operator/submission-handoff` | `node` `paper-core/bin/paper-submission-handoff.mjs` | full Rust business call chain | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain covering every argument mode, state transition, lease, retry, crash, cancellation, and external-effect boundary. |
 | `operator/submission-handoff-export` | `node` `paper-core/bin/paper-submission-handoff-export.mjs` | full Rust business call chain | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain covering every argument mode, state transition, lease, retry, crash, cancellation, and external-effect boundary. |

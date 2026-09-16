@@ -198,13 +198,19 @@
     },
     {
       "id": "operator/runtime-r-source-cas",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
+      "rustEntrypoint": "hepta-paper-rust runtime-r-source-cas REPOSITORY_ROOT",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
       "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_parity.rs"
+      ],
+      "remaining": "Rust matches the read-only lock/manifest/index/archive verification contract; network acquisition, tar DESCRIPTION identity checks, atomic publication and external CRAN transport remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
+        "rust/oracle/runtime-r-source-cas-v1.mjs"
+      ]
     },
     {
       "id": "operator/research-readiness",

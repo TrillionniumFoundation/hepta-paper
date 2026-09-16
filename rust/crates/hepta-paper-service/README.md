@@ -44,6 +44,7 @@ clock and local writer token. It is not a deployment configuration.
 | `release-trust-gate REQUEST` | Evaluate the pure release trust-layer count gate from JSON input; it never creates external signatures or activates production. |
 | `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input; composite release verification remains separate. |
 | `retirement-status REQUEST` | Inspect the read-only legacy archive retirement status for explicit roots and version; destructive identity-bound execution remains disabled. |
+| `runtime-r-source-cas REPOSITORY_ROOT` | Verify the R lock closure, source-CAS manifest, indexes and archive hashes without network acquisition; acquisition remains separate. |
 
 `ServiceRunV1` uses camelCase, rejects unknown fields, and binds a version, state
 directory, `registryJson`, hard policy, planner policy, frozen snapshot, frontier,

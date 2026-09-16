@@ -20,6 +20,7 @@ pub mod release_trust_gate;
 pub mod repository_assets;
 pub mod retirement_reference;
 pub mod retirement_status;
+pub mod runtime_source_cas;
 pub mod scientific_runtime;
 mod state_access;
 mod worker;

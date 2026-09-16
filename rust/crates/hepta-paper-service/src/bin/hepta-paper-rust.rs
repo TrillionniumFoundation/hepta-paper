@@ -11,7 +11,9 @@ use hepta_paper_service::{
     },
     retirement_reference::verify_retirement_reference_v1,
     retirement_status::inspect_retirement_status_v1,
-    run_service_v1, verify_legacy_node_freeze_v1,
+    run_service_v1,
+    runtime_source_cas::inspect_runtime_source_cas_v1,
+    verify_legacy_node_freeze_v1,
 };
 use std::{
     env,
@@ -147,6 +149,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&inspect_retirement_status_v1(&input)?)?
             );
         }
+        Some("runtime-r-source-cas") if args.len() == 2 => {
+            let report = inspect_runtime_source_cas_v1(&PathBuf::from(&args[1]));
+            let blocked = report.get("ready") != Some(&serde_json::Value::Bool(true));
+            println!("{}", serde_json::to_string(&report)?);
+            if blocked {
+                return Err("R runtime source CAS verification blocked".into());
+            }
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
@@ -158,7 +168,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | retirement-reference ROOT",
                 " | release-trust-gate REQUEST",
                 " | release-state REQUEST",
-                " | retirement-status REQUEST"
+                " | retirement-status REQUEST",
+                " | runtime-r-source-cas REPOSITORY_ROOT"
             )
             .into());
         }

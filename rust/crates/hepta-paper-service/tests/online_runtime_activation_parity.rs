@@ -1,8 +1,7 @@
-use hepta_paper_service::online_runtime_activation::{contracts::*, database::*, inventory::*};
+use hepta_paper_service::online_runtime_activation::{contracts::*, inventory::*};
 use serde_json::{Value, json};
 use std::io::Write;
-use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 fn oracle(input: Value) -> Value {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -310,127 +309,6 @@ fn schema_transition_readiness_claim_hash_expiry_and_binding_match_node() {
             );
         }
     }
-}
-struct Temp {
-    root: PathBuf,
-}
-impl Temp {
-    fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "hepta-native-activation-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&root).unwrap();
-        Self { root }
-    }
-    fn instance(&self, role: &str, mode: u32) -> Value {
-        let file = self.root.join("state.sqlite");
-        let database = rusqlite::Connection::open(&file).unwrap();
-        database
-            .execute_batch(
-                "CREATE TABLE state(value TEXT NOT NULL); INSERT INTO state VALUES('test');",
-            )
-            .unwrap();
-        drop(database);
-        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
-        json!({"role":role,"sourceRelativePath":"state.sqlite","sourceFileIdentity":oracle(json!({"mode":"identity","path":file}))})
-    }
-}
-impl Drop for Temp {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
-#[test]
-fn actual_database_opening_role_permissions_and_changed_identity_match_node() {
-    for (role, mode) in [
-        ("resident-instance", 0o600),
-        ("submission-handoff", 0o660),
-        ("resident-instance", 0o660),
-        ("submission-handoff", 0o662),
-    ] {
-        let t = Temp::new();
-        let instance = t.instance(role, mode);
-        let result = open_runtime_activation_database_v1(&t.root, &instance);
-        let actual = match result {
-            Ok(mut db) => json!({"opened":true,"inspection":db.inspect().unwrap()}),
-            Err(e) => json!({"error":e.code}),
-        };
-        assert_eq!(
-            actual,
-            oracle(json!({"mode":"open","runtimeRoot":t.root,"instance":instance})),
-            "{role} {mode:o}"
-        );
-    }
-    for kind in ["missing", "identity", "symlink", "outside"] {
-        let t = Temp::new();
-        let mut instance = t.instance("resident-instance", 0o600);
-        match kind {
-            "missing" => instance["sourceRelativePath"] = json!("missing.sqlite"),
-            "identity" => instance["sourceFileIdentity"]["inode"] = json!("0"),
-            "symlink" => {
-                std::fs::rename(t.root.join("state.sqlite"), t.root.join("other.sqlite")).unwrap();
-                symlink("other.sqlite", t.root.join("state.sqlite")).unwrap();
-            }
-            _ => instance["sourceRelativePath"] = json!("../outside.sqlite"),
-        };
-        let code = open_runtime_activation_database_v1(&t.root, &instance)
-            .err()
-            .unwrap()
-            .code;
-        assert_eq!(
-            json!({"error":code}),
-            oracle(json!({"mode":"open","runtimeRoot":t.root,"instance":instance})),
-            "{kind}"
-        );
-    }
-}
-#[test]
-fn database_descriptor_guards_reject_rebinding_and_expose_fixed_observations_only() {
-    for kind in ["replace", "chmod", "symlink", "parent"] {
-        let t = Temp::new();
-        let instance = t.instance("resident-instance", 0o600);
-        let result =
-            open_runtime_activation_database_with_hook_v1(&t.root, &instance, || match kind {
-                "replace" => {
-                    std::fs::rename(t.root.join("state.sqlite"), t.root.join("old.sqlite"))
-                        .unwrap();
-                    std::fs::copy(t.root.join("old.sqlite"), t.root.join("state.sqlite")).unwrap();
-                }
-                "chmod" => std::fs::set_permissions(
-                    t.root.join("state.sqlite"),
-                    std::fs::Permissions::from_mode(0o644),
-                )
-                .unwrap(),
-                "symlink" => {
-                    std::fs::rename(t.root.join("state.sqlite"), t.root.join("old.sqlite"))
-                        .unwrap();
-                    symlink("old.sqlite", t.root.join("state.sqlite")).unwrap();
-                }
-                _ => {
-                    let moved = t.root.with_extension("moved");
-                    std::fs::rename(&t.root, &moved).unwrap();
-                    std::fs::create_dir(&t.root).unwrap();
-                    std::fs::rename(moved.join("state.sqlite"), t.root.join("state.sqlite"))
-                        .unwrap();
-                    std::fs::remove_dir(moved).unwrap();
-                }
-            });
-        assert!(result.is_err(), "{kind}");
-    }
-    let t = Temp::new();
-    let instance = t.instance("resident-instance", 0o600);
-    let mut db = open_runtime_activation_database_v1(&t.root, &instance).unwrap();
-    assert_eq!(db.observed_identity(), &instance["sourceFileIdentity"]);
-    assert_eq!(db.inspect().unwrap()["quickCheck"], "ok");
-    db.assert_current().unwrap();
-    std::fs::rename(t.root.join("state.sqlite"), t.root.join("old.sqlite")).unwrap();
-    std::fs::copy(t.root.join("old.sqlite"), t.root.join("state.sqlite")).unwrap();
-    assert!(db.inspect().is_err());
 }
 #[test]
 fn stable_inventory_preserves_nested_member_order_and_detects_physical_drift() {

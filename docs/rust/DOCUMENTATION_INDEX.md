@@ -34,6 +34,12 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | native activation dependencies | `../modules/ONLINE_RUNTIME_ACTIVATION_HANDOFF.md` |
 | native writer source inspection | `../modules/ONLINE_WRITER_STATIC_HANDOFF.md` |
 | backup authority and stored restore sources | `../modules/STATE_BACKUP_AUTHORITY_RESTORE_SOURCE_HANDOFF.md` |
+| actual state database inventory | `../modules/STATE_DATABASE_INVENTORY_HANDOFF.md` |
+| schema transition readiness | `../modules/ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md` |
+| target schema projection and application | `../modules/ONLINE_SCHEMA_TARGET_EXECUTION_HANDOFF.md` |
+| private deployment environment overlay | `../modules/DEPLOYMENT_ENVIRONMENT_HANDOFF.md` |
+| passive authority evidence cache and verified write | `../modules/ONLINE_AUTHORITY_EVIDENCE_CACHE_HANDOFF.md` |
+| concrete backup, replay and recoverability controller | `../modules/STATE_RECOVERABILITY_HANDOFF.md` |
 | complete command gap ledger | `../migration/NODE_RUST_GAP_CLOSURE.md` |
 
 Cross-subsystem current contracts:

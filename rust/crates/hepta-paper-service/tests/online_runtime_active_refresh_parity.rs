@@ -342,3 +342,174 @@ fn active_evidence_rejects_post_rpc_expiry_modified_source_and_wrong_subject() {
     );
     assert_eq!(calls.lock().unwrap().len(), before);
 }
+
+#[test]
+fn verified_cache_write_requires_actual_inventory_signed_evidence_and_current_source() {
+    use hepta_paper_service::{
+        online_authority_evidence_cache::verified::record_verified_authority_evidence_cache_v1,
+        state_database_inventory::observe_state_database_inventory_v1,
+    };
+    let mut f = Fixture::new();
+    let state_manifest: Value = serde_json::from_slice(
+        &fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../paper-core/config/autonomous-research-state-databases.v1.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    for definition in state_manifest["databases"].as_array().unwrap() {
+        let path = f.root.join(definition["relativePath"].as_str().unwrap());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE fixture_records(id TEXT PRIMARY KEY,value TEXT); INSERT INTO fixture_records VALUES('one','before');").unwrap();
+        for object in definition["requiredSchemaObjects"].as_array().unwrap() {
+            let (kind, name) = object.as_str().unwrap().split_once(':').unwrap();
+            let sql = match kind {
+                "table" => format!("CREATE TABLE \"{name}\"(id TEXT PRIMARY KEY,value TEXT)"),
+                "index" => format!("CREATE INDEX \"{name}\" ON fixture_records(value)"),
+                "trigger" => format!(
+                    "CREATE TRIGGER \"{name}\" BEFORE UPDATE ON fixture_records BEGIN SELECT 1; END"
+                ),
+                "view" => format!("CREATE VIEW \"{name}\" AS SELECT * FROM fixture_records"),
+                _ => panic!("unknown fixture schema object"),
+            };
+            db.execute_batch(&sql).unwrap();
+        }
+        drop(db);
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let inventory = observe_state_database_inventory_v1(&f.root, &state_manifest).unwrap();
+    f.inventory = inventory.value().clone();
+    let mut configuration: Value =
+        serde_json::from_slice(&fs::read(&f.configuration).unwrap()).unwrap();
+    configuration["databaseScopeHash"] = f.inventory["databaseScopeHash"].clone();
+    configuration["maximumObservationAgeMs"] = json!(1000);
+    fs::write(&f.configuration, configuration.to_string()).unwrap();
+    f.pin = bytehash(&fs::read(&f.configuration).unwrap());
+    let source = verify_online_writer_static_coverage_v1(&f.root, &f.manifest).unwrap();
+    let (mut authority, calls) = f.authority("success", Arc::new(AtomicI64::new(NOW)));
+    let evidence = refresh_online_authority_evidence_v1(
+        &f.inventory,
+        &f.manifest,
+        &mut authority,
+        &source,
+        &mut || Ok(NOW),
+        3,
+    )
+    .unwrap();
+    let writes_before = calls.lock().unwrap().len();
+    let receipt = record_verified_authority_evidence_cache_v1(
+        &f.root,
+        &authority,
+        &evidence,
+        &inventory,
+        &source,
+        &mut || Ok(NOW),
+    )
+    .unwrap();
+    receipt
+        .assert_current(&authority, &evidence, &inventory, &source, &mut || {
+            Ok(NOW + 1)
+        })
+        .unwrap();
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        writes_before,
+        "cache never makes an authority RPC"
+    );
+    assert!(
+        receipt
+            .assert_current(&authority, &evidence, &inventory, &source, &mut || Ok(
+                NOW + 60000
+            ))
+            .is_err()
+    );
+    let mut write_times = vec![NOW + 100, NOW + 100, NOW + 50, NOW + 50, NOW + 50].into_iter();
+    assert!(
+        record_verified_authority_evidence_cache_v1(
+            &f.root,
+            &authority,
+            &evidence,
+            &inventory,
+            &source,
+            &mut || Ok(write_times.next().unwrap())
+        )
+        .is_err()
+    );
+    let mut times = vec![NOW, NOW - 1].into_iter();
+    assert!(
+        receipt
+            .assert_current(&authority, &evidence, &inventory, &source, &mut || Ok(
+                times.next().unwrap()
+            ))
+            .is_err()
+    );
+    assert!(
+        record_verified_authority_evidence_cache_v1(
+            &f.root.join("wrong"),
+            &authority,
+            &evidence,
+            &inventory,
+            &source,
+            &mut || Ok(NOW)
+        )
+        .is_err()
+    );
+    receipt
+        .assert_current(&authority, &evidence, &inventory, &source, &mut || {
+            Ok(NOW + 1000)
+        })
+        .unwrap();
+    let mut ages = vec![NOW + 1000, NOW + 1001].into_iter();
+    assert!(
+        receipt
+            .assert_current(&authority, &evidence, &inventory, &source, &mut || Ok(ages
+                .next()
+                .unwrap()))
+            .is_err(),
+        "still-unexpired signed evidence must reject observation age exceeded only after file/source checks"
+    );
+    let mut ages = vec![NOW, NOW, NOW, NOW, NOW + 1001].into_iter();
+    assert!(
+        record_verified_authority_evidence_cache_v1(
+            &f.root,
+            &authority,
+            &evidence,
+            &inventory,
+            &source,
+            &mut || Ok(ages.next().unwrap())
+        )
+        .is_err(),
+        "final write sample must enforce observation age too"
+    );
+    let path = f
+        .root
+        .join("automation-cache/online-authority-evidence-v1/current.json");
+    let saved = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, b"{}").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+    assert!(
+        receipt
+            .assert_current(&authority, &evidence, &inventory, &source, &mut || Ok(NOW))
+            .is_err()
+    );
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, saved).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+    let database = f.root.join(
+        state_manifest["databases"][0]["relativePath"]
+            .as_str()
+            .unwrap(),
+    );
+    let db = rusqlite::Connection::open(database).unwrap();
+    db.execute("UPDATE fixture_records SET value='changed'", [])
+        .unwrap();
+    drop(db);
+    assert!(
+        receipt
+            .assert_current(&authority, &evidence, &inventory, &source, &mut || Ok(NOW))
+            .is_err()
+    );
+}

@@ -1,7 +1,12 @@
-//! Existing-database opening with held descriptors and identity rechecks.
-//! A snapshot is not a future immutability lease. This module does not create a
-//! database, install schema, reconcile an authority, or authorize online writes.
+//! Restricted live database handles for authenticated startup reconciliation.
+//! Public fixed observations use actual inventory private copies instead.
+//! Holding source descriptors and rechecking names is not a descriptor-bound
+//! SQLite VFS or an immutable filesystem lease.
 use super::*;
+mod startup;
+#[cfg(test)]
+mod tests;
+use crate::state_database_inventory::ObservedStateDatabaseInventoryV1;
 use nix::fcntl::{OFlag, openat};
 use nix::sys::stat::Mode;
 use rusqlite::{Connection, OpenFlags};
@@ -110,10 +115,10 @@ fn parents(runtime_root: &Path, relative: &Path) -> Result<(Vec<Parent>, PathBuf
     chain.push(parent);
     Ok((chain, path))
 }
-/// Only fixed observations are public. Each use rechecks the name and
-/// held descriptor; post-action checks permit content changes while rejecting
-/// file replacement, permission/link changes and directory rebinding.
-pub struct ActivationDatabaseV1 {
+/// No public constructor or arbitrary connection callback. Fixed in-crate
+/// recovery operations require real pinned authorities and coordinator checks.
+/// This raw live handle is never exposed as readonly inventory evidence.
+pub(crate) struct LiveActivationDatabaseV1 {
     connection: Connection,
     held: File,
     path: PathBuf,
@@ -121,7 +126,7 @@ pub struct ActivationDatabaseV1 {
     role: String,
     snapshot: Value,
 }
-impl ActivationDatabaseV1 {
+impl LiveActivationDatabaseV1 {
     fn metadata(&self) -> Result<Metadata> {
         for parent in &self.parents {
             parent.assert_current()?;
@@ -137,56 +142,20 @@ impl ActivationDatabaseV1 {
         }
         Ok(held)
     }
-    pub fn observed_identity(&self) -> &Value {
-        &self.snapshot
-    }
-    pub fn assert_current(&self) -> Result<()> {
+    pub(crate) fn assert_current(&self) -> Result<()> {
         if identity(&self.metadata()?) != self.snapshot {
             return Err(changed());
         }
         Ok(())
     }
-    /// Observe SQLite's live schema and integrity using fixed read statements.
-    /// This is local evidence only, never backup or authority qualification.
-    pub fn inspect(&mut self) -> Result<Value> {
-        self.with_connection(|db| {
-            let query = |sql: &str| -> Result<i64> { db.query_row(sql, [], |r| r.get(0)).map_err(|e| error(e.to_string())) };
-            let quick: String = db.query_row("PRAGMA quick_check;", [], |r| r.get(0)).map_err(|e| error(e.to_string()))?;
-            let mut statement = db.prepare("PRAGMA foreign_key_check;").map_err(|e| error(e.to_string()))?;
-            let mut rows = statement.query([]).map_err(|e| error(e.to_string()))?;
-            let mut foreign_key_count = 0_u64;
-            while rows.next().map_err(|e| error(e.to_string()))?.is_some() { foreign_key_count += 1; }
-            let schema_hash = crate::sqlite_mutation_coordinator::storage::exact_schema_hash_v1(db).map_err(|e| error(e.to_string()))?;
-            Ok(json!({"quickCheck":quick,"foreignKeyViolationCount":foreign_key_count,"schemaHash":schema_hash,
-                "userVersion":query("PRAGMA user_version;")?,"applicationId":query("PRAGMA application_id;")?}))
-        })
-    }
-
-    fn with_connection<R>(
-        &mut self,
-        action: impl FnOnce(&mut Connection) -> Result<R>,
-    ) -> Result<R> {
-        self.assert_current()?;
-        let previous = self.snapshot.clone();
-        let result = action(&mut self.connection);
-        let next = identity(&self.metadata()?);
-        if ["device", "inode", "mode", "links"]
-            .iter()
-            .any(|k| previous[k] != next[k])
-        {
-            return Err(changed());
-        }
-        self.snapshot = next;
-        result
-    }
 }
-/// Open an existing SQLite database against the inventory's exact file identity.
-/// The hook is an observation seam for deterministic race tests, not authority.
-pub fn open_runtime_activation_database_with_hook_v1(
+// Private core. Only the opaque-inventory constructor below calls this in
+// production; tests use the hook to force deterministic namespace races.
+fn open_live_activation_database_with_hook_v1(
     runtime_root: &Path,
     instance: &Value,
     before_sqlite_open: impl FnOnce(),
-) -> Result<ActivationDatabaseV1> {
+) -> Result<LiveActivationDatabaseV1> {
     let relative = relative_path(instance)?;
     let (parents, path) = parents(runtime_root, relative)?;
     let parent = parents.last().ok_or_else(changed)?;
@@ -229,7 +198,7 @@ pub fn open_runtime_activation_database_with_hook_v1(
             "autonomous_research_online_runtime_activation_database_open_failed:{e}"
         ))
     })?;
-    let opened = ActivationDatabaseV1 {
+    let opened = LiveActivationDatabaseV1 {
         connection,
         held,
         path,
@@ -240,9 +209,16 @@ pub fn open_runtime_activation_database_with_hook_v1(
     opened.assert_current()?;
     Ok(opened)
 }
-pub fn open_runtime_activation_database_v1(
-    runtime_root: &Path,
-    instance: &Value,
-) -> Result<ActivationDatabaseV1> {
-    open_runtime_activation_database_with_hook_v1(runtime_root, instance, || {})
+/// Rechecks one instance from a real previously observed inventory. This permits
+/// the reconciler's already-authorized writes to other instances while requiring
+/// the selected source and sidecars to remain exactly as observed. The caller
+/// must compare a fresh complete inventory after reconciling all instances.
+pub(crate) fn open_live_activation_database_v1(
+    inventory: &ObservedStateDatabaseInventoryV1,
+    instance_id: &str,
+) -> Result<LiveActivationDatabaseV1> {
+    let instance = inventory
+        .current_database_instance(instance_id)
+        .map_err(|e| error(e.to_string()))?;
+    open_live_activation_database_with_hook_v1(inventory.runtime_root(), instance, || {})
 }

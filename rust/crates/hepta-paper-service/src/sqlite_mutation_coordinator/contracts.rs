@@ -1,4 +1,5 @@
 pub mod activation;
+pub mod schema_transition;
 use super::*;
 use base64ct::{Base64, Encoding};
 pub(super) const RESERVE_REQUEST_KEYS: &[&str] = &[
@@ -238,7 +239,7 @@ pub(super) const ABORT_RECEIPT_KEYS: &[&str] = &[
 ];
 
 pub fn assert_authority_trust_v1(trust: &Value) -> Result<()> {
-    if trust["version"] != 1
+    if trust["version"].as_f64() != Some(1.0)
         || trust["kind"] != "AutonomousResearchOnlineMutationAuthorityTrust"
         || !["authorityId", "keyId", "scopeId"]
             .iter()
@@ -258,7 +259,7 @@ pub fn assert_authority_trust_v1(trust: &Value) -> Result<()> {
 }
 fn common(v: &Value, expected: &[&str], kind: &str) -> bool {
     keys(v, expected)
-        && v["version"] == 1
+        && v["version"].as_f64() == Some(1.0)
         && v["kind"] == kind
         && v["protocol"] == ONLINE_MUTATION_PROTOCOL
         && safe(&v["scopeId"])
@@ -266,7 +267,12 @@ fn common(v: &Value, expected: &[&str], kind: &str) -> bool {
         && sha(&v["writerManifestHash"])
 }
 fn matches(a: &Value, b: &Value, names: &[&str]) -> bool {
-    names.iter().all(|k| a.get(*k) == b.get(*k))
+    names.iter().all(|k| match (a.get(*k), b.get(*k)) {
+        (Some(left @ Value::Number(_)), Some(right @ Value::Number(_))) => {
+            integer(left, 0) && integer(right, 0) && left.as_f64() == right.as_f64()
+        }
+        (left, right) => left == right,
+    })
 }
 fn scoped(a: &Value, b: &Value) -> bool {
     matches(
@@ -388,7 +394,7 @@ fn changeset_valid(v: &Value) -> Result<bool> {
     if v["changesetEncoding"] != "base64"
         || b.is_empty()
         || b.len() > 16 * 1024 * 1024
-        || v["changesetByteLength"] != json!(b.len())
+        || v["changesetByteLength"].as_f64() != Some(b.len() as f64)
         || !sha(&v["changesetHash"])
     {
         return Ok(false);
@@ -430,7 +436,7 @@ pub fn assert_reserve_request_v1(request: &Value, trust: &Value) -> Result<()> {
         && sorted(&request["sideEffectReservationHashes"], sha)
         && timestamp(&request["requestedAt"]).is_some()
         && integer(&request["requestedLeaseMs"], 1000)
-        && request["requestedLeaseMs"].as_i64() <= trust["maximumReservationLeaseMs"].as_i64();
+        && int(request, "requestedLeaseMs")? <= int(trust, "maximumReservationLeaseMs")?;
     if !valid {
         return Err(error(
             "autonomous_research_online_mutation_reserve_request_invalid",
@@ -479,7 +485,7 @@ pub fn verify_reservation_v1(
         return Ok(false);
     };
     Ok(keys(receipt, RESERVATION_KEYS)
-        && receipt["version"] == 1
+        && receipt["version"].as_f64() == Some(1.0)
         && receipt["kind"] == "AutonomousResearchOnlineMutationReservationReceipt"
         && receipt["status"] == "autonomous_research_online_mutation_reserved"
         && safe(&receipt["reservationId"])
@@ -515,9 +521,11 @@ pub fn verify_reservation_v1(
                 "sideEffectReservationHashes",
             ],
         )
-        && receipt["globalSequence"] == json!(int(request, "globalPreviousSequence")? + 1)
+        && integer(&receipt["globalSequence"], 0)
+        && int(receipt, "globalSequence")? == int(request, "globalPreviousSequence")? + 1
         && sha(&receipt["globalHash"])
-        && receipt["databaseSequence"] == json!(int(request, "databasePreviousSequence")? + 1)
+        && integer(&receipt["databaseSequence"], 0)
+        && int(receipt, "databaseSequence")? == int(request, "databasePreviousSequence")? + 1
         && sha(&receipt["databaseHash"])
         && changeset_valid(receipt)?
         && issued <= now.saturating_add(5000)
@@ -653,7 +661,7 @@ pub fn verify_finalization_v1(
         return Ok(false);
     };
     Ok(keys(receipt, FINALIZATION_KEYS)
-        && receipt["version"] == 1
+        && receipt["version"].as_f64() == Some(1.0)
         && receipt["kind"] == "AutonomousResearchOnlineMutationFinalizationReceipt"
         && receipt["status"] == "autonomous_research_online_mutation_finalized"
         && receipt["requestHash"]
@@ -739,8 +747,8 @@ fn live(receipt: &Value, trust: &Value, observed_key: &str, now: i64) -> bool {
     let (Some(observed), Some(expires), Some(max_age), Some(max_lease)) = (
         timestamp(&receipt[observed_key]),
         timestamp(&receipt["expiresAt"]),
-        trust["maximumObservationAgeMs"].as_i64(),
-        trust["maximumReservationLeaseMs"].as_i64(),
+        int(trust, "maximumObservationAgeMs").ok(),
+        int(trust, "maximumReservationLeaseMs").ok(),
     ) else {
         return false;
     };
@@ -772,7 +780,7 @@ pub fn verify_current_head_v1(
         ));
     }
     Ok(keys(receipt, HEAD_RECEIPT_KEYS)
-        && receipt["version"] == 1
+        && receipt["version"].as_f64() == Some(1.0)
         && receipt["kind"] == "AutonomousResearchOnlineMutationCurrentHeadReceipt"
         && receipt["status"] == "autonomous_research_online_mutation_current_head_observed"
         && receipt["requestHash"]
@@ -787,7 +795,7 @@ pub fn verify_current_head_v1(
         && database_heads_valid(&receipt["databaseHeads"], expected_instances)
         && signed(receipt, trust, verify)
         && live(receipt, trust, "observedAt", now)
-        && receipt["unresolvedReservationCount"] == 0)
+        && receipt["unresolvedReservationCount"].as_f64() == Some(0.0))
 }
 pub fn build_abort_request_v1(
     reservation: &Value,
@@ -900,7 +908,7 @@ pub fn verify_abort_v1(
 ) -> Result<bool> {
     assert_abort_request_v1(request, reservation)?;
     Ok(keys(receipt, ABORT_RECEIPT_KEYS)
-        && receipt["version"] == 1
+        && receipt["version"].as_f64() == Some(1.0)
         && receipt["kind"] == "AutonomousResearchOnlineMutationAbortReceipt"
         && receipt["status"] == "autonomous_research_online_mutation_aborted"
         && receipt["requestHash"] == hash("AutonomousResearchOnlineMutationAbortRequest", request)?
@@ -979,7 +987,7 @@ pub fn verify_resolution_v1(
         _ => false,
     };
     Ok(keys(receipt, RESOLUTION_RECEIPT_KEYS)
-        && receipt["version"] == 1
+        && receipt["version"].as_f64() == Some(1.0)
         && receipt["kind"] == "AutonomousResearchOnlineMutationResolutionReceipt"
         && receipt["status"] == "autonomous_research_online_mutation_resolution_observed"
         && receipt["requestHash"]
@@ -988,7 +996,7 @@ pub fn verify_resolution_v1(
         && valid
         && timestamp(&receipt["observedAt"]).is_some_and(|t| {
             t <= now.saturating_add(5000)
-                && now.saturating_sub(t) <= trust["maximumObservationAgeMs"].as_i64().unwrap_or(0)
+                && now.saturating_sub(t) <= int(trust, "maximumObservationAgeMs").ok().unwrap_or(0)
         })
         && signed(receipt, trust, verify))
 }

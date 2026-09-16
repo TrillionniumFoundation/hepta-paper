@@ -1,6 +1,7 @@
 //! Online SQLite reserve/apply/finalize coordination. Authority receipts are
 //! authenticated by the pinned verifier before they acquire an opaque type.
 pub mod authority;
+pub(crate) mod backup_replay;
 pub mod clock;
 pub mod contracts;
 pub mod execution;

@@ -5,6 +5,7 @@ mod contracts;
 pub mod manifest;
 use crate::sqlite_mutation_coordinator::authority::files as pinned_files;
 mod process;
+mod recovery_support;
 pub mod restore_source;
 use crate::sqlite_mutation_coordinator::authority::{
     MutationAuthorityTransportV1, PinnedMutationAuthorityV1,

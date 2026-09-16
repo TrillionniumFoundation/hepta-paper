@@ -115,3 +115,18 @@ activation boundaries.
 [Native writer source inspection](ONLINE_WRITER_STATIC_HANDOFF.md) covers the
 actual JavaScript parser/scope analysis, source pins and verified inspection type
 consumed by active authority refresh.
+
+[Live database inventory](STATE_DATABASE_INVENTORY_HANDOFF.md) documents actual
+DB/WAL observations, private snapshots, namespace bounds and the restricted live
+startup handle. [Schema readiness](ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md)
+and [target schema operations](ONLINE_SCHEMA_TARGET_EXECUTION_HANDOFF.md) cover
+real signed audits, current observations, fixed migrations and private projection.
+[Deployment environment](DEPLOYMENT_ENVIRONMENT_HANDOFF.md) and
+[authority evidence cache](ONLINE_AUTHORITY_EVIDENCE_CACHE_HANDOFF.md) describe
+actual private-file overlays and passive cache persistence. None of these source
+components alone establishes full runtime activation or command acceptance.
+
+[Backup and recoverability service](STATE_RECOVERABILITY_HANDOFF.md) covers
+actual SQLite backup, durable pending finalization, replay into isolated copies,
+resident leases and current epoch evidence. CLI assembly and external durability
+qualification remain separate gaps.

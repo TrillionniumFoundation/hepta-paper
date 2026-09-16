@@ -462,24 +462,34 @@
     },
     {
       "id": "operator/autonomous-state-backup",
-      "rustEntrypoint": "verify_stored_restore_source_v1(options, authority, now) [library; full backup CLI pending]",
+      "rustEntrypoint": "state_recoverability::BackupRecoveryServiceV1 / StateRecoverabilityControllerV1 [libraries; full backup CLI pending]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
         {
-          "path": "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source.rs",
-          "symbol": "verify_stored_restore_source_v1"
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/service.rs",
+          "symbol": "backup"
         },
         {
-          "path": "rust/crates/hepta-paper-service/src/state_backup_authority/manifest.rs",
-          "symbol": "assert_state_database_manifest_v1"
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller.rs",
+          "symbol": "reconcile_with_validity"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_database_inventory.rs",
+          "symbol": "observe_state_database_inventory_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/backup_replay.rs",
+          "symbol": "replay_verified_database_v1"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/state_backup_authority_parity.rs",
-        "rust/crates/hepta-paper-service/tests/state_backup_restore_source_parity.rs"
+        "rust/crates/hepta-paper-service/tests/state_backup_restore_source_parity.rs",
+        "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
+        "rust/crates/hepta-paper-service/tests/state_recoverability_resident_parity.rs"
       ],
-      "remaining": "Native pinned backup authority verifies actual Ed25519 reserve/finalize/head/journal receipts and online nested chains. Stored restore-source verification checks ten actual SQLite snapshot byte hashes and private-copy inspection, required objects, inventory/manifest scope, age, member order, source identity and aggregate resource bounds; real re-signed cross-snapshot splices are rejected. Live inventory, actual backup/drill/replay/renewal production services, resident lease/epoch controller, every CLI mode and independent acceptance remain unimplemented. Historical stored source evidence never grants runtime activation.",
+      "remaining": "Native service now performs actual ten-database inventory, pinned signed backup reservation/finalization, private SQLite Backup copies, restore drills with genuine signed SQLite Session replay, exact pending-transaction restart recovery, and startup reconciliation. Concrete resident lease and recoverability controller require fresh source/inventory/head evidence and final clock checks; lost-finalization replies, tampered bytes, signed system-row changesets, conflicts and equivocation are tested. Normal journaled heartbeats conservatively invalidate the retained inventory and require reconciliation; safe incremental refresh remains open. Every original CLI mode, full activation composition, operational retention policy and independent target-host/authority acceptance remain open. Historical evidence and caller-supplied JSON do not grant activation.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/state_backup_authority.rs",
         "rust/crates/hepta-paper-service/src/state_backup_authority/contracts.rs",
@@ -487,7 +497,24 @@
         "rust/crates/hepta-paper-service/src/state_backup_authority/process.rs",
         "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source.rs",
         "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source/validation.rs",
-        "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source/private_sqlite.rs"
+        "rust/crates/hepta-paper-service/src/state_backup_authority/restore_source/private_sqlite.rs",
+        "rust/crates/hepta-paper-service/src/online_runtime_activation/database/startup.rs",
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/backup_replay.rs",
+        "rust/crates/hepta-paper-service/src/state_backup_authority/recovery_support.rs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/backup.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/backup_recovery.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/controller.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/drill.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/files.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/observation.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/publication.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/publication/tests.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/reconciliation.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/resident.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/service.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/sqlite_copy.rs"
       ],
       "testCases": [
         {
@@ -501,6 +528,22 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/state_backup_restore_source_parity.rs",
           "symbol": "declared_aggregate_size_is_rejected_before_any_database_open"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
+          "symbol": "native_ten_database_backup_and_fresh_snapshot_drill_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
+          "symbol": "real_changeset_replay_matches_node_and_rejects_signed_system_writes_and_conflicts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
+          "symbol": "lost_finalization_reply_preserves_exact_transaction_and_real_restart_recovers_it"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
+          "symbol": "final_clock_sample_rejects_expiry_during_file_checks_without_minting_epoch"
         }
       ]
     },
@@ -987,14 +1030,55 @@
     },
     {
       "id": "maintenance/autonomous-online-schema-transition",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "inspect_online_schema_transition_readiness_v1 / project_schema_transition_target_v1 [libraries; complete transition executor and CLI pending]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
+          "symbol": "inspect_online_schema_transition_readiness_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
+          "symbol": "verify_audit"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/schema_transition.rs",
+          "symbol": "observe_schema_transition"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/online_schema_transition_parity.rs",
+        "rust/crates/hepta-paper-service/tests/online_schema_target_parity.rs"
+      ],
+      "remaining": "Native readiness verifies the actual ten-database inventory, exact persisted audit, historical Ed25519 reserve/finalize/observe and a fresh signed observation; cross-audit subject splices and post-I/O expiry are rejected. Native fixed target DDL and handoff v1-to-v2 migrations execute on actual SQLite, with private Backup projection and rollback parity. The complete pristine-state/normalization/installation driver, signed transition execution and recovery, V2 restart flow, every original CLI mode and independent qualification remain open; neither low-level DDL nor readiness JSON activates a runtime.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/files.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/target_schema.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/schema_data.json",
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/schema_transition.rs",
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/contracts/schema_transition.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/online_schema_target_parity.rs",
+          "symbol": "actual_sqlite_handoff_upgrade_and_failure_rollback_match_node_twenty_one_paths"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/online_schema_target_parity.rs",
+          "symbol": "projection_uses_a_real_private_sqlite_copy_and_leaves_source_schema_and_rows_untouched"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/online_schema_transition_parity.rs",
+          "symbol": "actual_ten_database_signed_schema_readiness_matches_node_and_retains_current_evidence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/online_schema_transition_parity.rs",
+          "symbol": "actual_schema_readiness_rejects_spliced_signatures_raw_member_drift_filesystem_and_late_rpc"
+        }
+      ]
     },
     {
       "id": "maintenance/command-surface-sync",

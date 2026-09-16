@@ -3,6 +3,7 @@
 mod activation;
 pub(crate) mod files;
 mod process;
+mod schema_transition;
 use super::{contracts::*, *};
 use base64ct::{Base64, Encoding};
 use ed25519_dalek::{Signature, VerifyingKey, pkcs8::DecodePublicKey};

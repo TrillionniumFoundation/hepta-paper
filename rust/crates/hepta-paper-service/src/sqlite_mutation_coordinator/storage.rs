@@ -161,6 +161,15 @@ pub(super) fn system_counts(database: &Connection) -> Result<Vec<i64>> {
 pub(super) fn pending_count(database: &Connection) -> Result<i64> {
     Ok(database.query_row("SELECT count(*) FROM autonomous_research_online_mutation_authority_marker marker LEFT JOIN autonomous_research_online_mutation_finalization_receipt finalized ON finalized.reservation_id=marker.reservation_id WHERE finalized.reservation_id IS NULL;",[],|row|row.get(0))?)
 }
+// Journal JSON is authenticated by canonical hashes, not original object-member
+// order. Match JavaScript Number spelling at this persistence boundary: an
+// authenticated 1.0 is the integer 1, including SQLite's json_type checks.
+fn journal_json(value: &Value) -> Result<String> {
+    let bytes = hepta_legacy_compatibility::production_stable_json_v1(value)
+        .map_err(|e| error(e.to_string()))?;
+    String::from_utf8(bytes)
+        .map_err(|_| error("externally_fenced_sqlite_mutation_journal_json_invalid"))
+}
 pub(super) fn insert_marker(
     database: &Connection,
     reservation: &Value,
@@ -195,9 +204,9 @@ pub(super) fn insert_marker(
             "AutonomousResearchOnlineMutationReserveRequest",
             reserve_request,
         )?),
-        SqlValue::Text(reserve_request.to_string()),
+        SqlValue::Text(journal_json(reserve_request)?),
         SqlValue::Text(online_mutation_receipt_hash_v1(reservation)?),
-        SqlValue::Text(reservation.to_string()),
+        SqlValue::Text(journal_json(reservation)?),
         SqlValue::Text(text(request, "localMarkerHash")?.into()),
         SqlValue::Text(text(request, "committedAt")?.into()),
     ]);
@@ -233,7 +242,7 @@ pub(super) fn record_finalization_in_transaction(
         ));
     }
     let receipt_hash = contracts::online_mutation_receipt_hash_v1(receipt)?;
-    database.execute("INSERT INTO autonomous_research_online_mutation_finalization_receipt(reservation_id,finalization_receipt_hash,finalization_receipt_json,side_effect_permit_hash,finalized_at,recorded_at) VALUES(?,?,?,?,?,?) ON CONFLICT(reservation_id) DO NOTHING;",rusqlite::params![text(receipt,"reservationId")?,receipt_hash,receipt.to_string(),text(receipt,"sideEffectPermitHash")?,text(receipt,"finalizedAt")?,recorded_at])?;
+    database.execute("INSERT INTO autonomous_research_online_mutation_finalization_receipt(reservation_id,finalization_receipt_hash,finalization_receipt_json,side_effect_permit_hash,finalized_at,recorded_at) VALUES(?,?,?,?,?,?) ON CONFLICT(reservation_id) DO NOTHING;",rusqlite::params![text(receipt,"reservationId")?,receipt_hash,journal_json(receipt)?,text(receipt,"sideEffectPermitHash")?,text(receipt,"finalizedAt")?,recorded_at])?;
     let stored:String=database.query_row("SELECT finalization_receipt_hash FROM autonomous_research_online_mutation_finalization_receipt WHERE reservation_id=?;",[text(receipt,"reservationId")?],|row|row.get(0))?;
     if stored != receipt_hash {
         return Err(error(

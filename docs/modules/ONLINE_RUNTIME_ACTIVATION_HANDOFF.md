@@ -43,29 +43,40 @@ file/process pins and operational limits.
   schema transition claim bindings, receipt hash and expiry. It returns no
   verified capability; signed transition audit and live observation validation
   are separate required work.
-- `open_runtime_activation_database_v1` opens an existing SQLite database against
-  its full inventory file identity. `ActivationDatabaseV1::inspect` performs
-  fixed SQLite quick-check, foreign-key check, schema hash, user-version and
-  application-id observations. Its connection is private and no public callback
-  accepts `&mut Connection`, preventing owned-connection replacement/extraction.
-  The opening hook API is only a deterministic race observation seam.
+- Public fixed database observations now use
+  `ObservedStateDatabaseInventoryV1::inspect_database_v1`: actual observed source
+  bytes and WAL are copied privately before SQLite is opened. Quick-check,
+  foreign-key count, schema hash, user version and application ID never open or
+  recover the live source. The fixed pending-finalization count used internally
+  by reconciliation uses the same private-copy boundary. See
+  [native inventory](STATE_DATABASE_INVENTORY_HANDOFF.md).
+- The previous public arbitrary-JSON writable opener and observation wrapper
+  have been removed. `LiveActivationDatabaseV1` and
+  `open_live_activation_database_v1` are crate-private and require an actual
+  opaque inventory plus an instance ID. Only dedicated authenticated startup
+  reconciliation operations can use their private live connection; no public
+  callback accepts `&mut Connection`. The internal race hook is not a public API.
 
 ## Filesystem and compatibility boundaries
 
-The database opener never creates a database or schema. It holds parent and file
+The restricted live opener never creates a database or schema. It holds parent and file
 handles, rejects symlink components, checks the named and held device/inode and
-full snapshot around opening, and repeats checks before/after observations.
+full snapshot around opening, and repeats checks around authenticated recovery.
 Group-write is allowed for `submission-handoff` only; world-write is rejected.
 
-These checks detect observed replacement, mode changes and parent rebinding.
+These live-handle checks detect observed replacement, mode changes and parent rebinding.
 They are not an immutable future lease or a custom SQLite VFS that binds every
 SQLite access to an already-open file descriptor. An adversary able to perform
-undetected ABA swaps between checks remains outside this snapshot guarantee.
+undetected ABA swaps between checks remains outside this live-handle guarantee.
+The private-copy observer does not use this live handle; it pins and copies
+actual bytes, so its fixed checks cannot perform source hot-journal recovery or
+write source SHM files.
 
 Native paths deliberately reject dot traversal and symlink components, including
 cases the original opener would normalize. File identity enters this typed API
-as a parsed object; it compares all canonical fields and values, not the original
-JSON member order. The Node opening oracle restores the inventory builder's
+from an actual observed inventory; it compares all canonical fields and values,
+not the original JSON member order. Private opening tests use the original Node
+opening oracle, which restores the inventory builder's
 canonical field order before calling the original opener. Raw inventory
 stability tests independently retain and compare member order.
 

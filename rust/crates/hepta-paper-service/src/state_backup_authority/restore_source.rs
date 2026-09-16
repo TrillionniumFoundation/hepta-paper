@@ -100,7 +100,7 @@ fn backup_path(value: &Value) -> bool {
 fn absent(path: &Path) -> bool {
     matches!(fs::symlink_metadata(path),Err(e)if e.kind()==std::io::ErrorKind::NotFound)
 }
-fn inspect_database(file: &Snapshot, entry: &Value, definition: &Value) -> Result<()> {
+pub(crate) fn inspect_database(file: &Snapshot, entry: &Value, definition: &Value) -> Result<()> {
     let invalid = || error("autonomous_research_state_backup_source_database_invalid");
     for suffix in ["-journal", "-wal", "-shm"] {
         if !absent(&PathBuf::from(format!("{}{suffix}", file.path.display()))) {
@@ -158,8 +158,7 @@ fn inspect_database(file: &Snapshot, entry: &Value, definition: &Value) -> Resul
     private.assert_current()?;
     file.assert_current().map_err(|_| invalid())
 }
-fn validate_bundle(bundle: &Value, manifest: &Value) -> Result<()> {
-    let manifest_hash = manifest::state_database_manifest_hash_v1(manifest)?;
+pub(crate) fn validate_bundle(bundle: &Value, manifest: &Value) -> Result<()> {
     ensure(
         number(&bundle["version"]) == Some(1)
             && bundle["kind"] == "AutonomousResearchStateBackupBundleManifest"
@@ -173,6 +172,34 @@ fn validate_bundle(bundle: &Value, manifest: &Value) -> Result<()> {
         "autonomous_research_state_backup_bundle_manifest_hash_invalid",
     )?;
     let content = &bundle["content"];
+    validate_content(content, &bundle["snapshotContentHash"], manifest)?;
+    ensure(
+        bundle["productionStateMutated"] == false,
+        "autonomous_research_state_backup_scope_hash_invalid",
+    )?;
+    let reservation = &bundle["authorityReservation"];
+    let finalization = &bundle["authorityFinalization"];
+    ensure(
+        content["inventoryHash"] == reservation["inventoryHash"]
+            && content["databaseScopeHash"] == reservation["databaseScopeHash"]
+            && content["authorityReservationHash"]
+                == state_backup_authority_receipt_hash_v1(reservation)?
+            && finalization["snapshotContentHash"] == bundle["snapshotContentHash"]
+            && equal(
+                &finalization["headSequence"],
+                &content["authorityHead"]["sequence"],
+            )
+            && finalization["headHash"] == content["authorityHead"]["hash"],
+        "autonomous_research_state_backup_authority_scope_binding_invalid",
+    )?;
+    Ok(())
+}
+pub(crate) fn validate_content(
+    content: &Value,
+    snapshot_hash: &Value,
+    manifest: &Value,
+) -> Result<()> {
+    let manifest_hash = manifest::state_database_manifest_hash_v1(manifest)?;
     ensure(
         content["manifestHash"] == manifest_hash && content["manifestId"] == manifest["manifestId"],
         "autonomous_research_state_backup_database_manifest_mismatch",
@@ -190,30 +217,13 @@ fn validate_bundle(bundle: &Value, manifest: &Value) -> Result<()> {
             && content["databases"]
                 .as_array()
                 .is_some_and(|a| !a.is_empty())
-            && bundle["snapshotContentHash"]
-                == hash("AutonomousResearchStateBackupContent", content)?,
+            && *snapshot_hash == hash("AutonomousResearchStateBackupContent", content)?,
         "autonomous_research_state_backup_content_hash_invalid",
     )?;
     ensure(
         content["databaseScopeHash"]
-            == manifest::state_database_scope_hash_v1(&content["databases"])?
-            && bundle["productionStateMutated"] == false,
+            == manifest::state_database_scope_hash_v1(&content["databases"])?,
         "autonomous_research_state_backup_scope_hash_invalid",
-    )?;
-    let reservation = &bundle["authorityReservation"];
-    let finalization = &bundle["authorityFinalization"];
-    ensure(
-        content["inventoryHash"] == reservation["inventoryHash"]
-            && content["databaseScopeHash"] == reservation["databaseScopeHash"]
-            && content["authorityReservationHash"]
-                == state_backup_authority_receipt_hash_v1(reservation)?
-            && finalization["snapshotContentHash"] == bundle["snapshotContentHash"]
-            && equal(
-                &finalization["headSequence"],
-                &content["authorityHead"]["sequence"],
-            )
-            && finalization["headHash"] == content["authorityHead"]["hash"],
-        "autonomous_research_state_backup_authority_scope_binding_invalid",
     )?;
     for key in ["instanceId", "sourceRelativePath", "backupRelativePath"] {
         let values = strings(&content["databases"], key)?;

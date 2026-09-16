@@ -480,3 +480,59 @@ fn process_transport_handles_real_signed_multi_megabyte_changesets_and_clean_env
         json!({"PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C"})
     );
 }
+
+#[test]
+fn signed_numeric_spellings_match_node_and_floating_lease_limits_remain_enforced() {
+    fn floating(value: &mut Value) {
+        match value {
+            Value::Number(number) => {
+                *value = json!(number.as_f64().unwrap());
+            }
+            Value::Array(values) => values.iter_mut().for_each(floating),
+            Value::Object(values) => values.values_mut().for_each(floating),
+            _ => {}
+        }
+    }
+    let root = Temp::new();
+    let fixture = fixture(&root, 8);
+    let cases = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case["label"].as_str().unwrap().ends_with("-valid"))
+        .map(|case| {
+            let mut case = case.clone();
+            floating(&mut case);
+            case
+        })
+        .collect::<Vec<_>>();
+    let requests=cases.iter().map(|case|json!({"operation":"verify","configurationPath":fixture["configurationPath"],"case":case})).collect::<Vec<_>>();
+    let expected = oracle(&requests);
+    for (index, case) in cases.iter().enumerate() {
+        assert_eq!(expected["results"][index]["ok"], true);
+        assert_eq!(expected["results"][index]["accepted"], true);
+        assert!(native(&fixture, case).is_ok(), "{}", case["label"]);
+    }
+    let reserve = cases
+        .iter()
+        .find(|case| case["operation"] == "reserve")
+        .unwrap();
+    let client = load(&fixture, Raw::new(Value::Null)).unwrap();
+    for (lease, accepted) in [
+        (json!(60000.0), true),
+        (json!(60001.0), false),
+        (json!(60000.5), false),
+        (json!("60000"), false),
+        (json!(-1.0), false),
+    ] {
+        let mut request = reserve["request"].clone();
+        request["requestedLeaseMs"] = lease.clone();
+        let actual =
+            hepta_paper_service::sqlite_mutation_coordinator::contracts::assert_reserve_request_v1(
+                &request,
+                client.trust(),
+            )
+            .is_ok();
+        assert_eq!(actual, accepted, "lease {lease}");
+    }
+}

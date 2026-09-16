@@ -101,6 +101,13 @@ A `source_implemented` migration item does not establish production parity,
 writer transfer, or retirement. The [full replacement acceptance contract](FULL_REPLACEMENT_ACCEPTANCE.md)
 requires command/mode and capability-specific evidence before those transitions.
 
+The generated [Node/Rust command compatibility map](node-rust-command-map.v1.json)
+keeps all registered command routes bound to either a reviewed Rust candidate or
+an explicit unmapped decision. Its `partial_local_source` rows are source
+call-chain candidates only; they do not grant parity, production activation or
+Node retirement. The map is checked by `docs/tools/audit-node-rust-coverage.mjs`
+and currently records 14 candidates and 43 explicit gaps.
+
 Adapters are temporary and have retirement work items.
 
 ## 6. Duplicate crate resolution

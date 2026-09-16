@@ -130,6 +130,57 @@ export function auditCampaignModeMappings() {
   return { ...map, sourceBindings: [...sources].sort(compare).map(readSource) };
 }
 
+// This map is deliberately separate from acceptance.  It records only reviewed
+// Rust command candidates (or an explicit unmapped decision), so that command
+// coverage cannot silently disappear while the migration is in progress.
+export function auditNodeRustCommandMap(routes) {
+  const relative = 'docs/migration/node-rust-command-map.v1.json';
+  const map = JSON.parse(fs.readFileSync(path.join(ROOT, relative), 'utf8'));
+  if (map.schemaVersion !== 1 || map.kind !== 'NodeRustCommandCompatibilityMapV1'
+      || map.scope !== 'source_call_chain_mapping_not_parity_acceptance'
+      || map.acceptedParity !== false || map.productionActivation !== false
+      || map.nodeRetirement !== false || !Array.isArray(map.commands)) {
+    throw new Error('invalid Node/Rust command map scope');
+  }
+  const expected = [...routes].map((route) => `${route.group}/${route.name}`).sort(compare);
+  const actual = map.commands.map((row) => row.id).sort(compare);
+  if (JSON.stringify(expected) !== JSON.stringify(actual)
+      || new Set(actual).size !== actual.length) {
+    throw new Error('Node/Rust command map is missing, duplicated or drifted');
+  }
+  for (const row of map.commands) {
+    if (!['partial_local_source', 'unmapped'].includes(row.scope)
+        || !['candidate', 'unmapped'].includes(row.compatibilityDecision)
+        || typeof row.remaining !== 'string' || row.remaining.length < 20
+        || !Array.isArray(row.tests) || !Array.isArray(row.rustSources)) {
+      throw new Error(`invalid Node/Rust command map row: ${row.id}`);
+    }
+    if (row.scope === 'unmapped' && (row.rustEntrypoint !== null || row.tests.length || row.rustSources.length)) {
+      throw new Error(`unmapped command claims Rust source: ${row.id}`);
+    }
+    if (row.scope === 'partial_local_source'
+        && (!row.rustEntrypoint || row.compatibilityDecision !== 'candidate')) {
+      throw new Error(`partial command is missing Rust candidate: ${row.id}`);
+    }
+    for (const test of row.tests) {
+      if (!test || typeof test !== 'string') throw new Error(`invalid map test: ${row.id}`);
+      readSource(test);
+    }
+    for (const source of row.rustSources) {
+      if (!source || typeof source !== 'string') throw new Error(`invalid Rust source: ${row.id}`);
+      readSource(source);
+    }
+  }
+  return {
+    ...map,
+    mappedCommands: map.commands.filter((row) => row.scope === 'partial_local_source').length,
+    unmappedCommands: map.commands.filter((row) => row.scope === 'unmapped').length,
+    sourceBindings: [relative, ...map.commands.flatMap((row) => [...row.tests, ...row.rustSources])]
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .sort(compare).map(readSource),
+  };
+}
+
 export function auditCurrentCoverage() {
   const globalFile = 'docs/system/truth/capabilities.v1.json';
   const moduleFile = 'docs/system/truth/modules.v1.json';
@@ -154,7 +205,9 @@ export function auditCurrentCoverage() {
     sources.add(row.rustCandidate.testTarget);
   }
   report.campaignModeMappings = auditCampaignModeMappings();
+  report.commandMappings = auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES);
   for (const binding of report.campaignModeMappings.sourceBindings) sources.add(binding.path);
+  for (const binding of report.commandMappings.sourceBindings) sources.add(binding.path);
   report.sourceBindings = [...sources].sort(compare).map(readSource);
   report.inventorySha256 = sha256(JSON.stringify(report));
   return report;

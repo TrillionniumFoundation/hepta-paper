@@ -1,0 +1,642 @@
+{
+  "schemaVersion": 1,
+  "kind": "NodeRustCommandCompatibilityMapV1",
+  "scope": "source_call_chain_mapping_not_parity_acceptance",
+  "acceptedParity": false,
+  "productionActivation": false,
+  "nodeRetirement": false,
+  "commands": [
+    {
+      "id": "operator/workspace",
+      "rustEntrypoint": "hepta-paper-rust inspect-db IMMUTABLE_DB",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/durable_service.rs"
+      ],
+      "remaining": "Database inspection is only a partial workspace status source; workspace roots, package graph and decoupling checks remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-readonly-store/src/lib.rs"
+      ]
+    },
+    {
+      "id": "operator/store",
+      "rustEntrypoint": "hepta-paper-rust inspect-db IMMUTABLE_DB",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/durable_service.rs"
+      ],
+      "remaining": "Read-only logical SQLite snapshot only; Node trust/repair/migration semantics and production store discovery remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-readonly-store/src/lib.rs"
+      ]
+    },
+    {
+      "id": "operator/store-migrate",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/store-backup",
+      "rustEntrypoint": "hepta-local-maintenance backup STATE DESTINATION",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs"
+      ],
+      "remaining": "Local workflow backup primitive only; no production store backup authority or retention qualification.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+        "rust/crates/hepta-paper-service/src/maintenance.rs"
+      ]
+    },
+    {
+      "id": "operator/automation",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/external-authority-intake",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/research-capability-matrix",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/personal-gpu-operational-gate",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/personal-self-hosted-readiness",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/journal-connector-coverage",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/portal-target-qualification",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/generic-domain-capability-evidence",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-supervisor-health",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/nested-runtime-platform-qualification",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-intake-authority-rotation",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-state-backup",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/runtime-image-reproducibility",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/runtime-r-source-cas",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/research-readiness",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-research",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-research-one-shot-campaign-attempt",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/local-golden-dataset-provision",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/strict-full-auto-acceptance",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-empirical-plugin-release",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/advanced-numerical-plugin",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-submission-dispatcher",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-submission-dispatcher-challenge",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/autonomous-supervisor",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/reconcile",
+      "rustEntrypoint": "hepta-local-maintenance prepared-plan STATE HASH",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs"
+      ],
+      "remaining": "Prepared local reconciliation planning only; Node automation reconciliation and external effects remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+        "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs"
+      ]
+    },
+    {
+      "id": "operator/reconcile-apply",
+      "rustEntrypoint": "hepta-local-maintenance prepared-commit STATE PLAN HASH NOW",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs"
+      ],
+      "remaining": "Prepared local reconciliation commit only; Node automation reconciliation and external effects remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+        "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs"
+      ]
+    },
+    {
+      "id": "operator/campaign",
+      "rustEntrypoint": "hepta-local-workflow {list|status|events|logs|pause|resume|amend|cancel} ...",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/local_workflow.rs"
+      ],
+      "remaining": "Campaign inspection and lifecycle are local bounded primitives; full Node campaign command/effect parity is unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+        "rust/crates/hepta-paper-service/src/workflow.rs"
+      ]
+    },
+    {
+      "id": "operator/batch",
+      "rustEntrypoint": "hepta-local-workflow advance STATE HASH ABSOLUTE_THROUGH NOW",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/local_workflow.rs"
+      ],
+      "remaining": "Bounded local workflow advancement only; no Node batch production dispatch or provider semantics.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+        "rust/crates/hepta-paper-service/src/workflow.rs"
+      ]
+    },
+    {
+      "id": "operator/submission-handoff",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/gc",
+      "rustEntrypoint": "hepta-local-maintenance gc-plan/gc-resume ...",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs"
+      ],
+      "remaining": "Local hash-bound garbage collection only; production pin/authentication and Node parity remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+        "rust/crates/hepta-paper-service/src/maintenance/gc.rs"
+      ]
+    },
+    {
+      "id": "operator/gc-apply",
+      "rustEntrypoint": "hepta-local-maintenance gc-apply STATE PLAN HASH",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs"
+      ],
+      "remaining": "Local hash-bound garbage collection only; production pin/authentication and Node parity remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
+        "rust/crates/hepta-paper-service/src/maintenance/gc.rs"
+      ]
+    },
+    {
+      "id": "maintenance/autonomous-state-provision",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "maintenance/autonomous-state-partial-root-maintenance",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "maintenance/autonomous-online-schema-transition",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "maintenance/command-surface-sync",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "verify/architecture",
+      "rustEntrypoint": "cargo test -p hepta-paper-service --test durable_service",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/durable_service.rs"
+      ],
+      "remaining": "Rust architecture tests are bounded crate checks; Node architecture conformance remains unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/tests/durable_service.rs"
+      ]
+    },
+    {
+      "id": "verify/critical",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "verify/store",
+      "rustEntrypoint": "hepta-paper-rust inspect-db IMMUTABLE_DB",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-readonly-store/tests/node_production_parity.rs"
+      ],
+      "remaining": "Read-only logical snapshot check only; full Node store integrity/trust gate remains unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-readonly-store/src/lib.rs"
+      ]
+    },
+    {
+      "id": "verify/repository-assets",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/full-production-readiness",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "operator/submission-handoff-export",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "verify/release",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "verify/trust",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "verify/operational",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "verify/owner",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "maintenance/release-attest",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "maintenance/release-integrity-key",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "verify/full",
+      "rustEntrypoint": "cargo test --workspace --all-targets",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [],
+      "remaining": "Rust workspace tests do not execute or certify the Node full test suite; parity acceptance remains unimplemented.",
+      "rustSources": []
+    },
+    {
+      "id": "retirement/status",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "retirement/reference",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "retirement/matrix",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
+      "callChain": [],
+      "tests": [],
+      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "rustSources": []
+    },
+    {
+      "id": "retirement/drill",
+      "rustEntrypoint": "cargo run -p hepta-cutover --example local_cutover_drill",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-cutover/tests/durable_cutover.rs"
+      ],
+      "remaining": "Local cutover drill only; protected production retirement evidence remains unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-cutover/examples/local_cutover_drill.rs"
+      ]
+    },
+    {
+      "id": "retirement/drill-attest",
+      "rustEntrypoint": "cargo run -p hepta-cutover --example local_cutover_drill -- --attest",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [],
+      "tests": [
+        "rust/crates/hepta-cutover/tests/durable_cutover.rs"
+      ],
+      "remaining": "Local cutover drill only; protected production retirement evidence remains unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-cutover/examples/local_cutover_drill.rs"
+      ]
+    }
+  ]
+}

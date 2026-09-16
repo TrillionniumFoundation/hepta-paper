@@ -1,7 +1,7 @@
 //! Bounded JSON command interface for the durable Rust composition.
 use hepta_paper_service::{
-    LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1, native_implementation_hash_v1,
-    run_service_v1, verify_legacy_node_freeze_v1,
+    LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1, migrate_node_store_v1,
+    native_implementation_hash_v1, run_service_v1, verify_legacy_node_freeze_v1,
 };
 use std::{
     env,
@@ -76,11 +76,19 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&store.node_logical_snapshot()?)?
             );
         }
+        Some("store-migrate") if (args.len() == 2 || args.len() == 3) => {
+            let target = args.get(2).map(|value| value.parse::<u32>()).transpose()?;
+            println!(
+                "{}",
+                serde_json::to_string(&migrate_node_store_v1(&PathBuf::from(&args[1]), target,)?)?
+            );
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
                 "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
-                "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE"
+                "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
+                "store-migrate NODE_DB [TARGET_VERSION]"
             )
             .into());
         }

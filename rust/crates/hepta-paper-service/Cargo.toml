@@ -17,9 +17,11 @@ hepta-control-plane = { path = "../hepta-control-plane", version = "=0.1.0" }
 hepta-campaign-writer = { path = "../hepta-campaign-writer", version = "=0.1.0" }
 hepta-cutover = { path = "../hepta-cutover", version = "=0.1.0" }
 hepta-readonly-store = { path = "../hepta-readonly-store", version = "=0.1.0" }
+hepta-readonly-control = { path = "../hepta-readonly-control", version = "=0.1.0" }
 hepta-qualification-ingest = { path = "../hepta-qualification-ingest", version = "=0.1.0" }
 hex.workspace = true
 nix.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

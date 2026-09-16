@@ -38,13 +38,18 @@
     },
     {
       "id": "operator/store-migrate",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
+      "rustEntrypoint": "hepta-paper-rust store-migrate NODE_DB [TARGET_VERSION]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
       "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/node_migration.rs"
+      ],
+      "remaining": "Offline local SQLite migration only; target-host writer fencing, production store authority, release evidence, and external qualification remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/node_migration.rs"
+      ]
     },
     {
       "id": "operator/store-backup",

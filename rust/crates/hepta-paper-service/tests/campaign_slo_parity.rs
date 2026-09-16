@@ -39,7 +39,12 @@ fn bounded_corpus_matches_the_production_node_oracle() {
     .expect("documented SLO fixture");
     let edge = serde_json::json!({
         "version": 1,
-        "campaigns": [],
+        "campaigns": [
+            {"status":"A","costKnown":true,"agentCallCount":0,"cpuJobCount":0,"gpuJobCount":0,"tokenCount":0},
+            {"status":"a","costKnown":true,"agentCallCount":0,"cpuJobCount":0,"gpuJobCount":0,"tokenCount":0},
+            {"status":"é","costKnown":true,"agentCallCount":0,"cpuJobCount":0,"gpuJobCount":0,"tokenCount":0},
+            {"status":"雪","costKnown":true,"agentCallCount":0,"cpuJobCount":0,"gpuJobCount":0,"tokenCount":0}
+        ],
         "nodes": [],
         "events": [],
         "telemetrySamples": [],

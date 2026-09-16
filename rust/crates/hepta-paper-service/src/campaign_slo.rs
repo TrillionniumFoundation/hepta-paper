@@ -102,7 +102,10 @@ fn histogram(values: &[f64], bounds: &[f64]) -> Value {
     out.push(json!({"le":"+Inf","count":s.len()}));
     Value::Array(out)
 }
-fn canonical_string(v: &Value, collator: &hepta_legacy_compatibility::ProductionCollationV1) -> String {
+fn canonical_string(
+    v: &Value,
+    collator: &hepta_legacy_compatibility::ProductionCollationV1,
+) -> String {
     match v {
         Value::Array(a) => format!(
             "[{}]",

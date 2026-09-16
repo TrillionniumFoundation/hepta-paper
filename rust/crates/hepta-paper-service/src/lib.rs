@@ -11,6 +11,7 @@ pub mod campaign_slo;
 mod deployment;
 pub mod maintenance;
 pub mod native_business;
+pub mod node_migration;
 mod objects;
 mod production;
 pub mod scientific_runtime;
@@ -39,6 +40,7 @@ pub use deployment::{
     ProductionServiceRoleV1, ProductionServiceUnitV1, ProductionWritableRootV1,
     VerifiedProductionDeploymentV1, verify_production_deployment_v1,
 };
+pub use node_migration::{NodeMigrationError, NodeMigrationReceiptV1, migrate_node_store_v1};
 pub use objects::ObjectStoreV1;
 pub use production::{
     ProductionActivationStageV1, ProductionServiceReceiptV1, ProductionServiceRunV1,

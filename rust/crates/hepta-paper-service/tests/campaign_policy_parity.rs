@@ -36,3 +36,24 @@ fn constants_are_stable_and_closed() {
         serde_json::json!(["completed", "failed", "cancelled"])
     );
 }
+
+#[test]
+fn ready_order_uses_pinned_node_locale_collation_and_js_priority_coercion() {
+    let request: CampaignPolicyRequestV1 = serde_json::from_value(serde_json::json!({
+        "kind": "ready",
+        "limit": 99,
+        "nodes": [
+            {"nodeId":"z","kind":"x","status":"queued","priority":-1,"dependencies":[]},
+            {"nodeId":"A","kind":"x","status":"queued","priority":1,"dependencies":[]},
+            {"nodeId":"a","kind":"x","status":"queued","priority":1,"dependencies":[]},
+            {"nodeId":"雪","kind":"x","status":"queued","priority":1,"dependencies":[]},
+            {"nodeId":"é","kind":"x","status":"queued","priority":1,"dependencies":[]},
+            {"nodeId":"e","kind":"x","status":"queued","priority":1,"dependencies":[]}
+        ]
+    }))
+    .expect("ready request");
+    assert_eq!(
+        evaluate_campaign_policy_v1(request).unwrap(),
+        serde_json::json!(["z", "a", "A", "e", "é", "雪"])
+    );
+}

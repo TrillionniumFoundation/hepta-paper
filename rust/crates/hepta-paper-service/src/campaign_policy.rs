@@ -90,9 +90,30 @@ pub enum CampaignPolicyError {
     #[error("invalid campaign policy request")]
     Invalid,
 }
-fn order(n: &CampaignNodeViewV1) -> (u64, String, String) {
-    let p = n.priority.filter(|x| *x != 0.0).unwrap_or(100.0).max(0.0) as u64;
-    (p, n.created_at.clone(), n.node_id.clone())
+/// Match the incumbent `Number(value || 100)` priority rule.  The source
+/// policy then uses Node's pinned en-US `localeCompare` for its two string
+/// tie-breakers; plain Rust byte ordering is observably different for case,
+/// punctuation and non-ASCII identifiers.
+fn node_priority(n: &CampaignNodeViewV1) -> f64 {
+    match n.priority {
+        Some(value) if value != 0.0 => value,
+        _ => 100.0,
+    }
+}
+
+fn order_nodes(nodes: &mut [CampaignNodeViewV1]) -> Result<(), CampaignPolicyError> {
+    let collator = hepta_legacy_compatibility::ProductionCollationV1::load()
+        .map_err(|_| CampaignPolicyError::Invalid)?;
+    // `sort_by` is stable, as is modern V8 Array.prototype.sort.  Equal keys
+    // therefore retain source order in both implementations.
+    nodes.sort_by(|left, right| {
+        node_priority(left)
+            .partial_cmp(&node_priority(right))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| collator.compare(&left.created_at, &right.created_at))
+            .then_with(|| collator.compare(&left.node_id, &right.node_id))
+    });
+    Ok(())
 }
 fn done(s: &str) -> bool {
     CAMPAIGN_NODE_DONE_STATUSES_V1.contains(&s)
@@ -102,8 +123,8 @@ pub fn evaluate_campaign_policy_v1(
 ) -> Result<Value, CampaignPolicyError> {
     let out=match r {
   CampaignPolicyRequestV1::Constants=>json!({"CAMPAIGN_NODE_DONE_STATUSES":CAMPAIGN_NODE_DONE_STATUSES_V1,"CAMPAIGN_TERMINAL_STATUSES":CAMPAIGN_TERMINAL_STATUSES_V1,"CAMPAIGN_SETTLED_STATUSES":CAMPAIGN_SETTLED_STATUSES_V1}),
-  CampaignPolicyRequestV1::Projection{nodes}=>{ let mut n=nodes; n.sort_by_key(order); let failed=n.iter().any(|x|x.status=="failed_terminal"); let completed=!n.is_empty()&&n.iter().all(|x|done(&x.status)); let active=n.iter().find(|x|x.status=="running"||x.status=="leased"); let pending=n.iter().find(|x|!done(&x.status)&&x.status!="failed_terminal"); let round=n.iter().filter(|x|x.round_index>0&&!matches!(x.kind.as_str(),"package"|"release-package")&&matches!(x.status.as_str(),"leased"|"running"|"completed"|"failed_terminal")).map(|x|x.round_index).max().unwrap_or(0); json!({"version":1,"kind":"CampaignOperationalProjection","status":if failed{"failed"}else if completed{"completed"}else{"running"},"currentPhase":if failed{"failed"}else if completed{"completed"}else{active.map(|x|x.kind.as_str()).or_else(||pending.map(|x|x.kind.as_str())).unwrap_or("running")},"currentReviewRound":round,"terminal":failed||completed}) },
-  CampaignPolicyRequestV1::Ready{mut nodes,limit}=>{ let map=nodes.iter().map(|n|(n.node_id.clone(),done(&n.status))).collect::<std::collections::HashMap<_,_>>(); nodes.retain(|n|n.status=="queued"&&n.dependencies.iter().all(|d|map.get(d).copied().unwrap_or(false))); nodes.sort_by_key(order); json!(nodes.into_iter().take(limit.max(1) as usize).map(|n|n.node_id).collect::<Vec<_>>()) },
+  CampaignPolicyRequestV1::Projection{mut nodes}=>{ order_nodes(&mut nodes)?; let failed=nodes.iter().any(|x|x.status=="failed_terminal"); let completed=!nodes.is_empty()&&nodes.iter().all(|x|done(&x.status)); let active=nodes.iter().find(|x|x.status=="running"||x.status=="leased"); let pending=nodes.iter().find(|x|!done(&x.status)&&x.status!="failed_terminal"); let round=nodes.iter().filter(|x|x.round_index>0&&!matches!(x.kind.as_str(),"package"|"release-package")&&matches!(x.status.as_str(),"leased"|"running"|"completed"|"failed_terminal")).map(|x|x.round_index).max().unwrap_or(0); json!({"version":1,"kind":"CampaignOperationalProjection","status":if failed{"failed"}else if completed{"completed"}else{"running"},"currentPhase":if failed{"failed"}else if completed{"completed"}else{active.map(|x|x.kind.as_str()).or_else(||pending.map(|x|x.kind.as_str())).unwrap_or("running")},"currentReviewRound":round,"terminal":failed||completed}) },
+  CampaignPolicyRequestV1::Ready{mut nodes,limit}=>{ let map=nodes.iter().map(|n|(n.node_id.clone(),done(&n.status))).collect::<std::collections::HashMap<_,_>>(); nodes.retain(|n|n.status=="queued"&&n.dependencies.iter().all(|d|map.get(d).copied().unwrap_or(false))); order_nodes(&mut nodes)?; json!(nodes.into_iter().take(limit.max(1) as usize).map(|n|n.node_id).collect::<Vec<_>>()) },
   CampaignPolicyRequestV1::Failure{node,retryable}=>{let max=if node.max_attempts==0{3}else{node.max_attempts};let lim=if node.prepared_integration_status.as_deref()==Some("integrated"){max+1}else{max};let can=retryable&&node.attempt_count<lim;json!({"status":if can{"queued"}else{"failed_terminal"},"canRetry":can,"eventKind":if can{"campaign_node_retry_queued"}else{"campaign_node_failed_terminal"}})},
   CampaignPolicyRequestV1::Descendants{nodes,root_node_id}=>{let mut set=std::collections::BTreeSet::from([root_node_id]);loop{let mut changed=false;for n in &nodes{if !set.contains(&n.node_id)&&n.dependencies.iter().any(|d|set.contains(d)){set.insert(n.node_id.clone());changed=true}}if !changed{break}}json!(set.into_iter().collect::<Vec<_>>())},
   CampaignPolicyRequestV1::FutureRound{nodes,after_round}=>json!(nodes.into_iter().filter(|n|n.round_index>after_round&&!CONVERGENCE.contains(&n.kind.as_str())&&n.status=="queued").map(|n|n.node_id).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>()),

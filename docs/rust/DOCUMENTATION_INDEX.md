@@ -20,6 +20,7 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | principals and filesystems | `PRINCIPAL_AND_FILESYSTEM_MATRIX.md` |
 | crash/recovery | `CRASH_AND_RECOVERY_MATRIX.md` |
 | operator procedures | `OPERATIONS_RUNBOOK.md` |
+| external blocker closure steps | `qualification/EXTERNAL_BLOCKER_CLOSURE_RUNBOOK.md` |
 | confidential legacy replay | `LEGACY_MATRIX_REFERENCE_PUBLICATION.md` |
 | supply-chain policy | `security/SUPPLY_CHAIN_POLICY.md` |
 

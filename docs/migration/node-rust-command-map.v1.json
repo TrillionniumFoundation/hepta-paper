@@ -487,13 +487,19 @@
     },
     {
       "id": "verify/repository-assets",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
+      "rustEntrypoint": "hepta-paper-rust repository-assets ROOT MANIFEST [--handoff]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
       "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs"
+      ],
+      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks; exact Node argument/runtime parity and independent release authority remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/repository_assets.rs",
+        "rust/oracle/repository-assets-v1.mjs"
+      ]
     },
     {
       "id": "operator/full-production-readiness",

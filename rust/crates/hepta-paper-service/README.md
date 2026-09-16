@@ -38,6 +38,7 @@ clock and local writer token. It is not a deployment configuration.
 | `serve` | Read one bounded JSON configuration per stdin line; emit one receipt per completed request. EOF shuts down. An invalid request exits nonzero. |
 | `inspect-db IMMUTABLE_DB` | Validate a real Node migration database and print the production-compatible logical report. |
 | `verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE` | Read and validate an already drained immutable Node database against the exact source subject; print the freeze receipt. It does not drain the live database, activate a Rust writer, authorize rollback or retire Node. |
+| `repository-assets ROOT MANIFEST [--handoff]` | Verify repository asset identities, pinned external references, restore-drill receipts and gitlink bindings; `--handoff` emits a non-authorizing migration handoff. |
 
 `ServiceRunV1` uses camelCase, rejects unknown fields, and binds a version, state
 directory, `registryJson`, hard policy, planner policy, frozen snapshot, frontier,

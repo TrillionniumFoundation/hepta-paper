@@ -1,7 +1,12 @@
 //! Bounded JSON command interface for the durable Rust composition.
 use hepta_paper_service::{
     LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1, migrate_node_store_v1,
-    native_implementation_hash_v1, run_service_v1, verify_legacy_node_freeze_v1,
+    native_implementation_hash_v1,
+    repository_assets::{
+        build_repository_asset_externalization_handoff_v1,
+        inspect_repository_asset_externalization_v1,
+    },
+    run_service_v1, verify_legacy_node_freeze_v1,
 };
 use std::{
     env,
@@ -83,12 +88,25 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&migrate_node_store_v1(&PathBuf::from(&args[1]), target,)?)?
             );
         }
+        Some("repository-assets") if args.len() == 3 || args.len() == 4 => {
+            let root = PathBuf::from(&args[1]);
+            let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(&args[2])?)?;
+            let value = if args.get(3).map(String::as_str) == Some("--handoff") {
+                build_repository_asset_externalization_handoff_v1(&root, &manifest)?
+            } else if args.len() == 3 {
+                inspect_repository_asset_externalization_v1(&root, &manifest)?
+            } else {
+                return Err("repository-assets accepts only --handoff".into());
+            };
+            println!("{}", serde_json::to_string(&value)?);
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
                 "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
-                "store-migrate NODE_DB [TARGET_VERSION]"
+                "store-migrate NODE_DB [TARGET_VERSION] | ",
+                "repository-assets ROOT MANIFEST [--handoff]"
             )
             .into());
         }

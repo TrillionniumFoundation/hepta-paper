@@ -2,8 +2,8 @@
 
 > Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. This ledger records closure work; it does not grant parity, production activation, or Node retirement.
 
-- Inventory binding: `sha256:14b6b30a5c612d378d464fc4eddbc8a1814a55f07c238873f8b4227fa4911d17`
-- Unmapped commands: **43**
+- Inventory binding: `sha256:dfab6d5e4fad6aee36a13efc14575d35d4a3ffbce25efde2cf7256e5f70a7afd`
+- Unmapped commands: **42**
 - Accepted parity: `false`
 - Production activation: `false`
 - Node retirement: `false`
@@ -51,7 +51,6 @@
 | `verify/operational` | `node` `paper-core/bin/operational-proof-status.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 | `verify/owner` | `node` `paper-core/bin/owner-acceptance-status.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 | `verify/release` | `npm` `run` `release:verify` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
-| `verify/repository-assets` | `node` `paper-core/bin/repository-asset-status.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 | `verify/trust` | `node` `paper-core/bin/release-trust-gate.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 
 The ledger is intentionally closed by evidence, not by changing a status token. A route moves out of this file only when its command-map row binds a real Rust entrypoint, complete call chain, executable tests, and the required qualification package.

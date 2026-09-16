@@ -83,7 +83,8 @@ fn bounded_corpus_matches_the_production_node_oracle() {
         {"kind":"future_round","after_round":1,"nodes":[
             {"nodeId":"雪","kind":"x","status":"queued","roundIndex":2,"dependencies":[]},
             {"nodeId":"package","kind":"package","status":"queued","roundIndex":2,"dependencies":[]},
-            {"nodeId":"a","kind":"x","status":"queued","roundIndex":3,"dependencies":[]}
+            {"nodeId":"a","kind":"x","status":"queued","roundIndex":3,"dependencies":[]},
+            {"nodeId":"","kind":"x","status":"queued","roundIndex":4,"dependencies":[]}
         ]},
         {"kind":"command","campaign_status":"paused","command":"resume"},
         {"kind":"manual_retry","node":{"nodeId":"n","kind":"x","status":"failed_terminal","dependencies":[]}},

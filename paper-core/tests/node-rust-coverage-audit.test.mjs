@@ -50,6 +50,13 @@ test('source inventory is deterministic and binds actual source bytes', () => {
   assert.ok(report.sourceBindings.length > 50);
   assert.ok(report.sourceBindings.every((row) => /^sha256:[0-9a-f]{64}$/.test(row.sha256)));
 });
+test('partial command mappings bind both concrete Rust sources and tests', () => {
+  const partial = report.commandMappings.commands.filter((row) => row.scope === 'partial_local_source');
+  assert.equal(partial.length, report.commandMappings.mappedCommands);
+  assert.ok(partial.every((row) => row.rustEntrypoint && row.rustSources.length > 0 && row.tests.length > 0));
+  assert.ok(report.commandMappings.commands.filter((row) => row.scope === 'unmapped').some((row) => row.id === 'verify/full'));
+});
+
 test('completion mode rejects an inventory without independent acceptance', () => {
   const script = fileURLToPath(new URL('../../docs/tools/audit-node-rust-coverage.mjs', import.meta.url));
   const result = spawnSync(process.execPath, [script, '--require-complete'], { encoding: 'utf8', timeout: 10000, maxBuffer: 2 * 1024 * 1024 });

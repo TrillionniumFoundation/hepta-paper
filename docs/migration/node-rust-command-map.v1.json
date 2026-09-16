@@ -572,9 +572,9 @@
     },
     {
       "id": "verify/full",
-      "rustEntrypoint": "cargo test --workspace --all-targets",
-      "scope": "partial_local_source",
-      "compatibilityDecision": "candidate",
+      "rustEntrypoint": null,
+      "scope": "unmapped",
+      "compatibilityDecision": "unmapped",
       "callChain": [],
       "tests": [],
       "remaining": "Rust workspace tests do not execute or certify the Node full test suite; parity acceptance remains unimplemented.",

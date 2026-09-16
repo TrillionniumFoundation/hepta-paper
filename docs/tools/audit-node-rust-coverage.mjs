@@ -159,8 +159,9 @@ export function auditNodeRustCommandMap(routes) {
       throw new Error(`unmapped command claims Rust source: ${row.id}`);
     }
     if (row.scope === 'partial_local_source'
-        && (!row.rustEntrypoint || row.compatibilityDecision !== 'candidate')) {
-      throw new Error(`partial command is missing Rust candidate: ${row.id}`);
+        && (!row.rustEntrypoint || row.compatibilityDecision !== 'candidate'
+          || row.tests.length === 0 || row.rustSources.length === 0)) {
+      throw new Error(`partial command is missing Rust candidate, source, or test binding: ${row.id}`);
     }
     for (const test of row.tests) {
       if (!test || typeof test !== 'string') throw new Error(`invalid map test: ${row.id}`);

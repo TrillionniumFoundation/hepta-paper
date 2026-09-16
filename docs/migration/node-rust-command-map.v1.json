@@ -609,13 +609,19 @@
     },
     {
       "id": "retirement/reference",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
+      "rustEntrypoint": "hepta-paper-rust retirement-reference ROOT",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
       "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/retirement_reference_parity.rs"
+      ],
+      "remaining": "Rust verifies receipt-bound archive bytes and hashes with the Node oracle; exact target reference root, immutable filesystem attributes, historical replay and independent retirement authority remain external qualification work.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/retirement_reference.rs",
+        "rust/oracle/retirement-reference-v1.mjs"
+      ]
     },
     {
       "id": "retirement/matrix",

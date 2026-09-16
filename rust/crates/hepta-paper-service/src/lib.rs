@@ -16,6 +16,7 @@ pub mod node_migration;
 mod objects;
 mod production;
 pub mod repository_assets;
+pub mod retirement_reference;
 pub mod scientific_runtime;
 mod state_access;
 mod worker;

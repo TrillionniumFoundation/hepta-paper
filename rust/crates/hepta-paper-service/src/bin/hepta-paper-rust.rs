@@ -7,6 +7,7 @@ use hepta_paper_service::{
         build_repository_asset_externalization_handoff_v1,
         inspect_repository_asset_externalization_v1,
     },
+    retirement_reference::verify_retirement_reference_v1,
     run_service_v1, verify_legacy_node_freeze_v1,
 };
 use std::{
@@ -114,6 +115,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 )?)?
             );
         }
+        Some("retirement-reference") if args.len() == 2 => {
+            let report = verify_retirement_reference_v1(&PathBuf::from(&args[1]))?;
+            let blocked = report["status"] == "retirement_reference_blocked";
+            println!("{}", serde_json::to_string(&report)?);
+            if blocked {
+                return Err("retirement reference verification blocked".into());
+            }
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
@@ -121,7 +130,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
                 "store-migrate NODE_DB [TARGET_VERSION] | ",
                 "repository-assets ROOT MANIFEST [--handoff]",
-                " | command-surface ROOT [--write-package]"
+                " | command-surface ROOT [--write-package]",
+                " | retirement-reference ROOT"
             )
             .into());
         }

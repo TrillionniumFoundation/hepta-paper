@@ -40,6 +40,7 @@ clock and local writer token. It is not a deployment configuration.
 | `verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE` | Read and validate an already drained immutable Node database against the exact source subject; print the freeze receipt. It does not drain the live database, activate a Rust writer, authorize rollback or retire Node. |
 | `repository-assets ROOT MANIFEST [--handoff]` | Verify repository asset identities, pinned external references, restore-drill receipts and gitlink bindings; `--handoff` emits a non-authorizing migration handoff. |
 | `command-surface ROOT [--write-package]` | Inspect or synchronize the local `package.json` command-script registry without invoking Node; `--write-package` performs the deterministic local rewrite. |
+| `retirement-reference ROOT` | Verify retirement snapshot receipts and archive hashes without consulting or mutating a live legacy runtime. |
 
 `ServiceRunV1` uses camelCase, rejects unknown fields, and binds a version, state
 directory, `registryJson`, hard policy, planner policy, frozen snapshot, frontier,

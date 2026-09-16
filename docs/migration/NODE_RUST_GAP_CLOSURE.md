@@ -2,7 +2,7 @@
 
 > Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. This ledger records closure work; it does not grant parity, production activation, or Node retirement.
 
-- Inventory binding: `sha256:06586a87ec25f333a245d88dd976ad17d70753a8172564a576d0ab55a2462725`
+- Inventory binding: `sha256:00463e23cf15f62d795b072acea160c8234ba8cef69d4236713bc01e826298ef`
 - Unmapped commands: **38**
 - Accepted parity: `false`
 - Production activation: `false`

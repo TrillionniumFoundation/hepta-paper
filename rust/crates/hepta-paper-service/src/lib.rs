@@ -19,6 +19,7 @@ pub mod release_state;
 pub mod release_trust_gate;
 pub mod repository_assets;
 pub mod retirement_reference;
+pub mod retirement_status;
 pub mod scientific_runtime;
 mod state_access;
 mod worker;

@@ -611,13 +611,19 @@
     },
     {
       "id": "retirement/status",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
+      "rustEntrypoint": "hepta-paper-rust retirement-status REQUEST",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
       "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": []
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs"
+      ],
+      "remaining": "Rust matches the pure read-only legacy archive status contract for explicit roots and version; default workspace-root resolution, destructive identity-bound execution, exact retirement authority and independent acceptance remain unimplemented.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/retirement_status.rs",
+        "rust/oracle/retirement-status-v1.mjs"
+      ]
     },
     {
       "id": "retirement/reference",

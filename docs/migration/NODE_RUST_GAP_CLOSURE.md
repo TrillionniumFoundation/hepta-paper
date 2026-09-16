@@ -2,8 +2,8 @@
 
 > Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. This ledger records closure work; it does not grant parity, production activation, or Node retirement.
 
-- Inventory binding: `sha256:00463e23cf15f62d795b072acea160c8234ba8cef69d4236713bc01e826298ef`
-- Unmapped commands: **38**
+- Inventory binding: `sha256:769cbad5dcc2745c342b71cfdf59f4e35ba4fc7fdffbcb591139ccdf6c2b492b`
+- Unmapped commands: **37**
 - Accepted parity: `false`
 - Production activation: `false`
 - Node retirement: `false`
@@ -43,7 +43,6 @@
 | `operator/submission-handoff` | `node` `paper-core/bin/paper-submission-handoff.mjs` | full Rust business call chain | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain covering every argument mode, state transition, lease, retry, crash, cancellation, and external-effect boundary. |
 | `operator/submission-handoff-export` | `node` `paper-core/bin/paper-submission-handoff-export.mjs` | full Rust business call chain | No reviewed Rust entrypoint or accepted compatibility mapping. | Complete Rust call chain covering every argument mode, state transition, lease, retry, crash, cancellation, and external-effect boundary. |
 | `retirement/matrix` | `npm` `run` `migration:capability-matrix-v3` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
-| `retirement/status` | `npm` `run` `migration:retirement-status` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 | `verify/critical` | `npm` `run` `coverage:critical-modules` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |
 | `verify/full` | `npm` `test` | local parity acceptance | Rust workspace tests do not execute or certify the Node full test suite; parity acceptance remains unimplemented. | Rust implementation of the complete Node test surface, argument modes, failure matrix, and independent acceptance evidence. |
 | `verify/operational` | `node` `paper-core/bin/operational-proof-status.mjs` | verification / retirement authority | No reviewed Rust entrypoint or accepted compatibility mapping. | Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence. |

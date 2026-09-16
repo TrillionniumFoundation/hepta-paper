@@ -10,6 +10,7 @@ use hepta_paper_service::{
         inspect_repository_asset_externalization_v1,
     },
     retirement_reference::verify_retirement_reference_v1,
+    retirement_status::inspect_retirement_status_v1,
     run_service_v1, verify_legacy_node_freeze_v1,
 };
 use std::{
@@ -139,6 +140,13 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&inspect_release_state_v1(&input)?)?
             );
         }
+        Some("retirement-status") if args.len() == 2 => {
+            let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
+            println!(
+                "{}",
+                serde_json::to_string(&inspect_retirement_status_v1(&input)?)?
+            );
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
@@ -149,7 +157,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | command-surface ROOT [--write-package]",
                 " | retirement-reference ROOT",
                 " | release-trust-gate REQUEST",
-                " | release-state REQUEST"
+                " | release-state REQUEST",
+                " | retirement-status REQUEST"
             )
             .into());
         }

@@ -1,5 +1,6 @@
 use hepta_paper_service::{
     online_schema_execution::{
+        maintenance::normalization::finalization::observe_schema_transition_post_state_v1,
         maintenance::{
             normalization::{installation::*, *},
             *,
@@ -263,6 +264,24 @@ fn actual_ten_database_genesis_installation_matches_full_node_records() {
         )
         .unwrap();
         assert_eq!(resumed.records(), &expected["value"]);
+        if version == 1 {
+            let post_state = observe_schema_transition_post_state_v1(
+                Path::new(fixture.setup["runtimeRoot"].as_str().unwrap()),
+                &fixture.setup["stateDatabaseManifest"],
+                &journal["plan"],
+                resumed.records(),
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                post_state.inventory()["instances"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                10
+            );
+            assert_eq!(post_state.inspections().len(), 0);
+        }
         drop(resumed);
         assert_eq!(plan_bytes(&fixture, &journal["plan"]), before);
     }

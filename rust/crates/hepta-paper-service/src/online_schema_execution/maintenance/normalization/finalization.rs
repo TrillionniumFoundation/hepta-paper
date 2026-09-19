@@ -15,7 +15,9 @@ use crate::sqlite_mutation_coordinator::{
     contracts::schema_transition::schema_transition_receipt_hash_v1,
     hash,
 };
-use crate::state_database_inventory::observe_state_database_inventory_v1;
+use crate::state_database_inventory::{
+    ObservedStateDatabaseInventoryV1, observe_state_database_inventory_v1,
+};
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 
@@ -155,14 +157,40 @@ pub struct SchemaTransitionObservationResult {
     pub observation: VerifiedMutationReceiptV1,
 }
 
-/// Fresh local post-state evidence required before an external finalize call.
-/// The inventory is rebuilt from the real manifest and every v2 pristine
-/// inspection reads a private source snapshot. The result has no authority or
-/// activation semantics.
+/// Local post-state bound to real held file observations and exact plan/records.
+/// Reports can be read, but caller JSON cannot construct or rewrite this object.
+/// The result has no external authority or activation semantics.
+///
+/// ```compile_fail
+/// use hepta_paper_service::online_schema_execution::maintenance::normalization::finalization::SchemaTransitionPostStateV1;
+/// let state: SchemaTransitionPostStateV1 = serde_json::from_str("{}").unwrap();
+/// ```
 pub struct SchemaTransitionPostStateV1 {
-    pub inventory: Value,
-    pub pristine_runtime_state_hash: String,
-    pub inspections: Vec<PristineDatabaseInspectionV1>,
+    observed: ObservedStateDatabaseInventoryV1,
+    plan: Value,
+    installations: Value,
+    pristine_runtime_state_hash: String,
+    inspections: Vec<PristineDatabaseInspectionV1>,
+}
+impl SchemaTransitionPostStateV1 {
+    pub fn inventory(&self) -> &Value {
+        self.observed.value()
+    }
+    pub fn pristine_runtime_state_hash(&self) -> &str {
+        &self.pristine_runtime_state_hash
+    }
+    pub fn inspections(&self) -> &[PristineDatabaseInspectionV1] {
+        &self.inspections
+    }
+    /// Revalidate the retained live files before consuming their hashes. This
+    /// is an observation boundary, not a lock against subsequent mutations.
+    pub fn assert_current(&self, plan: &Value, installations: Option<&Value>) -> Result<()> {
+        ensure(
+            *plan == self.plan && installations.is_none_or(|value| *value == self.installations),
+            "autonomous_research_online_schema_transition_post_state_subject_changed",
+        )?;
+        self.observed.assert_current()
+    }
 }
 
 pub fn observe_schema_transition_post_state_v1(
@@ -172,47 +200,56 @@ pub fn observe_schema_transition_post_state_v1(
     installations: &Value,
     machine_genesis: Option<&crate::pristine_runtime_state::PinnedMachineGenesisDocumentsV1>,
 ) -> Result<SchemaTransitionPostStateV1> {
+    ensure(
+        plan["version"] == 1 || plan["version"] == 2,
+        "autonomous_research_online_schema_transition_version_invalid",
+    )?;
     let inventory = observe_state_database_inventory_v1(runtime_root, state_database_manifest)?;
     ensure(
         inventory.value()["status"] == "autonomous_research_state_database_inventory_ready"
-            && inventory.value()["databaseScopeHash"] == plan["databaseScopeHash"],
+            && inventory.value()["databaseScopeHash"] == plan["databaseScopeHash"]
+            && inventory.value()["manifestHash"] == plan["stateDatabaseManifestHash"],
         "autonomous_research_online_schema_transition_post_inventory_invalid",
     )?;
     let instances = plan["instances"].as_array().ok_or_else(|| {
-        crate::sqlite_mutation_coordinator::error(
-            "autonomous_research_online_schema_transition_installation_invalid",
-        )
+        error("autonomous_research_online_schema_transition_installation_invalid")
     })?;
     let records = installations.as_array().ok_or_else(|| {
-        crate::sqlite_mutation_coordinator::error(
-            "autonomous_research_online_schema_transition_installations_invalid",
-        )
+        error("autonomous_research_online_schema_transition_installations_invalid")
     })?;
-    if instances.len() != records.len() {
-        return Err(crate::sqlite_mutation_coordinator::error(
-            "autonomous_research_online_schema_transition_installations_invalid",
-        ));
-    }
-    if plan["version"] == 1 {
-        return Ok(SchemaTransitionPostStateV1 {
-            inventory: inventory.value().clone(),
-            pristine_runtime_state_hash: hash(
-                "AutonomousResearchInitialSchemaTransitionPristineStateNotApplicable",
-                &json!({ "transitionId": plan["transitionId"] }),
-            )?,
-            inspections: Vec::new(),
-        });
-    }
+    let actual = inventory.value()["instances"].as_array().ok_or_else(|| {
+        error("autonomous_research_online_schema_transition_post_inventory_invalid")
+    })?;
+    ensure(
+        instances.len() == crate::sqlite_mutation_coordinator::DATABASE_ROLES.len()
+            && instances.len() == records.len()
+            && instances.len() == actual.len(),
+        "autonomous_research_online_schema_transition_installations_invalid",
+    )?;
+    let mut seen = std::collections::BTreeSet::new();
     let mut inspections = Vec::with_capacity(instances.len());
     for (instance, record) in instances.iter().zip(records) {
         let id = text_field(instance, "databaseInstanceId")?;
         let observed = inventory.current_database_instance(id)?;
         ensure(
-            observed["schemaHash"] == instance["expectedPostSchemaHash"]
+            seen.insert(id)
+                && observed["role"] == instance["databaseRole"]
+                && observed["schemaContractId"] == instance["schemaContractId"]
+                && observed["sourceRelativePath"] == instance["sourceRelativePath"]
+                && observed["schemaHash"] == instance["expectedPostSchemaHash"]
                 && record["databaseInstanceId"] == instance["databaseInstanceId"]
+                && record["databaseRole"] == instance["databaseRole"]
+                && record["schemaContractId"] == instance["schemaContractId"]
+                && record["preSchemaHash"] == instance["preSchemaHash"]
+                && record["prePristineStateHash"] == instance["prePristineStateHash"]
                 && record["postSchemaHash"] == instance["expectedPostSchemaHash"],
             "autonomous_research_pristine_schema_rebind_installation_missing",
         )?;
+        // Initial installation still binds every actual schema and record. Only
+        // the aggregate pristine hash is not applicable to protocol v1.
+        if plan["version"] == 1 {
+            continue;
+        }
         let inspection = inventory.with_database_snapshot(id, |path| {
             let mut database = Connection::open_with_flags(
                 path,
@@ -238,9 +275,19 @@ pub fn observe_schema_transition_post_state_v1(
         )?;
         inspections.push(inspection);
     }
-    let pristine_runtime_state_hash = pristine_runtime_state_hash_v1(&inspections)?;
+    let pristine_runtime_state_hash = if plan["version"] == 1 {
+        hash(
+            "AutonomousResearchInitialSchemaTransitionPristineStateNotApplicable",
+            &json!({ "transitionId": plan["transitionId"] }),
+        )?
+    } else {
+        pristine_runtime_state_hash_v1(&inspections)?
+    };
+    inventory.assert_current()?;
     Ok(SchemaTransitionPostStateV1 {
-        inventory: inventory.value().clone(),
+        observed: inventory,
+        plan: plan.clone(),
+        installations: installations.clone(),
         pristine_runtime_state_hash,
         inspections,
     })
@@ -301,18 +348,25 @@ pub fn finalize_schema_transition_with_post_state_v1<T: MutationAuthorityTranspo
     options: SchemaTransitionFinalizePostStateOptions<'_>,
     now: i64,
 ) -> Result<SchemaTransitionFinalizationResult> {
-    finalize_schema_transition_v1(
+    options
+        .post_state
+        .assert_current(options.plan, Some(options.installations))?;
+    let result = finalize_schema_transition_v1(
         authority,
         SchemaTransitionFinalizeOptions {
             plan: options.plan,
             reservation: options.reservation,
             installations: options.installations,
-            post_inventory_hash: text_field(&options.post_state.inventory, "inventoryHash")?,
+            post_inventory_hash: text_field(options.post_state.inventory(), "inventoryHash")?,
             post_pristine_runtime_state_hash: &options.post_state.pristine_runtime_state_hash,
             completed_at: options.completed_at,
         },
         now,
-    )
+    )?;
+    options
+        .post_state
+        .assert_current(options.plan, Some(options.installations))?;
+    Ok(result)
 }
 
 /// Invoke observation only for a version whose external protocol permits the
@@ -347,18 +401,21 @@ pub fn observe_schema_transition_with_post_state_v1<T: MutationAuthorityTranspor
     options: SchemaTransitionObservePostStateOptions<'_>,
     now: i64,
 ) -> Result<SchemaTransitionObservationResult> {
-    observe_schema_transition_v1(
+    options.post_state.assert_current(options.plan, None)?;
+    let result = observe_schema_transition_v1(
         authority,
         SchemaTransitionObserveOptions {
             plan: options.plan,
             finalization: options.finalization,
-            post_inventory_hash: text_field(&options.post_state.inventory, "inventoryHash")?,
+            post_inventory_hash: text_field(options.post_state.inventory(), "inventoryHash")?,
             post_pristine_runtime_state_hash: &options.post_state.pristine_runtime_state_hash,
             nonce: options.nonce,
             requested_at: options.requested_at,
         },
         now,
-    )
+    )?;
+    options.post_state.assert_current(options.plan, None)?;
+    Ok(result)
 }
 
 #[cfg(test)]

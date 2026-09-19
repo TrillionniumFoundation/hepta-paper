@@ -789,7 +789,7 @@
     },
     {
       "id": "operator/runtime-r-source-cas",
-      "rustEntrypoint": "hepta-paper-rust runtime-r-source-cas REPOSITORY_ROOT",
+      "rustEntrypoint": "hepta-paper-rust runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -800,12 +800,17 @@
         {
           "path": "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
           "symbol": "inspect_runtime_source_cas_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
+          "symbol": "acquire_runtime_source_cas_from_seed_v1"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_parity.rs"
+        "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_parity.rs",
+        "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_seed.rs"
       ],
-      "remaining": "Rust matches the read-only lock/manifest/index/archive verification contract; network acquisition, tar DESCRIPTION identity checks, atomic publication and external CRAN transport remain unimplemented.",
+      "remaining": "Rust now adds a bounded offline --seed acquisition path with host-tar DESCRIPTION identity checks, exact archive hashes/indexes, private staging, no-replace atomic publication and post-publish verification. Network acquisition, retry/concurrency semantics, seed publication authority, external CRAN transport, tar-tool qualification and target-host qualification remain unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
@@ -815,6 +820,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_parity.rs",
           "symbol": "source_cas_verifier_matches_node_for_verified_and_tampered_archives"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_seed.rs",
+          "symbol": "seed_acquisition_checks_description_and_publishes_exactly_once"
         }
       ]
     },

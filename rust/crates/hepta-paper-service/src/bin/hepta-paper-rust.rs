@@ -21,7 +21,7 @@ use hepta_paper_service::{
     retirement_reference::verify_retirement_reference_v1,
     retirement_status::inspect_retirement_status_v1,
     run_service_v1,
-    runtime_source_cas::inspect_runtime_source_cas_v1,
+    runtime_source_cas::{acquire_runtime_source_cas_from_seed_v1, inspect_runtime_source_cas_v1},
     verify_legacy_node_freeze_v1,
 };
 use std::{
@@ -253,8 +253,40 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&inspect_retirement_status_v1(&input)?)?
             );
         }
-        Some("runtime-r-source-cas") if args.len() == 2 => {
-            let report = inspect_runtime_source_cas_v1(&PathBuf::from(&args[1]));
+        Some("runtime-r-source-cas") if args.len() >= 2 => {
+            let repository_root = PathBuf::from(&args[1]);
+            let mut action = "status";
+            let mut seed = None;
+            let mut action_seen = false;
+            let mut seed_seen = false;
+            let mut index = 2;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--action" if index + 1 < args.len() && !action_seen => {
+                        action = args[index + 1].as_str();
+                        action_seen = true;
+                        index += 2;
+                    }
+                    "--seed" if index + 1 < args.len() && !seed_seen => {
+                        seed = Some(PathBuf::from(&args[index + 1]));
+                        seed_seen = true;
+                        index += 2;
+                    }
+                    _ => {
+                        return Err(
+                            "runtime-r-source-cas accepts ROOT [--action status|acquire] [--seed DIRECTORY] only".into(),
+                        );
+                    }
+                }
+            }
+            let report = match action {
+                "status" => inspect_runtime_source_cas_v1(&repository_root),
+                "acquire" => {
+                    let seed = seed.ok_or("runtime-r-source-cas acquire requires --seed")?;
+                    acquire_runtime_source_cas_from_seed_v1(&repository_root, &seed)?
+                }
+                _ => return Err("runtime-r-source-cas action must be status or acquire".into()),
+            };
             let blocked = report.get("ready") != Some(&serde_json::Value::Bool(true));
             println!("{}", serde_json::to_string(&report)?);
             if blocked {
@@ -278,7 +310,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | release-state REQUEST",
                 " | release-attest REQUEST",
                 " | retirement-status REQUEST",
-                " | runtime-r-source-cas REPOSITORY_ROOT"
+                " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]"
             )
             .into());
         }

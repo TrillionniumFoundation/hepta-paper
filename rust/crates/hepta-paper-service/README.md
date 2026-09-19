@@ -50,7 +50,7 @@ clock and local writer token. It is not a deployment configuration.
 | `release-trust-gate REQUEST` | Evaluate the pure release trust-layer count gate from JSON input; it never creates external signatures or activates production. |
 | `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input; composite release verification remains separate. |
 | `retirement-status REQUEST` | Inspect the read-only legacy archive retirement status for explicit roots and version; destructive identity-bound execution remains disabled. |
-| `runtime-r-source-cas REPOSITORY_ROOT` | Verify the R lock closure, source-CAS manifest, indexes and archive hashes without network acquisition; acquisition remains separate. |
+| `runtime-r-source-cas REPOSITORY_ROOT [--action status\|acquire] [--seed DIRECTORY]` | Verify the R lock closure, source-CAS manifest, indexes and archive hashes. `--action acquire --seed DIRECTORY` performs bounded offline acquisition (256 MiB per archive) with the host `tar` DESCRIPTION identity check, exact hashes, private staging and no-replace publication; network/CRAN acquisition remains unavailable. |
 
 Separate native binaries inspect operational proof, owner acceptance, nested
 runtime qualification and journal connector coverage. Their inputs, signature

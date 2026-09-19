@@ -14,7 +14,10 @@ missing, escaped, unreadable, or unresolved modules.
 The report also checks the retired direct-workflow paths, the production graph
 reference boundary, domain filesystem/clock restrictions, compatibility
 manifest paths and forbidden production reachability, and the research versus
-submission-dispatcher network boundary. The result is a diagnostic projection:
+submission-dispatcher network boundary. It scans every active-root production
+source file for direct process/database primitives, retired acceptance
+shortcuts, forbidden domain/adapter/application dependencies, SQL/query
+leaks, and governance-to-migration imports. The result is a diagnostic projection:
 `ready=true` means these local source checks passed. It does not mean the Node
 test suite has run, independent command acceptance has occurred, production has
 been activated, or the Node implementation can be retired.

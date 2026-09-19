@@ -262,7 +262,11 @@ fn table_digest(
     }
     Ok(hash.finalize().into())
 }
-fn exact_digest(database: &Connection, bounds: Bounds) -> Result<[u8; 32]> {
+fn exact_digest(
+    database: &Connection,
+    bounds: Bounds,
+    excluded_table: Option<&str>,
+) -> Result<[u8; 32]> {
     assert_surface(database)?;
     let mut budget = Budget::new(bounds);
     let mut hash = Sha256::new();
@@ -280,6 +284,9 @@ fn exact_digest(database: &Connection, bounds: Bounds) -> Result<[u8; 32]> {
             continue;
         }
         require(kind == "table", UNSUPPORTED)?;
+        if excluded_table.is_some_and(|excluded| name == excluded) {
+            continue;
+        }
         let wr: i64 = row.get(2)?;
         require(wr == 0 || wr == 1, UNSUPPORTED)?;
         tables.push((name, wr == 1));
@@ -324,9 +331,20 @@ fn compare_with_bounds(expected: &Connection, actual: &Connection, bounds: Bound
     pin_snapshot(expected)?;
     pin_snapshot(actual)?;
     require(
-        exact_digest(expected, bounds)? == exact_digest(actual, bounds)?,
+        exact_digest(expected, bounds, None)? == exact_digest(actual, bounds, None)?,
         MISMATCH,
     )
+}
+
+/// Hashes all effective SQLite state except one explicitly named table.  The
+/// schema remains part of the digest; only rows from the excluded table are
+/// omitted.  This is used by startup recovery to prove that its authorized
+/// finalization receipt append did not alter business, schema, metadata,
+/// marker, or prior receipt state.
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn digest_excluding_table_v1(database: &Connection, table: &str) -> Result<String> {
+    let digest = exact_digest(database, BOUNDS, Some(table))?;
+    Ok(format!("sha256:{}", hex::encode(digest)))
 }
 /// Observe exact logical state inside two caller-owned transactions. Requires
 /// trusted_schema=false and busy_timeout=0 set by the caller before locking.

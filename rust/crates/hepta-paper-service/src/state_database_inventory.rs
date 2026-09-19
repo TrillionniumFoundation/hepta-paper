@@ -51,6 +51,29 @@ impl ObservedStateDatabaseInventoryV1 {
             .and_then(|rows| rows.iter().find(|row| row["instanceId"] == instance_id))
             .ok_or_else(|| error("autonomous_research_state_database_instance_missing"))
     }
+    /// Re-observe a complete post-write inventory after SQLite recovery has
+    /// legitimately appended finalization rows. The old inventory's content
+    /// hashes are intentionally stale; only its directory/source namespace
+    /// binding is reused before resolving fresh observations.
+    pub(crate) fn reobserve_post_write_v1(&self) -> Result<Self> {
+        for (_, database) in &self.databases {
+            database.assert_source_namespace_current()?;
+        }
+        resolve(&self.runtime_root, &self.manifest, false).and_then(|resolved| {
+            if resolved.report["status"] != "autonomous_research_state_database_inventory_ready" {
+                return Err(error(
+                    "autonomous_research_state_database_inventory_blocked",
+                ));
+            }
+            Ok(Self {
+                report: resolved.report,
+                runtime_root: resolved.runtime_root,
+                manifest: self.manifest.clone(),
+                ancestors: resolved.ancestors,
+                databases: resolved.databases,
+            })
+        })
+    }
     pub fn assert_current(&self) -> Result<()> {
         for ancestor in &self.ancestors {
             ancestor.assert_current()?;

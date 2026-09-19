@@ -138,6 +138,26 @@ pub(super) struct FileObservation {
     pub sha256: String,
 }
 impl FileObservation {
+    pub fn assert_namespace_current(&self) -> Result<()> {
+        let named = std::fs::symlink_metadata(&self.path).map_err(|_| changed())?;
+        let held = self.file.metadata().map_err(|_| changed())?;
+        ensure(
+            named.is_file()
+                && !named.file_type().is_symlink()
+                && named.nlink()
+                    == self.metadata["links"]
+                        .as_str()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0)
+                && inode(&named, &held)
+                && named.mode()
+                    == self.metadata["mode"]
+                        .as_str()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0),
+            "autonomous_research_state_database_namespace_changed",
+        )
+    }
     fn hash(&self) -> Result<String> {
         let size = self.file.metadata().map_err(|_| changed())?.len();
         ensure(
@@ -263,6 +283,12 @@ pub(super) struct DatabaseObservation {
     journal: Option<FileObservation>,
 }
 impl DatabaseObservation {
+    pub fn assert_source_namespace_current(&self) -> Result<()> {
+        for parent in &self.parents {
+            parent.assert_current()?;
+        }
+        self.source.assert_namespace_current()
+    }
     pub fn observe(
         root: &Directory,
         relative: &Path,

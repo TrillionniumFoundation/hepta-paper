@@ -19,6 +19,15 @@ inventory, signature, or clock causes rejection. No business DML is replayed by
 the composition, no active coordinator is constructed, and no activation
 receipt is minted.
 
+Each database now captures a bounded exact logical digest before and after the
+reconciler, excluding only rows in the durable finalization-receipt table. The
+post-state check requires every old receipt row to remain byte-for-byte equal
+and every new row to match one recovered reservation, its receipt hash, permit,
+timestamp, and finalized global head. A fresh complete inventory is retained
+in the opaque proof after all ten databases; parent directories and source
+device/inode/mode/link identity remain bound while authorized receipt appends
+are allowed to change content hashes.
+
 ## Evidence
 
 `tests/online_runtime_startup_set_parity.rs` uses the real ten-database fixture
@@ -26,6 +35,11 @@ and a disposable in-memory signed broker. It verifies all ten receipts, exact
 Node receipt hashes through `rust/oracle/online-runtime-startup-set-v1.mjs`,
 zero unresolved reservations, descriptor-bound currentness, invalid-signature
 rejection, source identity drift rejection, and post-window expiry rejection.
+`tests/online_runtime_startup_set_nonempty_parity.rs` adds a real signed pending
+marker in the resident database, verifies the aggregate finalization append,
+and proves a subsequent business-table write invalidates the retained proof.
+The module unit tests also reject a changed non-receipt digest and any
+unexpected or removed finalization row.
 
 Validation used for this slice:
 
@@ -36,12 +50,14 @@ rustup run 1.98.0 cargo clippy --manifest-path rust/Cargo.toml \
 PATH=../toolchains/node-npm/node_modules/node-linux-x64/bin:$PATH \
   rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml \
   -p hepta-paper-service --all-features --locked \
-  --test online_runtime_startup_set_parity -- --nocapture
+  --test online_runtime_startup_set_parity \
+  --test online_runtime_startup_set_nonempty_parity -- --nocapture
 ```
 
-The local result is **2 passed, 0 failed**. The Node process is a test oracle
-only; its private signing key is created in process memory and no production
-authority or credential is used.
+The focused result is **3 passed, 0 failed**; the startup-inventory unit
+delta tests add **2 passed**. The Node process is a test oracle only; its
+private signing key is created in process memory and no production authority
+or credential is used.
 
 ## Remaining boundary
 

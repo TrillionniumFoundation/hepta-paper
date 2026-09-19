@@ -33,6 +33,7 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | native workspace status | `../modules/WORKSPACE_STATUS_HANDOFF.md` |
 | native architecture conformance | `../modules/ARCHITECTURE_CONFORMANCE_HANDOFF.md` |
 | native retirement drill-attest inspection | `../modules/RETIREMENT_DRILL_ATTEST_HANDOFF.md` |
+| native retirement matrix inspection | `../modules/RETIREMENT_MATRIX_HANDOFF.md` |
 | native release-attestation inspection | `../modules/RELEASE_ATTEST_HANDOFF.md` |
 | all-database startup reconciliation | `../modules/ONLINE_STARTUP_RECONCILIATION_SET_HANDOFF.md` |
 | finalized-head inspection | `../modules/ONLINE_FINALIZED_HEAD_INSPECTION_HANDOFF.md` |

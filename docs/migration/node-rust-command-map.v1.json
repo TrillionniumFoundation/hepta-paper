@@ -882,7 +882,7 @@
       "compatibilityDecision": "unmapped",
       "callChain": [],
       "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "remaining": "No native campaign command entrypoint for prepare, launch, status, resume and converge. Existing Rust state-safety diagnostics do not implement campaign persistence, provider execution, qualification renewal, budget/lease control or external-authority composition. Complete native source and differential recovery/argument coverage are required before external qualification.",
       "rustSources": [],
       "testCases": []
     },
@@ -970,7 +970,7 @@
       "compatibilityDecision": "unmapped",
       "callChain": [],
       "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "remaining": "No native supervisor execution entrypoint. The separate Rust supervisor-health route inspects resident-instance.sqlite only. The Rust resident lifecycle, process signals, instance/cycle leases, campaign scheduling and dispatch, provider canary, qualification renewal, machine-intake enqueue, external-action journal, startup/shutdown recovery and runtime/state-safety composition remain unimplemented; these are source gaps before target-host qualification.",
       "rustSources": [],
       "testCases": []
     },
@@ -1715,7 +1715,7 @@
         "rust/crates/hepta-paper-service/src/release_attest.rs",
         "rust/crates/hepta-paper-service/tests/release_attest.rs"
       ],
-      "remaining": "Native read-only composition covers release-state consistency, release trust-layer counts, schema-25 freeze and archive identity; Node differential/policy replay, independent provenance and owner/operational acceptance, external signing, no-clobber publication, physical deletion and retirement authority remain external and the command always reports releaseEvidenceReady=false.",
+      "remaining": "Native preflight combines caller-supplied release-state/count projections with local schema-25 freeze and archive inspection and always reports releaseEvidenceReady=false. Native source/provenance capture, release snapshot binding, conformance and policy replay orchestration, signing integration, no-clobber publication and recovery are still implementation gaps. Independent owner/operational acceptance, key custody, exact legacy replay inputs and retirement authority are separate external qualification requirements.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/release_attest.rs",
@@ -1731,6 +1731,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/release_attest.rs",
           "symbol": "native_release_attest_composes_local_checks_and_stays_blocked"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_attest.rs",
+          "symbol": "request_rejects_trust_gate_release_subject_mismatch_before_filesystem_access"
         }
       ]
     },
@@ -1929,7 +1933,8 @@
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/retirement_matrix.rs"
+        "rust/crates/hepta-paper-service/tests/retirement_matrix.rs",
+        "rust/crates/hepta-paper-service/src/retirement_matrix.rs"
       ],
       "remaining": "Native Rust performs a bounded, read-only projection of all explicit-retirement rows, conservative decision classification, source/target hash inspection and owner-status import. It never executes the Node release profile, verifies capability conformance or production receipts, obtains external owner acceptance, replays the private legacy archive, or grants retirement authority; blocked output exits non-zero.",
       "rustSources": [
@@ -1941,6 +1946,22 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/retirement_matrix.rs",
           "symbol": "retirement_matrix_cli_emits_bounded_blocked_report_without_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/retirement_matrix.rs",
+          "symbol": "malformed_source_fields_and_escape_paths_fail_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/retirement_matrix.rs",
+          "symbol": "source_reader_rejects_parent_and_leaf_symlinks"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/retirement_matrix.rs",
+          "symbol": "source_snapshot_rejects_rebinding_and_oversized_sparse_files"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/retirement_matrix.rs",
+          "symbol": "target_hash_summary_separates_retirements_without_targets"
         }
       ]
     },

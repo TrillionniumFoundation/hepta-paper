@@ -1,5 +1,6 @@
 //! Integration coverage for the bounded native release-attest composition.
 
+use hepta_control_plane::canonical_hash_v1;
 use hepta_paper_service::LegacyDeletionDrillAttestationRequestV1;
 use hepta_paper_service::release_attest::{
     ReleaseAttestationRequestV1, inspect_release_attestation_v1,
@@ -73,22 +74,67 @@ fn native_release_attest_composes_local_checks_and_stays_blocked() {
         version: 1,
         kind: "ReleaseAttestationRequest".to_owned(),
         drill,
-        release_state: json!({}),
+        release_state: json!({
+            "packageJson": {
+                "name": "hepta-paper",
+                "version": "1.2.3",
+                "engines": {"node": ">=22.23.1 <23"},
+                "packageManager": "npm@10.9.8"
+            },
+            "packageLock": {
+                "name": "hepta-paper",
+                "version": "1.2.3",
+                "packages": {"": {"name": "hepta-paper", "version": "1.2.3"}}
+            },
+            "currentStatus": "This is the normative status for the unreleased v1.2.3 development candidate.",
+            "releaseDocument": "Version 1.2.3 is an unreleased automation-first research-production candidate.",
+            "changelog": "## Unreleased (1.2.3 development)",
+            "headTags": [],
+            "allTags": []
+        }),
         release_trust_gate: json!({
             "releaseCommit": "a".repeat(40),
             "capabilityCount": 1,
-            "implementationVerified": 0,
-            "releaseBoundConformanceVerified": 0,
-            "independentProductionOperationalVerified": 0
+            "implementationVerified": 1,
+            "releaseBoundConformanceVerified": 1,
+            "independentProductionOperationalVerified": 1
         }),
     };
     let report = inspect_release_attestation_v1(request.clone()).expect("inspection report");
     assert_eq!(report["kind"], "ReleaseAttestationInspection");
     assert_eq!(report["status"], "release_attestation_blocked");
     assert_eq!(report["releaseEvidenceReady"], false);
+    assert_eq!(report["releaseState"]["ok"], true);
+    assert_eq!(
+        report["releaseTrustGate"]["status"],
+        "code_release_trust_layers_ready"
+    );
     assert_eq!(report["signingKeyRead"], false);
     assert_eq!(report["runtimeEvidenceWritten"], false);
     assert_eq!(report["externalActionPerformed"], false);
+    assert_eq!(report["sourceBound"], false);
+    assert_eq!(
+        report["releaseStateObservationScope"],
+        "caller_supplied_json_pure_consistency_only"
+    );
+    assert_eq!(
+        report["releaseTrustGateObservationScope"],
+        "caller_supplied_counts_pure_gate_only"
+    );
+    assert_eq!(report["nativeSourceCapture"]["verified"], false);
+    let claimed_hash = report["reportHash"].clone();
+    let mut payload = report.clone();
+    payload
+        .as_object_mut()
+        .expect("report object")
+        .remove("reportHash");
+    let recomputed = canonical_hash_v1(&json!({
+        "kind": "ReleaseAttestationInspection",
+        "value": payload,
+    }))
+    .expect("report hash")
+    .to_string();
+    assert_eq!(claimed_hash, recomputed);
     assert!(
         report["reportHash"]
             .as_str()
@@ -97,7 +143,7 @@ fn native_release_attest_composes_local_checks_and_stays_blocked() {
     assert!(report["blockers"].as_array().is_some_and(|items| {
         items
             .iter()
-            .any(|value| value == "release_attestation_node_differential_replay_external")
+            .any(|value| value == "release_attestation_node_differential_replay_not_implemented")
     }));
     let request_path = root.join("request.json");
     fs::write(

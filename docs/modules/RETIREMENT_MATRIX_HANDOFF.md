@@ -20,6 +20,19 @@ directory. A blocked result is emitted as JSON before the process exits with
 status 1, so automation can retain the diagnostic without mistaking it for an
 approval.
 
+Source paths must remain relative to the workspace and contain no empty, `.`
+or `..` components. Every component is opened through its parent descriptor
+with `O_NOFOLLOW`; regular files must have one link. Reads are limited to
+16 MiB each, retained snapshot bytes to 64 MiB, explicit matrix rows to 4,096,
+and root/source path depth to 64 components each. Empty explicit matrices and
+malformed source fields fail with a diagnostic error. File identity is checked
+before and after reading, and all captured paths are rechecked before returning.
+
+The target hash summary distinguishes applicable bound/pending rows from rows
+without a target: the current registry has 40 bound rows and 209 permanent
+retirements reported as `targetHashNotApplicableEntries`. Not-applicable rows
+are never counted as verified targets.
+
 The report is intentionally named `LegacyCapabilityMigrationMatrixReadOnly` and
 sets `authorityGranted`, `productionActivation`, and `nodeRetirement` to
 `false`. `implementationVerified` and `operationallyProven` remain zero because
@@ -40,6 +53,8 @@ through `hepta-paper-rust` and covered by
 Verification:
 
 ```bash
+rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml \
+  -p hepta-paper-service --lib retirement_matrix::tests --locked
 rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml \
   -p hepta-paper-service --test retirement_matrix --locked
 ```

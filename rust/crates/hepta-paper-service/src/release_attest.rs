@@ -46,14 +46,23 @@ pub enum ReleaseAttestError {
     Hash,
 }
 
-fn external_blockers() -> Vec<&'static str> {
+fn implementation_blockers() -> Vec<&'static str> {
     vec![
-        "release_attestation_node_differential_replay_external",
-        "release_attestation_policy_replay_external",
-        "release_attestation_release_provenance_external",
-        "release_attestation_signing_authority_external",
-        "release_attestation_runtime_publication_external",
+        "release_attestation_node_differential_replay_not_implemented",
+        "release_attestation_policy_replay_not_implemented",
+        "release_attestation_release_provenance_capture_not_implemented",
+        "release_attestation_release_snapshot_binding_not_implemented",
+        "release_attestation_signing_integration_not_implemented",
+        "release_attestation_runtime_publication_not_implemented",
+        "release_attestation_publication_recovery_not_implemented",
+    ]
+}
+
+fn external_qualification_blockers() -> Vec<&'static str> {
+    vec![
         "release_attestation_owner_acceptance_external",
+        "release_attestation_operational_acceptance_external",
+        "release_attestation_release_key_custody_external",
         "release_attestation_physical_deletion_external",
     ]
 }
@@ -76,9 +85,18 @@ pub fn inspect_release_attestation_v1(
     let release_state = inspect_release_state_v1(&request.release_state)?;
     let trust_gate = build_release_trust_layer_gate_from_values_v1(&request.release_trust_gate)?;
     let drill = inspect_legacy_deletion_drill_attest_v1(request.drill)?;
-    let mut blockers = external_blockers()
+    let implementation_blockers = implementation_blockers()
         .into_iter()
         .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let external_qualification_blockers = external_qualification_blockers()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut blockers = implementation_blockers
+        .iter()
+        .chain(external_qualification_blockers.iter())
+        .cloned()
         .collect::<Vec<_>>();
     if release_state["ok"] != true {
         blockers.push("release_attestation_release_state_blocked".to_owned());
@@ -100,6 +118,17 @@ pub fn inspect_release_attestation_v1(
         "status": "release_attestation_blocked",
         "releaseState": release_state,
         "releaseTrustGate": trust_gate,
+        "observationScope": "local_filesystem_plus_caller_supplied_projections",
+        "sourceBound": false,
+        "releaseStateObservationScope": "caller_supplied_json_pure_consistency_only",
+        "releaseTrustGateObservationScope": "caller_supplied_counts_pure_gate_only",
+        "implementationBlockers": implementation_blockers,
+        "externalQualificationBlockers": external_qualification_blockers,
+        "nativeSourceCapture": {
+            "status": "release_attestation_source_capture_not_implemented",
+            "verified": false,
+            "releaseSnapshotBindingVerified": false
+        },
         "drill": drill,
         "blockers": blockers,
         "technicalLocalChecksReady": false,
@@ -142,6 +171,31 @@ mod tests {
             },
             release_state: json!({}),
             release_trust_gate: json!({}),
+        };
+        assert!(matches!(
+            inspect_release_attestation_v1(request),
+            Err(ReleaseAttestError::RequestInvalid)
+        ));
+    }
+
+    #[test]
+    fn request_rejects_trust_gate_release_subject_mismatch_before_filesystem_access() {
+        let request = ReleaseAttestationRequestV1 {
+            version: REQUEST_VERSION,
+            kind: REQUEST_KIND.to_owned(),
+            drill: LegacyDeletionDrillAttestationRequestV1 {
+                version: 1,
+                kind: "LegacyDeletionDrillAttestationRequest".to_owned(),
+                legacy_database_path: "/tmp/legacy.sqlite".to_owned(),
+                archive_path: "/tmp/archive.tar".to_owned(),
+                repository: "TrillionniumFoundation/hepta-paper".to_owned(),
+                commit: "a".repeat(40),
+                tree: "b".repeat(40),
+                release_commit: "a".repeat(40),
+                release_state_snapshot_hash: format!("sha256:{}", "d".repeat(64)),
+            },
+            release_state: json!({}),
+            release_trust_gate: json!({"releaseCommit": "b".repeat(40)}),
         };
         assert!(matches!(
             inspect_release_attestation_v1(request),

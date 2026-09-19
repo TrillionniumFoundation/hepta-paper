@@ -2,8 +2,9 @@
 
 This handoff documents the Rust local inspection corresponding to
 `node paper-core/bin/release-evidence.mjs --execute`. The native command is a
-read-only preflight and remains blocked until the independent release contract
-is supplied.
+read-only preflight. It remains blocked for both unimplemented native
+implementation work and independently qualified release authority; supplying
+external credentials alone cannot turn this report into release evidence.
 
 ## Input and command
 
@@ -17,17 +18,22 @@ the native archive identity and legacy freeze inspection.
 ## Local boundary
 
 The report includes the release-state result, trust-layer result, drill report,
-deduplicated blockers, and a domain-separated report hash. It never reads a
-signing key, writes runtime evidence, mutates or deletes a legacy database,
-publishes a bundle, or grants release or Node-retirement authority.
+deduplicated blockers, and a domain-separated report hash. The release-state
+and trust-layer values are explicitly marked as caller-supplied pure projections;
+they are not source-bound observations. Native source/provenance capture and
+release-snapshot binding are not implemented. It never reads a signing key,
+writes runtime evidence, mutates or deletes a legacy database, publishes a
+bundle, or grants release or Node-retirement authority.
 
-## External blockers
+## Implementation and external blockers
 
 The result is always `release_attestation_blocked` with
-`releaseEvidenceReady=false`. Node p0/p1 differential and policy replays,
-release provenance, independent owner and operational acceptance, release-key
-signing, no-clobber publication, and physical deletion remain external
-requirements. A blocked report is printed before the CLI exits non-zero.
+`releaseEvidenceReady=false`. The report separates Rust implementation gaps
+(source/provenance capture, release-snapshot binding, p0/p1 differential and
+policy replay orchestration, signing integration, publication and recovery)
+from external qualification requirements (independent owner/operational
+acceptance, release-key custody and physical deletion authority). A blocked
+report is printed before the CLI exits non-zero.
 
 ## Validation
 

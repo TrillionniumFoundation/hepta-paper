@@ -112,10 +112,12 @@ external authority, lease-fenced commits and recovery. Production runtime
 activation remains a separate verified contract.
 
 [Research capability matrix handoff](RESEARCH_CAPABILITY_MATRIX_HANDOFF.md)
-
-[Retirement capability matrix handoff](RETIREMENT_MATRIX_HANDOFF.md)
 documents the native ten-capability projection, exact evidence ceilings and the
 remaining environment/observer/CLI boundary.
+
+[Retirement capability matrix handoff](RETIREMENT_MATRIX_HANDOFF.md) documents
+the native 249-row migration inventory, bounded source/target identity checks,
+and the remaining receipt, owner-acceptance and retirement-authority gates.
 
 [Online startup recovery](ONLINE_MUTATION_STARTUP_HANDOFF.md),
 [all-database startup reconciliation](ONLINE_STARTUP_RECONCILIATION_SET_HANDOFF.md),

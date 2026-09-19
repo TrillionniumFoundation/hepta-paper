@@ -31,6 +31,7 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | research capability projection | `../modules/RESEARCH_CAPABILITY_MATRIX_HANDOFF.md` |
 | startup mutation recovery | `../modules/ONLINE_MUTATION_STARTUP_HANDOFF.md` |
 | finalized-head inspection | `../modules/ONLINE_FINALIZED_HEAD_INSPECTION_HANDOFF.md` |
+| finalized inventory | `../modules/ONLINE_FINALIZED_INVENTORY_HANDOFF.md` |
 | native activation dependencies | `../modules/ONLINE_RUNTIME_ACTIVATION_HANDOFF.md` |
 | native writer source inspection | `../modules/ONLINE_WRITER_STATIC_HANDOFF.md` |
 | backup authority and stored restore sources | `../modules/STATE_BACKUP_AUTHORITY_RESTORE_SOURCE_HANDOFF.md` |
@@ -40,6 +41,9 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | private deployment environment overlay | `../modules/DEPLOYMENT_ENVIRONMENT_HANDOFF.md` |
 | passive authority evidence cache and verified write | `../modules/ONLINE_AUTHORITY_EVIDENCE_CACHE_HANDOFF.md` |
 | concrete backup, replay and recoverability controller | `../modules/STATE_RECOVERABILITY_HANDOFF.md` |
+| concrete recoverability action fence | `../modules/RECOVERABILITY_CONCRETE_FENCE_HANDOFF.md` |
+| schema finalization observation | `../modules/SCHEMA_FINALIZATION_OBSERVATION_HANDOFF.md` |
+| autonomous supervisor health | `../modules/AUTONOMOUS_SUPERVISOR_HEALTH_HANDOFF.md` |
 | active/passive signed authority inspection | `../modules/ONLINE_AUTHORITY_INSPECTION_HANDOFF.md` |
 | state safety diagnostic projection | `../modules/STATE_SAFETY_PROJECTION_HANDOFF.md` |
 | actual pristine runtime database baseline | `../modules/PRISTINE_RUNTIME_STATE_HANDOFF.md` |
@@ -94,6 +98,10 @@ artifacts and superseded approval cannot be reused.
 - [Actual passive state-safety composition](../modules/STATE_SAFETY_COMPOSITION_HANDOFF.md)
 - [Complete writer source input proof](../modules/ONLINE_WRITER_COMPLETE_INPUT_PROOF_HANDOFF.md)
 - [Signed schema journal normalization](../modules/SCHEMA_JOURNAL_NORMALIZATION_HANDOFF.md)
+- [Schema genesis installation](../modules/SCHEMA_GENESIS_INSTALLATION_HANDOFF.md)
+- [Concrete recoverability action fence](../modules/RECOVERABILITY_CONCRETE_FENCE_HANDOFF.md)
+- [Schema finalization observation](../modules/SCHEMA_FINALIZATION_OBSERVATION_HANDOFF.md)
+- [Autonomous supervisor health](../modules/AUTONOMOUS_SUPERVISOR_HEALTH_HANDOFF.md)
 
 These code-level handoffs do not change registered module qualification,
 production activation, principal authority, or Node retirement status.

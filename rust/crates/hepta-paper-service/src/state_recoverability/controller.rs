@@ -521,3 +521,6 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1> Recove
 mod heartbeat;
 
 mod automatic;
+
+mod fence;
+pub use fence::{SharedRecoverabilityEpochFenceV1, VerifiedRecoverabilityActionV1};

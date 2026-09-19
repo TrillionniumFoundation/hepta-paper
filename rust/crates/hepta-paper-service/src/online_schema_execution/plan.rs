@@ -304,3 +304,5 @@ pub fn build_schema_transition_plan_v1<T: MutationAuthorityTransportV1>(
 }
 
 pub(in crate::online_schema_execution) mod normalization_support;
+
+pub(crate) mod installation_support;

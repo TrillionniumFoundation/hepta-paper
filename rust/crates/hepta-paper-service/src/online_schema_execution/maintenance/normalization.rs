@@ -297,3 +297,7 @@ pub fn resume_schema_normalization_v1<T: MutationAuthorityTransportV1>(
         checkpoint,
     )
 }
+
+pub mod installation;
+
+pub mod finalization;

@@ -679,3 +679,57 @@ fn final_pinned_io_and_transaction_cleanup_cannot_outlive_signed_head_time() {
         assert!(db.is_autocommit());
     }
 }
+
+#[test]
+fn zero_global_head_rejects_wrong_genesis_global_hash_accepted_by_node() {
+    let f = Fixture::new();
+    let mut db = f.database("normal");
+    let (_coordinator, state) = f.coordinator(&db, "normal");
+    let (mut authority, inventory) = authority(&f, &state);
+    let verified = inspect_online_finalized_database_head_v1(
+        &mut db,
+        "resident-instance",
+        &inventory,
+        &mut authority,
+        &f.value["manifest"],
+        &mut || Ok(NOW),
+    )
+    .unwrap();
+    assert_eq!(verified.current_head()["globalSequence"], 0);
+    let request = state.lock().unwrap().calls.last().unwrap()["request"].clone();
+    mutate_protected(
+        &db,
+        "autonomous_research_online_mutation_metadata_no_update",
+        &format!(
+            "UPDATE autonomous_research_online_mutation_authority_metadata SET genesis_global_hash='{}'",
+            h("unrelated-genesis-global")
+        ),
+    );
+    db.close().unwrap();
+    let mut db = Connection::open(f.root.join("state.sqlite")).unwrap();
+    let before = snapshot(&db);
+    let changes = db.total_changes();
+    // This is an intentional native tightening: the original Node inspector
+    // verifies the real Ed25519 head but accepts unrelated local global genesis.
+    let query = json!({"schema":f.value["schema"],"metadata":before["metadata"],"markers":before["markers"],"finalizations":before["finalizations"],"inventory":inventory,"manifest":f.value["manifest"],"trust":f.value["trust"],"publicKeyPem":f.key.verifying_key().to_public_key_pem(LineEnding::LF).unwrap(),"head":verified.current_head(),"request":request,"now":f.value["now"]});
+    let node = head_oracle(&[query]).remove(0);
+    assert_eq!(node["ok"], true);
+    assert_eq!(node["value"]["genesisZeroHeadVerified"], true);
+    let failure = inspect_online_finalized_database_head_v1(
+        &mut db,
+        "resident-instance",
+        &inventory,
+        &mut authority,
+        &f.value["manifest"],
+        &mut || Ok(NOW),
+    )
+    .err()
+    .expect("a signed zero head must bind the local global genesis hash");
+    assert_eq!(
+        failure.code,
+        "autonomous_research_online_finalized_head_local_authority_mismatch"
+    );
+    assert_eq!(snapshot(&db), before);
+    assert_eq!(db.total_changes(), changes);
+    assert!(db.is_autocommit());
+}

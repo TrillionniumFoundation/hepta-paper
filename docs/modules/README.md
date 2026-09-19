@@ -107,6 +107,7 @@ remaining environment/observer/CLI boundary.
 
 [Online startup recovery](ONLINE_MUTATION_STARTUP_HANDOFF.md),
 [finalized-head inspection](ONLINE_FINALIZED_HEAD_INSPECTION_HANDOFF.md),
+[finalized inventory](ONLINE_FINALIZED_INVENTORY_HANDOFF.md),
 [activation foundations and active authority](ONLINE_RUNTIME_ACTIVATION_HANDOFF.md),
 and [backup authority and stored restore sources](STATE_BACKUP_AUTHORITY_RESTORE_SOURCE_HANDOFF.md)
 describe the verified native dependency chains and the remaining production
@@ -163,4 +164,17 @@ identities and namespaces before reusing its source inspection.
 
 [Signed schema journal normalization](SCHEMA_JOURNAL_NORMALIZATION_HANDOFF.md)
 documents actual ten-database WAL normalization, durable progress, process-death
-recovery and the remaining metadata/genesis installation boundary.
+recovery and its signed installation handoff. [Schema genesis installation](SCHEMA_GENESIS_INSTALLATION_HANDOFF.md) covers the fixed v1/v2 metadata and
+genesis installation protocol, crash recovery and exact Node state comparison.
+[Concrete recoverability action fence](RECOVERABILITY_CONCRETE_FENCE_HANDOFF.md)
+binds recoverability actions to current sources, inventory, resident and trust
+evidence without granting runtime activation.
+
+[Schema finalization observation](SCHEMA_FINALIZATION_OBSERVATION_HANDOFF.md)
+provides verifier-bound Node-compatible finalize/observe request construction and
+fresh post-inventory/post-pristine binding; authority restart and Active remain
+outside this passive capability.
+
+[Autonomous supervisor health](AUTONOMOUS_SUPERVISOR_HEALTH_HANDOFF.md) provides
+the first three read-only resident health modes with descriptor-pinned snapshots;
+dependent advanced modes remain explicitly unsupported.

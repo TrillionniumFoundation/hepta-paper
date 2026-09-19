@@ -192,3 +192,5 @@ fn root_identity(root: &files::Directory) -> Result<Value> {
 pub(crate) mod maintenance_lock;
 
 pub(crate) mod normalization_support;
+
+pub(crate) mod installation_support;

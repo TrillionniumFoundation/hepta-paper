@@ -39,8 +39,8 @@
       "context": "format, lint, test, docs",
       "workflowId": 344308644,
       "workflowPath": ".github/workflows/rust-foundation.yml",
-      "workflowGitBlobSha": "27a4a1bb148d35ae7361d5670587e593314be52f",
-      "workflowSha256": "sha256:dfff86895352778ed98a90385abd38c48ed0a4ebcd8c6389a1979498db0b66fc"
+      "workflowGitBlobSha": "62ff31d05cd18c5d34a77db5b518ca408696436c",
+      "workflowSha256": "sha256:236c9076086ac86a1d6ca0fc11f241acb9bc5dc35685653339e8aa6dfd029978"
     },
     {
       "context": "validate-contracts",

@@ -419,6 +419,13 @@ pub fn inspect_online_finalized_database_head_v1<T: MutationAuthorityTransportV1
     checked(observing >= requested, "authority_evidence_expired")?;
     let head = authority.observe_current_head(&request, Some(&expected), observing)?;
     let current = head.value();
+    // At global sequence zero the authenticated current hash is the global
+    // genesis hash itself. Later global heads cannot stand in for that genesis.
+    checked(
+        !equal(&current["globalSequence"], &json!(0))
+            || meta["genesis_global_hash"] == current["globalHash"],
+        "local_authority_mismatch",
+    )?;
     let matches = current["databaseHeads"]
         .as_array()
         .ok_or_else(|| error(code("authority_instance_missing")))?

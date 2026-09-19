@@ -16,6 +16,15 @@ struct PrivateSnapshot {
 }
 impl PrivateSnapshot {
     fn create(observation: &DatabaseObservation) -> Result<Self> {
+        Self::create_with_sidecars(observation, true)
+    }
+    fn create_main_only(observation: &DatabaseObservation) -> Result<Self> {
+        Self::create_with_sidecars(observation, false)
+    }
+    fn create_with_sidecars(
+        observation: &DatabaseObservation,
+        include_sidecars: bool,
+    ) -> Result<Self> {
         observation.assert_current()?;
         let (_, mut ancestors) = files::open_root(&std::env::temp_dir())?;
         let parent = ancestors.pop().ok_or_else(files::changed)?;
@@ -43,7 +52,14 @@ impl PrivateSnapshot {
         };
         for (name, source) in [
             ("candidate.sqlite", Some(&observation.source)),
-            ("candidate.sqlite-wal", observation.wal.as_ref()),
+            (
+                "candidate.sqlite-wal",
+                if include_sidecars {
+                    observation.wal.as_ref()
+                } else {
+                    None
+                },
+            ),
         ] {
             if let Some(source) = source {
                 let target = File::from(
@@ -73,7 +89,7 @@ impl PrivateSnapshot {
                 copy.assert_current()?;
             }
         }
-        if observation.wal.is_some() {
+        if include_sidecars && observation.wal.is_some() {
             // Own the SHM inode before SQLite initializes it, so cleanup never
             // has to delete a file merely because its name looks familiar.
             result.shared_memory = Some(File::from(
@@ -139,6 +155,24 @@ impl PrivateSnapshot {
         }
         Ok(())
     }
+}
+pub(super) fn with_main_only_snapshot<R>(
+    observation: &DatabaseObservation,
+    inspect: impl FnOnce(&Path) -> Result<R>,
+) -> Result<R> {
+    // The incumbent health command opens the resident database read-only and
+    // does not ask SQLite to recover a WAL. Keep all sidecars descriptor-pinned
+    // through observation/assert_current, while matching that main-file read
+    // for inert or malformed stale sidecars.
+    let snapshot = PrivateSnapshot::create_main_only(observation)?;
+    snapshot.assert_current()?;
+    let result = inspect(&snapshot.path());
+    let unchanged = snapshot
+        .assert_current()
+        .and_then(|()| observation.assert_current());
+    drop(snapshot);
+    unchanged?;
+    result
 }
 impl Drop for PrivateSnapshot {
     fn drop(&mut self) {

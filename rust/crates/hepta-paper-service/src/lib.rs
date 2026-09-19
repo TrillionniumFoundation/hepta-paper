@@ -45,6 +45,7 @@ mod state_access;
 pub mod state_database_inventory;
 pub mod state_recoverability;
 pub mod state_safety;
+pub mod supervisor_health;
 mod worker;
 pub mod workflow;
 

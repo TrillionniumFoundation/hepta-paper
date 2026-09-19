@@ -147,11 +147,38 @@ pub fn inspect_pristine_database_state_v1(
         return Err(fail("caller_transaction_active"));
     }
     let transaction = database.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let result = inspect_pristine_database_in_transaction_v1(&transaction, input)?;
+    transaction.rollback()?;
+    Ok(result)
+}
+
+/// Internal fixed observation of a transaction owned by schema installation.
+/// It never begins, commits or rolls back the caller's transaction.
+pub(crate) fn inspect_pristine_database_in_transaction_v1(
+    database: &Connection,
+    input: PristineDatabaseOptionsV1<'_>,
+) -> Result<PristineDatabaseInspectionV1> {
+    if [
+        input.database_role,
+        input.database_instance_id,
+        input.schema_contract_id,
+        input.schema_hash,
+        input.state_database_manifest_hash,
+    ]
+    .iter()
+    .any(|s| s.is_empty())
+        || !["pre-rebind", "post-rebind", "adoption"].contains(&input.phase)
+    {
+        return Err(fail("inspection_input_invalid"));
+    }
+    if database.is_autocommit() {
+        return Err(fail("installation_transaction_required"));
+    }
     let policy = policy(input.database_role, input.phase)?;
     // Preserve the historical hash projection, but reject ordinary tables that
     // the legacy LIKE underscore wildcard would otherwise silently hide.
     let hidden = query::one(
-        &transaction,
+        database,
         "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name LIKE 'sqlite_%' LIMIT 1",
     )?;
     if !hidden.is_null() {
@@ -160,7 +187,7 @@ pub fn inspect_pristine_database_state_v1(
         return Err(failure);
     }
     let tables = rows(
-        &transaction,
+        database,
         "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT 257",
         &[],
         257,
@@ -182,11 +209,11 @@ pub fn inspect_pristine_database_state_v1(
             }
         }
     }
-    let mut bindings = baseline::inspect(&transaction, &input)?;
-    bindings["onlineAuthority"] = online(&transaction, &input)?;
+    let mut bindings = baseline::inspect(database, &input)?;
+    bindings["onlineAuthority"] = online(database, &input)?;
     let mut states = Vec::new();
     for table in table_names {
-        let count: i64 = transaction.query_row(
+        let count: i64 = database.query_row(
             &format!("SELECT count(*) FROM {}", query::identifier(table)),
             [],
             |r| r.get(0),
@@ -205,7 +232,7 @@ pub fn inspect_pristine_database_state_v1(
             e.details = json!({"databaseRole":input.database_role,"databaseInstanceId":input.database_instance_id,"tableName":table,"rowCount":count});
             return Err(e);
         }
-        let (columns, rows_hash) = query::canonical_rows(&transaction, table, count)?;
+        let (columns, rows_hash) = query::canonical_rows(database, table, count)?;
         states.push(json!({"tableName":table,"classification":if allowed.is_some(){"permitted-baseline"}else{"business-empty"},"rowCount":count,"columns":columns,"rowsHash":rows_hash}));
     }
     let mut payload = json!({"databaseRole":input.database_role,"databaseInstanceId":input.database_instance_id,"schemaContractId":input.schema_contract_id,"schemaHash":input.schema_hash,"phase":input.phase,"stateDatabaseManifestHash":input.state_database_manifest_hash,"policyHash":pristine_runtime_state_policy_hash_v1(input.state_database_manifest_hash)?,"tableStates":states,"semanticBindings":bindings,"businessRowCount":0});
@@ -217,7 +244,6 @@ pub fn inspect_pristine_database_state_v1(
     if let Some(documents) = input.machine_genesis {
         documents.assert_current()?;
     }
-    transaction.rollback()?;
     Ok(PristineDatabaseInspectionV1 { value: payload })
 }
 /// The inputs must originate in actual inspections, but the resulting digest is

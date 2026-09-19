@@ -429,3 +429,11 @@ impl PinnedMutationAuthorityV1<ProcessMutationAuthorityTransportV1> {
         &self.transport.configuration_hash
     }
 }
+
+#[cfg(test)]
+pub(crate) fn verified_for_test(value: serde_json::Value) -> VerifiedMutationReceiptV1 {
+    VerifiedMutationReceiptV1 {
+        value,
+        verifier_identity: String::new(),
+    }
+}

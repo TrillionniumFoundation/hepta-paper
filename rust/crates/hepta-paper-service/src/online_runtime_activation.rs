@@ -6,6 +6,7 @@
 pub mod active_refresh;
 pub mod contracts;
 pub mod database;
+pub mod finalized_inventory;
 pub mod inventory;
 pub(crate) mod ordered_json;
 use serde_json::Value;

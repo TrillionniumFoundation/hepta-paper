@@ -247,6 +247,27 @@ fn resolve(runtime_root: &Path, manifest: &Value, handoff: bool) -> Result<Resol
         databases: observations,
     })
 }
+/// Inspect one registered path through the same descriptor-pinned private
+/// snapshot used by the inventory. Callers receive no live database handle.
+pub(crate) fn with_database_snapshot_path_v1<R>(
+    runtime_root: &Path,
+    relative: &Path,
+    role: &str,
+    inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
+) -> Result<R> {
+    let (_, ancestors) = files::open_root(runtime_root)?;
+    let root = ancestors.last().ok_or_else(files::changed)?;
+    let mut budget = files::Budget::default();
+    let observation = files::DatabaseObservation::observe(root, relative, role, &mut budget)?;
+    let result =
+        snapshot::with_main_only_snapshot(&observation, |path| inspect(path).map_err(error))?;
+    observation.assert_current()?;
+    for ancestor in ancestors {
+        ancestor.assert_current()?;
+    }
+    Ok(result)
+}
+
 /// Produces the legacy ready/blocked report from actual observed state. This
 /// serialized report alone is not a verified observation capability.
 pub fn inspect_state_database_inventory_v1(runtime_root: &Path, manifest: &Value) -> Result<Value> {

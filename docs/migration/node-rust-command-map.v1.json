@@ -377,14 +377,55 @@
     },
     {
       "id": "operator/autonomous-supervisor-health",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-autonomous-supervisor-health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/supervisor_health.rs",
+          "symbol": "inspect_supervisor_health_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_database_inventory.rs",
+          "symbol": "with_database_snapshot_path_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-autonomous-supervisor-health.rs",
+          "symbol": "main"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs"
+      ],
+      "remaining": "Native read-only descriptor-pinned resident health matches Node for base, startup-reconciliation and machine-intake modes, including empty/stopped/WAL/permission/timing and CLI negatives. Current-machine-intake, strict-machine-intake and fully-autonomous modes remain explicit unsupported until their prerequisite evidence chains are native; process probes and production qualification remain external.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/supervisor_health.rs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory/snapshot.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-autonomous-supervisor-health.rs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
+          "symbol": "base_startup_machine_modes_match_node_with_fixed_lease_token"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
+          "symbol": "malformed_permissions_and_timing_have_matching_exit_and_blocker"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
+          "symbol": "empty_and_stopped_states_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
+          "symbol": "unsupported_advanced_modes_are_explicitly_rejected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
+          "symbol": "strict_cli_parse_errors_match_node_error_class"
+        }
+      ]
     },
     {
       "id": "operator/nested-runtime-platform-qualification",
@@ -1132,7 +1173,7 @@
     },
     {
       "id": "maintenance/autonomous-online-schema-transition",
-      "rustEntrypoint": "build_schema_transition_plan_v1 / normalize_schema_maintenance_v1 / resume_schema_normalization_v1 [native observed plan, signed reservation and durable normalization; complete installation/CLI pending]",
+      "rustEntrypoint": "build_schema_transition_plan_v1 / normalize_schema_maintenance_v1 / resume_schema_normalization_v1 / install_schema_maintenance_v1 / resume_schema_installation_v1 / finalize_schema_transition_v1 / observe_schema_transition_v1",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -1171,6 +1212,34 @@
         {
           "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization.rs",
           "symbol": "resume_schema_normalization_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/installation.rs",
+          "symbol": "install_schema_maintenance_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/installation.rs",
+          "symbol": "resume_schema_installation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/finalization.rs",
+          "symbol": "observe_schema_transition_post_state_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/finalization.rs",
+          "symbol": "finalize_schema_transition_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/finalization.rs",
+          "symbol": "observe_schema_transition_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_runtime_activation/finalized_inventory.rs",
+          "symbol": "inspect_online_finalized_inventory_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/fence.rs",
+          "symbol": "observe_action"
         }
       ],
       "tests": [
@@ -1178,9 +1247,13 @@
         "rust/crates/hepta-paper-service/tests/online_schema_target_parity.rs",
         "rust/crates/hepta-paper-service/tests/pristine_runtime_state_parity.rs",
         "rust/crates/hepta-paper-service/tests/schema_source_projection_parity.rs",
-        "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs"
+        "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs",
+        "rust/crates/hepta-paper-service/tests/schema_installation_parity.rs",
+        "rust/crates/hepta-paper-service/tests/schema_installation_state_parity.rs",
+        "rust/crates/hepta-paper-service/tests/online_finalized_inventory_parity.rs",
+        "rust/crates/hepta-paper-service/tests/state_recoverability_fence.rs"
       ],
-      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, real signed maintenance reservation and actual journal normalization/recovery are implemented. Normalization uses a root-inode maintenance lock, exact source/signature/lease checks, identity-bound SHM quarantine, bounded atomic progress, actual process-death recovery and real-wall-clock lease tests. Metadata/genesis installation, exclusive per-commit recovery, finalization and V2 authority restart, complete CLI modes and independent qualification remain open. Previous Node-engine WAL reservation digest interoperability, Node raw genesis-object member-order rejection semantics, and named-VFS same-user ABA limits remain explicit; reports do not activate a runtime.",
+      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
@@ -1205,7 +1278,16 @@
         "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/copy.rs",
         "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/maintenance_lock.rs",
         "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/normalization_support.rs",
-        "rust/crates/hepta-paper-service/src/state_recoverability/schema_normalization_repository.rs"
+        "rust/crates/hepta-paper-service/src/state_recoverability/schema_normalization_repository.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/installation.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/installation/metadata.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/installation/state.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/finalization.rs",
+        "rust/crates/hepta-paper-service/src/online_runtime_activation/finalized_inventory.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/controller/fence.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/schema_installation_repository.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/plan/installation_support.rs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/installation_support.rs"
       ],
       "testCases": [
         {
@@ -1247,6 +1329,22 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs",
           "symbol": "actual_wall_clock_signed_lease_completes_ten_database_wal_normalization"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/schema_installation_parity.rs",
+          "symbol": "actual_ten_database_genesis_installation_matches_full_node_records"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/schema_installation_state_parity.rs",
+          "symbol": "exact_installation_state_includes_all_values_and_system_bookkeeping"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/online_finalized_inventory_parity.rs",
+          "symbol": "actual_ten_database_heads_match_original_node_and_retain_current_proof_without_rpc_or_source_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_recoverability_fence.rs",
+          "symbol": "action_tokens_bind_one_controller_generation_and_exact_action_without_rpc"
         }
       ]
     },

@@ -106,6 +106,7 @@ documents the native ten-capability projection, exact evidence ceilings and the
 remaining environment/observer/CLI boundary.
 
 [Online startup recovery](ONLINE_MUTATION_STARTUP_HANDOFF.md),
+[all-database startup reconciliation](ONLINE_STARTUP_RECONCILIATION_SET_HANDOFF.md),
 [finalized-head inspection](ONLINE_FINALIZED_HEAD_INSPECTION_HANDOFF.md),
 [finalized inventory](ONLINE_FINALIZED_INVENTORY_HANDOFF.md),
 [activation foundations and active authority](ONLINE_RUNTIME_ACTIVATION_HANDOFF.md),

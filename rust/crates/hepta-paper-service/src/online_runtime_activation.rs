@@ -9,6 +9,7 @@ pub mod database;
 pub mod finalized_inventory;
 pub mod inventory;
 pub(crate) mod ordered_json;
+pub mod startup_inventory;
 use serde_json::Value;
 use thiserror::Error;
 

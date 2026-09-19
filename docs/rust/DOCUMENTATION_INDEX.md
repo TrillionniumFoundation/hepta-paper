@@ -30,6 +30,7 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | externally fenced SQLite mutation | `../modules/SQLITE_MUTATION_COORDINATOR_HANDOFF.md` |
 | research capability projection | `../modules/RESEARCH_CAPABILITY_MATRIX_HANDOFF.md` |
 | startup mutation recovery | `../modules/ONLINE_MUTATION_STARTUP_HANDOFF.md` |
+| all-database startup reconciliation | `../modules/ONLINE_STARTUP_RECONCILIATION_SET_HANDOFF.md` |
 | finalized-head inspection | `../modules/ONLINE_FINALIZED_HEAD_INSPECTION_HANDOFF.md` |
 | finalized inventory | `../modules/ONLINE_FINALIZED_INVENTORY_HANDOFF.md` |
 | native activation dependencies | `../modules/ONLINE_RUNTIME_ACTIVATION_HANDOFF.md` |

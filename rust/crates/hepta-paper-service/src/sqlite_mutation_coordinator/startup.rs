@@ -20,6 +20,20 @@ impl StartupMutationReconciliationV1 {
     pub fn authority_configuration_hash(&self) -> &str {
         &self.authority_configuration_hash
     }
+    /// Memory-only final-time check after the aggregate has finished all file
+    /// and signature I/O. It does not replace signature verification.
+    pub(crate) fn assert_confirmation_valid_at(
+        &self,
+        trust: &Value,
+        now_millis: i64,
+    ) -> Result<()> {
+        if !contracts::live(self.confirmation.value(), trust, "observedAt", now_millis) {
+            return Err(error(
+                "autonomous_research_online_mutation_startup_confirmation_expired",
+            ));
+        }
+        Ok(())
+    }
     /// Recheck the original signed confirmation against the same currently pinned
     /// authority. This does not re-observe database state or grant activation.
     pub fn assert_confirmation_current<T: MutationAuthorityTransportV1>(

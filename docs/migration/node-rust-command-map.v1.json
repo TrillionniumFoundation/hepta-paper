@@ -13,20 +13,16 @@
       "compatibilityDecision": "candidate",
       "callChain": [
         {
-          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
-          "symbol": "command"
-        },
-        {
-          "path": "rust/crates/hepta-readonly-store/src/lib.rs",
-          "symbol": "node_logical_snapshot"
-        },
-        {
           "path": "rust/crates/hepta-paper-service/src/workspace_status.rs",
-          "symbol": "resolve_workspace_layout_v1"
+          "symbol": "workspace_status_cli_v1"
         },
         {
           "path": "rust/crates/hepta-paper-service/src/workspace_status.rs",
           "symbol": "inspect_workspace_status_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workspace_status.rs",
+          "symbol": "resolve_workspace_layout_v1"
         },
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-workspace-status.rs",
@@ -34,21 +30,14 @@
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/durable_service.rs",
         "rust/crates/hepta-paper-service/tests/workspace_status_parity.rs"
       ],
-      "remaining": "Native read-only workspace-root, asset/runtime/legacy layout and physical-decoupling diagnostics now match the Node oracle for the supported relocatable root profile, including missing-suffix symlink resolution, hop limits, overlap blockers and relocated CLI. Package graph/workspace discovery, exact incumbent default deployment-root selection and independent command acceptance remain open.",
+      "remaining": "Native read-only workspace-root, asset/runtime/legacy layout and physical-decoupling diagnostics match the Node oracle for the UTF-8 relocatable profile, including missing-suffix symlink resolution, hop limits, and overlap blockers. Native CLI relocation is covered separately; exact incumbent default deployment-root selection and independent command acceptance remain open.",
       "rustSources": [
-        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
-        "rust/crates/hepta-readonly-store/src/lib.rs",
         "rust/crates/hepta-paper-service/src/workspace_status.rs",
         "rust/crates/hepta-paper-service/src/bin/hepta-workspace-status.rs"
       ],
       "testCases": [
-        {
-          "path": "rust/crates/hepta-paper-service/tests/durable_service.rs",
-          "symbol": "native_database_inspection_pins_bytes_and_replays_the_historical_input"
-        },
         {
           "path": "rust/crates/hepta-paper-service/tests/workspace_status_parity.rs",
           "symbol": "layout_roots_defaults_and_decoupling_match_node_oracle"

@@ -109,3 +109,44 @@ fn rejects_migration_when_a_live_job_lease_is_present() {
         Err(NodeMigrationError::ActiveLease)
     ));
 }
+
+#[test]
+fn rejects_migration_when_a_response_consumer_lease_is_present() {
+    let temp = Temp::new();
+    let path = temp.database();
+    migrate_node_store_v1(&path, Some(20)).expect("initial migrations");
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO submission_outbox(
+                message_id,paper_id,dispatch_hash,provider,account_id,nonce,status,
+                payload_json,created_at,updated_at
+             ) VALUES ('message-1','paper-1','dispatch-1','provider-1','account-1',
+                       'nonce-1','waiting_for_response','{}','now','now')",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO submission_inbox(
+                response_id,message_id,dispatch_hash,outcome,response_json,received_at
+             ) VALUES ('response-1','message-1','dispatch-1','accepted','{}','now')",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO submission_response_consumption(
+                response_id,message_id,provider,account_id,anchor_hash,state,
+                claimed_by,lease_token,lease_expires_at,created_at,updated_at
+             ) VALUES ('response-1','message-1','provider-1','account-1','anchor-1',
+                       'IN_PROGRESS','worker-1','lease-1','later','now','now')",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    assert!(matches!(
+        migrate_node_store_v1(&path, Some(21)),
+        Err(NodeMigrationError::ActiveLease)
+    ));
+}

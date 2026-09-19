@@ -173,7 +173,23 @@ fn active_leases(connection: &Connection) -> Result<bool, NodeMigrationError> {
             ("lease_expires_at", "lease_expires_at IS NOT NULL"),
         ],
     )?;
-    Ok(jobs > 0 || campaign_nodes > 0 || submissions > 0)
+    // Response consumption was introduced by migration 17.  It is a
+    // separate lease-bearing state machine from the outbox itself: a worker
+    // may have acknowledged a response while the original outbox row is no
+    // longer `in_flight`.  The Node preflight rejects this state before the
+    // offline cutover migrations (21-25), so omitting it would let migration
+    // proceed while a response consumer can still mutate the store.
+    let response_consumption = count_if_table(
+        connection,
+        "submission_response_consumption",
+        &[
+            ("state", "state='IN_PROGRESS'"),
+            ("claimed_by", "claimed_by IS NOT NULL"),
+            ("lease_token", "lease_token IS NOT NULL"),
+            ("lease_expires_at", "lease_expires_at IS NOT NULL"),
+        ],
+    )?;
+    Ok(jobs > 0 || campaign_nodes > 0 || submissions > 0 || response_consumption > 0)
 }
 
 fn read_history(connection: &Connection) -> Result<Vec<(u32, String, String)>, NodeMigrationError> {

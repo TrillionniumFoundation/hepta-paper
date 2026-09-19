@@ -22,10 +22,12 @@ path, and `--require-decoupled` exits 2 when roots overlap.
 ## Evidence
 
 `tests/workspace_status_parity.rs` compares root projections and decoupling
-blockers against a Node oracle, exercises relative symlinks with a missing
-suffix, 40/41-hop loops, all overlap pairs, read-only status, and a relocated
-binary CLI invocation. It uses disposable `/tmp/hepta-workspace-status-*`
-directories only.
+blockers against a Node oracle for ordinary, missing-suffix, symlink-hop, and
+overlap fixtures. It also checks the 40-hop boundary, read-only status, and a
+relocated native binary CLI invocation. The CLI relocation and `--require-
+decoupled` behavior are native assertions because the incumbent Node command
+has no equivalent root override. It uses disposable
+`/tmp/hepta-workspace-status-*` directories only.
 
 Validation:
 
@@ -42,6 +44,8 @@ Current focused result: **3 passed, 0 failed**.
 
 ## Boundary
 
-The command is diagnostic only. It does not provision roots, mutate stores,
-perform package graph checks, or authorize runtime activation. Full Node command
-registry acceptance and target-host qualification remain separate work.
+The command is diagnostic only. It does not provision roots, mutate stores, or
+authorize runtime activation. Rust accepts UTF-8 paths and environment values;
+non-UTF-8 Unix path bytes are outside this JSON command contract and are not
+claimed as Node parity. Exact incumbent default deployment-root selection and
+independent command acceptance remain separate work.

@@ -121,6 +121,13 @@ fn symlink_missing_suffix_hop_limit_and_overlap_fail_closed() {
         runtime_root: Some(runtime.to_str().unwrap()),
         legacy_root: Some(legacy.to_str().unwrap()),
     };
+    let hop_input = json!({
+        "assetRoot": hop0,
+        "runtimeRoot": runtime,
+        "legacyRoot": legacy,
+    });
+    let hop_node = oracle(&hop_input);
+    assert_eq!(hop_node["ok"], true, "{hop_node}");
     let mut env = BTreeMap::new();
     env.insert(
         "HEPTA_PAPER_ASSET_ROOT".into(),
@@ -143,6 +150,12 @@ fn symlink_missing_suffix_hop_limit_and_overlap_fail_closed() {
             .iter()
             .any(|v| v.contains("assetRoot"))
     );
+    let hop_native = serde_json::to_value(&result).unwrap();
+    assert_eq!(hop_native["realPaths"], hop_node["value"]["realPaths"]);
+    assert_eq!(
+        hop_native["decouplingBlockers"],
+        hop_node["value"]["decouplingBlockers"]
+    );
     let overlap = WorkspaceLayoutOptionsV1 {
         asset_root: Some(runtime.to_str().unwrap()),
         runtime_root: Some(runtime.to_str().unwrap()),
@@ -155,6 +168,22 @@ fn symlink_missing_suffix_hop_limit_and_overlap_fail_closed() {
             .decoupling_blockers
             .iter()
             .any(|v| v == "workspace_layout_paths_overlap:assetRoot:runtimeRoot")
+    );
+    let overlap_input = json!({
+        "assetRoot": runtime,
+        "runtimeRoot": runtime,
+        "legacyRoot": legacy,
+    });
+    let overlap_node = oracle(&overlap_input);
+    assert_eq!(overlap_node["ok"], true, "{overlap_node}");
+    let overlap_native = serde_json::to_value(&result).unwrap();
+    assert_eq!(
+        overlap_native["realPaths"],
+        overlap_node["value"]["realPaths"]
+    );
+    assert_eq!(
+        overlap_native["decouplingBlockers"],
+        overlap_node["value"]["decouplingBlockers"]
     );
 }
 

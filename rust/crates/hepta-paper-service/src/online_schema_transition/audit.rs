@@ -21,7 +21,7 @@ fn raw_same(root: &Json, left: &[&str], right: &[&str]) -> Result<bool> {
     let encode = |path: &[&str]| child(root, path)?.stringify().map_err(|e| error(e.code));
     Ok(encode(left)? == encode(right)?)
 }
-pub(super) fn verify_audit<T: MutationAuthorityTransportV1>(
+pub(crate) fn verify_audit<T: MutationAuthorityTransportV1>(
     receipt: &Value,
     bytes: &[u8],
     inventory: &Value,

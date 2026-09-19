@@ -574,3 +574,5 @@ mod tests {
         assert_eq!(observe, expected["observe"]);
     }
 }
+
+pub mod publication;

@@ -179,6 +179,9 @@ evidence without granting runtime activation.
 provides verifier-bound Node-compatible finalize/observe request construction and
 fresh post-inventory/post-pristine binding; authority restart and Active remain
 outside this passive capability.
+[Schema final receipt publication](SCHEMA_FINAL_RECEIPT_PUBLICATION_HANDOFF.md)
+binds a signed ten-database audit to a locked, CAS-protected historical
+`FINAL.json`; it does not activate a runtime or complete external finalization.
 
 [Autonomous supervisor health](AUTONOMOUS_SUPERVISOR_HEALTH_HANDOFF.md) provides
 the first three read-only resident health modes with descriptor-pinned snapshots;

@@ -45,6 +45,7 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | concrete backup, replay and recoverability controller | `../modules/STATE_RECOVERABILITY_HANDOFF.md` |
 | concrete recoverability action fence | `../modules/RECOVERABILITY_CONCRETE_FENCE_HANDOFF.md` |
 | schema finalization observation | `../modules/SCHEMA_FINALIZATION_OBSERVATION_HANDOFF.md` |
+| schema final receipt publication | `../modules/SCHEMA_FINAL_RECEIPT_PUBLICATION_HANDOFF.md` |
 | autonomous supervisor health | `../modules/AUTONOMOUS_SUPERVISOR_HEALTH_HANDOFF.md` |
 | active/passive signed authority inspection | `../modules/ONLINE_AUTHORITY_INSPECTION_HANDOFF.md` |
 | state safety diagnostic projection | `../modules/STATE_SAFETY_PROJECTION_HANDOFF.md` |

@@ -1,5 +1,5 @@
 //! Actual audit-to-live-observation readiness with pinned signatures and inventory.
-mod audit;
+pub(crate) mod audit;
 mod files;
 pub mod target_schema;
 use crate::{

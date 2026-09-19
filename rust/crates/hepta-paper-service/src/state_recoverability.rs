@@ -31,4 +31,5 @@ mod renewal;
 
 pub(crate) mod schema_normalization_repository;
 
+pub(crate) mod schema_finalization_repository;
 pub(crate) mod schema_installation_repository;

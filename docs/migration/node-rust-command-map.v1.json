@@ -1225,7 +1225,7 @@
       "compatibilityDecision": "unmapped",
       "callChain": [],
       "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "remaining": "Node binds machine-intake, topic-producer/profile, static intake, dataset manifest, provider configuration, runtime policy and writer/state manifest inputs into the provisioning plan identity, then creates the ten business database repositories in a capability-bound staging root, atomically renames them, and verifies inventory, schema transition and handoff receipts. Rust currently has only generic state-database manifest validation/hash and inventory/schema observers; it has no equivalent source-bound input loaders, semantic checks, ten-repository atomic provisioner or failure-cleanup/recovery chain. A caller-supplied identity or manifest-only wrapper would not be compatible evidence.",
       "rustSources": [],
       "testCases": []
     },
@@ -1236,7 +1236,7 @@
       "compatibilityDecision": "unmapped",
       "callChain": [],
       "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "remaining": "Node performs partial-root maintenance against a production runtime root with machine-intake ownership, state-database layout, lease/fence and retry/cancellation semantics, atomic filesystem effects, crash cleanup and recovery receipts. Rust has no reviewed entrypoint or source-bound call chain for these external-effect and failure-boundary contracts; local inventory or manifest observations cannot replace the required root mutation, authority and recoverability evidence.",
       "rustSources": [],
       "testCases": []
     },

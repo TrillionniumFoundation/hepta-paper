@@ -63,14 +63,12 @@ fn rust_output(root: &std::path::Path, flag: Option<&str>) -> std::process::Outp
     command.output().expect("Rust command")
 }
 
-fn rust_result(root: &std::path::Path, write_package: bool) -> Value {
-    let flag = write_package.then_some("--write-package");
+fn rust_result(root: &std::path::Path, flag: Option<&str>) -> Value {
     let output = rust_output(root, flag);
     serde_json::from_slice(&output.stdout).expect("Rust JSON")
 }
 
-fn rust_raw_result(root: &std::path::Path, write_package: bool) -> String {
-    let flag = write_package.then_some("--write-package");
+fn rust_raw_result(root: &std::path::Path, flag: Option<&str>) -> String {
     let output = rust_output(root, flag);
     String::from_utf8(output.stdout)
         .expect("Rust UTF-8")
@@ -92,21 +90,24 @@ fn package_surface_check_and_write_match_node_oracle() {
     )
     .expect("oracle fixture package");
     let requests = serde_json::json!([
-        {"root": oracle_fixture, "writePackage": false},
+        {"root": oracle_fixture, "mode": "check-package"},
         {"root": oracle_fixture, "writePackage": true},
     ]);
     let expected = oracle(requests);
     assert_eq!(
-        rust_result(&fixture, false),
+        rust_result(&fixture, Some("--check-package")),
         expected["results"][0]["value"]
     );
     assert_eq!(
-        rust_raw_result(&fixture, false),
+        rust_raw_result(&fixture, Some("--check-package")),
         expected["results"][0]["raw"]
     );
-    assert_eq!(rust_result(&fixture, true), expected["results"][1]["value"]);
     assert_eq!(
-        rust_raw_result(&fixture, true),
+        rust_result(&fixture, Some("--write-package")),
+        expected["results"][1]["value"]
+    );
+    assert_eq!(
+        rust_raw_result(&fixture, Some("--write-package")),
         expected["results"][1]["raw"]
     );
     assert_eq!(
@@ -168,9 +169,46 @@ fn deterministic_command_surface_flags_match_node_oracle_and_exit_codes() {
         );
     }
 
-    let unsupported = rust_output(&fixture, Some("--help-artifact"));
-    assert_eq!(unsupported.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&unsupported.stderr).contains("command-surface accepts"));
+    let help = rust_output(&fixture, Some("--help-artifact"));
+    assert!(help.status.success());
     let _ = fs::remove_dir_all(fixture);
     let _ = fs::remove_dir_all(oracle_fixture);
+}
+
+#[test]
+fn default_classify_and_help_artifact_match_node_oracle() {
+    let fixture = temp_fixture();
+    let package = fixture.join("package.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&package).expect("fixture package"))
+        .expect("fixture JSON");
+    value["scripts"]["😀-unknown"] = Value::String("echo unknown".to_owned());
+    value["scripts"]["zzz-unknown"] = Value::String("echo unknown".to_owned());
+    fs::write(
+        &package,
+        serde_json::to_vec(&value).expect("fixture JSON bytes"),
+    )
+    .expect("fixture package write");
+    let requests = serde_json::json!([
+        {"root": fixture, "mode": "classify"},
+        {"root": fixture, "mode": "help-artifact"},
+    ]);
+    let expected = oracle(requests);
+    for (flag, index) in [(None, 0_usize), (Some("--help-artifact"), 1)] {
+        let output = rust_output(&fixture, flag);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let actual_raw = String::from_utf8(output.stdout)
+            .expect("Rust UTF-8")
+            .trim_end_matches('\n')
+            .to_owned();
+        assert_eq!(actual_raw, expected["results"][index]["raw"]);
+        assert_eq!(
+            serde_json::from_str::<Value>(&actual_raw).expect("Rust JSON"),
+            expected["results"][index]["value"]
+        );
+    }
+    let _ = fs::remove_dir_all(fixture);
 }

@@ -1432,7 +1432,7 @@
     },
     {
       "id": "maintenance/command-surface-sync",
-      "rustEntrypoint": "hepta-paper-rust command-surface ROOT [--write-package|--check-package|--npm-aliases|--ci-matrix]",
+      "rustEntrypoint": "hepta-paper-rust command-surface ROOT [--write-package|--check-package|--npm-aliases|--help-artifact|--ci-matrix]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -1443,17 +1443,27 @@
         {
           "path": "rust/crates/hepta-paper-service/src/command_surface.rs",
           "symbol": "synchronize_command_surface_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/command_surface.rs",
+          "symbol": "classify_npm_script_surface_json_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/command_surface.rs",
+          "symbol": "command_usage_json_v1"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/command_surface_parity.rs"
       ],
-      "remaining": "Rust now owns deterministic package-script synchronization with byte-compatible Node JSON rewrite and ordered inspection output for check/write, plus exact deterministic --npm-aliases and --ci-matrix projections with Node-compatible exit behavior for blocked checks. The standalone classify and --help-artifact metadata surfaces, full command-registry metadata, and independent acceptance remain to be qualified.",
+      "remaining": "Rust now owns deterministic package-script synchronization with byte-compatible Node JSON rewrite and ordered inspection output for check/write, exact deterministic --npm-aliases, --help-artifact, default classify, and --ci-matrix projections from checked-in command-registry artifacts with Node-compatible exit behavior for blocked checks. Independent acceptance of the full command registry and production command dispatch remain open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/command_surface.rs",
         "rust/oracle/command-surface-v1.mjs",
-        "rust/crates/hepta-paper-service/src/data/legacy-command-script-registry.v1.json"
+        "rust/crates/hepta-paper-service/src/data/legacy-command-script-registry.v1.json",
+        "rust/crates/hepta-paper-service/src/data/command-surface-npm-classification.v1.json",
+        "rust/crates/hepta-paper-service/src/data/command-surface-usage.v1.json"
       ],
       "testCases": [
         {
@@ -1463,6 +1473,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/command_surface_parity.rs",
           "symbol": "deterministic_command_surface_flags_match_node_oracle_and_exit_codes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/command_surface_parity.rs",
+          "symbol": "default_classify_and_help_artifact_match_node_oracle"
         }
       ]
     },

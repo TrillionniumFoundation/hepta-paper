@@ -1,4 +1,4 @@
-//! Rust port of the local `command-surface.mjs --write-package` maintenance path.
+//! Rust port of the local `command-surface.mjs` deterministic metadata paths.
 //!
 //! The operator routes themselves remain external workflows. This module only
 //! owns the deterministic package-script synchronization step and never runs a
@@ -372,6 +372,95 @@ pub fn ci_command_matrix_json_v1(root: &Path) -> Result<String, CommandSurfaceEr
     // Parse once so the embedded contract cannot silently become invalid JSON.
     let _: Value = serde_json::from_str(CI_COMMAND_MATRIX_JSON)?;
     Ok(CI_COMMAND_MATRIX_JSON.to_owned())
+}
+
+/// Classify the package script names using the checked-in command-registry
+/// classification generated from `command-registry-catalog.mjs`.
+///
+/// This is deliberately a projection only: it does not execute a script or
+/// turn an unregistered name into an operator capability.  The output key and
+/// array order match `classifyNpmScriptSurface` exactly.
+pub fn classify_npm_script_surface_json_v1(root: &Path) -> Result<String, CommandSurfaceError> {
+    let package: Value = serde_json::from_slice(&fs::read(package_path(root))?)?;
+    let script_names = package
+        .get("scripts")
+        .and_then(Value::as_object)
+        .map(|scripts| scripts.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let classification: std::collections::BTreeMap<String, String> = serde_json::from_str(
+        include_str!("data/command-surface-npm-classification.v1.json"),
+    )?;
+    let mut names = script_names;
+    // JavaScript's default Array#sort compares UTF-16 code units.  Sorting the
+    // encoded keys keeps the projection byte-compatible for non-BMP names too.
+    names.sort_by(|left, right| {
+        left.encode_utf16()
+            .cmp(right.encode_utf16())
+            .then_with(|| left.cmp(right))
+    });
+    let groups = [
+        "operator",
+        "verification",
+        "maintenance",
+        "retirement",
+        "compatibility",
+        "experimental",
+        "internal",
+    ];
+    let mut grouped = std::collections::BTreeMap::<&str, Vec<&str>>::new();
+    for group in groups {
+        grouped.insert(group, Vec::new());
+    }
+    let mut blocked = Vec::new();
+    for name in &names {
+        let group = classification.get(name).map(String::as_str);
+        if group.is_none() {
+            blocked.push(name.as_str());
+        }
+        let group = group.unwrap_or("internal");
+        grouped.entry(group).or_default().push(name.as_str());
+    }
+    let encode = |value: &Value| serde_json::to_string(value).map_err(CommandSurfaceError::Json);
+    let mut output = String::from(
+        r#"{"version":4,"kind":"NpmCommandSurface","policy":"unregistered scripts default to internal and are blocked from the supported operator surface","groups":{"#,
+    );
+    for (index, group) in groups.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        output.push_str(&encode(&Value::String((*group).to_owned()))?);
+        output.push(':');
+        let values = grouped
+            .get(group)
+            .ok_or(CommandSurfaceError::InvalidPackage)?;
+        output.push('[');
+        for (name_index, name) in values.iter().enumerate() {
+            if name_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&encode(&Value::String((*name).to_owned()))?);
+        }
+        output.push(']');
+    }
+    output.push_str("},\"blocked\":[");
+    for (index, name) in blocked.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        output.push_str(&encode(&Value::String((*name).to_owned()))?);
+    }
+    output.push_str("]}");
+    Ok(output)
+}
+
+/// Return the checked-in command-registry help artifact.  It is generated from
+/// `heptaPaperCommandUsage()` and is read-only metadata, so no Node process is
+/// needed at runtime.
+pub fn command_usage_json_v1(root: &Path) -> Result<String, CommandSurfaceError> {
+    validate_package_root(root)?;
+    Ok(include_str!("data/command-surface-usage.v1.json")
+        .trim_end_matches('\n')
+        .to_owned())
 }
 
 fn javascript_truthy(value: &Value) -> bool {

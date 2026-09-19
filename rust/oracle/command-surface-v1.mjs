@@ -5,6 +5,7 @@ import {
   generatedNpmRouteScripts,
   HEPTA_PAPER_COMMAND_REGISTRY,
   heptaPaperCiCommandMatrix,
+  heptaPaperCommandUsage,
   inspectNpmScriptRegistry,
 } from '../../paper-core/src/command-registry.mjs';
 
@@ -33,6 +34,8 @@ function run(request) {
       return generatedNpmRouteScripts();
     case 'ci-matrix':
       return heptaPaperCiCommandMatrix();
+    case 'help-artifact':
+      return heptaPaperCommandUsage();
     case 'classify':
       return classifyNpmScriptSurface(Object.keys(packageJson.scripts || {}));
     default:

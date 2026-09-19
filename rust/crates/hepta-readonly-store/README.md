@@ -56,6 +56,13 @@ Node's safe Number range are rejected instead of silently rounded. Invalid UTF-8
 TEXT is rejected. This method produces hash evidence; it does not issue receipt
 qualification or declare a campaign safe to cut over.
 
+`node_logical_integrity_report()` adds the complete Node report envelope around
+that snapshot: file-byte preimage/postimage hashes, SQLite `quick_check`, foreign
+key violation count, receipt-ledger hash validation, and ordered blockers/status.
+The `hepta-paper-rust store-integrity IMMUTABLE_DB` command emits this report as
+JSON and exits nonzero when its status is blocked. `inspect-db` remains the
+snapshot-only compatibility route.
+
 `database_content_hash()` exposes the captured file-byte SHA-256 for worker
 commands that pin an expected database preimage. Both snapshot APIs require
 immutable inputs and verify that original byte hash again after reading. Header/schema validation is shared, so callers cannot bypass it by

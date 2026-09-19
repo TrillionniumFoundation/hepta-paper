@@ -11,8 +11,9 @@ use std::{
 };
 
 use hepta_codex_protocol::Sha256Digest;
-use hepta_readonly_control::{DatabaseFormatV1, DatabaseSchemaV1, validate_database_schema_v1};
-use rusqlite::{Connection, OpenFlags, types::ValueRef};
+use hepta_legacy_compatibility::production_hash_record_v1;
+use hepta_readonly_control::{validate_database_schema_v1, DatabaseFormatV1, DatabaseSchemaV1};
+use rusqlite::{types::ValueRef, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -237,6 +238,137 @@ impl ReadOnlyStoreV1 {
         })
     }
 
+    /// Builds the complete read-only report emitted by Node's
+    /// `buildSqliteLogicalIntegrityReport`.
+    ///
+    /// The snapshot hash fields are byte-compatible with Node.  The report also
+    /// carries the file preimage/postimage hashes and the cheap SQLite checks so
+    /// callers can use one Rust command for the same inspection contract.
+    pub fn node_logical_integrity_report(
+        &self,
+    ) -> Result<NodeLogicalIntegrityReportV1, ReadOnlyStoreError> {
+        let snapshot = self.node_logical_snapshot()?;
+        let quick_check: String = self
+            .connection
+            .query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        let foreign_key_violation_count = self.connection.query_row(
+            "SELECT count(*) FROM pragma_foreign_key_check",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if foreign_key_violation_count < 0 {
+            return Err(ReadOnlyStoreError::NumericOverflow);
+        }
+        let (receipt_ledger_row_count, invalid_receipt_hash_count, invalid_receipt_rows) =
+            if snapshot
+                .tables
+                .iter()
+                .any(|table| table.name == "receipt_ledger")
+            {
+                self.inspect_receipt_ledger()?
+            } else {
+                (0, 0, Vec::new())
+            };
+        let byte_hash_before = self.identity.content_hash.clone();
+        let byte_hash_after = hash_file(&self.path)?;
+        let readonly_check_mutated_database = byte_hash_before != byte_hash_after;
+        let mut blockers = Vec::new();
+        if quick_check != "ok" {
+            blockers.push("sqlite_quick_check_failed".to_owned());
+        }
+        if foreign_key_violation_count != 0 {
+            blockers.push("sqlite_foreign_key_check_failed".to_owned());
+        }
+        if invalid_receipt_hash_count != 0 {
+            blockers.push("receipt_ledger_hash_mismatch".to_owned());
+        }
+        if readonly_check_mutated_database {
+            blockers.push("readonly_integrity_check_mutated_database".to_owned());
+        }
+        self.verify_unchanged()?;
+        Ok(NodeLogicalIntegrityReportV1 {
+            version: 1,
+            kind: "SqliteLogicalIntegrityReport".to_owned(),
+            status: if blockers.is_empty() {
+                "sqlite_logical_integrity_verified".to_owned()
+            } else {
+                "sqlite_logical_integrity_blocked".to_owned()
+            },
+            db_path: self.path.display().to_string(),
+            byte_hash_before,
+            byte_hash_after,
+            readonly_check_mutated_database,
+            logical_database_hash: snapshot.logical_database_hash,
+            schema_hash: snapshot.schema_hash,
+            table_count: snapshot.table_count,
+            total_row_count: snapshot.total_row_count,
+            tables: snapshot.tables,
+            quick_check,
+            foreign_key_violation_count: u64::try_from(foreign_key_violation_count)
+                .map_err(|_| ReadOnlyStoreError::NumericOverflow)?,
+            receipt_ledger_row_count,
+            invalid_receipt_hash_count,
+            invalid_receipt_rows,
+            blockers,
+        })
+    }
+
+    fn inspect_receipt_ledger(
+        &self,
+    ) -> Result<(u64, u64, Vec<serde_json::Value>), ReadOnlyStoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT receipt_id,receipt_json,receipt_sha256
+             FROM receipt_ledger ORDER BY receipt_id",
+        )?;
+        let mut rows = statement.query([])?;
+        let mut row_count = 0_u64;
+        let mut invalid_count = 0_u64;
+        let mut invalid_rows = Vec::new();
+        while let Some(row) = rows.next()? {
+            row_count = row_count
+                .checked_add(1)
+                .ok_or(ReadOnlyStoreError::NumericOverflow)?;
+            let receipt_id: String = row.get(0)?;
+            let receipt_json: String = row.get(1)?;
+            let actual: String = row.get(2)?;
+            let invalid = match serde_json::from_str::<serde_json::Value>(&receipt_json) {
+                Ok(receipt) => match select_receipt_hash(&receipt) {
+                    Ok(expected) => {
+                        let expected_text = js_string(&expected);
+                        if expected != serde_json::Value::String(actual.clone())
+                            || !receipt_id.ends_with(&format!(":{expected_text}"))
+                        {
+                            Some(serde_json::json!({
+                                "receiptId": receipt_id,
+                                "expected": expected,
+                                "actual": actual,
+                            }))
+                        } else {
+                            None
+                        }
+                    }
+                    Err(error) => Some(serde_json::json!({
+                        "receiptId": receipt_id,
+                        "error": error.to_string(),
+                    })),
+                },
+                Err(_) => Some(serde_json::json!({
+                    "receiptId": receipt_id,
+                    "error": "SyntaxError",
+                })),
+            };
+            if let Some(invalid) = invalid {
+                invalid_count = invalid_count
+                    .checked_add(1)
+                    .ok_or(ReadOnlyStoreError::NumericOverflow)?;
+                if invalid_rows.len() < 20 {
+                    invalid_rows.push(invalid);
+                }
+            }
+        }
+        Ok((row_count, invalid_count, invalid_rows))
+    }
+
     pub fn verify_unchanged(&self) -> Result<(), ReadOnlyStoreError> {
         let observed = inspect_file_identity(&self.path)?;
         if observed != self.identity {
@@ -323,6 +455,78 @@ pub struct NodeLogicalSnapshotV1 {
     pub schema_hash: Sha256Digest,
     pub logical_database_hash: Sha256Digest,
     pub tables: Vec<NodeLogicalTableV1>,
+}
+
+/// Byte-compatible projection of Node's complete SQLite logical integrity
+/// report, including the file preimage/postimage and receipt-ledger checks.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeLogicalIntegrityReportV1 {
+    pub version: u8,
+    pub kind: String,
+    pub status: String,
+    pub db_path: String,
+    pub byte_hash_before: Sha256Digest,
+    pub byte_hash_after: Sha256Digest,
+    pub readonly_check_mutated_database: bool,
+    pub logical_database_hash: Sha256Digest,
+    pub schema_hash: Sha256Digest,
+    pub table_count: usize,
+    pub total_row_count: u64,
+    pub tables: Vec<NodeLogicalTableV1>,
+    pub quick_check: String,
+    pub foreign_key_violation_count: u64,
+    pub receipt_ledger_row_count: u64,
+    pub invalid_receipt_hash_count: u64,
+    pub invalid_receipt_rows: Vec<serde_json::Value>,
+    pub blockers: Vec<String>,
+}
+
+fn select_receipt_hash(value: &serde_json::Value) -> Result<serde_json::Value, ReadOnlyStoreError> {
+    let object = value
+        .as_object()
+        .ok_or(ReadOnlyStoreError::ReceiptJsonNotObject)?;
+    for key in ["receiptHash", "writeReceiptHash", "jobReceiptHash"] {
+        if let Some(candidate) = object.get(key)
+            && javascript_truthy(candidate)
+        {
+            return Ok(candidate.clone());
+        }
+    }
+    for (key, candidate) in object.iter().rev() {
+        if key.ends_with("ReceiptHash") && javascript_truthy(candidate) {
+            return Ok(candidate.clone());
+        }
+    }
+    let kind = object
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Receipt");
+    let hash = production_hash_record_v1(kind, value)?;
+    Ok(serde_json::Value::String(hash.as_str().to_owned()))
+}
+
+fn javascript_truthy(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::Number(value) => value.as_f64().is_some_and(|number| number != 0.0),
+        serde_json::Value::String(value) => !value.is_empty(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => true,
+    }
+}
+
+fn js_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_owned(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Array(values) => {
+            values.iter().map(js_string).collect::<Vec<_>>().join(",")
+        }
+        serde_json::Value::Object(_) => "[object Object]".to_owned(),
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -597,6 +801,8 @@ pub enum ReadOnlyStoreError {
     NumericOverflow,
     #[error("read-only filesystem operation failed for {0}: {1:?}")]
     Filesystem(&'static str, std::io::ErrorKind),
+    #[error("receipt ledger JSON value must be an object")]
+    ReceiptJsonNotObject,
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
 }

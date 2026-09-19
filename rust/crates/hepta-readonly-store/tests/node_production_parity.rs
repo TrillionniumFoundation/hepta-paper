@@ -82,6 +82,34 @@ fn all_twenty_five_actual_node_stores_match_production_integrity_hashes_and_rema
                 "version {version}, field {field}"
             );
         }
+        let integrity = store
+            .node_logical_integrity_report()
+            .expect("Node-compatible logical integrity report");
+        let integrity = serde_json::to_value(integrity).expect("integrity report JSON");
+        for field in [
+            "version",
+            "kind",
+            "status",
+            "byteHashBefore",
+            "byteHashAfter",
+            "readonlyCheckMutatedDatabase",
+            "logicalDatabaseHash",
+            "schemaHash",
+            "tableCount",
+            "totalRowCount",
+            "tables",
+            "quickCheck",
+            "foreignKeyViolationCount",
+            "receiptLedgerRowCount",
+            "invalidReceiptHashCount",
+            "invalidReceiptRows",
+            "blockers",
+        ] {
+            assert_eq!(
+                integrity[field], fixture["report"][field],
+                "version {version}, integrity field {field}"
+            );
+        }
         store
             .logical_snapshot()
             .expect("typed Rust snapshot accepts real SQL values");

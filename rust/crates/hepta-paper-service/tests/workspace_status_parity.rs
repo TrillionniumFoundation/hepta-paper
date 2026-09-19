@@ -153,6 +153,10 @@ fn symlink_missing_suffix_hop_limit_and_overlap_fail_closed() {
     let hop_native = serde_json::to_value(&result).unwrap();
     assert_eq!(hop_native["realPaths"], hop_node["value"]["realPaths"]);
     assert_eq!(
+        hop_native["physicallyDecoupled"],
+        hop_node["value"]["physicallyDecoupled"]
+    );
+    assert_eq!(
         hop_native["decouplingBlockers"],
         hop_node["value"]["decouplingBlockers"]
     );
@@ -180,6 +184,10 @@ fn symlink_missing_suffix_hop_limit_and_overlap_fail_closed() {
     assert_eq!(
         overlap_native["realPaths"],
         overlap_node["value"]["realPaths"]
+    );
+    assert_eq!(
+        overlap_native["physicallyDecoupled"],
+        overlap_node["value"]["physicallyDecoupled"]
     );
     assert_eq!(
         overlap_native["decouplingBlockers"],

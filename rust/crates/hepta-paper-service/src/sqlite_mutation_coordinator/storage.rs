@@ -115,6 +115,23 @@ pub fn exact_schema_hash_v1(database: &Connection) -> Result<String> {
         )?),
     )
 }
+
+/// Bounded, typed view of durable finalization receipts.  Startup recovery
+/// uses this only to compare the pre/post row set while holding the live
+/// database handle; callers never receive a mutable SQLite connection.
+pub(crate) fn finalization_rows_v1(database: &Connection) -> Result<Vec<Value>> {
+    rows_bounded(
+        database,
+        "SELECT reservation_id,finalization_receipt_hash,finalization_receipt_json,side_effect_permit_hash,finalized_at,recorded_at FROM autonomous_research_online_mutation_finalization_receipt ORDER BY reservation_id;",
+        &[],
+        RowLimits {
+            rows: 4097,
+            cell_bytes: 32 * 1024 * 1024,
+            total_bytes: 64 * 1024 * 1024,
+        },
+        "autonomous_research_online_mutation_startup_finalization_rows_limit",
+    )
+}
 pub(super) fn metadata(database: &Connection) -> Result<Value> {
     let mut rows = rows_bounded(
         database,

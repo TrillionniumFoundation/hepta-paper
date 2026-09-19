@@ -1119,14 +1119,44 @@
     },
     {
       "id": "operator/submission-handoff",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-native-business CAP-SUBMIT / NativeBusinessJobV1::PrepareSubmission [deterministic package preparation only]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-native-business.rs",
+          "symbol": "run_bytes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business.rs",
+          "symbol": "execute_native_business_for_capability_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/submission.rs",
+          "symbol": "prepare_submission_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/documented_native_business.rs",
+        "rust/crates/hepta-paper-service/tests/native_bundle_and_binding.rs"
+      ],
+      "remaining": "Rust natively validates and deterministically prepares a bounded non-authoritative submission package, with artifact references and hashes. The Node handoff still owns current campaign-release authority query, release/promotion/verification receipt binding, artifact existence/content verification, provider/portal account qualification, and handoff-output compatibility; no submission is dispatched or authorized by the Rust kernel.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-native-business.rs",
+        "rust/crates/hepta-paper-service/src/native_business.rs",
+        "rust/crates/hepta-paper-service/src/native_business/submission.rs",
+        "docs/modules/NATIVE_BUSINESS_HANDOFF.md"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/documented_native_business.rs",
+          "symbol": "documented_native_business_examples_execute_without_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/native_bundle_and_binding.rs",
+          "symbol": "all_seven_native_business_jobs_bind_exactly_one_capability"
+        }
+      ]
     },
     {
       "id": "operator/gc",

@@ -24,6 +24,14 @@ use crate::{
 };
 use rusqlite::Connection;
 
+/// Exact bounded logical state digest used by passive startup recovery. The
+/// named table's rows are excluded; schema and every other table remain in the
+/// digest, so an authorized receipt append cannot hide business or marker
+/// changes.
+pub(crate) fn digest_excluding_table_v1(database: &Connection, table: &str) -> Result<String> {
+    state::digest_excluding_table_v1(database, table)
+}
+
 pub trait SchemaInstallationCheckpointV1 {
     fn checkpoint(&mut self, point: &str, database_instance_id: &str) -> Result<()>;
 }

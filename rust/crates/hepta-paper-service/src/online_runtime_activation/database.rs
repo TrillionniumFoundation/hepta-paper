@@ -15,6 +15,14 @@ use std::fs::{File, Metadata};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
+/// Logical state captured around one startup reconciliation.  The digest
+/// covers every table except the durable finalization-receipt rows, which are
+/// checked separately as an exact append-only delta.
+pub(crate) struct StartupDatabaseSnapshotV1 {
+    pub stable_digest: String,
+    pub finalization_rows: Vec<Value>,
+}
+
 fn changed() -> RuntimeActivationErrorV1 {
     error("autonomous_research_online_runtime_activation_database_identity_changed")
 }
@@ -147,6 +155,30 @@ impl LiveActivationDatabaseV1 {
             return Err(changed());
         }
         Ok(())
+    }
+
+    pub(crate) fn startup_snapshot(
+        &self,
+    ) -> crate::sqlite_mutation_coordinator::Result<StartupDatabaseSnapshotV1> {
+        // The caller performs a full pre-write `assert_current`; after
+        // recovery the source bytes are expected to have changed because the
+        // finalization row was durably appended. Keep the descriptor/namespace
+        // checks here while allowing that authorized content delta.
+        self.metadata()
+            .map_err(|e| crate::sqlite_mutation_coordinator::error(e.code))?;
+        let stable_digest = crate::online_schema_execution::maintenance::normalization::installation::digest_excluding_table_v1(
+            &self.connection,
+            "autonomous_research_online_mutation_finalization_receipt",
+        )
+        .map_err(|e| crate::sqlite_mutation_coordinator::error(e.to_string()))?;
+        let finalization_rows =
+            crate::sqlite_mutation_coordinator::storage::finalization_rows_v1(&self.connection)?;
+        self.metadata()
+            .map_err(|e| crate::sqlite_mutation_coordinator::error(e.code))?;
+        Ok(StartupDatabaseSnapshotV1 {
+            stable_digest,
+            finalization_rows,
+        })
     }
 }
 // Private core. Only the opaque-inventory constructor below calls this in

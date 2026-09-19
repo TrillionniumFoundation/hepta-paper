@@ -30,6 +30,7 @@ pub mod owner_status;
 pub mod portal_target_qualification;
 pub mod pristine_runtime_state;
 mod production;
+pub mod release_attest;
 pub mod release_integrity_key;
 pub mod release_state;
 pub mod release_trust_gate;

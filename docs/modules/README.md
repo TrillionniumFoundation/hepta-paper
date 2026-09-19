@@ -97,6 +97,8 @@ remaining compatibility/qualification limits.
 
 [Release-integrity key handoff](RELEASE_INTEGRITY_KEY_HANDOFF.md) documents native
 status, create-once provisioning, key custody limits and crash/race behavior.
+[Release-attestation inspection](RELEASE_ATTEST_HANDOFF.md) documents the native
+read-only release-state, trust-layer, schema-25 freeze and archive preflight.
 [Portal target qualification handoff](PORTAL_TARGET_QUALIFICATION_HANDOFF.md)
 covers signed preflight, import planning, atomic import and registry ownership.
 [Runtime image reproducibility handoff](RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md)

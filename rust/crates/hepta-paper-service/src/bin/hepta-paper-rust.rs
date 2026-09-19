@@ -7,6 +7,7 @@ use hepta_paper_service::{
     },
     command_surface::synchronize_command_surface_v1,
     inspect_legacy_deletion_drill_attest_v1, migrate_node_store_v1, native_implementation_hash_v1,
+    release_attest::{ReleaseAttestationRequestV1, inspect_release_attestation_v1},
     release_state::inspect_release_state_v1,
     release_trust_gate::build_release_trust_layer_gate_from_values_v1,
     repository_assets::{
@@ -221,6 +222,15 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&inspect_release_state_v1(&input)?)?
             );
         }
+        Some("release-attest") if args.len() == 2 => {
+            let request: ReleaseAttestationRequestV1 =
+                serde_json::from_slice(&read_bounded(&args[1])?)?;
+            let report = inspect_release_attestation_v1(request)?;
+            println!("{}", serde_json::to_string(&report)?);
+            if report["releaseEvidenceReady"] != true {
+                return Err("release attestation blocked pending external evidence".into());
+            }
+        }
         Some("retirement-status") if args.len() == 2 => {
             let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
             println!(
@@ -250,6 +260,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | retirement-drill-attest REQUEST",
                 " | release-trust-gate REQUEST",
                 " | release-state REQUEST",
+                " | release-attest REQUEST",
                 " | retirement-status REQUEST",
                 " | runtime-r-source-cas REPOSITORY_ROOT"
             )

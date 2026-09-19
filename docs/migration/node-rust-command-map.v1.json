@@ -1694,14 +1694,45 @@
     },
     {
       "id": "maintenance/release-attest",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust release-attest REQUEST",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_attest.rs",
+          "symbol": "inspect_release_attestation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-cutover/src/retirement_attest.rs",
+          "symbol": "inspect_legacy_deletion_drill_attest_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/src/release_attest.rs",
+        "rust/crates/hepta-paper-service/tests/release_attest.rs"
+      ],
+      "remaining": "Native read-only composition covers release-state consistency, release trust-layer counts, schema-25 freeze and archive identity; Node differential/policy replay, independent provenance and owner/operational acceptance, external signing, no-clobber publication, physical deletion and retirement authority remain external and the command always reports releaseEvidenceReady=false.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/release_attest.rs",
+        "rust/crates/hepta-paper-service/src/release_state.rs",
+        "rust/crates/hepta-paper-service/src/release_trust_gate.rs",
+        "rust/crates/hepta-cutover/src/retirement_attest.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/release_attest.rs",
+          "symbol": "request_rejects_mismatched_release_subject_before_filesystem_access"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/release_attest.rs",
+          "symbol": "native_release_attest_composes_local_checks_and_stays_blocked"
+        }
+      ]
     },
     {
       "id": "maintenance/release-integrity-key",

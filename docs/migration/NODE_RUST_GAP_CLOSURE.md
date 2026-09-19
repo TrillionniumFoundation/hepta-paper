@@ -2,7 +2,7 @@
 
 > Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. Unmapped and partially implemented commands remain open. This ledger does not grant parity, production activation, or Node retirement.
 
-- Inventory binding: `sha256:2b2c69d46176273c6ca293ad8b309a1f5e81266d2d01e2038431f743ecaafef3`
+- Inventory binding: `sha256:56161188c7859f5ffa74d72a64b2476ff98d39ca347b4a79efc1b1fe643f1361`
 - Total command routes: **57**
 - Unmapped commands: **20**
 - Partial source candidates: **37**

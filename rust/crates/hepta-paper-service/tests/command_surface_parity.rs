@@ -13,7 +13,7 @@ fn temp_fixture() -> std::path::PathBuf {
     fs::create_dir_all(&path).expect("fixture directory");
     fs::write(
         path.join("package.json"),
-        r#"{"name":"fixture","scripts":{"test":"old","store:status":"old","custom":"echo custom","gpu:personal-gate":0,"personal:readiness":false},"bin":{"dev":"./bin/dev.js"},"devDependencies":{"z":"1","a":"2"}}"#,
+        r#"{"name":"fixture","version":1.0,"zero":-0.0,"large":1e21,"small":1e-7,"scripts":{"test":"old","store:status":"old","custom":"echo custom","gpu:personal-gate":0,"personal:readiness":false},"bin":{"dev":"./bin/dev.js"},"devDependencies":{"z":"1","a":"2"}}"#,
     )
     .expect("fixture package");
     path

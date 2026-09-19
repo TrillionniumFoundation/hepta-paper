@@ -276,7 +276,11 @@ fn write_ordered_json_pretty(
     match value {
         OrderedJson::Null => output.push_str("null"),
         OrderedJson::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-        OrderedJson::Number(value) => output.push_str(&value.to_string()),
+        OrderedJson::Number(value) => {
+            let number = value.as_f64().ok_or(CommandSurfaceError::InvalidPackage)?;
+            let mut buffer = ryu_js::Buffer::new();
+            output.push_str(buffer.format(number));
+        }
         OrderedJson::String(value) => {
             output.push_str(&serde_json::to_string(value).map_err(CommandSurfaceError::Json)?);
         }

@@ -645,6 +645,7 @@ dependencies = [
  "oxc_span",
  "regex",
  "rusqlite",
+ "ryu-js",
  "serde",
  "serde_json",
  "sha2 0.10.8",

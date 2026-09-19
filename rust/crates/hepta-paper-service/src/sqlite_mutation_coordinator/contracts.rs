@@ -743,7 +743,7 @@ fn database_heads_valid(heads: &Value, expected: Option<&Value>) -> bool {
         })
     })
 }
-fn live(receipt: &Value, trust: &Value, observed_key: &str, now: i64) -> bool {
+pub(crate) fn live(receipt: &Value, trust: &Value, observed_key: &str, now: i64) -> bool {
     let (Some(observed), Some(expires), Some(max_age), Some(max_lease)) = (
         timestamp(&receipt[observed_key]),
         timestamp(&receipt["expiresAt"]),

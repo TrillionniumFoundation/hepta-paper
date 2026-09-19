@@ -2,6 +2,7 @@
 //! observation type. WAL inspection operates only on a private database copy.
 mod files;
 mod inspection;
+pub(crate) mod schema_source;
 mod snapshot;
 #[cfg(test)]
 mod tests;

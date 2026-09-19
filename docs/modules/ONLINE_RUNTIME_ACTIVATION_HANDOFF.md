@@ -199,9 +199,17 @@ separate raw JSON inventory-stability API.
 
 Native tightening: all three receipts are reverified at a new clock observation
 after the final external call, and source evidence is rechecked after the call
-chain. A response that expired while IPC was running cannot become evidence.
+chain. A final clock sample after all signature/configuration/source I/O and
+receipt serialization checks the three already-authenticated time windows in
+memory. Exclusive expiry and maximum observation age remain enforced even when
+only that last sample crosses the boundary; every sampled time, including
+retries, must be monotonic. The original `recordedAt` observation is retained for
+receipt compatibility. The low-level `assert_current(..., now)` validates at its
+supplied time; compositions that authorize an action must sample their clock
+after that method's I/O and check time validity again. The current inspection
+and verified-cache compositions implement that final check.
 
-`tests/online_runtime_active_refresh_parity.rs`: two passing tests:
+`tests/online_runtime_active_refresh_parity.rs` includes:
 
 - `real_static_scan_and_signed_active_refresh_match_node_success_retry_and_instability`
   executes real source inspection and real Ed25519 responses, then replays the
@@ -212,6 +220,13 @@ chain. A response that expired while IPC was running cannot become evidence.
   rejects post-RPC expiry, a different inventory hash, expired stored active
   evidence and newly added unregistered writer source. Invalid source evidence
   prevents further authority calls.
+
+- `active_refresh_rejects_expiry_after_final_file_and_source_checks` reproduces
+  expiry reached only after all final I/O. The unfixed implementation returned
+  evidence after five clock samples; the final sixth sample must reject it.
+- `active_refresh_final_age_boundary_and_clock_high_water_are_enforced` accepts
+  the exact observation-age limit, rejects one millisecond beyond it, rejects
+  final/intermediate clock rollback, and preserves the Node `recordedAt` value.
 
 Synthetic private keys in this test exist only in Rust test memory. Public trust
 files and signed replies are stored under disposable

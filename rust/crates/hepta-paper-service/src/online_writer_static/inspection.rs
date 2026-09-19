@@ -1,6 +1,9 @@
 use super::*;
+#[path = "proof_inputs.rs"]
+mod proof_inputs;
 use crate::sqlite_mutation_coordinator::manifest::writer_manifest_hash_v1;
 use nix::fcntl::OFlag;
+use proof_inputs::CompleteStaticInputs;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{Metadata, OpenOptions},
@@ -109,7 +112,18 @@ fn tagged(path: &str, value: &Value) -> Value {
     }
     row
 }
-fn inspect(root: &Path, manifest: &Value) -> Result<(Value, Vec<Source>)> {
+fn inspect(
+    root: &Path,
+    manifest: &Value,
+    inputs: Option<&CompleteStaticInputs>,
+) -> Result<(Value, Vec<Source>)> {
+    let observed_read = |path: &Path| -> Result<(String, Source)> {
+        let value = read_source(path)?;
+        if let Some(inputs) = inputs {
+            inputs.assert_source(&value.1)?;
+        }
+        Ok(value)
+    };
     let manifest_hash = writer_manifest_hash_v1(manifest)?;
     let config = config()?;
     let root = if root.is_absolute() {
@@ -134,9 +148,15 @@ fn inspect(root: &Path, manifest: &Value) -> Result<(Value, Vec<Source>)> {
     let mut all_functions = BTreeMap::new();
     let mut sources = BTreeMap::<String, Source>::new();
     for scan in strings(&config["SCAN_ROOTS"]) {
-        for path in modules(&root.join(scan))? {
+        // A verified AST must enumerate the captured set, not a second live
+        // directory listing which could transiently omit an unregistered writer.
+        let paths = match inputs {
+            Some(inputs) => inputs.module_paths(&root.join(scan))?,
+            None => modules(&root.join(scan))?,
+        };
+        for path in paths {
             let relative = relative(&root, &path)?;
-            let (text, source) = read_source(&path)?;
+            let (text, source) = observed_read(&path)?;
             let inspection = discover_online_writer_mutation_entrypoints_v1(&relative, &text)?;
             if let Some(reason) = inspection["exclusionReason"].as_str() {
                 excluded.push(json!({"sourceFile":relative,"reason":reason}));
@@ -194,19 +214,22 @@ fn inspect(root: &Path, manifest: &Value) -> Result<(Value, Vec<Source>)> {
                 "autonomous_research_online_writer_provenance_source_missing:{relative}"
             ));
         } else {
-            sources.insert(relative, read_source(&path)?.1);
+            sources.insert(relative, observed_read(&path)?.1);
         }
     }
     let migration_root =
         root.join(config["SQL_MIGRATION_ROOT"].as_str().ok_or_else(|| {
             error("autonomous_research_online_writer_static_configuration_invalid")
         })?);
-    if migration_root.exists() {
-        let mut migrations = std::fs::read_dir(&migration_root)
-            .map_err(|e| error(e.to_string()))?
-            .map(|e| e.map(|e| e.path()))
-            .collect::<std::io::Result<Vec<_>>>()
-            .map_err(|e| error(e.to_string()))?;
+    if inputs.is_some() || migration_root.exists() {
+        let mut migrations = match inputs {
+            Some(inputs) => inputs.migration_paths(&migration_root)?,
+            None => std::fs::read_dir(&migration_root)
+                .map_err(|e| error(e.to_string()))?
+                .map(|e| e.map(|e| e.path()))
+                .collect::<std::io::Result<Vec<_>>>()
+                .map_err(|e| error(e.to_string()))?,
+        };
         migrations.retain(|p| p.extension().is_some_and(|e| e == "sql"));
         migrations.sort();
         let name_pattern =
@@ -223,7 +246,7 @@ fn inspect(root: &Path, manifest: &Value) -> Result<(Value, Vec<Source>)> {
                 ));
                 continue;
             }
-            let (text, source) = read_source(&path)?;
+            let (text, source) = observed_read(&path)?;
             let entrypoint = format!(
                 "migration{}",
                 name.strip_suffix(".sql").ok_or_else(|| error(
@@ -255,7 +278,7 @@ fn inspect(root: &Path, manifest: &Value) -> Result<(Value, Vec<Source>)> {
             continue;
         }
         if !sources.contains_key(source) {
-            sources.insert(source.into(), read_source(&path)?.1);
+            sources.insert(source.into(), observed_read(&path)?.1);
         }
         if !all_functions
             .get(source)
@@ -398,36 +421,28 @@ pub fn inspect_online_writer_static_coverage_v1(
     workspace_root: &Path,
     manifest: &Value,
 ) -> Result<Value> {
-    inspect(workspace_root, manifest).map(|(value, _)| value)
+    inspect(workspace_root, manifest, None).map(|(value, _)| value)
 }
 pub struct VerifiedWriterStaticCoverageV1 {
     value: Value,
-    root: PathBuf,
-    manifest: Value,
-    sources: Vec<Source>,
+    inputs: CompleteStaticInputs,
 }
 impl VerifiedWriterStaticCoverageV1 {
     pub fn value(&self) -> &Value {
         &self.value
     }
     pub fn assert_current(&self) -> Result<()> {
-        for source in &self.sources {
-            source.assert_current()?;
-        }
-        let current = inspect_online_writer_static_coverage_v1(&self.root, &self.manifest)?;
-        if current != self.value {
-            return Err(error(
-                "autonomous_research_online_writer_source_changed_during_scan",
-            ));
-        }
-        Ok(())
+        self.inputs.assert_current()
     }
 }
 pub fn verify_online_writer_static_coverage_v1(
     workspace_root: &Path,
     manifest: &Value,
 ) -> Result<VerifiedWriterStaticCoverageV1> {
-    let (value, sources) = inspect(workspace_root, manifest)?;
+    // Validate the caller's manifest before observing any paths it declares.
+    writer_manifest_hash_v1(manifest)?;
+    let inputs = CompleteStaticInputs::capture(workspace_root, manifest, &config()?)?;
+    let (value, _) = inspect(workspace_root, manifest, Some(&inputs))?;
     if value["status"] != "autonomous_research_online_writer_static_coverage_complete"
         || !value["blockers"].as_array().is_some_and(Vec::is_empty)
     {
@@ -435,19 +450,8 @@ pub fn verify_online_writer_static_coverage_v1(
             "autonomous_research_online_writer_static_coverage_required",
         ));
     }
-    let root = if workspace_root.is_absolute() {
-        workspace_root.to_owned()
-    } else {
-        std::env::current_dir()
-            .map_err(|e| error(e.to_string()))?
-            .join(workspace_root)
-    };
-    Ok(VerifiedWriterStaticCoverageV1 {
-        value,
-        root,
-        manifest: manifest.clone(),
-        sources,
-    })
+    inputs.assert_current()?;
+    Ok(VerifiedWriterStaticCoverageV1 { value, inputs })
 }
 
 #[cfg(test)]

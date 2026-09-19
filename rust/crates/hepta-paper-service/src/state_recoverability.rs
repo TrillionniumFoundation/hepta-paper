@@ -10,6 +10,7 @@ pub mod observation;
 mod publication;
 mod reconciliation;
 pub mod resident;
+pub mod safety_inspection;
 pub mod service;
 mod sqlite_copy;
 use crate::sqlite_mutation_coordinator::clock::{MutationClockV1, iso};
@@ -27,3 +28,5 @@ mod history;
 
 pub mod cli;
 mod renewal;
+
+pub(crate) mod schema_normalization_repository;

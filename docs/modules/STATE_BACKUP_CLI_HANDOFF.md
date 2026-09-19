@@ -4,7 +4,7 @@
 
 The native `hepta-state-backup` binary composes the original `operator/autonomous-state-backup` route. The reference sources are `paper-core/bin/autonomous-research-state-backup.mjs` and `paper-composition/bootstrap/autonomous-research-state-backup-composition.mjs`. The five actions are `status`, `backup`, `restore-drill`, `renew`, and `reconcile-and-renew`. Production Rust code executes the configured, pinned authority processes; it does not invoke Node or load a fixture authority implementation.
 
-This command implements the five actions within the source checkout. The executable currently derives its workspace from the compile-time `CARGO_MANIFEST_DIR`; copying it to a host without that checkout does not relocate the manifest lookup. A safe installation-layout or explicit deployment-root contract and relocated-binary tests remain required. The migration route remains partial until this deployment gap, its complete required acceptance evidence, and intentional compatibility differences are adjudicated. No test creates a production authority, deployment permit, or Node retirement permit.
+This command implements the five actions with an explicit deployment workspace selected by the native `--root PATH` extension. The [portable workspace handoff](STATE_BACKUP_PORTABLE_ROOT_HANDOFF.md) documents copied-binary tests and path behavior. Omitting that option retains the legacy compile-time checkout default; packaging must supply its deployed root. The route remains partial pending full activation composition, required independent acceptance, and adjudication of intentional compatibility differences. No test creates a production authority, deployment permit, or Node retirement permit.
 
 ## Arguments, defaults, and exit behavior
 

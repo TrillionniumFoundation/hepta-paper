@@ -316,8 +316,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
     ) -> Result<CurrentRestoreSourcesV1> {
         let path = PathBuf::from(text(sources.source.inspection(), "bundlePath")?);
         sources.assert_current(clock_now(clock)?.0)?;
-        super::drill::run(self, &path, clock)?;
-        self.selected(&path, self.inventory()?, clock_now(clock)?.0)
+        super::history::replay_selected_history(self, &path, clock)
     }
     pub fn reconcile_and_renew(&mut self, clock: &mut dyn MutationClockV1) -> Result<Value> {
         self.renew_evidence(clock).map(|r| r.receipt)

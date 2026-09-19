@@ -128,8 +128,9 @@ components alone establishes full runtime activation or command acceptance.
 
 [Backup and recoverability service](STATE_RECOVERABILITY_HANDOFF.md) covers
 actual SQLite backup, durable pending finalization, replay into isolated copies,
-resident leases and current epoch evidence. CLI assembly and external durability
-qualification remain separate gaps.
+resident leases and current epoch evidence. The native backup command is
+documented below; full runtime activation and external durability qualification
+remain separate gaps.
 
 [Authority inspection](ONLINE_AUTHORITY_INSPECTION_HANDOFF.md) covers actual active
 and passive signature verification, retained currentness and diagnostic status.
@@ -145,3 +146,21 @@ a separate integration step.
 [Native state backup command](STATE_BACKUP_CLI_HANDOFF.md) documents all five
 operator modes, concrete process clients, independent renewal, actual failure
 reports and deliberate input/SQLite compatibility differences.
+
+[Configured fixed-plan composition](ONLINE_MUTATION_COMPOSITION_HANDOFF.md) binds
+all original 134 operations and 486 SQL statements to actual inventory and
+pinned authority trust; the configured wrapper exposes diagnostics only.
+[Observed schema execution plan](ONLINE_SCHEMA_EXECUTION_HANDOFF.md) covers actual
+source projection and genuinely signed quiesced maintenance reservation.
+[Portable backup workspace](STATE_BACKUP_PORTABLE_ROOT_HANDOFF.md) documents a
+copied native binary's explicit root, environment and path behavior.
+[Actual passive state-safety composition](STATE_SAFETY_COMPOSITION_HANDOFF.md)
+combines actual files, backups, source coverage and signature evidence without
+performing authority RPCs or granting runtime activation.
+[Complete writer input proof](ONLINE_WRITER_COMPLETE_INPUT_PROOF_HANDOFF.md)
+retains the complete immutable AST input set and rechecks all file bytes,
+identities and namespaces before reusing its source inspection.
+
+[Signed schema journal normalization](SCHEMA_JOURNAL_NORMALIZATION_HANDOFF.md)
+documents actual ten-database WAL normalization, durable progress, process-death
+recovery and the remaining metadata/genesis installation boundary.

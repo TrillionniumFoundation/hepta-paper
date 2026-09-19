@@ -160,7 +160,7 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
     pub fn configuration_hash(&self) -> &str {
         &self.configuration_hash
     }
-    fn current(&self) -> Result<()> {
+    pub(crate) fn current(&self) -> Result<()> {
         self.configuration.assert_current()?;
         self.public_key_document.assert_current()
     }

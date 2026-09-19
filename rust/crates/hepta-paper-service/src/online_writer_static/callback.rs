@@ -29,7 +29,11 @@ fn member_raw(member: &Value) -> bool {
 fn reference(parsed: &Parsed, node: &Value) -> Option<u32> {
     parsed.references.get(&span(node)?).copied()
 }
-fn callback<'a>(parsed: &'a Parsed, call: &'a Value) -> Option<&'a Value> {
+fn callback<'a>(
+    parsed: &Parsed,
+    call: &'a Value,
+    declarations: &DeclarationIndex<'a>,
+) -> Option<&'a Value> {
     let value = &callback_property(call)?["value"];
     if ["FunctionExpression", "ArrowFunctionExpression"].contains(&kind(value)) {
         return Some(value);
@@ -39,7 +43,7 @@ fn callback<'a>(parsed: &'a Parsed, call: &'a Value) -> Option<&'a Value> {
     }
     let symbol = parsed.symbols.get(&reference(parsed, value)?)?;
     for declaration in &symbol.definitions {
-        let Some(definition) = find_node(&parsed.tree, *declaration) else {
+        let Some(definition) = declarations.get(*declaration) else {
             continue;
         };
         let candidate = if kind(definition) == "VariableDeclarator" {
@@ -61,6 +65,7 @@ fn callback<'a>(parsed: &'a Parsed, call: &'a Value) -> Option<&'a Value> {
 }
 pub(super) fn violations(
     parsed: &Parsed,
+    declarations: &DeclarationIndex<'_>,
     source: &str,
     call: &Value,
     binding: Option<&(String, String)>,
@@ -73,7 +78,7 @@ pub(super) fn violations(
         let (line, column) = location(source, node);
         json!({"entrypoint":entrypoint,"databaseRole":binding.map(|b|&b.0),"operationId":binding.map(|b|&b.1),"capabilityBinding":capability,"method":method,"line":line,"column":column})
     };
-    let Some(callback) = callback(parsed, call) else {
+    let Some(callback) = callback(parsed, call, declarations) else {
         return vec![row(
             property,
             property["value"]["name"]
@@ -118,7 +123,8 @@ pub(super) fn violations(
         for (id, symbol) in &parsed.symbols {
             let within = callback_scope.is_some_and(|scope| symbol.scopes.contains(&scope));
             for declaration in &symbol.definitions {
-                let Some(definition) = find_node(&parsed.tree, *declaration)
+                let Some(definition) = declarations
+                    .get(*declaration)
                     .filter(|d| kind(d) == "VariableDeclarator")
                 else {
                     continue;

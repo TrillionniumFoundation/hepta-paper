@@ -86,6 +86,18 @@ hosted workflow and independent review have completed successfully.
 The G0 work items `QUAL-001` through `QUAL-005` own closure. Historical green
 artifacts and superseded approval cannot be reused.
 
+## Native composition implementation handoffs
+
+- [Fixed online mutation plan composition](../modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md)
+- [Observed schema execution and maintenance](../modules/ONLINE_SCHEMA_EXECUTION_HANDOFF.md)
+- [Portable backup command root](../modules/STATE_BACKUP_PORTABLE_ROOT_HANDOFF.md)
+- [Actual passive state-safety composition](../modules/STATE_SAFETY_COMPOSITION_HANDOFF.md)
+- [Complete writer source input proof](../modules/ONLINE_WRITER_COMPLETE_INPUT_PROOF_HANDOFF.md)
+- [Signed schema journal normalization](../modules/SCHEMA_JOURNAL_NORMALIZATION_HANDOFF.md)
+
+These code-level handoffs do not change registered module qualification,
+production activation, principal authority, or Node retirement status.
+
 ## Source-of-truth rule
 
 Global committed truth is `docs/system/truth/*.json`. During migration,

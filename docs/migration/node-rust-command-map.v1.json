@@ -501,9 +501,12 @@
         "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
         "rust/crates/hepta-paper-service/tests/state_recoverability_resident_parity.rs",
         "rust/crates/hepta-paper-service/tests/state_backup_cli_parity.rs",
-        "rust/crates/hepta-paper-service/tests/state_recoverability_heartbeat_parity.rs"
+        "rust/crates/hepta-paper-service/tests/state_recoverability_heartbeat_parity.rs",
+        "rust/crates/hepta-paper-service/tests/state_backup_relocated_binary.rs",
+        "rust/crates/hepta-paper-service/tests/state_recoverability_automatic_parity.rs",
+        "rust/crates/hepta-paper-service/tests/state_recoverability_mixed_parity.rs"
       ],
-      "remaining": "Native five-mode CLI composes actual ten-database inspection, signed backup/drill, independent exact-bundle renewal, and pending reconciliation; real authority processes, blocked reports and exit classes are exercised. The concrete recoverability controller compares authenticated replay with every live effective SQLite row before minting an epoch; signed heartbeats can refresh historical backups without excusing unrecorded business writes. Historical source reports and caller JSON remain non-authoritative. Deliberate stricter v2 authority-verifier requirements, SQLite engine-header byte differences, relocated-binary workspace resolution (current executable binds its build checkout), full activation composition, operational retention and independent target-host/authority acceptance remain open.",
+      "remaining": "Native five-mode CLI composes actual ten-database inspection, signed backup/drill, independent exact-bundle renewal, and pending reconciliation; copied-binary explicit workspace roots, real authority processes, blocked reports and exit classes are exercised. The concrete controller automatically selects authenticated historical snapshots for fixed business, heartbeat and mixed ranges under the complete original registry and compares actual replay with every live effective SQLite row before publishing or minting an epoch; complete original Node normal-controller/drill reports match. Selected failures cannot silently renew a backup. General history requires the full original registry and binds operation/writer/role/schema/provenance and allowed effects; custom non-heartbeat source fallback and reconstruction of callback invocation traces are not claimed. Deliberate stricter v2 authority-verifier requirements, SQLite engine-header byte differences, full activation composition, operational retention and independent target-host/authority acceptance also remain open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/state_backup_authority.rs",
         "rust/crates/hepta-paper-service/src/state_backup_authority/contracts.rs",
@@ -539,7 +542,11 @@
         "rust/crates/hepta-paper-service/src/state_recoverability/history/transition.rs",
         "rust/crates/hepta-paper-service/src/state_recoverability/renewal.rs",
         "rust/crates/hepta-paper-service/src/bin/hepta-state-backup.rs",
-        "rust/crates/hepta-paper-service/src/state_recoverability/history/tests.rs"
+        "rust/crates/hepta-paper-service/src/state_recoverability/history/tests.rs",
+        "rust/crates/hepta-paper-service/src/native_workspace.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/controller/automatic.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/history/selection.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/history/registered.rs"
       ],
       "testCases": [
         {
@@ -589,6 +596,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/state_backup_cli_parity.rs",
           "symbol": "failed_reconciliation_reports_actual_initial_scope_and_completed_database_work"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_recoverability_automatic_parity.rs",
+          "symbol": "automatic_reconciliation_reuses_old_snapshot_for_running_and_fresh_controller"
         }
       ]
     },
@@ -752,7 +763,7 @@
     },
     {
       "id": "operator/research-readiness",
-      "rustEntrypoint": "evaluate_state_safety_readiness_v1 / inspect_passive_online_authority_v1 [state-safety dependency libraries; complete readiness command pending]",
+      "rustEntrypoint": "inspect_autonomous_research_state_safety_v1 / inspect_passive_online_authority_v1 [actual state-safety composition; complete readiness command pending]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -763,19 +774,30 @@
         {
           "path": "rust/crates/hepta-paper-service/src/online_authority_inspection.rs",
           "symbol": "inspect_passive_online_authority_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/safety_inspection.rs",
+          "symbol": "inspect_autonomous_research_state_safety_v1"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/online_runtime_active_refresh_parity.rs"
+        "rust/crates/hepta-paper-service/tests/online_runtime_active_refresh_parity.rs",
+        "rust/crates/hepta-paper-service/tests/state_safety_composition_parity.rs",
+        "rust/crates/hepta-paper-service/tests/online_writer_complete_inputs.rs",
+        "rust/crates/hepta-paper-service/tests/online_mutation_composition_parity.rs"
       ],
-      "remaining": "State-safety projection has 394 complete canonical-input Node comparisons; actual passive/active authority inspection verifies three real signatures, observed inventory and native AST provenance, rejects forged or contradictory database heads, and rechecks currentness/observation age after I/O. Coordinator JSON is diagnostic only. General Date.parse coercion/format compatibility, actual end-to-end passive state-safety composition, all other readiness observers and environment loading, complete CLI modes and independent acceptance remain open. No diagnostic ready field creates an activation capability.",
+      "remaining": "Actual passive state-safety composition now combines real ten-database inventory, stored backup verification, configured coordinator, complete native source AST coverage and three pinned signatures; full original Node report comparisons include missing/invalid configuration, signed caches, corruption and unregistered writers, with zero authority RPC. Fixed composition covers all 134 operations/486 statements but exposes diagnostics only. Complete source inputs are retained and every file byte, identity and namespace is rechecked before AST reuse. General Date.parse coercion/format compatibility, other readiness observers, complete CLI/environment modes, final runtime activation and independent acceptance remain open. Native stored-source checks deliberately reject some expired or mismatched historical evidence that the Node diagnostic reader accepts; no diagnostic ready field grants activation.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/state_safety.rs",
         "rust/crates/hepta-paper-service/src/online_authority_inspection.rs",
         "rust/crates/hepta-paper-service/src/online_runtime_activation/active_refresh.rs",
         "rust/crates/hepta-paper-service/src/online_authority_evidence_cache.rs",
         "rust/crates/hepta-paper-service/src/state_database_inventory.rs",
-        "rust/crates/hepta-paper-service/src/online_writer_static.rs"
+        "rust/crates/hepta-paper-service/src/online_writer_static.rs",
+        "rust/crates/hepta-paper-service/src/online_mutation_composition.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/safety_inspection.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/safety_inspection/sources.rs",
+        "rust/crates/hepta-paper-service/src/online_writer_static/proof_inputs.rs"
       ],
       "testCases": [
         {
@@ -789,6 +811,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/online_runtime_active_refresh_parity.rs",
           "symbol": "observation_age_crossed_only_after_inspection_io_rejects_still_unexpired_signatures"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/state_safety_composition_parity.rs",
+          "symbol": "actual_signed_cache_backup_source_and_original_source_scan_match_without_rpc_or_authority_promotion"
         }
       ]
     },
@@ -1106,7 +1132,7 @@
     },
     {
       "id": "maintenance/autonomous-online-schema-transition",
-      "rustEntrypoint": "inspect_online_schema_transition_readiness_v1 / project_schema_transition_target_v1 [libraries; complete transition executor and CLI pending]",
+      "rustEntrypoint": "build_schema_transition_plan_v1 / normalize_schema_maintenance_v1 / resume_schema_normalization_v1 [native observed plan, signed reservation and durable normalization; complete installation/CLI pending]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -1129,14 +1155,32 @@
         {
           "path": "rust/crates/hepta-paper-service/src/pristine_runtime_state.rs",
           "symbol": "pristine_runtime_state_hash_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/plan.rs",
+          "symbol": "build_schema_transition_plan_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance.rs",
+          "symbol": "reserve_schema_maintenance_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization.rs",
+          "symbol": "normalize_schema_maintenance_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization.rs",
+          "symbol": "resume_schema_normalization_v1"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/online_schema_transition_parity.rs",
         "rust/crates/hepta-paper-service/tests/online_schema_target_parity.rs",
-        "rust/crates/hepta-paper-service/tests/pristine_runtime_state_parity.rs"
+        "rust/crates/hepta-paper-service/tests/pristine_runtime_state_parity.rs",
+        "rust/crates/hepta-paper-service/tests/schema_source_projection_parity.rs",
+        "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs"
       ],
-      "remaining": "Native signed readiness, exact audit chain, actual ten-database inventory, fixed target DDL and private projection are implemented. Pristine inspection now reads real SQLite baseline rows in one transaction, validates native ledger semantics, real dual-signature external genesis and cross-database bindings, and rejects user tables hidden by the original LIKE wildcard. Readiness checks final pinned-file I/O observation age, expiry and clock rollback. Complete pre-transition inventory, normalization/installation driver, signed execution/recovery, V2 authority restart flow, all original CLI modes and independent qualification remain open; historical observations and readiness JSON do not activate a runtime.",
+      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, real signed maintenance reservation and actual journal normalization/recovery are implemented. Normalization uses a root-inode maintenance lock, exact source/signature/lease checks, identity-bound SHM quarantine, bounded atomic progress, actual process-death recovery and real-wall-clock lease tests. Metadata/genesis installation, exclusive per-commit recovery, finalization and V2 authority restart, complete CLI modes and independent qualification remain open. Previous Node-engine WAL reservation digest interoperability, Node raw genesis-object member-order rejection semantics, and named-VFS same-user ABA limits remain explicit; reports do not activate a runtime.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
@@ -1151,7 +1195,17 @@
         "rust/crates/hepta-paper-service/src/pristine_runtime_state/machine.rs",
         "rust/crates/hepta-paper-service/src/pristine_runtime_state/migrations.rs",
         "rust/crates/hepta-paper-service/src/pristine_runtime_state/policy_data.json",
-        "rust/crates/hepta-paper-service/src/pristine_runtime_state/query.rs"
+        "rust/crates/hepta-paper-service/src/pristine_runtime_state/query.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/plan.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/plan/normalization_support.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization.rs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source.rs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/copy.rs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/maintenance_lock.rs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/normalization_support.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/schema_normalization_repository.rs"
       ],
       "testCases": [
         {
@@ -1181,6 +1235,18 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/online_schema_transition_parity.rs",
           "symbol": "real_schema_readiness_checks_final_pinned_io_age_and_clock_without_extra_rpc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/schema_source_projection_parity.rs",
+          "symbol": "actual_ten_database_initial_and_pristine_rebind_plans_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs",
+          "symbol": "actual_process_crash_after_checkpoint_and_before_publication_resumes_signed_bytes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs",
+          "symbol": "actual_wall_clock_signed_lease_completes_ten_database_wal_normalization"
         }
       ]
     },

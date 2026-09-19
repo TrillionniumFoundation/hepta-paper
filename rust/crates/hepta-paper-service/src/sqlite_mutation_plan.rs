@@ -8,7 +8,10 @@ mod transaction;
 use hepta_legacy_compatibility::{ProductionCollationV1, production_hash_record_v1};
 use regex::Regex;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{LazyLock, Mutex},
+};
 
 pub use surface::assert_sqlite_mutation_database_surface_v1;
 pub use transaction::{RestrictedMutationTransactionV1, with_restricted_sqlite_mutation_v1};
@@ -58,6 +61,24 @@ impl ValidatedMutationPlanV1 {
     }
     pub fn projection(&self) -> Value {
         json!({"version":1,"operationId":self.raw_id,"statements":self.statements.iter().map(Statement::value).collect::<Vec<_>>()})
+    }
+    /// Historical replay can authenticate plan membership and the signed
+    /// effects. It cannot reconstruct which callback statements were invoked.
+    /// Reuse the exact live guard's plan projection rather than another parser.
+    pub(crate) fn allowed_replay_effects(
+        &self,
+    ) -> Result<Vec<crate::sqlite_changeset::ChangesetEffectV1>> {
+        Ok(planned_events(self)?
+            .into_iter()
+            .flat_map(|(table, events)| {
+                events.into_iter().map(move |operation| {
+                    crate::sqlite_changeset::ChangesetEffectV1 {
+                        table: table.clone(),
+                        operation: operation.into(),
+                    }
+                })
+            })
+            .collect())
     }
 }
 #[derive(Debug)]
@@ -113,6 +134,25 @@ fn same_primitive_id(left: &Value, right: &Value) -> bool {
 }
 // JavaScript's non-Unicode /i case folding and \s set, including BOM and
 // excluding U+0085. SQL keyword boundaries must remain ASCII word boundaries.
+// All callers use module-owned literal patterns; SQL remains input only. Cache
+// compilation rather than recompiling these predicates for every statement and
+// writer hash. Matching runs on a cheap clone after releasing the cache lock.
+static PATTERNS: LazyLock<Mutex<BTreeMap<&'static str, Regex>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+fn cached_expression(pattern: &'static str) -> Result<Regex> {
+    let mut patterns = PATTERNS
+        .lock()
+        .map_err(|_| error("externally_fenced_sqlite_mutation_pattern_invalid"))?;
+    if let Some(expression) = patterns.get(pattern) {
+        return Ok(expression.clone());
+    }
+    let expression = expression(pattern)?;
+    // Keep a fixed bound even if future source adds more literal predicates.
+    if patterns.len() < 16 {
+        patterns.insert(pattern, expression.clone());
+    }
+    Ok(expression)
+}
 fn expression(pattern: &str) -> Result<Regex> {
     let whitespace = r"(?u:[\x09-\x0d\x20\u{00a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}])";
     // Only ASCII literal letters are folded. Keep UTF-8-aware wildcard and
@@ -157,8 +197,8 @@ fn expression(pattern: &str) -> Result<Regex> {
     }
     Regex::new(&converted).map_err(|_| error("externally_fenced_sqlite_mutation_pattern_invalid"))
 }
-fn matches(pattern: &str, input: &str) -> Result<bool> {
-    Ok(expression(pattern)?.is_match(input))
+fn matches(pattern: &'static str, input: &str) -> Result<bool> {
+    Ok(cached_expression(pattern)?.is_match(input))
 }
 fn trim_js(value: &str) -> &str {
     value.trim_matches(|c| matches!(c, '\u{9}'..='\u{d}' | '\u{20}' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'))
@@ -170,7 +210,7 @@ fn write_table(sql: &str) -> Result<Option<String>> {
         r"^UPDATE\s+([A-Za-z_][A-Za-z0-9_]*)\s+SET\b",
         r"^DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)\b",
     ] {
-        if let Some(captures) = expression(pattern)?.captures(trim_js(sql)) {
+        if let Some(captures) = cached_expression(pattern)?.captures(trim_js(sql)) {
             return captures
                 .get(1)
                 .map(|v| Some(v.as_str().to_owned()))

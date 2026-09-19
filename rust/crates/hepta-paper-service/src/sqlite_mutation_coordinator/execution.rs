@@ -90,6 +90,10 @@ impl<T: MutationAuthorityTransportV1> SqliteMutationCoordinatorV1<T> {
             fence,
         })
     }
+    /// Current pinned authority inputs only; no RPC and no runtime activation.
+    pub(crate) fn assert_configuration_current(&self) -> Result<()> {
+        self.authority.current()
+    }
     pub fn inspect_status(&self) -> Value {
         let complete = self.manifest["coverage"]["percent"].as_f64() == Some(100.0);
         let mut blockers = Vec::new();

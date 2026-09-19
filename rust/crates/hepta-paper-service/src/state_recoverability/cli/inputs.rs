@@ -10,7 +10,7 @@ use std::{
     path::Component,
 };
 
-pub(super) fn configuration(
+pub(in crate::state_recoverability) fn configuration(
     path: &Path,
     code: &str,
 ) -> Result<(super::super::files::ObservedFile, String, Value)> {
@@ -39,7 +39,7 @@ fn same(a: &Metadata, b: &Metadata) -> bool {
 /// A repository manifest is public source data and may be group writable in a
 /// shared checkout. Authority configurations use the stronger private input
 /// policy above. Neither policy opens FIFO devices or follows path aliases.
-pub(super) struct ManifestFile {
+pub(in crate::state_recoverability) struct ManifestFile {
     path: PathBuf,
     file: File,
     metadata: Metadata,

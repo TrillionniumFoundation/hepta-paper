@@ -1,5 +1,7 @@
-//! Refresh a historical snapshot by actually replaying a signed heartbeat
-//! range, then comparing every live effective row with the private replay.
+//! Refresh a historical snapshot by actually replaying authenticated fixed
+//! mutations, then comparing every live effective row with the private replay.
+//! Automatic general recovery requires the complete original writer registry;
+//! custom registries retain only the bounded heartbeat transition.
 //! Historical candidate construction never grants a current epoch.
 use super::*;
 use super::{
@@ -24,9 +26,12 @@ use std::{
     path::{Path, PathBuf},
 };
 mod equivalence;
+mod registered;
+mod selection;
 #[cfg(test)]
 mod tests;
 mod transition;
+pub(super) use selection::replay_best_heartbeat_history;
 
 /// Cached result of actual private replay/current-row comparison. Private
 /// fields prevent callers from converting a report into proof. It is only
@@ -272,6 +277,58 @@ pub(super) fn replay_heartbeat_history<
     let before = clock_now(clock)?;
     let candidate =
         HistoricalBackupCandidateV1::load(service, path, &inventory, before.0, maximum_age)?;
+    replay_candidate(
+        service,
+        candidate,
+        inventory,
+        clock,
+        before.0,
+        ReplayPolicy::Heartbeat,
+    )
+}
+
+/// The ordinary already-selected journal branch supports every mutation the
+/// replay engine validates. Its publication still requires exact current rows.
+pub(super) fn replay_selected_history<
+    B: StateBackupAuthorityTransportV1,
+    O: MutationAuthorityTransportV1,
+>(
+    service: &mut BackupRecoveryServiceV1<B, O>,
+    path: &Path,
+    clock: &mut dyn MutationClockV1,
+) -> Result<CurrentRestoreSourcesV1> {
+    let inventory = service.inventory()?;
+    let before = clock_now(clock)?.0;
+    let candidate = HistoricalBackupCandidateV1::load(service, path, &inventory, before, i64::MAX)?;
+    replay_candidate(
+        service,
+        candidate,
+        inventory,
+        clock,
+        before,
+        ReplayPolicy::Existing,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ReplayPolicy {
+    Heartbeat,
+    Automatic,
+    Existing,
+}
+
+fn replay_candidate<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>(
+    service: &mut BackupRecoveryServiceV1<B, O>,
+    candidate: HistoricalBackupCandidateV1,
+    inventory: ObservedStateDatabaseInventoryV1,
+    clock: &mut dyn MutationClockV1,
+    before: i64,
+    policy: ReplayPolicy,
+) -> Result<CurrentRestoreSourcesV1> {
+    candidate.assert_current()?;
+    inventory
+        .assert_current()
+        .map_err(|e| error(e.to_string()))?;
     let prepared = super::drill::prepare(service, &candidate.path, clock)?;
     let drill = prepared.receipt();
     ensure(
@@ -282,7 +339,7 @@ pub(super) fn replay_heartbeat_history<
     )?;
     let observed = clock_now(clock)?;
     ensure(
-        observed.0 >= before.0,
+        observed.0 >= before,
         "autonomous_research_state_heartbeat_clock_rollback",
     )?;
     let signed = service.backup.verify_journal_range(
@@ -291,12 +348,33 @@ pub(super) fn replay_heartbeat_history<
         observed.0,
     )?;
     let range = service.backup.verify_finalized_journal_chain(&signed)?;
-    transition::assert_heartbeat_range(&range)?;
+    let registered = match policy {
+        ReplayPolicy::Automatic | ReplayPolicy::Existing => {
+            registered::RegisteredJournalPlansV1::authenticate(
+                &service.options.writer_manifest,
+                &inventory,
+                &range,
+            )?
+        }
+        _ => None,
+    };
+    let require_heartbeat = matches!(policy, ReplayPolicy::Heartbeat)
+        || (matches!(policy, ReplayPolicy::Automatic) && registered.is_none());
+    if require_heartbeat {
+        transition::assert_heartbeat_range(&range)?;
+    }
     candidate.assert_current()?;
     inventory
         .assert_current()
         .map_err(|e| error(e.to_string()))?;
-    compare_effective_state(service, &candidate, &inventory, &range, true)?;
+    compare_effective_state(
+        service,
+        &candidate,
+        &inventory,
+        &range,
+        require_heartbeat,
+        registered.as_ref(),
+    )?;
     let completed = clock_now(clock)?;
     ensure(
         completed.0 >= observed.0,
@@ -323,6 +401,7 @@ fn compare_effective_state<B: StateBackupAuthorityTransportV1, O: MutationAuthor
     inventory: &ObservedStateDatabaseInventoryV1,
     range: &crate::state_backup_authority::VerifiedFinalizedJournalEvidenceV1,
     require_heartbeat_schema: bool,
+    registered: Option<&registered::RegisteredJournalPlansV1>,
 ) -> Result<()> {
     let scratch = Scratch::new()?;
     for (index, (entry, file)) in candidate.databases.iter().enumerate() {
@@ -335,6 +414,7 @@ fn compare_effective_state<B: StateBackupAuthorityTransportV1, O: MutationAuthor
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        equivalence::limit_private_sqlite(&replay)?;
         replay.pragma_update(None, "trusted_schema", false)?;
         if require_heartbeat_schema && entry["role"] == "resident-instance" {
             let columns=replay.prepare("SELECT name FROM pragma_table_xinfo('autonomous_research_supervisor_instance') ORDER BY cid")?.query_map([],|row|row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -342,6 +422,9 @@ fn compare_effective_state<B: StateBackupAuthorityTransportV1, O: MutationAuthor
                 columns == transition::COLUMNS,
                 "autonomous_research_state_heartbeat_schema_unsupported",
             )?;
+        }
+        if let Some(plans) = registered {
+            plans.assert_database_surface(&replay, entry, range)?;
         }
         let restored = replay_verified_database_v1(&mut replay, entry, range, &service.online)?;
         let restored_digest = equivalence::effective_digest(&replay)?;
@@ -353,6 +436,7 @@ fn compare_effective_state<B: StateBackupAuthorityTransportV1, O: MutationAuthor
                         | OpenFlags::SQLITE_OPEN_NOFOLLOW
                         | OpenFlags::SQLITE_OPEN_NO_MUTEX,
                 )?;
+                equivalence::limit_private_sqlite(&live)?;
                 let head = checked_snapshot_head_v1(&live, entry, &service.online)?;
                 ensure(
                     canonical_equal(head.value(), restored.value())?,
@@ -398,6 +482,18 @@ pub(super) fn verify_journal_source_current_state<
         performed,
     )?;
     let range = service.backup.verify_finalized_journal_chain(&receipt)?;
-    compare_effective_state(service, &candidate, inventory, &range, false)?;
+    let registered = registered::RegisteredJournalPlansV1::authenticate(
+        &service.options.writer_manifest,
+        inventory,
+        &range,
+    )?;
+    compare_effective_state(
+        service,
+        &candidate,
+        inventory,
+        &range,
+        false,
+        registered.as_ref(),
+    )?;
     Ok(Some(VerifiedCurrentReplayV1::checked(inventory, restore)?))
 }

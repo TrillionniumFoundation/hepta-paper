@@ -1,7 +1,7 @@
 //! Complete state-backup command composition. Production authority calls use
 //! the pinned process clients; no Node, shell or fixture adapter is invoked.
 mod arguments;
-mod inputs;
+pub(super) mod inputs;
 use super::*;
 use super::{
     renewal,
@@ -129,7 +129,12 @@ fn run(
     clock: &mut dyn MutationClockV1,
 ) -> Result<StateBackupCliOutputV1> {
     let cwd = &context.working_directory;
-    let workspace = arguments::resolve(cwd, &context.workspace_root)?;
+    let workspace = crate::native_workspace::resolve_native_workspace_root_v1(
+        cwd,
+        &context.workspace_root,
+        args.workspace.as_deref().map(Path::new),
+    )
+    .map_err(error)?;
     let runtime = if let Some(root) = args.runtime.as_ref().or_else(|| {
         context
             .environment

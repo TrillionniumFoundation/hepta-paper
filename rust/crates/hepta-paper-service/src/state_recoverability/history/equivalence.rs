@@ -177,7 +177,17 @@ fn table_digest(
     }
     Ok(result.finalize().into())
 }
+/// Bound SQLite value/row construction before the engine evaluates generated
+/// expressions or materializes an oversized row. Never raise an existing limit.
+pub(super) fn limit_private_sqlite(db: &Connection) -> Result<()> {
+    use rusqlite::limits::Limit;
+    let limit = db.limit(Limit::SQLITE_LIMIT_LENGTH)?.min(MAX_CELL as i32);
+    db.set_limit(Limit::SQLITE_LIMIT_LENGTH, limit)?;
+    Ok(())
+}
+
 pub(super) fn effective_digest(db: &Connection) -> Result<[u8; 32]> {
+    limit_private_sqlite(db)?;
     ensure(
         db.is_autocommit(),
         "autonomous_research_state_heartbeat_open_transaction",

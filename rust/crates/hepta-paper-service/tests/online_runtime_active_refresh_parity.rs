@@ -993,3 +993,63 @@ fn observation_age_crossed_only_after_inspection_io_rejects_still_unexpired_sign
     );
     assert_eq!(calls.lock().unwrap().len(), before);
 }
+
+#[test]
+fn active_refresh_rejects_expiry_after_final_file_and_source_checks() {
+    let f = Fixture::new();
+    let evidence = verify_online_writer_static_coverage_v1(&f.root, &f.manifest).unwrap();
+    let (mut authority, calls) = f.authority("success", Arc::new(AtomicI64::new(NOW)));
+    let mut samples = 0;
+    let result = refresh_online_authority_evidence_v1(
+        &f.inventory,
+        &f.manifest,
+        &mut authority,
+        &evidence,
+        &mut || {
+            samples += 1;
+            Ok(if samples >= 6 { NOW + 60000 } else { NOW })
+        },
+        3,
+    );
+    assert!(
+        result.is_err(),
+        "final source/authority I/O must not return newly expired evidence; clock samples={samples}"
+    );
+    assert_eq!(calls.lock().unwrap().len(), 3);
+}
+
+#[test]
+fn active_refresh_final_age_boundary_and_clock_high_water_are_enforced() {
+    let mut f = Fixture::new();
+    let mut config: Value = serde_json::from_slice(&fs::read(&f.configuration).unwrap()).unwrap();
+    config["maximumObservationAgeMs"] = json!(1000);
+    fs::write(&f.configuration, config.to_string()).unwrap();
+    f.pin = bytehash(&fs::read(&f.configuration).unwrap());
+    let source = verify_online_writer_static_coverage_v1(&f.root, &f.manifest).unwrap();
+    for (samples, valid) in [
+        ([NOW, NOW, NOW, NOW, NOW, NOW + 1000], true),
+        ([NOW, NOW, NOW, NOW, NOW, NOW + 1001], false),
+        ([NOW, NOW, NOW, NOW, NOW + 1, NOW], false),
+        ([NOW, NOW + 1, NOW, NOW, NOW, NOW], false),
+    ] {
+        let (mut authority, calls) = f.authority("success", Arc::new(AtomicI64::new(NOW)));
+        let mut times = samples.into_iter();
+        let result = refresh_online_authority_evidence_v1(
+            &f.inventory,
+            &f.manifest,
+            &mut authority,
+            &source,
+            &mut || Ok(times.next().unwrap_or(NOW + 60000)),
+            3,
+        );
+        assert_eq!(result.is_ok(), valid, "samples={samples:?}");
+        if let Ok(proof) = result {
+            assert_eq!(
+                proof.value()["recordedAt"],
+                iso(NOW).unwrap(),
+                "retain original Node receipt observation time"
+            );
+        }
+        assert!(calls.lock().unwrap().len() <= 3);
+    }
+}

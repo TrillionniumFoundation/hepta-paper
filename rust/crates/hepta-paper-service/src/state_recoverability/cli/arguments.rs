@@ -23,6 +23,7 @@ pub(super) struct Arguments {
     pub help: bool,
     pub action: StateBackupActionV1,
     pub runtime: Option<String>,
+    pub workspace: Option<String>,
     pub backup_configuration: Option<String>,
     pub online_configuration: Option<String>,
     pub bundle: Option<String>,
@@ -52,6 +53,7 @@ pub(super) fn parse(argv: &[String]) -> std::result::Result<Arguments, String> {
             if ![
                 "action",
                 "runtime-root",
+                "root",
                 "authority-config",
                 "online-authority-process-config",
                 "bundle",
@@ -111,6 +113,7 @@ pub(super) fn parse(argv: &[String]) -> std::result::Result<Arguments, String> {
         help,
         action,
         runtime: parsed.remove("runtime-root"),
+        workspace: parsed.remove("root"),
         backup_configuration: parsed.remove("authority-config"),
         online_configuration: parsed.remove("online-authority-process-config"),
         bundle: parsed.remove("bundle"),

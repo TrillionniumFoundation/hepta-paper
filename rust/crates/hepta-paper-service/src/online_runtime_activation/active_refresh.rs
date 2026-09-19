@@ -9,8 +9,14 @@ use crate::sqlite_mutation_coordinator::{
     manifest::writer_manifest_hash_v1,
 };
 use serde_json::{Value, json};
-fn now(clock: &mut dyn MutationClockV1) -> Result<(i64, String)> {
+fn now(clock: &mut dyn MutationClockV1, previous: &mut Option<i64>) -> Result<(i64, String)> {
     let time = clock.now_millis()?;
+    if previous.is_some_and(|earlier| time < earlier) {
+        return Err(error(
+            "autonomous_research_online_mutation_active_refresh_clock_invalid",
+        ));
+    }
+    *previous = Some(time);
     let text = iso(time)
         .map_err(|_| error("autonomous_research_online_mutation_active_refresh_clock_invalid"))?;
     Ok((time, text))
@@ -156,8 +162,9 @@ pub fn refresh_online_authority_evidence_v1<T: MutationAuthorityTransportV1>(
         ));
     }
     let expected = expected_instances(inventory)?;
+    let mut previous = None;
     for attempt in 1..=maximum_attempts {
-        let requested = now(clock)?.1;
+        let requested = now(clock, &mut previous)?.1;
         let trust = authority.trust();
         let base = json!({"version":1,"protocol":"external-linearizable-reserve-apply-finalize-v1","scopeId":trust["scopeId"],"databaseScopeHash":trust["databaseScopeHash"],"writerManifestHash":trust["writerManifestHash"],"requestedAt":requested});
         let mut current_request = base.clone();
@@ -182,18 +189,21 @@ pub fn refresh_online_authority_evidence_v1<T: MutationAuthorityTransportV1>(
         scope_request["requiredDatabaseRoles"] = manifest["requiredDatabaseRoles"].clone();
         scope_request["coveredDatabaseRoles"] =
             manifest["coverage"]["coveredDatabaseRoles"].clone();
-        let current =
-            authority.observe_current_head(&current_request, Some(&expected), now(clock)?.0)?;
-        let scope = authority.observe_scope(&scope_request, now(clock)?.0)?;
+        let current = authority.observe_current_head(
+            &current_request,
+            Some(&expected),
+            now(clock, &mut previous)?.0,
+        )?;
+        let scope = authority.observe_scope(&scope_request, now(clock, &mut previous)?.0)?;
         let challenge = authority.challenge_active_authority(
             &challenge_request,
             Some(&expected),
-            now(clock)?.0,
+            now(clock, &mut previous)?.0,
         )?;
         if !same_head(current.value(), challenge.value(), scope.value()) {
             continue;
         }
-        let (observed, recorded) = now(clock)?;
+        let (observed, recorded) = now(clock, &mut previous)?;
         // Reject a receipt which expired while the process call was running.
         authority.verify_current_head_receipt(
             current.value(),
@@ -215,6 +225,25 @@ pub fn refresh_online_authority_evidence_v1<T: MutationAuthorityTransportV1>(
                 .map_err(|e| error(e.to_string()))?,
         )
         .map_err(|e| error(e.to_string()))?;
+        // Pins and source currentness perform I/O after the earlier observation.
+        // Sample once more, then check only already-authenticated memory values.
+        let completed = now(clock, &mut previous)?.0;
+        for (value, observed_key) in [
+            (current.value(), "observedAt"),
+            (scope.value(), "observedAt"),
+            (challenge.value(), "challengedAt"),
+        ] {
+            if !crate::sqlite_mutation_coordinator::contracts::live(
+                value,
+                authority.trust(),
+                observed_key,
+                completed,
+            ) {
+                return Err(error(
+                    "autonomous_research_online_mutation_active_refresh_evidence_expired",
+                ));
+            }
+        }
         return Ok(VerifiedActiveAuthorityEvidenceV1{receipt,authority_configuration_hash:authority.configuration_hash().into(),inventory_hash:inventory["inventoryHash"].as_str().ok_or_else(||error("autonomous_research_online_mutation_active_refresh_inventory_required"))?.into(),static_inspection_hash:static_inspection["astGateReceiptHash"].as_str().ok_or_else(||error("autonomous_research_online_mutation_active_refresh_static_coverage_required"))?.into(),expected_instances:expected});
     }
     Err(error(

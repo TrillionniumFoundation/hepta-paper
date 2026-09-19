@@ -415,7 +415,9 @@ pub fn inspect_online_finalized_database_head_v1<T: MutationAuthorityTransportV1
     let meta = metadata(&transaction, &instance, authority.trust(), &schema)?;
     let (requested, requested_at) = observe(clock)?;
     let request = json!({"version":1,"kind":"AutonomousResearchOnlineMutationCurrentHeadRequest","protocol":ONLINE_MUTATION_PROTOCOL,"scopeId":authority.trust()["scopeId"],"databaseScopeHash":authority.trust()["databaseScopeHash"],"writerManifestHash":authority.trust()["writerManifestHash"],"nonce":nonce()?,"requestedAt":requested_at});
-    let head = authority.observe_current_head(&request, Some(&expected), observe(clock)?.0)?;
+    let observing = observe(clock)?.0;
+    checked(observing >= requested, "authority_evidence_expired")?;
+    let head = authority.observe_current_head(&request, Some(&expected), observing)?;
     let current = head.value();
     let matches = current["databaseHeads"]
         .as_array()
@@ -453,7 +455,7 @@ pub fn inspect_online_finalized_database_head_v1<T: MutationAuthorityTransportV1
     let observed = timestamp(&current["observedAt"])
         .ok_or_else(|| error(code("authority_evidence_expired")))?;
     checked(
-        inspected >= requested
+        inspected >= observing
             && timestamp(&current["expiresAt"]).is_some_and(|t| t > inspected)
             && inspected.saturating_sub(observed)
                 <= int(authority.trust(), "maximumObservationAgeMs")?,
@@ -466,6 +468,17 @@ pub fn inspect_online_finalized_database_head_v1<T: MutationAuthorityTransportV1
     receipt["inspectionReceiptHash"] = json!(finalized_head_inspection_receipt_hash_v1(&receipt)?);
     assert_finalized_head_inspection_receipt_v1(&receipt)?;
     transaction.rollback()?;
+    // Verifier pin reads and SQLite rollback occur after the prior sample. This
+    // final memory-only check covers all I/O; no earlier clock value authorizes
+    // returning an already expired or over-age signed observation.
+    let completed = observe(clock)?.0;
+    checked(
+        completed >= inspected
+            && timestamp(&current["expiresAt"]).is_some_and(|t| t > completed)
+            && completed.saturating_sub(observed)
+                <= int(authority.trust(), "maximumObservationAgeMs")?,
+        "authority_evidence_expired",
+    )?;
     Ok(VerifiedFinalizedHeadInspectionV1 {
         receipt,
         current_head: current.clone(),

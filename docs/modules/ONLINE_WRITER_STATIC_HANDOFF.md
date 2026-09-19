@@ -29,8 +29,8 @@ Public APIs:
   `VerifiedWriterStaticCoverageV1` only when that actual scan completes without
   blockers. This type has private fields and no public constructor/deserializer.
   Its `value()` is read-only; `assert_current()` checks captured source identities
-  and hashes and rescans the repository so newly introduced writers invalidate
-  the proof.
+  and hashes plus the complete captured directory namespaces, so newly introduced
+  files invalidate the proof without reparsing unchanged AST inputs.
 
 No `ready` Boolean, static JSON inspection, caller-supplied signature callback or
 frozen expected output can construct the opaque evidence.
@@ -64,6 +64,16 @@ Callback analysis resolves inline and named callbacks; treats only the actual
 transaction parameter and its lexical aliases as trusted; tracks raw database,
 store, persistence, coordinator-receiver and explicit database-input aliases;
 and checks captured raw member access, dynamic methods and nested callbacks.
+Declaration lookup builds a private index for one immutable parsed tree. It
+uses the exact original recursive child order and retains the first matching
+variable/function declaration for each source span. Callback alias analysis
+reuses those borrowed nodes; no AST, source input or analysis result is cached
+across parses. A direct unit comparison covers all spans and duplicate-span
+first-match behavior; the four unchanged original-Node discovery suites cover
+actual aliases, scopes, exclusions, every production writer and full hashes.
+The fixed repository-factory-name expression is compiled once from its literal
+source rule; input source selection and complete node traversal are unchanged.
+
 The original authority/maintenance/private-copy/staged-provisioning exclusions
 are represented as policy data in `config.json`, mechanically translated from
 the source configuration. They are not precomputed scan results. Policy changes
@@ -71,8 +81,8 @@ require regenerating this data and rerunning the Node comparison.
 
 ## Filesystem and qualification boundary
 
-The inspector actually enumerates all configured source roots, skips symlink
-entries as the source scanner does, reads source through no-follow descriptors,
+The descriptive inspector enumerates all configured source roots, skips symlink
+entries as the original scanner does, reads source through no-follow descriptors,
 and checks named/held full identity before/after reading. Hashes use the bytes
 that were read. It also covers provenance-only files and SQL migrations,
 validates declared/discovered entrypoints and coordinator bindings, and checks
@@ -83,7 +93,14 @@ Source descriptors are opened nonblocking before regular-file validation, so a
 provenance FIFO or a regular file replaced by a FIFO cannot block waiting for a
 writer. Directories and all other nonregular descriptor types are refused.
 
-`assert_current()` performs a new full scan in addition to captured-file checks.
+The opaque verified path applies the stricter
+[complete input proof](ONLINE_WRITER_COMPLETE_INPUT_PROOF_HANDOFF.md): it captures
+all source/migration inputs and exact namespaces before AST evaluation, derives
+that evaluation's file enumeration from the captured set, and requires complete
+byte/identity/namespace currentness before returning. Captured files cannot be
+omitted by temporarily hiding them from a later live directory enumeration.
+Later `assert_current()` checks the full captured input set again. Unchanged
+inputs reuse the established AST result; changed or missing inputs fail.
 The proof is a point-in-time source inspection, not a future filesystem lease.
 It describes the scanned JavaScript writer manifest. It does not certify that
 all Rust business adapters have been wired or that a deployment's external

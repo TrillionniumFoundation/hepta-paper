@@ -442,7 +442,12 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         let now = self.now()?.0;
         let sources = match self.service.sources(now) {
             Ok(s) => s,
-            Err(e) if fallback(&e.code) => return self.renew(required),
+            Err(e) if fallback(&e.code) => {
+                return match self.automatic_heartbeat_history(required, now)? {
+                    Some(receipt) => Ok(receipt),
+                    None => self.renew(required),
+                };
+            }
             Err(e) => return self.failure(e, "source-inspection"),
         };
         let created = timestamp(&sources.source.inspection()["snapshotCreatedAt"]);
@@ -514,3 +519,5 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1> Recove
 }
 
 mod heartbeat;
+
+mod automatic;

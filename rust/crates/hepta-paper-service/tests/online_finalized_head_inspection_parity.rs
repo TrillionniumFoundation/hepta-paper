@@ -624,3 +624,58 @@ fn database_surface_and_head_expiry_are_enforced() {
         assert!(db.is_autocommit());
     }
 }
+
+#[test]
+fn final_pinned_io_and_transaction_cleanup_cannot_outlive_signed_head_time() {
+    for (final_delta, observed_delta, should_pass) in [
+        (1001, 0, false),
+        (60_000, 0, false),
+        (-1, 0, false),
+        (0, 500, false),
+        (1000, 0, true),
+    ] {
+        let mut f = Fixture::new();
+        let mut config: Value =
+            serde_json::from_slice(&fs::read(&f.configuration).unwrap()).unwrap();
+        config["maximumObservationAgeMs"] = json!(1000);
+        let bytes = serde_json::to_vec(&config).unwrap();
+        fs::write(&f.configuration, &bytes).unwrap();
+        f.pin = bytes_hash(&bytes);
+        let mut db = f.database("normal");
+        let (_coordinator, state) = f.coordinator(&db, "normal");
+        let (mut authority, inventory) = authority(&f, &state);
+        let before = snapshot(&db);
+        let mut samples = 0;
+        let result = inspect_online_finalized_database_head_v1(
+            &mut db,
+            "resident-instance",
+            &inventory,
+            &mut authority,
+            &f.value["manifest"],
+            &mut || {
+                samples += 1;
+                Ok(NOW
+                    + match samples {
+                        2 => observed_delta,
+                        4.. => final_delta,
+                        _ => 0,
+                    })
+            },
+        );
+        if should_pass {
+            assert!(result.is_ok());
+            assert_eq!(samples, 4);
+        } else {
+            assert_eq!(
+                result
+                    .err()
+                    .expect("stale or rolling-back final proof must fail")
+                    .code,
+                "autonomous_research_online_finalized_head_authority_evidence_expired",
+                "final={final_delta}, observation={observed_delta}",
+            );
+        }
+        assert_eq!(snapshot(&db), before);
+        assert!(db.is_autocommit());
+    }
+}

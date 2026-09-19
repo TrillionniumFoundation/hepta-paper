@@ -137,6 +137,32 @@ pub(super) fn walk<'a>(node: &'a Value, visit: &mut impl FnMut(&'a Value)) {
         walk(child, visit);
     }
 }
+/// A single immutable AST owns every referenced declaration. Build the same
+/// first matching declaration map once; no caller input survives this parse.
+pub(super) struct DeclarationIndex<'a>(BTreeMap<(u32, u32), &'a Value>);
+impl<'a> DeclarationIndex<'a> {
+    pub(super) fn new(tree: &'a Value) -> Self {
+        let mut entries = BTreeMap::new();
+        walk(tree, &mut |node| {
+            if [
+                "VariableDeclarator",
+                "FunctionDeclaration",
+                "FunctionExpression",
+                "ArrowFunctionExpression",
+            ]
+            .contains(&kind(node))
+                && let Some(position) = span(node)
+            {
+                entries.entry(position).or_insert(node);
+            }
+        });
+        Self(entries)
+    }
+    pub(super) fn get(&self, target: (u32, u32)) -> Option<&'a Value> {
+        self.0.get(&target).copied()
+    }
+}
+#[cfg(test)]
 pub(super) fn find_node(tree: &Value, target: (u32, u32)) -> Option<&Value> {
     if span(tree) == Some(target)
         && [
@@ -256,4 +282,33 @@ pub(super) fn location(source: &str, node: &Value) -> (usize, usize) {
         .encode_utf16()
         .count();
     (line, column)
+}
+
+#[cfg(test)]
+mod declaration_index_tests {
+    use super::*;
+    #[test]
+    fn index_retains_recursive_first_match_for_every_declared_span() {
+        let source = "export function outer(db) { let raw = db; const cb = (tx) => { const alias = tx; return alias.run('x'); }; function nested() { let raw = 3; return raw; } return db.executeMutation({mutate: cb}); }";
+        let parsed = parse("fixture.mjs", source).unwrap();
+        let index = DeclarationIndex::new(&parsed.tree);
+        walk(&parsed.tree, &mut |node| {
+            if let Some(position) = span(node) {
+                let before = find_node(&parsed.tree, position);
+                let after = index.get(position);
+                assert_eq!(before, after);
+                if let (Some(before), Some(after)) = (before, after) {
+                    assert!(std::ptr::eq(before, after));
+                }
+            }
+        });
+        assert_eq!(index.get((u32::MAX - 1, u32::MAX)), None);
+        let duplicate = json!({"type":"Program","start":0,"end":10,"body":[
+            {"type":"VariableDeclarator","start":1,"end":2,"id":{"type":"Identifier","start":1,"end":2,"name":"first"}},
+            {"type":"FunctionDeclaration","start":1,"end":2,"id":{"type":"Identifier","start":1,"end":2,"name":"second"}}
+        ]});
+        let index = DeclarationIndex::new(&duplicate);
+        assert_eq!(index.get((1, 2)), find_node(&duplicate, (1, 2)));
+        assert_eq!(index.get((1, 2)).unwrap()["id"]["name"], "first");
+    }
 }

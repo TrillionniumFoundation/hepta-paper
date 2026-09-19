@@ -41,7 +41,7 @@ hash and reservation/request hashes. Database sequence, hash and state continuit
 start at the provisioned genesis. Global sequences must advance and cannot exceed
 the observed authority head. The final local schema, sequence, hash and state must
 match that authority's database head. The final clock observation rejects evidence
-that expired during transport or local inspection.
+that expired during transport or local inspection. Clock samples are monotonic across request, observation, local scan and completion. A final memory-only time check follows public-key/configuration pin rechecks and SQLite transaction rollback; expiry is exclusive and maximum observation age is inclusive. This prevents late verification I/O from returning stale evidence.
 
 The derived marker-chain and inspection hashes match the original Node adapter.
 No local business rows, journal records, schema or cache are written. The caller
@@ -73,6 +73,8 @@ metadata/markers, invalid finalization signatures, duplicate JSON, bad recorded
 times, attached/temp/hidden schema, mismatched authority heads and evidence that
 expires during the call. Database snapshots and change counters verify no local
 mutation.
+
+A regression advances time only after the previous final verification sample: the old implementation incorrectly returned evidence at age 1001 ms with a 1000 ms observation-age limit. The corrected path refuses age 1001 ms, exact expiry, final clock rollback and an intermediate clock rollback; it accepts the exact 1000 ms age boundary. These cases use real signed receipts and leave the SQLite transaction closed and database contents unchanged. The previous Node adapter lacks this final post-I/O clock sample; this is an explicit stricter native boundary.
 
 The remaining runtime activation chain must combine this evidence for every
 registered database with startup reconciliation, fresh active challenge and broker

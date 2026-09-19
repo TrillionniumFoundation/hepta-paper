@@ -1,9 +1,17 @@
 use super::ast::*;
 use super::*;
-fn regex_match(pattern: &str, source: &str) -> Result<bool> {
-    Ok(regex::Regex::new(pattern)
-        .map_err(|e| error(e.to_string()))?
-        .is_match(source))
+fn repository_factory_name(source: &str) -> Result<bool> {
+    // This source-owned rule is identical for every AST call expression. Reuse
+    // its compilation; every source file and AST node is still inspected.
+    static PATTERN: std::sync::OnceLock<std::result::Result<regex::Regex, String>> =
+        std::sync::OnceLock::new();
+    let pattern = PATTERN
+        .get_or_init(|| {
+            regex::Regex::new(r"^create[A-Za-z0-9]+Repository$").map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(error)?;
+    Ok(pattern.is_match(source))
 }
 fn candidate(path: &str, source: &str, config: &Value) -> Result<bool> {
     if path.starts_with("paper-adapters/persistence/")
@@ -138,6 +146,7 @@ fn exclusion<'a>(config: &'a Value, key: &str) -> Option<(Option<&'a str>, &'a s
 }
 struct Discovery<'a> {
     parsed: &'a Parsed,
+    declarations: DeclarationIndex<'a>,
     source: &'a str,
     path: &'a str,
     config: &'a Value,
@@ -191,6 +200,7 @@ impl Discovery<'_> {
             {
                 self.violations.extend(super::callback::violations(
                     self.parsed,
+                    &self.declarations,
                     self.source,
                     node,
                     binding.as_ref(),
@@ -210,7 +220,7 @@ impl Discovery<'_> {
                 || self.imported.contains(name)
                 || strings(&self.config["WRITABLE_FACTORY_IMPORT_SOURCES"][self.path])
                     .contains(&name)
-                || (regex_match(r"^create[A-Za-z0-9]+Repository$", name)? && create_true(node));
+                || (repository_factory_name(name)? && create_true(node));
             if mutation_sql || direct_dynamic || name == "run" || writable {
                 self.mutation(caller.clone());
             }
@@ -247,6 +257,7 @@ pub fn discover_online_writer_mutation_entrypoints_v1(path: &str, source: &str) 
     let parsed = parse(path, source)?;
     let mut discovery = Discovery {
         parsed: &parsed,
+        declarations: DeclarationIndex::new(&parsed.tree),
         source,
         path,
         config: &config,

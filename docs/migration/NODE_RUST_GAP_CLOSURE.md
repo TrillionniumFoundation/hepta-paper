@@ -4,8 +4,8 @@
 
 - Inventory binding: `sha256:fbbb8573823f08a8c23531792405e37f5feb8fba6209efb820860792bac94eca`
 - Total command routes: **57**
-- Unmapped commands: **27**
-- Partial source candidates: **30**
+- Unmapped commands: **26**
+- Partial source candidates: **31**
 - Independently accepted parity rows: **0**
 - Open command gaps: **57**
 - Accepted parity: `false`

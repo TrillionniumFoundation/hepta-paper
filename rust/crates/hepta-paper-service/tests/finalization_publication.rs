@@ -213,6 +213,7 @@ fn prepares_real_signed_ten_database_final_receipt_and_rejects_splice() {
         proof.value()["schemaTransitionReceiptHash"],
         audit["schemaTransitionReceiptHash"]
     );
+    assert!(proof.value()["authorityConfigurationActivated"].is_null());
     let mut tampered = audit["observeRequest"].clone();
     tampered["nonce"] = json!("splice");
     assert!(
@@ -285,6 +286,32 @@ fn prepares_real_signed_ten_database_final_receipt_and_rejects_splice() {
         )
         .is_err()
     );
+    let mut v2_plan = plan.clone();
+    v2_plan["version"] = json!(2);
+    let v2_result = prepare_schema_transition_audit_v1(
+        SchemaTransitionAuditInputV1 {
+            plan: &v2_plan,
+            expected_plan_hash: audit["planHash"].as_str().unwrap(),
+            state_database_manifest: &manifest,
+            writer_manifest: &writer,
+            reserve_request: &audit["reserveRequest"],
+            reservation: &audit["reservation"],
+            finalize_request: &audit["finalizeRequest"],
+            finalization: &audit["finalization"],
+            observe_request: &audit["observeRequest"],
+            observation: &audit["observation"],
+            installations: &audit["installations"],
+        },
+        &inventory,
+        &authority,
+    );
+    assert_eq!(
+        v2_result.err().map(|error| error.code),
+        Some(
+            "autonomous_research_pristine_schema_rebind_target_configuration_restart_required"
+                .into()
+        )
+    );
 }
 
 #[test]
@@ -349,15 +376,49 @@ fn final_receipt_publication_is_node_readable_cas_idempotent_and_crash_recoverab
     );
     assert_ne!(node_audit, fs::read(&final_path).unwrap());
 
-    // The Node pinned reader accepts the same durable bytes and exposes the
-    // exact receipt hash. This is a reader differential, not an authority claim.
+    // The Node pinned reader and the Node historical verifier accept the same
+    // durable bytes. It independently rebuilds the ten-database inventory and
+    // verifies all three signatures before exposing the exact receipt hash.
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let node_reader = fixture.root.join("node-final-reader.mjs");
+    fs::write(
+        &node_reader,
+        r#"import fs from 'node:fs';
+const root = process.cwd();
+const { readAutonomousResearchOnlineSchemaTransitionJson: read } = await import(`file://${root}/paper-adapters/automation/autonomous-research-online-schema-transition-state-repository.mjs`);
+const { resolveAutonomousResearchStateDatabaseInventory } = await import(`file://${root}/paper-adapters/automation/autonomous-research-state-database-inventory.mjs`);
+const { validateAutonomousResearchOnlineSchemaTransitionAuditReceipt } = await import(`file://${root}/paper-adapters/automation/autonomous-research-online-schema-transition-completion.mjs`);
+const { createAutonomousResearchOnlineMutationReceiptVerifier } = await import(`file://${root}/paper-adapters/automation/autonomous-research-online-mutation-authority.mjs`);
+const { verifyAutonomousResearchOnlineSchemaTransitionReservation, verifyAutonomousResearchOnlineSchemaTransitionFinalization, verifyAutonomousResearchOnlineSchemaTransitionObservation } = await import(`file://${root}/paper-domain/automation/autonomous-research-online-schema-transition-contract.mjs`);
+const receipt = read(process.env.HEPTA_FINAL_PUBLICATION_FILE);
+const manifest = JSON.parse(fs.readFileSync(process.env.HEPTA_FINAL_PUBLICATION_MANIFEST, 'utf8'));
+const writerManifest = JSON.parse(fs.readFileSync(process.env.HEPTA_FINAL_PUBLICATION_WRITER, 'utf8'));
+const inventory = resolveAutonomousResearchStateDatabaseInventory({ runtimeRoot: process.env.HEPTA_FINAL_PUBLICATION_RUNTIME, manifest });
+const verifier = createAutonomousResearchOnlineMutationReceiptVerifier({ configurationPath: process.env.HEPTA_FINAL_PUBLICATION_CONFIGURATION });
+const verify = (fn, args) => fn({ ...args, trust: verifier.trust, now: new Date(args.receipt.issuedAt || args.receipt.finalizedAt || args.receipt.observedAt), verifySignature: verifier.verifySignedReceipt });
+const authorityClient = { verifyHistoricalReservation: args => verify(verifyAutonomousResearchOnlineSchemaTransitionReservation, args), verifyHistoricalFinalization: args => verify(verifyAutonomousResearchOnlineSchemaTransitionFinalization, args), verifyHistoricalObservation: args => verify(verifyAutonomousResearchOnlineSchemaTransitionObservation, args) };
+const checked = validateAutonomousResearchOnlineSchemaTransitionAuditReceipt({ receipt, inventory, writerManifest, authorityClient });
+process.stdout.write(checked.schemaTransitionReceiptHash);
+"#,
+    )
+    .unwrap();
     let output = std::process::Command::new("node")
         .current_dir(&repo)
-        .arg("--input-type=module")
-        .arg("-e")
-        .arg("import { readAutonomousResearchOnlineSchemaTransitionJson as read } from './paper-adapters/automation/autonomous-research-online-schema-transition-state-repository.mjs'; const v=read(process.env.HEPTA_FINAL_PUBLICATION_FILE); if(v.kind !== 'AutonomousResearchOnlineSchemaTransitionAuditReceipt' || v.status !== 'autonomous_research_online_schema_transition_ready') process.exit(2); process.stdout.write(v.schemaTransitionReceiptHash);")
+        .arg(&node_reader)
         .env("HEPTA_FINAL_PUBLICATION_FILE", &final_path)
+        .env(
+            "HEPTA_FINAL_PUBLICATION_MANIFEST",
+            fixture.root.join("publication-manifest.json"),
+        )
+        .env(
+            "HEPTA_FINAL_PUBLICATION_WRITER",
+            fixture.root.join("publication-writer.json"),
+        )
+        .env("HEPTA_FINAL_PUBLICATION_RUNTIME", &fixture.runtime)
+        .env(
+            "HEPTA_FINAL_PUBLICATION_CONFIGURATION",
+            fixture.value["configurationPath"].as_str().unwrap(),
+        )
         .output()
         .unwrap();
     assert!(output.status.success(), "node={output:?}");

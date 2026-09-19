@@ -29,6 +29,7 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | runtime image reproducibility | `../modules/RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md` |
 | externally fenced SQLite mutation | `../modules/SQLITE_MUTATION_COORDINATOR_HANDOFF.md` |
 | research capability projection | `../modules/RESEARCH_CAPABILITY_MATRIX_HANDOFF.md` |
+| advanced numerical reference candidate | `../modules/ADVANCED_NUMERICAL_PLUGIN_HANDOFF.md` |
 | startup mutation recovery | `../modules/ONLINE_MUTATION_STARTUP_HANDOFF.md` |
 | native workspace status | `../modules/WORKSPACE_STATUS_HANDOFF.md` |
 | native architecture conformance | `../modules/ARCHITECTURE_CONFORMANCE_HANDOFF.md` |

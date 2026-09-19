@@ -115,6 +115,10 @@ activation remains a separate verified contract.
 documents the native ten-capability projection, exact evidence ceilings and the
 remaining environment/observer/CLI boundary.
 
+[Advanced numerical plugin handoff](ADVANCED_NUMERICAL_PLUGIN_HANDOFF.md)
+documents the bounded native reference-candidate computation, request/result
+hash checks, and the missing signed-runner and scientific-qualification gates.
+
 [Retirement capability matrix handoff](RETIREMENT_MATRIX_HANDOFF.md) documents
 the native 249-row migration inventory, bounded source/target identity checks,
 and the remaining receipt, owner-acceptance and retirement-authority gates.

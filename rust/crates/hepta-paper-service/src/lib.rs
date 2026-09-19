@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod advanced_numerical;
 pub mod architecture_conformance;
 pub mod campaign_policy;
 pub mod campaign_slo;

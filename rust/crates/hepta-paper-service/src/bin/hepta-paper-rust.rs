@@ -2,6 +2,9 @@
 use hepta_paper_service::{
     LegacyDeletionDrillAttestationRequestV1, LegacyNodeFreezeSubjectV1, ObjectStoreV1,
     ServiceRunV1,
+    advanced_numerical::{
+        ADVANCED_NUMERICAL_MAX_INPUT_BYTES, execute_advanced_numerical_plugin_v1,
+    },
     architecture_conformance::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
     },
@@ -155,6 +158,18 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("architecture conformance verification blocked".into());
             }
         }
+        Some("advanced-numerical-plugin") if args.len() == 2 => {
+            let mut bytes = Vec::new();
+            File::open(&args[1])?
+                .take(ADVANCED_NUMERICAL_MAX_INPUT_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > ADVANCED_NUMERICAL_MAX_INPUT_BYTES {
+                return Err("advanced numerical request exceeds 32KiB".into());
+            }
+            let request: serde_json::Value = serde_json::from_slice(&bytes)?;
+            let result = execute_advanced_numerical_plugin_v1(&request)?;
+            println!("{}", serde_json::to_string(&result)?);
+        }
         Some("retirement-reference") if args.len() == 2 => {
             let report = verify_retirement_reference_v1(&PathBuf::from(&args[1]))?;
             let blocked = report["status"] == "retirement_reference_blocked";
@@ -255,6 +270,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "repository-assets ROOT MANIFEST [--handoff]",
                 " | command-surface ROOT [--write-package]",
                 " | verify-architecture ROOT [--json] [--strict]",
+                " | advanced-numerical-plugin REQUEST",
                 " | retirement-reference ROOT",
                 " | retirement-matrix --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH",
                 " | retirement-drill-attest REQUEST",

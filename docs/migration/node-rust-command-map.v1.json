@@ -932,14 +932,37 @@
     },
     {
       "id": "operator/advanced-numerical-plugin",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust advanced-numerical-plugin REQUEST",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/advanced_numerical.rs",
+          "symbol": "execute_advanced_numerical_plugin_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs"
+      ],
+      "remaining": "Native Rust executes only the three checked-in reference-candidate families (linear-algebra, monte-carlo, optimization) with request/result hash checks and an explicit unqualified result. The incumbent signed bundle/trust store, executable/source/package identity, kernel OS sandbox and resource receipt, GPU container authority, complete ten-family surface, independent oracle/replay/uncertainty qualification, provider effects, complete status/run argument modes and production activation remain unimplemented; the native result cannot authorize Node retirement.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/advanced_numerical.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
+          "symbol": "cli_executes_bounded_candidate_and_reports_unqualified_boundary"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
+          "symbol": "cli_rejects_request_hash_tampering_and_unsupported_families"
+        }
+      ]
     },
     {
       "id": "operator/autonomous-submission-dispatcher",

@@ -1432,7 +1432,7 @@
     },
     {
       "id": "maintenance/command-surface-sync",
-      "rustEntrypoint": "hepta-paper-rust command-surface ROOT [--write-package]",
+      "rustEntrypoint": "hepta-paper-rust command-surface ROOT [--write-package|--check-package|--npm-aliases|--ci-matrix]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -1448,7 +1448,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/command_surface_parity.rs"
       ],
-      "remaining": "Rust now owns deterministic package-script synchronization with byte-compatible Node JSON rewrite and ordered inspection output for the reviewed check/write path, including JavaScript truthiness for malformed alias values. The Rust CLI still exposes only the mapped ROOT [--write-package] route; Node's standalone classify, --check-package, --npm-aliases, --help-artifact and --ci-matrix modes, full command-registry metadata surface, and independent acceptance remain to be qualified.",
+      "remaining": "Rust now owns deterministic package-script synchronization with byte-compatible Node JSON rewrite and ordered inspection output for check/write, plus exact deterministic --npm-aliases and --ci-matrix projections with Node-compatible exit behavior for blocked checks. The standalone classify and --help-artifact metadata surfaces, full command-registry metadata, and independent acceptance remain to be qualified.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/command_surface.rs",
@@ -1459,6 +1459,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/command_surface_parity.rs",
           "symbol": "package_surface_check_and_write_match_node_oracle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/command_surface_parity.rs",
+          "symbol": "deterministic_command_surface_flags_match_node_oracle_and_exit_codes"
         }
       ]
     },
@@ -1509,7 +1513,7 @@
     },
     {
       "id": "verify/store",
-      "rustEntrypoint": "hepta-paper-rust inspect-db IMMUTABLE_DB",
+      "rustEntrypoint": "hepta-paper-rust store-integrity IMMUTABLE_DB",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -1519,13 +1523,13 @@
         },
         {
           "path": "rust/crates/hepta-readonly-store/src/lib.rs",
-          "symbol": "node_logical_snapshot"
+          "symbol": "node_logical_integrity_report"
         }
       ],
       "tests": [
         "rust/crates/hepta-readonly-store/tests/node_production_parity.rs"
       ],
-      "remaining": "Read-only logical snapshot check only; full Node store integrity/trust gate remains unimplemented.",
+      "remaining": "Rust now emits the complete read-only logical-integrity report with byte pre/post hashes, schema/table hashes, quick_check, foreign-key count, receipt-ledger hash validation, bounded blockers and fail-closed status; 25 generated Node migration stores match the report. Production store discovery, trust/repair/migration authority, historical recovery, external qualification and independent acceptance remain unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-readonly-store/src/lib.rs"

@@ -12,8 +12,8 @@ use std::{
 
 use hepta_codex_protocol::Sha256Digest;
 use hepta_legacy_compatibility::production_hash_record_v1;
-use hepta_readonly_control::{validate_database_schema_v1, DatabaseFormatV1, DatabaseSchemaV1};
-use rusqlite::{types::ValueRef, Connection, OpenFlags};
+use hepta_readonly_control::{DatabaseFormatV1, DatabaseSchemaV1, validate_database_schema_v1};
+use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;

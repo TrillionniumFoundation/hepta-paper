@@ -8,7 +8,10 @@ use hepta_paper_service::{
     architecture_conformance::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
     },
-    command_surface::synchronize_command_surface_json_v1,
+    command_surface::{
+        ci_command_matrix_json_v1, generated_npm_route_scripts_json_v1,
+        synchronize_command_surface_json_v1,
+    },
     inspect_legacy_deletion_drill_attest_v1, migrate_node_store_v1, native_implementation_hash_v1,
     release_attest::{ReleaseAttestationRequestV1, inspect_release_attestation_v1},
     release_state::inspect_release_state_v1,
@@ -117,14 +120,32 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string(&value)?);
         }
         Some("command-surface") if args.len() == 2 || args.len() == 3 => {
-            let write = args.get(2).map(String::as_str) == Some("--write-package");
-            if args.len() == 3 && !write {
-                return Err("command-surface accepts only --write-package".into());
+            let root = PathBuf::from(&args[1]);
+            match args.get(2).map(String::as_str) {
+                None | Some("--write-package") | Some("--check-package") => {
+                    let write = args.get(2).map(String::as_str) == Some("--write-package");
+                    let check = args.get(2).map(String::as_str) == Some("--check-package");
+                    let output = synchronize_command_surface_json_v1(&root, write)?;
+                    let blocked = serde_json::from_str::<serde_json::Value>(&output)?.get("ready")
+                        != Some(&serde_json::Value::Bool(true));
+                    println!("{output}");
+                    if (write || check) && blocked {
+                        return Err("command-surface package inspection blocked".into());
+                    }
+                }
+                Some("--npm-aliases") => {
+                    println!("{}", generated_npm_route_scripts_json_v1(&root)?);
+                }
+                Some("--ci-matrix") => {
+                    println!("{}", ci_command_matrix_json_v1(&root)?);
+                }
+                Some(_) => {
+                    return Err(
+                        "command-surface accepts --write-package, --check-package, --npm-aliases, or --ci-matrix"
+                            .into(),
+                    );
+                }
             }
-            println!(
-                "{}",
-                synchronize_command_surface_json_v1(&PathBuf::from(&args[1]), write)?
-            );
         }
         Some("verify-architecture") if args.len() >= 2 => {
             let root = PathBuf::from(&args[1]);
@@ -297,7 +318,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
                 "store-migrate NODE_DB [TARGET_VERSION] | ",
                 "repository-assets ROOT MANIFEST [--handoff]",
-                " | command-surface ROOT [--write-package]",
+                " | command-surface ROOT [--write-package|--check-package|--npm-aliases|--ci-matrix]",
                 " | verify-architecture ROOT [--json] [--strict]",
                 " | advanced-numerical-plugin REQUEST",
                 " | retirement-reference ROOT",

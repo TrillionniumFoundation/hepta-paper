@@ -8,7 +8,14 @@ use std::{
 };
 
 fn temp_fixture() -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("hepta-command-surface-{}", std::process::id()));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "hepta-command-surface-{}-{nonce}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("fixture directory");
     fs::write(
@@ -46,35 +53,25 @@ fn oracle(requests: Value) -> Value {
     value
 }
 
-fn rust_result(root: &std::path::Path, write_package: bool) -> Value {
+fn rust_output(root: &std::path::Path, flag: Option<&str>) -> std::process::Output {
     let binary = env!("CARGO_BIN_EXE_hepta-paper-rust");
     let mut command = Command::new(binary);
     command.arg("command-surface").arg(root);
-    if write_package {
-        command.arg("--write-package");
+    if let Some(flag) = flag {
+        command.arg(flag);
     }
-    let output = command.output().expect("Rust command");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    command.output().expect("Rust command")
+}
+
+fn rust_result(root: &std::path::Path, write_package: bool) -> Value {
+    let flag = write_package.then_some("--write-package");
+    let output = rust_output(root, flag);
     serde_json::from_slice(&output.stdout).expect("Rust JSON")
 }
 
 fn rust_raw_result(root: &std::path::Path, write_package: bool) -> String {
-    let binary = env!("CARGO_BIN_EXE_hepta-paper-rust");
-    let mut command = Command::new(binary);
-    command.arg("command-surface").arg(root);
-    if write_package {
-        command.arg("--write-package");
-    }
-    let output = command.output().expect("Rust command");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let flag = write_package.then_some("--write-package");
+    let output = rust_output(root, flag);
     String::from_utf8(output.stdout)
         .expect("Rust UTF-8")
         .trim_end_matches('\n')
@@ -116,6 +113,64 @@ fn package_surface_check_and_write_match_node_oracle() {
         fs::read(fixture.join("package.json")).expect("Rust package bytes"),
         fs::read(oracle_fixture.join("package.json")).expect("Node package bytes")
     );
+    let _ = fs::remove_dir_all(fixture);
+    let _ = fs::remove_dir_all(oracle_fixture);
+}
+
+#[test]
+fn deterministic_command_surface_flags_match_node_oracle_and_exit_codes() {
+    let fixture = temp_fixture();
+    let oracle_fixture = fixture.with_file_name(format!(
+        "{}-modes-oracle",
+        fixture.file_name().unwrap().to_string_lossy()
+    ));
+    fs::create_dir_all(&oracle_fixture).expect("oracle fixture directory");
+    fs::copy(
+        fixture.join("package.json"),
+        oracle_fixture.join("package.json"),
+    )
+    .expect("oracle fixture package");
+
+    let requests = serde_json::json!([
+        {"root": oracle_fixture, "mode": "check-package"},
+        {"root": oracle_fixture, "mode": "npm-aliases"},
+        {"root": oracle_fixture, "mode": "ci-matrix"},
+    ]);
+    let expected = oracle(requests);
+    for (flag, index) in [
+        ("--check-package", 0_usize),
+        ("--npm-aliases", 1),
+        ("--ci-matrix", 2),
+    ] {
+        let output = rust_output(&fixture, Some(flag));
+        let expected_result = &expected["results"][index];
+        assert_eq!(
+            output.status.code(),
+            expected_result["exitCode"]
+                .as_i64()
+                .map(|value| value as i32),
+            "{flag}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let actual_raw = String::from_utf8(output.stdout)
+            .expect("Rust UTF-8")
+            .trim_end_matches('\n')
+            .to_owned();
+        assert_eq!(
+            actual_raw,
+            expected_result["raw"].as_str().unwrap(),
+            "{flag}"
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&actual_raw).expect("Rust JSON"),
+            expected_result["value"],
+            "{flag}"
+        );
+    }
+
+    let unsupported = rust_output(&fixture, Some("--help-artifact"));
+    assert_eq!(unsupported.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unsupported.stderr).contains("command-surface accepts"));
     let _ = fs::remove_dir_all(fixture);
     let _ = fs::remove_dir_all(oracle_fixture);
 }

@@ -118,6 +118,11 @@ const RETAINED_ALIASES: &[(&str, &str)] = &[
     ),
 ];
 
+// The CI matrix is deliberately kept as data.  It has no runtime authority or
+// side effects; the command-surface CLI only reports the matrix owned by the
+// checked-in command registry.
+const CI_COMMAND_MATRIX_JSON: &str = r#"{"pullRequest":[{"id":"static-contracts","npmScripts":["static:check","security:npm-audit"]},{"id":"impacted-tests","npmScripts":["test:impacted"],"shardCount":4,"targetDurationMinutes":5}],"nightly":[{"id":"full-portable","npmScripts":["security:npm-audit","ci:selftest","coverage:architecture","coverage:repository"]},{"id":"formal-cache","npmScripts":["ci:mathlib-cache"]},{"id":"academic-empirical","npmScripts":["test:academic-docker-operational"]},{"id":"typed-numeric","npmScripts":["test:typed-numeric-process-operational"]},{"id":"dynamic-formal","npmScripts":["test:dynamic-formal-kernel-operational"]}]}"#;
+
 #[derive(Debug, Error)]
 pub enum CommandSurfaceError {
     #[error("package.json is invalid or missing scripts")]
@@ -130,6 +135,11 @@ pub enum CommandSurfaceError {
 
 fn package_path(root: &Path) -> PathBuf {
     root.join("package.json")
+}
+
+fn validate_package_root(root: &Path) -> Result<(), CommandSurfaceError> {
+    let _: Value = serde_json::from_slice(&fs::read(package_path(root))?)?;
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -336,6 +346,32 @@ fn generated_aliases() -> Map<String, Value> {
         .iter()
         .map(|(name, command)| ((*name).to_owned(), Value::String((*command).to_owned())))
         .collect()
+}
+
+/// Return the retained npm aliases in the exact insertion order emitted by
+/// `generatedNpmRouteScripts()` in the Node command registry.
+pub fn generated_npm_route_scripts_json_v1(root: &Path) -> Result<String, CommandSurfaceError> {
+    validate_package_root(root)?;
+    let mut output = String::from("{");
+    for (index, (name, command)) in RETAINED_ALIASES.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        output.push_str(&serde_json::to_string(name).map_err(CommandSurfaceError::Json)?);
+        output.push(':');
+        output.push_str(&serde_json::to_string(command).map_err(CommandSurfaceError::Json)?);
+    }
+    output.push('}');
+    Ok(output)
+}
+
+/// Return the static CI command matrix in the exact key/array order emitted by
+/// `heptaPaperCiCommandMatrix()`.
+pub fn ci_command_matrix_json_v1(root: &Path) -> Result<String, CommandSurfaceError> {
+    validate_package_root(root)?;
+    // Parse once so the embedded contract cannot silently become invalid JSON.
+    let _: Value = serde_json::from_str(CI_COMMAND_MATRIX_JSON)?;
+    Ok(CI_COMMAND_MATRIX_JSON.to_owned())
 }
 
 fn javascript_truthy(value: &Value) -> bool {

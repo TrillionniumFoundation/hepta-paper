@@ -34,7 +34,7 @@ return, after which a new process can verify and resume idempotently.
 
 `tests/finalization_publication.rs` passed three groups: a real Node ten-database
 signed fixture with signature-splice and plan-hash negative cases, Node pinned
-reader verification, and a child exit after publication followed by idempotent
+reader plus historical audit verifier validation, and a child exit after publication followed by idempotent
 recovery. Strict production Clippy, rustfmt check, package rustdoc, and the
 publication repository's bounded CAS unit test passed.
 

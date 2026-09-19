@@ -82,6 +82,10 @@ python3 docs/rust/tools/test_strict_json_schema_contract.py
 
 [Module implementation handoff](IMPLEMENTATION_HANDOFF.md) maps every registered module to concrete API/type definitions, its engineering contract and a focused validation command. It explicitly separates incumbent Node roles, bounded Rust kernels and qualified production replacements. The handoff and the actual Rust command table are checked by `paper-core/tests/module-development-handoff.test.mjs`; navigation completeness is not full business parity.
 
+[Native workspace status](WORKSPACE_STATUS_HANDOFF.md) documents relocatable
+workspace-root selection, physical decoupling, bounded symlink resolution and
+the read-only status CLI.
+
 [Native authority inspection handoff](NATIVE_AUTHORITY_INSPECTION_HANDOFF.md)
 documents the operational, owner-acceptance, nested-platform and journal discovery
 commands, including input ownership, signed evidence, error behavior, tests and

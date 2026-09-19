@@ -286,3 +286,4 @@ pub mod research_capability_matrix;
 pub mod state_backup_authority;
 
 pub mod online_writer_static;
+pub mod workspace_status;

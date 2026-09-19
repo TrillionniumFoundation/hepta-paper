@@ -86,6 +86,10 @@ python3 docs/rust/tools/test_strict_json_schema_contract.py
 workspace-root selection, physical decoupling, bounded symlink resolution and
 the read-only status CLI.
 
+[Native architecture conformance](ARCHITECTURE_CONFORMANCE_HANDOFF.md)
+documents the read-only Rust source-boundary/import-graph checker and its
+explicit non-authorizing boundary.
+
 [Native authority inspection handoff](NATIVE_AUTHORITY_INSPECTION_HANDOFF.md)
 documents the operational, owner-acceptance, nested-platform and journal discovery
 commands, including input ownership, signed evidence, error behavior, tests and
@@ -186,3 +190,7 @@ binds a signed ten-database audit to a locked, CAS-protected historical
 [Autonomous supervisor health](AUTONOMOUS_SUPERVISOR_HEALTH_HANDOFF.md) provides
 the first three read-only resident health modes with descriptor-pinned snapshots;
 dependent advanced modes remain explicitly unsupported.
+
+[Native retirement drill-attest inspection](RETIREMENT_DRILL_ATTEST_HANDOFF.md)
+captures the local immutable Node freeze and archive checks while preserving the
+external replay, signing, publication, and independent retirement gates.

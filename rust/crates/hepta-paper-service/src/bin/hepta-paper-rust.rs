@@ -1,8 +1,12 @@
 //! Bounded JSON command interface for the durable Rust composition.
 use hepta_paper_service::{
-    LegacyNodeFreezeSubjectV1, ObjectStoreV1, ServiceRunV1,
+    LegacyDeletionDrillAttestationRequestV1, LegacyNodeFreezeSubjectV1, ObjectStoreV1,
+    ServiceRunV1,
+    architecture_conformance::{
+        ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
+    },
     command_surface::synchronize_command_surface_v1,
-    migrate_node_store_v1, native_implementation_hash_v1,
+    inspect_legacy_deletion_drill_attest_v1, migrate_node_store_v1, native_implementation_hash_v1,
     release_state::inspect_release_state_v1,
     release_trust_gate::build_release_trust_layer_gate_from_values_v1,
     repository_assets::{
@@ -120,12 +124,53 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 )?)?
             );
         }
+        Some("verify-architecture") if args.len() >= 2 => {
+            let root = PathBuf::from(&args[1]);
+            let mut json_output = false;
+            for flag in args.iter().skip(2) {
+                match flag.as_str() {
+                    "--json" | "--strict" => {
+                        if flag == "--json" {
+                            json_output = true;
+                        }
+                    }
+                    _ => return Err("verify-architecture accepts only --json or --strict".into()),
+                }
+            }
+            let report =
+                inspect_architecture_conformance_v1(&root, ArchitectureConformanceModeV1::Strict)?;
+            if json_output {
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                println!(
+                    "{}",
+                    report["status"]
+                        .as_str()
+                        .unwrap_or("architecture_conformance_blocked")
+                );
+            }
+            if report["ready"] != true {
+                return Err("architecture conformance verification blocked".into());
+            }
+        }
         Some("retirement-reference") if args.len() == 2 => {
             let report = verify_retirement_reference_v1(&PathBuf::from(&args[1]))?;
             let blocked = report["status"] == "retirement_reference_blocked";
             println!("{}", serde_json::to_string(&report)?);
             if blocked {
                 return Err("retirement reference verification blocked".into());
+            }
+        }
+        Some("retirement-drill-attest") if args.len() == 2 => {
+            let request: LegacyDeletionDrillAttestationRequestV1 =
+                serde_json::from_slice(&read_bounded(&args[1])?)?;
+            let report = inspect_legacy_deletion_drill_attest_v1(request)?;
+            let blocked = !report.technical_release_ready || !report.physical_deletion_allowed;
+            println!("{}", serde_json::to_string(&report)?);
+            if blocked {
+                return Err(
+                    "retirement drill attestation blocked pending external evidence".into(),
+                );
             }
         }
         Some("release-trust-gate") if args.len() == 2 => {
@@ -165,7 +210,9 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "store-migrate NODE_DB [TARGET_VERSION] | ",
                 "repository-assets ROOT MANIFEST [--handoff]",
                 " | command-surface ROOT [--write-package]",
+                " | verify-architecture ROOT [--json] [--strict]",
                 " | retirement-reference ROOT",
+                " | retirement-drill-attest REQUEST",
                 " | release-trust-gate REQUEST",
                 " | release-state REQUEST",
                 " | retirement-status REQUEST",

@@ -552,6 +552,7 @@ dependencies = [
  "hepta-readonly-control",
  "hepta-readonly-store",
  "hex",
+ "nix",
  "rusqlite",
  "serde",
  "serde_json",

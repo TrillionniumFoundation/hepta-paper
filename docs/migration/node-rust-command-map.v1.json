@@ -1398,14 +1398,37 @@
     },
     {
       "id": "verify/architecture",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "Rust durable-service tests are not an implementation of the Node architecture-conformance command. A native checker for the complete incumbent boundary/import contract and its argument modes is required.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust verify-architecture ROOT [--json] [--strict]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/architecture_conformance.rs",
+          "symbol": "inspect_architecture_conformance_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/architecture_conformance.rs"
+      ],
+      "remaining": "Rust now performs a read-only source-boundary/import-graph inspection for every declared architecture manifest category, retired workflow path, production/reference boundary, domain filesystem/clock rule, compatibility manifest, and research/dispatcher network boundary. It does not execute the complete Node architecture-conformance runtime assertions, provider/artifact/SQLite/formal-verifier behavior, argument/error matrix, or independent acceptance; the native report never grants production activation or Node retirement.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/architecture_conformance.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/architecture_conformance.rs",
+          "symbol": "native_checker_accepts_current_declared_architecture_boundary"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/architecture_conformance.rs",
+          "symbol": "native_checker_has_explicit_diagnostic_contract"
+        }
+      ]
     },
     {
       "id": "verify/critical",
@@ -1893,14 +1916,46 @@
     },
     {
       "id": "retirement/drill-attest",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "The local_cutover_drill example requires an absent directory and does not implement --attest. Independent attestation generation/verification and the actual Node command contract remain unmapped.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust retirement-drill-attest REQUEST",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-cutover/src/retirement_attest.rs",
+          "symbol": "inspect_legacy_deletion_drill_attest_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-cutover/src/retirement_attest.rs",
+        "rust/crates/hepta-paper-service/tests/retirement_drill_attest.rs"
+      ],
+      "remaining": "Rust now performs a native immutable schema-25 freeze and archive identity inspection and emits a self-hashed blocked report. It does not run the incumbent isolated Node p0/p1 or matrix replay, independently verify release provenance, obtain owner or operational acceptance, use the release signing key, publish a receipt, or authorize physical deletion; those independent qualification gates remain external.",
+      "rustSources": [
+        "rust/crates/hepta-cutover/src/retirement_attest.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-cutover/src/retirement_attest.rs",
+          "symbol": "missing_database_and_nonimmutable_archive_are_fail_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_drill_attest.rs",
+          "symbol": "native_attest_reads_real_schema25_and_stays_blocked_without_external_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_drill_attest.rs",
+          "symbol": "native_attest_rejects_archive_hardlink_before_any_freeze_claim"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_drill_attest.rs",
+          "symbol": "native_attest_cli_prints_blocked_report_and_exits_nonzero"
+        }
+      ]
     }
   ]
 }

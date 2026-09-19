@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod architecture_conformance;
 pub mod campaign_policy;
 pub mod campaign_slo;
 pub mod command_surface;
@@ -57,8 +58,11 @@ use hepta_control_plane::{
     ResourceAllocatorV1, SqliteCommitSequencerV1, canonical_hash_v1,
 };
 pub use hepta_cutover::{
+    LegacyDeletionDrillArchiveCaptureV1, LegacyDeletionDrillAttestError,
+    LegacyDeletionDrillAttestationInspectionV1, LegacyDeletionDrillAttestationRequestV1,
     LegacyNodeFreezeError, LegacyNodeFreezeReceiptV1, LegacyNodeFreezeSubjectV1,
-    LegacyRollbackModeV1, VerifiedLegacyNodeFreezeV1, verify_legacy_node_freeze_v1,
+    LegacyRollbackModeV1, VerifiedLegacyNodeFreezeV1, inspect_legacy_deletion_drill_attest_v1,
+    verify_legacy_node_freeze_v1,
 };
 use hepta_module_platform::ModuleRegistryArtifactV1;
 use serde::{Deserialize, Serialize};

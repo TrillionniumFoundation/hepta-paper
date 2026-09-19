@@ -5,8 +5,10 @@ use thiserror::Error;
 
 mod durable;
 mod retirement;
+mod retirement_attest;
 pub use durable::*;
 pub use retirement::*;
+pub use retirement_attest::*;
 
 /// Durable cutover phase.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

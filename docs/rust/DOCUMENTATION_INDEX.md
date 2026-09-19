@@ -31,6 +31,8 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | research capability projection | `../modules/RESEARCH_CAPABILITY_MATRIX_HANDOFF.md` |
 | startup mutation recovery | `../modules/ONLINE_MUTATION_STARTUP_HANDOFF.md` |
 | native workspace status | `../modules/WORKSPACE_STATUS_HANDOFF.md` |
+| native architecture conformance | `../modules/ARCHITECTURE_CONFORMANCE_HANDOFF.md` |
+| native retirement drill-attest inspection | `../modules/RETIREMENT_DRILL_ATTEST_HANDOFF.md` |
 | all-database startup reconciliation | `../modules/ONLINE_STARTUP_RECONCILIATION_SET_HANDOFF.md` |
 | finalized-head inspection | `../modules/ONLINE_FINALIZED_HEAD_INSPECTION_HANDOFF.md` |
 | finalized inventory | `../modules/ONLINE_FINALIZED_INVENTORY_HANDOFF.md` |

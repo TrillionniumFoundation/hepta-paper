@@ -135,6 +135,12 @@ promotes locally and rolls ownership back while preserving both records. Its
 JSON output explicitly states `productionActivation: false` and
 `legacySchemaTranslationVerified: false`.
 
+The native retirement boundary is the separate
+`hepta-paper-rust retirement-drill-attest REQUEST` command documented in
+[`docs/modules/RETIREMENT_DRILL_ATTEST_HANDOFF.md`](../../../docs/modules/RETIREMENT_DRILL_ATTEST_HANDOFF.md).
+It is read-only and always fail-closed until external Node replay, release
+signing, publication, and independent retirement evidence are supplied.
+
 Integration tests additionally kill a child process mid-transition, verify the
 previous durable state on restart, and hold a Node process inside an actual
 native database write while a concurrent Rust handoff waits. Other tests cover

@@ -20,6 +20,7 @@ use hepta_paper_service::{
         build_repository_asset_externalization_handoff_v1,
         inspect_repository_asset_externalization_v1,
     },
+    research_capability_matrix::build_research_capability_matrix_v2,
     retirement_matrix::inspect_retirement_matrix_v1,
     retirement_reference::verify_retirement_reference_v1,
     retirement_status::inspect_retirement_status_v1,
@@ -99,6 +100,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "{}",
                 serde_json::to_string(&store.node_logical_snapshot()?)?
             );
+        }
+        Some("store-integrity") if args.len() == 2 => {
+            let store = hepta_readonly_store::ReadOnlyStoreV1::open(PathBuf::from(&args[1]))?;
+            let report = store.node_logical_integrity_report()?;
+            println!("{}", serde_json::to_string(&report)?);
+            if report.status != "sqlite_logical_integrity_verified" {
+                return Err("sqlite logical integrity report blocked".into());
+            }
         }
         Some("store-migrate") if (args.len() == 2 || args.len() == 3) => {
             let target = args.get(2).map(|value| value.parse::<u32>()).transpose()?;
@@ -311,10 +320,56 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("R runtime source CAS verification blocked".into());
             }
         }
+        Some("research-capability-matrix") => {
+            let mut request = None;
+            let mut require_production_ready = false;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--request" if index + 1 < args.len() && request.is_none() => {
+                        let path = PathBuf::from(&args[index + 1]);
+                        if !path.is_absolute() {
+                            return Err(
+                                "research-capability-matrix requires an absolute request path"
+                                    .into(),
+                            );
+                        }
+                        request = Some(path);
+                        index += 2;
+                    }
+                    "--require-production-ready" if !require_production_ready => {
+                        require_production_ready = true;
+                        index += 1;
+                    }
+                    _ => {
+                        return Err(
+                            "research-capability-matrix accepts --request ABSOLUTE_JSON_PATH [--require-production-ready] only"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            let request = request
+                .ok_or("research-capability-matrix requires --request ABSOLUTE_JSON_PATH")?;
+            let readiness: serde_json::Value = serde_json::from_slice(&read_bounded(
+                request
+                    .to_str()
+                    .ok_or("research-capability-matrix request path must be valid UTF-8")?,
+            )?)?;
+            let report = build_research_capability_matrix_v2(&readiness)?;
+            let production_ready = report["fullyAutonomousProductionReady"] == true;
+            println!("{}", serde_json::to_string(&report)?);
+            if require_production_ready && !production_ready {
+                return Err(
+                    "research capability matrix is descriptive and not production ready".into(),
+                );
+            }
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
                 "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
+                "store-integrity IMMUTABLE_DB | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
                 "store-migrate NODE_DB [TARGET_VERSION] | ",
                 "repository-assets ROOT MANIFEST [--handoff]",
@@ -328,7 +383,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | release-state REQUEST",
                 " | release-attest REQUEST",
                 " | retirement-status REQUEST",
-                " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]"
+                " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
+                " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]"
             )
             .into());
         }

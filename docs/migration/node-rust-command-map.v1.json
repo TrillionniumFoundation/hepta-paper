@@ -166,7 +166,7 @@
     },
     {
       "id": "operator/research-capability-matrix",
-      "rustEntrypoint": "build_research_capability_matrix_v2(readiness) [library; observer/CLI pending]",
+      "rustEntrypoint": "hepta-paper-rust research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -178,7 +178,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/research_capability_matrix_parity.rs"
       ],
-      "remaining": "Native pure projection covers all ten capabilities, strict boolean gates, four evidence levels, actual registry inputs, Unicode blocker ordering and recomputed production hashes. More than 700 real Node cases pass. Environment composition, live readiness observations, full CLI/exit behavior and independent command acceptance remain unimplemented; descriptive JSON never grants authority.",
+      "remaining": "Native Rust now exposes the bounded --request CLI over the already-observed descriptive readiness JSON; the optional --require-production-ready flag is a fail-closed diagnostic gate. Pure projection covers all ten capabilities, strict boolean gates, four evidence levels, actual registry inputs, Unicode blocker ordering and recomputed production hashes, with more than 700 real Node cases plus CLI/gate parity. Environment composition, live readiness observations, full incumbent command modes and independent command acceptance remain unimplemented; descriptive JSON never grants authority.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/research_capability_matrix.rs",
         "rust/crates/hepta-paper-service/src/research_capability_matrix/registry-inputs.v1.json"
@@ -191,6 +191,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/research_capability_matrix_parity.rs",
           "symbol": "malformed_blocker_shapes_cannot_panic_or_authorize_any_action"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_capability_matrix_parity.rs",
+          "symbol": "research_capability_matrix_cli_matches_node_oracle_and_fails_closed_gate"
         }
       ]
     },

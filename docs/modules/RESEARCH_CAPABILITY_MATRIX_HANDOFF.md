@@ -11,6 +11,11 @@ never returns an activation capability, portal permission or qualification.
 - Rust: `rust/crates/hepta-paper-service/src/research_capability_matrix.rs`.
 - Entry: `build_research_capability_matrix_v2(&serde_json::Value) -> Result<Value,
   ResearchCapabilityMatrixError>`.
+- Bounded local CLI: `hepta-paper-rust research-capability-matrix --request
+  ABSOLUTE_JSON_PATH [--require-production-ready]`. The request file is limited
+  by the service's 16 MiB JSON reader. The command prints the descriptive matrix
+  even when `--require-production-ready` fails closed with a non-zero exit; that
+  flag is only a diagnostic assertion over the returned projection.
 - Static input data: `research_capability_matrix/registry-inputs.v1.json` contains
   registered empirical family/oracle identities, runtime languages, formal
   template identities, proof strategy capabilities and backend descriptors. It
@@ -62,7 +67,11 @@ returned field and recomputed hash for more than 700 current-source cases. Cases
 cover individually missing gates, mixed readiness, wrong boolean types, all ten
 capabilities and evidence levels, explicit evidence errors, runtime images,
 Unicode blocker ordering and deployment inspection. A separate negative test
-checks malformed input rejection and legacy GPU fields.
+checks malformed input rejection and legacy GPU fields. The same parity test
+invokes the native CLI for the all-ready and empty oracle fixtures, checks the
+complete JSON projection, and verifies that the optional production-ready
+assertion exits non-zero for the blocked fixture while still emitting its
+descriptive report.
 
 ```bash
 cargo +1.98.0 test --manifest-path rust/Cargo.toml -p hepta-paper-service \
@@ -71,5 +80,5 @@ cargo +1.98.0 test --manifest-path rust/Cargo.toml -p hepta-paper-service \
 
 The Node oracle is test-only. Completing the operator route still requires native
 `composeAutomationReadinessDeploymentEnvironment`, `queryAutomationReadiness`,
-all local/external observer dependencies, the actual CLI options/exit behavior,
+all local/external observer dependencies, the incumbent's other command modes,
 and independent acceptance. This handoff grants none of those statuses.

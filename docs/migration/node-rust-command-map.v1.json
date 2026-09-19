@@ -1880,14 +1880,38 @@
     },
     {
       "id": "retirement/matrix",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust retirement-matrix --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/retirement_matrix.rs",
+          "symbol": "inspect_retirement_matrix_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/owner_status.rs",
+          "symbol": "inspect_owner_acceptance_status_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/retirement_matrix.rs"
+      ],
+      "remaining": "Native Rust performs a bounded, read-only projection of all explicit-retirement rows, conservative decision classification, source/target hash inspection and owner-status import. It never executes the Node release profile, verifies capability conformance or production receipts, obtains external owner acceptance, replays the private legacy archive, or grants retirement authority; blocked output exits non-zero.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/retirement_matrix.rs",
+        "rust/crates/hepta-paper-service/src/owner_status.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_matrix.rs",
+          "symbol": "retirement_matrix_cli_emits_bounded_blocked_report_without_writes"
+        }
+      ]
     },
     {
       "id": "retirement/drill",

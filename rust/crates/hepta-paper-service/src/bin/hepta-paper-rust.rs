@@ -13,6 +13,7 @@ use hepta_paper_service::{
         build_repository_asset_externalization_handoff_v1,
         inspect_repository_asset_externalization_v1,
     },
+    retirement_matrix::inspect_retirement_matrix_v1,
     retirement_reference::verify_retirement_reference_v1,
     retirement_status::inspect_retirement_status_v1,
     run_service_v1,
@@ -161,6 +162,39 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("retirement reference verification blocked".into());
             }
         }
+        Some("retirement-matrix") => {
+            let mut workspace_root = None;
+            let mut runtime_root = None;
+            let mut index = 1;
+            while index < args.len() {
+                let target =
+                    match args[index].as_str() {
+                        "--workspace-root" => &mut workspace_root,
+                        "--runtime-root" => &mut runtime_root,
+                        _ => return Err(
+                            "retirement-matrix accepts --workspace-root and --runtime-root only"
+                                .into(),
+                        ),
+                    };
+                if target.is_some() || index + 1 >= args.len() {
+                    return Err("retirement-matrix arguments must be unique absolute paths".into());
+                }
+                let path = PathBuf::from(&args[index + 1]);
+                if !path.is_absolute() {
+                    return Err("retirement-matrix requires absolute root paths".into());
+                }
+                *target = Some(path);
+                index += 2;
+            }
+            let workspace_root =
+                workspace_root.ok_or("retirement-matrix requires --workspace-root")?;
+            let runtime_root = runtime_root.ok_or("retirement-matrix requires --runtime-root")?;
+            let report = inspect_retirement_matrix_v1(&workspace_root, &runtime_root)?;
+            println!("{}", serde_json::to_string(&report)?);
+            if report["status"] == "retirement_matrix_partial_blocked" {
+                return Err("retirement matrix is locally inspectable but blocked by source or owner evidence".into());
+            }
+        }
         Some("retirement-drill-attest") if args.len() == 2 => {
             let request: LegacyDeletionDrillAttestationRequestV1 =
                 serde_json::from_slice(&read_bounded(&args[1])?)?;
@@ -212,6 +246,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | command-surface ROOT [--write-package]",
                 " | verify-architecture ROOT [--json] [--strict]",
                 " | retirement-reference ROOT",
+                " | retirement-matrix --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH",
                 " | retirement-drill-attest REQUEST",
                 " | release-trust-gate REQUEST",
                 " | release-state REQUEST",

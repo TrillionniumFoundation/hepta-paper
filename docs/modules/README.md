@@ -110,6 +110,8 @@ external authority, lease-fenced commits and recovery. Production runtime
 activation remains a separate verified contract.
 
 [Research capability matrix handoff](RESEARCH_CAPABILITY_MATRIX_HANDOFF.md)
+
+[Retirement capability matrix handoff](RETIREMENT_MATRIX_HANDOFF.md)
 documents the native ten-capability projection, exact evidence ceilings and the
 remaining environment/observer/CLI boundary.
 

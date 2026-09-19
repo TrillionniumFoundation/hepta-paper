@@ -1444,7 +1444,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/command_surface_parity.rs"
       ],
-      "remaining": "Rust owns deterministic package-script synchronization and matches the Node oracle for the reviewed check/write path; exact JSON formatting, full command-registry classification, and independent acceptance remain to be qualified.",
+      "remaining": "Rust now owns deterministic package-script synchronization with byte-compatible Node JSON rewrite and ordered inspection output for the reviewed check/write path, including JavaScript truthiness for malformed alias values. The Rust CLI still exposes only the mapped ROOT [--write-package] route; Node's standalone classify, --check-package, --npm-aliases, --help-artifact and --ci-matrix modes, full command-registry metadata surface, and independent acceptance remain to be qualified.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/command_surface.rs",

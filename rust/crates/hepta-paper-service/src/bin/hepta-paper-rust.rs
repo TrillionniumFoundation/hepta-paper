@@ -8,7 +8,7 @@ use hepta_paper_service::{
     architecture_conformance::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
     },
-    command_surface::synchronize_command_surface_v1,
+    command_surface::synchronize_command_surface_json_v1,
     inspect_legacy_deletion_drill_attest_v1, migrate_node_store_v1, native_implementation_hash_v1,
     release_attest::{ReleaseAttestationRequestV1, inspect_release_attestation_v1},
     release_state::inspect_release_state_v1,
@@ -123,10 +123,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!(
                 "{}",
-                serde_json::to_string(&synchronize_command_surface_v1(
-                    &PathBuf::from(&args[1]),
-                    write
-                )?)?
+                synchronize_command_surface_json_v1(&PathBuf::from(&args[1]), write)?
             );
         }
         Some("verify-architecture") if args.len() >= 2 => {

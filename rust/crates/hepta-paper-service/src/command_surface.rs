@@ -4,7 +4,9 @@
 //! owns the deterministic package-script synchronization step and never runs a
 //! route or invokes Node.
 
-use serde_json::{Map, Value, json};
+use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde_json::{Map, Number, Value, json};
+use std::fmt;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -130,6 +132,194 @@ fn package_path(root: &Path) -> PathBuf {
     root.join("package.json")
 }
 
+#[derive(Clone, Debug)]
+enum OrderedJson {
+    Null,
+    Bool(bool),
+    Number(Number),
+    String(String),
+    Array(Vec<Self>),
+    Object(Vec<(String, Self)>),
+}
+
+struct OrderedJsonVisitor;
+
+impl<'de> Visitor<'de> for OrderedJsonVisitor {
+    type Value = OrderedJson;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(OrderedJson::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(OrderedJson::Number(Number::from(value)))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(OrderedJson::Number(Number::from(value)))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Number::from_f64(value)
+            .map(OrderedJson::Number)
+            .ok_or_else(|| E::custom("non-finite JSON number"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(OrderedJson::String(value.to_owned()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(OrderedJson::String(value))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(OrderedJson::Null)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(OrderedJson::Null)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_seq<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = access.next_element()? {
+            values.push(value);
+        }
+        Ok(OrderedJson::Array(values))
+    }
+
+    fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut entries = Vec::new();
+        while let Some(key) = access.next_key::<String>()? {
+            let value = access.next_value()?;
+            if let Some((_, existing)) = entries.iter_mut().find(|(name, _)| name == &key) {
+                *existing = value;
+            } else {
+                entries.push((key, value));
+            }
+        }
+        Ok(OrderedJson::Object(entries))
+    }
+}
+
+impl<'de> Deserialize<'de> for OrderedJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(OrderedJsonVisitor)
+    }
+}
+
+impl OrderedJson {
+    fn into_value(self) -> Value {
+        match self {
+            Self::Null => Value::Null,
+            Self::Bool(value) => Value::Bool(value),
+            Self::Number(value) => Value::Number(value),
+            Self::String(value) => Value::String(value),
+            Self::Array(values) => Value::Array(values.into_iter().map(Self::into_value).collect()),
+            Self::Object(entries) => Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, value.into_value()))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn scripts_for_node(&self) -> Result<Self, CommandSurfaceError> {
+        let mut entries = match self {
+            Self::Object(entries) => entries
+                .iter()
+                .filter(|(name, _)| !ROUTED_SCRIPTS.contains(&name.as_str()))
+                .cloned()
+                .collect(),
+            Self::Null => Vec::new(),
+            _ => return Err(CommandSurfaceError::InvalidPackage),
+        };
+        entries.extend(
+            RETAINED_ALIASES
+                .iter()
+                .map(|(name, command)| ((*name).to_owned(), Self::String((*command).to_owned()))),
+        );
+        Ok(Self::Object(entries))
+    }
+}
+
+fn write_ordered_json_pretty(
+    value: &OrderedJson,
+    output: &mut String,
+    depth: usize,
+) -> Result<(), CommandSurfaceError> {
+    match value {
+        OrderedJson::Null => output.push_str("null"),
+        OrderedJson::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+        OrderedJson::Number(value) => output.push_str(&value.to_string()),
+        OrderedJson::String(value) => {
+            output.push_str(&serde_json::to_string(value).map_err(CommandSurfaceError::Json)?);
+        }
+        OrderedJson::Array(values) => {
+            output.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index == 0 {
+                    output.push('\n');
+                } else {
+                    output.push_str(",\n");
+                }
+                output.push_str(&"  ".repeat(depth + 1));
+                write_ordered_json_pretty(value, output, depth + 1)?;
+            }
+            if !values.is_empty() {
+                output.push('\n');
+                output.push_str(&"  ".repeat(depth));
+            }
+            output.push(']');
+        }
+        OrderedJson::Object(entries) => {
+            output.push('{');
+            for (index, (key, value)) in entries.iter().enumerate() {
+                if index == 0 {
+                    output.push('\n');
+                } else {
+                    output.push_str(",\n");
+                }
+                output.push_str(&"  ".repeat(depth + 1));
+                output.push_str(&serde_json::to_string(key).map_err(CommandSurfaceError::Json)?);
+                output.push_str(": ");
+                write_ordered_json_pretty(value, output, depth + 1)?;
+            }
+            if !entries.is_empty() {
+                output.push('\n');
+                output.push_str(&"  ".repeat(depth));
+            }
+            output.push('}');
+        }
+    }
+    Ok(())
+}
+
 fn scripts(package: &Value) -> Result<&Map<String, Value>, CommandSurfaceError> {
     package
         .get("scripts")
@@ -144,14 +334,35 @@ fn generated_aliases() -> Map<String, Value> {
         .collect()
 }
 
+fn javascript_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(value) => value.as_f64().is_some_and(|number| number != 0.0),
+        Value::String(value) => !value.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
 fn inspection(package: &Value) -> Result<Value, CommandSurfaceError> {
     let script_map = scripts(package)?;
     let aliases = generated_aliases();
-    let mismatches: Vec<Value> = RETAINED_ALIASES.iter().filter(|(name, expected)| {
-        script_map.get(*name).and_then(Value::as_str) != Some(*expected)
-    }).map(|(name, expected)| json!({
-            "name": name, "expected": expected, "actual": script_map.get(*name).and_then(Value::as_str),
-        })).collect();
+    let mismatches: Vec<Value> = RETAINED_ALIASES
+        .iter()
+        .filter(|(name, expected)| script_map.get(*name).and_then(Value::as_str) != Some(*expected))
+        .map(|(name, expected)| {
+            let actual = script_map
+                .get(*name)
+                .filter(|value| javascript_truthy(value))
+                .cloned()
+                .unwrap_or(Value::Null);
+            json!({
+                "name": name,
+                "expected": expected,
+                "actual": actual,
+            })
+        })
+        .collect();
     let mut retired: Vec<String> = ROUTED_SCRIPTS
         .iter()
         .filter(|name| {
@@ -198,20 +409,73 @@ pub fn synchronize_command_surface_v1(
     let path = package_path(root);
     let mut package: Value = serde_json::from_slice(&fs::read(&path)?)?;
     if write_package {
-        let scripts = package
-            .get_mut("scripts")
-            .and_then(Value::as_object_mut)
-            .ok_or(CommandSurfaceError::InvalidPackage)?;
-        for name in ROUTED_SCRIPTS {
-            scripts.remove(*name);
+        let mut ordered: OrderedJson = serde_json::from_slice(&fs::read(&path)?)?;
+        let scripts = match &ordered {
+            OrderedJson::Object(entries) => entries
+                .iter()
+                .find(|(name, _)| name == "scripts")
+                .map(|(_, value)| value)
+                .cloned()
+                .unwrap_or(OrderedJson::Null),
+            _ => return Err(CommandSurfaceError::InvalidPackage),
+        };
+        let replacement = scripts.scripts_for_node()?;
+        if let OrderedJson::Object(entries) = &mut ordered {
+            if let Some((_, value)) = entries.iter_mut().find(|(name, _)| name == "scripts") {
+                *value = replacement;
+            } else {
+                entries.push(("scripts".to_owned(), replacement));
+            }
         }
-        for (name, command) in RETAINED_ALIASES {
-            scripts.insert((*name).to_owned(), Value::String((*command).to_owned()));
-        }
-        fs::write(
-            &path,
-            format!("{}\n", serde_json::to_string_pretty(&package)?),
-        )?;
+        let mut bytes = String::new();
+        write_ordered_json_pretty(&ordered, &mut bytes, 0)?;
+        bytes.push('\n');
+        fs::write(&path, bytes.as_bytes())?;
+        package = ordered.into_value();
     }
     inspection(&package)
+}
+
+/// Serialize the inspection with the same insertion order as Node's
+/// JSON.stringify. serde_json::Map is intentionally sorted in this workspace,
+/// so the CLI uses this ordered serializer for byte-compatible output while
+/// the library API continues to return Value.
+pub fn synchronize_command_surface_json_v1(
+    root: &Path,
+    write_package: bool,
+) -> Result<String, CommandSurfaceError> {
+    let value = synchronize_command_surface_v1(root, write_package)?;
+    let encode = |value: &Value| serde_json::to_string(value).map_err(CommandSurfaceError::Json);
+    let mut output = String::from(r#"{"version":2,"kind":"NpmScriptRegistryInspection","ready":"#);
+    output.push_str(&encode(&value["ready"])?);
+    output.push_str(r#","generatedAliases":{"#);
+    for (index, (name, command)) in RETAINED_ALIASES.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        output.push_str(&encode(&Value::String((*name).to_owned()))?);
+        output.push(':');
+        output.push_str(&encode(&Value::String((*command).to_owned()))?);
+    }
+    output.push_str(r#"},"aliasMismatches":["#);
+    if let Some(mismatches) = value["aliasMismatches"].as_array() {
+        for (index, mismatch) in mismatches.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            output.push_str("{\"name\":");
+            output.push_str(&encode(&mismatch["name"])?);
+            output.push_str(",\"expected\":");
+            output.push_str(&encode(&mismatch["expected"])?);
+            output.push_str(",\"actual\":");
+            output.push_str(&encode(&mismatch["actual"])?);
+            output.push('}');
+        }
+    }
+    output.push_str(r#"],"retiredAliases":"#);
+    output.push_str(&encode(&value["retiredAliases"])?);
+    output.push_str(r#","blocked":"#);
+    output.push_str(&encode(&value["blocked"])?);
+    output.push('}');
+    Ok(output)
 }

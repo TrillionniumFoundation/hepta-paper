@@ -11,7 +11,11 @@ fn temp_fixture() -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("hepta-command-surface-{}", std::process::id()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("fixture directory");
-    fs::write(path.join("package.json"), r#"{"name":"fixture","scripts":{"test":"old","store:status":"old","custom":"echo custom"}}"#).expect("fixture package");
+    fs::write(
+        path.join("package.json"),
+        r#"{"name":"fixture","scripts":{"test":"old","store:status":"old","custom":"echo custom","gpu:personal-gate":0,"personal:readiness":false},"bin":{"dev":"./bin/dev.js"},"devDependencies":{"z":"1","a":"2"}}"#,
+    )
+    .expect("fixture package");
     path
 }
 
@@ -58,6 +62,25 @@ fn rust_result(root: &std::path::Path, write_package: bool) -> Value {
     serde_json::from_slice(&output.stdout).expect("Rust JSON")
 }
 
+fn rust_raw_result(root: &std::path::Path, write_package: bool) -> String {
+    let binary = env!("CARGO_BIN_EXE_hepta-paper-rust");
+    let mut command = Command::new(binary);
+    command.arg("command-surface").arg(root);
+    if write_package {
+        command.arg("--write-package");
+    }
+    let output = command.output().expect("Rust command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("Rust UTF-8")
+        .trim_end_matches('\n')
+        .to_owned()
+}
+
 #[test]
 fn package_surface_check_and_write_match_node_oracle() {
     let fixture = temp_fixture();
@@ -80,7 +103,19 @@ fn package_surface_check_and_write_match_node_oracle() {
         rust_result(&fixture, false),
         expected["results"][0]["value"]
     );
+    assert_eq!(
+        rust_raw_result(&fixture, false),
+        expected["results"][0]["raw"]
+    );
     assert_eq!(rust_result(&fixture, true), expected["results"][1]["value"]);
+    assert_eq!(
+        rust_raw_result(&fixture, true),
+        expected["results"][1]["raw"]
+    );
+    assert_eq!(
+        fs::read(fixture.join("package.json")).expect("Rust package bytes"),
+        fs::read(oracle_fixture.join("package.json")).expect("Node package bytes")
+    );
     let _ = fs::remove_dir_all(fixture);
     let _ = fs::remove_dir_all(oracle_fixture);
 }

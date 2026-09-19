@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 use thiserror::Error;
 
@@ -129,6 +129,32 @@ fn is_within(root: &Path, candidate: &Path) -> bool {
     candidate.strip_prefix(root).map(|_| true).unwrap_or(false)
 }
 
+/// Normalize a path lexically before checking the workspace boundary.
+///
+/// `Path::absolute` preserves `..` components.  Checking that spelling with
+/// `strip_prefix` would therefore accept a not-yet-existing path such as
+/// `<root>/entry/../../../outside`; an attacker could use that to turn an
+/// escaped import into an ordinary unresolved import.  Keep the check purely
+/// lexical (the target may not exist yet), but reject attempts to walk above
+/// the absolute root before the canonical symlink check below.
+fn normalize_lexical(path: &Path) -> Option<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            Component::Normal(value) => normalized.push(value),
+        }
+    }
+    Some(normalized)
+}
+
 fn normalize_entry(raw: &str) -> Option<String> {
     if raw.is_empty() || raw.starts_with('/') || raw.contains('\0') {
         return None;
@@ -145,13 +171,16 @@ fn normalize_entry(raw: &str) -> Option<String> {
 
 fn resolve_import(root: &Path, importer: &Path, specifier: &str) -> (Option<PathBuf>, bool) {
     let lexical = importer.parent().unwrap_or(importer).join(specifier);
+    let Some(lexical) = normalize_lexical(&std::path::absolute(&lexical).unwrap_or(lexical)) else {
+        return (None, true);
+    };
     let candidates = [
         lexical.clone(),
         lexical.with_extension("mjs"),
         lexical.join("index.mjs"),
     ];
     for candidate in candidates {
-        let absolute = std::path::absolute(&candidate).unwrap_or(candidate);
+        let absolute = normalize_lexical(&candidate).unwrap_or(candidate);
         if !is_within(root, &absolute) {
             return (None, true);
         }

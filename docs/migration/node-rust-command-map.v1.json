@@ -2225,7 +2225,7 @@
         "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
         "rust/crates/hepta-paper-service/tests/full_production_readiness_route.rs"
       ],
-      "remaining": "Rust strictly parses and safely hashes local references, but does not execute package recovery, verify external owner signatures, aggregate operational proofs, verify off-host WORM custody, or perform live provider/release-attestor actions; accepted parity and production readiness remain blocked.",
+      "remaining": "Rust strictly parses and safely hashes local references, now also loads an explicitly pinned deployment-environment file through the descriptor-pinned reader and reports its hash/selected roots; explicit --root/--runtime-root still take precedence. It does not execute package recovery, verify external owner signatures, aggregate operational proofs, verify off-host WORM custody, or perform live provider/release-attestor actions; accepted parity and production readiness remain blocked.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/full_production_readiness.rs",

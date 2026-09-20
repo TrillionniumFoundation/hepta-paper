@@ -106,3 +106,84 @@ fn is_sha256(value: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provenance() -> Value {
+        json!({
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "commitTree": "fedcba9876543210fedcba9876543210fedcba98",
+            "repositoryContentHash": format!("sha256:{}", "a".repeat(64)),
+        })
+    }
+
+    fn valid_receipt(provenance: &Value) -> Value {
+        let mut payload = json!({
+            "version": VERSION,
+            "kind": KIND,
+            "testFiles": EXPECTED_TEST_FILES,
+            "tests": 23,
+            "suites": 0,
+            "pass": 23,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0,
+            "codeProvenance": provenance,
+        });
+        let hash = production_hash_record_v1(KIND, &payload).expect("receipt hash");
+        payload.as_object_mut().expect("receipt object").insert(
+            "formalOperationalReceiptHash".into(),
+            Value::String(hash.as_str().to_owned()),
+        );
+        payload
+    }
+
+    #[test]
+    fn exact_receipt_and_provenance_are_accepted() {
+        let provenance = provenance();
+        let receipt = valid_receipt(&provenance);
+        assert!(verify_formal_receipt(&receipt, Some(&provenance)));
+        let projection = inspect_formal_receipt(Some(&receipt), Some(&provenance));
+        assert_eq!(projection["verified"], true);
+        assert_eq!(projection["zeroSkipped"], true);
+        assert_eq!(projection["pass"], 23);
+    }
+
+    #[test]
+    fn shape_hash_and_provenance_mutations_fail_closed() {
+        let provenance = provenance();
+        let receipt = valid_receipt(&provenance);
+
+        let mut extra = receipt.clone();
+        extra
+            .as_object_mut()
+            .expect("receipt object")
+            .insert("unexpected".into(), json!(true));
+        assert!(!verify_formal_receipt(&extra, Some(&provenance)));
+
+        let mut changed = receipt.clone();
+        changed["pass"] = json!(22);
+        assert!(!verify_formal_receipt(&changed, Some(&provenance)));
+
+        let mut wrong_provenance = provenance.clone();
+        wrong_provenance["commit"] = json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert!(!verify_formal_receipt(&receipt, Some(&wrong_provenance)));
+
+        let mut uppercase_hash = receipt;
+        uppercase_hash["formalOperationalReceiptHash"] =
+            json!("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        assert!(!verify_formal_receipt(&uppercase_hash, Some(&provenance)));
+    }
+
+    #[test]
+    fn missing_receipt_is_blocked_without_diagnostic_claims() {
+        let projection = inspect_formal_receipt(None, None);
+        assert_eq!(projection["verified"], false);
+        assert_eq!(projection["zeroSkipped"], false);
+        assert_eq!(projection["pass"], 0);
+        assert_eq!(projection["receiptHash"], Value::Null);
+    }
+}

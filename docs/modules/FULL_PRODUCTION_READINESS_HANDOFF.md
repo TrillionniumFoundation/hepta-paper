@@ -73,6 +73,15 @@ identity is inserted. Final output includes a content-bound
 `fullProductionReadinessStatusHash`, and `--require-full-production` exits with
 status 2 while any required gate is blocked.
 
+The separate `automation_readiness_policy` module now ports the incumbent pure
+`evaluateAutomationReadiness`, `evaluateAutomationReadinessLevels`, and
+`automationReadinessExitCode` functions. It accepts only already-observed JSON,
+performs no I/O or external action, and is covered by a Node differential oracle
+for runtime, store, degradation, qualification, GPU, level, and exit-code
+cases. This evaluator is not wired to the full-production command and cannot
+turn a synthetic or stale report into automation authority; the live
+automation-status query remains an external/local composition gap.
+
 ## Verification and remaining work
 
 Tests use the pinned Node v22.23.1 oracle and Rust 1.98.0. Owner and operational

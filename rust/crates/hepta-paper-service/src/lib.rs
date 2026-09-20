@@ -8,6 +8,7 @@
 
 pub mod advanced_numerical;
 pub mod architecture_conformance;
+pub mod automation_readiness_policy;
 pub mod automation_status;
 pub mod autonomous_empirical_plugin_release;
 pub mod autonomous_intake_authority_rotation;

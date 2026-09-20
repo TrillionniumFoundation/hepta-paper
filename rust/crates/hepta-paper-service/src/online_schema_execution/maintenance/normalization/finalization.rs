@@ -4,6 +4,7 @@
 //! verified authority receipts. It never marks a runtime capability active,
 //! mutates SQLite, or treats an external receipt as proof of local post-state.
 use super::*;
+use crate::online_runtime_activation::inventory::state_database_inventory_hash_v1;
 use crate::pristine_runtime_state::{
     PristineDatabaseInspectionV1, PristineDatabaseOptionsV1, inspect_pristine_database_state_v1,
     pristine_runtime_state_hash_v1,
@@ -38,6 +39,20 @@ fn text_field<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
                 "autonomous_research_online_schema_transition_field_invalid",
             )
         })
+}
+
+fn assert_post_inventory_claim(inventory: &Value) -> Result<()> {
+    ensure(
+        inventory["blockers"].as_array().is_some_and(Vec::is_empty),
+        "autonomous_research_online_schema_transition_post_inventory_invalid",
+    )?;
+    let expected = state_database_inventory_hash_v1(inventory).map_err(|_| {
+        error("autonomous_research_online_schema_transition_post_inventory_invalid")
+    })?;
+    ensure(
+        inventory["inventoryHash"] == expected,
+        "autonomous_research_online_schema_transition_post_inventory_invalid",
+    )
 }
 
 /// Construct the same exact-key finalization request as the Node completion
@@ -205,6 +220,7 @@ pub fn observe_schema_transition_post_state_v1(
         "autonomous_research_online_schema_transition_version_invalid",
     )?;
     let inventory = observe_state_database_inventory_v1(runtime_root, state_database_manifest)?;
+    assert_post_inventory_claim(inventory.value())?;
     ensure(
         inventory.value()["status"] == "autonomous_research_state_database_inventory_ready"
             && inventory.value()["databaseScopeHash"] == plan["databaseScopeHash"]
@@ -441,6 +457,40 @@ mod tests {
             plan["sourceWriterManifestHash"] = plan["writerManifestHash"].clone();
         }
         plan
+    }
+
+    fn post_inventory() -> Value {
+        let mut inventory = json!({
+            "version": 1,
+            "kind": "AutonomousResearchStateDatabaseInventory",
+            "status": "autonomous_research_state_database_inventory_ready",
+            "manifestId": "manifest",
+            "manifestHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "databaseScopeHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "instances": [{
+                "instanceId": "instance",
+                "role": "native-store",
+                "sourceRelativePath": "native-store.sqlite",
+            }],
+            "blockers": [],
+        });
+        inventory["inventoryHash"] = json!(state_database_inventory_hash_v1(&inventory).unwrap());
+        inventory
+    }
+
+    #[test]
+    fn post_inventory_claim_requires_empty_blockers_and_bound_hash() {
+        let valid = post_inventory();
+        assert!(assert_post_inventory_claim(&valid).is_ok());
+
+        let mut blocked = valid.clone();
+        blocked["blockers"] = json!(["tampered"]);
+        assert!(assert_post_inventory_claim(&blocked).is_err());
+
+        let mut rebound = valid;
+        rebound["inventoryHash"] =
+            json!("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        assert!(assert_post_inventory_claim(&rebound).is_err());
     }
 
     #[test]

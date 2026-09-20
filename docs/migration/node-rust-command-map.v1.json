@@ -165,15 +165,22 @@
         {
           "path": "rust/crates/hepta-paper-service/src/automation_status.rs",
           "symbol": "automation_status_help_json_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_readiness_policy.rs",
+          "symbol": "evaluate_automation_readiness_v1"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/automation_status_help.rs"
+        "rust/crates/hepta-paper-service/tests/automation_status_help.rs",
+        "rust/crates/hepta-paper-service/src/automation_readiness_policy_tests.rs"
       ],
-      "remaining": "Rust now emits byte-identical deterministic AutomationStatusUsage help metadata for automation-status --help and --json --help without reading runtime state or performing probes. This bounded route does not implement the incumbent readiness observers, deployment-environment loading, handoff composition, provider/formal-sandbox/release-attestor flags, live authority effects, complete argument modes or independent command acceptance.",
+      "remaining": "Rust now emits byte-identical deterministic AutomationStatusUsage help metadata for automation-status --help and --json --help and ports the pure JSON readiness evaluator, readiness-level projection, and exit-code policy with Node differential fixtures. The pure evaluator consumes already-observed values only; the command route still does not implement incumbent readiness observers, deployment-environment loading, handoff composition, provider/formal-sandbox/release-attestor effects, store/runtime probes, live authority effects, complete argument modes or independent command acceptance.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
-        "rust/crates/hepta-paper-service/src/automation_status.rs"
+        "rust/crates/hepta-paper-service/src/automation_status.rs",
+        "rust/crates/hepta-paper-service/src/automation_readiness_policy.rs",
+        "rust/oracle/automation-readiness-policy-v1.mjs"
       ],
       "testCases": [
         {
@@ -183,6 +190,14 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/automation_status_help.rs",
           "symbol": "unsupported_readiness_mode_fails_closed_without_claiming_implementation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_readiness_policy_tests.rs",
+          "symbol": "evaluator_matches_node_for_runtime_store_degraded_qualification_and_gpu_cases"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_readiness_policy_tests.rs",
+          "symbol": "levels_and_exit_codes_match_node_for_each_gate"
         }
       ]
     },

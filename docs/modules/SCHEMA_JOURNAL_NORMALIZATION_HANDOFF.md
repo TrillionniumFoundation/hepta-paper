@@ -64,7 +64,14 @@ Exact physical symbols: `real_other_process_write_lock_cannot_wait_past_maintena
 
 ## Remaining execution work
 
-Metadata/genesis installation requires all ten EXCLUSIVE transactions, fixed target DDL application, v1 exact metadata insertion or v2 source-genesis/pristine validation and exact trigger-preserving rebinding, real post-schema/pristine checks, commit lease checks, durable per-database installation records and recovery of commits that occurred before progress publication. Those operations are not supplied by this normalization token yet. Fresh runtime activation and actual external service qualification remain separate capabilities.
+This normalization token covers the signed lease and source-side journal
+normalization boundary. The subsequent schema-genesis installation stage now
+supplies all ten EXCLUSIVE transactions, fixed target DDL application, v1/v2
+metadata and pristine validation, post-schema checks, durable per-database
+installation records, and crash recovery; see
+[SCHEMA_GENESIS_INSTALLATION_HANDOFF.md](SCHEMA_GENESIS_INSTALLATION_HANDOFF.md).
+Fresh runtime activation, externally durable finalization and actual external
+service qualification remain separate capabilities.
 
 Run from the repository root with the pinned Node oracle runtime:
 

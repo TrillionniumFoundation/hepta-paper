@@ -1,12 +1,17 @@
 # Native schema transition source projection and execution dependencies
 
-This slice implements actual migration-source observation, private SQLite journal normalization/target-schema projection, complete registered-scope v1/v2 local planning, and a pinned signed maintenance reservation. It is not the complete schema-transition command, a live source writer, an installation receipt, a ready inventory, or runtime activation.
+This slice implements actual migration-source observation, private SQLite journal
+normalization/target-schema projection, complete registered-scope v1/v2 local
+planning, signed maintenance reservation, ten-database installation with
+durable progress/recovery, and finalization post-state/publication primitives.
+It is not the complete operator CLI, a target-host restart/activation proof, an
+externally durable final receipt, or independent production qualification.
 
 The native module is exposed as `online_schema_execution`; its actual source observer is crate-private `state_database_inventory::schema_source`. The public types retain real source and signature evidence rather than accepting a serialized readiness claim.
 
 ## Source and native entry points
 
-Original behavior comes from `paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs`: source path/identity, stable identity hashing, journal preimage hashing, `expectedNormalizedSourceSha256`, private journal normalization and expected target-schema projection. The later maintenance and installation sources are `autonomous-research-online-schema-transition-journal-normalization.mjs` and `autonomous-research-online-schema-transition-installation.mjs`. The all-scope signed reservation boundary is implemented; their actual live writes, progress persistence and installation/finalization recovery remain to be implemented.
+Original behavior comes from `paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs`: source path/identity, stable identity hashing, journal preimage hashing, `expectedNormalizedSourceSha256`, private journal normalization and expected target-schema projection. The later maintenance and installation sources are `autonomous-research-online-schema-transition-journal-normalization.mjs` and `autonomous-research-online-schema-transition-installation.mjs`. The all-scope signed reservation, live local writes, durable progress/recovery and finalization post-state checks are implemented; target restart/authority linearizability and complete CLI modes remain open.
 
 `online_schema_execution::observe_schema_transition_source_v1(runtime_root, relative_path, role, applied_at)` returns `ObservedSchemaTransitionSourceV1` only after actual filesystem and SQLite operations. All fields are private; `.value()` exposes diagnostic/hash data and `.assert_current()` rechecks the captured physical sources. There is no Deserialize, claim constructor, ready flag, public arbitrary callback, or public live database connection.
 

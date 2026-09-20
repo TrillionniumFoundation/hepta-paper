@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::deployment_environment::load_readiness_deployment_environment_v1;
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -180,6 +181,28 @@ pub fn parse_full_production_readiness_arguments(
             return Err(format!("full_production_readiness_{name}_required"));
         }
     }
+    if let Some(path) = options.deployment_environment_file.as_ref()
+        && !path.is_absolute()
+    {
+        return Err(
+            "full_production_readiness_deployment_environment_file_must_be_absolute".to_owned(),
+        );
+    }
+    for (name, path) in [
+        ("owner_trust_store", options.owner_trust_store.as_ref()),
+        (
+            "owner_acceptance_document",
+            options.owner_acceptance_document.as_ref(),
+        ),
+        (
+            "package_recovery_readiness_command",
+            options.package_recovery_readiness_command.as_ref(),
+        ),
+    ] {
+        if path.is_some_and(|path| !path.is_absolute()) {
+            return Err(format!("full_production_readiness_{name}_must_be_absolute"));
+        }
+    }
     Ok(options)
 }
 
@@ -307,13 +330,33 @@ pub fn inspect_full_production_readiness_v1(
     options: &FullProductionReadinessOptions,
     workspace_root: &Path,
 ) -> Result<Value, String> {
+    if !workspace_root.is_absolute() {
+        return Err("full_production_readiness_workspace_root_must_be_absolute".to_owned());
+    }
+    let deployment_environment = load_readiness_deployment_environment_v1(
+        &json!({}),
+        options.deployment_environment_file.as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
     let root = options
         .root
         .clone()
+        .or_else(|| {
+            deployment_environment.environment["HEPTA_PAPER_ASSET_ROOT"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
         .unwrap_or_else(|| workspace_root.to_path_buf());
     let runtime_root = options
         .runtime_root
         .clone()
+        .or_else(|| {
+            deployment_environment.environment["HEPTA_PAPER_RUNTIME_ROOT"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
         .unwrap_or_else(|| workspace_root.join("runtime"));
     if !root.is_absolute() || !runtime_root.is_absolute() || !workspace_root.is_absolute() {
         return Err("full_production_readiness_root_paths_must_be_absolute".to_owned());
@@ -404,6 +447,7 @@ pub fn inspect_full_production_readiness_v1(
         "fullProductionReady": false,
         "root": root,
         "runtimeRoot": runtime_root,
+        "deploymentEnvironment": deployment_environment.inspection,
         "observedAt": observed_at,
         "automationPlaneStatus": "rust_bounded_projection",
         "automationPlaneReady": false,
@@ -441,12 +485,32 @@ pub fn execute_full_production_readiness_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt};
 
     #[test]
     fn parser_requires_all_pinned_inputs_and_rejects_duplicates() {
         assert!(parse_full_production_readiness_arguments(&[]).is_err());
         assert!(
             parse_full_production_readiness_arguments(&["--help".into(), "--help".into()]).is_err()
+        );
+        assert!(
+            parse_full_production_readiness_arguments(&[
+                "--deployment-environment-file".into(),
+                "relative.env".into(),
+                "--owner-trust-store".into(),
+                "/tmp/trust".into(),
+                "--owner-trust-store-sha256".into(),
+                format!("{SHA256_PREFIX}{}", "a".repeat(64)),
+                "--owner-acceptance-document".into(),
+                "/tmp/acceptance".into(),
+                "--owner-acceptance-document-sha256".into(),
+                format!("{SHA256_PREFIX}{}", "b".repeat(64)),
+                "--package-recovery-readiness-command".into(),
+                "/tmp/command".into(),
+                "--package-recovery-readiness-command-sha256".into(),
+                format!("{SHA256_PREFIX}{}", "c".repeat(64)),
+            ])
+            .is_err()
         );
     }
 
@@ -462,5 +526,45 @@ mod tests {
         assert_eq!(report["fullProductionReady"], false);
         assert_eq!(report["externalActionPerformed"], false);
         assert!(report["blockers"].as_array().unwrap().len() >= 5);
+    }
+
+    #[test]
+    fn explicit_deployment_environment_selects_default_roots_and_is_reported() {
+        let path = std::env::temp_dir().join(format!(
+            "hepta-full-production-environment-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "HEPTA_PAPER_ASSET_ROOT=/srv/hepta/assets\nHEPTA_PAPER_RUNTIME_ROOT=/srv/hepta/runtime\n",
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let options = FullProductionReadinessOptions {
+            deployment_environment_file: Some(path.clone()),
+            ..Default::default()
+        };
+        let report =
+            inspect_full_production_readiness_v1(&options, Path::new("/tmp/workspace")).unwrap();
+        assert_eq!(report["root"], "/srv/hepta/assets");
+        assert_eq!(report["runtimeRoot"], "/srv/hepta/runtime");
+        assert_eq!(
+            report["deploymentEnvironment"]["status"],
+            "automation_readiness_deployment_environment_loaded"
+        );
+        assert_eq!(
+            report["deploymentEnvironment"]["loadedKeys"],
+            json!(["HEPTA_PAPER_ASSET_ROOT", "HEPTA_PAPER_RUNTIME_ROOT"])
+        );
+        assert!(
+            report["deploymentEnvironment"]["fileHash"]
+                .as_str()
+                .is_some_and(|hash| hash.starts_with(SHA256_PREFIX))
+        );
+        fs::remove_file(path).unwrap();
     }
 }

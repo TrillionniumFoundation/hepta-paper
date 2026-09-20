@@ -61,6 +61,27 @@ fn require_externalized_matches_node_for_ready_manifest() -> Result<(), Box<dyn 
     let native_json: Value = serde_json::from_slice(&native.stdout)?;
     assert_eq!(native_json, node_json);
     assert_eq!(native_json["fullyExternalized"], true);
+
+    let node_handoff = node_command(&["--handoff", "--require-externalized"]);
+    assert!(
+        node_handoff.status.success(),
+        "{}",
+        String::from_utf8_lossy(&node_handoff.stderr)
+    );
+    let native_handoff = rust_command(
+        &root,
+        &manifest_path(),
+        &["--handoff", "--require-externalized"],
+    );
+    assert!(
+        native_handoff.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native_handoff.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&native_handoff.stdout)?,
+        serde_json::from_slice::<Value>(&node_handoff.stdout)?,
+    );
     Ok(())
 }
 

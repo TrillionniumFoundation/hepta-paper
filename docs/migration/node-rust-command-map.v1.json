@@ -1345,14 +1345,41 @@
     },
     {
       "id": "operator/autonomous-submission-dispatcher",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust autonomous-submission-dispatcher [--resident] [--campaign-id ID] [--limit N] [--poll-ms MS] [--root PATH] [--runtime-root PATH] [--help]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_submission_dispatcher.rs",
+          "symbol": "parse_autonomous_submission_dispatcher_arguments"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_submission_dispatcher.rs",
+          "symbol": "inspect_autonomous_submission_dispatcher_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher.rs"
+      ],
+      "remaining": "Rust now owns a bounded read-only dispatcher preflight with strict argument parsing, local challenge observation and storage metadata reporting. Resident polling, dispatcher identity and cycle signature verification, portal credential/configuration binding, independent canary authority, handoff SQLite queue inspection, signed cycle publication and external submission delivery remain unported; the native report never authorizes provider action or Node retirement.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_submission_dispatcher.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher.rs",
+          "symbol": "help_is_json_and_does_not_require_dispatcher_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher.rs",
+          "symbol": "status_is_fail_closed_on_missing_exchange"
+        }
+      ]
     },
     {
       "id": "operator/autonomous-submission-dispatcher-challenge",

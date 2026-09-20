@@ -13,6 +13,10 @@ use hepta_paper_service::{
         autonomous_research_help_json_v1, execute_autonomous_research_v1,
         inspect_autonomous_research_v1, parse_autonomous_research_arguments,
     },
+    autonomous_submission_dispatcher::{
+        AUTONOMOUS_SUBMISSION_DISPATCHER_USAGE, inspect_autonomous_submission_dispatcher_v1,
+        parse_autonomous_submission_dispatcher_arguments,
+    },
     autonomous_submission_dispatcher_challenge::{
         AutonomousSubmissionDispatcherChallengeOptions,
         inspect_autonomous_submission_dispatcher_challenge_v1,
@@ -1055,6 +1059,29 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("{rendered}");
             if !ready {
+                std::process::exit(2);
+            }
+        }
+        Some("autonomous-submission-dispatcher") => {
+            let options = match parse_autonomous_submission_dispatcher_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}\n{AUTONOMOUS_SUBMISSION_DISPATCHER_USAGE}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!("{AUTONOMOUS_SUBMISSION_DISPATCHER_USAGE}");
+                return Ok(());
+            }
+            let workspace_root = env::current_dir()?;
+            let report = inspect_autonomous_submission_dispatcher_v1(
+                &options,
+                &workspace_root,
+                current_unix_millis()?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if report["ready"] != serde_json::Value::Bool(true) {
                 std::process::exit(2);
             }
         }

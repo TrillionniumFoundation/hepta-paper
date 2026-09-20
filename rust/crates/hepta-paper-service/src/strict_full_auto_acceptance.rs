@@ -227,7 +227,6 @@ fn read_configuration(path: &Path) -> Value {
         "valid": stable && parsed.as_ref().is_some_and(Value::is_object),
         "jsonObject": parsed.as_ref().is_some_and(Value::is_object),
         "observedSha256": observed,
-        "configuration": parsed,
     })
 }
 

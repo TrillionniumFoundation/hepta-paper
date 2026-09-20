@@ -12,7 +12,7 @@ fn temp_config() -> PathBuf {
     ));
     fs::write(
         &path,
-        br#"{"version":1,"kind":"StrictFullAutoAcceptanceConfiguration"}"#,
+        br#"{"version":1,"kind":"StrictFullAutoAcceptanceConfiguration","opaqueSecret":"do-not-echo"}"#,
     )
     .unwrap();
     path
@@ -45,5 +45,6 @@ fn require_accepted_remains_fail_closed_without_live_authority() {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["strictFullAutoAccepted"], false);
     assert_eq!(report["externalActionPerformed"], false);
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("do-not-echo"));
     let _ = fs::remove_file(path);
 }

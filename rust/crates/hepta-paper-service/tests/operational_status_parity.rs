@@ -164,6 +164,16 @@ fn binary(fixture: &Fixture, sealed: bool) -> std::process::Output {
     }
     command.output().expect("operational proof status binary")
 }
+
+fn binary_with_environment_defaults(fixture: &Fixture) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_hepta-operational-proof-status"))
+        .current_dir(&fixture.0)
+        .env("HEPTA_WORKSPACE_ROOT", fixture.0.join("workspace"))
+        .env("HEPTA_PAPER_RUNTIME_ROOT", fixture.0.join("runtime"))
+        .env("HEPTA_PAPER_ASSET_ROOT", fixture.0.join("assets"))
+        .output()
+        .expect("operational proof status binary with environment defaults")
+}
 #[test]
 fn binary_reports_full_json_and_source_failures() {
     let fixture = Fixture::new();
@@ -176,6 +186,16 @@ fn binary_reports_full_json_and_source_failures() {
     );
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        node["status"]
+    );
+    let defaulted = binary_with_environment_defaults(&fixture);
+    assert!(
+        defaulted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&defaulted.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&defaulted.stdout).unwrap(),
         node["status"]
     );
     fs::write(fixture.0.join("workspace/package.json"), "not json").unwrap();

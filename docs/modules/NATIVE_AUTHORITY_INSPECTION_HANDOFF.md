@@ -14,17 +14,14 @@ Build with the pinned Rust toolchain and committed lockfile:
 cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --bins
 ```
 
-| Binary | Required arguments | Public implementation |
+| Binary | Arguments | Public implementation |
 |---|---|---|
-| `hepta-operational-proof-status` | `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH --asset-root ABSOLUTE_PATH` | `operational_status::capability_operational_proof_status_v1` |
-| `hepta-owner-acceptance-status` | `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH` | `owner_status::inspect_owner_acceptance_status_v1` |
+| `hepta-operational-proof-status` | Optional `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH --asset-root ABSOLUTE_PATH`; omitted roots use `HEPTA_WORKSPACE_ROOT`, `HEPTA_PAPER_RUNTIME_ROOT`, `HEPTA_PAPER_ASSET_ROOT`, then the compiled workspace's sibling defaults. | `operational_status::capability_operational_proof_status_v1` |
+| `hepta-owner-acceptance-status` | Optional `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH`; omitted roots use `HEPTA_WORKSPACE_ROOT`, `HEPTA_PAPER_RUNTIME_ROOT`, then the compiled workspace's sibling runtime default. | `owner_status::inspect_owner_acceptance_status_v1` |
 | `hepta-nested-runtime-qualification` | the incumbent 18 flags/environment bindings, or `--request ABSOLUTE_JSON_PATH` | `nested_runtime_cli::nested_runtime_qualification_cli_v1` / `nested_runtime_qualification::verify_nested_runtime_platform_qualification_file_v1` |
 | `hepta-journal-connector-coverage` | discovery filters and readiness flags corresponding to `paper-core/bin/journal-connector-coverage.mjs` | `journal_connector_coverage::journal_connector_coverage_cli_v2` |
 
-All binaries reject unknown, repeated and missing options. Operational/owner roots
-and the nested request-file extension require absolute paths. They emit formatted
-JSON on stdout; input/source errors use stderr and exit 1. Pending operational/owner
-acceptance is a valid status and exits 0. Nested qualification uses the incumbent
+All binaries reject unknown, repeated and missing option values. Explicit operational/owner roots require absolute paths; environment-root values follow the incumbent `path.resolve` behavior for relative values. They emit formatted JSON on stdout; input/source errors use stderr and exit 1. Pending operational/owner acceptance is a valid status and exits 0. Nested qualification uses the incumbent
 exit 1 for a blocked report in flag/environment mode; its explicit request-file
 extension uses exit 2. Journal readiness gates preserve their incumbent exit-1
 behavior. Independent acceptance still needs to review the explicit root interfaces

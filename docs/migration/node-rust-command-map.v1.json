@@ -2350,7 +2350,7 @@
     },
     {
       "id": "verify/operational",
-      "rustEntrypoint": "hepta-operational-proof-status --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH --asset-root ABSOLUTE_PATH",
+      "rustEntrypoint": "hepta-operational-proof-status [--workspace-root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--asset-root ABSOLUTE_PATH]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -2374,7 +2374,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/operational_status_parity.rs"
       ],
-      "remaining": "Native Ed25519 verification, all 16 capabilities, source-bound replay validation and sealed hydrated-submodule closure are implemented. Explicit-root CLI differs from incumbent environment defaults; independent complete-mode acceptance and real external operational evidence remain open.",
+      "remaining": "Native Ed25519 verification, all 16 capabilities, source-bound replay validation and sealed hydrated-submodule closure are implemented. The standalone CLI now matches the incumbent workspace/runtime/asset environment defaults while preserving explicit absolute-root overrides; independent complete-mode acceptance and real external operational evidence remain open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-operational-proof-status.rs",
         "rust/crates/hepta-paper-service/src/operational_status.rs",
@@ -2402,7 +2402,7 @@
     },
     {
       "id": "verify/owner",
-      "rustEntrypoint": "hepta-owner-acceptance-status --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH",
+      "rustEntrypoint": "hepta-owner-acceptance-status [--workspace-root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -2430,7 +2430,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/owner_status_parity.rs"
       ],
-      "remaining": "Native current-matrix family rebuilding and v1/v2 signed owner acceptance status match Node fixtures. Explicit-root CLI and stronger no-alias input restrictions require compatibility review; real independent owner acceptance and retirement authority remain absent.",
+      "remaining": "Native current-matrix family rebuilding and v1/v2 signed owner acceptance status match Node fixtures. The standalone CLI now matches the incumbent workspace/runtime environment defaults while preserving explicit absolute-root overrides; stronger no-alias input restrictions require compatibility review, and real independent owner acceptance and retirement authority remain absent.",
       "rustSources": [
         "migration/legacy-semantic-migration-matrix.json",
         "paper-domain/governance/legacy-owner-acceptance-family-manifest.v1.json",

@@ -156,6 +156,12 @@ fn actual_owner_cli_is_read_only_and_emits_current_node_equivalent_status() {
         .arg(&fixture.0)
         .output()
         .unwrap();
+    let defaulted = Command::new(env!("CARGO_BIN_EXE_hepta-owner-acceptance-status"))
+        .current_dir(&fixture.0)
+        .env("HEPTA_WORKSPACE_ROOT", &workspace)
+        .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.0)
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -164,6 +170,16 @@ fn actual_owner_cli_is_read_only_and_emits_current_node_equivalent_status() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        node["status"]
+    );
+    assert!(
+        defaulted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&defaulted.stderr)
+    );
+    assert!(defaulted.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&defaulted.stdout).unwrap(),
         node["status"]
     );
     assert_eq!(before, fs::read(&receipt).unwrap());

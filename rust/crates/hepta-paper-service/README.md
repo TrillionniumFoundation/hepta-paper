@@ -53,6 +53,7 @@ clock and local writer token. It is not a deployment configuration.
 | `research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]` | Project an already-observed descriptive readiness document through the ten-capability matrix; the optional gate is fail-closed and never grants authority or activation. |
 | `research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]` | Project the actual passive Rust state-safety inspection and compare it with the Node diagnostic contract; `--require-ready` fails closed and the command performs no authority RPC or runtime write. Full automation-status observers and live activation remain outside this bounded route. |
 | `generic-domain-capability-evidence --action status\|converge --runtime-root ABSOLUTE_PATH` | Inspect only the explicit private `generic-domain-capability-evidence.json` file under the supplied runtime root, matching Node shape/hash/path checks. `status` is read-only; `converge` is a fail-closed diagnostic that never publishes, invokes external replay/authority, or changes service state. |
+| `personal-self-hosted-readiness [--root PATH] [--runtime-root PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO\|UNIX_MILLIS]` | Compose the read-only personal local observer: exact provenance, formal zero-skip evidence, tracked-source/runtime boundary, SQLite schema/lease and consistent-snapshot checks, anti-rollback ledger, backup/restore-drill receipts and CPU/optional GPU scientific receipts. Missing evidence stays blocked; the route never invokes external actors or grants authority. Hardware qualification, external authority, deployment and Node retirement remain open. |
 | `retirement-reference ROOT` | Verify retirement snapshot receipts and archive hashes without consulting or mutating a live legacy runtime. |
 | `release-trust-gate REQUEST` | Evaluate the pure release trust-layer count gate from JSON input; it never creates external signatures or activates production. |
 | `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input; composite release verification remains separate. |
@@ -170,6 +171,15 @@ external authority, signer, replay, private key or runtime mutation is used.
 The [generic-domain evidence handoff](../../../docs/modules/GENERIC_DOMAIN_CAPABILITY_EVIDENCE_HANDOFF.md)
 defines the local `ready` field, exact input shape, exits, and remaining strong
 status/convergence call chain.
+
+`hepta-paper-rust personal-self-hosted-readiness` composes the seven local
+controls from the incumbent personal profile and matches the pinned Node report
+for missing evidence, GPU opt-in blocking and a safe schema-25 database with a
+valid anti-rollback ledger, backup and restore drill. The [personal readiness
+handoff](../../../docs/modules/PERSONAL_SELF_HOSTED_READINESS_HANDOFF.md)
+defines the private-file, SQLite snapshot, scientific-receipt and
+`--require-ready` boundaries. The route remains a source-level local observer;
+it never performs provider, network, signer, deployment or publication work.
 
 `cargo test -p hepta-paper-service` covers executable configuration, actual CAS
 bytes, durable commit/replay, unsafe content rejection and authority refusal.

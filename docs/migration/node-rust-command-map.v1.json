@@ -275,14 +275,80 @@
     },
     {
       "id": "operator/personal-self-hosted-readiness",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No Rust entrypoint exists. The Node observer binds seven local controls that Rust does not yet compose: exact Git commit/tree/content provenance; formal operational receipt with the fixed zero-skip 23-test contract; tracked-source secret scan plus owner-only runtime boundary; immutable SQLite schema/quick-check/foreign-key/lease inspection with anti-rollback hash chain and current read-only snapshot; backup and restore-drill receipt verification; CPU process-isolated and optional GPU same-device scientific receipts with freshness and model/data/checkpoint IR constraints; and the hash-bound personal profile evaluator with explicit not-applicable controls. Existing Rust operational_status covers provenance only and store_status covers a separate generic store projection; neither is a personal-readiness call chain. A help-only or caller-supplied report would not be compatible evidence.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust personal-self-hosted-readiness [--root PATH] [--runtime-root PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_readiness.rs",
+          "symbol": "inspect_personal_self_hosted_readiness_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_readiness.rs",
+          "symbol": "inspect_provenance"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_formal.rs",
+          "symbol": "inspect_formal_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_source.rs",
+          "symbol": "inspect_source_security"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_readiness.rs",
+          "symbol": "inspect_database"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_readiness.rs",
+          "symbol": "inspect_cpu"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_readiness.rs",
+          "symbol": "inspect_gpu"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
+          "symbol": "verify_personal_gpu_receipt"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/personal_self_hosted_readiness_parity.rs"
+      ],
+      "remaining": "Rust now composes the read-only personal local observer and matches the incumbent Node report for missing evidence, GPU opt-in failure, and a safe schema-25 database with a valid anti-rollback ledger, content-addressed backup and restore-drill receipt. The route validates exact provenance, formal zero-skip evidence, tracked-source secret policy, owner-only runtime boundary, immutable SQLite quick-check/foreign-key/schema/lease state, SQLite-consistent snapshot hashing, anti-rollback entries, backup/restore receipts, and CPU/optional GPU scientific receipt constraints. It never writes runtime state, invokes an external actor, reads private signing material, publishes authority, or enables distribution. Full formal receipt semantics, source-policy parity outside the checked-in tracked scan, hardware execution, external authority, target-host acceptance, deployment and Node retirement remain open.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_readiness.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_formal.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_source.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_self_hosted_readiness_parity.rs",
+          "symbol": "help_metadata_matches_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_self_hosted_readiness_parity.rs",
+          "symbol": "missing_local_evidence_matches_node_exactly"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_self_hosted_readiness_parity.rs",
+          "symbol": "missing_runtime_root_preserves_node_catch_boundary"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_self_hosted_readiness_parity.rs",
+          "symbol": "gpu_opt_in_missing_evidence_matches_node_and_require_ready_blocks"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_self_hosted_readiness_parity.rs",
+          "symbol": "safe_local_database_ledger_backup_and_restore_match_node"
+        }
+      ]
     },
     {
       "id": "operator/journal-connector-coverage",

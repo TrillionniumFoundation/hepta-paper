@@ -32,6 +32,11 @@ pub mod online_schema_execution;
 pub mod online_schema_transition;
 pub mod operational_status;
 pub mod owner_status;
+pub mod personal_self_hosted_formal;
+pub mod personal_self_hosted_gpu;
+pub mod personal_self_hosted_readiness;
+pub(crate) mod personal_self_hosted_source;
+
 pub mod portal_target_qualification;
 pub mod pristine_runtime_state;
 mod production;

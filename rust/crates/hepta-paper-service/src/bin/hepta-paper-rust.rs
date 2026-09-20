@@ -28,6 +28,10 @@ use hepta_paper_service::{
         local_golden_dataset_provisioning_usage, parse_local_golden_dataset_provisioning_arguments,
     },
     migrate_node_store_v1, native_implementation_hash_v1,
+    personal_self_hosted_readiness::{
+        PersonalSelfHostedReadinessOptions, canonical_observed_at_v1,
+        inspect_personal_self_hosted_readiness_v1, personal_self_hosted_readiness_help_json_v1,
+    },
     release_attest::{ReleaseAttestationRequestV1, inspect_release_attestation_v1},
     release_state::inspect_release_state_v1,
     release_trust_gate::build_release_trust_layer_gate_from_values_v1,
@@ -52,7 +56,7 @@ use std::{
     env,
     fs::File,
     io::{self, BufRead, Read},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -694,6 +698,135 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Some("personal-self-hosted-readiness") => {
+            let mut workspace_root = None;
+            let mut runtime_root = None;
+            let mut cpu_receipt = None;
+            let mut gpu_receipt = None;
+            let mut gpu_enabled = false;
+            let mut require_ready = false;
+            let mut help = false;
+            let mut observed_at = None;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--root" | "--workspace-root"
+                        if index + 1 < args.len() && workspace_root.is_none() =>
+                    {
+                        workspace_root = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--runtime-root" if index + 1 < args.len() && runtime_root.is_none() => {
+                        runtime_root = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--cpu-receipt" if index + 1 < args.len() && cpu_receipt.is_none() => {
+                        cpu_receipt = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--gpu-receipt" if index + 1 < args.len() && gpu_receipt.is_none() => {
+                        gpu_receipt = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--gpu-enabled" if !gpu_enabled => {
+                        gpu_enabled = true;
+                        index += 1;
+                    }
+                    "--require-ready" if !require_ready => {
+                        require_ready = true;
+                        index += 1;
+                    }
+                    "--help" if !help => {
+                        help = true;
+                        index += 1;
+                    }
+                    "--now" if index + 1 < args.len() && observed_at.is_none() => {
+                        observed_at = Some(args[index + 1].clone());
+                        index += 2;
+                    }
+                    _ => {
+                        return Err("personal-self-hosted-readiness accepts --root PATH [--runtime-root PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help] only".into());
+                    }
+                }
+            }
+            if help {
+                println!(
+                    "{}",
+                    serde_json::to_string(&personal_self_hosted_readiness_help_json_v1())?
+                );
+                return Ok(());
+            }
+            let resolve_path = |path: PathBuf| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    env::current_dir()
+                        .map(|cwd| cwd.join(&path))
+                        .unwrap_or(path)
+                }
+            };
+            let workspace_root = workspace_root
+                .or_else(|| env::var("HEPTA_WORKSPACE_ROOT").ok().map(PathBuf::from))
+                .map(resolve_path)
+                .unwrap_or(env::current_dir()?);
+            let runtime_root = runtime_root
+                .or_else(|| env::var("HEPTA_PAPER_RUNTIME_ROOT").ok().map(PathBuf::from))
+                .map(resolve_path)
+                .unwrap_or_else(|| {
+                    workspace_root
+                        .parent()
+                        .unwrap_or_else(|| Path::new("/"))
+                        .join("hepta-paper-runtime/native-runtime")
+                });
+            if !workspace_root.is_absolute() || !runtime_root.is_absolute() {
+                return Err("personal-self-hosted-readiness requires absolute root paths".into());
+            }
+            let observed_at = match observed_at {
+                Some(value) => canonical_observed_at_v1(&value)?,
+                None => unix_millis_to_iso_v1(current_unix_millis()?)?,
+            };
+            cpu_receipt = cpu_receipt.map(resolve_path);
+            gpu_receipt = gpu_receipt.map(resolve_path);
+            let environment = [
+                "HEPTA_FORMAL_OPERATIONAL_RECEIPT",
+                "HEPTA_PERSONAL_CPU_RECEIPT",
+                "HEPTA_PERSONAL_GPU_RECEIPT",
+                "HEPTA_PERSONAL_GPU_ENABLED",
+                "HEPTA_PERSONAL_GPU_DISABLED_REASON",
+            ]
+            .into_iter()
+            .filter_map(|name| env::var(name).ok().map(|value| (name.to_owned(), value)))
+            .chain(cpu_receipt.as_ref().map(|path| {
+                (
+                    "HEPTA_PERSONAL_CPU_RECEIPT".to_owned(),
+                    path.to_string_lossy().into_owned(),
+                )
+            }))
+            .chain(gpu_receipt.as_ref().map(|path| {
+                (
+                    "HEPTA_PERSONAL_GPU_RECEIPT".to_owned(),
+                    path.to_string_lossy().into_owned(),
+                )
+            }))
+            .collect::<BTreeMap<_, _>>();
+            let options = PersonalSelfHostedReadinessOptions {
+                workspace_root,
+                runtime_root,
+                cpu_receipt,
+                gpu_receipt,
+                gpu_enabled: gpu_enabled
+                    || environment
+                        .get("HEPTA_PERSONAL_GPU_ENABLED")
+                        .is_some_and(|v| v == "true"),
+                observed_at,
+                environment,
+            };
+            let report = inspect_personal_self_hosted_readiness_v1(&options)?;
+            println!("{}", serde_json::to_string(&report)?);
+            if require_ready && report["personalSelfHostedProductionReady"] != true {
+                std::process::exit(2);
+            }
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
@@ -719,7 +852,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | external-authority-intake [--author-config PATH --author-config-hash sha256:...] [--release-attestor-config PATH --release-attestor-config-hash sha256:...] [--require-ready]",
                 " | generic-domain-capability-evidence --action status|converge --runtime-root ABSOLUTE_PATH",
                 " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]",
-                " | local-golden-dataset-provision --action plan|execute [options]"
+                " | local-golden-dataset-provision --action plan|execute [options]",
+                " | personal-self-hosted-readiness [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help]"
             )
             .into());
         }

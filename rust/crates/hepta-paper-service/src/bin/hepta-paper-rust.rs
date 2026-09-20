@@ -1060,6 +1060,69 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("autonomous-supervisor") => {
+            let mut action = "health".to_owned();
+            let mut runtime_root = None;
+            let mut help = false;
+            let mut require_startup = false;
+            let mut require_machine = false;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--help" if !help => {
+                        help = true;
+                        index += 1;
+                    }
+                    "--action" if index + 1 < args.len() => {
+                        action = args[index + 1].clone();
+                        index += 2;
+                    }
+                    "--runtime-root" if index + 1 < args.len() => {
+                        runtime_root = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--require-startup-reconciliation" if !require_startup => {
+                        require_startup = true;
+                        index += 1;
+                    }
+                    "--require-machine-intake-reconciliation" if !require_machine => {
+                        require_machine = true;
+                        index += 1;
+                    }
+                    token => return Err(format!("unsupported_supervisor_mode:{token}").into()),
+                }
+            }
+            if help {
+                println!(
+                    "{{\"version\":1,\"kind\":\"AutonomousSupervisorHealthUsage\",\"usage\":\"hepta-paper-rust autonomous-supervisor --action health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation]\",\"mutation\":\"none\"}}"
+                );
+                return Ok(());
+            }
+            if action != "health" {
+                return Err("rust_autonomous_supervisor_execution_not_ported".into());
+            }
+            let runtime_root = runtime_root
+                .or_else(|| env::var("HEPTA_PAPER_RUNTIME_ROOT").ok().map(PathBuf::from))
+                .unwrap_or_else(|| {
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../../../hepta-paper-runtime/native-runtime")
+                });
+            let report = hepta_paper_service::supervisor_health::inspect_supervisor_health_v1(
+                &lexical_absolute_path(runtime_root),
+                current_unix_millis()?,
+            )?;
+            println!("{}", serde_json::to_string(&report)?);
+            let passing = if require_machine {
+                report["ready"] == true
+            } else if require_startup {
+                report["startupReady"] == true
+            } else {
+                report["healthy"] == true
+            };
+            if !passing {
+                std::process::exit(2);
+            }
+        }
         Some("personal-self-hosted-readiness") => {
             let mut workspace_root = None;
             let mut runtime_root = None;

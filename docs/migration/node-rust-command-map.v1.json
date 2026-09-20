@@ -1329,14 +1329,38 @@
     },
     {
       "id": "operator/autonomous-supervisor",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No native supervisor execution entrypoint. The separate Rust supervisor-health route inspects resident-instance.sqlite only. The Rust resident lifecycle, process signals, instance/cycle leases, campaign scheduling and dispatch, provider canary, qualification renewal, machine-intake enqueue, external-action journal, startup/shutdown recovery and runtime/state-safety composition remain unimplemented; these are source gaps before target-host qualification.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust autonomous-supervisor --action health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation] [--help]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/supervisor_health.rs",
+          "symbol": "inspect_supervisor_health_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
+        "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs"
+      ],
+      "remaining": "Rust now exposes the already-qualified read-only supervisor health observer through the unified service CLI, including missing-instance, startup and machine-intake status checks. Resident lifecycle execution, signals, instance/cycle leases, campaign scheduling/dispatch, provider canary, qualification renewal, machine-intake enqueue, external-action journal, startup/shutdown recovery and target-host qualification remain open.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/supervisor_health.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs",
+          "symbol": "health_route_reports_read_only_missing_instance_and_execution_stays_blocked"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs",
+          "symbol": "health_route_help_is_json_and_does_not_touch_runtime"
+        }
+      ]
     },
     {
       "id": "operator/reconcile",

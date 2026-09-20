@@ -264,14 +264,57 @@
     },
     {
       "id": "operator/personal-gpu-operational-gate",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
+          "symbol": "verify_personal_gpu_operational_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
+          "symbol": "blocked_personal_gpu_receipt_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs"
+      ],
+      "remaining": "Rust now covers the incumbent read-only --check path for help, missing or invalid receipts, valid blocked receipts and valid personal-ready receipts, including exact blocked/ready receipt shape, blocker normalization and production hash binding. It deliberately does not execute nvidia-smi, Docker, PDE, deep-learning, CPU-oracle or holdout work, does not write receipts, and does not establish second hardware, external authority, production activation or Node retirement.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "help_matches_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "blocked_receipt_check_matches_node_exactly"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "invalid_timestamp_blocked_receipt_matches_node_exactly"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "ready_receipt_check_matches_node_exactly"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "missing_receipt_is_fail_closed_and_hash_valid"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "symlink_receipt_is_rejected_by_both_scoped_readers"
+        }
+      ]
     },
     {
       "id": "operator/personal-self-hosted-readiness",

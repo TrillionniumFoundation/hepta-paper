@@ -28,6 +28,9 @@ use hepta_paper_service::{
         local_golden_dataset_provisioning_usage, parse_local_golden_dataset_provisioning_arguments,
     },
     migrate_node_store_v1, native_implementation_hash_v1,
+    personal_self_hosted_gpu::{
+        blocked_personal_gpu_receipt_v1, verify_personal_gpu_operational_receipt,
+    },
     personal_self_hosted_readiness::{
         PersonalSelfHostedReadinessOptions, canonical_observed_at_v1,
         inspect_personal_self_hosted_readiness_v1, personal_self_hosted_readiness_help_json_v1,
@@ -54,9 +57,11 @@ use hepta_paper_service::{
 use std::{
     collections::BTreeMap,
     env,
-    fs::File,
+    fs::{self, File},
     io::{self, BufRead, Read},
-    path::{Path, PathBuf},
+    os::unix::{fs::MetadataExt, fs::OpenOptionsExt},
+    path::{Component, Path, PathBuf},
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -80,6 +85,138 @@ fn main() {
 fn current_unix_millis() -> Result<i64, Box<dyn std::error::Error>> {
     let millis = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     Ok(i64::try_from(millis).map_err(|_| "current clock exceeds signed millisecond range")?)
+}
+
+fn safe_personal_gpu_token(value: &str) -> String {
+    let mut token = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | ':' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    token.truncate(180);
+    if token.is_empty() {
+        "error".to_owned()
+    } else {
+        token
+    }
+}
+
+fn workspace_commit_for_personal_gpu(root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "HEAD"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let commit = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    if commit.len() == 40
+        && commit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        Some(commit)
+    } else {
+        None
+    }
+}
+
+fn lexical_absolute_path(path: PathBuf) -> PathBuf {
+    let candidate = if path.is_absolute() {
+        path
+    } else {
+        env::current_dir().map_or(path.clone(), |cwd| cwd.join(path))
+    };
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            Component::RootDir => normalized.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+            Component::Prefix(_) => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn personal_gpu_check_fallback(
+    workspace_root: &Path,
+    failure: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let created_at = current_unix_millis()?;
+    let failure_token = format!(
+        "personal_gpu_gate_failed:{}",
+        safe_personal_gpu_token(failure)
+    );
+    blocked_personal_gpu_receipt_v1(
+        created_at,
+        workspace_commit_for_personal_gpu(workspace_root).as_deref(),
+        &failure_token,
+    )
+}
+
+fn read_personal_gpu_receipt(path: &Path) -> Result<Vec<u8>, ()> {
+    const MAX_RECEIPT_BYTES: u64 = 64 * 1024 * 1024;
+    let parent = path.parent().ok_or(())?;
+    let parent_metadata = fs::symlink_metadata(parent).map_err(|_| ())?;
+    if !parent_metadata.is_dir()
+        || parent_metadata.file_type().is_symlink()
+        || fs::canonicalize(parent).map_err(|_| ())? != parent
+        || fs::canonicalize(path).map_err(|_| ())? != path
+    {
+        return Err(());
+    }
+    let before = fs::symlink_metadata(path).map_err(|_| ())?;
+    if !before.is_file()
+        || before.file_type().is_symlink()
+        || before.nlink() != 1
+        || before.len() > MAX_RECEIPT_BYTES
+    {
+        return Err(());
+    }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| ())?;
+    let opened = file.metadata().map_err(|_| ())?;
+    if opened.dev() != before.dev()
+        || opened.ino() != before.ino()
+        || opened.mode() != before.mode()
+        || opened.len() != before.len()
+        || opened.mtime_nsec() != before.mtime_nsec()
+        || opened.nlink() != before.nlink()
+    {
+        return Err(());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_RECEIPT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    if bytes.len() as u64 > MAX_RECEIPT_BYTES {
+        return Err(());
+    }
+    let after = fs::symlink_metadata(path).map_err(|_| ())?;
+    if after.dev() != before.dev()
+        || after.ino() != before.ino()
+        || after.mode() != before.mode()
+        || after.len() != before.len()
+        || after.mtime_nsec() != before.mtime_nsec()
+        || after.nlink() != before.nlink()
+    {
+        return Err(());
+    }
+    Ok(bytes)
 }
 
 fn command() -> Result<(), Box<dyn std::error::Error>> {
@@ -696,6 +833,113 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 if !ready {
                     std::process::exit(2);
                 }
+            }
+        }
+        Some("personal-gpu-operational-gate") => {
+            let mut check = false;
+            let mut help = false;
+            let mut write = false;
+            let mut workspace_root = None;
+            let mut runtime_root = None;
+            let mut receipt = None;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--check" if !check => {
+                        check = true;
+                        index += 1;
+                    }
+                    "--help" if !help => {
+                        help = true;
+                        index += 1;
+                    }
+                    "--write" if !write => {
+                        write = true;
+                        index += 1;
+                    }
+                    "--root" if index + 1 < args.len() && workspace_root.is_none() => {
+                        workspace_root = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--runtime-root" if index + 1 < args.len() && runtime_root.is_none() => {
+                        runtime_root = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--receipt" if index + 1 < args.len() && receipt.is_none() => {
+                        receipt = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    // These execution arguments are accepted by Node's strict
+                    // parser, but the Rust partial route intentionally refuses
+                    // to execute or write any GPU work.
+                    "--output-root" | "--run-id" | "--deadline-ms" if index + 1 < args.len() => {
+                        index += 2;
+                    }
+                    _ => {
+                        return Err("personal-gpu-operational-gate accepts --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help] only; GPU execution is not ported".into());
+                    }
+                }
+            }
+            if help {
+                println!(
+                    "personal-gpu-operational-gate [--write] [--check] [--root PATH] [--runtime-root PATH]\n  Runs the local single-host GPU/PDE/DL gate. Green is personal-only and non-promotable."
+                );
+                return Ok(());
+            }
+            if !check {
+                return Err("personal-gpu-operational-gate Rust route currently supports only read-only --check; GPU execution is not ported".into());
+            }
+            let resolve_path = lexical_absolute_path;
+            let workspace_root = workspace_root.map(resolve_path).unwrap_or_else(|| {
+                lexical_absolute_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+            });
+            let runtime_root = runtime_root
+                .or_else(|| env::var("HEPTA_PAPER_RUNTIME_ROOT").ok().map(PathBuf::from))
+                .map(resolve_path)
+                .unwrap_or_else(|| {
+                    workspace_root
+                        .parent()
+                        .unwrap_or_else(|| Path::new("/"))
+                        .join("hepta-paper-runtime/native-runtime")
+                });
+            let receipt_path = receipt.map(resolve_path).unwrap_or_else(|| {
+                runtime_root.join("gpu-personal/personal-gpu-operational-receipt.json")
+            });
+            if !workspace_root.is_absolute()
+                || !runtime_root.is_absolute()
+                || !receipt_path.is_absolute()
+            {
+                return Err(
+                    "personal-gpu-operational-gate requires absolute root and receipt paths".into(),
+                );
+            }
+            // `--write` is deliberately ignored only when paired with check,
+            // matching Node's check-first branch while retaining read-only Rust
+            // behavior.  No branch below writes the supplied receipt path.
+            let _ = write;
+            let report = match read_personal_gpu_receipt(&receipt_path) {
+                Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    Ok(value) if verify_personal_gpu_operational_receipt(&value) => value,
+                    _ => personal_gpu_check_fallback(
+                        &workspace_root,
+                        "personal_gpu_existing_receipt_invalid",
+                    )?,
+                },
+                Err(_) => {
+                    let basename = receipt_path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("receipt.json");
+                    personal_gpu_check_fallback(
+                        &workspace_root,
+                        &format!("personal_gpu_artifact_read_failed:{basename}"),
+                    )?
+                }
+            };
+            let ready = report["personalProductionReady"] == serde_json::Value::Bool(true);
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if !ready {
+                std::process::exit(2);
             }
         }
         Some("personal-self-hosted-readiness") => {

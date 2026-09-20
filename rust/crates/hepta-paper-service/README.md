@@ -54,6 +54,7 @@ clock and local writer token. It is not a deployment configuration.
 | `research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]` | Project the actual passive Rust state-safety inspection and compare it with the Node diagnostic contract; `--require-ready` fails closed and the command performs no authority RPC or runtime write. Full automation-status observers and live activation remain outside this bounded route. |
 | `generic-domain-capability-evidence --action status\|converge --runtime-root ABSOLUTE_PATH` | Inspect only the explicit private `generic-domain-capability-evidence.json` file under the supplied runtime root, matching Node shape/hash/path checks. `status` is read-only; `converge` is a fail-closed diagnostic that never publishes, invokes external replay/authority, or changes service state. |
 | `personal-self-hosted-readiness [--root PATH] [--runtime-root PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO\|UNIX_MILLIS]` | Compose the read-only personal local observer: exact provenance, formal zero-skip evidence, tracked-source/runtime boundary, SQLite schema/lease and consistent-snapshot checks, anti-rollback ledger, backup/restore-drill receipts and CPU/optional GPU scientific receipts. Missing evidence stays blocked; the route never invokes external actors or grants authority. Hardware qualification, external authority, deployment and Node retirement remain open. |
+| `personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH]` | Read and verify the existing personal GPU operational receipt with the Node-compatible shape, blocker normalization and production hash. Missing, malformed and blocked receipts fail closed; the route never runs `nvidia-smi`, Docker, PDE/DL workers, CPU or holdout oracles, and never writes a receipt. The execute gate, second hardware, external authority, production activation and Node retirement remain open. |
 | `retirement-reference ROOT` | Verify retirement snapshot receipts and archive hashes without consulting or mutating a live legacy runtime. |
 | `release-trust-gate REQUEST` | Evaluate the pure release trust-layer count gate from JSON input; it never creates external signatures or activates production. |
 | `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input; composite release verification remains separate. |
@@ -180,6 +181,17 @@ handoff](../../../docs/modules/PERSONAL_SELF_HOSTED_READINESS_HANDOFF.md)
 defines the private-file, SQLite snapshot, scientific-receipt and
 `--require-ready` boundaries. The route remains a source-level local observer;
 it never performs provider, network, signer, deployment or publication work.
+
+`hepta-paper-rust personal-gpu-operational-gate --check` is the bounded
+read-only counterpart for the incumbent private GPU gate. It accepts the same
+valid ready and blocked receipt wire format, verifies all nested GPU/PDE/deep
+learning/IR fields and the `personalGpuOperationalReceiptHash`, and emits the
+same exit class as Node (zero only for a valid personal-ready receipt; two for
+missing, malformed or blocked evidence). Receipt reads use a regular-file,
+single-link, no-follow descriptor, stable identity and 64 MiB bound. The Rust
+route does not claim to execute or authorize the real GPU gate: that still
+requires the pinned NVIDIA/Docker/PDE/DL/CPU-oracle/holdout chain and remains a
+separate migration and host-qualification gap.
 
 `cargo test -p hepta-paper-service` covers executable configuration, actual CAS
 bytes, durable commit/replay, unsafe content rejection and authority refusal.

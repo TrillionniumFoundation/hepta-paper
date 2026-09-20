@@ -102,6 +102,13 @@ impl InstalledSchemaMaintenanceV1 {
 fn invalid() -> crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorError {
     error("autonomous_research_online_schema_transition_installation_invalid")
 }
+fn validate_commit_safety_margin(commit_safety_margin_ms: i64, plan: &Value) -> Result<()> {
+    let required_execution_window_ms = int(plan, "requiredExecutionWindowMs")?;
+    ensure(
+        commit_safety_margin_ms >= 1 && commit_safety_margin_ms < required_execution_window_ms,
+        "autonomous_research_online_schema_transition_safety_margin_invalid",
+    )
+}
 fn advance(context: &mut InstallationContext, now: i64) -> Result<()> {
     ensure(
         now >= context.checked_at,
@@ -429,10 +436,7 @@ pub fn install_schema_maintenance_v1<T: MutationAuthorityTransportV1>(
     options: SchemaInstallationOptionsV1<'_>,
     checkpoint: &mut dyn SchemaInstallationCheckpointV1,
 ) -> Result<InstalledSchemaMaintenanceV1> {
-    ensure(
-        options.commit_safety_margin_ms >= 1000,
-        "autonomous_research_online_schema_transition_commit_margin_invalid",
-    )?;
+    validate_commit_safety_margin(options.commit_safety_margin_ms, normalized.plan())?;
     normalized.assert_current(authority, clock)?;
     let manifest = normalized.maintenance.plan.installation_manifest().clone();
     let repo = InstallationPreimages::open(&normalized.lock, normalized.plan(), true)?;
@@ -480,10 +484,6 @@ pub fn resume_schema_installation_v1<T: MutationAuthorityTransportV1>(
     clock: &mut dyn MutationClockV1,
     checkpoint: &mut dyn SchemaInstallationCheckpointV1,
 ) -> Result<InstalledSchemaMaintenanceV1> {
-    ensure(
-        options.installation.commit_safety_margin_ms >= 1000,
-        "autonomous_research_online_schema_transition_commit_margin_invalid",
-    )?;
     let inventory =
         inspect_state_database_inventory_v1(options.runtime_root, options.state_database_manifest)?;
     let first = inventory["instances"]
@@ -517,6 +517,10 @@ pub fn resume_schema_installation_v1<T: MutationAuthorityTransportV1>(
         options.state_database_manifest,
         &journal["plan"],
     )?;
+    validate_commit_safety_margin(
+        options.installation.commit_safety_margin_ms,
+        &journal["plan"],
+    )?;
     let now = clock.now_millis()?;
     ensure(
         now >= int(&journal, "checkedAtMillis")?
@@ -539,4 +543,33 @@ pub fn resume_schema_installation_v1<T: MutationAuthorityTransportV1>(
         margin: options.installation.commit_safety_margin_ms,
     };
     execute(context, authority, clock, options.installation, checkpoint)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn commit_safety_margin_matches_node_window_rule() {
+        let plan = json!({"requiredExecutionWindowMs": 30_000});
+        assert!(validate_commit_safety_margin(1, &plan).is_ok());
+        assert!(validate_commit_safety_margin(29_999, &plan).is_ok());
+        assert_eq!(
+            validate_commit_safety_margin(0, &plan).unwrap_err().code,
+            "autonomous_research_online_schema_transition_safety_margin_invalid"
+        );
+        assert_eq!(
+            validate_commit_safety_margin(30_000, &plan)
+                .unwrap_err()
+                .code,
+            "autonomous_research_online_schema_transition_safety_margin_invalid"
+        );
+        assert_eq!(
+            validate_commit_safety_margin(30_001, &plan)
+                .unwrap_err()
+                .code,
+            "autonomous_research_online_schema_transition_safety_margin_invalid"
+        );
+    }
 }

@@ -134,13 +134,8 @@ fn execute<T: MutationAuthorityTransportV1>(
             error("autonomous_research_online_schema_transition_normalized_source_mismatch")
         })?;
         record["beforeSha256"] = before_sha;
-        if already_normalized {
-            let row = &maintenance.plan()["instances"][index];
-            record[if row["preSchemaHash"] == row["expectedPostSchemaHash"] {
-                "alreadyInstalled"
-            } else {
-                "alreadyNormalized"
-            }] = json!(true);
+        if already_normalized && record.get("alreadyInstalled") != Some(&json!(true)) {
+            record["alreadyNormalized"] = json!(true);
         }
         records.push(record);
         checkpoint.checkpoint("before_normalization_progress_publication", &id)?;

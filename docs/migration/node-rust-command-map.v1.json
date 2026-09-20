@@ -1943,7 +1943,7 @@
         "rust/crates/hepta-paper-service/tests/online_finalized_inventory_parity.rs",
         "rust/crates/hepta-paper-service/tests/state_recoverability_fence.rs"
       ],
-      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime.",
+      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
@@ -2019,6 +2019,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs",
           "symbol": "actual_wall_clock_signed_lease_completes_ten_database_wal_normalization"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs",
+          "symbol": "already_installed_normalization_recovery_matches_node"
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/schema_installation_parity.rs",

@@ -1,6 +1,9 @@
 use hepta_paper_service::{
     online_schema_execution::{
-        maintenance::{normalization::*, *},
+        maintenance::{
+            normalization::{installation::*, *},
+            *,
+        },
         plan::*,
     },
     sqlite_mutation_coordinator::{
@@ -134,7 +137,9 @@ fn options(setup: &Value) -> SchemaTransitionPlanOptionsV1<'_> {
         state_database_manifest: &setup["stateDatabaseManifest"],
         writer_manifest: &setup["writerManifest"],
         requested_lease_ms: 60000,
-        required_execution_window_ms: 1000,
+        // The installation default uses a 1000ms commit margin; keep the
+        // direct Rust fixture's signed execution window strictly larger.
+        required_execution_window_ms: 2000,
         expected_pre_rebind_pristine_runtime_state_hash:
             setup["expectedPreRebindPristineRuntimeStateHash"].as_str(),
         machine_genesis: None,
@@ -286,6 +291,58 @@ fn actual_ten_database_normalization_records_match_node_and_keep_exclusive_lock(
         fs::read(path).unwrap(),
         changed_bytes,
         "completed progress cannot authorize overwrite of changed source"
+    );
+}
+
+#[test]
+fn already_installed_normalization_recovery_matches_node() {
+    let fixture = Fixture::new(false);
+    let mut authority = fixture.authority();
+    let plan =
+        build_schema_transition_plan_v1(fixture.options(), &authority, &mut || Ok(BASE)).unwrap();
+    let token = reserve_schema_maintenance_v1(plan, &mut authority, &mut || Ok(BASE)).unwrap();
+    let plan_value = token.plan().clone();
+    let request = token.request().clone();
+    let reservation = token.reservation().clone();
+    let _installed = install_schema_maintenance_v1(
+        normalize_schema_maintenance_v1(
+            token,
+            &authority,
+            &mut || Ok(BASE),
+            &mut NoSchemaNormalizationCheckpointV1,
+        )
+        .unwrap(),
+        &authority,
+        &mut || Ok(BASE),
+        SchemaInstallationOptionsV1::default(),
+        &mut NoSchemaInstallationCheckpointV1,
+    )
+    .unwrap();
+    drop(_installed);
+    let expected = fixture.oracle.borrow_mut().call(json!({
+        "operation":"normalize-scope",
+        "root":fixture.root,
+        "plan":plan_value,
+        "request":request,
+        "reservation":reservation,
+    }));
+    assert_eq!(expected["ok"], true, "{expected}");
+    let id = plan_value["transitionId"].as_str().unwrap();
+    let recovered = resume_schema_normalization_v1(
+        fixture.resume(id),
+        &authority,
+        &mut || Ok(BASE),
+        &mut NoSchemaNormalizationCheckpointV1,
+    )
+    .unwrap();
+    assert_eq!(recovered.records(), &expected["value"]);
+    assert!(
+        recovered
+            .records()
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["alreadyInstalled"] == true)
     );
 }
 struct ExitAt {

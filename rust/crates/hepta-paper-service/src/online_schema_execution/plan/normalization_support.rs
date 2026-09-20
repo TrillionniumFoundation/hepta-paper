@@ -6,6 +6,113 @@ fn ensure(valid: bool, code: &str) -> Result<()> {
 }
 use crate::state_database_inventory::schema_source::SchemaSource;
 
+fn inventory_row(inventory: &Value, index: usize) -> Result<&Value> {
+    inventory
+        .get("instances")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.get(index))
+        .ok_or_else(invalid)
+}
+
+fn is_installed_row(observed: &Value, reserved: &Value) -> bool {
+    observed["schemaHash"] == reserved["expectedPostSchemaHash"]
+}
+
+/// Re-observe a target-schema source after a prior installation. The original
+/// source descriptor intentionally rejects changed bytes, so an installed
+/// state must be accepted only through the exact signed identity/path/schema
+/// pins and with both SQLite sidecars absent.
+fn observe_installed_source(
+    plan: &ObservedSchemaTransitionPlanV1,
+    index: usize,
+    inventory: &Value,
+) -> Result<Option<SchemaSource>> {
+    let reserved = plan.value["instances"].get(index).ok_or_else(invalid)?;
+    let observed = inventory_row(inventory, index)?;
+    if !is_installed_row(observed, reserved) {
+        return Ok(None);
+    }
+    let source = SchemaSource::observe(
+        &plan.runtime_root,
+        Path::new(text(reserved, "sourceRelativePath")?),
+        text(reserved, "databaseRole")?,
+    )?;
+    ensure(
+        source.root_matches(plan.first_source()?),
+        "autonomous_research_online_schema_transition_runtime_root_identity_changed",
+    )?;
+    let state = source.normalization_state();
+    ensure(
+        state["sidecarsPresent"] == false
+            && state["sourceFileIdentityHash"] == reserved["sourceFileIdentityHash"]
+            && state["sourceSha256"] == observed["sourceSha256"],
+        "autonomous_research_online_schema_transition_reserved_normalized_projection_mismatch",
+    )?;
+    Ok(Some(source))
+}
+
+/// Validate the complete physical scope while accepting a database that has
+/// already committed the signed target schema. This mirrors the Node oracle's
+/// `installedState` branch without weakening the authority or inode pins.
+fn current_scope_allow_installed(plan: &ObservedSchemaTransitionPlanV1) -> Result<Value> {
+    let inventory = inspect_state_database_inventory_v1(&plan.runtime_root, &plan.manifest)?;
+    validate_inventory(&inventory, &plan.manifest)?;
+    ensure(
+        inventory["databaseScopeHash"] == plan.value["databaseScopeHash"],
+        "autonomous_research_online_schema_transition_normalization_scope_changed",
+    )?;
+    let rows = inventory["instances"].as_array().ok_or_else(invalid)?;
+    let expected = plan.value["instances"].as_array().ok_or_else(invalid)?;
+    ensure(
+        rows.len() == expected.len(),
+        "autonomous_research_online_schema_transition_normalization_scope_changed",
+    )?;
+    for (index, (observed, reserved)) in rows.iter().zip(expected).enumerate() {
+        for (a, b) in [
+            ("role", "databaseRole"),
+            ("instanceId", "databaseInstanceId"),
+            ("sourceRelativePath", "sourceRelativePath"),
+            ("schemaContractId", "schemaContractId"),
+        ] {
+            ensure(
+                observed[a] == reserved[b],
+                "autonomous_research_online_schema_transition_normalization_scope_changed",
+            )?;
+        }
+        ensure(
+            observed["schemaHash"] == reserved["preSchemaHash"]
+                || observed["schemaHash"] == reserved["expectedPostSchemaHash"],
+            "autonomous_research_online_schema_transition_normalization_scope_changed",
+        )?;
+        if let Some(source) = observe_installed_source(plan, index, &inventory)? {
+            source.assert_current()?;
+            continue;
+        }
+        // Non-installed rows may be in the original or normalized physical
+        // state while a WAL checkpoint is completing. The full source
+        // identity/projection check is performed by `refresh_normalization_scope`
+        // below; do not hash the same live file a second time here.
+    }
+    let final_inventory = inspect_state_database_inventory_v1(&plan.runtime_root, &plan.manifest)?;
+    ensure(
+        final_inventory == inventory,
+        "autonomous_research_online_schema_transition_database_changed_during_simulation",
+    )?;
+    Ok(inventory)
+}
+
+impl ObservedSchemaTransitionPlanV1 {
+    pub(in crate::online_schema_execution) fn assert_current_allow_installed(&self) -> Result<()> {
+        let inventory = current_scope_allow_installed(self)?;
+        if inventory == self.inventory {
+            for source in &self.sources {
+                source.assert_current()?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl ObservedSchemaTransitionPlanV1 {
     pub(in crate::online_schema_execution) fn normalization_root(&self) -> &Path {
         &self.runtime_root
@@ -35,11 +142,48 @@ impl ObservedSchemaTransitionPlanV1 {
     ) -> Result<Option<Value>> {
         let reserved = self.value["instances"].get(index).ok_or_else(invalid)?;
         let source = self.sources.get(index).ok_or_else(invalid)?;
-        let state = source.source.normalization_state();
-        source.assert_current()?;
-        if state["sidecarsPresent"] != false
-            || state["sourceSha256"] != reserved["expectedNormalizedSourceSha256"]
+        let state = match source
+            .assert_current()
+            .map(|_| source.source.normalization_state())
         {
+            Ok(state) => state,
+            Err(original) => {
+                let inventory =
+                    inspect_state_database_inventory_v1(&self.runtime_root, &self.manifest)?;
+                let Some(installed) = observe_installed_source(self, index, &inventory)? else {
+                    return Err(original);
+                };
+                let state = installed.normalization_state();
+                return Ok(Some(json!({
+                    "databaseRole":reserved["databaseRole"],
+                    "databaseInstanceId":reserved["databaseInstanceId"],
+                    "journalPreimageHash":reserved["journalPreimageHash"],
+                    "beforeSha256":state["sourceSha256"],
+                    "normalizedSha256":state["sourceSha256"],
+                    "journalMode":"delete",
+                    "sidecarsPresent":false,
+                    "alreadyInstalled":true,
+                })));
+            }
+        };
+        if state["sidecarsPresent"] != false {
+            return Ok(None);
+        }
+        let inventory = inspect_state_database_inventory_v1(&self.runtime_root, &self.manifest)?;
+        if let Some(installed) = observe_installed_source(self, index, &inventory)? {
+            let state = installed.normalization_state();
+            return Ok(Some(json!({
+                "databaseRole":reserved["databaseRole"],
+                "databaseInstanceId":reserved["databaseInstanceId"],
+                "journalPreimageHash":reserved["journalPreimageHash"],
+                "beforeSha256":state["sourceSha256"],
+                "normalizedSha256":state["sourceSha256"],
+                "journalMode":"delete",
+                "sidecarsPresent":false,
+                "alreadyInstalled":true,
+            })));
+        }
+        if state["sourceSha256"] != reserved["expectedNormalizedSourceSha256"] {
             return Ok(None);
         }
         Ok(Some(
@@ -66,12 +210,7 @@ impl ObservedSchemaTransitionPlanV1 {
         if unchanged.is_ok() {
             return Ok(());
         }
-        let before = inspect_state_database_inventory_v1(&self.runtime_root, &self.manifest)?;
-        validate_inventory(&before, &self.manifest)?;
-        ensure(
-            before["databaseScopeHash"] == self.value["databaseScopeHash"],
-            "autonomous_research_online_schema_transition_normalization_scope_changed",
-        )?;
+        let before = current_scope_allow_installed(self)?;
         let actual = before["instances"].as_array().ok_or_else(invalid)?;
         let expected = self.value["instances"].as_array().ok_or_else(invalid)?;
         ensure(
@@ -85,7 +224,6 @@ impl ObservedSchemaTransitionPlanV1 {
                 ("instanceId", "databaseInstanceId"),
                 ("sourceRelativePath", "sourceRelativePath"),
                 ("schemaContractId", "schemaContractId"),
-                ("schemaHash", "preSchemaHash"),
             ] {
                 ensure(
                     observed[a] == reserved[b],
@@ -96,6 +234,31 @@ impl ObservedSchemaTransitionPlanV1 {
                 &self.runtime_root,
                 Path::new(text(reserved, "sourceRelativePath")?),
                 text(reserved, "databaseRole")?,
+            )?;
+            if is_installed_row(observed, reserved) {
+                let state = physical.normalization_state();
+                ensure(
+                    state["sidecarsPresent"] == false
+                        && state["sourceFileIdentityHash"] == reserved["sourceFileIdentityHash"]
+                        && state["sourceSha256"] == observed["sourceSha256"],
+                    "autonomous_research_online_schema_transition_reserved_normalized_projection_mismatch",
+                )?;
+                let mut projection = reserved.clone();
+                projection["sourceSha256"] = observed["sourceSha256"].clone();
+                let source = ObservedSchemaTransitionSourceV1 {
+                    source: physical,
+                    projection,
+                };
+                ensure(
+                    source.source.root_matches(self.first_source()?),
+                    "autonomous_research_online_schema_transition_runtime_root_identity_changed",
+                )?;
+                sources.push(source);
+                continue;
+            }
+            ensure(
+                observed["schemaHash"] == reserved["preSchemaHash"],
+                "autonomous_research_online_schema_transition_normalization_scope_changed",
             )?;
             // Reuse only our own previously computed projection when every real
             // source and sidecar identity/hash is unchanged. Caller progress is
@@ -167,7 +330,109 @@ pub(in crate::online_schema_execution) fn restore_normalization_plan<
     )?;
     let planned_at = crate::sqlite_mutation_coordinator::timestamp(&original["plannedAt"])
         .ok_or_else(invalid)?;
-    let mut fresh = build_schema_transition_plan_v1(options, authority, &mut || Ok(planned_at))?;
+    let current =
+        inspect_state_database_inventory_v1(options.runtime_root, options.state_database_manifest)?;
+    let installed = current["instances"]
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .zip(original["instances"].as_array().ok_or_else(invalid)?)
+        .any(|(observed, reserved)| is_installed_row(observed, reserved));
+    let mut fresh = if installed {
+        validate_inventory(&current, options.state_database_manifest)?;
+        ensure(
+            current["databaseScopeHash"] == original["databaseScopeHash"]
+                && authority.trust()["databaseScopeHash"] == current["databaseScopeHash"],
+            "autonomous_research_online_schema_transition_authority_scope_mismatch",
+        )?;
+        let mut sources = Vec::new();
+        let mut root_identity = None;
+        for (index, (observed, reserved)) in current["instances"]
+            .as_array()
+            .ok_or_else(invalid)?
+            .iter()
+            .zip(original["instances"].as_array().ok_or_else(invalid)?)
+            .enumerate()
+        {
+            for (a, b) in [
+                ("role", "databaseRole"),
+                ("instanceId", "databaseInstanceId"),
+                ("sourceRelativePath", "sourceRelativePath"),
+                ("schemaContractId", "schemaContractId"),
+            ] {
+                ensure(
+                    observed[a] == reserved[b],
+                    "autonomous_research_online_schema_transition_normalization_scope_changed",
+                )?;
+            }
+            let physical = SchemaSource::observe(
+                options.runtime_root,
+                Path::new(text(reserved, "sourceRelativePath")?),
+                text(reserved, "databaseRole")?,
+            )?;
+            if let Some(expected_root) = &root_identity {
+                ensure(
+                    physical.original_root_identity() == expected_root,
+                    "autonomous_research_online_schema_transition_runtime_root_identity_changed",
+                )?;
+            } else {
+                root_identity = Some(physical.original_root_identity().clone());
+            }
+            let mut projection = reserved.clone();
+            if is_installed_row(observed, reserved) {
+                ensure(
+                    physical.normalization_state()["sidecarsPresent"] == false
+                        && physical.normalization_state()["sourceFileIdentityHash"]
+                            == reserved["sourceFileIdentityHash"]
+                        && physical.normalization_state()["sourceSha256"]
+                            == observed["sourceSha256"],
+                    "autonomous_research_online_schema_transition_reserved_normalized_projection_mismatch",
+                )?;
+                projection["sourceSha256"] = observed["sourceSha256"].clone();
+            } else {
+                ensure(
+                    observed["schemaHash"] == reserved["preSchemaHash"],
+                    "autonomous_research_online_schema_transition_normalization_scope_changed",
+                )?;
+                let projected = observe_schema_transition_source_v1(
+                    options.runtime_root,
+                    Path::new(text(reserved, "sourceRelativePath")?),
+                    text(reserved, "databaseRole")?,
+                    Some(text(original, "plannedAt")?),
+                )?;
+                for key in [
+                    "sourceFileIdentityHash",
+                    "preSchemaHash",
+                    "expectedPostSchemaHash",
+                    "expectedNormalizedSourceSha256",
+                ] {
+                    ensure(
+                        projected.value()[key] == reserved[key],
+                        "autonomous_research_online_schema_transition_reserved_normalized_projection_mismatch",
+                    )?;
+                }
+                sources.push(projected);
+                continue;
+            }
+            sources.push(ObservedSchemaTransitionSourceV1 {
+                source: physical,
+                projection,
+            });
+            let _ = index;
+        }
+        ObservedSchemaTransitionPlanV1 {
+            value: original.clone(),
+            runtime_root: std::fs::canonicalize(options.runtime_root).map_err(|_| {
+                error("autonomous_research_online_schema_transition_runtime_root_identity_invalid")
+            })?,
+            manifest: options.state_database_manifest.clone(),
+            inventory: current,
+            sources,
+            authority_configuration_hash: authority.configuration_hash().to_owned(),
+        }
+    } else {
+        build_schema_transition_plan_v1(options, authority, &mut || Ok(planned_at))?
+    };
     for key in [
         "version",
         "kind",
@@ -226,6 +491,10 @@ pub(in crate::online_schema_execution) fn restore_normalization_plan<
         request == journal["request"],
         "autonomous_research_online_schema_transition_normalization_journal_request_mismatch",
     )?;
-    fresh.assert_current()?;
+    if installed {
+        fresh.assert_current_allow_installed()?;
+    } else {
+        fresh.assert_current()?;
+    }
     Ok(fresh)
 }

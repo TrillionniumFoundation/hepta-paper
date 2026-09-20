@@ -128,7 +128,10 @@ fn options(setup: &Value) -> SchemaTransitionPlanOptionsV1<'_> {
         state_database_manifest: &setup["stateDatabaseManifest"],
         writer_manifest: &setup["writerManifest"],
         requested_lease_ms: 60000,
-        required_execution_window_ms: 1000,
+        // The Node execute defaults use a 1000ms margin with a 30000ms
+        // execution window. Keep this direct primitive fixture's plan valid
+        // under the same strict margin < window rule.
+        required_execution_window_ms: 2000,
         expected_pre_rebind_pristine_runtime_state_hash:
             setup["expectedPreRebindPristineRuntimeStateHash"].as_str(),
         machine_genesis: None,

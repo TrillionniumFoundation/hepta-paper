@@ -189,7 +189,22 @@ fn operational_receipt(
                 && keys
                     .iter()
                     .all(|key| key["assurance"] == "external_independent")
+                // Keep the composition-level contract explicit even though
+                // authority::verify currently enforces this invariant too.
+                && distinct_verified_subjects(&keys)
         })
+}
+
+fn distinct_verified_subjects(keys: &[&Value]) -> bool {
+    keys.iter()
+        .map(|key| {
+            key["subjectId"]
+                .as_str()
+                .unwrap_or_else(|| key["keyId"].as_str().unwrap_or(""))
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
+        >= 2
 }
 
 /// Inspect the same catalog and runtime receipt layout as Node's status command.
@@ -291,4 +306,23 @@ pub fn capability_operational_proof_status_v1(
         "conformanceCannotQualifyAsOperationalProof": true, "externalOwnerSignatureRequired": true,
         "capabilities": capabilities,
     }))
+}
+
+#[cfg(test)]
+mod subject_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_subject_ids_are_rejected() {
+        let first = json!({"keyId":"key-a","subjectId":"same"});
+        let second = json!({"keyId":"key-b","subjectId":"same"});
+        assert!(!distinct_verified_subjects(&[&first, &second]));
+    }
+
+    #[test]
+    fn missing_subject_ids_fall_back_to_distinct_key_ids() {
+        let first = json!({"keyId":"key-a"});
+        let second = json!({"keyId":"key-b"});
+        assert!(distinct_verified_subjects(&[&first, &second]));
+    }
 }

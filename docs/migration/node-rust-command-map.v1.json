@@ -188,14 +188,45 @@
     },
     {
       "id": "operator/external-authority-intake",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust external-authority-intake [--author-config PATH --author-config-hash sha256:...] [--release-attestor-config PATH --release-attestor-config-hash sha256:...] [--require-ready]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/external_authority_intake.rs",
+          "symbol": "inspect_external_authority_intake_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs"
+      ],
+      "remaining": "Rust now covers the canonical help payload, missing-input report/hash and fail-closed --require-ready exit, with canonical regular-file/symlink identity checks for configured paths. The configured author envelope/trust-store subject verification and resolved release-attestor v3/KMS hardware bundle identity are deliberately blocked behind an independently reviewed Rust adapter; no external authority, signer process, key material or service state is touched.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/external_authority_intake.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs",
+          "symbol": "missing_input_report_matches_node_composition"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs",
+          "symbol": "help_metadata_matches_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs",
+          "symbol": "strict_gate_is_fail_closed_without_external_inputs"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs",
+          "symbol": "configured_paths_are_pinned_and_symlinks_are_rejected"
+        }
+      ]
     },
     {
       "id": "operator/research-capability-matrix",
@@ -249,7 +280,7 @@
       "compatibilityDecision": "unmapped",
       "callChain": [],
       "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
+      "remaining": "No Rust entrypoint exists. The Node observer binds seven local controls that Rust does not yet compose: exact Git commit/tree/content provenance; formal operational receipt with the fixed zero-skip 23-test contract; tracked-source secret scan plus owner-only runtime boundary; immutable SQLite schema/quick-check/foreign-key/lease inspection with anti-rollback hash chain and current read-only snapshot; backup and restore-drill receipt verification; CPU process-isolated and optional GPU same-device scientific receipts with freshness and model/data/checkpoint IR constraints; and the hash-bound personal profile evaluator with explicit not-applicable controls. Existing Rust operational_status covers provenance only and store_status covers a separate generic store projection; neither is a personal-readiness call chain. A help-only or caller-supplied report would not be compatible evidence.",
       "rustSources": [],
       "testCases": []
     },

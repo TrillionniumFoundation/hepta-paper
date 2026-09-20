@@ -13,6 +13,10 @@ use hepta_paper_service::{
         ci_command_matrix_json_v1, classify_npm_script_surface_json_v1, command_usage_json_v1,
         generated_npm_route_scripts_json_v1, synchronize_command_surface_json_v1,
     },
+    external_authority_intake::{
+        external_authority_intake_help_json_v1, inspect_external_authority_intake_v1,
+        unix_millis_to_iso_v1,
+    },
     inspect_legacy_deletion_drill_attest_v1, migrate_node_store_v1, native_implementation_hash_v1,
     release_attest::{ReleaseAttestationRequestV1, inspect_release_attestation_v1},
     release_state::inspect_release_state_v1,
@@ -474,6 +478,84 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("research readiness state-safety inspection is blocked".into());
             }
         }
+        Some("external-authority-intake") => {
+            let mut author_config = None;
+            let mut author_hash = None;
+            let mut release_config = None;
+            let mut release_hash = None;
+            let mut require_ready = false;
+            let mut help = false;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--author-config" if index + 1 < args.len() && author_config.is_none() => {
+                        author_config = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--author-config-hash" if index + 1 < args.len() && author_hash.is_none() => {
+                        author_hash = Some(args[index + 1].clone());
+                        index += 2;
+                    }
+                    "--release-attestor-config"
+                        if index + 1 < args.len() && release_config.is_none() =>
+                    {
+                        release_config = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--release-attestor-config-hash"
+                        if index + 1 < args.len() && release_hash.is_none() =>
+                    {
+                        release_hash = Some(args[index + 1].clone());
+                        index += 2;
+                    }
+                    "--require-ready" if !require_ready => {
+                        require_ready = true;
+                        index += 1;
+                    }
+                    "--help" if !help => {
+                        help = true;
+                        index += 1;
+                    }
+                    _ => {
+                        return Err("external-authority-intake accepts --author-config PATH --author-config-hash sha256:... --release-attestor-config PATH --release-attestor-config-hash sha256:... [--require-ready] [--help] only".into());
+                    }
+                }
+            }
+            if help {
+                println!(
+                    "{}",
+                    serde_json::to_string(&external_authority_intake_help_json_v1())?
+                );
+                return Ok(());
+            }
+            let author_config = author_config.or_else(|| {
+                env::var("HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG")
+                    .ok()
+                    .map(PathBuf::from)
+            });
+            let author_hash =
+                author_hash.or_else(|| env::var("HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH").ok());
+            let release_config = release_config.or_else(|| {
+                env::var("HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG")
+                    .ok()
+                    .map(PathBuf::from)
+            });
+            let release_hash = release_hash
+                .or_else(|| env::var("HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH").ok());
+            let observed_at = unix_millis_to_iso_v1(current_unix_millis()?)?;
+            let report = inspect_external_authority_intake_v1(
+                author_config.as_deref(),
+                author_hash.as_deref(),
+                release_config.as_deref(),
+                release_hash.as_deref(),
+                &observed_at,
+            )?;
+            let ready = report["ready"] == true;
+            println!("{}", serde_json::to_string(&report)?);
+            if require_ready && !ready {
+                std::process::exit(2);
+            }
+        }
         Some("research-capability-matrix") => {
             let mut request = None;
             let mut require_production_ready = false;
@@ -541,6 +623,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | retirement-status REQUEST",
                 " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
                 " | research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
+                " | external-authority-intake [--author-config PATH --author-config-hash sha256:...] [--release-attestor-config PATH --release-attestor-config-hash sha256:...] [--require-ready]",
                 " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]"
             )
             .into());

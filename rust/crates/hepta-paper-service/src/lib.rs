@@ -14,6 +14,7 @@ pub mod campaign_slo;
 pub mod command_surface;
 mod deployment;
 pub mod deployment_environment;
+pub mod external_authority_intake;
 pub mod journal_connector_coverage;
 pub mod maintenance;
 pub mod native_business;

@@ -143,6 +143,17 @@ production callback supplied by this executable.
 
 ## Verification and remaining production work
 
+`hepta-paper-rust external-authority-intake` is the bounded passive intake
+surface for the first external production dependency. Its `--help` payload,
+missing-input report, inspection hash and `--require-ready` exit status match
+the Node composition; supplied paths are pinned regular files (canonical,
+single-link, non-writable, owner-checked) and symlinks fail closed. The current
+Rust route deliberately reports `rust_external_authority_intake_adapter_not_ported`
+for configured material. It does not parse or trust author envelopes, release
+attestor v3/KMS hardware bundles, invoke signer processes, read private keys,
+or claim production readiness. Those independently reviewed authority adapters
+remain an open migration row in the command-gap ledger.
+
 `cargo test -p hepta-paper-service` covers executable configuration, actual CAS
 bytes, durable commit/replay, unsafe content rejection and authority refusal.
 Run the local service and cutover drills independently: one proves campaign

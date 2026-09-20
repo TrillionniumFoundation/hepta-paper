@@ -9,6 +9,10 @@ use hepta_paper_service::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
     },
     automation_status::automation_status_help_json_v1,
+    autonomous_research::{
+        autonomous_research_help_json_v1, execute_autonomous_research_v1,
+        inspect_autonomous_research_v1, parse_autonomous_research_arguments,
+    },
     autonomous_submission_dispatcher_challenge::{
         AutonomousSubmissionDispatcherChallengeOptions,
         inspect_autonomous_submission_dispatcher_challenge_v1,
@@ -1064,6 +1068,31 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("autonomous-research") => {
+            let options = match parse_autonomous_research_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&autonomous_research_help_json_v1())?
+                );
+                return Ok(());
+            }
+            let report = if options.action == "prepare" || options.action == "status" {
+                inspect_autonomous_research_v1(&options)
+            } else {
+                execute_autonomous_research_v1(&options)
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if report["ready"] != serde_json::Value::Bool(true) {
+                std::process::exit(2);
+            }
+        }
         Some("submission-handoff-export") => {
             let options = match parse_submission_handoff_export_arguments(&args[1..]) {
                 Ok(options) => options,
@@ -1310,6 +1339,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | local-golden-dataset-provision --action plan|execute [options]",
                 " | personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
                 " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
+                " | autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--launch-mode local-run|production-run|golden-bootstrap]",
                 " | personal-self-hosted-readiness [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help]"
             )
             .into());

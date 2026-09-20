@@ -221,7 +221,7 @@ fn malformed_script_containers_follow_node_object_key_coercion() {
     // array- or string-valued scripts field instead of an object.
     let cases = [
         ("array", serde_json::json!(["first", "second"])),
-        ("string", serde_json::json!("ab")),
+        ("string", serde_json::json!("a😀b")),
         ("number", serde_json::json!(1)),
         ("false", serde_json::json!(false)),
         ("null", serde_json::Value::Null),

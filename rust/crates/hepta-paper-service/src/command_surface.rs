@@ -148,6 +148,10 @@ enum OrderedJson {
     Bool(bool),
     Number(Number),
     String(String),
+    /// A JavaScript string's enumerable properties are UTF-16 code units.
+    /// Lone surrogate units cannot be represented by Rust's `String`, so the
+    /// writer retains them until JSON serialization and emits `\uXXXX`.
+    Utf16Unit(u16),
     Array(Vec<Self>),
     Object(Vec<(String, Self)>),
 }
@@ -249,6 +253,7 @@ impl OrderedJson {
             Self::Bool(value) => Value::Bool(value),
             Self::Number(value) => Value::Number(value),
             Self::String(value) => Value::String(value),
+            Self::Utf16Unit(value) => Value::String(String::from_utf16_lossy(&[value])),
             Self::Array(values) => Value::Array(values.into_iter().map(Self::into_value).collect()),
             Self::Object(entries) => Value::Object(
                 entries
@@ -322,14 +327,12 @@ fn javascript_ordered_entries_for_ordered(value: &OrderedJson) -> Vec<(String, O
         OrderedJson::String(value) => value
             .encode_utf16()
             .enumerate()
-            .map(|(index, unit)| {
-                (
-                    index.to_string(),
-                    OrderedJson::String(String::from_utf16_lossy(&[unit])),
-                )
-            })
+            .map(|(index, unit)| (index.to_string(), OrderedJson::Utf16Unit(unit)))
             .collect(),
-        OrderedJson::Null | OrderedJson::Bool(_) | OrderedJson::Number(_) => Vec::new(),
+        OrderedJson::Null
+        | OrderedJson::Bool(_)
+        | OrderedJson::Number(_)
+        | OrderedJson::Utf16Unit(_) => Vec::new(),
     }
 }
 
@@ -419,6 +422,17 @@ fn write_ordered_json_pretty(
         }
         OrderedJson::String(value) => {
             output.push_str(&serde_json::to_string(value).map_err(CommandSurfaceError::Json)?);
+        }
+        OrderedJson::Utf16Unit(value) => {
+            if (0xd800..=0xdfff).contains(value) {
+                output.push_str(&format!(r#""\u{value:04x}""#));
+            } else {
+                let scalar = char::from_u32(*value as u32)
+                    .ok_or(CommandSurfaceError::InvalidPackage)?
+                    .to_string();
+                output
+                    .push_str(&serde_json::to_string(&scalar).map_err(CommandSurfaceError::Json)?);
+            }
         }
         OrderedJson::Array(values) => {
             output.push('[');

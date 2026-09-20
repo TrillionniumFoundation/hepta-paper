@@ -2077,7 +2077,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/command_surface_parity.rs"
       ],
-      "remaining": "Rust now owns deterministic package-script synchronization with byte-compatible Node JSON rewrite and ordered inspection output for check/write, exact deterministic --npm-aliases, --help-artifact, default classify, and --ci-matrix projections from checked-in command-registry artifacts with Node-compatible exit behavior for blocked checks. Independent acceptance of the full command registry and production command dispatch remain open.",
+      "remaining": "Rust now owns deterministic package-script synchronization with byte-compatible Node JSON rewrite and ordered inspection output for check/write, including JavaScript Object.keys/Object.entries coercion for malformed array/string scripts values, UTF-16 code-unit key ordering and surrogate-safe rewrite output; exact deterministic --npm-aliases, --help-artifact, default classify, and --ci-matrix projections come from checked-in command-registry artifacts with Node-compatible exit behavior for blocked checks. Independent acceptance of the full command registry and production command dispatch remain open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/command_surface.rs",
@@ -2098,6 +2098,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/command_surface_parity.rs",
           "symbol": "default_classify_and_help_artifact_match_node_oracle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/command_surface_parity.rs",
+          "symbol": "malformed_script_containers_follow_node_object_key_coercion"
         }
       ]
     },

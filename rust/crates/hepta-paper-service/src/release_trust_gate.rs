@@ -80,7 +80,7 @@ fn normalize_javascript_json(value: &Value) -> Value {
             if (0.0..18_446_744_073_709_551_616.0).contains(&float) {
                 return Value::Number(serde_json::Number::from(float as u64));
             }
-            if float >= -9_223_372_036_854_775_808.0 {
+            if (-9_223_372_036_854_775_808.0..0.0).contains(&float) {
                 return Value::Number(serde_json::Number::from(float as i64));
             }
             value.clone()

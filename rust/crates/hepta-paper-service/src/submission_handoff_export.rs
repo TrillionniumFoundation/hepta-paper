@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::journal_connector_coverage::qualification::canonical_instant_millis;
 use hepta_legacy_compatibility::{production_digest_v1, production_hash_record_v1};
 use serde_json::{Value, json};
 use sha2::Digest;
@@ -290,6 +291,96 @@ fn nonempty(record: &Value, field: &str) -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
+/// Match the incumbent `requiredFieldsPresent` check for decision metadata.
+///
+/// The Node verifier only rejects null/undefined, the empty string, and empty
+/// arrays here. It intentionally does not impose a schema on the metadata
+/// object at this boundary; later authority layers own that validation.
+fn required_node_field(record: &Value, field: &str) -> bool {
+    let value = &record[field];
+    !value.is_null()
+        && !value.as_str().is_some_and(str::is_empty)
+        && !value.as_array().is_some_and(Vec::is_empty)
+}
+
+/// The incumbent uses `Number.isFinite(Date.parse(String(value || '')))`. The
+/// records emitted by the submission builders use ISO strings, but Date.parse
+/// also accepts the common date-only, second-precision, fractional, offset,
+/// and space-separated ISO spellings below. Keep this check side-effect free
+/// and bounded while retaining the finite-date gate at the Rust boundary.
+fn node_date_parse_finite(value: &str) -> bool {
+    if canonical_instant_millis(value).is_some() {
+        return true;
+    }
+    if value.len() == 10 {
+        return canonical_instant_millis(&format!("{value}T00:00:00.000Z")).is_some();
+    }
+    let Some(separator) = value.as_bytes().get(10).copied() else {
+        return false;
+    };
+    if !matches!(separator, b'T' | b' ') || value.len() < 19 {
+        return false;
+    }
+    let mut cursor = 19;
+    let mut milliseconds = String::from("000");
+    if value.as_bytes().get(cursor) == Some(&b'.') {
+        cursor += 1;
+        let start = cursor;
+        while value
+            .as_bytes()
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_digit())
+        {
+            cursor += 1;
+        }
+        let digits = value.get(start..cursor).unwrap_or_default();
+        if digits.is_empty() {
+            return false;
+        }
+        milliseconds = format!("{digits:0<3}");
+        milliseconds.truncate(3);
+    }
+    let timezone = value.get(cursor..).unwrap_or_default();
+    let offset_minutes = if timezone.is_empty() || timezone == "Z" {
+        0_i64
+    } else if timezone.len() == 6
+        && matches!(timezone.as_bytes().first(), Some(b'+' | b'-'))
+        && timezone.as_bytes().get(3) == Some(&b':')
+        && timezone[1..3].bytes().all(|byte| byte.is_ascii_digit())
+        && timezone[4..].bytes().all(|byte| byte.is_ascii_digit())
+    {
+        let hours = match timezone[1..3].parse::<i64>() {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        let minutes = match timezone[4..].parse::<i64>() {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        if hours > 23 || minutes > 59 {
+            return false;
+        }
+        let signed = hours * 60 + minutes;
+        if timezone.starts_with('-') {
+            -signed
+        } else {
+            signed
+        }
+    } else {
+        return false;
+    };
+    let mut prefix = value[..19].to_owned();
+    prefix.replace_range(10..11, "T");
+    let normalized = format!("{prefix}.{milliseconds}Z");
+    let Some(base) = canonical_instant_millis(&normalized) else {
+        return false;
+    };
+    let Some(offset_millis) = offset_minutes.checked_mul(60_000) else {
+        return false;
+    };
+    base.checked_sub(offset_millis).is_some()
+}
+
 fn verify_nested_contracts(value: &Value, blockers: &mut Vec<String>) {
     let decision = &value["submissionDecisionPacket"];
     let confirmed = decision["humanConfirmedFields"]
@@ -323,6 +414,7 @@ fn verify_nested_contracts(value: &Value, blockers: &mut Vec<String>) {
     .collect::<Vec<_>>();
     if decision["version"] != 1
         || !nonempty(decision, "paperId")
+        || !required_node_field(decision, "metadata")
         || !nonempty(decision, "reviewedBy")
         || !nonempty(decision, "reviewedAt")
         || decision["reviewActorType"] != "human"
@@ -414,6 +506,9 @@ fn verify_nested_contracts(value: &Value, blockers: &mut Vec<String>) {
         || !nonempty(dispatch, "accountId")
         || !nonempty(dispatch, "nonce")
         || !nonempty(dispatch, "portalRoute")
+        || dispatch["responseDueAt"]
+            .as_str()
+            .is_none_or(|value| !node_date_parse_finite(value))
         || dispatch["blockers"]
             .as_array()
             .is_none_or(|items| !items.is_empty())
@@ -730,6 +825,83 @@ mod tests {
         assert_eq!(
             error,
             "submission_handoff_export_bundle_root_absolute_path_required"
+        );
+    }
+
+    #[test]
+    fn decision_metadata_presence_matches_node_required_fields_contract() {
+        let decision = json!({
+            "version": 1,
+            "paperId": "paper",
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00.000Z",
+            "humanConfirmedFields": [
+                "abstract", "anonymity", "authors", "checklist", "conflicts",
+                "coverLetter", "keywords", "subjectAreas", "supplements", "title", "track"
+            ],
+            "reviewActorType": "human",
+            "machineSuggestionsAreAuthority": false,
+            "localWorksheetGrantsAuthorization": false,
+            "blockers": []
+        });
+        assert!(!required_node_field(&decision, "metadata"));
+        assert!(required_node_field(&json!({"metadata": {}}), "metadata"));
+        assert!(!required_node_field(&json!({"metadata": []}), "metadata"));
+        assert!(!required_node_field(&json!({"metadata": ""}), "metadata"));
+        assert!(required_node_field(&json!({"metadata": 0}), "metadata"));
+
+        let mut blockers = Vec::new();
+        verify_nested_contracts(
+            &json!({"submissionDecisionPacket": decision}),
+            &mut blockers,
+        );
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker == "submission_handoff_export_decision_contract_invalid")
+        );
+    }
+
+    #[test]
+    fn dispatch_response_due_at_uses_finite_node_date_parse_boundary() {
+        assert!(node_date_parse_finite("2026-08-15T02:00:00.000Z"));
+        assert!(node_date_parse_finite("2026-08-15"));
+        assert!(node_date_parse_finite("2026-08-15T02:00:00+02:30"));
+        assert!(node_date_parse_finite("2026-08-15 02:00:00"));
+        assert!(!node_date_parse_finite("not-a-date"));
+        assert!(!node_date_parse_finite(""));
+
+        let valid_hash = format!("sha256:{}", "a".repeat(64));
+        let dispatch = json!({
+            "actionScopeKey": valid_hash.clone(),
+            "artifactPackageHash": valid_hash.clone(),
+            "controlledExecutorReceiptHash": valid_hash.clone(),
+            "dispatchCycleHash": valid_hash.clone(),
+            "executorCapabilitiesHash": valid_hash.clone(),
+            "executorDescriptorHash": valid_hash.clone(),
+            "liveAuthorizationHash": valid_hash.clone(),
+            "outboxHash": valid_hash.clone(),
+            "preflightHash": valid_hash.clone(),
+            "providerCapabilityVerificationReceiptHash": valid_hash.clone(),
+            "replayGuardHash": valid_hash.clone(),
+            "replayKey": valid_hash.clone(),
+            "reviewedSubmissionDecisionPacketHash": valid_hash.clone(),
+            "expectedArtifactHashes": [valid_hash.clone()],
+            "attempt": 1,
+            "executorId": "executor",
+            "provider": "provider",
+            "accountId": "account",
+            "nonce": "nonce",
+            "portalRoute": "/submit",
+            "responseDueAt": "not-a-date",
+            "blockers": []
+        });
+        let mut blockers = Vec::new();
+        verify_nested_contracts(&json!({"dispatchAuthorization": dispatch}), &mut blockers);
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker == "submission_handoff_export_dispatch_contract_invalid")
         );
     }
 

@@ -8,6 +8,7 @@
 
 pub mod advanced_numerical;
 pub mod architecture_conformance;
+pub mod automation_status;
 pub mod campaign_policy;
 pub mod campaign_slo;
 pub mod command_surface;

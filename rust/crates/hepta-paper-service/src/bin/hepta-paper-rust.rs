@@ -8,6 +8,7 @@ use hepta_paper_service::{
     architecture_conformance::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
     },
+    automation_status::automation_status_help_json_v1,
     command_surface::{
         ci_command_matrix_json_v1, classify_npm_script_surface_json_v1, command_usage_json_v1,
         generated_npm_route_scripts_json_v1, synchronize_command_surface_json_v1,
@@ -126,6 +127,33 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let report =
                 inspect_store_status_v1(&PathBuf::from(&args[1]), runtime_root.as_deref())?;
             println!("{}", serde_json::to_string(&report)?);
+        }
+        Some("automation-status") if args.len() >= 2 => {
+            let mut help = false;
+            let mut json = false;
+            for flag in args.iter().skip(1) {
+                match flag.as_str() {
+                    "--help" if !help => help = true,
+                    "--json" if !json => json = true,
+                    _ => {
+                        return Err(
+                            "automation-status currently supports only --help [--json] (bounded help metadata)"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            if !help {
+                return Err(
+                    "automation-status currently supports only --help [--json] (bounded help metadata)"
+                        .into(),
+                );
+            }
+            // `--json` is accepted by the incumbent parser but does not change
+            // its help payload. This route intentionally exposes no readiness
+            // observers, handoff, provider probe, or authority action.
+            let _ = json;
+            println!("{}", automation_status_help_json_v1());
         }
         Some("store-migrate") if (args.len() == 2 || args.len() == 3) => {
             let target = args.get(2).map(|value| value.parse::<u32>()).transpose()?;
@@ -497,6 +525,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
                 "store-integrity IMMUTABLE_DB | ",
                 "store-status IMMUTABLE_DB [RUNTIME_ROOT] | ",
+                "automation-status --help [--json] | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
                 "store-migrate NODE_DB [TARGET_VERSION] | ",
                 "repository-assets ROOT MANIFEST [--handoff]",

@@ -68,6 +68,10 @@ use hepta_paper_service::{
         full_production_readiness_help_json_v1, inspect_full_production_readiness_v1,
         parse_full_production_readiness_arguments,
     },
+    full_suite_verification::{
+        FULL_SUITE_VERIFICATION_USAGE, full_suite_verification_help_json_v1,
+        inspect_full_suite_verification_v1, parse_full_suite_verification_arguments,
+    },
     generic_domain_capability_evidence::{
         converge_generic_domain_capability_evidence_v1,
         generic_domain_capability_evidence_help_json_v1,
@@ -559,6 +563,34 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             if options.require_ok && report["ok"] != true {
                 std::process::exit(2);
             }
+        }
+        Some("verify-full") => {
+            let options = match parse_full_suite_verification_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}\n{FULL_SUITE_VERIFICATION_USAGE}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&full_suite_verification_help_json_v1())?
+                );
+                return Ok(());
+            }
+            let report = inspect_full_suite_verification_v1(&options)?;
+            if options.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{}",
+                    report["status"].as_str().unwrap_or("verify_full_blocked")
+                );
+            }
+            // This route is an explicit acceptance boundary. Inventory is
+            // useful evidence, but it cannot silently become test parity.
+            std::process::exit(2);
         }
         Some("advanced-numerical-plugin") if args.len() == 2 => {
             let mut bytes = Vec::new();
@@ -1680,6 +1712,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | command-surface ROOT [--write-package|--check-package|--npm-aliases|--help-artifact|--ci-matrix]",
                 " | verify-architecture ROOT [--json] [--strict]",
                 " | verify-critical [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--evidence ABSOLUTE_JSON_PATH --evidence-sha256 sha256:...] [--require-ok] [--json]",
+                " | verify-full --workspace-root ABSOLUTE_PATH [--require-parity] [--json]",
                 " | advanced-numerical-plugin REQUEST",
                 " | retirement-reference ROOT",
                 " | retirement-matrix --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH",

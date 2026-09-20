@@ -2604,14 +2604,37 @@
     },
     {
       "id": "verify/full",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "Rust workspace tests do not execute or certify the Node full test suite; parity acceptance remains unimplemented.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust verify-full --workspace-root ABSOLUTE_PATH [--require-parity] [--json]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_suite_verification.rs",
+          "symbol": "inspect_full_suite_verification_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/full_suite_verification_route.rs"
+      ],
+      "remaining": "Rust now performs a read-only inventory of the checked-in Node npm test manifest and test-source files plus Rust workspace provenance/counts. It never executes Node or npm, does not compare test outcomes or failure matrices, and cannot independently accept full-suite parity or retire Node; --require-parity remains fail-closed with exit code 2.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/full_suite_verification.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/full_suite_verification_route.rs",
+          "symbol": "require_parity_reports_inventory_without_running_node_or_npm"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/full_suite_verification_route.rs",
+          "symbol": "help_describes_static_fail_closed_boundary"
+        }
+      ]
     },
     {
       "id": "retirement/status",

@@ -25,6 +25,7 @@ mod deployment;
 pub mod deployment_environment;
 pub mod external_authority_intake;
 pub mod full_production_readiness;
+pub mod full_suite_verification;
 pub mod generic_domain_capability_evidence;
 pub mod journal_connector_coverage;
 pub mod local_golden_dataset;

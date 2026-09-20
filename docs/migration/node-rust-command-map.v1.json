@@ -1716,14 +1716,46 @@
     },
     {
       "id": "maintenance/autonomous-state-partial-root-maintenance",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "Node performs partial-root maintenance against a production runtime root with machine-intake ownership, state-database layout, lease/fence and retry/cancellation semantics, atomic filesystem effects, crash cleanup and recovery receipts. Rust has no reviewed entrypoint or source-bound call chain for these external-effect and failure-boundary contracts; local inventory or manifest observations cannot replace the required root mutation, authority and recoverability evidence.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust autonomous-state-partial-root-maintenance --action plan|execute [options]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+          "symbol": "parse_autonomous_state_partial_root_maintenance_arguments"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+          "symbol": "inspect_autonomous_state_partial_root_maintenance_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+          "symbol": "execute_autonomous_state_partial_root_maintenance_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs"
+      ],
+      "remaining": "Rust now performs a bounded no-follow preflight over the production-shaped partial runtime root, rescue root, five existing database identities, manifest role closure, machine/topic/dataset inputs and writer quiescence receipt. Execute verifies the source-bound plan id but remains fail-closed: rescue copy/restore, exclusive SQLite locks, schema repair, atomic publication, rollback/crash recovery, lease renewal and external authority are not ported; no runtime or rescue path is written.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+        "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
+          "symbol": "parser_requires_double_gated_execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
+          "symbol": "execute_is_fail_closed_without_mutating_roots"
+        }
+      ]
     },
     {
       "id": "maintenance/autonomous-online-schema-transition",

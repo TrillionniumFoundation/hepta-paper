@@ -777,14 +777,45 @@
     },
     {
       "id": "operator/autonomous-intake-authority-rotation",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust autonomous-intake-authority-rotation --action plan|apply --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_intake_authority_rotation.rs",
+          "symbol": "parse_autonomous_intake_authority_rotation_arguments"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_intake_authority_rotation.rs",
+          "symbol": "inspect_autonomous_intake_authority_rotation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_intake_authority_rotation.rs",
+          "symbol": "execute_autonomous_intake_authority_rotation_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/autonomous_intake_authority_rotation_route.rs"
+      ],
+      "remaining": "Rust now provides a bounded no-follow/hash preflight for a v2 machine-intake configuration, topic-producer profile, runtime-root identity and fixed authority-rotation root. Plan and double-confirmed apply remain fail-closed: authority bundle signature verification, SQLite quiescence/lease inspection, target identity conflict checks, external governance, generation CAS, quarantine, journal publication and all mutation remain unimplemented; no external actor or network is contacted.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_intake_authority_rotation.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_intake_authority_rotation_route.rs",
+          "symbol": "plan_is_bounded_and_reports_target_hashes_without_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_intake_authority_rotation_route.rs",
+          "symbol": "apply_requires_double_confirmation_and_stays_fail_closed"
+        }
+      ]
     },
     {
       "id": "operator/autonomous-state-backup",

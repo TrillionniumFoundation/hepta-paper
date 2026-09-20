@@ -9,6 +9,13 @@ use hepta_paper_service::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
     },
     automation_status::automation_status_help_json_v1,
+    autonomous_intake_authority_rotation::{
+        AUTONOMOUS_INTAKE_AUTHORITY_ROTATION_USAGE,
+        autonomous_intake_authority_rotation_help_json_v1,
+        execute_autonomous_intake_authority_rotation_v1,
+        inspect_autonomous_intake_authority_rotation_v1,
+        parse_autonomous_intake_authority_rotation_arguments,
+    },
     autonomous_research::{
         autonomous_research_help_json_v1, execute_autonomous_research_v1,
         inspect_autonomous_research_v1, parse_autonomous_research_arguments,
@@ -1106,6 +1113,56 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("autonomous-intake-authority-rotation") => {
+            let mut options = match parse_autonomous_intake_authority_rotation_arguments(&args[1..])
+            {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}\n{AUTONOMOUS_INTAKE_AUTHORITY_ROTATION_USAGE}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &autonomous_intake_authority_rotation_help_json_v1()
+                    )?
+                );
+                return Ok(());
+            }
+            if options.runtime_root.is_none() {
+                options.runtime_root = env::var("HEPTA_PAPER_RUNTIME_ROOT")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from);
+            }
+            if options.runtime_root.is_none() {
+                options.runtime_root = Some(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../../../hepta-paper-runtime/native-runtime"),
+                );
+            }
+            options.runtime_root = options.runtime_root.take().map(lexical_absolute_path);
+            options.next_machine_intake_config = options
+                .next_machine_intake_config
+                .take()
+                .map(lexical_absolute_path);
+            options.topic_producer_profile = options
+                .topic_producer_profile
+                .take()
+                .map(lexical_absolute_path);
+            options.rotation_intent = options.rotation_intent.take().map(lexical_absolute_path);
+            let report = if options.action == "apply" {
+                execute_autonomous_intake_authority_rotation_v1(&options)
+            } else {
+                inspect_autonomous_intake_authority_rotation_v1(&options)
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if report["ready"] != serde_json::Value::Bool(true) {
+                std::process::exit(2);
+            }
+        }
         Some("autonomous-submission-dispatcher") => {
             let mut options = match parse_autonomous_submission_dispatcher_arguments(&args[1..]) {
                 Ok(options) => options,
@@ -1525,6 +1582,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
                 " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
                 " | autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--launch-mode local-run|production-run|golden-bootstrap]",
+                " | autonomous-intake-authority-rotation --action plan|apply --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",
                 " | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
                 " | strict-full-auto-acceptance --action plan|inspect-runtime-adoption-candidate|adoption-status|adopt-runtime|status|execute|converge --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
                 " | personal-self-hosted-readiness [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help]"

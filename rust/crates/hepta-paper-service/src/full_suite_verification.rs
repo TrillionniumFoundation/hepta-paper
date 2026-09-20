@@ -296,6 +296,7 @@ pub fn inspect_full_suite_verification_v1(
         .as_deref()
         .map(workspace_members)
         .unwrap_or_default();
+    let node_inventory = [node_tests.as_slice(), node_operational.as_slice()].concat();
     let mut blockers = vec![
         "full_suite_node_execution_not_performed_by_rust_boundary".to_owned(),
         "full_suite_rust_execution_parity_not_independently_accepted".to_owned(),
@@ -305,14 +306,19 @@ pub fn inspect_full_suite_verification_v1(
     } else if test_script.is_none() {
         blockers.push("full_suite_node_test_script_missing".to_owned());
     }
+    if node_inventory.is_empty() {
+        blockers.push("full_suite_node_test_inventory_empty".to_owned());
+    }
     if cargo_bytes.is_none() {
         blockers.push("full_suite_rust_workspace_manifest_missing".to_owned());
     } else if members.is_empty() {
         blockers.push("full_suite_rust_workspace_members_missing".to_owned());
     }
+    if rust_sources.is_empty() {
+        blockers.push("full_suite_rust_source_inventory_empty".to_owned());
+    }
     blockers.sort();
     blockers.dedup();
-    let node_inventory = [node_tests.as_slice(), node_operational.as_slice()].concat();
     Ok(json!({
         "version": 1,
         "kind": "FullSuiteVerificationPreflightReport",

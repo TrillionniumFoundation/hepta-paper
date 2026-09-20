@@ -42,7 +42,7 @@ activation is false and Node retirement is false. The generated ledger is
 bound to:
 
 ```text
-sha256:bf3a664c8ae723d5f8acde3accb23e178b9ec1c38fa954407b4083ccfc066735
+sha256:fd50cf111eb118e0739c0241669c7208f6aa0be48fe139a32e8afca4879dab2a
 ```
 
 A bounded Rust preflight is evidence about inputs and safety boundaries. It is

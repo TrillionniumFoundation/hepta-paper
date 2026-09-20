@@ -9,6 +9,10 @@ use hepta_paper_service::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
     },
     automation_status::automation_status_help_json_v1,
+    autonomous_submission_dispatcher_challenge::{
+        AutonomousSubmissionDispatcherChallengeOptions,
+        inspect_autonomous_submission_dispatcher_challenge_v1,
+    },
     command_surface::{
         ci_command_matrix_json_v1, classify_npm_script_surface_json_v1, command_usage_json_v1,
         generated_npm_route_scripts_json_v1, synchronize_command_surface_json_v1,
@@ -209,6 +213,91 @@ fn parse_personal_gpu_arguments(args: &[String]) -> Result<BTreeMap<String, Stri
     }
     Ok(parsed)
 }
+
+fn parse_dispatcher_challenge_arguments(
+    args: &[String],
+) -> Result<BTreeMap<String, String>, String> {
+    let mut parsed = BTreeMap::new();
+    let value_flags = [
+        "action",
+        "plan-hash",
+        "idempotency-key",
+        "portal-id",
+        "portal-configuration-hash",
+        "portal-descriptor-hash",
+        "runtime-root",
+    ];
+    let mut index = 0;
+    while index < args.len() {
+        let token = args[index].as_str();
+        let raw = token
+            .strip_prefix("--")
+            .ok_or_else(|| "unexpected_cli_positional".to_owned())?;
+        if raw == "help" {
+            if parsed
+                .insert("help".to_owned(), "true".to_owned())
+                .is_some()
+            {
+                return Err("duplicate_cli_option:--help".into());
+            }
+            index += 1;
+            continue;
+        }
+        let (key, inline) = raw
+            .split_once('=')
+            .map_or((raw, None), |(key, value)| (key, Some(value)));
+        if !value_flags.contains(&key) {
+            return Err(format!("unknown_cli_option:--{key}"));
+        }
+        let value = match inline {
+            Some(value) if !value.is_empty() => value.to_owned(),
+            Some(_) => return Err(format!("empty_cli_option_value:--{key}")),
+            None => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .filter(|value| !value.starts_with("--") && !value.is_empty())
+                    .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?;
+                value.clone()
+            }
+        };
+        if parsed.insert(key.to_owned(), value).is_some() {
+            return Err(format!("duplicate_cli_option:--{key}"));
+        }
+        index += 1;
+    }
+    if parsed.contains_key("help") {
+        return Ok(parsed);
+    }
+    let action = parsed.get("action").map(String::as_str).unwrap_or("status");
+    if !matches!(action, "publish" | "status")
+        || ![
+            "plan-hash",
+            "idempotency-key",
+            "portal-id",
+            "portal-configuration-hash",
+            "portal-descriptor-hash",
+        ]
+        .iter()
+        .all(|key| parsed.contains_key(*key))
+        || !parsed["plan-hash"].starts_with("sha256:")
+        || !parsed["idempotency-key"].starts_with("sha256:")
+        || !parsed["portal-configuration-hash"].starts_with("sha256:")
+        || !parsed["portal-descriptor-hash"].starts_with("sha256:")
+    {
+        return Err("autonomous_submission_dispatcher_challenge_arguments_invalid".into());
+    }
+    Ok(parsed)
+}
+
+const DISPATCHER_CHALLENGE_USAGE: &str = r#"{
+  "version": 1,
+  "kind": "AutonomousSubmissionDispatcherChallengeUsage",
+  "usage": "autonomous-submission-dispatcher-challenge --action publish|status --plan-hash sha256:... --idempotency-key sha256:... --portal-id ID --portal-configuration-hash sha256:... --portal-descriptor-hash sha256:...",
+  "publisherHasPortalCredentials": false,
+  "statusIsReadOnly": true,
+  "residentDispatcherPrincipalRequired": true
+}"#;
 
 fn command() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -912,6 +1001,62 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("{rendered}");
             if !ready {
+                std::process::exit(2);
+            }
+        }
+        Some("autonomous-submission-dispatcher-challenge") => {
+            let options = match parse_dispatcher_challenge_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            };
+            if options.contains_key("help") {
+                println!("{DISPATCHER_CHALLENGE_USAGE}");
+                // The incumbent entrypoint treats the usage object as a
+                // non-ready status report and exits 2.
+                std::process::exit(2);
+            }
+            if options
+                .get("action")
+                .map(String::as_str)
+                .unwrap_or("status")
+                == "publish"
+            {
+                return Err(
+                    "rust_autonomous_submission_dispatcher_challenge_publish_not_ported".into(),
+                );
+            }
+            let runtime_root = options
+                .get("runtime-root")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    env::var("HEPTA_PAPER_RUNTIME_ROOT")
+                        .ok()
+                        .filter(|value| !value.is_empty())
+                        .map(PathBuf::from)
+                })
+                .map(lexical_absolute_path)
+                .unwrap_or_else(|| {
+                    lexical_absolute_path(
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("../../../../hepta-paper-runtime/native-runtime"),
+                    )
+                });
+            let report = inspect_autonomous_submission_dispatcher_challenge_v1(
+                &AutonomousSubmissionDispatcherChallengeOptions {
+                    runtime_root,
+                    now_millis: current_unix_millis()?,
+                    plan_hash: options.get("plan-hash").cloned(),
+                    idempotency_key: options.get("idempotency-key").cloned(),
+                    portal_id: options.get("portal-id").cloned(),
+                    portal_configuration_hash: options.get("portal-configuration-hash").cloned(),
+                    portal_descriptor_hash: options.get("portal-descriptor-hash").cloned(),
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if report["ready"] != serde_json::Value::Bool(true) {
                 std::process::exit(2);
             }
         }

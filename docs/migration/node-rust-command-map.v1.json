@@ -1295,14 +1295,37 @@
     },
     {
       "id": "operator/autonomous-submission-dispatcher-challenge",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust autonomous-submission-dispatcher-challenge --action status|publish --plan-hash sha256:... --idempotency-key sha256:... --portal-id ID --portal-configuration-hash sha256:... --portal-descriptor-hash sha256:... [--runtime-root PATH] [--help]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "parse_dispatcher_challenge_arguments"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_submission_dispatcher_challenge.rs",
+          "symbol": "inspect_autonomous_submission_dispatcher_challenge_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher_challenge.rs"
+      ],
+      "remaining": "Rust now owns a bounded read-only challenge-exchange observer: strict arguments, no-follow/nonblocking bounded document reads, exact challenge shape/hash/expiry/binding checks, newest valid challenge selection and fail-closed readiness projection. Publish remains unsupported; dispatcher identity/trust-store signature verification, portal descriptor and independent canary authority, signed cycle envelope, handoff SQLite cutover/queue inspection, resident delivery and external submission effects remain open source work and qualification requirements.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_submission_dispatcher_challenge.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher_challenge.rs",
+          "symbol": "help_is_the_same_usage_object_as_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher_challenge.rs",
+          "symbol": "status_is_fail_closed_on_missing_exchange_and_parent_symlink"
+        }
+      ]
     },
     {
       "id": "operator/autonomous-supervisor",

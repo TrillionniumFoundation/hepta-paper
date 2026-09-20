@@ -1,7 +1,7 @@
 //! Native, read-only legacy capability owner acceptance projection.
 //! Family hashes are rebuilt from the current migration input; signatures alone
 //! cannot authorize a different source or business disposition.
-mod reader;
+pub(crate) mod reader;
 
 use crate::operational_status::authority;
 use hepta_legacy_compatibility::{ProductionCollationV1, production_hash_record_v1};

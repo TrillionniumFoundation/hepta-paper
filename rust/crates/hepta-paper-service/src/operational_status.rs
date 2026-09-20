@@ -8,6 +8,7 @@ pub(crate) mod authority;
 mod conformance;
 mod files;
 mod ordered;
+pub(crate) mod production;
 mod provenance;
 mod sealed;
 

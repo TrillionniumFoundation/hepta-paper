@@ -204,3 +204,7 @@ dependent advanced modes remain explicitly unsupported.
 [Native retirement drill-attest inspection](RETIREMENT_DRILL_ATTEST_HANDOFF.md)
 captures the local immutable Node freeze and archive checks while preserving the
 external replay, signing, publication, and independent retirement gates.
+
+The [native full-production readiness handoff](FULL_PRODUCTION_READINESS_HANDOFF.md)
+describes the pinned owner and operational proof composition, five-axis policy,
+and remaining package recovery, WORM and live automation adapters.

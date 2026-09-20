@@ -6,6 +6,7 @@ use nix::{
 };
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     fmt,
     fs::{self, File, Metadata},
@@ -14,8 +15,10 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub(super) struct Snapshot {
-    pub document: Value,
+#[derive(Clone, Debug)]
+pub(crate) struct Snapshot {
+    pub(crate) document: Value,
+    pub(crate) content_hash: String,
     paths: Vec<(PathBuf, Metadata)>,
     private: bool,
 }
@@ -33,6 +36,10 @@ fn same(a: &Metadata, b: &Metadata) -> bool {
         && a.ctime_nsec() == b.ctime_nsec()
 }
 impl Snapshot {
+    pub(crate) fn selected_uid(&self) -> u32 {
+        self.paths.last().map_or(0, |(_, metadata)| metadata.uid())
+    }
+
     pub fn assert_current(&self) -> Result<()> {
         for (index, (path, expected)) in self.paths.iter().enumerate() {
             let current =
@@ -53,7 +60,7 @@ impl Snapshot {
         Ok(())
     }
 }
-pub(super) fn read(path: &Path, private: bool) -> Result<Snapshot> {
+pub(crate) fn read(path: &Path, private: bool) -> Result<Snapshot> {
     if !path.is_absolute() || path.components().any(|v| matches!(v, Component::ParentDir)) {
         return Err(error("owner_acceptance_path_invalid"));
     }
@@ -140,6 +147,7 @@ pub(super) fn read(path: &Path, private: bool) -> Result<Snapshot> {
         serde_json::from_slice(&bytes).map_err(|_| error("owner_acceptance_json_invalid"))?;
     let snapshot = Snapshot {
         document,
+        content_hash: format!("sha256:{:x}", Sha256::digest(&bytes)),
         paths,
         private,
     };

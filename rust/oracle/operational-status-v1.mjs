@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { readBoundRegularJsonSnapshot } from '../../paper-adapters/governance/capability-proof-verifier-support.mjs';
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
 import { inspectSealedReadOnlySubmodules } from '../../paper-adapters/runtime/sealed-readonly-submodule-provenance.mjs';
@@ -142,10 +143,23 @@ if(request.inspectSealed){
 } else {
 const codeProvenance=currentCodeProvenance({workspaceRoot,allowReleaseCommitEnvironment:false});
 const options={workspaceRoot,runtimeRoot,assetRoot,capabilityCatalog:CAPABILITY_CATALOG,releaseCommit:codeProvenance.commit,codeProvenance};
+if(request.productionTrustOverride) {
+  const referenceRoot=path.join(request.root,'capabilities-public');
+  fs.mkdirSync(referenceRoot,{recursive:true});
+  const source=path.join(runtimeRoot,'owner-acceptance/OWNER_TRUST_STORE.json');
+  const selected=path.join(referenceRoot,'OWNER_TRUST_STORE.json');
+  if (request.productionTrustOverride==='invalid') write(selected,{version:1,kind:'AuthorityTrustStore',keys:[]});
+  else fs.copyFileSync(source,selected);
+  options.ownerTrustStoreSnapshot=readBoundRegularJsonSnapshot(referenceRoot,selected);
+  if (request.productionTrustOverride==='runtime-invalid') write(source,{version:1,kind:'AuthorityTrustStore',keys:[]});
+}
 const proofs=loadCapabilityOperationalProofs(options);const conformance=loadCapabilityConformanceProofs(options);
 const capabilities=Object.keys(CAPABILITY_CATALOG).sort().map(capabilityId=>({capabilityId,operationallyProven:proofs.has(capabilityId),operationalReceiptHashes:proofs.get(capabilityId)?.operationalReceiptHashes||[],conformanceVerified:conformance.has(capabilityId),conformanceReceiptHashes:conformance.get(capabilityId)?.conformanceReceiptHashes||[],conformanceIssuerAssurances:conformance.get(capabilityId)?.issuerAssurances||[]}));
 const status={version:1,kind:'CapabilityOperationalProofStatus',status:capabilities.every(item=>item.operationallyProven)?'all_capabilities_operationally_proven':'capability_operational_proof_pending',releaseCommit:codeProvenance.commit,capabilityCount:capabilities.length,operationallyProven:capabilities.filter(item=>item.operationallyProven).length,operationallyPending:capabilities.filter(item=>!item.operationallyProven).length,conformanceVerified:capabilities.filter(item=>item.conformanceVerified).length,conformancePending:capabilities.filter(item=>!item.conformanceVerified).length,conformanceCannotQualifyAsOperationalProof:true,externalOwnerSignatureRequired:true,capabilities};
-process.stdout.write(JSON.stringify({profile:{node:process.version},status,codeProvenance}));
+const productionCapabilities=Object.keys(CAPABILITY_CATALOG).sort().map(capabilityId=>({capabilityId,verified:proofs.has(capabilityId),operationalReceiptHashes:[...(proofs.get(capabilityId)?.operationalReceiptHashes||[])].sort(),issuerAssurances:[...(proofs.get(capabilityId)?.issuerAssurances||[])].sort()}));
+const productionVerified=productionCapabilities.filter(item=>item.verified).length;
+const productionInspection={version:1,kind:'IndependentProductionOperationalProofInspection',status:productionVerified===productionCapabilities.length?'independent_production_operational_proof_ready':'independent_production_operational_proof_blocked',releaseCommit:codeProvenance.commit,verified:productionVerified,required:productionCapabilities.length,capabilities:productionCapabilities,externalIndependentRequired:true,conformanceCannotQualify:true};
+process.stdout.write(JSON.stringify({profile:{node:process.version},status,codeProvenance,productionInspection}));
 
 }
 } catch(error) { process.stdout.write(JSON.stringify({profile:{node:process.version},error:error.message})); }

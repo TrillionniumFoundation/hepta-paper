@@ -1,11 +1,15 @@
-//! Read-only, fail-closed projection of the Node `full-production-readiness` route.
-//!
-//! The route deliberately does not execute a package recovery helper, verify an
-//! external owner signature, contact a provider, or mint release authority. It
-//! validates the bounded local references and reports the remaining gates so a
-//! caller can see exactly why production readiness has not been established.
+//! Full-production readiness with pinned independent owner and operational proof
+//! verification. The five-axis policy revalidates evidence at aggregation time.
+//! Package helper execution, live automation, and off-host WORM verification
+//! remain explicit blocking gates until their native adapters are implemented.
 
 #![forbid(unsafe_code)]
+
+pub mod owner;
+pub mod policy;
+
+#[cfg(test)]
+mod composition_tests;
 
 use crate::deployment_environment::load_readiness_deployment_environment_v1;
 use hepta_legacy_compatibility::production_hash_record_v1;
@@ -29,7 +33,7 @@ pub const FULL_PRODUCTION_READINESS_USAGE: &str = r#"{
   "localObservationEffects": "none",
   "externalAction": "never",
   "semanticNotReadyExitCode": 2,
-  "rustBoundary": "read-only bounded reference inspection; package recovery execution and external authority verification remain fail-closed"
+  "rustBoundary": "pinned owner signature and operational proof verification; package recovery execution, live automation and off-host WORM remain fail-closed"
 }"#;
 
 #[derive(Clone, Debug, Default)]
@@ -334,6 +338,20 @@ pub fn inspect_full_production_readiness_v1(
     options: &FullProductionReadinessOptions,
     workspace_root: &Path,
 ) -> Result<Value, String> {
+    inspect_with_owner_references(options, workspace_root, owner::PinnedOwnerReferences::open)
+}
+
+fn inspect_with_owner_references(
+    options: &FullProductionReadinessOptions,
+    workspace_root: &Path,
+    pin_owner: impl Fn(
+        &Path,
+        &str,
+        &Path,
+        &str,
+    )
+        -> Result<owner::PinnedOwnerReferences, owner::OwnerAcceptanceInspectionError>,
+) -> Result<Value, String> {
     if !workspace_root.is_absolute() {
         return Err("full_production_readiness_workspace_root_must_be_absolute".to_owned());
     }
@@ -370,14 +388,6 @@ pub fn inspect_full_production_readiness_v1(
     if !root.is_absolute() || !runtime_root.is_absolute() || !workspace_root.is_absolute() {
         return Err("full_production_readiness_root_paths_must_be_absolute".to_owned());
     }
-    let now_millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?
-        .as_millis();
-    let now_millis = i64::try_from(now_millis)
-        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
-    let observed_at = crate::external_authority_intake::unix_millis_to_iso_v1(now_millis)
-        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
     let owner_trust = inspect_reference(
         options.owner_trust_store.as_deref(),
         options.owner_trust_store_sha256.as_deref(),
@@ -398,27 +408,67 @@ pub fn inspect_full_production_readiness_v1(
     let offhost_contract = fs::read(&offhost_contract_path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-    let mut blockers = Vec::new();
-    blocker(
-        &mut blockers,
-        "rust_full_production_package_recovery_execution_not_ported",
-    );
-    blocker(
-        &mut blockers,
-        "rust_full_production_external_owner_signature_verification_not_ported",
-    );
-    blocker(
-        &mut blockers,
-        "rust_full_production_operational_proof_aggregation_not_ported",
-    );
-    blocker(
-        &mut blockers,
-        "rust_full_production_offhost_worm_custody_verification_not_ported",
-    );
-    blocker(
-        &mut blockers,
-        "rust_full_production_automation_plane_aggregation_not_ported",
-    );
+    let mut blockers = vec![
+        "rust_full_production_package_recovery_execution_not_ported".to_owned(),
+        "rust_full_production_offhost_worm_custody_verification_not_ported".to_owned(),
+        "rust_full_production_automation_plane_aggregation_not_ported".to_owned(),
+    ];
+    let references = match (
+        options.owner_trust_store.as_deref(),
+        options.owner_trust_store_sha256.as_deref(),
+        options.owner_acceptance_document.as_deref(),
+        options.owner_acceptance_document_sha256.as_deref(),
+    ) {
+        (Some(trust), Some(trust_hash), Some(acceptance), Some(acceptance_hash)) => {
+            pin_owner(trust, trust_hash, acceptance, acceptance_hash)
+                .map_err(|error| error.to_string())
+        }
+        _ => Err("full_production_owner_acceptance_reference_invalid".to_owned()),
+    };
+    let mut inspection_errors = Vec::new();
+    if let Err(error) = &references {
+        inspection_errors.push(error.clone());
+    }
+    let references = references.ok();
+    let owner_inspection = references.as_ref().and_then(|references| {
+        references
+            .inspect_workspace(workspace_root)
+            .map_err(|error| {
+                inspection_errors.push(error.to_string());
+            })
+            .ok()
+    });
+    let operational_inspection = references.as_ref().and_then(|references| {
+        crate::operational_status::production::inspect_production_proofs(
+            workspace_root,
+            &runtime_root,
+            references.trust_document(),
+        )
+        .map_err(|error| {
+            inspection_errors.push(error.to_string());
+        })
+        .ok()
+    });
+    let owner_report = owner_inspection.as_ref().map(|inspection| inspection.report().clone())
+        .unwrap_or_else(|| json!({
+            "version": 1, "kind": "IndependentExternalOwnerAcceptanceInspection",
+            "status": "independent_external_owner_acceptance_blocked",
+            "externallyAccepted": 0, "required": owner::FULL_PRODUCTION_OWNER_ACCEPTANCE_REQUIRED,
+            "familyManifestBound": false, "familyManifestHash": null,
+            "localAdminAccepted": 0, "automaticAcceptanceForbidden": true,
+        }));
+    // A missing source observation never receives a fabricated commit identity.
+    let operational_report = operational_inspection.as_ref().map(|inspection| inspection.report.clone())
+        .unwrap_or_else(|| json!({
+            "version": 1, "kind": "IndependentProductionOperationalProofInspection",
+            "status": "independent_production_operational_proof_blocked",
+            "releaseCommit": null, "verified": 0,
+            "required": policy::FULL_PRODUCTION_OPERATIONAL_CAPABILITY_IDS.len(),
+            "capabilities": policy::FULL_PRODUCTION_OPERATIONAL_CAPABILITY_IDS.iter().map(|id| json!({
+                "capabilityId": id, "verified": false, "operationalReceiptHashes": [], "issuerAssurances": [],
+            })).collect::<Vec<_>>(),
+            "externalIndependentRequired": true, "conformanceCannotQualify": true,
+        }));
     if owner_trust["referenceValid"] != true {
         blocker(&mut blockers, "owner_trust_store_reference_invalid");
     }
@@ -431,13 +481,12 @@ pub fn inspect_full_production_readiness_v1(
             "package_recovery_readiness_command_reference_invalid",
         );
     }
-    if !offhost_contract.as_ref().is_some_and(|value| {
-        value["version"] == 1
-            && value["kind"] == "OffhostWormSnapshotContract"
-            && value["contractId"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
-    }) {
+    let contract_id = offhost_contract
+        .as_ref()
+        .filter(|value| value["version"] == 1 && value["kind"] == "OffhostWormSnapshotContract")
+        .and_then(|value| value["contractId"].as_str())
+        .filter(|id| !id.is_empty());
+    if contract_id.is_none() {
         blocker(&mut blockers, "offhost_worm_contract_invalid");
     }
     if !options.live_provider_canary {
@@ -446,37 +495,95 @@ pub fn inspect_full_production_readiness_v1(
     if !options.live_release_attestor {
         blocker(&mut blockers, "live_release_attestor_not_requested");
     }
+    let package_inspection = json!({
+        "version": 1, "kind": "PackageRetentionRecoveryReadinessInspection",
+        "status": "not_executed", "ready": false,
+    });
+    let worm_inspection = json!({
+        "version": 1, "kind": "OffhostWormTargetStatus",
+        "status": "not_verified", "ready": false,
+    });
+    let automation_report = json!({
+        "version": 2, "kind": "AutomationPlaneStatus",
+        "status": "rust_automation_aggregation_not_ported", "productionReady": false,
+    });
+    let now_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?
+        .as_millis();
+    let now_millis = i64::try_from(now_millis)
+        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
+    let observed_at = crate::external_authority_intake::unix_millis_to_iso_v1(now_millis)
+        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
+    let aggregate = policy::evaluate_full_production_readiness_v1(&json!({
+        "automationReport": automation_report,
+        "packageRetentionRecoveryInspection": package_inspection,
+        "offhostWormCustodyInspection": worm_inspection,
+        "independentExternalOwnerAcceptanceInspection": owner_report,
+        "independentProductionOperationalProofInspection": operational_report,
+        "offhostWormContractId": contract_id,
+        "observedAt": observed_at,
+    }));
+    let mut payload = match aggregate {
+        Ok(report) => report,
+        Err(error) => {
+            inspection_errors.push(error.to_string());
+            json!({
+                "version": 1, "kind": "FullProductionReadinessStatus",
+                "status": "full_production_blocked", "fullProductionStatus": "full_production_blocked",
+                "fullProductionReady": false, "observedAt": observed_at,
+                "automationPlaneStatus": automation_report["status"], "automationPlaneReady": false,
+                "packageRetentionRecoveryReady": false, "packageRetentionRecoveryInspection": package_inspection,
+                "offhostWormCustodyReady": false, "offhostWormCustodyInspection": worm_inspection,
+                "independentExternalOwnerAcceptanceReady": false,
+                "independentExternalOwnerAcceptanceInspection": owner_report,
+                "independentProductionOperationalProofReady": false,
+                "independentProductionOperationalProofInspection": operational_report,
+            })
+        }
+    };
+    if let Some(policy_blockers) = payload["blockers"].as_array() {
+        blockers.extend(
+            policy_blockers
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned),
+        );
+    }
+    blockers.extend(inspection_errors.iter().cloned());
     blockers.sort();
     blockers.dedup();
-    let payload = json!({
-        "version": 1,
-        "kind": "FullProductionReadinessStatus",
-        "status": "full_production_blocked",
-        "fullProductionStatus": "full_production_blocked",
-        "fullProductionReady": false,
-        "root": root,
-        "runtimeRoot": runtime_root,
+    let object = payload.as_object_mut().expect("readiness report object");
+    object.remove("fullProductionReadinessStatusHash");
+    object.extend(json!({
+        "root": root, "runtimeRoot": runtime_root,
         "deploymentEnvironment": deployment_environment.inspection,
-        "observedAt": observed_at,
-        "automationPlaneStatus": "rust_bounded_projection",
-        "automationPlaneReady": false,
-        "packageRetentionRecoveryReady": false,
-        "packageRetentionRecoveryInspection": {"status": "not_executed", "ready": false},
-        "offhostWormCustodyReady": false,
-        "offhostWormCustodyInspection": {"status": "not_verified", "ready": false},
-        "independentExternalOwnerAcceptanceReady": false,
-        "independentExternalOwnerAcceptanceInspection": {"status": "not_verified", "externallyAccepted": 0, "required": 249},
-        "independentProductionOperationalProofReady": false,
-        "independentProductionOperationalProofInspection": {"status": "not_verified", "verified": 0},
         "references": {"ownerTrustStore": owner_trust, "ownerAcceptanceDocument": owner_acceptance, "packageRecoveryReadinessCommand": package_command},
-        "offhostWormContract": offhost_contract.map(|value| json!({"version": value["version"], "kind": value["kind"], "contractId": value["contractId"]})),
+        "offhostWormContract": offhost_contract.as_ref().map(|value| json!({"version": value["version"], "kind": value["kind"], "contractId": value["contractId"]})),
         "liveProviderCanaryRequested": options.live_provider_canary,
         "liveReleaseAttestorVerificationRequested": options.live_release_attestor,
-        "externalActionPerformed": false,
-        "serviceStateChanged": false,
-        "blockers": blockers,
-        "rustBoundary": "read-only-bounded-reference-inspection",
-    });
+        "externalActionPerformed": false, "serviceStateChanged": false,
+        "blockers": blockers, "inspectionErrors": inspection_errors,
+        "rustBoundary": "pinned-owner-and-operational-proof-verification",
+    }).as_object().expect("metadata object").clone());
+    // Retain the original source and authority snapshots through aggregation.
+    // A replacement invalidates the observation instead of retaining an earlier
+    // positive count in a newly hashed report.
+    if let Some(inspection) = &owner_inspection {
+        inspection
+            .assert_current()
+            .map_err(|error| error.to_string())?;
+    }
+    if let Some(inspection) = &operational_inspection {
+        inspection
+            .assert_current()
+            .map_err(|error| error.to_string())?;
+    }
+    if let Some(references) = &references {
+        references
+            .assert_current()
+            .map_err(|error| error.to_string())?;
+    }
     let hash = production_hash_record_v1("FullProductionReadinessStatus", &payload)
         .map_err(|_| "full_production_readiness_status_hash_failed".to_owned())?;
     let mut report = payload;

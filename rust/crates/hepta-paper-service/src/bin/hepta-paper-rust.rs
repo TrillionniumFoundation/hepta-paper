@@ -17,6 +17,11 @@ use hepta_paper_service::{
         external_authority_intake_help_json_v1, inspect_external_authority_intake_v1,
         unix_millis_to_iso_v1,
     },
+    generic_domain_capability_evidence::{
+        converge_generic_domain_capability_evidence_v1,
+        generic_domain_capability_evidence_help_json_v1,
+        inspect_generic_domain_capability_evidence_v1,
+    },
     inspect_legacy_deletion_drill_attest_v1,
     local_golden_dataset::{
         execute_local_golden_dataset_provisioning_v1, inspect_local_golden_dataset_provisioning_v1,
@@ -561,6 +566,71 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("generic-domain-capability-evidence") => {
+            let mut action = "status".to_owned();
+            let mut action_seen = false;
+            let mut runtime_root = None;
+            let mut help = false;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--action" if index + 1 < args.len() && !action_seen => {
+                        action = args[index + 1].clone();
+                        action_seen = true;
+                        index += 2;
+                    }
+                    "--runtime-root" if index + 1 < args.len() && runtime_root.is_none() => {
+                        let path = PathBuf::from(&args[index + 1]);
+                        if !path.is_absolute() {
+                            return Err(
+                                "generic-domain-capability-evidence requires an absolute runtime root"
+                                    .into(),
+                            );
+                        }
+                        runtime_root = Some(path);
+                        index += 2;
+                    }
+                    "--help" if !help => {
+                        help = true;
+                        index += 1;
+                    }
+                    _ => {
+                        return Err("generic-domain-capability-evidence accepts --action status|converge --runtime-root ABSOLUTE_PATH [--help] only".into());
+                    }
+                }
+            }
+            if help {
+                println!(
+                    "{}",
+                    serde_json::to_string(&generic_domain_capability_evidence_help_json_v1())?
+                );
+                return Ok(());
+            }
+            let runtime_root = runtime_root.ok_or(
+                "generic-domain-capability-evidence requires --runtime-root ABSOLUTE_PATH",
+            )?;
+            match action.as_str() {
+                "status" => {
+                    let report = inspect_generic_domain_capability_evidence_v1(&runtime_root)?;
+                    let ready = report["ready"] == true;
+                    println!("{}", serde_json::to_string(&report)?);
+                    if !ready {
+                        std::process::exit(2);
+                    }
+                }
+                "converge" => {
+                    let report = converge_generic_domain_capability_evidence_v1(&runtime_root)?;
+                    println!("{}", serde_json::to_string(&report)?);
+                    std::process::exit(2);
+                }
+                _ => {
+                    return Err(
+                        "generic-domain-capability-evidence --action must be status or converge"
+                            .into(),
+                    );
+                }
+            }
+        }
         Some("research-capability-matrix") => {
             let mut request = None;
             let mut require_production_ready = false;
@@ -647,6 +717,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
                 " | research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
                 " | external-authority-intake [--author-config PATH --author-config-hash sha256:...] [--release-attestor-config PATH --release-attestor-config-hash sha256:...] [--require-ready]",
+                " | generic-domain-capability-evidence --action status|converge --runtime-root ABSOLUTE_PATH",
                 " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]",
                 " | local-golden-dataset-provision --action plan|execute [options]"
             )

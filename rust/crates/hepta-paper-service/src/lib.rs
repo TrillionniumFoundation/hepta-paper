@@ -15,6 +15,7 @@ pub mod command_surface;
 mod deployment;
 pub mod deployment_environment;
 pub mod external_authority_intake;
+pub mod generic_domain_capability_evidence;
 pub mod journal_connector_coverage;
 pub mod local_golden_dataset;
 pub mod maintenance;

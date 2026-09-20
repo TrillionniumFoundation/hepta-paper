@@ -52,6 +52,7 @@ clock and local writer token. It is not a deployment configuration.
 | `command-surface ROOT [--write-package\|--check-package\|--npm-aliases\|--help-artifact\|--ci-matrix]` | Inspect or synchronize the local `package.json` command-script registry without invoking Node; write/check preserve Node's insertion order and JavaScript truthiness, while classify, help, aliases, and CI matrix are deterministic read-only projections backed by checked-in command-registry artifacts. |
 | `research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]` | Project an already-observed descriptive readiness document through the ten-capability matrix; the optional gate is fail-closed and never grants authority or activation. |
 | `research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]` | Project the actual passive Rust state-safety inspection and compare it with the Node diagnostic contract; `--require-ready` fails closed and the command performs no authority RPC or runtime write. Full automation-status observers and live activation remain outside this bounded route. |
+| `generic-domain-capability-evidence --action status\|converge --runtime-root ABSOLUTE_PATH` | Inspect only the explicit private `generic-domain-capability-evidence.json` file under the supplied runtime root, matching Node shape/hash/path checks. `status` is read-only; `converge` is a fail-closed diagnostic that never publishes, invokes external replay/authority, or changes service state. |
 | `retirement-reference ROOT` | Verify retirement snapshot receipts and archive hashes without consulting or mutating a live legacy runtime. |
 | `release-trust-gate REQUEST` | Evaluate the pure release trust-layer count gate from JSON input; it never creates external signatures or activates production. |
 | `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input; composite release verification remains separate. |
@@ -154,6 +155,21 @@ for configured material. It does not parse or trust author envelopes, release
 attestor v3/KMS hardware bundles, invoke signer processes, read private keys,
 or claim production readiness. Those independently reviewed authority adapters
 remain an open migration row in the command-gap ledger.
+
+`hepta-paper-rust generic-domain-capability-evidence` deliberately covers a
+narrower local boundary than the incumbent generic-domain command. It accepts
+only an explicit absolute, canonical, private runtime root and reads its
+canonical `generic-domain-capability-evidence.json` with a no-follow file
+descriptor, stable identity/size/mtime checks, the 16 MiB bound, exact fourteen
+field shape and the production Node record hash. `status` reports that local
+inspection and never returns an authority decision. `converge` always exits
+with the fail-closed blocked result: persisted authority lineage, formal-domain
+replay, independent review, target-host qualification and the atomic
+publication writer are not represented by this adapter. No environment path,
+external authority, signer, replay, private key or runtime mutation is used.
+The [generic-domain evidence handoff](../../../docs/modules/GENERIC_DOMAIN_CAPABILITY_EVIDENCE_HANDOFF.md)
+defines the local `ready` field, exact input shape, exits, and remaining strong
+status/convergence call chain.
 
 `cargo test -p hepta-paper-service` covers executable configuration, actual CAS
 bytes, durable commit/replay, unsafe content rejection and authority refusal.

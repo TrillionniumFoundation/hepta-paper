@@ -30,10 +30,18 @@ record hashes for the dataset, split, harness, analysis, semantics, trust-store,
 private-key path, runtime scope and provisioning plan. It performs no writes and
 never opens the private-key path.
 
-The route rejects the built-in protected production roots and symlinked roots
-before any source-bound report is constructed. Exact incumbent expansion from
-repository/workspace/environment protected roots is still open. It reports only
-local evidence and always keeps `academicPromotionEligible=false`,
+The route rejects the built-in protected production roots, the incumbent
+repository/workspace root, default sibling asset/runtime roots, and the
+`HEPTA_PAPER_ASSET_ROOT`, `HEPTA_PAPER_RUNTIME_ROOT`, and
+`HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT` environment roots before any
+source-bound report is constructed. Symlinked roots are also rejected. The
+analysis protocol now requires the canonical Node v1/v2 top-level and bounded
+`ml_algorithm_benchmark` contract; the authority window is checked against the
+current clock as well as the 31-day lifetime. Split assignments are checked
+against the normalized eligible split set, public trust stores are checked for
+global key shape/role/uniqueness and private-material absence, and harness
+oracle values remain finite and bounded. It reports only local evidence and
+always keeps `academicPromotionEligible=false`,
 `externalTrustClaimed=false` and `externalActionPerformed=false` in its plan
 payload.
 
@@ -62,5 +70,7 @@ cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service \
 ```
 
 The focused test compares help bytes with the Node entrypoint and verifies
-source-bound plan/no-write behavior, fail-closed execute, protected-root
-rejection, and symlink rejection.
+source-bound plan hashes and the complete plan JSON with the Node entrypoint;
+it also verifies no-write behavior, fail-closed execute, protected-root and
+symlink rejection, semantic split binding, canonical analysis rejection and
+authority-window failures.

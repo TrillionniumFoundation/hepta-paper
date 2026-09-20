@@ -253,6 +253,77 @@ fn path_within(root: &Path, candidate: &Path) -> bool {
 fn overlap(left: &Path, right: &Path) -> bool {
     path_within(left, right) || path_within(right, left)
 }
+fn normalized_absolute(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(path)
+    };
+    let mut normalized = PathBuf::from("/");
+    for component in absolute.components() {
+        match component {
+            std::path::Component::Normal(name) => normalized.push(name),
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::RootDir | std::path::Component::CurDir => {}
+            std::path::Component::Prefix(_) => {}
+        }
+    }
+    normalized
+}
+fn node_repository_root() -> PathBuf {
+    normalized_absolute(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+}
+fn node_default_asset_root(repository_root: &Path) -> PathBuf {
+    if let Ok(value) = std::env::var("HEPTA_PAPER_ASSET_ROOT")
+        && !value.is_empty()
+    {
+        return normalized_absolute(Path::new(&value));
+    }
+    let parent = repository_root.parent().unwrap_or(repository_root);
+    if parent.file_name().and_then(|name| name.to_str()) == Some("paper_factory") {
+        parent.to_owned()
+    } else {
+        parent.join("hepta-paper-assets")
+    }
+}
+fn node_default_runtime_root(repository_root: &Path) -> PathBuf {
+    if let Ok(value) = std::env::var("HEPTA_PAPER_RUNTIME_ROOT")
+        && !value.is_empty()
+    {
+        return normalized_absolute(Path::new(&value));
+    }
+    repository_root
+        .parent()
+        .unwrap_or(repository_root)
+        .join("hepta-paper-runtime")
+        .join("native-runtime")
+}
+fn node_protected_roots() -> Vec<PathBuf> {
+    let repository_root = node_repository_root();
+    let mut roots = vec![
+        PathBuf::from("/var/lib/hepta-paper"),
+        PathBuf::from("/srv/hepta-paper"),
+        PathBuf::from("/etc/hepta-paper"),
+        PathBuf::from("/opt/hepta-paper"),
+        repository_root.clone(),
+        repository_root.clone(), // Node's repositoryRoot and workspaceRoot are the same.
+        node_default_asset_root(&repository_root),
+        node_default_runtime_root(&repository_root),
+    ];
+    if let Ok(value) = std::env::var("HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT")
+        && !value.is_empty()
+    {
+        roots.push(normalized_absolute(Path::new(&value)));
+    }
+    roots
+        .into_iter()
+        .map(|root| normalized_absolute(&root))
+        .collect()
+}
 fn canonical_existing_directory(path: &Path, role: &str, private: bool) -> Result<PathBuf> {
     let canonical = fs::canonicalize(path)
         .map_err(|_| error(format!("local_golden_dataset_{role}_unreadable")))?;
@@ -452,6 +523,217 @@ fn normalize_semantics(value: &Value) -> Result<Value> {
     Ok(normalized)
 }
 
+fn normalize_analysis_protocol(value: &Value, dataset_name: &str) -> Result<Value> {
+    let version = value["version"]
+        .as_u64()
+        .ok_or_else(|| error("analysis_protocol_shape_invalid"))?;
+    if ![1, 2].contains(&version)
+        || value["kind"] != "AcademicAnalysisProtocol"
+        || !exact_keys(
+            value,
+            if version == 2 {
+                &[
+                    "version",
+                    "kind",
+                    "protocolId",
+                    "benchmarkId",
+                    "benchmarkFamily",
+                    "requiredMetrics",
+                    "metricSpecs",
+                    "inferenceProfile",
+                    "inferenceProfileHash",
+                    "estimator",
+                    "assumptions",
+                    "pairedUnit",
+                    "missingness",
+                    "outlierSensitivity",
+                    "uncertainty",
+                    "hypotheses",
+                    "multiplicity",
+                    "power",
+                    "numericValidation",
+                    "assuranceScope",
+                    "empiricalClaimUniverseHash",
+                    "manuscriptCorpusHash",
+                ]
+            } else {
+                &[
+                    "version",
+                    "kind",
+                    "protocolId",
+                    "benchmarkId",
+                    "benchmarkFamily",
+                    "requiredMetrics",
+                    "metricSpecs",
+                    "inferenceProfile",
+                    "inferenceProfileHash",
+                    "estimator",
+                    "assumptions",
+                    "pairedUnit",
+                    "missingness",
+                    "outlierSensitivity",
+                    "uncertainty",
+                    "hypotheses",
+                    "multiplicity",
+                    "power",
+                    "numericValidation",
+                    "assuranceScope",
+                ]
+            },
+        )
+        || value["benchmarkId"] != dataset_name
+        || value["benchmarkFamily"] != "ml_algorithm_benchmark"
+    {
+        return Err(error("analysis_protocol_shape_invalid"));
+    }
+    let identifier = |v: &Value| {
+        let Some(text) = v.as_str() else { return false };
+        !text.is_empty()
+            && text.len() <= 160
+            && text.as_bytes()[0].is_ascii_alphanumeric()
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+    };
+    if !identifier(&value["protocolId"])
+        || version == 2
+            && (!valid_hash(
+                value["empiricalClaimUniverseHash"]
+                    .as_str()
+                    .unwrap_or_default(),
+            ) || !valid_hash(value["manuscriptCorpusHash"].as_str().unwrap_or_default()))
+    {
+        return Err(error("analysis_protocol_identity_invalid"));
+    }
+    let metrics = value["requiredMetrics"]
+        .as_array()
+        .ok_or_else(|| error("analysis_protocol_required_metrics_invalid"))?;
+    let expected_metrics = [
+        "mean_score",
+        "standard_error",
+        "baseline_gap",
+        "robustness_gap",
+    ];
+    if metrics.len() != expected_metrics.len()
+        || metrics
+            .iter()
+            .map(Value::as_str)
+            .collect::<Option<Vec<_>>>()
+            != Some(expected_metrics.to_vec())
+    {
+        return Err(error("analysis_protocol_required_metrics_invalid"));
+    }
+    let metric_specs = value["metricSpecs"]
+        .as_object()
+        .ok_or_else(|| error("analysis_protocol_metric_specs_invalid"))?;
+    let expected_specs = [
+        ("baseline_gap", "ratio", "maximize", -1.0, 1.0),
+        ("mean_score", "ratio", "maximize", 0.0, 1.0),
+        ("robustness_gap", "ratio", "maximize", -1.0, 1.0),
+        ("standard_error", "ratio", "minimize", 0.0, 1.0),
+    ];
+    if metric_specs.len() != expected_specs.len() {
+        return Err(error("analysis_protocol_metric_specs_invalid"));
+    }
+    for (name, unit, direction, minimum, maximum) in expected_specs {
+        let spec = metric_specs
+            .get(name)
+            .and_then(Value::as_object)
+            .ok_or_else(|| error("analysis_protocol_metric_spec_invalid"))?;
+        if spec.len() != 4
+            || spec.get("unit").and_then(Value::as_str) != Some(unit)
+            || spec.get("direction").and_then(Value::as_str) != Some(direction)
+            || spec.get("minimum").and_then(Value::as_f64) != Some(minimum)
+            || spec.get("maximum").and_then(Value::as_f64) != Some(maximum)
+        {
+            return Err(error("analysis_protocol_metric_spec_invalid"));
+        }
+    }
+    let profile = &value["inferenceProfile"];
+    let expected_profile = json!({
+        "version":1,"kind":"AcademicAnalysisInferenceProfile",
+        "profileId":"ml_algorithm_benchmark:seed-repetition-cell:v1",
+        "benchmarkFamily":"ml_algorithm_benchmark",
+        "independentUnit":"seed-repetition-cell-v1",
+        "withinSeedAggregation":"none-each-complete-seed-repetition-cell-v1",
+        "bootstrapUnit":"seed-repetition-cell-difference-v1",
+        "signFlipUnit":"seed-repetition-cell-difference-v1",
+        "powerCountingUnit":"independent-seed-repetition-cell-v1",
+        "balanceRequirements":{"completeArms":"treatment-baseline-ablation-per-seed-repetition-v1","repetitionSchedule":"identical-repetition-index-set-across-seeds-v1","clusterSize":"equal-complete-repetition-count-per-seed-v1","failureMode":"fail-closed-v1"},
+        "assumptions":{"independentAcross":"predeclared-seed-repetition-cells-v1","dependenceWithinSeed":"no-additional-within-seed-cluster-independence-claim-v1","resamplingExchangeability":"exchangeable-complete-seed-repetition-cells-v1","signSymmetry":"seed-repetition-cell-differences-v1"}
+    });
+    if profile != &expected_profile
+        || value["inferenceProfileHash"]
+            != "sha256:7a07d5ef5c38b14249ee0ebc0a29994b060ef99f51f4ea5eec5176936b394a17"
+    {
+        return Err(error("analysis_protocol_inference_profile_invalid"));
+    }
+    if value["estimator"]
+        != json!({"method":"paired-arithmetic-mean-difference-v1","treatmentArm":"treatment","controlArms":["baseline","ablation"],"directionNormalization":"positive-is-treatment-improvement-v1"})
+        || value["assumptions"]
+            != json!({"distribution":"paired-sign-symmetry-and-bootstrap-exchangeability-v1","exchangeability":"operator-predeclared-fixed-cell-schedule-v1","independenceScope":"paired-schedule-unit-only-no-independent-machine-claim-v1","finiteObservationsRequired":true,"symmetryDiagnostic":"sample-skewness-bound-v1","maximumAbsoluteSkewness":2})
+        || value["pairedUnit"] != "seed-and-repetition-v1"
+        || value["missingness"]
+            != json!({"method":"fail-closed-complete-paired-cells-v1","maximumMissingFraction":0})
+        || value["outlierSensitivity"]
+            != json!({"method":"winsorized-and-leave-one-out-sensitivity-v1","lowerQuantile":0.05,"upperQuantile":0.95,"requireWinsorizedDirection":true,"requireLeaveOneOutDirection":true})
+        || value["uncertainty"]
+            != json!({"method":"deterministic-paired-percentile-bootstrap-v1","confidenceLevel":0.95,"resamples":4096,"seed":1597463007_i64,"testMethod":"deterministic-paired-sign-flip-v1","testDraws":8192})
+    {
+        return Err(error("analysis_protocol_estimator_invalid"));
+    }
+    let hypotheses = value["hypotheses"]
+        .as_array()
+        .ok_or_else(|| error("analysis_protocol_hypotheses_invalid"))?;
+    if hypotheses.is_empty() || hypotheses.len() > 32 {
+        return Err(error("analysis_protocol_hypotheses_invalid"));
+    }
+    let mut hypothesis_ids = BTreeSet::new();
+    let mut normalized_hypotheses = Vec::new();
+    for hypothesis in hypotheses {
+        if !exact_keys(
+            hypothesis,
+            &[
+                "hypothesisId",
+                "metric",
+                "comparator",
+                "alternative",
+                "minimumEffect",
+                "acceptanceRequired",
+            ],
+        ) || !identifier(&hypothesis["hypothesisId"])
+            || !hypothesis_ids.insert(hypothesis["hypothesisId"].as_str().unwrap_or_default())
+            || !expected_metrics.contains(&hypothesis["metric"].as_str().unwrap_or_default())
+            || !["baseline", "ablation"]
+                .contains(&hypothesis["comparator"].as_str().unwrap_or_default())
+            || hypothesis["alternative"] != "greater"
+            || hypothesis["minimumEffect"]
+                .as_f64()
+                .is_none_or(|v| !(0.0..=1e12).contains(&v))
+            || !hypothesis["acceptanceRequired"].is_boolean()
+        {
+            return Err(error("analysis_protocol_hypothesis_invalid"));
+        }
+        normalized_hypotheses.push(hypothesis.clone());
+    }
+    if !hypotheses
+        .iter()
+        .any(|item| item["acceptanceRequired"] == true)
+        || value["multiplicity"]
+            != json!({"method":"holm-bonferroni-v1","familyAlpha":0.05,"family":"all-predeclared-hypotheses-v1"})
+        || value["power"]
+            != json!({"method":"predeclared-standardized-effect-normal-design-v1","targetPower":0.8,"minimumStandardizedEffect":0.5,"requiredPairedObservations":32})
+        || value["numericValidation"]
+            != json!({"residual":{"method":"authority-recomputed-aggregate-residual-v1","maximumAbsoluteResidual":1e-10},"convergence":{"method":"not-observable-no-candidate-convergence-claim-v1","candidateClaimAccepted":false},"condition":{"method":"not-observable-no-candidate-condition-claim-v1","candidateClaimAccepted":false},"tolerances":{"absolute":1e-10,"relative":1e-9},"propertyOracle":{"method":"repository-hidden-oracle-event-recomputation-v1","required":true},"agentAggregatesAccepted":false})
+        || value["assuranceScope"] != "operator-signed-preregistered-analysis-protocol-v1"
+    {
+        return Err(error("analysis_protocol_numeric_validation_invalid"));
+    }
+    let mut normalized = value.clone();
+    normalized["hypotheses"] = Value::Array(normalized_hypotheses);
+    Ok(normalized)
+}
+
 fn normalize_harness(value: &Value, dataset_name: &str) -> Result<Value> {
     if !exact_keys(
         value,
@@ -537,14 +819,14 @@ fn normalize_harness(value: &Value, dataset_name: &str) -> Result<Value> {
                 || !candidate["ablationInput"].is_object()
                 || !candidate["referenceResponse"]
                     .as_f64()
-                    .is_some_and(f64::is_finite)
+                    .is_some_and(|value| value.is_finite() && value.abs() <= 1e6)
                 || !exact_keys(&candidate["oracle"], &["label", "robustLabel"])
                 || !candidate["oracle"]["label"]
                     .as_f64()
-                    .is_some_and(f64::is_finite)
+                    .is_some_and(|value| value.is_finite() && value.abs() <= 1e12)
                 || !candidate["oracle"]["robustLabel"]
                     .as_f64()
-                    .is_some_and(f64::is_finite)
+                    .is_some_and(|value| value.is_finite() && value.abs() <= 1e12)
                 || !ids.insert(
                     candidate["caseId"]
                         .as_str()
@@ -612,6 +894,66 @@ fn selected_trust_key(value: &Value, key_id: &str) -> Result<()> {
     let keys = value["keys"]
         .as_array()
         .ok_or_else(|| error("local_golden_dataset_public_trust_store_invalid"))?;
+    if keys.is_empty()
+        || keys
+            .iter()
+            .filter_map(|key| key["keyId"].as_str())
+            .collect::<BTreeSet<_>>()
+            .len()
+            != keys.len()
+    {
+        return Err(error("local_golden_dataset_public_trust_store_invalid"));
+    }
+    let allowed_fields = BTreeSet::from([
+        "keyId",
+        "subjectId",
+        "organization",
+        "algorithm",
+        "publicKeyPem",
+        "roles",
+        "status",
+        "revoked",
+        "effectiveFrom",
+        "validFrom",
+        "expiresAt",
+        "revokedAt",
+        "keyPurpose",
+        "authorityScope",
+        "academicPromotionEligible",
+        "externalTrustClaimed",
+    ]);
+    for key in keys {
+        let object = key
+            .as_object()
+            .ok_or_else(|| error("local_golden_dataset_public_trust_store_invalid"))?;
+        if object
+            .keys()
+            .any(|field| !allowed_fields.contains(field.as_str()))
+            || key["keyId"].as_str().is_none_or(str::is_empty)
+            || key["subjectId"].as_str().is_none_or(str::is_empty)
+            || key["algorithm"] != "ed25519"
+            || key["roles"].as_array().is_none_or(|roles| {
+                roles.len() != 1 || roles[0] != LOCAL_GOLDEN_DATASET_AUTHORITY_ROLE
+            })
+            || key["keyPurpose"] != LOCAL_GOLDEN_DATASET_AUTHORITY_KEY_PURPOSE
+            || key["authorityScope"] != LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+            || key["academicPromotionEligible"] != false
+            || key["externalTrustClaimed"] != false
+            || key["publicKeyPem"].as_str().is_none_or(str::is_empty)
+            || key.get("privateKeyPem").is_some()
+            || key["publicKeyPem"]
+                .as_str()
+                .is_some_and(|pem| pem.contains("PRIVATE KEY"))
+        {
+            return Err(error("local_golden_dataset_public_trust_store_invalid"));
+        }
+    }
+    if serde_json::to_string(value)
+        .map_err(|_| error("local_golden_dataset_public_trust_store_invalid"))?
+        .contains("PRIVATE KEY")
+    {
+        return Err(error("local_golden_dataset_public_trust_store_invalid"));
+    }
     let selected = keys
         .iter()
         .filter(|key| key["keyId"].as_str() == Some(key_id))
@@ -687,6 +1029,21 @@ fn validate_time(signed_at: &str, expires_at: &str) -> Result<(String, String)> 
         .ok_or_else(|| error("local_golden_dataset_authority_time_invalid"))?;
     let expires = parse_iso_millis(expires_at)
         .ok_or_else(|| error("local_golden_dataset_authority_time_invalid"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .ok_or_else(|| error("local_golden_dataset_authority_time_invalid"))?;
+    if now < signed {
+        return Err(error(
+            "local_golden_dataset_authority_time_invalid:authority_not_yet_valid",
+        ));
+    }
+    if now >= expires {
+        return Err(error(
+            "local_golden_dataset_authority_time_invalid:authority_expired",
+        ));
+    }
     if expires <= signed || expires - signed > MAXIMUM_AUTHORITY_LIFETIME_MS {
         return Err(error("local_golden_dataset_authority_time_invalid"));
     }
@@ -738,19 +1095,21 @@ pub fn inspect_local_golden_dataset_provisioning_v1(
     {
         return Err(error("local_golden_dataset_identity_invalid"));
     }
-    let protected = [
-        "/var/lib/hepta-paper",
-        "/srv/hepta-paper",
-        "/etc/hepta-paper",
-        "/opt/hepta-paper",
-    ];
+    let protected = node_protected_roots();
     for (role, path) in [
         ("runtimeRoot", &options.runtime_root),
         ("controlRoot", &options.control_root),
         ("datasetRoot", &options.dataset_root),
+        ("splitAssignmentsPath", &options.split_assignments),
+        ("harnessDefinitionPath", &options.harness_definition),
+        ("analysisProtocolPath", &options.analysis_protocol),
+        ("researchSemanticsPath", &options.research_semantics),
+        ("authorityTrustStorePath", &options.authority_trust_store),
         ("authorityPrivateKeyPath", &options.authority_private_key),
+        ("mountOutputPath", &options.mount_output),
     ] {
-        if protected.iter().any(|root| overlap(Path::new(root), path)) {
+        let candidate = normalized_absolute(path);
+        if protected.iter().any(|root| overlap(root, &candidate)) {
             return Err(error(format!(
                 "local_golden_dataset_protected_root_forbidden:{role}"
             )));
@@ -864,14 +1223,21 @@ pub fn inspect_local_golden_dataset_provisioning_v1(
     let split_hash = hash_record("OperatorDatasetSplitManifest", &split_manifest)?;
     let harness = normalize_harness(&harness_input, &options.dataset_name)?;
     let harness_hash = hash_record("OperatorAuthorizedDatasetBenchmarkHarness", &harness)?;
-    if !analysis_input.is_object() || analysis_input["version"].is_null() {
-        return Err(error("analysis_protocol_invalid"));
-    }
-    // The incumbent uses the normalized AcademicAnalysisProtocol record kind.
-    // Full semantic normalization is still outside this bounded source slice,
-    // so callers must provide the canonical protocol object here.
-    let analysis_hash = hash_record("AcademicAnalysisProtocol", &analysis_input)?;
+    let analysis = normalize_analysis_protocol(&analysis_input, &options.dataset_name)?;
+    let analysis_hash = hash_record("AcademicAnalysisProtocol", &analysis)?;
     let semantics = normalize_semantics(&semantics_input)?;
+    let eligible_splits = semantics["eligibleSplits"]
+        .as_array()
+        .ok_or_else(|| error("operator_dataset_research_semantics_invalid"))?;
+    if assignments.values().any(|split| {
+        !eligible_splits
+            .iter()
+            .any(|allowed| allowed.as_str() == Some(split.as_str()))
+    }) {
+        return Err(error(
+            "local_golden_dataset_research_semantics_split_mismatch",
+        ));
+    }
     let semantics_hash = hash_record("OperatorDatasetResearchSemantics", &semantics)?;
     let trust_hash = hash_record("LocalGoldenDatasetAuthorityTrustStore", &trust_input)?;
     let (signed_at, expires_at) = validate_time(&options.signed_at, &options.expires_at)?;

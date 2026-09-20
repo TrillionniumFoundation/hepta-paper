@@ -450,14 +450,49 @@
     },
     {
       "id": "operator/generic-domain-capability-evidence",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust generic-domain-capability-evidence --action status|converge --runtime-root ABSOLUTE_PATH",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/generic_domain_capability_evidence.rs",
+          "symbol": "inspect_generic_domain_capability_evidence_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/generic_domain_capability_evidence.rs",
+          "symbol": "converge_generic_domain_capability_evidence_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs"
+      ],
+      "remaining": "Rust now covers a bounded read-only inspector for one explicit canonical runtime evidence file: 16 MiB limit, no-follow private regular-file identity, stable read identity, exact fourteen-key shape and production Node record hash. The status report never returns a production authority decision. The converge route is deliberately fail-closed and never publishes, invokes external replay/Mathlib/reviewer/authority, reads credentials or changes service state. Persisted authority lineage, semantic readiness, formal-domain external replay, independent review, target-host qualification, atomic publication and all incumbent argument/environment modes remain open.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/generic_domain_capability_evidence.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
+          "symbol": "missing_and_loaded_inspections_match_node_shape_and_hash"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
+          "symbol": "symlink_and_shape_drift_fail_closed_without_following_or_writing"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
+          "symbol": "converge_is_always_fail_closed_and_never_changes_the_explicit_file"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
+          "symbol": "cli_status_and_converge_are_explicit_and_fail_closed"
+        }
+      ]
     },
     {
       "id": "operator/autonomous-supervisor-health",

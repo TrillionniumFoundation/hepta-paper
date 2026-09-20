@@ -240,6 +240,14 @@ fn submodule_binding(root: &Path, source: &str, asset: &Value) -> Vec<String> {
         .get("transport")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    // The incumbent verifier only applies submodule binding checks when the
+    // external reference explicitly opts into a submodule transport. Keep a
+    // missing transport equivalent to the Node implementation's
+    // `if (!reference?.transport) return []` guard; a missing transport is
+    // handled by the generic external-reference contract instead.
+    if transport.is_empty() {
+        return vec![];
+    }
     if transport != "git-submodule" && transport != "git-lfs-submodule" {
         return vec!["repository_asset_external_transport_invalid".into()];
     }

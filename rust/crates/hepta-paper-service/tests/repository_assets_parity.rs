@@ -76,6 +76,14 @@ fn repository_asset_inspection_and_handoff_match_node_oracle() {
     ));
     let mut duplicate = baseline.clone();
     duplicate["assets"][1]["assetId"] = duplicate["assets"][0]["assetId"].clone();
+    // Node skips the optional git-submodule binding verifier when transport is
+    // omitted. This exercises that guard while retaining the generic
+    // external-reference and restore-receipt checks.
+    let mut transport_omitted = baseline.clone();
+    transport_omitted["assets"][0]["externalReference"]
+        .as_object_mut()
+        .expect("external reference object")
+        .remove("transport");
     let cases = vec![
         (baseline.clone(), false),
         (baseline.clone(), true),
@@ -83,6 +91,7 @@ fn repository_asset_inspection_and_handoff_match_node_oracle() {
         (incomplete, false),
         (pinned, false),
         (duplicate, false),
+        (transport_omitted, false),
     ];
     let oracle = oracle_requests(root_text, cases.clone());
     for (index, (manifest, handoff)) in cases.iter().enumerate() {

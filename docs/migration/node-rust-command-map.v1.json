@@ -2189,7 +2189,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs"
       ],
-      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks; exact Node argument/runtime parity and independent release authority remain unimplemented.",
+      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks, including the incumbent optional-transport guard; exact Node argument/runtime parity and independent release authority remain unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/repository_assets.rs",

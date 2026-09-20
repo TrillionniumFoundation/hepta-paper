@@ -48,6 +48,10 @@ pub struct FullProductionReadinessOptions {
     pub package_recovery_readiness_command_sha256: Option<String>,
     pub root: Option<PathBuf>,
     pub runtime_root: Option<PathBuf>,
+    /// Base environment supplied by the command boundary. The Node route
+    /// starts with `process.env` and then overlays the owner-private file;
+    /// tests and library callers may provide an explicit object instead.
+    pub environment: Value,
 }
 
 fn option_value(args: &[String], index: &mut usize, key: &str) -> Result<String, String> {
@@ -333,8 +337,13 @@ pub fn inspect_full_production_readiness_v1(
     if !workspace_root.is_absolute() {
         return Err("full_production_readiness_workspace_root_must_be_absolute".to_owned());
     }
+    let base_environment = if options.environment.is_object() {
+        options.environment.clone()
+    } else {
+        json!({})
+    };
     let deployment_environment = load_readiness_deployment_environment_v1(
-        &json!({}),
+        &base_environment,
         options.deployment_environment_file.as_deref(),
     )
     .map_err(|error| error.to_string())?;
@@ -566,5 +575,26 @@ mod tests {
                 .is_some_and(|hash| hash.starts_with(SHA256_PREFIX))
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ambient_environment_selects_default_roots_without_file() {
+        let options = FullProductionReadinessOptions {
+            environment: json!({
+                "HEPTA_PAPER_ASSET_ROOT": "/ambient/hepta/assets",
+                "HEPTA_PAPER_RUNTIME_ROOT": "/ambient/hepta/runtime",
+            }),
+            ..Default::default()
+        };
+        let report =
+            inspect_full_production_readiness_v1(&options, Path::new("/tmp/workspace")).unwrap();
+        assert_eq!(report["root"], "/ambient/hepta/assets");
+        assert_eq!(report["runtimeRoot"], "/ambient/hepta/runtime");
+        assert_eq!(
+            report["deploymentEnvironment"]["status"],
+            "automation_readiness_ambient_environment_observed"
+        );
+        assert_eq!(report["deploymentEnvironment"]["filePath"], Value::Null);
+        assert_eq!(report["deploymentEnvironment"]["loadedKeys"], json!([]));
     }
 }

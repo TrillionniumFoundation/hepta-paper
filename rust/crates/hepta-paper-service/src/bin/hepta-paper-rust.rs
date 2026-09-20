@@ -1455,7 +1455,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some("full-production-readiness") => {
-            let options = match parse_full_production_readiness_arguments(&args[1..]) {
+            let mut options = match parse_full_production_readiness_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
                     eprintln!("{error}\n{FULL_PRODUCTION_READINESS_USAGE}");
@@ -1469,6 +1469,11 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
+            options.environment = serde_json::Value::Object(
+                env::vars()
+                    .map(|(key, value)| (key, serde_json::Value::String(value)))
+                    .collect(),
+            );
             let workspace_root = env::current_dir()?;
             let report = if options.require_full_production {
                 execute_full_production_readiness_v1(&options, &workspace_root)?

@@ -649,7 +649,14 @@ fn inspection(package: &Value) -> Result<Value, CommandSurfaceError> {
                 && !aliases.contains_key(name)
         })
         .collect();
-    blocked.sort();
+    // `Array#sort()` in the Node registry compares UTF-16 code units.  The
+    // distinction is observable when an astral key is compared with a BMP
+    // key above U+ D7FF, so keep blocked diagnostics on the same ordering.
+    blocked.sort_by(|left, right| {
+        left.encode_utf16()
+            .cmp(right.encode_utf16())
+            .then_with(|| left.cmp(right))
+    });
     Ok(json!({
         "version": 2,
         "kind": "NpmScriptRegistryInspection",

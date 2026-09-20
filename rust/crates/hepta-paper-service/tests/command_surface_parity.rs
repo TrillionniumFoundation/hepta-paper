@@ -222,6 +222,10 @@ fn malformed_script_containers_follow_node_object_key_coercion() {
     let cases = [
         ("array", serde_json::json!(["first", "second"])),
         ("string", serde_json::json!("a😀b")),
+        (
+            "object-unicode",
+            serde_json::json!({"-unknown": "first", "😀-unknown": "second"}),
+        ),
         ("number", serde_json::json!(1)),
         ("false", serde_json::json!(false)),
         ("null", serde_json::Value::Null),

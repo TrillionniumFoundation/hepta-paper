@@ -138,6 +138,14 @@ authority, including after reboot, restore and failure. A grep result or
 uninvoked Node binary is not sufficient. Keep immutable historical archives and
 read-only verifiers without retaining execution authority.
 
+## External execution handoff
+
+The current candidate-bound packet for branch dispositions, target-host work,
+authority custody, scientific execution, submission and full-suite acceptance
+is [EXTERNAL_GAP_EXECUTION_HANDOFF.md](EXTERNAL_GAP_EXECUTION_HANDOFF.md). It
+turns each remaining unmapped route into an evidence request without treating
+local hashes, blocked receipts or source presence as external qualification.
+
 ## Exit decision
 
 Full replacement requires ALL of: reviewed branch dispositions; complete accepted

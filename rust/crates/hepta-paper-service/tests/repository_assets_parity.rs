@@ -87,7 +87,8 @@ fn repository_asset_inspection_and_handoff_match_node_oracle() {
     let cases = vec![
         (baseline.clone(), false),
         (baseline.clone(), true),
-        (drift, false),
+        (drift.clone(), false),
+        (drift, true),
         (incomplete, false),
         (pinned, false),
         (duplicate, false),

@@ -2218,7 +2218,7 @@
         "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs",
         "rust/crates/hepta-paper-service/tests/repository_assets_cli.rs"
       ],
-      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks, including the incumbent optional-transport guard, strict duplicate/unknown/boolean argument handling, and --require-externalized fail-closed output. The Rust route still requires explicit ROOT/MANIFEST paths instead of the Node command's workspace defaults, and independent release authority remains unimplemented.",
+      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks, including the incumbent optional-transport guard, strict duplicate/unknown/boolean argument handling, default blocked-boundary exit status, and --require-externalized output/exit behavior, including handoff combinations. Independent-root CLI fixtures execute the original Node entrypoint against ready, pending and invalid local identities. The Rust route still requires explicit ROOT/MANIFEST paths instead of the Node command's workspace defaults, and independent release authority remains unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/repository_assets.rs",

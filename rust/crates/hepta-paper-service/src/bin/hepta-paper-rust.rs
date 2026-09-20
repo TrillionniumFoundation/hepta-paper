@@ -457,7 +457,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&migrate_node_store_v1(&PathBuf::from(&args[1]), target,)?)?
             );
         }
-        Some("repository-assets") if (3..=5).contains(&args.len()) => {
+        Some("repository-assets") if args.len() >= 3 => {
             let root = PathBuf::from(&args[1]);
             let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(&args[2])?)?;
             let mut handoff = false;
@@ -472,6 +472,9 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 let (key, inline_value) = raw
                     .split_once('=')
                     .map_or((raw, None), |(key, value)| (key, Some(value)));
+                if key.is_empty() {
+                    return Err("empty_cli_option".into());
+                }
                 let flag = match key {
                     "handoff" => &mut handoff,
                     "require-externalized" => &mut require_externalized,
@@ -492,8 +495,10 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 inspection.clone()
             };
             println!("{}", serde_json::to_string(&value)?);
-            if require_externalized && inspection["fullyExternalized"] != true {
-                return Err("repository asset externalization required".into());
+            if inspection["repositoryBoundaryReady"] != true
+                || (require_externalized && inspection["fullyExternalized"] != true)
+            {
+                std::process::exit(1);
             }
         }
         Some("command-surface") if args.len() == 2 || args.len() == 3 => {

@@ -26,7 +26,7 @@ pub enum RepositoryAssetError {
     InvalidRequest,
     #[error("repository asset file operation failed")]
     Io,
-    #[error("repository asset externalization handoff blocked:{0}")]
+    #[error("repository_asset_externalization_handoff_blocked:{0}")]
     HandoffBlocked(String),
     #[error("repository asset compatibility hash failed")]
     Compatibility,

@@ -212,3 +212,84 @@ fn default_classify_and_help_artifact_match_node_oracle() {
     }
     let _ = fs::remove_dir_all(fixture);
 }
+
+#[test]
+fn malformed_script_containers_follow_node_object_key_coercion() {
+    // The incumbent command-surface script uses JavaScript's `scripts || {}`
+    // and Object.keys/Object.entries semantics.  Keep the native rewrite and
+    // inspection behavior aligned even when a package has an accidentally
+    // array- or string-valued scripts field instead of an object.
+    let cases = [
+        ("array", serde_json::json!(["first", "second"])),
+        ("string", serde_json::json!("ab")),
+        ("number", serde_json::json!(1)),
+        ("false", serde_json::json!(false)),
+        ("null", serde_json::Value::Null),
+    ];
+    for (label, scripts) in cases {
+        let fixture = temp_fixture().with_file_name(format!(
+            "hepta-command-surface-coercion-{label}-{}",
+            std::process::id()
+        ));
+        let oracle_fixture = fixture.with_file_name(format!("{label}-oracle"));
+        let package = serde_json::json!({
+            "name": "fixture",
+            "version": 1,
+            "scripts": scripts,
+            "custom": "preserved"
+        });
+        let package_bytes = serde_json::to_vec(&package).expect("fixture package");
+        fs::create_dir_all(&fixture).expect("fixture directory");
+        fs::create_dir_all(&oracle_fixture).expect("oracle fixture directory");
+        fs::write(fixture.join("package.json"), &package_bytes).expect("fixture package");
+        fs::write(oracle_fixture.join("package.json"), &package_bytes)
+            .expect("oracle fixture package");
+
+        let expected = oracle(serde_json::json!([
+            {"root": oracle_fixture, "mode": "classify"},
+            {"root": oracle_fixture, "mode": "check-package"},
+            {"root": oracle_fixture, "mode": "write-package", "writePackage": true}
+        ]));
+        for (flag, index) in [(None, 0_usize), (Some("--check-package"), 1)] {
+            let output = rust_output(&fixture, flag);
+            let expected_result = &expected["results"][index];
+            assert_eq!(
+                output.status.code(),
+                expected_result["exitCode"]
+                    .as_i64()
+                    .map(|value| value as i32),
+                "{label} {flag:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let actual_raw = String::from_utf8(output.stdout)
+                .expect("Rust UTF-8")
+                .trim_end_matches('\n')
+                .to_owned();
+            assert_eq!(actual_raw, expected_result["raw"], "{label} {flag:?}");
+        }
+
+        let output = rust_output(&fixture, Some("--write-package"));
+        let expected_result = &expected["results"][2];
+        assert_eq!(
+            output.status.code(),
+            expected_result["exitCode"]
+                .as_i64()
+                .map(|value| value as i32),
+            "{label} write: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let actual_raw = String::from_utf8(output.stdout)
+            .expect("Rust UTF-8")
+            .trim_end_matches('\n')
+            .to_owned();
+        assert_eq!(actual_raw, expected_result["raw"], "{label} write");
+        assert_eq!(
+            fs::read(fixture.join("package.json")).expect("Rust package bytes"),
+            fs::read(oracle_fixture.join("package.json")).expect("Node package bytes"),
+            "{label} rewritten package"
+        );
+
+        let _ = fs::remove_dir_all(fixture);
+        let _ = fs::remove_dir_all(oracle_fixture);
+    }
+}

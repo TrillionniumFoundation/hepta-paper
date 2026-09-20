@@ -260,21 +260,147 @@ impl OrderedJson {
     }
 
     fn scripts_for_node(&self) -> Result<Self, CommandSurfaceError> {
-        let mut entries = match self {
-            Self::Object(entries) => entries
-                .iter()
-                .filter(|(name, _)| !ROUTED_SCRIPTS.contains(&name.as_str()))
-                .cloned()
-                .collect(),
-            Self::Null => Vec::new(),
-            _ => return Err(CommandSurfaceError::InvalidPackage),
-        };
+        // `command-surface.mjs` intentionally relies on JavaScript's object
+        // spread/Object.entries coercion here.  A malformed `scripts` value
+        // (for example an array or string) therefore contributes its own
+        // enumerable properties instead of causing a Rust-only parse error.
+        // Keep that fail-closed package rewrite behavior byte-compatible with
+        // the incumbent before appending the generated aliases.
+        let mut entries: Vec<(String, Self)> = javascript_ordered_entries_for_ordered(self)
+            .into_iter()
+            .filter(|(name, _)| !ROUTED_SCRIPTS.contains(&name.as_str()))
+            .collect();
         entries.extend(
             RETAINED_ALIASES
                 .iter()
                 .map(|(name, command)| ((*name).to_owned(), Self::String((*command).to_owned()))),
         );
         Ok(Self::Object(entries))
+    }
+}
+
+fn javascript_array_index(name: &str) -> Option<usize> {
+    // Object.keys/Object.entries enumerate canonical array indexes first. The
+    // 2^32-1 sentinel is intentionally excluded, matching ECMAScript's
+    // array-index definition.
+    if name == "0" {
+        return Some(0);
+    }
+    if name.is_empty() || name.starts_with('0') || !name.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let value = name.parse::<u64>().ok()?;
+    (value < u32::MAX as u64).then_some(value as usize)
+}
+
+fn javascript_ordered_entries(entries: &[(String, OrderedJson)]) -> Vec<(String, OrderedJson)> {
+    let mut indexed = Vec::new();
+    let mut ordinary = Vec::new();
+    for (name, value) in entries {
+        if let Some(index) = javascript_array_index(name) {
+            indexed.push((index, name.clone(), value.clone()));
+        } else {
+            ordinary.push((name.clone(), value.clone()));
+        }
+    }
+    indexed.sort_by_key(|(index, _, _)| *index);
+    indexed
+        .into_iter()
+        .map(|(_, name, value)| (name, value))
+        .chain(ordinary)
+        .collect()
+}
+
+fn javascript_ordered_entries_for_ordered(value: &OrderedJson) -> Vec<(String, OrderedJson)> {
+    match value {
+        OrderedJson::Object(entries) => javascript_ordered_entries(entries),
+        OrderedJson::Array(values) => values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| (index.to_string(), value.clone()))
+            .collect(),
+        OrderedJson::String(value) => value
+            .encode_utf16()
+            .enumerate()
+            .map(|(index, unit)| {
+                (
+                    index.to_string(),
+                    OrderedJson::String(String::from_utf16_lossy(&[unit])),
+                )
+            })
+            .collect(),
+        OrderedJson::Null | OrderedJson::Bool(_) | OrderedJson::Number(_) => Vec::new(),
+    }
+}
+
+fn javascript_ordered_entries_from_value(value: Option<&Value>) -> Vec<(String, Value)> {
+    match value {
+        Some(Value::Object(entries)) => entries
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| (index.to_string(), value.clone()))
+            .collect(),
+        Some(Value::String(value)) => value
+            .encode_utf16()
+            .enumerate()
+            .map(|(index, unit)| {
+                // Alias/retired names are never numeric, but keeping the
+                // UTF-16 key count matches Object.keys for string values.
+                // Valid scalar units remain lossless; lone surrogates are
+                // represented by replacement characters in the in-memory
+                // diagnostic (JSON.stringify still escapes them on Node).
+                (
+                    index.to_string(),
+                    Value::String(String::from_utf16_lossy(&[unit])),
+                )
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn javascript_scripts_value(package: &Value) -> Option<&Value> {
+    package
+        .get("scripts")
+        .filter(|value| javascript_truthy(value))
+}
+
+fn javascript_script_keys(value: Option<&Value>) -> Vec<String> {
+    javascript_ordered_entries_from_value(value)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
+}
+
+fn javascript_script_property(value: Option<&Value>, name: &str) -> Option<Value> {
+    match value {
+        Some(Value::Object(entries)) => entries.get(name).cloned(),
+        Some(Value::Array(entries)) => {
+            javascript_array_index(name).and_then(|index| entries.get(index).cloned())
+        }
+        Some(Value::String(text)) => javascript_array_index(name).and_then(|index| {
+            text.encode_utf16()
+                .nth(index)
+                .map(|unit| Value::String(String::from_utf16_lossy(&[unit])))
+        }),
+        _ => None,
+    }
+}
+
+fn javascript_script_has_own(value: Option<&Value>, name: &str) -> bool {
+    match value {
+        Some(Value::Object(entries)) => entries.contains_key(name),
+        Some(Value::Array(entries)) => {
+            javascript_array_index(name).is_some_and(|index| index < entries.len())
+        }
+        Some(Value::String(text)) => {
+            javascript_array_index(name).is_some_and(|index| index < text.encode_utf16().count())
+        }
+        _ => false,
     }
 }
 
@@ -312,6 +438,7 @@ fn write_ordered_json_pretty(
             output.push(']');
         }
         OrderedJson::Object(entries) => {
+            let entries = javascript_ordered_entries(entries);
             output.push('{');
             for (index, (key, value)) in entries.iter().enumerate() {
                 if index == 0 {
@@ -332,13 +459,6 @@ fn write_ordered_json_pretty(
         }
     }
     Ok(())
-}
-
-fn scripts(package: &Value) -> Result<&Map<String, Value>, CommandSurfaceError> {
-    package
-        .get("scripts")
-        .and_then(Value::as_object)
-        .ok_or(CommandSurfaceError::InvalidPackage)
 }
 
 fn generated_aliases() -> Map<String, Value> {
@@ -382,11 +502,7 @@ pub fn ci_command_matrix_json_v1(root: &Path) -> Result<String, CommandSurfaceEr
 /// array order match `classifyNpmScriptSurface` exactly.
 pub fn classify_npm_script_surface_json_v1(root: &Path) -> Result<String, CommandSurfaceError> {
     let package: Value = serde_json::from_slice(&fs::read(package_path(root))?)?;
-    let script_names = package
-        .get("scripts")
-        .and_then(Value::as_object)
-        .map(|scripts| scripts.keys().cloned().collect::<Vec<_>>())
-        .unwrap_or_default();
+    let script_names = javascript_script_keys(javascript_scripts_value(&package));
     let classification: std::collections::BTreeMap<String, String> = serde_json::from_str(
         include_str!("data/command-surface-npm-classification.v1.json"),
     )?;
@@ -474,16 +590,19 @@ fn javascript_truthy(value: &Value) -> bool {
 }
 
 fn inspection(package: &Value) -> Result<Value, CommandSurfaceError> {
-    let script_map = scripts(package)?;
+    let script_value = javascript_scripts_value(package);
     let aliases = generated_aliases();
     let mismatches: Vec<Value> = RETAINED_ALIASES
         .iter()
-        .filter(|(name, expected)| script_map.get(*name).and_then(Value::as_str) != Some(*expected))
+        .filter(|(name, expected)| {
+            javascript_script_property(script_value, name)
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .as_deref()
+                != Some(*expected)
+        })
         .map(|(name, expected)| {
-            let actual = script_map
-                .get(*name)
-                .filter(|value| javascript_truthy(value))
-                .cloned()
+            let actual = javascript_script_property(script_value, name)
+                .filter(javascript_truthy)
                 .unwrap_or(Value::Null);
             json!({
                 "name": name,
@@ -496,7 +615,7 @@ fn inspection(package: &Value) -> Result<Value, CommandSurfaceError> {
         .iter()
         .filter(|name| {
             !RETAINED_ALIASES.iter().any(|(kept, _)| *kept == **name)
-                && script_map.contains_key(**name)
+                && javascript_script_has_own(script_value, name)
         })
         .map(|name| (*name).to_owned())
         .collect();
@@ -508,14 +627,13 @@ fn inspection(package: &Value) -> Result<Value, CommandSurfaceError> {
     // Historical npm identifiers are data, never executable dependencies.
     let known: Vec<&str> =
         serde_json::from_str(include_str!("data/legacy-command-script-registry.v1.json"))?;
-    let mut blocked: Vec<String> = script_map
-        .keys()
+    let mut blocked: Vec<String> = javascript_script_keys(script_value)
+        .into_iter()
         .filter(|name| {
             !ROUTED_SCRIPTS.contains(&name.as_str())
                 && !known.contains(&name.as_str())
-                && !aliases.contains_key(*name)
+                && !aliases.contains_key(name)
         })
-        .cloned()
         .collect();
     blocked.sort();
     Ok(json!({

@@ -1,0 +1,466 @@
+//! Read-only, fail-closed projection of the Node `full-production-readiness` route.
+//!
+//! The route deliberately does not execute a package recovery helper, verify an
+//! external owner signature, contact a provider, or mint release authority. It
+//! validates the bounded local references and reports the remaining gates so a
+//! caller can see exactly why production readiness has not been established.
+
+#![forbid(unsafe_code)]
+
+use hepta_legacy_compatibility::production_hash_record_v1;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    fs::{self, OpenOptions},
+    io::Read,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+const MAX_REFERENCE_BYTES: u64 = 16 * 1024 * 1024;
+const SHA256_PREFIX: &str = "sha256:";
+
+pub const FULL_PRODUCTION_READINESS_USAGE: &str = r#"{
+  "version": 1,
+  "kind": "FullProductionReadinessUsage",
+  "usage": "full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+  "localObservationEffects": "none",
+  "externalAction": "never",
+  "semanticNotReadyExitCode": 2,
+  "rustBoundary": "read-only bounded reference inspection; package recovery execution and external authority verification remain fail-closed"
+}"#;
+
+#[derive(Clone, Debug, Default)]
+pub struct FullProductionReadinessOptions {
+    pub help: bool,
+    pub json: bool,
+    pub live_provider_canary: bool,
+    pub live_release_attestor: bool,
+    pub require_full_production: bool,
+    pub deployment_environment_file: Option<PathBuf>,
+    pub owner_acceptance_document: Option<PathBuf>,
+    pub owner_acceptance_document_sha256: Option<String>,
+    pub owner_trust_store: Option<PathBuf>,
+    pub owner_trust_store_sha256: Option<String>,
+    pub package_recovery_readiness_command: Option<PathBuf>,
+    pub package_recovery_readiness_command_sha256: Option<String>,
+    pub root: Option<PathBuf>,
+    pub runtime_root: Option<PathBuf>,
+}
+
+fn option_value(args: &[String], index: &mut usize, key: &str) -> Result<String, String> {
+    if *index + 1 >= args.len() || args[*index + 1].starts_with("--") {
+        return Err(format!("full_production_readiness_{key}_value_required"));
+    }
+    let value = args[*index + 1].clone();
+    *index += 2;
+    Ok(value)
+}
+
+/// Parse the Node option surface with duplicate and unknown-option rejection.
+pub fn parse_full_production_readiness_arguments(
+    args: &[String],
+) -> Result<FullProductionReadinessOptions, String> {
+    let mut options = FullProductionReadinessOptions::default();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let key = flag.strip_prefix("--").unwrap_or(flag);
+        if !seen.insert(key.to_owned()) {
+            return Err(format!("duplicate_cli_option:{flag}"));
+        }
+        match flag {
+            "--help" => options.help = true,
+            "--json" => options.json = true,
+            "--live-provider-canary" => options.live_provider_canary = true,
+            "--live-release-attestor" => options.live_release_attestor = true,
+            "--require-full-production" => options.require_full_production = true,
+            "--deployment-environment-file" => {
+                options.deployment_environment_file = Some(PathBuf::from(option_value(
+                    args,
+                    &mut index,
+                    "deployment_environment_file",
+                )?));
+                continue;
+            }
+            "--owner-acceptance-document" => {
+                options.owner_acceptance_document = Some(PathBuf::from(option_value(
+                    args,
+                    &mut index,
+                    "owner_acceptance_document",
+                )?));
+                continue;
+            }
+            "--owner-acceptance-document-sha256" => {
+                options.owner_acceptance_document_sha256 = Some(option_value(
+                    args,
+                    &mut index,
+                    "owner_acceptance_document_sha256",
+                )?);
+                continue;
+            }
+            "--owner-trust-store" => {
+                options.owner_trust_store = Some(PathBuf::from(option_value(
+                    args,
+                    &mut index,
+                    "owner_trust_store",
+                )?));
+                continue;
+            }
+            "--owner-trust-store-sha256" => {
+                options.owner_trust_store_sha256 =
+                    Some(option_value(args, &mut index, "owner_trust_store_sha256")?);
+                continue;
+            }
+            "--package-recovery-readiness-command" => {
+                options.package_recovery_readiness_command = Some(PathBuf::from(option_value(
+                    args,
+                    &mut index,
+                    "package_recovery_readiness_command",
+                )?));
+                continue;
+            }
+            "--package-recovery-readiness-command-sha256" => {
+                options.package_recovery_readiness_command_sha256 = Some(option_value(
+                    args,
+                    &mut index,
+                    "package_recovery_readiness_command_sha256",
+                )?);
+                continue;
+            }
+            "--root" => {
+                options.root = Some(PathBuf::from(option_value(args, &mut index, "root")?));
+                continue;
+            }
+            "--runtime-root" => {
+                options.runtime_root = Some(PathBuf::from(option_value(
+                    args,
+                    &mut index,
+                    "runtime_root",
+                )?));
+                continue;
+            }
+            _ => {
+                return Err(format!(
+                    "unsupported_full_production_readiness_argument:{flag}"
+                ));
+            }
+        }
+        index += 1;
+    }
+    if options.help {
+        return Ok(options);
+    }
+    for (name, present) in [
+        ("owner_trust_store", options.owner_trust_store.is_some()),
+        (
+            "owner_trust_store_sha256",
+            options.owner_trust_store_sha256.is_some(),
+        ),
+        (
+            "owner_acceptance_document",
+            options.owner_acceptance_document.is_some(),
+        ),
+        (
+            "owner_acceptance_document_sha256",
+            options.owner_acceptance_document_sha256.is_some(),
+        ),
+        (
+            "package_recovery_readiness_command",
+            options.package_recovery_readiness_command.is_some(),
+        ),
+        (
+            "package_recovery_readiness_command_sha256",
+            options.package_recovery_readiness_command_sha256.is_some(),
+        ),
+    ] {
+        if !present {
+            return Err(format!("full_production_readiness_{name}_required"));
+        }
+    }
+    Ok(options)
+}
+
+fn valid_sha256(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value.strip_prefix(SHA256_PREFIX).is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+    })
+}
+
+fn digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn read_stable_regular(path: &Path, expected: &fs::Metadata) -> Option<Vec<u8>> {
+    let parent = path.parent()?;
+    let parent_before = fs::symlink_metadata(parent).ok()?;
+    if !parent_before.is_dir() || fs::canonicalize(parent).ok()?.as_path() != parent {
+        return None;
+    }
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC);
+    let mut file = options.open(path).ok()?;
+    let before = file.metadata().ok()?;
+    if !before.is_file() || before.nlink() != 1 || before.len() > MAX_REFERENCE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(before.len() as usize);
+    file.by_ref()
+        .take(MAX_REFERENCE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let after = file.metadata().ok()?;
+    let path_after = fs::symlink_metadata(path).ok()?;
+    let parent_after = fs::symlink_metadata(parent).ok()?;
+    let stable = expected.dev() == path_after.dev()
+        && expected.ino() == path_after.ino()
+        && expected.mode() == path_after.mode()
+        && expected.nlink() == path_after.nlink()
+        && expected.len() == path_after.len()
+        && expected.mtime() == path_after.mtime()
+        && expected.mtime_nsec() == path_after.mtime_nsec()
+        && before.dev() == after.dev()
+        && before.ino() == after.ino()
+        && before.mode() == after.mode()
+        && before.nlink() == after.nlink()
+        && before.len() == after.len()
+        && before.mtime() == after.mtime()
+        && before.mtime_nsec() == after.mtime_nsec()
+        && parent_before.dev() == parent_after.dev()
+        && parent_before.ino() == parent_after.ino()
+        && parent_before.mode() == parent_after.mode()
+        && parent_before.nlink() == parent_after.nlink()
+        && fs::canonicalize(parent).ok()?.as_path() == parent
+        && bytes.len() as u64 <= MAX_REFERENCE_BYTES;
+    stable.then_some(bytes)
+}
+
+fn inspect_reference(path: Option<&Path>, expected_hash: Option<&str>, executable: bool) -> Value {
+    let path_text = path.map(|path| path.to_string_lossy().into_owned());
+    let absolute = path.is_some_and(Path::is_absolute);
+    let hash_format_valid = valid_sha256(expected_hash);
+    let (is_regular, is_symlink, mode, nlink, observed_hash, size) =
+        path.map_or((false, false, None, None, None, None), |path| {
+            let link = fs::symlink_metadata(path).ok();
+            let is_symlink = link
+                .as_ref()
+                .is_some_and(|value| value.file_type().is_symlink());
+            let is_regular = link
+                .as_ref()
+                .is_some_and(|value| value.file_type().is_file());
+            let mode = link.as_ref().map(|value| value.permissions().mode());
+            let nlink = link.as_ref().map(MetadataExt::nlink);
+            let size = link.as_ref().map(|value| value.len());
+            let bytes = (is_regular
+                && !is_symlink
+                && nlink == Some(1)
+                && size.unwrap_or(0) <= MAX_REFERENCE_BYTES)
+                .then(|| {
+                    link.as_ref()
+                        .and_then(|metadata| read_stable_regular(path, metadata))
+                })
+                .flatten();
+            let observed_hash = bytes.as_deref().map(digest);
+            (is_regular, is_symlink, mode, nlink, observed_hash, size)
+        });
+    let executable_ok =
+        !executable || mode.is_some_and(|mode| mode & 0o111 != 0 && mode & 0o222 == 0);
+    let hash_matches = hash_format_valid && observed_hash.as_deref() == expected_hash;
+    json!({
+        "path": path_text,
+        "absolute": absolute,
+        "regular": is_regular,
+        "symlink": is_symlink,
+        "mode": mode,
+        "nlink": nlink,
+        "size": size,
+        "expectedSha256": expected_hash,
+        "observedSha256": observed_hash,
+        "hashFormatValid": hash_format_valid,
+        "hashMatches": hash_matches,
+        "executableReferenceValid": executable_ok,
+        "singleLink": nlink == Some(1),
+        "referenceValid": absolute && is_regular && !is_symlink && nlink == Some(1) && hash_matches && executable_ok,
+    })
+}
+
+fn blocker(blockers: &mut Vec<String>, value: &str) {
+    blockers.push(value.to_owned());
+}
+
+pub fn full_production_readiness_help_json_v1() -> Value {
+    serde_json::from_str(FULL_PRODUCTION_READINESS_USAGE)
+        .expect("static full production readiness usage JSON")
+}
+
+/// Inspect local references without executing or mutating anything.
+pub fn inspect_full_production_readiness_v1(
+    options: &FullProductionReadinessOptions,
+    workspace_root: &Path,
+) -> Result<Value, String> {
+    let root = options
+        .root
+        .clone()
+        .unwrap_or_else(|| workspace_root.to_path_buf());
+    let runtime_root = options
+        .runtime_root
+        .clone()
+        .unwrap_or_else(|| workspace_root.join("runtime"));
+    if !root.is_absolute() || !runtime_root.is_absolute() || !workspace_root.is_absolute() {
+        return Err("full_production_readiness_root_paths_must_be_absolute".to_owned());
+    }
+    let now_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?
+        .as_millis();
+    let now_millis = i64::try_from(now_millis)
+        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
+    let observed_at = crate::external_authority_intake::unix_millis_to_iso_v1(now_millis)
+        .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
+    let owner_trust = inspect_reference(
+        options.owner_trust_store.as_deref(),
+        options.owner_trust_store_sha256.as_deref(),
+        false,
+    );
+    let owner_acceptance = inspect_reference(
+        options.owner_acceptance_document.as_deref(),
+        options.owner_acceptance_document_sha256.as_deref(),
+        false,
+    );
+    let package_command = inspect_reference(
+        options.package_recovery_readiness_command.as_deref(),
+        options.package_recovery_readiness_command_sha256.as_deref(),
+        true,
+    );
+    let offhost_contract_path =
+        workspace_root.join("paper-core/config/offhost-worm-contract.v1.json");
+    let offhost_contract = fs::read(&offhost_contract_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let mut blockers = Vec::new();
+    blocker(
+        &mut blockers,
+        "rust_full_production_package_recovery_execution_not_ported",
+    );
+    blocker(
+        &mut blockers,
+        "rust_full_production_external_owner_signature_verification_not_ported",
+    );
+    blocker(
+        &mut blockers,
+        "rust_full_production_operational_proof_aggregation_not_ported",
+    );
+    blocker(
+        &mut blockers,
+        "rust_full_production_offhost_worm_custody_verification_not_ported",
+    );
+    blocker(
+        &mut blockers,
+        "rust_full_production_automation_plane_aggregation_not_ported",
+    );
+    if owner_trust["referenceValid"] != true {
+        blocker(&mut blockers, "owner_trust_store_reference_invalid");
+    }
+    if owner_acceptance["referenceValid"] != true {
+        blocker(&mut blockers, "owner_acceptance_document_reference_invalid");
+    }
+    if package_command["referenceValid"] != true {
+        blocker(
+            &mut blockers,
+            "package_recovery_readiness_command_reference_invalid",
+        );
+    }
+    if !offhost_contract.as_ref().is_some_and(|value| {
+        value["version"] == 1
+            && value["kind"] == "OffhostWormSnapshotContract"
+            && value["contractId"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+    }) {
+        blocker(&mut blockers, "offhost_worm_contract_invalid");
+    }
+    if !options.live_provider_canary {
+        blocker(&mut blockers, "live_provider_canary_not_requested");
+    }
+    if !options.live_release_attestor {
+        blocker(&mut blockers, "live_release_attestor_not_requested");
+    }
+    blockers.sort();
+    blockers.dedup();
+    let payload = json!({
+        "version": 1,
+        "kind": "FullProductionReadinessStatus",
+        "status": "full_production_blocked",
+        "fullProductionStatus": "full_production_blocked",
+        "fullProductionReady": false,
+        "root": root,
+        "runtimeRoot": runtime_root,
+        "observedAt": observed_at,
+        "automationPlaneStatus": "rust_bounded_projection",
+        "automationPlaneReady": false,
+        "packageRetentionRecoveryReady": false,
+        "packageRetentionRecoveryInspection": {"status": "not_executed", "ready": false},
+        "offhostWormCustodyReady": false,
+        "offhostWormCustodyInspection": {"status": "not_verified", "ready": false},
+        "independentExternalOwnerAcceptanceReady": false,
+        "independentExternalOwnerAcceptanceInspection": {"status": "not_verified", "externallyAccepted": 0, "required": 249},
+        "independentProductionOperationalProofReady": false,
+        "independentProductionOperationalProofInspection": {"status": "not_verified", "verified": 0},
+        "references": {"ownerTrustStore": owner_trust, "ownerAcceptanceDocument": owner_acceptance, "packageRecoveryReadinessCommand": package_command},
+        "offhostWormContract": offhost_contract.map(|value| json!({"version": value["version"], "kind": value["kind"], "contractId": value["contractId"]})),
+        "liveProviderCanaryRequested": options.live_provider_canary,
+        "liveReleaseAttestorVerificationRequested": options.live_release_attestor,
+        "externalActionPerformed": false,
+        "serviceStateChanged": false,
+        "blockers": blockers,
+        "rustBoundary": "read-only-bounded-reference-inspection",
+    });
+    let hash = production_hash_record_v1("FullProductionReadinessStatus", &payload)
+        .map_err(|_| "full_production_readiness_status_hash_failed".to_owned())?;
+    let mut report = payload;
+    report["fullProductionReadinessStatusHash"] = json!(hash.as_str());
+    Ok(report)
+}
+
+pub fn execute_full_production_readiness_v1(
+    options: &FullProductionReadinessOptions,
+    workspace_root: &Path,
+) -> Result<Value, String> {
+    inspect_full_production_readiness_v1(options, workspace_root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parser_requires_all_pinned_inputs_and_rejects_duplicates() {
+        assert!(parse_full_production_readiness_arguments(&[]).is_err());
+        assert!(
+            parse_full_production_readiness_arguments(&["--help".into(), "--help".into()]).is_err()
+        );
+    }
+
+    #[test]
+    fn inspection_is_always_blocked_and_never_claims_external_action() {
+        let options = FullProductionReadinessOptions {
+            root: Some(PathBuf::from("/tmp/root")),
+            runtime_root: Some(PathBuf::from("/tmp/runtime")),
+            ..Default::default()
+        };
+        let report =
+            inspect_full_production_readiness_v1(&options, Path::new("/tmp/workspace")).unwrap();
+        assert_eq!(report["fullProductionReady"], false);
+        assert_eq!(report["externalActionPerformed"], false);
+        assert!(report["blockers"].as_array().unwrap().len() >= 5);
+    }
+}

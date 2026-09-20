@@ -21,9 +21,18 @@ use hepta_paper_service::{
         ci_command_matrix_json_v1, classify_npm_script_surface_json_v1, command_usage_json_v1,
         generated_npm_route_scripts_json_v1, synchronize_command_surface_json_v1,
     },
+    critical_module_coverage::{
+        CRITICAL_MODULE_COVERAGE_USAGE, critical_module_coverage_help_json_v1,
+        inspect_critical_module_coverage_v1, parse_critical_module_coverage_arguments,
+    },
     external_authority_intake::{
         external_authority_intake_help_json_v1, inspect_external_authority_intake_v1,
         unix_millis_to_iso_v1,
+    },
+    full_production_readiness::{
+        FULL_PRODUCTION_READINESS_USAGE, execute_full_production_readiness_v1,
+        full_production_readiness_help_json_v1, inspect_full_production_readiness_v1,
+        parse_full_production_readiness_arguments,
     },
     generic_domain_capability_evidence::{
         converge_generic_domain_capability_evidence_v1,
@@ -478,6 +487,38 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
             if report["ready"] != true {
                 return Err("architecture conformance verification blocked".into());
+            }
+        }
+        Some("verify-critical") => {
+            let options = match parse_critical_module_coverage_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}\n{CRITICAL_MODULE_COVERAGE_USAGE}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&critical_module_coverage_help_json_v1())?
+                );
+                return Ok(());
+            }
+            let workspace_root = env::current_dir()?;
+            let report = inspect_critical_module_coverage_v1(&options, &workspace_root)
+                .map_err(|error| format!("critical module coverage preflight failed: {error}"))?;
+            if options.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{}",
+                    report["status"]
+                        .as_str()
+                        .unwrap_or("critical_module_coverage_blocked")
+                );
+            }
+            if options.require_ok && report["ok"] != true {
+                std::process::exit(2);
             }
         }
         Some("advanced-numerical-plugin") if args.len() == 2 => {
@@ -1119,6 +1160,32 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("full-production-readiness") => {
+            let options = match parse_full_production_readiness_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}\n{FULL_PRODUCTION_READINESS_USAGE}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&full_production_readiness_help_json_v1())?
+                );
+                return Ok(());
+            }
+            let workspace_root = env::current_dir()?;
+            let report = if options.require_full_production {
+                execute_full_production_readiness_v1(&options, &workspace_root)?
+            } else {
+                inspect_full_production_readiness_v1(&options, &workspace_root)?
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if options.require_full_production && report["fullProductionReady"] != true {
+                std::process::exit(2);
+            }
+        }
         Some("autonomous-supervisor") => {
             let mut action = "health".to_owned();
             let mut runtime_root = None;
@@ -1323,6 +1390,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "repository-assets ROOT MANIFEST [--handoff]",
                 " | command-surface ROOT [--write-package|--check-package|--npm-aliases|--help-artifact|--ci-matrix]",
                 " | verify-architecture ROOT [--json] [--strict]",
+                " | verify-critical [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--evidence ABSOLUTE_JSON_PATH --evidence-sha256 sha256:...] [--require-ok] [--json]",
                 " | advanced-numerical-plugin REQUEST",
                 " | retirement-reference ROOT",
                 " | retirement-matrix --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH",
@@ -1340,6 +1408,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
                 " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
                 " | autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--launch-mode local-run|production-run|golden-bootstrap]",
+                " | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
                 " | personal-self-hosted-readiness [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help]"
             )
             .into());

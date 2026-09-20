@@ -1899,14 +1899,37 @@
     },
     {
       "id": "verify/critical",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust verify-critical [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--evidence ABSOLUTE_JSON_PATH --evidence-sha256 sha256:...] [--require-ok] [--json]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/critical_module_coverage.rs",
+          "symbol": "inspect_critical_module_coverage_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs"
+      ],
+      "remaining": "Rust now performs a bounded read-only inventory of the checked-in critical-module target registry and validates an explicitly pinned Node CriticalModuleCoverageReport shape/hash. It does not execute the isolated Node coverage/test batch, verify a cryptographic signature or external authority, recompute V8 coverage, or grant critical coverage parity; --require-ok remains fail-closed.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/critical_module_coverage.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs",
+          "symbol": "missing_node_evidence_is_explicitly_blocked"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs",
+          "symbol": "parser_rejects_unpaired_evidence_and_relative_roots"
+        }
+      ]
     },
     {
       "id": "verify/store",
@@ -1971,14 +1994,45 @@
     },
     {
       "id": "operator/full-production-readiness",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
+          "symbol": "inspect_full_production_readiness_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
+          "symbol": "parse_full_production_readiness_arguments"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
+        "rust/crates/hepta-paper-service/tests/full_production_readiness_route.rs"
+      ],
+      "remaining": "Rust strictly parses and safely hashes local references, but does not execute package recovery, verify external owner signatures, aggregate operational proofs, verify off-host WORM custody, or perform live provider/release-attestor actions; accepted parity and production readiness remain blocked.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
+        "paper-core/bin/full-production-readiness.mjs",
+        "paper-composition/automation/full-production-readiness-composition.mjs",
+        "paper-application/automation/full-production-readiness-policy.mjs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
+          "symbol": "parser_requires_all_pinned_inputs_and_rejects_duplicates"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
+          "symbol": "inspection_is_always_blocked_and_never_claims_external_action"
+        }
+      ]
     },
     {
       "id": "operator/submission-handoff-export",

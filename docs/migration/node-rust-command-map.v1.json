@@ -2171,7 +2171,7 @@
     },
     {
       "id": "verify/store",
-      "rustEntrypoint": "hepta-paper-rust store-integrity IMMUTABLE_DB",
+      "rustEntrypoint": "hepta-paper-rust store-integrity [IMMUTABLE_DB]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -2185,9 +2185,10 @@
         }
       ],
       "tests": [
-        "rust/crates/hepta-readonly-store/tests/node_production_parity.rs"
+        "rust/crates/hepta-readonly-store/tests/node_production_parity.rs",
+        "rust/crates/hepta-paper-service/tests/store_integrity_cli.rs"
       ],
-      "remaining": "Rust now emits the complete read-only logical-integrity report with byte pre/post hashes, schema/table hashes, quick_check, foreign-key count, receipt-ledger hash validation, bounded blockers and fail-closed status; 25 generated Node migration stores match the report. Production store discovery, trust/repair/migration authority, historical recovery, external qualification and independent acceptance remain unimplemented.",
+      "remaining": "Rust now emits the complete read-only logical-integrity report with byte pre/post hashes, schema/table hashes, quick_check, foreign-key count, receipt-ledger hash validation, bounded blockers and fail-closed status; 25 generated Node migration stores match the report. The CLI also matches Node's implicit HEPTA_PAPER_RUNTIME_ROOT/hepta-paper.sqlite default and explicit-path form through a real Node/Rust fixture. Production store discovery, trust/repair/migration authority, historical recovery, external qualification and independent acceptance remain unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-readonly-store/src/lib.rs"
@@ -2201,7 +2202,7 @@
     },
     {
       "id": "verify/repository-assets",
-      "rustEntrypoint": "hepta-paper-rust repository-assets ROOT MANIFEST [--handoff] [--require-externalized]",
+      "rustEntrypoint": "hepta-paper-rust repository-assets [ROOT MANIFEST] [--handoff] [--require-externalized]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -2218,7 +2219,7 @@
         "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs",
         "rust/crates/hepta-paper-service/tests/repository_assets_cli.rs"
       ],
-      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks, including the incumbent optional-transport guard, strict duplicate/unknown/boolean argument handling, default blocked-boundary exit status, and --require-externalized output/exit behavior, including handoff combinations. Independent-root CLI fixtures execute the original Node entrypoint against ready, pending and invalid local identities. The Rust route still requires explicit ROOT/MANIFEST paths instead of the Node command's workspace defaults, and independent release authority remains unimplemented.",
+      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks, including the incumbent optional-transport guard, strict duplicate/unknown/boolean argument handling, default blocked-boundary exit status, and --require-externalized output/exit behavior, including handoff combinations. Omitted ROOT/MANIFEST arguments now resolve a canonical manifest from the current deployment root, with a compiled source-root fallback; explicit paths remain available for isolated deployments. Independent-root CLI fixtures execute the original Node entrypoint against ready, pending and invalid local identities. Independent release authority remains unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/repository_assets.rs",

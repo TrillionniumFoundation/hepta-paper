@@ -129,6 +129,32 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// Resolve the same database default used by Node's
+/// `paper-core/bin/hepta-store-logical-integrity.mjs`: an explicit
+/// `HEPTA_PAPER_RUNTIME_ROOT` is resolved from the current directory, while
+/// the installed source tree defaults to its sibling runtime deployment.
+fn default_store_integrity_database_v1() -> PathBuf {
+    let runtime_root = env::var_os("HEPTA_PAPER_RUNTIME_ROOT")
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                env::current_dir()
+                    .map(|cwd| cwd.join(&path))
+                    .unwrap_or(path)
+            }
+        })
+        .unwrap_or_else(|| {
+            let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+            workspace
+                .parent()
+                .unwrap_or(&workspace)
+                .join("hepta-paper-runtime/native-runtime")
+        });
+    runtime_root.join("hepta-paper.sqlite")
+}
+
 fn read_bounded(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     File::open(path)?
@@ -139,6 +165,28 @@ fn read_bounded(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     }
     Ok(bytes)
 }
+fn default_repository_asset_paths() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    let manifest_relative = Path::new("paper-core/config/repository-asset-externalization.v1.json");
+    let mut candidates = Vec::new();
+    if let Ok(current) = env::current_dir() {
+        candidates.push(current);
+    }
+    let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .map(Path::to_path_buf);
+    if let Some(source_root) = source_root {
+        candidates.push(source_root);
+    }
+    for root in candidates {
+        let manifest = root.join(manifest_relative);
+        if manifest.is_file() {
+            return Ok((root, manifest));
+        }
+    }
+    Err("repository_asset_default_manifest_not_found".into())
+}
+
 fn main() {
     if let Err(error) = command() {
         eprintln!("hepta-paper-rust: {error}");
@@ -409,8 +457,12 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&store.node_logical_snapshot()?)?
             );
         }
-        Some("store-integrity") if args.len() == 2 => {
-            let store = hepta_readonly_store::ReadOnlyStoreV1::open(PathBuf::from(&args[1]))?;
+        Some("store-integrity") if args.len() == 1 || args.len() == 2 => {
+            let database = args
+                .get(1)
+                .map(PathBuf::from)
+                .unwrap_or_else(default_store_integrity_database_v1);
+            let store = hepta_readonly_store::ReadOnlyStoreV1::open(database)?;
             let report = store.node_logical_integrity_report()?;
             println!("{}", serde_json::to_string(&report)?);
             if report.status != "sqlite_logical_integrity_verified" {
@@ -457,12 +509,23 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&migrate_node_store_v1(&PathBuf::from(&args[1]), target,)?)?
             );
         }
-        Some("repository-assets") if args.len() >= 3 => {
-            let root = PathBuf::from(&args[1]);
-            let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(&args[2])?)?;
+        Some("repository-assets") => {
+            let (root, manifest_path, flag_start) = match args.len() {
+                1 | 2 if args.get(1).is_none_or(|value| value.starts_with("--")) => {
+                    let (root, manifest) = default_repository_asset_paths()?;
+                    (root, manifest, 1)
+                }
+                count if count >= 3 => (PathBuf::from(&args[1]), PathBuf::from(&args[2]), 3),
+                _ => return Err("repository_asset_root_and_manifest_required".into()),
+            };
+            let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(
+                manifest_path
+                    .to_str()
+                    .ok_or("repository_asset_manifest_path_invalid")?,
+            )?)?;
             let mut handoff = false;
             let mut require_externalized = false;
-            for token in args.iter().skip(3) {
+            for token in args.iter().skip(flag_start) {
                 if token == "--" {
                     return Err("unexpected_cli_argument_separator".into());
                 }
@@ -495,9 +558,16 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 inspection.clone()
             };
             println!("{}", serde_json::to_string(&value)?);
-            if inspection["repositoryBoundaryReady"] != true
-                || (require_externalized && inspection["fullyExternalized"] != true)
-            {
+            let repository_boundary_ready = inspection
+                .get("repositoryBoundaryReady")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let fully_externalized = inspection
+                .get("fullyExternalized")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            eprintln!("DEBUG root={} manifest={} flags handoff={} require={} ready={} full={}", root.display(), manifest_path.display(), handoff, require_externalized, repository_boundary_ready, fully_externalized);
+            if !repository_boundary_ready || (require_externalized && !fully_externalized) {
                 std::process::exit(1);
             }
         }
@@ -1740,7 +1810,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
                 "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
-                "store-integrity IMMUTABLE_DB | ",
+                "store-integrity [IMMUTABLE_DB] | ",
                 "store-status IMMUTABLE_DB [RUNTIME_ROOT] | ",
                 "automation-status --help [--json] | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",

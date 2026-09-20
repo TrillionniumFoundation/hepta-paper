@@ -2403,7 +2403,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/release_state_parity.rs"
       ],
-      "remaining": "Rust matches the pure Node package/document/tag consistency contract; npm security audit, complete release verification suite, target-host release authority and production publication remain unimplemented.",
+      "remaining": "Rust matches the pure Node package/document/tag consistency contract, including omitted tag snapshots, duplicate-tag diagnostics and newer-tag deduplication. npm security audit, complete release verification suite, target-host release authority and production publication remain unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/release_state.rs",
@@ -2434,7 +2434,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/release_trust_gate_parity.rs"
       ],
-      "remaining": "Rust matches the pure Node release trust-layer gate and hash; runtime capability-proof loading, external owner signatures, release authority and production activation remain unimplemented and must stay fail-closed.",
+      "remaining": "Rust matches the covered pure Node release trust-layer gate and hash, including JavaScript String(value || '') release-commit coercion and 0b/0o numeric count forms. Broader arbitrary JavaScript number coercion remains outside the bounded count profile; runtime capability-proof loading, external owner signatures, release authority and production activation remain unimplemented and must stay fail-closed.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/release_trust_gate.rs",

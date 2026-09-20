@@ -819,7 +819,7 @@
     },
     {
       "id": "operator/autonomous-state-backup",
-      "rustEntrypoint": "hepta-state-backup --action status|backup|restore-drill|renew|reconcile-and-renew [--runtime-root PATH] [--authority-config PATH] [--online-authority-process-config PATH] [--bundle PATH]",
+      "rustEntrypoint": "hepta-state-backup --action status|backup|restore-drill|renew|reconcile-and-renew [--root PATH] [--runtime-root PATH] [--authority-config PATH] [--online-authority-process-config PATH] [--bundle PATH]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [

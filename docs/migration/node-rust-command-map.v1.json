@@ -54,7 +54,7 @@
     },
     {
       "id": "operator/store",
-      "rustEntrypoint": "hepta-paper-rust inspect-db IMMUTABLE_DB",
+      "rustEntrypoint": "hepta-paper-rust store-status IMMUTABLE_DB [RUNTIME_ROOT]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -63,22 +63,32 @@
           "symbol": "command"
         },
         {
-          "path": "rust/crates/hepta-readonly-store/src/lib.rs",
-          "symbol": "node_logical_snapshot"
+          "path": "rust/crates/hepta-paper-service/src/store_status.rs",
+          "symbol": "inspect_store_status_v1"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/durable_service.rs"
+        "rust/crates/hepta-paper-service/tests/durable_service.rs",
+        "rust/crates/hepta-paper-service/tests/store_status_parity.rs"
       ],
-      "remaining": "Read-only logical SQLite snapshot only; Node trust/repair/migration semantics and production store discovery remain unimplemented.",
+      "remaining": "Rust now emits the full read-only HeptaNativeStoreStatus projection for an explicitly supplied canonical Node store and optional runtime root, including table counts, metadata, receipt/job classifications, contamination gate and submission-handoff cutover diagnostics; exact production store discovery, writable trust/repair/migration authority, and independent acceptance remain unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/store_status.rs",
         "rust/crates/hepta-readonly-store/src/lib.rs"
       ],
       "testCases": [
         {
           "path": "rust/crates/hepta-paper-service/tests/durable_service.rs",
           "symbol": "native_database_inspection_pins_bytes_and_replays_the_historical_input"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/store_status_parity.rs",
+          "symbol": "immutable_status_matches_node_with_metadata_and_handoff"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/store_status_parity.rs",
+          "symbol": "immutable_status_matches_node_when_handoff_is_missing"
         }
       ]
     },
@@ -833,7 +843,7 @@
     },
     {
       "id": "operator/research-readiness",
-      "rustEntrypoint": "inspect_autonomous_research_state_safety_v1 / inspect_passive_online_authority_v1 [actual state-safety composition; complete readiness command pending]",
+      "rustEntrypoint": "hepta-paper-rust research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -854,9 +864,10 @@
         "rust/crates/hepta-paper-service/tests/online_runtime_active_refresh_parity.rs",
         "rust/crates/hepta-paper-service/tests/state_safety_composition_parity.rs",
         "rust/crates/hepta-paper-service/tests/online_writer_complete_inputs.rs",
-        "rust/crates/hepta-paper-service/tests/online_mutation_composition_parity.rs"
+        "rust/crates/hepta-paper-service/tests/online_mutation_composition_parity.rs",
+        "rust/crates/hepta-paper-service/tests/research_readiness_cli.rs"
       ],
-      "remaining": "Actual passive state-safety composition now combines real ten-database inventory, stored backup verification, configured coordinator, complete native source AST coverage and three pinned signatures; full original Node report comparisons include missing/invalid configuration, signed caches, corruption and unregistered writers, with zero authority RPC. Fixed composition covers all 134 operations/486 statements but exposes diagnostics only. Complete source inputs are retained and every file byte, identity and namespace is rechecked before AST reuse. General Date.parse coercion/format compatibility, other readiness observers, complete CLI/environment modes, final runtime activation and independent acceptance remain open. Native stored-source checks deliberately reject some expired or mismatched historical evidence that the Node diagnostic reader accepts; no diagnostic ready field grants activation.",
+      "remaining": "The bounded research-readiness CLI now projects the actual Rust state-safety composition and matches the original Node report for the covered passive case, including fail-closed --require-ready behavior and no runtime writes. The composition combines real ten-database inventory, stored backup verification, configured coordinator, complete native source AST coverage and three pinned signatures; full original Node report comparisons include missing/invalid configuration, signed caches, corruption and unregistered writers, with zero authority RPC. General Date.parse coercion/format compatibility, automation-status observers, live provider/attestor flags, complete CLI/environment modes, final runtime activation and independent acceptance remain open. Native stored-source checks deliberately reject some expired or mismatched historical evidence that the Node diagnostic reader accepts; no diagnostic ready field grants activation.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/state_safety.rs",
         "rust/crates/hepta-paper-service/src/online_authority_inspection.rs",
@@ -885,6 +896,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/state_safety_composition_parity.rs",
           "symbol": "actual_signed_cache_backup_source_and_original_source_scan_match_without_rpc_or_authority_promotion"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_readiness_cli.rs",
+          "symbol": "passive_route_reports_blocked_runtime_without_authority_or_mutation"
         }
       ]
     },

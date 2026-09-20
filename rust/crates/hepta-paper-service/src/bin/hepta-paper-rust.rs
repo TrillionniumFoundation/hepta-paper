@@ -26,13 +26,19 @@ use hepta_paper_service::{
     retirement_status::inspect_retirement_status_v1,
     run_service_v1,
     runtime_source_cas::{acquire_runtime_source_cas_from_seed_v1, inspect_runtime_source_cas_v1},
+    state_recoverability::safety_inspection::{
+        StateSafetyInspectionOptionsV1, inspect_autonomous_research_state_safety_v1,
+    },
+    store_status::inspect_store_status_v1,
     verify_legacy_node_freeze_v1,
 };
 use std::{
+    collections::BTreeMap,
     env,
     fs::File,
     io::{self, BufRead, Read},
     path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 fn read_bounded(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -51,6 +57,12 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+fn current_unix_millis() -> Result<i64, Box<dyn std::error::Error>> {
+    let millis = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+    Ok(i64::try_from(millis).map_err(|_| "current clock exceeds signed millisecond range")?)
+}
+
 fn command() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -108,6 +120,12 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             if report.status != "sqlite_logical_integrity_verified" {
                 return Err("sqlite logical integrity report blocked".into());
             }
+        }
+        Some("store-status") if args.len() == 2 || args.len() == 3 => {
+            let runtime_root = args.get(2).map(PathBuf::from);
+            let report =
+                inspect_store_status_v1(&PathBuf::from(&args[1]), runtime_root.as_deref())?;
+            println!("{}", serde_json::to_string(&report)?);
         }
         Some("store-migrate") if (args.len() == 2 || args.len() == 3) => {
             let target = args.get(2).map(|value| value.parse::<u32>()).transpose()?;
@@ -326,6 +344,108 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("R runtime source CAS verification blocked".into());
             }
         }
+        Some("research-readiness") => {
+            let mut workspace_root = None;
+            let mut runtime_root = None;
+            let mut working_directory = env::current_dir()?;
+            let mut now = current_unix_millis()?;
+            let mut require_ready = false;
+            let mut help = false;
+            let mut working_directory_seen = false;
+            let mut now_seen = false;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--workspace-root" if index + 1 < args.len() && workspace_root.is_none() => {
+                        workspace_root = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--runtime-root" if index + 1 < args.len() && runtime_root.is_none() => {
+                        runtime_root = Some(PathBuf::from(&args[index + 1]));
+                        index += 2;
+                    }
+                    "--working-directory" if index + 1 < args.len() && !working_directory_seen => {
+                        working_directory = PathBuf::from(&args[index + 1]);
+                        working_directory_seen = true;
+                        index += 2;
+                    }
+                    "--now" if index + 1 < args.len() && !now_seen => {
+                        now = args[index + 1]
+                            .parse::<i64>()
+                            .map_err(|_| "research-readiness --now requires signed milliseconds")?;
+                        now_seen = true;
+                        index += 2;
+                    }
+                    "--require-ready" if !require_ready => {
+                        require_ready = true;
+                        index += 1;
+                    }
+                    "--help" if !help => {
+                        help = true;
+                        index += 1;
+                    }
+                    _ => {
+                        return Err("research-readiness accepts --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready] [--help] only".into());
+                    }
+                }
+            }
+            if help {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "version": 1,
+                        "kind": "ResearchReadinessUsage",
+                        "usage": "research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
+                        "mutation": "read-only passive state-safety observation; no authority RPC or canonical state write",
+                        "localObservationEffects": "reads actual state-database, backup, cache, authority-configuration and writer-source inputs when configured",
+                        "externalAction": "none",
+                        "environmentKeys": [
+                            "HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG",
+                            "HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG",
+                            "HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG"
+                        ]
+                    })
+                );
+                return Ok(());
+            }
+            let workspace_root = workspace_root
+                .ok_or("research-readiness requires --workspace-root ABSOLUTE_PATH")?;
+            let runtime_root =
+                runtime_root.ok_or("research-readiness requires --runtime-root ABSOLUTE_PATH")?;
+            for (name, path) in [
+                ("workspace-root", &workspace_root),
+                ("runtime-root", &runtime_root),
+                ("working-directory", &working_directory),
+            ] {
+                if !path.is_absolute() {
+                    return Err(format!(
+                        "research-readiness requires {name} to be an absolute path"
+                    )
+                    .into());
+                }
+            }
+            let environment = [
+                "HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG",
+                "HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG",
+                "HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG",
+            ]
+            .into_iter()
+            .filter_map(|name| env::var(name).ok().map(|value| (name.into(), value)))
+            .collect::<BTreeMap<_, _>>();
+            let report =
+                inspect_autonomous_research_state_safety_v1(&StateSafetyInspectionOptionsV1 {
+                    workspace_root,
+                    runtime_root,
+                    working_directory,
+                    now,
+                    environment,
+                })?;
+            let ready = report["ready"] == serde_json::Value::Bool(true);
+            println!("{}", serde_json::to_string(&report)?);
+            if require_ready && !ready {
+                return Err("research readiness state-safety inspection is blocked".into());
+            }
+        }
         Some("research-capability-matrix") => {
             let mut request = None;
             let mut require_production_ready = false;
@@ -376,6 +496,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
                 "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
                 "store-integrity IMMUTABLE_DB | ",
+                "store-status IMMUTABLE_DB [RUNTIME_ROOT] | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
                 "store-migrate NODE_DB [TARGET_VERSION] | ",
                 "repository-assets ROOT MANIFEST [--handoff]",
@@ -390,6 +511,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | release-attest REQUEST",
                 " | retirement-status REQUEST",
                 " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
+                " | research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
                 " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]"
             )
             .into());

@@ -71,6 +71,11 @@ use hepta_paper_service::{
         StateSafetyInspectionOptionsV1, inspect_autonomous_research_state_safety_v1,
     },
     store_status::inspect_store_status_v1,
+    strict_full_auto_acceptance::{
+        STRICT_FULL_AUTO_ACCEPTANCE_USAGE, execute_strict_full_auto_acceptance_v1,
+        inspect_strict_full_auto_acceptance_v1, parse_strict_full_auto_acceptance_arguments,
+        strict_full_auto_acceptance_help_json_v1,
+    },
     submission_handoff_export::{
         SUBMISSION_HANDOFF_EXPORT_USAGE, execute_submission_handoff_export_v1,
         inspect_submission_handoff_export_v1, parse_submission_handoff_export_arguments,
@@ -1186,6 +1191,33 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("strict-full-auto-acceptance") => {
+            let options = match parse_strict_full_auto_acceptance_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}\n{STRICT_FULL_AUTO_ACCEPTANCE_USAGE}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&strict_full_auto_acceptance_help_json_v1())?
+                );
+                return Ok(());
+            }
+            let report = if options.execute {
+                execute_strict_full_auto_acceptance_v1(&options)
+            } else {
+                inspect_strict_full_auto_acceptance_v1(&options)
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if (options.require_accepted && report["strictFullAutoAccepted"] != true)
+                || (options.require_adopted && report["ready"] != true)
+            {
+                std::process::exit(2);
+            }
+        }
         Some("autonomous-supervisor") => {
             let mut action = "health".to_owned();
             let mut runtime_root = None;
@@ -1409,6 +1441,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
                 " | autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--launch-mode local-run|production-run|golden-bootstrap]",
                 " | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+                " | strict-full-auto-acceptance --action plan|inspect-runtime-adoption-candidate|adoption-status|adopt-runtime|status|execute|converge --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
                 " | personal-self-hosted-readiness [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help]"
             )
             .into());

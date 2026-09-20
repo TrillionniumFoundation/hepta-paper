@@ -362,6 +362,16 @@ fn read_private_json(path: &Path) -> Option<Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
+fn read_private_gpu_json(path: &Path) -> (Option<Value>, bool) {
+    let Some(bytes) = read_private_bytes(path, MAX_RECEIPT_BYTES) else {
+        return (None, false);
+    };
+    match personal_self_hosted_gpu::parse_personal_gpu_operational_receipt_v1(&bytes) {
+        Ok(value) => (Some(value), true),
+        Err(_) => (serde_json::from_slice(&bytes).ok(), false),
+    }
+}
+
 fn read_private_json_read_only(path: &Path) -> Option<Value> {
     let bytes = read_private_bytes_with_mode(path, MAX_RECEIPT_BYTES, true)?;
     serde_json::from_slice(&bytes).ok()
@@ -1027,30 +1037,31 @@ fn inspect_cpu(
         .or_else(|| environment.get("HEPTA_PERSONAL_GPU_RECEIPT"))
         .map(PathBuf::from)
         .unwrap_or_else(|| runtime_root.join("gpu-personal/personal-gpu-operational-receipt.json"));
-    let receipt = read_private_json(&path);
+    let (receipt, wire_valid) = read_private_gpu_json(&path);
     let created_ms = receipt
         .as_ref()
         .and_then(|v| v.get("createdAtEpochMs"))
         .and_then(Value::as_i64);
-    let valid = receipt.as_ref().is_some_and(|value| {
-        personal_self_hosted_gpu::verify_personal_gpu_receipt(value)
-            && provenance.is_some_and(|p| value["workspaceCommit"] == p["commit"])
-            && value["externalActionPerformed"] == false
-            && value["networkActionPerformed"] == false
-            && value["pde"]["cpuOracleStatus"]
-                == "process_isolated_pde_poisson_2d_cpu_oracle_verified"
-            && valid_hash(value["pde"].get("cpuOracleHash"))
-            && value["deepLearning"]["cpuOracleStatus"]
-                == "process_isolated_deep_learning_cpu_oracle_verified"
-            && valid_hash(value["deepLearning"].get("cpuOracleHash"))
-            && value["deepLearning"]["deterministicReplay"] == true
-            && value["ir"]["modelExecutableCodeEmbedded"] == false
-            && value["ir"]["checkpointExecutablePayloadAllowed"] == false
-            && value["ir"]["pickleAllowed"] == false
-            && created_ms.is_some_and(|created| {
-                created <= observed_ms && observed_ms - created <= MAX_EVIDENCE_AGE_MS
-            })
-    });
+    let valid = wire_valid
+        && receipt.as_ref().is_some_and(|value| {
+            personal_self_hosted_gpu::verify_personal_gpu_receipt(value)
+                && provenance.is_some_and(|p| value["workspaceCommit"] == p["commit"])
+                && value["externalActionPerformed"] == false
+                && value["networkActionPerformed"] == false
+                && value["pde"]["cpuOracleStatus"]
+                    == "process_isolated_pde_poisson_2d_cpu_oracle_verified"
+                && valid_hash(value["pde"].get("cpuOracleHash"))
+                && value["deepLearning"]["cpuOracleStatus"]
+                    == "process_isolated_deep_learning_cpu_oracle_verified"
+                && valid_hash(value["deepLearning"].get("cpuOracleHash"))
+                && value["deepLearning"]["deterministicReplay"] == true
+                && value["ir"]["modelExecutableCodeEmbedded"] == false
+                && value["ir"]["checkpointExecutablePayloadAllowed"] == false
+                && value["ir"]["pickleAllowed"] == false
+                && created_ms.is_some_and(|created| {
+                    created <= observed_ms && observed_ms - created <= MAX_EVIDENCE_AGE_MS
+                })
+        });
     let details = json!({
         "cpuOracleReady":valid,
         "deterministicReplay":valid,
@@ -1116,28 +1127,29 @@ fn inspect_gpu(
             "observedAt":observed_at,"disabledReason":environment.get("HEPTA_PERSONAL_GPU_DISABLED_REASON").cloned().unwrap_or_else(|| "GPU capability is not enabled; CPU readiness is evaluated separately from the process-isolated CPU oracle receipt.".into()),"receiptPath":path,
         });
     }
-    let receipt = read_private_json(&path);
+    let (receipt, wire_valid) = read_private_gpu_json(&path);
     let created_ms = receipt
         .as_ref()
         .and_then(|v| v.get("createdAtEpochMs"))
         .and_then(Value::as_i64);
-    let valid = receipt.as_ref().is_some_and(|value| {
-        personal_self_hosted_gpu::verify_personal_gpu_receipt(value)
-            && provenance.is_some_and(|p| value["workspaceCommit"] == p["commit"])
-            && value["externalActionPerformed"] == false
-            && value["networkActionPerformed"] == false
-            && value["pde"]["scientificChecksPassed"] == true
-            && value["deepLearning"]["deterministicReplay"] == true
-            && value["deepLearning"]["sameDeviceReplayHash"]
-                .as_str()
-                .is_some()
-            && value["ir"]["modelExecutableCodeEmbedded"] == false
-            && value["ir"]["checkpointExecutablePayloadAllowed"] == false
-            && value["ir"]["pickleAllowed"] == false
-            && created_ms.is_some_and(|created| {
-                created <= observed_ms && observed_ms - created <= MAX_EVIDENCE_AGE_MS
-            })
-    });
+    let valid = wire_valid
+        && receipt.as_ref().is_some_and(|value| {
+            personal_self_hosted_gpu::verify_personal_gpu_receipt(value)
+                && provenance.is_some_and(|p| value["workspaceCommit"] == p["commit"])
+                && value["externalActionPerformed"] == false
+                && value["networkActionPerformed"] == false
+                && value["pde"]["scientificChecksPassed"] == true
+                && value["deepLearning"]["deterministicReplay"] == true
+                && value["deepLearning"]["sameDeviceReplayHash"]
+                    .as_str()
+                    .is_some()
+                && value["ir"]["modelExecutableCodeEmbedded"] == false
+                && value["ir"]["checkpointExecutablePayloadAllowed"] == false
+                && value["ir"]["pickleAllowed"] == false
+                && created_ms.is_some_and(|created| {
+                    created <= observed_ms && observed_ms - created <= MAX_EVIDENCE_AGE_MS
+                })
+        });
     json!({
         "enabled":true,"status":if valid {"verified"} else {"blocked"},"deterministicReplay":valid,"sameDeviceReplay":valid,
         "errorBudgetVerified":valid,"modelDataCheckpointIrBound":valid,"evidenceHash":if valid {receipt.as_ref().and_then(|v|v["personalGpuOperationalReceiptHash"].clone().as_str().map(Value::from)).unwrap_or(Value::Null)} else {Value::Null},
@@ -1409,4 +1421,33 @@ pub fn inspect_personal_self_hosted_readiness_v1(
         &payload,
     )?);
     Ok(report)
+}
+
+#[cfg(test)]
+mod gpu_wire_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn readiness_gpu_reader_retains_diagnostics_but_rejects_reordered_wire() {
+        let path = std::env::temp_dir().join(format!(
+            "hepta-readiness-gpu-wire-{}.json",
+            std::process::id()
+        ));
+        let value =
+            personal_self_hosted_gpu::blocked_personal_gpu_receipt_v1(1, None, "fixture").unwrap();
+        let text =
+            personal_self_hosted_gpu::encode_personal_gpu_operational_receipt_v1(&value).unwrap();
+        fs::write(&path, text).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let (projection, valid) = read_private_gpu_json(&path);
+        assert!(valid);
+        assert_eq!(projection, Some(value.clone()));
+        // Value serialization sorts the top-level and policy fields; Node's
+        // structural verifier rejects that wire form despite the valid hash.
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let (projection, valid) = read_private_gpu_json(&path);
+        assert!(!valid);
+        assert_eq!(projection, Some(value));
+        fs::remove_file(path).unwrap();
+    }
 }

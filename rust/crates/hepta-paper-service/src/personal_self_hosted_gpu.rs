@@ -1,12 +1,23 @@
 //! Exact shape/hash verifier for the personal GPU operational receipt.
 //!
 //! Readiness only consumes receipts which claim a successful personal run.
-//! The verifier therefore mirrors every positive branch of the Node contract
-//! and rejects malformed or self-authored boolean/hash projections.
+//! The value and wire validators jointly enforce the supported Node receipt
+//! contract; source handoff documentation records remaining wire edge cases.
 
 #![forbid(unsafe_code)]
 
-use hepta_legacy_compatibility::production_hash_record_v1;
+mod files;
+mod publication;
+pub use publication::write_personal_gpu_receipt_v1;
+mod wire;
+pub use files::{PersonalGpuReceiptReadError, read_personal_gpu_receipt_v1};
+pub use wire::{
+    PersonalGpuReceiptWireError, encode_personal_gpu_operational_receipt_v1,
+    parse_personal_gpu_operational_receipt_v1, personal_gpu_receipt_json_v1,
+    verify_personal_gpu_operational_receipt_raw_v1,
+};
+
+use hepta_legacy_compatibility::{production_hash_record_v1, production_stable_json_v1};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -167,17 +178,39 @@ fn exact_keys(value: Option<&Value>, keys: &[&str]) -> bool {
     object.len() == keys.len() && keys.iter().all(|key| object.contains_key(*key))
 }
 
+// JSON data can carry numbers and arrays in fields that the Node contract
+// explicitly coerces with String(value || ''). Preserve that behavior.
+fn js_string(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_owned(),
+        Value::Bool(v) => v.to_string(),
+        Value::Number(_) => production_stable_json_v1(value)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default(),
+        Value::String(v) => v.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(|v| {
+                if v.is_null() {
+                    String::new()
+                } else {
+                    js_string(v)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Object(_) => "[object Object]".to_owned(),
+    }
+}
+
 fn hash(value: Option<&Value>) -> bool {
-    let Some(value) = value.and_then(Value::as_str) else {
+    let Some(value) = value else {
         return false;
     };
-    let Some(hex) = value.strip_prefix("sha256:") else {
-        return false;
-    };
-    hex.len() == 64
-        && hex
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    let text = js_string(value).to_ascii_lowercase();
+    text.strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
 fn commit(value: Option<&Value>) -> bool {
@@ -205,7 +238,7 @@ fn safe_epoch(value: &Value) -> bool {
 
 fn valid_gpu(value: &Value) -> bool {
     exact_keys(Some(value), &GPU_KEYS)
-        && value["gpuUuid"].as_str().is_some_and(|text| {
+        && Some(js_string(&value["gpuUuid"])).is_some_and(|text| {
             let bytes = text.as_bytes();
             bytes.len() == 40
                 && text.starts_with(GPU_UUID_PREFIX)
@@ -218,7 +251,7 @@ fn valid_gpu(value: &Value) -> bool {
         && value["gpuModel"]
             .as_str()
             .is_some_and(|text| !text.is_empty())
-        && value["computeCapability"].as_str().is_some_and(|text| {
+        && Some(js_string(&value["computeCapability"])).is_some_and(|text| {
             let mut parts = text.split('.');
             parts.next().is_some_and(|v| {
                 (1..=2).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit())
@@ -226,16 +259,14 @@ fn valid_gpu(value: &Value) -> bool {
                 (1..=2).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit())
             }) && parts.next().is_none()
         })
-        && value["driverVersion"].as_str().is_some_and(|text| {
+        && Some(js_string(&value["driverVersion"])).is_some_and(|text| {
             let parts = text.split('.').collect::<Vec<_>>();
             (2..=4).contains(&parts.len())
                 && parts
                     .iter()
                     .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
         })
-        && value["memoryMiB"]
-            .as_i64()
-            .is_some_and(|value| (1..=9_007_199_254_740_991).contains(&value))
+        && safe_epoch(&value["memoryMiB"])
 }
 
 fn valid_runtime(value: &Value) -> bool {
@@ -280,7 +311,8 @@ fn valid_dl(value: &Value) -> bool {
 }
 
 fn valid_ir(value: &Value, deep_learning: &Value) -> bool {
-    exact_keys(Some(value), &IR_KEYS)
+    !deep_learning.is_null()
+        && exact_keys(Some(value), &IR_KEYS)
         && value["modelHash"] == deep_learning["modelIrHash"]
         && value["datasetHash"] == deep_learning["datasetManifestHash"]
         && value["checkpointHash"] == deep_learning["checkpointManifestHash"]
@@ -321,8 +353,9 @@ pub(crate) fn verify_personal_gpu_receipt(value: &Value) -> bool {
     verify_personal_gpu_operational_receipt(value) && value["personalProductionReady"] == true
 }
 
-/// Verify the complete Node operational-receipt contract, including blocked
-/// receipts.  The readiness observer consumes only a positive receipt, but
+/// Verify the value-level operational-receipt contract, including blocked
+/// receipts. Raw JSON callers must also check property order through
+/// `parse_personal_gpu_operational_receipt_v1`. The readiness observer consumes only a positive receipt, but
 /// the Node `--check` route deliberately accepts a valid blocked receipt and
 /// exits with status 2.  Keeping this verifier separate prevents the Rust
 /// check route from accidentally accepting a forged readiness boolean while
@@ -354,7 +387,7 @@ pub fn verify_personal_gpu_operational_receipt(value: &Value) -> bool {
         return false;
     };
     let mut expected_blockers = supplied_blockers.clone();
-    expected_blockers.sort();
+    expected_blockers.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
     expected_blockers.dedup();
     if supplied_blockers != expected_blockers {
         return false;
@@ -388,7 +421,7 @@ pub fn verify_personal_gpu_operational_receipt(value: &Value) -> bool {
     if !valid_ir_evidence {
         expected_blockers.push("personal_gpu_receipt_ir_binding_invalid".to_owned());
     }
-    expected_blockers.sort();
+    expected_blockers.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
     expected_blockers.dedup();
     if supplied_blockers != expected_blockers
         || value["personalProductionReady"] != (supplied_blockers.is_empty())

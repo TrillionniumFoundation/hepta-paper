@@ -1,80 +1,106 @@
 # Personal GPU operational gate check handoff
 
-This handoff records the bounded Rust slice for
-`operator/personal-gpu-operational-gate`. The accepted slice is read-only
-`--check` receipt inspection. It does not execute GPU work, write a receipt,
-grant production authority or retire the Node implementation.
+This handoff records the Rust source candidate for
+`operator/personal-gpu-operational-gate --check`. It verifies existing receipts
+and supports the incumbent failure-only `--check --write` publication path.
+GPU execution and independent migration acceptance remain open.
 
 ## Source and call chain
 
 | Source | Symbol | Responsibility |
 |---|---|---|
-| `paper-core/bin/personal-gpu-operational-gate.mjs` | `runPersonalGpuOperationalGateCli` | Incumbent CLI; `--check` loads an existing receipt, verifies it and exits zero only when `personalProductionReady` is true. |
-| `rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs` | `command` | Parses the Rust partial route, resolves Node-compatible roots/receipt defaults, performs bounded no-follow reads, emits JSON and preserves Node exit classes. |
-| `rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs` | `verify_personal_gpu_operational_receipt` | Verifies ready and blocked receipt shapes, nested field contracts, canonical blocker list, normalization and `personalGpuOperationalReceiptHash`. |
-| the same module | `blocked_personal_gpu_receipt_v1` | Constructs the fail-closed fallback used when a receipt is missing or invalid; it never writes the fallback. |
-| `rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs` | six parity tests | Compares help, blocked/invalid-timestamp/ready fixtures, missing-receipt fallback and symlink rejection with the pinned Node oracle. |
-
-The native route is:
+| `paper-core/verification/personal-gpu-operational-gate-runner.mjs` | `runPersonalGpuOperationalGateCli` | Incumbent argument, check, fallback and private-publication behavior. |
+| `rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs` | `parse_personal_gpu_arguments` / `command` | Strict argument parsing, roots/defaults, check result and failure-only write dispatch. |
+| `rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/files.rs` | `read_personal_gpu_receipt_v1` | Bounded descriptor-pinned receipt reads and path/metadata race rejection. |
+| `rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/wire.rs` | `parse_personal_gpu_operational_receipt_v1` / `personal_gpu_receipt_json_v1` | Preserves JSON property order, normalizes JavaScript numbers, verifies the wire contract and emits the original valid receipt in Node's pretty layout. |
+| the same module | `encode_personal_gpu_operational_receipt_v1` | Orders locally built fallback fields to satisfy the Node verifier. |
+| `rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs` | `verify_personal_gpu_operational_receipt` / `blocked_personal_gpu_receipt_v1` | Value contracts, normalization, UTF-16 blocker sorting, production hashes and fail-closed fallback construction. |
+| `rust/crates/hepta-paper-service/src/operational_status/provenance.rs` | `current_operational_code_provenance_v1` | Stable Git/content/package provenance; failed provenance produces a null commit in the fallback. Release commit overrides are ignored. |
+| `rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/publication.rs` | `write_personal_gpu_receipt_v1` | Private parent provisioning and descriptor-relative atomic fallback publication. |
+| `rust/crates/hepta-paper-service/src/personal_self_hosted_readiness.rs` | `read_private_gpu_json` | Enforces the same wire-order contract for CPU/GPU readiness while retaining invalid-receipt diagnostic fields. |
 
 ```text
-hepta-paper-rust personal-gpu-operational-gate --check \
+hepta-paper-rust personal-gpu-operational-gate --check [--write]
   [--root PATH] [--runtime-root PATH] [--receipt PATH]
 ```
 
-`--help` emits the incumbent usage text. `--write`, `--output-root`,
-`--run-id` and `--deadline-ms` are accepted only in the parser-compatible
-check-first surface; no Rust branch performs a write or starts execution.
-Calling the route without `--check` fails closed with an explicit
-“GPU execution is not ported” error.
+`--help` emits incumbent usage. The strict parser accepts `--option=value`
+and separate values, rejects duplicate/unknown options, empty/missing values,
+boolean assignments, separators and positional arguments with Node's exit 2
+and stderr. `--output-root`, `--run-id` and `--deadline-ms` are accepted but
+unused by the check-first path. The default runtime is the installed source
+workspace's sibling runtime, independently of provenance `--root`; a nonempty
+`HEPTA_PAPER_RUNTIME_ROOT` or explicit `--runtime-root` overrides it. Calling
+without `--check` still returns an explicit unsupported GPU execution error.
 
 ## Receipt contract
 
-The verifier mirrors the Node `buildPersonalGpuOperationalReceipt` and
-`verifyPersonalGpuOperationalReceipt` semantics. A receipt must have exactly
-the 17 top-level fields, profile/release policy constants, false external and
-network action flags, a positive safe timestamp, canonical lowercase commit
-when present, and a sorted unique string blocker list. Each nested GPU,
-runtime, PDE, deep-learning and IR object is checked for exact keys, hash
-format, fixed statuses and cross-field bindings. Invalid evidence is required
-to be `null` in a blocked receipt, matching the Node builder's normalization;
-the receipt hash is recomputed over the payload without
-`personalGpuOperationalReceiptHash` using the production Node record hash.
+A receipt has exactly 17 top-level fields in builder order, fixed local-policy
+and release-boundary object order, false external/network-action flags, and
+an exact production record hash. Nested evidence property order is retained,
+not forced into a sorted order. Duplicate JSON properties use the first
+position and last value, like JSON.parse. The verifier supports numeric/array
+string coercion where the Node contract explicitly requests it, case-insensitive
+nested SHA-256 checks, safe integer memory/time checks and JavaScript UTF-16
+blocker sorting. Invalid timestamps are allowed only in correctly hashed
+blocked receipts with the required timestamp blocker; positive readiness
+requires a positive safe timestamp. Invalid evidence normalizes to null.
 
-Both classes are supported:
+- Valid ready receipts exit 0; valid blocked receipts exit 2. Their JSON output
+  preserves Node's two-space layout and nested order. Neither is rewritten,
+  even with `--write`.
+- Missing, unreadable, unsafe or invalid receipts yield a new hash-bound blocked
+  fallback and exit 2. Without `--write`, no publication occurs.
+- With `--write`, only this failure path publishes the fallback. Publication
+  errors leave the CLI blocked and reporting the fallback, as Node does.
 
-- A valid ready receipt has no blockers, `personalProductionReady=true` and
-  exits zero.
-- A valid blocked receipt has the exact derived blockers and
-  `personalProductionReady=false`; it is emitted unchanged and exits 2.
-- A missing, unreadable, unsafe or malformed receipt emits a newly constructed
-  fail-closed fallback with a `personal_gpu_gate_failed:*` blocker and exits 2.
+The reader requires a real parent directory, regular single-link leaf,
+64 MiB bound and `O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC`. The full mtime (seconds plus
+nanoseconds), device, inode, mode, size and link count are compared for the
+retained descriptor and named path before/after reading. Parent/leaf symlink
+rebindings are rejected. A symlink above the parent scope is permitted by the
+incumbent reader. The nonblocking open additionally prevents FIFO swaps from
+hanging the process.
 
-The check read mirrors Node's scoped reader: the parent scope must be a real
-directory, the receipt must be a regular single-link file, the final open uses
-`O_NOFOLLOW|O_CLOEXEC`, reads are capped at 64 MiB, and device/inode/mode/size/
-mtime/link-count identity is compared before and after the read. No owner or
-permission requirement is added beyond the Node contract.
+Publication creates missing directories with mode 0700 and requires an owned,
+private real parent. It creates an exclusive mode-0400 temporary leaf, writes
+and fsyncs it, verifies the retained parent, renames relative to that directory
+and fsyncs the directory. Existing temp collisions are untouched; failed
+publication cleans only the temp created by this invocation. A valid existing
+receipt bypasses all write operations.
 
-## Execute boundary
+## Remaining compatibility and execute gaps
 
-The Node execute path is not represented by this route. It requires a real
-single-device `nvidia-smi` observation, a loaded digest-bound Docker image,
-private PDE and CuPy deep-learning runs, same-device deterministic replay,
-process-isolated CPU oracle, sealed holdout evaluation, clean exact source
-provenance and private artifact publication. A receipt check cannot mint any
-of those facts. Second-hardware evidence, external authority, release
-promotion, production activation, target-host qualification and Node
-retirement remain open migration/acceptance work.
+Malformed JSON currently uses `personal_gpu_existing_receipt_invalid` instead
+of reproducing V8's detailed parse-error string. The ordered serde parser also
+rejects unpaired UTF-16 surrogate strings and out-of-range JSON numbers that
+JSON.parse can represent. Those inputs need additional wire-level work; the
+successful fixture matrix does not establish exhaustive check parity.
+
+The complete execute call chain remains unported: single-device nvidia-smi
+observation, digest-bound Docker image loading, private PDE and CuPy runs,
+deterministic replay, process-isolated CPU oracle, sealed holdout evaluation,
+exact provenance and artifact publication. Implementing that orchestration
+is source work; qualifying its real hardware behavior additionally requires
+a suitable host and evidence. Second hardware, external authority, release
+promotion, production activation, target-host qualification and Node retirement
+remain open acceptance work.
 
 ## Verification
 
-Use the pinned Node v22.23.1 and Rust 1.98.0:
+The integration suite compares strict parser stderr/exit codes, ready/blocked
+receipts, invalid timestamps, inline values, read-only successful checks,
+failure publication and permissions, nonprivate-parent refusal, full provenance,
+coerced fields, Unicode blockers, duplicate properties, nested field order,
+forged/reordered receipts, ancestor symlinks and hardlinks against pinned Node.
+Unit regressions inject whole-second mtime changes, post-read parent rebinds,
+FIFO open races, publication parent rebinds and reordered readiness evidence.
 
 ```sh
 export PATH="$PWD/../toolchains/node-npm/node_modules/node-linux-x64/bin:$PATH"
 rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml \
-  -p hepta-paper-service --test personal_gpu_operational_gate_parity --locked
+  -p hepta-paper-service --lib --test personal_gpu_operational_gate_parity \
+  --test personal_self_hosted_readiness_parity --locked
 rustup run 1.98.0 cargo clippy --manifest-path rust/Cargo.toml \
   -p hepta-paper-service --lib --bin hepta-paper-rust --all-features --locked -- \
   -D warnings -D unsafe_code -D unused_must_use \
@@ -82,6 +108,5 @@ rustup run 1.98.0 cargo clippy --manifest-path rust/Cargo.toml \
   -D clippy::expect_used -D clippy::panic
 ```
 
-The command map remains `partial_local_source` with
-`compatibilityDecision=candidate`; this handoff does not claim accepted parity,
-production activation or Node retirement.
+The command map remains `partial_local_source` and `compatibilityDecision=candidate`.
+This handoff does not grant accepted parity, production activation or Node retirement.

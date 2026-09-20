@@ -264,7 +264,7 @@
     },
     {
       "id": "operator/personal-gpu-operational-gate",
-      "rustEntrypoint": "hepta-paper-rust personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
+      "rustEntrypoint": "hepta-paper-rust personal-gpu-operational-gate --check [--write] [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -279,15 +279,35 @@
         {
           "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
           "symbol": "blocked_personal_gpu_receipt_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/files.rs",
+          "symbol": "read_personal_gpu_receipt_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/wire.rs",
+          "symbol": "parse_personal_gpu_operational_receipt_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/publication.rs",
+          "symbol": "write_personal_gpu_receipt_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/operational_status/provenance.rs",
+          "symbol": "current_operational_code_provenance_v1"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs"
       ],
-      "remaining": "Rust now covers the incumbent read-only --check path for help, missing or invalid receipts, valid blocked receipts and valid personal-ready receipts, including exact blocked/ready receipt shape, blocker normalization and production hash binding. It deliberately does not execute nvidia-smi, Docker, PDE, deep-learning, CPU-oracle or holdout work, does not write receipts, and does not establish second hardware, external authority, production activation or Node retirement.",
+      "remaining": "Rust covers strict check argument parsing, bounded descriptor-pinned reads, ready/blocked wire verification, Node-compatible output for tested numeric/coercion/property-order cases and private fallback publication only on --check --write failures. Malformed JSON diagnostics, unpaired UTF-16 surrogates and out-of-range JSON numbers still need wire compatibility work. The complete nvidia-smi/Docker/PDE/deep-learning/CPU-oracle/holdout execute call chain remains source work; real-host qualification, second hardware, external authority, independent acceptance, production activation and Node retirement remain open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
-        "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs"
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/files.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/wire.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/publication.rs",
+        "rust/crates/hepta-paper-service/src/operational_status/provenance.rs"
       ],
       "testCases": [
         {
@@ -300,11 +320,11 @@
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
-          "symbol": "invalid_timestamp_blocked_receipt_matches_node_exactly"
+          "symbol": "ready_receipt_check_matches_node_exactly"
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
-          "symbol": "ready_receipt_check_matches_node_exactly"
+          "symbol": "invalid_timestamp_blocked_receipt_matches_node_exactly"
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
@@ -313,6 +333,38 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
           "symbol": "symlink_receipt_is_rejected_by_both_scoped_readers"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "check_with_write_flag_is_read_only_and_accepts_inline_values"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "invalid_cli_arguments_match_node_exit_stdout_and_stderr"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "check_write_failure_publishes_private_fallback_like_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "fallback_publication_refuses_nonprivate_parent_like_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "node_receipt_coercions_unicode_and_nested_order_preserve_output_bytes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "reordered_contract_objects_and_forged_receipts_fail_like_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "scoped_reader_allows_ancestor_symlink_but_rejects_hardlinked_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "fallback_commit_requires_complete_code_provenance_like_node"
         }
       ]
     },
@@ -357,6 +409,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
           "symbol": "verify_personal_gpu_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/wire.rs",
+          "symbol": "parse_personal_gpu_operational_receipt_v1"
         }
       ],
       "tests": [
@@ -368,7 +424,8 @@
         "rust/crates/hepta-paper-service/src/personal_self_hosted_readiness.rs",
         "rust/crates/hepta-paper-service/src/personal_self_hosted_formal.rs",
         "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
-        "rust/crates/hepta-paper-service/src/personal_self_hosted_source.rs"
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_source.rs",
+        "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu/wire.rs"
       ],
       "testCases": [
         {

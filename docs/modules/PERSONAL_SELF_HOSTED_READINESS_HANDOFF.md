@@ -56,7 +56,10 @@ Missing or invalid evidence remains blocked.
 
 CPU is always enabled and requires the process-isolated PDE and deep-learning
 oracle fields, a current workspace commit, deterministic replay and safe IR
-flags. GPU is opt-in and additionally requires its same-device replay fields.
+flags. CPU/GPU receipt consumption now checks the original JSON field order
+before projecting values, so reordered top-level/policy/release objects cannot
+pass readiness with an otherwise valid hash. Invalid receipt projections remain
+available for blocked diagnostics. GPU is opt-in and additionally requires its same-device replay fields.
 Neither path calls a provider, network, signer, KMS/HSM, portal or release
 attestor. The `--require-ready` switch changes only the process exit status;
 it never turns a blocked report into authority.

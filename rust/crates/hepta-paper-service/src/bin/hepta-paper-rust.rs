@@ -136,17 +136,11 @@ use std::{
 fn default_store_integrity_database_v1() -> PathBuf {
     let runtime_root = env::var_os("HEPTA_PAPER_RUNTIME_ROOT")
         .map(PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                env::current_dir()
-                    .map(|cwd| cwd.join(&path))
-                    .unwrap_or(path)
-            }
-        })
+        .map(lexical_absolute_path)
         .unwrap_or_else(|| {
-            let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+            let workspace = lexical_absolute_path(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."),
+            );
             workspace
                 .parent()
                 .unwrap_or(&workspace)

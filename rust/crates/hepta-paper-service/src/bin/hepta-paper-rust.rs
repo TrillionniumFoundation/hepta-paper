@@ -9,6 +9,13 @@ use hepta_paper_service::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
     },
     automation_status::automation_status_help_json_v1,
+    autonomous_empirical_plugin_release::{
+        AUTONOMOUS_EMPIRICAL_PLUGIN_RELEASE_USAGE,
+        autonomous_empirical_plugin_release_help_json_v1,
+        execute_autonomous_empirical_plugin_release_v1,
+        inspect_autonomous_empirical_plugin_release_v1,
+        parse_autonomous_empirical_plugin_release_arguments,
+    },
     autonomous_intake_authority_rotation::{
         AUTONOMOUS_INTAKE_AUTHORITY_ROTATION_USAGE,
         autonomous_intake_authority_rotation_help_json_v1,
@@ -1169,6 +1176,36 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("autonomous-empirical-plugin-release") => {
+            let options = match parse_autonomous_empirical_plugin_release_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}\n{AUTONOMOUS_EMPIRICAL_PLUGIN_RELEASE_USAGE}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &autonomous_empirical_plugin_release_help_json_v1()
+                    )?
+                );
+                return Ok(());
+            }
+            let report = if options.action == "publish" {
+                execute_autonomous_empirical_plugin_release_v1(&options)
+            } else {
+                inspect_autonomous_empirical_plugin_release_v1(&options)
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if options.action == "publish"
+                || (options.action != "template"
+                    && report["ready"] != serde_json::Value::Bool(true))
+            {
+                std::process::exit(2);
+            }
+        }
         Some("autonomous-submission-dispatcher") => {
             let mut options = match parse_autonomous_submission_dispatcher_arguments(&args[1..]) {
                 Ok(options) => options,
@@ -1663,6 +1700,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
                 " | autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--launch-mode local-run|production-run|golden-bootstrap]",
                 " | autonomous-research-one-shot-campaign-attempt --action plan|preflight|execute|status [--dataset-mount-file PATH|--attempt-id ID] [--root PATH --runtime-root PATH --control-root PATH]",
+                " | autonomous-empirical-plugin-release --action template|plan|publish|inspect [--template ABSOLUTE_PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config ABSOLUTE_PATH] [--install-root ABSOLUTE_PATH] [--activation ABSOLUTE_PATH]",
                 " | autonomous-intake-authority-rotation --action plan|apply --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",
                 " | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
                 " | strict-full-auto-acceptance --action plan|inspect-runtime-adoption-candidate|adoption-status|adopt-runtime|status|execute|converge --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",

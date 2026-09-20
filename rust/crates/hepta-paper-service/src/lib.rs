@@ -9,6 +9,7 @@
 pub mod advanced_numerical;
 pub mod architecture_conformance;
 pub mod automation_status;
+pub mod autonomous_empirical_plugin_release;
 pub mod autonomous_intake_authority_rotation;
 pub mod autonomous_research;
 pub mod autonomous_research_one_shot_campaign_attempt;

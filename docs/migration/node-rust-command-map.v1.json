@@ -1362,14 +1362,41 @@
     },
     {
       "id": "operator/autonomous-empirical-plugin-release",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust autonomous-empirical-plugin-release --action template|plan|publish|inspect [--template ABSOLUTE_PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config ABSOLUTE_PATH] [--install-root ABSOLUTE_PATH] [--activation ABSOLUTE_PATH]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+          "symbol": "parse_autonomous_empirical_plugin_release_arguments"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+          "symbol": "inspect_autonomous_empirical_plugin_release_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/autonomous_empirical_plugin_release_route.rs"
+      ],
+      "remaining": "Rust now provides strict action/template/plan/publish/inspect argument parsing and a bounded no-follow, stable-identity, hash and JSON-shape preflight for template, signing configuration, activation and install-root references. It never loads private keys, executes a signer, verifies an external bundle authority, writes an installation or publishes activation; plan, publish and inspect remain fail-closed pending external authority, immutable installation and target-host acceptance.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_empirical_plugin_release_route.rs",
+          "symbol": "help_is_structured_and_declares_no_external_action"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_empirical_plugin_release_route.rs",
+          "symbol": "publish_preflight_never_loads_key_or_writes_install_root"
+        }
+      ]
     },
     {
       "id": "operator/advanced-numerical-plugin",
@@ -1815,7 +1842,7 @@
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
-          "symbol": "execute_is_fail_closed_without_mutating_roots"
+          "symbol": "invalid_or_incomplete_sqlite_observation_fails_closed_without_mutation"
         }
       ]
     },

@@ -96,6 +96,30 @@ fn oracle(requests: &[Value]) -> Value {
     result
 }
 
+fn status_oracle(requests: &[Value]) -> Value {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let mut child = Command::new("node")
+        .arg(repository.join("rust/oracle/automation-readiness-system-status-v1.mjs"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Node automation system-status oracle");
+    child
+        .stdin
+        .take()
+        .expect("oracle stdin")
+        .write_all(serde_json::to_vec(requests).unwrap().as_slice())
+        .unwrap();
+    let output = child.wait_with_output().expect("oracle wait");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("oracle JSON")
+}
+
 fn expected_result(result: &Value, index: usize) -> &Value {
     &result["results"][index]
 }
@@ -201,6 +225,65 @@ fn levels_and_exit_codes_match_node_for_each_gate() {
             json!({"ok":true,"value":actual}),
             *expected_result(&node_exits, index),
             "exit case {index}"
+        );
+    }
+}
+
+#[test]
+fn derived_fully_autonomous_status_matches_node_for_ready_blocked_and_malformed_inputs() {
+    let cases = vec![
+        json!({
+            "operation": "derive-status",
+            "readinessLevels": {
+                "productionReady": true,
+                "status": "automation_plane_production_ready"
+            },
+            "coreStatus": "generic_domain_autonomous_research_system_ready"
+        }),
+        json!({
+            "operation": "derive-status",
+            "readinessLevels": {
+                "productionReady": true,
+                "status": "automation_plane_production_ready"
+            },
+            "coreStatus": "automation_plane_production_ready"
+        }),
+        json!({
+            "operation": "derive-status",
+            "readinessLevels": {
+                "productionReady": false,
+                "status": "automation_plane_generic_research_blocked"
+            },
+            "coreStatus": "generic_domain_autonomous_research_system_ready"
+        }),
+        json!({
+            "operation": "derive-status",
+            "readinessLevels": {
+                "productionReady": false,
+                "status": "automation_plane_production_ready"
+            },
+            "coreStatus": "automation_plane_production_ready"
+        }),
+        json!({
+            "operation": "derive-status",
+            "readinessLevels": {
+                "productionReady": false,
+                "status": 17
+            },
+            "coreStatus": null
+        }),
+        json!({"operation": "derive-status", "readinessLevels": null, "coreStatus": null}),
+    ];
+    let node = status_oracle(&cases);
+    for (index, case) in cases.iter().enumerate() {
+        let actual = derive_fully_autonomous_research_system_status_v1(
+            &case["readinessLevels"],
+            &case["coreStatus"],
+        );
+        assert_eq!(
+            json!({"ok":true,"value":actual}),
+            *expected_result(&node, index),
+            "case {index}"
         );
     }
 }

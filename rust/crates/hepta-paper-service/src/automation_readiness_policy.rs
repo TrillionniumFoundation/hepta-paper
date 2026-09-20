@@ -404,6 +404,29 @@ pub fn evaluate_automation_readiness_levels_v1(input: &Value) -> Value {
     })
 }
 
+/// Port of `deriveFullyAutonomousResearchSystemStatus` from the incumbent
+/// automation readiness query.
+///
+/// This is a pure status projection over already-observed readiness levels and
+/// the core status. It does not inspect runtime state or grant any authority.
+#[must_use]
+pub fn derive_fully_autonomous_research_system_status_v1(
+    readiness_levels: &Value,
+    core_status: &Value,
+) -> Value {
+    let ready_status = "generic_domain_autonomous_research_system_ready";
+    if field(readiness_levels, "productionReady") == &Value::Bool(true)
+        && core_status == ready_status
+    {
+        return json!(ready_status);
+    }
+    let status = field(readiness_levels, "status");
+    if js_truthy(status) && status != "automation_plane_production_ready" {
+        return status.clone();
+    }
+    json!("automation_plane_production_blocked")
+}
+
 /// Port of `automationReadinessExitCode` from the incumbent Node policy.
 #[must_use]
 pub fn automation_readiness_exit_code_v1(evaluation: &Value, options: &Value) -> i32 {

@@ -20,6 +20,12 @@ use hepta_paper_service::{
         autonomous_research_help_json_v1, execute_autonomous_research_v1,
         inspect_autonomous_research_v1, parse_autonomous_research_arguments,
     },
+    autonomous_research_one_shot_campaign_attempt::{
+        autonomous_research_one_shot_campaign_attempt_help_json_v1,
+        execute_autonomous_research_one_shot_campaign_attempt_v1,
+        inspect_autonomous_research_one_shot_campaign_attempt_v1,
+        parse_autonomous_research_one_shot_campaign_attempt_arguments,
+    },
     autonomous_state_partial_root_maintenance::{
         AUTONOMOUS_STATE_PARTIAL_ROOT_MAINTENANCE_USAGE,
         execute_autonomous_state_partial_root_maintenance_v1,
@@ -1279,6 +1285,80 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("autonomous-research-one-shot-campaign-attempt") => {
+            let mut options =
+                parse_autonomous_research_one_shot_campaign_attempt_arguments(&args[1..])?;
+            if options.help {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &autonomous_research_one_shot_campaign_attempt_help_json_v1()
+                    )?
+                );
+                return Ok(());
+            }
+            let workspace_root =
+                lexical_absolute_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+            options.root = Some(
+                options
+                    .root
+                    .or_else(|| {
+                        env::var("HEPTA_PAPER_ASSET_ROOT")
+                            .ok()
+                            .filter(|value| !value.is_empty())
+                            .map(PathBuf::from)
+                    })
+                    .map(lexical_absolute_path)
+                    .unwrap_or_else(|| {
+                        let parent = workspace_root.parent().unwrap_or(&workspace_root);
+                        if parent
+                            .file_name()
+                            .is_some_and(|name| name == "paper_factory")
+                        {
+                            parent.to_path_buf()
+                        } else {
+                            parent.join("hepta-paper-assets")
+                        }
+                    }),
+            );
+            options.runtime_root = Some(
+                options
+                    .runtime_root
+                    .or_else(|| {
+                        env::var("HEPTA_PAPER_RUNTIME_ROOT")
+                            .ok()
+                            .filter(|value| !value.is_empty())
+                            .map(PathBuf::from)
+                    })
+                    .map(lexical_absolute_path)
+                    .unwrap_or_else(|| {
+                        lexical_absolute_path(
+                            workspace_root.join("../hepta-paper-runtime/native-runtime"),
+                        )
+                    }),
+            );
+            options.control_root = Some(
+                options
+                    .control_root
+                    .map(lexical_absolute_path)
+                    .unwrap_or_else(|| {
+                        options
+                            .runtime_root
+                            .as_ref()
+                            .and_then(|path| path.parent())
+                            .unwrap_or(&workspace_root)
+                            .join("one-shot-campaign-control")
+                    }),
+            );
+            options.dataset_mount_file = options.dataset_mount_file.map(lexical_absolute_path);
+            let report = if options.action == "execute" {
+                execute_autonomous_research_one_shot_campaign_attempt_v1(&options, &workspace_root)
+            } else {
+                inspect_autonomous_research_one_shot_campaign_attempt_v1(&options, &workspace_root)
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            std::process::exit(2);
+        }
         Some("submission-handoff-export") => {
             let options = match parse_submission_handoff_export_arguments(&args[1..]) {
                 Ok(options) => options,
@@ -1582,6 +1662,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
                 " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
                 " | autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--launch-mode local-run|production-run|golden-bootstrap]",
+                " | autonomous-research-one-shot-campaign-attempt --action plan|preflight|execute|status [--dataset-mount-file PATH|--attempt-id ID] [--root PATH --runtime-root PATH --control-root PATH]",
                 " | autonomous-intake-authority-rotation --action plan|apply --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",
                 " | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
                 " | strict-full-auto-acceptance --action plan|inspect-runtime-adoption-candidate|adoption-status|adopt-runtime|status|execute|converge --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",

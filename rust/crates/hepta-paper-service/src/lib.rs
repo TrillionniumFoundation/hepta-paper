@@ -11,6 +11,7 @@ pub mod architecture_conformance;
 pub mod automation_status;
 pub mod autonomous_intake_authority_rotation;
 pub mod autonomous_research;
+pub mod autonomous_research_one_shot_campaign_attempt;
 pub mod autonomous_state_partial_root_maintenance;
 pub mod autonomous_state_provision;
 pub mod autonomous_submission_dispatcher;

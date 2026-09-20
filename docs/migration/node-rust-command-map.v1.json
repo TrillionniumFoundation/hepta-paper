@@ -981,14 +981,49 @@
     },
     {
       "id": "operator/local-golden-dataset-provision",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust local-golden-dataset-provision --action plan|execute [options]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_golden_dataset.rs",
+          "symbol": "parse_local_golden_dataset_provisioning_arguments"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_golden_dataset.rs",
+          "symbol": "inspect_local_golden_dataset_provisioning_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_golden_dataset.rs",
+          "symbol": "execute_local_golden_dataset_provisioning_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs"
+      ],
+      "remaining": "Rust now validates a bounded source-bound local-golden plan for the checked-in ml_algorithm_benchmark profile: private runtime/control roots, immutable dataset manifest, complete split assignments, harness cells, semantics, local trust-store scope, time window and plan hashes are inspected without writes. Execute validates the exact plan ID but intentionally returns a blocked report before reading any private key or publishing envelope, trust, mount or receipt outputs. Full all-family contract normalization, Ed25519 authority signing, mount authorization, durable no-clobber publication, runtime envelope verification and independent command acceptance remain open. Exact incumbent repository/workspace/environment protected-root expansion is also not yet ported; this route never grants promotion or external trust.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/local_golden_dataset.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs",
+          "symbol": "parser_help_and_execute_boundaries_match_node_contract"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs",
+          "symbol": "plan_is_source_bound_and_execute_fails_closed_without_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs",
+          "symbol": "production_root_and_symlink_inputs_are_rejected"
+        }
+      ]
     },
     {
       "id": "operator/strict-full-auto-acceptance",

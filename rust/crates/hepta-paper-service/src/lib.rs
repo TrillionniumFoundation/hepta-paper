@@ -16,6 +16,7 @@ mod deployment;
 pub mod deployment_environment;
 pub mod external_authority_intake;
 pub mod journal_connector_coverage;
+pub mod local_golden_dataset;
 pub mod maintenance;
 pub mod native_business;
 pub mod native_workspace;

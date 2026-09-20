@@ -17,7 +17,12 @@ use hepta_paper_service::{
         external_authority_intake_help_json_v1, inspect_external_authority_intake_v1,
         unix_millis_to_iso_v1,
     },
-    inspect_legacy_deletion_drill_attest_v1, migrate_node_store_v1, native_implementation_hash_v1,
+    inspect_legacy_deletion_drill_attest_v1,
+    local_golden_dataset::{
+        execute_local_golden_dataset_provisioning_v1, inspect_local_golden_dataset_provisioning_v1,
+        local_golden_dataset_provisioning_usage, parse_local_golden_dataset_provisioning_arguments,
+    },
+    migrate_node_store_v1, native_implementation_hash_v1,
     release_attest::{ReleaseAttestationRequestV1, inspect_release_attestation_v1},
     release_state::inspect_release_state_v1,
     release_trust_gate::build_release_trust_layer_gate_from_values_v1,
@@ -601,6 +606,24 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
+        Some("local-golden-dataset-provision") => {
+            let Some(options) = parse_local_golden_dataset_provisioning_arguments(&args[1..])?
+            else {
+                println!("{}", local_golden_dataset_provisioning_usage());
+                return Ok(());
+            };
+            if options.action == "plan" {
+                let report = inspect_local_golden_dataset_provisioning_v1(&options)?;
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                let report = execute_local_golden_dataset_provisioning_v1(&options)?;
+                let ready = report["ready"] == true;
+                println!("{}", serde_json::to_string(&report)?);
+                if !ready {
+                    std::process::exit(2);
+                }
+            }
+        }
         _ => {
             return Err(concat!(
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
@@ -624,7 +647,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
                 " | research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
                 " | external-authority-intake [--author-config PATH --author-config-hash sha256:...] [--release-attestor-config PATH --release-attestor-config-hash sha256:...] [--require-ready]",
-                " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]"
+                " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]",
+                " | local-golden-dataset-provision --action plan|execute [options]"
             )
             .into());
         }

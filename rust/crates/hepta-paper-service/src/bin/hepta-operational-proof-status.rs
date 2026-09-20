@@ -2,8 +2,31 @@
 use hepta_paper_service::operational_status::capability_operational_proof_status_v1;
 use std::{
     env,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
+
+fn lexical_absolute_path(path: PathBuf) -> PathBuf {
+    let path = if path.is_absolute() {
+        path
+    } else {
+        env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(component) => normalized.push(component),
+        }
+    }
+    normalized
+}
 
 fn environment_path(name: &str) -> Option<PathBuf> {
     let value = env::var_os(name)?;
@@ -11,15 +34,11 @@ fn environment_path(name: &str) -> Option<PathBuf> {
         return None;
     }
     let path = PathBuf::from(value);
-    Some(if path.is_absolute() {
-        path
-    } else {
-        env::current_dir().ok()?.join(path)
-    })
+    Some(lexical_absolute_path(path))
 }
 
 fn compiled_workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    lexical_absolute_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
 }
 
 fn default_asset_root(workspace_root: &Path) -> PathBuf {

@@ -131,7 +131,14 @@ fn composition_verifies_pinned_evidence_without_promoting_unimplemented_gates() 
         .unwrap()
     };
     let mut report = inspect(&options);
-    assert_eq!(report["inspectionErrors"], json!([]), "{report}");
+    assert!(
+        report["inspectionErrors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error == "full_production_package_readiness_command_reference_invalid"),
+        "{report}"
+    );
     assert_eq!(
         report["independentExternalOwnerAcceptanceReady"], true,
         "{report}"

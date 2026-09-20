@@ -2240,9 +2240,11 @@
         "rust/crates/hepta-paper-service/src/full_production_readiness/owner.rs",
         "rust/crates/hepta-paper-service/src/full_production_readiness/policy.rs",
         "rust/crates/hepta-paper-service/src/operational_status/production.rs",
-        "rust/crates/hepta-paper-service/src/full_production_readiness/policy_tests.rs"
+        "rust/crates/hepta-paper-service/src/full_production_readiness/policy_tests.rs",
+        "rust/crates/hepta-paper-service/src/full_production_readiness/package_recovery_tests.rs",
+        "rust/crates/hepta-paper-service/src/full_production_readiness/offhost.rs"
       ],
-      "remaining": "Rust now composes pinned UID-0 owner references, actual Ed25519 owner acceptance, all 16 operational capability proofs using only the explicit public trust store, retained source/evidence currentness and the five-axis Node readiness policy. It preserves ambient/deployment environment roots and reports real per-axis verification. Package recovery command execution, off-host WORM custody verification and live automation/provider/release-attestor aggregation still require native adapters; accepted command parity and full production remain blocked. See docs/modules/FULL_PRODUCTION_READINESS_HANDOFF.md.",
+      "remaining": "Rust now pins and executes the package readiness helper through a protected descriptor with bounded output, timeout, restricted environment, exact JSON policy and postflight identity checks. It validates the exact off-host WORM status protocol but does not probe mounts or custody stores. Native off-host WORM custody and live automation/provider/release-attestor aggregation still require target-host/external evidence; accepted command parity and full production remain blocked. See docs/modules/FULL_PRODUCTION_READINESS_HANDOFF.md.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
@@ -2255,7 +2257,11 @@
         "rust/crates/hepta-paper-service/src/owner_status/reader.rs",
         "rust/oracle/full-production-owner-v1.mjs",
         "rust/oracle/full-production-readiness-policy-v1.mjs",
-        "rust/oracle/operational-status-v1.mjs"
+        "rust/oracle/operational-status-v1.mjs",
+        "rust/crates/hepta-paper-service/src/full_production_readiness/package_recovery.rs",
+        "rust/crates/hepta-paper-service/src/full_production_readiness/offhost.rs",
+        "rust/oracle/full-production-package-recovery-v1.mjs",
+        "rust/oracle/offhost-worm-status-v1.mjs"
       ],
       "testCases": [
         {
@@ -2285,6 +2291,18 @@
         {
           "path": "rust/crates/hepta-paper-service/src/full_production_readiness/owner.rs",
           "symbol": "owner_inspection_matches_node_for_real_signature_and_family_mutations"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_production_readiness/package_recovery_tests.rs",
+          "symbol": "pinned_child_ready_and_unavailable_inspections_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_production_readiness/package_recovery_tests.rs",
+          "symbol": "protected_command_rejects_mutable_alias_and_identity_drift"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_production_readiness/offhost.rs",
+          "symbol": "node_target_and_aggregate_fixture_matches_rust_protocol_boundary"
         }
       ]
     },

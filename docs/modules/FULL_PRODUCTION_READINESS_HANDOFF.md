@@ -3,8 +3,9 @@
 The Rust `full-production-readiness` route now verifies independent owner
 acceptance and production operational receipts before applying the five-axis
 readiness policy. The command remains `partial_local_source`: package recovery
-helper execution, live automation aggregation and off-host WORM custody adapters
-still block full production. A successful synthetic test is not external approval.
+readiness can still block when the pinned helper is unavailable or not ready,
+while live automation aggregation and off-host WORM custody adapters still
+block full production. A successful synthetic test is not external approval.
 
 ## Composition and inputs
 
@@ -64,8 +65,9 @@ acceptances and all 16 independent operational proofs.
 
 The pure policy API takes JSON observations; callers must establish their
 authenticity at the composition boundary. A supplied JSON value is not an
-authority object. The CLI accepts no caller-supplied ready aggregate. The CLI's
-three incomplete adapters supply explicit blocked observations. Missing or
+authority object. The CLI accepts no caller-supplied ready aggregate. Its two
+incomplete external adapters supply explicit blocked observations; the package
+adapter supplies a bounded observation or a concrete failure. Missing or
 malformed inputs produce `inspectionErrors` and blockers; no fabricated commit
 identity is inserted. Final output includes a content-bound
 `fullProductionReadinessStatusHash`, and `--require-full-production` exits with
@@ -88,9 +90,13 @@ cargo +1.98.0 test --manifest-path rust/Cargo.toml -p hepta-paper-service \
   --lib operational_status::production --locked
 ```
 
-Next implementation work must preserve the incumbent protected-command path,
+The package adapter now preserves the incumbent protected-command path,
 descriptor execution, restricted child environment, timeout/output bounds and
-postflight identity checks for package recovery. WORM and automation adapters
-must inspect their actual external evidence and target host. Full command parity,
+postflight identity checks. Its differential suite covers ready/unavailable
+responses, invalid protocol, nonzero child, output overflow, aliases, identity
+drift, descendant-held pipes and environment filtering. The off-host module
+validates the exact 28-field status crossing and freshness predicate but does
+not manufacture mount or custody evidence. WORM and automation adapters must
+still inspect their actual external evidence and target host. Full command parity,
 independent acceptance, production activation and Node retirement remain separate
 unfulfilled gates in the [command ledger](../migration/NODE_RUST_GAP_CLOSURE.md).

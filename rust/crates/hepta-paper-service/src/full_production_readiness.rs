@@ -1,11 +1,14 @@
 //! Full-production readiness with pinned independent owner and operational proof
 //! verification. The five-axis policy revalidates evidence at aggregation time.
-//! Package helper execution, live automation, and off-host WORM verification
-//! remain explicit blocking gates until their native adapters are implemented.
+//! Package helper execution is bounded and descriptor-pinned. Live automation
+//! and off-host WORM verification remain explicit blocking gates until their
+//! native adapters are implemented.
 
 #![forbid(unsafe_code)]
 
+pub mod offhost;
 pub mod owner;
+mod package_recovery;
 pub mod policy;
 
 #[cfg(test)]
@@ -409,7 +412,6 @@ fn inspect_with_owner_references(
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
     let mut blockers = vec![
-        "rust_full_production_package_recovery_execution_not_ported".to_owned(),
         "rust_full_production_offhost_worm_custody_verification_not_ported".to_owned(),
         "rust_full_production_automation_plane_aggregation_not_ported".to_owned(),
     ];
@@ -495,13 +497,62 @@ fn inspect_with_owner_references(
     if !options.live_release_attestor {
         blocker(&mut blockers, "live_release_attestor_not_requested");
     }
-    let package_inspection = json!({
-        "version": 1, "kind": "PackageRetentionRecoveryReadinessInspection",
-        "status": "not_executed", "ready": false,
-    });
+    let package_inspection = match (
+        options.package_recovery_readiness_command.as_deref(),
+        options.package_recovery_readiness_command_sha256.as_deref(),
+    ) {
+        (Some(command), Some(command_hash)) if package_command["referenceValid"] == true => {
+            match package_recovery::query_package_retention_recovery_readiness_v1(
+                command,
+                command_hash,
+                &root,
+                &runtime_root,
+                workspace_root,
+                &deployment_environment.environment,
+            ) {
+                Ok(result) => result["inspection"].clone(),
+                Err(error) => {
+                    inspection_errors.push(error);
+                    json!({
+                        "version": 1, "kind": "PackageRetentionRecoveryReadinessInspection",
+                        "status": "not_executed", "ready": false,
+                    })
+                }
+            }
+        }
+        _ => json!({
+            "version": 1, "kind": "PackageRetentionRecoveryReadinessInspection",
+            "status": "not_executed", "ready": false,
+        }),
+    };
+    // Keep the nested value on the exact Node protocol boundary even when no
+    // native mount/custody probe has run. This is a blocked observation, not a
+    // fabricated qualification claim.
+    let worm_contract_id = contract_id.unwrap_or("invalid-contract");
+    let worm_target_root = offhost_contract
+        .as_ref()
+        .and_then(|value| value["targetMountRoot"].as_str())
+        .filter(|value| value.starts_with('/'))
+        .unwrap_or("/");
     let worm_inspection = json!({
         "version": 1, "kind": "OffhostWormTargetStatus",
-        "status": "not_verified", "ready": false,
+        "status": "offhost_worm_target_blocked",
+        "contractId": worm_contract_id,
+        "targetMountRoot": worm_target_root,
+        "mountAvailable": false, "mountIdentity": null, "mountObservationHash": null,
+        "targetDirectoryIdentity": null, "targetDeviceMajorMinor": null, "targetMountId": null,
+        "mountDeviceMatchesTarget": false, "mountIdMatchesTarget": false,
+        "expectedStorageIdentityHash": null, "storageIdentityMatchesContract": false,
+        "distinctDevice": false, "storageIdentityHash": null,
+        "custodyRequired": true, "currentProtectionLevel": "unknown",
+        "custodyDeclaredQualified": false, "offHostOrOffsiteCustodyQualified": false,
+        "custodyStatus": "offhost_or_offsite_custody_blocked", "custodyBlockers": [
+            "rust_full_production_offhost_worm_custody_verification_not_ported"
+        ],
+        "custodyEvidenceStatus": "offhost_worm_custody_evidence_blocked",
+        "custodyEvidenceBundleHash": null, "custodyTrustStoreHash": null,
+        "custodyEvidenceExpiresAt": null,
+        "blockers": ["rust_full_production_offhost_worm_custody_verification_not_ported"],
     });
     let automation_report = json!({
         "version": 2, "kind": "AutomationPlaneStatus",

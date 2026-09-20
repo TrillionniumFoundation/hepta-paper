@@ -80,8 +80,16 @@ fn pinned_references_still_fail_closed_without_external_authority() {
         report["references"]["packageRecoveryReadinessCommand"]["hashMatches"],
         true
     );
+    assert_eq!(report["packageRetentionRecoveryReady"], false);
     assert!(
-        report["blockers"]
+        report["inspectionErrors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "full_production_package_readiness_command_reference_invalid")
+    );
+    assert!(
+        !report["blockers"]
             .as_array()
             .unwrap()
             .iter()

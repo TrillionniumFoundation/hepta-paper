@@ -1063,7 +1063,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some("autonomous-submission-dispatcher") => {
-            let options = match parse_autonomous_submission_dispatcher_arguments(&args[1..]) {
+            let mut options = match parse_autonomous_submission_dispatcher_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
                     eprintln!("{error}\n{AUTONOMOUS_SUBMISSION_DISPATCHER_USAGE}");
@@ -1073,6 +1073,18 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             if options.help {
                 println!("{AUTONOMOUS_SUBMISSION_DISPATCHER_USAGE}");
                 return Ok(());
+            }
+            if options.runtime_root.is_none() {
+                options.runtime_root = env::var("HEPTA_PAPER_RUNTIME_ROOT")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from);
+            }
+            if options.root.is_none() {
+                options.root = env::var("HEPTA_PAPER_ASSET_ROOT")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from);
             }
             let workspace_root = env::current_dir()?;
             let report = inspect_autonomous_submission_dispatcher_v1(

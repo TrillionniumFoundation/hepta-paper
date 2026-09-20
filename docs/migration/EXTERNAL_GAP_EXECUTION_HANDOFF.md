@@ -1,7 +1,7 @@
 # Rust replacement external-gap execution handoff
 
 This handoff is bound to candidate commit
-`9169269af2c2831a53af109da6dbb164014aa6c6` on
+`d5ab9df79a360ceab9c4de03e9befcf982b44dc3` on
 `codex/full-rust-replacement-progress-20260916`. It is an executable packet
 for evidence that cannot be produced by a local source checkout. It does not
 mark a route implemented, accepted, activated or retired.
@@ -12,14 +12,14 @@ The candidate branch is equal locally and remotely. The current full-history
 branch inventory is:
 
 ```text
-candidateCommit=9169269af2c2831a53af109da6dbb164014aa6c6
-candidateTree=2abbe003997eb46c36c17ff5467ec0fb125805f1
+candidateCommit=d5ab9df79a360ceab9c4de03e9befcf982b44dc3
+candidateTree=be97682a47398d03749f9ccf222ef4e2246c6c03
 branchCount=228
 same_tree=1
 ancestor=49
 diverged=178
 unresolvedBranchCount=178
-branchAuditSha256=sha256:f6951cca9cc3ce01a7d29d6d9c156b61f89e00f36114766421a736264c736476
+branchAuditSha256=sha256:a8c01b3aa4573b26c1389aeae7732d60b40e267d54d4f1e3ae3ca7fbbf6f945b
 ```
 
 Run the read-only audit from a full-history checkout:
@@ -42,12 +42,16 @@ activation is false and Node retirement is false. The generated ledger is
 bound to:
 
 ```text
-sha256:752cd3b60dd94944510d1aa55c83c0a72c344c4637af019373857f10f4b5e93b
+sha256:bf3a664c8ae723d5f8acde3accb23e178b9ec1c38fa954407b4083ccfc066735
 ```
 
 A bounded Rust preflight is evidence about inputs and safety boundaries. It is
 not evidence that a provider, signer, portal, target host or production writer
-performed the missing action.
+performed the missing action. Full-production readiness now preserves ambient
+`HEPTA_PAPER_ASSET_ROOT`/`HEPTA_PAPER_RUNTIME_ROOT` before applying a pinned
+deployment-environment file, and the standalone operational/owner verifier CLIs
+follow the incumbent environment/default-root resolution. These changes improve
+local behavior parity but do not create external acceptance.
 
 ## External execution packages
 

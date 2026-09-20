@@ -1,7 +1,8 @@
 //! Property order is observable in Node's JSON.stringify(rebuilt) comparison.
 //! Keep it until the wire contract has been checked, before projecting to Value.
 
-use crate::online_runtime_activation::ordered_json::Json;
+use crate::online_runtime_activation::ordered_json::{Json, parse_ordered};
+use hepta_legacy_compatibility::parse_and_hash_production_record_v1;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -51,22 +52,71 @@ fn ordered(value: Option<&Json>, keys: &[&str]) -> bool {
     matches!(value, Some(Json::Object(entries)) if entries.iter().map(|(key, _)| key.as_str()).eq(keys.iter().copied()))
 }
 
+fn has_unpaired_surrogate(value: &Json) -> bool {
+    match value {
+        Json::Utf16String(units) => {
+            char::decode_utf16(units.iter().copied()).any(|item| item.is_err())
+        }
+        Json::Scalar(_) => false,
+        Json::Array(values) => values.iter().any(has_unpaired_surrogate),
+        Json::Object(entries) => entries
+            .iter()
+            .any(|(_, value)| has_unpaired_surrogate(value)),
+    }
+}
+
+fn ascii_string(value: Option<&Json>) -> Option<String> {
+    let Json::Utf16String(units) = value? else {
+        return value.and_then(Json::string).map(str::to_owned);
+    };
+    let text = String::from_utf16(units).ok()?;
+    text.is_ascii().then_some(text)
+}
+
+fn verify_utf16_hash(parsed: &Json, value: &Value) -> bool {
+    if !has_unpaired_surrogate(parsed)
+        || !super::verify_personal_gpu_operational_receipt_shape(value)
+    {
+        return false;
+    }
+    let Json::Object(entries) = parsed else {
+        return false;
+    };
+    let Some(receipt_hash) = ascii_string(parsed.get("personalGpuOperationalReceiptHash")) else {
+        return false;
+    };
+    let payload = Json::Object(
+        entries
+            .iter()
+            .filter(|(key, _)| key != "personalGpuOperationalReceiptHash")
+            .cloned()
+            .collect(),
+    );
+    let Ok(payload) = payload.stringify() else {
+        return false;
+    };
+    parse_and_hash_production_record_v1("PersonalGpuOperationalReceipt", payload.as_bytes())
+        .ok()
+        .is_some_and(|computed| computed.as_str() == receipt_hash)
+}
+
 fn parse(bytes: &[u8]) -> Result<(Json, Value), PersonalGpuReceiptWireError> {
     // Buffer.toString('utf8') replaces malformed UTF-8 before JSON.parse.
+    // The production parser additionally retains unpaired UTF-16 surrogate
+    // values and overflowing IEEE-754 numbers, both of which serde_json
+    // rejects even though V8 accepts them.
     let text = String::from_utf8_lossy(bytes);
-    let parsed: Json = serde_json::from_str(&text).map_err(|_| PersonalGpuReceiptWireError)?;
+    let parsed = parse_ordered(text.as_bytes()).map_err(|_| PersonalGpuReceiptWireError)?;
     if !ordered(Some(&parsed), &RECEIPT_ORDER)
         || !ordered(parsed.get("localPolicy"), &POLICY_ORDER)
         || !ordered(parsed.get("releaseBoundary"), &RELEASE_ORDER)
     {
         return Err(PersonalGpuReceiptWireError);
     }
-    let normalized = parsed
-        .stringify()
-        .map_err(|_| PersonalGpuReceiptWireError)?;
-    let value: Value =
-        serde_json::from_str(&normalized).map_err(|_| PersonalGpuReceiptWireError)?;
-    if !super::verify_personal_gpu_operational_receipt(&value) {
+    let value = parsed.to_value();
+    if !super::verify_personal_gpu_operational_receipt(&value)
+        && !verify_utf16_hash(&parsed, &value)
+    {
         return Err(PersonalGpuReceiptWireError);
     }
     Ok((parsed, value))
@@ -90,6 +140,7 @@ fn pretty(value: &Json, depth: usize) -> Result<String, PersonalGpuReceiptWireEr
     let indent = format!("{pad}  ");
     match value {
         Json::Scalar(_) => value.stringify().map_err(|_| PersonalGpuReceiptWireError),
+        Json::Utf16String(_) => value.stringify().map_err(|_| PersonalGpuReceiptWireError),
         Json::Array(values) => {
             if values.is_empty() {
                 return Ok("[]".into());

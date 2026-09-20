@@ -175,12 +175,13 @@
         "rust/crates/hepta-paper-service/tests/automation_status_help.rs",
         "rust/crates/hepta-paper-service/src/automation_readiness_policy_tests.rs"
       ],
-      "remaining": "Rust now emits byte-identical deterministic AutomationStatusUsage help metadata for automation-status --help and --json --help and ports the pure JSON readiness evaluator, readiness-level projection, and exit-code policy with Node differential fixtures. The pure evaluator consumes already-observed values only; the command route still does not implement incumbent readiness observers, deployment-environment loading, handoff composition, provider/formal-sandbox/release-attestor effects, store/runtime probes, live authority effects, complete argument modes or independent command acceptance.",
+      "remaining": "Pure system-status projection (`deriveFullyAutonomousResearchSystemStatus`) now matches a dedicated Node oracle for ready, blocked, and malformed observed inputs. Rust now emits byte-identical deterministic AutomationStatusUsage help metadata for automation-status --help and --json --help and ports the pure JSON readiness evaluator, readiness-level projection, and exit-code policy with Node differential fixtures. The pure evaluator consumes already-observed values only; the command route still does not implement incumbent readiness observers, deployment-environment loading, handoff composition, provider/formal-sandbox/release-attestor effects, store/runtime probes, live authority effects, complete argument modes or independent command acceptance.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/automation_status.rs",
         "rust/crates/hepta-paper-service/src/automation_readiness_policy.rs",
-        "rust/oracle/automation-readiness-policy-v1.mjs"
+        "rust/oracle/automation-readiness-policy-v1.mjs",
+        "rust/oracle/automation-readiness-system-status-v1.mjs"
       ],
       "testCases": [
         {
@@ -198,6 +199,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/automation_readiness_policy_tests.rs",
           "symbol": "levels_and_exit_codes_match_node_for_each_gate"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_readiness_policy_tests.rs",
+          "symbol": "derived_fully_autonomous_status_matches_node_for_ready_blocked_and_malformed_inputs"
         }
       ]
     },
@@ -315,7 +320,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs"
       ],
-      "remaining": "Rust covers strict check argument parsing, bounded descriptor-pinned reads, ready/blocked wire verification, Node-compatible output for tested numeric/coercion/property-order cases and private fallback publication only on --check --write failures. Malformed JSON diagnostics, unpaired UTF-16 surrogates and out-of-range JSON numbers still need wire compatibility work. The complete nvidia-smi/Docker/PDE/deep-learning/CPU-oracle/holdout execute call chain remains source work; real-host qualification, second hardware, external authority, independent acceptance, production activation and Node retirement remain open.",
+      "remaining": "Rust covers strict check argument parsing, bounded descriptor-pinned reads, ready/blocked wire verification, Node-compatible output for tested numeric/coercion/property-order cases and private fallback publication only on --check --write failures. Malformed JSON diagnostics, unpaired UTF-16 surrogates and out-of-range JSON numbers now match the Node wire fixtures, including hash verification and fail-closed diagnostics. The complete nvidia-smi/Docker/PDE/deep-learning/CPU-oracle/holdout execute call chain remains source work; real-host qualification, second hardware, external authority, independent acceptance, production activation and Node retirement remain open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/personal_self_hosted_gpu.rs",
@@ -380,6 +385,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
           "symbol": "fallback_commit_requires_complete_code_provenance_like_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/personal_gpu_operational_gate_parity.rs",
+          "symbol": "utf16_surrogate_and_overflow_number_receipts_match_node_wire_semantics"
         }
       ]
     },

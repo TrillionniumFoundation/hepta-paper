@@ -173,8 +173,13 @@ fn raw_digest(bytes: &[u8]) -> LegacyRecordHash {
     LegacyRecordHash(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
 }
 
-#[derive(Debug)]
-enum NodeJson {
+/// A parsed production JSON value retaining JavaScript's UTF-16 string units.
+///
+/// Unlike `serde_json::Value`, this representation can carry an unpaired
+/// surrogate from `JSON.parse` and represents overflowing JSON numbers as
+/// non-finite `f64` values (which `JSON.stringify` later emits as `null`).
+#[derive(Debug, Clone)]
+pub enum ProductionJsonValue {
     Null,
     Bool(bool),
     Number(f64),
@@ -182,6 +187,8 @@ enum NodeJson {
     Array(Vec<Self>),
     Object(Vec<(Vec<u16>, Self)>),
 }
+
+type NodeJson = ProductionJsonValue;
 
 impl NodeJson {
     fn from_value(value: &Value, depth: usize) -> Result<Self, CompatibilityError> {
@@ -561,6 +568,13 @@ impl<'a> Parser<'a> {
             }
         }
     }
+}
+
+/// Parse JSON with the same UTF-16 string and IEEE-754 number semantics as
+/// the qualified Node production runtime. Object insertion order and
+/// duplicate-key position are retained for callers that need wire parity.
+pub fn parse_production_json_v1(input: &[u8]) -> Result<ProductionJsonValue, CompatibilityError> {
+    Parser::parse(input)
 }
 
 #[cfg(test)]

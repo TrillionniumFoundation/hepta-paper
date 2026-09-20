@@ -505,8 +505,15 @@ if (mode === 'numeric-gpu') {
     modelExecutableCodeEmbedded: false, checkpointExecutablePayloadAllowed: false, pickleAllowed: false };
   const {personalGpuOperationalReceiptHash, ...payload} = value;
   value.personalGpuOperationalReceiptHash = hashRecord('PersonalGpuOperationalReceipt', payload);
+} else if (mode === 'unpaired-surrogate') {
+  value.gpu.gpuModel = '\\ud800';
+  value = build(value);
+} else if (mode === 'overflow-number') {
+  value.createdAtEpochMs = 1e400;
+  value = build(value);
 }
 let text = JSON.stringify(value);
+if (mode === 'overflow-number') text = text.replace('"createdAtEpochMs":null', '"createdAtEpochMs":1e400');
 if (mode === 'float-spelling') text = text.replace('"memoryMiB":8188', '"memoryMiB":8188.0').replace('"version":1', '"version":1.0');
 if (mode === 'duplicate-key') text = text.replace('"version":1', '"version":0,"version":1');
 fs.chmodSync(path, 0o600);
@@ -556,6 +563,35 @@ fn node_receipt_coercions_unicode_and_nested_order_preserve_output_bytes() {
         );
         assert_eq!(rust, node, "{mode}");
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn utf16_surrogate_and_overflow_number_receipts_match_node_wire_semantics() {
+    for mode in ["unpaired-surrogate", "overflow-number"] {
+        let root = fixture_root();
+        let receipt = root.join("receipt.json");
+        write_fixture(&receipt, "ready");
+        mutate_fixture(&receipt, mode);
+        let path = receipt.to_str().unwrap();
+        let rust = run_rust(&[
+            "personal-gpu-operational-gate",
+            "--check",
+            "--receipt",
+            path,
+        ]);
+        let node = run_node(&[
+            "paper-core/bin/personal-gpu-operational-gate.mjs",
+            "--check",
+            "--receipt",
+            path,
+        ]);
+        assert_eq!(rust, node, "{mode}");
+        assert_eq!(rust.0, if mode == "overflow-number" { 2 } else { 0 });
+        if mode == "unpaired-surrogate" {
+            let output: Value = serde_json::from_str(&rust.1).expect("Rust surrogate output JSON");
+            assert!(output["gpu"]["gpuModel"].as_str().is_some());
+        }
     }
 }
 

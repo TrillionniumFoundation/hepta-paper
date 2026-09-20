@@ -361,6 +361,19 @@ pub(crate) fn verify_personal_gpu_receipt(value: &Value) -> bool {
 /// check route from accidentally accepting a forged readiness boolean while
 /// preserving the incumbent blocked-receipt semantics.
 pub fn verify_personal_gpu_operational_receipt(value: &Value) -> bool {
+    verify_personal_gpu_operational_receipt_inner(value, true)
+}
+
+/// Verify every receipt field except the production hash. This is used only
+/// by the raw wire adapter when a JSON string contains an unpaired UTF-16
+/// surrogate: Rust's `serde_json::Value` must project that unit to U+FFFD for
+/// structural checks, while the hash is still checked against the original
+/// UTF-16 wire tree.
+pub(crate) fn verify_personal_gpu_operational_receipt_shape(value: &Value) -> bool {
+    verify_personal_gpu_operational_receipt_inner(value, false)
+}
+
+fn verify_personal_gpu_operational_receipt_inner(value: &Value, check_hash: bool) -> bool {
     if !exact_keys(Some(value), &RECEIPT_KEYS)
         || value["version"] != 1
         || value["kind"] != KIND
@@ -473,7 +486,8 @@ pub fn verify_personal_gpu_operational_receipt(value: &Value) -> bool {
         return false;
     };
     object.remove("personalGpuOperationalReceiptHash");
-    production_hash_record_v1(KIND, &normalized)
-        .ok()
-        .is_some_and(|computed| computed.as_str() == receipt_hash)
+    !check_hash
+        || production_hash_record_v1(KIND, &normalized)
+            .ok()
+            .is_some_and(|computed| computed.as_str() == receipt_hash)
 }

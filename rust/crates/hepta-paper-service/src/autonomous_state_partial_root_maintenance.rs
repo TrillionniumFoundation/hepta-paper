@@ -4,25 +4,30 @@
 //! publish five missing databases.  Those writes and their external authority
 //! boundary are intentionally not represented here.  This module only reads
 //! bounded local inputs, checks their identity and lease/quiescence envelope,
-//! and emits a stable plan.  `execute` verifies the plan id and then remains
-//! fail-closed without touching the runtime or rescue roots.
+//! and emits a blocked observation. Complete SQLite schema, business-state and
+//! lease validation remain unported, so no executable plan identity is issued.
+//! `execute` remains fail-closed without touching runtime or rescue roots.
 
 #![forbid(unsafe_code)]
 
+use crate::{
+    journal_connector_coverage::qualification::canonical_instant_millis,
+    sqlite_mutation_coordinator::manifest::writer_manifest_hash_v1,
+    state_backup_authority::manifest::state_database_scope_hash_v1,
+    state_recoverability::cli::state_backup_writer_manifest_v1,
+};
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, OpenOptions},
-    io::Read,
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    fs,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
-const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
 const SHA256_PREFIX: &str = "sha256:";
 const EXECUTE_BLOCKER: &str = "rust_autonomous_state_partial_root_maintenance_execute_not_ported";
 const EXISTING_ROLES: &[&str] = &[
@@ -65,7 +70,7 @@ Required: --rescue-root PATH --writer-quiescence-receipt PATH
 Optional: --runtime-root PATH --action plan|execute --execute
           --maintenance-plan-id sha256:...
 
-Plan is a read-only bounded identity/quiescence preflight. Execute is
+Plan returns a blocked read-only observation, not an executable plan. Execute is
 deliberately fail-closed until rescue, lock, schema-repair, rollback and
 external-authority contracts have a reviewed native implementation."#;
 
@@ -288,48 +293,27 @@ fn safe_root(path: &Path, key: &str) -> Result<fs::Metadata> {
 }
 
 fn read_regular(path: &Path, key: &str) -> Result<Vec<u8>> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| error(format!("autonomous_state_partial_root_{key}_missing")))?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.nlink() != 1
-        || metadata.mode() & 0o022 != 0
-    {
-        return Err(error(format!(
-            "autonomous_state_partial_root_{key}_identity_invalid"
-        )));
-    }
-    if metadata.len() > MAX_INPUT_BYTES {
-        return Err(error(format!(
-            "autonomous_state_partial_root_{key}_too_large"
-        )));
-    }
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
-        .open(path)
-        .map_err(|_| error(format!("autonomous_state_partial_root_{key}_unreadable")))?;
-    let opened = file.metadata().map_err(|_| {
+    let first = crate::autonomous_state_provision::files::Snapshot::read(path).map_err(|_| {
         error(format!(
             "autonomous_state_partial_root_{key}_identity_invalid"
         ))
     })?;
-    if opened.dev() != metadata.dev() || opened.ino() != metadata.ino() || opened.nlink() != 1 {
+    first.assert_current().map_err(|_| {
+        error(format!(
+            "autonomous_state_partial_root_{key}_changed_during_read"
+        ))
+    })?;
+    let second = crate::autonomous_state_provision::files::Snapshot::read(path).map_err(|_| {
+        error(format!(
+            "autonomous_state_partial_root_{key}_changed_during_read"
+        ))
+    })?;
+    if first.observation() != second.observation() || first.bytes != second.bytes {
         return Err(error(format!(
-            "autonomous_state_partial_root_{key}_identity_changed"
+            "autonomous_state_partial_root_{key}_changed_during_read"
         )));
     }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.by_ref()
-        .take(MAX_INPUT_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| error(format!("autonomous_state_partial_root_{key}_unreadable")))?;
-    if bytes.len() as u64 > MAX_INPUT_BYTES {
-        return Err(error(format!(
-            "autonomous_state_partial_root_{key}_too_large"
-        )));
-    }
-    Ok(bytes)
+    Ok(first.bytes)
 }
 
 fn read_json(path: &Path, key: &str) -> Result<Value> {
@@ -362,12 +346,23 @@ fn metadata(path: &Path, key: &str) -> Result<Value> {
 
 fn manifest(root: &Path) -> Result<Value> {
     let path = root.join("paper-core/config/autonomous-research-state-databases.v1.json");
-    let value = read_json(&path, "state_database_manifest")?;
+    let snapshot =
+        crate::autonomous_state_provision::files::Snapshot::read(&path).map_err(|_| {
+            error("autonomous_state_partial_root_state_database_manifest_identity_invalid")
+        })?;
+    let value: Value = serde_json::from_slice(&snapshot.bytes)
+        .map_err(|_| error("autonomous_state_partial_root_state_database_manifest_json_invalid"))?;
     if value["version"] != 1
         || value["kind"] != "AutonomousResearchStateDatabaseManifest"
         || value["databases"]
             .as_array()
             .is_none_or(|rows| rows.len() != 10)
+        || value["databases"].as_array().is_none_or(|rows| {
+            rows.iter().any(|row| {
+                row["role"].as_str().is_none_or(str::is_empty)
+                    || row["relativePath"].as_str().is_none_or(str::is_empty)
+            })
+        })
     {
         return Err(error("autonomous_state_partial_root_manifest_invalid"));
     }
@@ -391,19 +386,21 @@ fn database_observations(
         let relative = row["relativePath"]
             .as_str()
             .ok_or_else(|| error("autonomous_state_partial_root_manifest_invalid"))?;
-        let path = runtime.join(relative);
-        if path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
+        let relative_path = Path::new(relative);
+        let path = runtime.join(relative_path);
+        if relative_path.is_absolute()
+            || relative_path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
         {
             return Err(error("autonomous_state_partial_root_database_path_invalid"));
         }
         match (fs::symlink_metadata(&path), role) {
             (Ok(_), _) => {
-                let file_meta = metadata(&path, "database")?;
-                let bytes = read_regular(&path, "database")?;
+                let file_meta = metadata(&path, &format!("database:{role}"))?;
+                let bytes = read_regular(&path, &format!("database:{role}"))?;
                 let source_sha256 = hash_bytes(&bytes);
-                instances.push(json!({"role":role,"sourceRelativePath":relative,"sourceSha256":source_sha256,"sourceFileIdentity":file_meta}));
+                instances.push(json!({"instanceId":role,"role":role,"sourceRelativePath":relative,"sourceSha256":source_sha256,"sourceFileIdentity":file_meta}));
                 existing.push(role.to_owned());
             }
             (Err(cause), _) if cause.kind() == std::io::ErrorKind::NotFound => {
@@ -422,14 +419,15 @@ fn database_observations(
     Ok((instances, existing, missing))
 }
 
-fn observed_at_millis() -> u64 {
-    SystemTime::now()
+fn observed_at_millis() -> Result<i64> {
+    let value = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
+        .map_err(|_| error("autonomous_state_partial_root_clock_invalid"))?
+        .as_millis();
+    i64::try_from(value).map_err(|_| error("autonomous_state_partial_root_clock_invalid"))
 }
 
-fn receipt(root: &Path, path: &Path) -> Result<Value> {
+fn receipt(root: &Path, path: &Path, scope: &str, writer_hash: &str) -> Result<Value> {
     let value = read_json(path, "writer_quiescence_receipt")?;
     if value["version"] != 1
         || value["kind"] != "AutonomousResearchStatePartialRootWriterQuiescenceReceipt"
@@ -437,14 +435,15 @@ fn receipt(root: &Path, path: &Path) -> Result<Value> {
         || value["status"] != "autonomous_research_state_partial_root_writers_quiesced"
         || value["serviceInspectionComplete"] != true
         || value["processInspectionComplete"] != true
-        || value["observedAt"].as_str().is_none_or(str::is_empty)
-        || value["expiresAt"].as_str().is_none_or(str::is_empty)
         || value["activeWriterProcessIds"]
             .as_array()
             .is_none_or(|rows| !rows.is_empty())
         || value["quiescedWriterServices"]
             .as_array()
             .is_none_or(|rows| {
+                if rows.len() != REQUIRED_SERVICES.len() {
+                    return true;
+                }
                 let mut selected = rows.iter().filter_map(Value::as_str).collect::<Vec<_>>();
                 selected.sort_unstable();
                 selected != REQUIRED_SERVICES
@@ -452,17 +451,52 @@ fn receipt(root: &Path, path: &Path) -> Result<Value> {
     {
         return Err(error("autonomous_state_partial_root_quiescence_invalid"));
     }
-    let expires_at = value["expiresAt"]
-        .as_str()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(u64::MAX);
-    if expires_at != u64::MAX && expires_at <= observed_at_millis() {
-        return Err(error("autonomous_state_partial_root_quiescence_expired"));
+    let instant = |key: &str| {
+        value[key]
+            .as_str()
+            .and_then(canonical_instant_millis)
+            .ok_or_else(|| error("autonomous_state_partial_root_quiescence_timestamp_invalid"))
+    };
+    let observed = instant("observedAt")?;
+    let expires = instant("expiresAt")?;
+    let now = observed_at_millis()?;
+    if observed > now || expires <= now || expires <= observed {
+        return Err(error(
+            "autonomous_state_partial_root_quiescence_expired_or_future",
+        ));
     }
-    if value["receiptHash"]
-        .as_str()
-        .is_none_or(|hash| !valid_hash(hash))
-    {
+    if value["databaseScopeHash"] != scope || value["writerManifestHash"] != writer_hash {
+        return Err(error(
+            "autonomous_state_partial_root_quiescence_scope_mismatch",
+        ));
+    }
+    // Node hashes this normalized payload; the input receiptHash and any extra
+    // fields are excluded. Opaque claims are never promoted to external authority.
+    let mut payload = serde_json::Map::new();
+    for key in [
+        "version",
+        "kind",
+        "status",
+        "runtimeRoot",
+        "databaseScopeHash",
+        "writerManifestHash",
+        "activeWriterProcessIds",
+        "serviceInspectionComplete",
+        "processInspectionComplete",
+        "observedAt",
+        "expiresAt",
+    ] {
+        payload.insert(key.to_owned(), value[key].clone());
+    }
+    payload.insert(
+        "quiescedWriterServices".to_owned(),
+        json!(REQUIRED_SERVICES),
+    );
+    let expected = record_hash(
+        "AutonomousResearchStatePartialRootWriterQuiescenceReceipt",
+        &Value::Object(payload),
+    )?;
+    if value["receiptHash"] != expected {
         return Err(error(
             "autonomous_state_partial_root_quiescence_hash_invalid",
         ));
@@ -472,13 +506,14 @@ fn receipt(root: &Path, path: &Path) -> Result<Value> {
 
 fn plan_payload(options: &AutonomousStatePartialRootMaintenanceOptions) -> Result<Value> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let runtime = fs::canonicalize(&options.runtime_root)
-        .map_err(|_| error("autonomous_state_partial_root_runtime_root_invalid"))?;
-    let rescue = fs::canonicalize(&options.rescue_root)
-        .map_err(|_| error("autonomous_state_partial_root_rescue_root_invalid"))?;
+    let runtime = options.runtime_root.clone();
+    let rescue = options.rescue_root.clone();
     let runtime_meta = safe_root(&runtime, "runtime_root")?;
     let rescue_meta = safe_root(&rescue, "rescue_root")?;
-    if runtime == rescue || runtime_meta.dev() != rescue_meta.dev() {
+    if runtime.starts_with(&rescue)
+        || rescue.starts_with(&runtime)
+        || runtime_meta.dev() != rescue_meta.dev()
+    {
         return Err(error("autonomous_state_partial_root_rescue_root_invalid"));
     }
     let manifest = manifest(&workspace_root)?;
@@ -494,21 +529,41 @@ fn plan_payload(options: &AutonomousStatePartialRootMaintenanceOptions) -> Resul
         return Err(error("autonomous_state_partial_root_input_shape_invalid"));
     }
     let dataset_meta = safe_root(&options.dataset_root, "dataset_root")?;
-    let quiescence = receipt(&runtime, &options.writer_quiescence_receipt)?;
+    let scope = state_database_scope_hash_v1(&json!(instances))
+        .map_err(|_| error("autonomous_state_partial_root_database_scope_invalid"))?;
+    let writer_manifest = state_backup_writer_manifest_v1()
+        .map_err(|_| error("autonomous_state_partial_root_writer_manifest_invalid"))?;
+    let writer_hash = writer_manifest_hash_v1(&writer_manifest)
+        .map_err(|_| error("autonomous_state_partial_root_writer_manifest_invalid"))?;
+    let quiescence = receipt(
+        &runtime,
+        &options.writer_quiescence_receipt,
+        &scope,
+        &writer_hash,
+    )?;
     let manifest_hash = record_hash("AutonomousResearchStateDatabaseManifest", &manifest)?;
     let machine_hash = record_hash("AutonomousResearchMachineIntakeConfiguration", &machine)?;
     let topic_hash = record_hash("AutonomousResearchTopicProducerProfile", &topic)?;
     let policy = json!({"maximumAttemptsPerEpoch":options.maximum_attempts_per_epoch,"maximumCostUsdPerEpoch":options.maximum_cost_usd_per_epoch});
     let policy_hash = record_hash("RuntimeReproducibilityRefreshPolicy", &policy)?;
-    let scope = record_hash(
-        "AutonomousResearchStatePartialRootDatabaseScope",
-        &json!(instances),
-    )?;
     let mut payload = json!({
         "version":1,
-        "kind":"AutonomousResearchStatePartialRootMaintenancePlan",
-        "status":"autonomous_research_state_partial_root_maintenance_plan_ready",
-        "ready":true,
+        "kind":"AutonomousResearchStatePartialRootMaintenanceObservation",
+        "status":"autonomous_research_state_partial_root_maintenance_preflight_blocked",
+        "ready":false,
+        "maintenancePlanId":null,
+        "maintenancePlanVerified":false,
+        "sqliteSchemaAndBusinessStateVerified":false,
+        "writerLeaseStateVerified":false,
+        "configurationSemanticIdentityVerified":false,
+        "runtimeMutated":false,
+        "rescueBundleCreated":false,
+        "externalAuthorityInvoked":false,
+        "blockers":[
+            "rust_autonomous_state_partial_root_sqlite_schema_business_state_and_lease_validation_not_ported",
+            "rust_autonomous_state_partial_root_configuration_semantic_identity_not_ported",
+            EXECUTE_BLOCKER
+        ],
         "protocol":"offline-partial-native-root-pre-transition-business-repair-v1",
         "runtimeRoot":runtime,
         "rescueRoot":rescue,
@@ -523,16 +578,19 @@ fn plan_payload(options: &AutonomousStatePartialRootMaintenanceOptions) -> Resul
         "runtimeReproducibilityPolicy":policy,
         "runtimeReproducibilityPolicyHash":policy_hash,
         "writerQuiescenceReceiptHash":quiescence["receiptHash"],
+        "writerQuiescenceEnvelopeVerified":true,
+        "writerManifestHash":writer_hash,
+        "writerManifestBinding":"compiled-original-writer-manifest-data",
         "rescueBundleAndCopyRestoreVerificationRequired":true,
         "exclusiveDatabaseLocksRequired":true,
         "onlineSchemaTransitionRequired":true,
         "externalAuthorityInvocationAllowed":false,
     });
-    let plan_id = record_hash(
-        "AutonomousResearchStatePartialRootMaintenancePlan",
+    let observation_hash = record_hash(
+        "AutonomousResearchStatePartialRootMaintenanceObservation",
         &payload,
     )?;
-    payload["maintenancePlanId"] = json!(plan_id);
+    payload["observationHash"] = json!(observation_hash);
     Ok(payload)
 }
 
@@ -545,20 +603,16 @@ pub fn inspect_autonomous_state_partial_root_maintenance_v1(
 pub fn execute_autonomous_state_partial_root_maintenance_v1(
     options: &AutonomousStatePartialRootMaintenanceOptions,
 ) -> Result<Value> {
-    let plan = inspect_autonomous_state_partial_root_maintenance_v1(options)?;
-    if options.expected_maintenance_plan_id.as_deref() != plan["maintenancePlanId"].as_str() {
-        return Err(error(
-            "autonomous_state_partial_root_maintenance_plan_mismatch",
-        ));
-    }
+    let observation = inspect_autonomous_state_partial_root_maintenance_v1(options)?;
     Ok(json!({
         "version":1,
         "kind":"AutonomousResearchStatePartialRootMaintenanceReceipt",
         "status":"autonomous_research_state_partial_root_maintenance_blocked",
         "ready":false,
-        "maintenancePlanId":plan["maintenancePlanId"],
-        "existingRoles":plan["existingRoles"],
-        "missingRoles":plan["missingRoles"],
+        "maintenancePlanId":null,
+        "maintenancePlanVerified":false,
+        "requestedMaintenancePlanId":options.expected_maintenance_plan_id,
+        "observation":observation,
         "externalAuthorityInvoked":false,
         "runtimeMutated":false,
         "rescueBundleCreated":false,

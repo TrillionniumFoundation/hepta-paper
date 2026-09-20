@@ -15,7 +15,8 @@ use std::{
 };
 use thiserror::Error;
 
-const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) mod files;
+
 const PROVISIONING_BLOCKER: &str = "rust_autonomous_state_provision_execute_not_ported";
 
 #[derive(Debug, Error)]
@@ -58,7 +59,9 @@ pub struct AutonomousStateProvisioningOptions {
 fn valid_hash(value: &str) -> bool {
     value.len() == 71
         && value.starts_with("sha256:")
-        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn parse_positive_u64(value: &str, key: &str) -> Result<u64> {
@@ -204,19 +207,9 @@ pub fn parse_autonomous_state_provisioning_arguments(
 }
 
 fn read_json(path: &Path) -> Result<Value> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| error("autonomous_state_provisioning_input_missing"))?;
-    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-        return Err(error(
-            "autonomous_state_provisioning_input_identity_invalid",
-        ));
-    }
-    if metadata.len() > MAX_INPUT_BYTES {
-        return Err(error("autonomous_state_provisioning_input_too_large"));
-    }
-    let bytes =
-        fs::read(path).map_err(|_| error("autonomous_state_provisioning_input_unreadable"))?;
-    serde_json::from_slice(&bytes)
+    let snapshot = files::Snapshot::read(path)
+        .map_err(|_| error("autonomous_state_provisioning_input_identity_invalid"))?;
+    serde_json::from_slice(&snapshot.bytes)
         .map_err(|_| error("autonomous_state_provisioning_input_json_invalid"))
 }
 
@@ -241,6 +234,11 @@ fn manifest(workspace_root: &Path) -> Result<Value> {
 }
 
 fn inspect_input(path: &Path, directory: bool) -> Result<Value> {
+    if !directory {
+        let snapshot = files::Snapshot::read(path)
+            .map_err(|_| error("autonomous_state_provisioning_input_identity_invalid"))?;
+        return Ok(snapshot.observation());
+    }
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| error("autonomous_state_provisioning_input_missing"))?;
     if metadata.file_type().is_symlink()
@@ -271,37 +269,23 @@ fn plan_payload(options: &AutonomousStateProvisioningOptions) -> Result<Value> {
         ));
     }
     let manifest = manifest(&options.workspace_root)?;
-    let machine_hash = machine
-        .get("configurationHash")
-        .and_then(Value::as_str)
-        .filter(|hash| valid_hash(hash))
-        .map(str::to_owned)
-        .unwrap_or(input_hash(
-            "AutonomousResearchMachineIntakeConfiguration",
-            &machine,
-        )?);
-    let topic_hash = topic
-        .get("producerProfileHash")
-        .and_then(Value::as_str)
-        .filter(|hash| valid_hash(hash))
-        .map(str::to_owned)
-        .unwrap_or(input_hash(
-            "AutonomousResearchTopicProducerProfile",
-            &topic,
-        )?);
-    let provider_hash = topic
-        .get("providerConfigurationHash")
-        .and_then(Value::as_str)
-        .filter(|hash| valid_hash(hash))
-        .map(str::to_owned)
-        .unwrap_or(input_hash(
-            "AutonomousResearchProviderConfiguration",
-            &topic,
-        )?);
+    // Never trust a caller-supplied hash field. The plan identity is derived
+    // from the pinned JSON bytes and separately reports those opaque fields.
+    let machine_hash = input_hash("AutonomousResearchMachineIntakeConfiguration", &machine)?;
+    let topic_hash = input_hash("AutonomousResearchTopicProducerProfile", &topic)?;
+    let provider_hash = input_hash("AutonomousResearchProviderConfiguration", &topic)?;
     let policy = json!({"maximumAttemptsPerEpoch": options.maximum_attempts_per_epoch, "maximumCostUsdPerEpoch": options.maximum_cost_usd_per_epoch});
     let policy_hash = input_hash("RuntimeReproducibilityRefreshPolicy", &policy)?;
     let manifest_hash = input_hash("AutonomousResearchStateDatabaseManifest", &manifest)?;
-    let identity = json!({"machineIntakeConfigurationHash": machine_hash, "machineIntakeGenesisAuthorityMode": options.machine_intake_genesis_authority, "providerCanaryPairMaximumCostUsd": options.maximum_cost_usd_per_epoch, "providerConfigurationHash": provider_hash, "runtimeReproducibilityRefreshPolicyHash": policy_hash, "topicProducerProfileHash": topic_hash, "writerManifestHash": input_hash("AutonomousResearchOnlineWriterOperationManifest", &json!({"version": 1}))?});
+    let writer_manifest_path = options.workspace_root.join(
+        "rust/crates/hepta-paper-service/src/state_recoverability/cli/writer-manifest.v1.json",
+    );
+    let writer_manifest = read_json(&writer_manifest_path)?;
+    let writer_hash = input_hash(
+        "AutonomousResearchOnlineWriterOperationManifest",
+        &writer_manifest,
+    )?;
+    let identity = json!({"machineIntakeConfigurationHash": machine_hash, "machineIntakeGenesisAuthorityMode": options.machine_intake_genesis_authority, "providerCanaryPairMaximumCostUsd": options.maximum_cost_usd_per_epoch, "providerConfigurationHash": provider_hash, "runtimeReproducibilityRefreshPolicyHash": policy_hash, "topicProducerProfileHash": topic_hash, "writerManifestHash": writer_hash, "callerDeclaredMachineIntakeConfigurationHash": machine.get("configurationHash"), "callerDeclaredTopicProducerProfileHash": topic.get("producerProfileHash"), "callerDeclaredProviderConfigurationHash": topic.get("providerConfigurationHash")});
     let roles = manifest["databases"]
         .as_array()
         .expect("validated")

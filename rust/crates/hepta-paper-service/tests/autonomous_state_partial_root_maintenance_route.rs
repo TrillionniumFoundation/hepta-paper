@@ -1,5 +1,4 @@
 use hepta_paper_service::autonomous_state_partial_root_maintenance::{
-    execute_autonomous_state_partial_root_maintenance_v1,
     inspect_autonomous_state_partial_root_maintenance_v1,
     parse_autonomous_state_partial_root_maintenance_arguments,
 };
@@ -104,7 +103,7 @@ fn parser_requires_double_gated_execute() {
 }
 
 #[test]
-fn execute_is_fail_closed_without_mutating_roots() {
+fn invalid_or_incomplete_sqlite_observation_fails_closed_without_mutation() {
     let (root, runtime, rescue, machine, topic, dataset) = fixture();
     let receipt = root.join("quiescence.json");
     let args = vec![
@@ -128,15 +127,12 @@ fn execute_is_fail_closed_without_mutating_roots() {
     let options = parse_autonomous_state_partial_root_maintenance_arguments(&args)
         .unwrap()
         .unwrap();
-    let plan = inspect_autonomous_state_partial_root_maintenance_v1(&options).unwrap();
-    assert_eq!(plan["ready"], true);
-    let mut execute = options.clone();
-    execute.action = "execute".into();
-    execute.execute = true;
-    execute.expected_maintenance_plan_id = Some(plan["maintenancePlanId"].as_str().unwrap().into());
-    let receipt = execute_autonomous_state_partial_root_maintenance_v1(&execute).unwrap();
-    assert_eq!(receipt["ready"], false);
-    assert_eq!(receipt["runtimeMutated"], false);
+    // The fixture deliberately contains non-SQLite bytes. The native boundary
+    // must reject the observation before issuing any plan identity or write.
+    let error = inspect_autonomous_state_partial_root_maintenance_v1(&options)
+        .expect_err("non-SQLite source must not become a ready plan");
+    println!("preflight error: {error}");
+    assert!(!error.to_string().is_empty());
     assert!(fs::read_dir(&rescue).unwrap().next().is_none());
     fs::remove_dir_all(root).unwrap();
 }

@@ -58,6 +58,10 @@ use hepta_paper_service::{
         StateSafetyInspectionOptionsV1, inspect_autonomous_research_state_safety_v1,
     },
     store_status::inspect_store_status_v1,
+    submission_handoff_export::{
+        SUBMISSION_HANDOFF_EXPORT_USAGE, execute_submission_handoff_export_v1,
+        inspect_submission_handoff_export_v1, parse_submission_handoff_export_arguments,
+    },
     verify_legacy_node_freeze_v1,
 };
 use std::{
@@ -1060,6 +1064,32 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
+        Some("submission-handoff-export") => {
+            let options = match parse_submission_handoff_export_arguments(&args[1..]) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("{error}\n{SUBMISSION_HANDOFF_EXPORT_USAGE}");
+                    std::process::exit(1);
+                }
+            };
+            if options.help {
+                println!("{SUBMISSION_HANDOFF_EXPORT_USAGE}");
+                return Ok(());
+            }
+            let report = if options.action == "export" {
+                execute_submission_handoff_export_v1(&options)?
+            } else {
+                inspect_submission_handoff_export_v1(&options)?
+            };
+            let blocked = report["status"]
+                != serde_json::Value::String("submission_handoff_export_preflight_ready".into())
+                || report["ready"] == serde_json::Value::Bool(false)
+                || options.action == "export";
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if blocked {
+                std::process::exit(2);
+            }
+        }
         Some("autonomous-supervisor") => {
             let mut action = "health".to_owned();
             let mut runtime_root = None;
@@ -1279,6 +1309,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]",
                 " | local-golden-dataset-provision --action plan|execute [options]",
                 " | personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
+                " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
                 " | personal-self-hosted-readiness [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help]"
             )
             .into());

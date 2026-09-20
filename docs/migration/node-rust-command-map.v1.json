@@ -1951,14 +1951,45 @@
     },
     {
       "id": "operator/submission-handoff-export",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "No reviewed Rust entrypoint or accepted compatibility mapping.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust submission-handoff-export --action inspect|export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/submission_handoff_export.rs",
+          "symbol": "parse_submission_handoff_export_arguments"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/submission_handoff_export.rs",
+          "symbol": "inspect_submission_handoff_export_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/submission_handoff_export.rs",
+          "symbol": "execute_submission_handoff_export_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/submission_handoff_export.rs"
+      ],
+      "remaining": "Rust now provides a bounded read-only request/layout preflight with nofollow regular-file identity checks, exact top-level request shape, campaign binding, production hash validation, and explicit no-mutation/no-provider semantics. Full Node parity still requires validating every nested authority record and consuming the current verified release/submission authority, crash-safe bundle publication/recovery, and independent acceptance; export action remains fail-closed and never publishes.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/submission_handoff_export.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/submission_handoff_export.rs",
+          "symbol": "help_is_explicitly_read_only_and_missing_request_fails_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/submission_handoff_export.rs",
+          "symbol": "export_action_is_never_reported_as_completed"
+        }
+      ]
     },
     {
       "id": "verify/release",

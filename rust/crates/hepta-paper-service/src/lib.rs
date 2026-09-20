@@ -60,6 +60,7 @@ pub mod state_database_inventory;
 pub mod state_recoverability;
 pub mod state_safety;
 pub mod store_status;
+pub mod submission_handoff_export;
 pub mod supervisor_health;
 mod worker;
 pub mod workflow;

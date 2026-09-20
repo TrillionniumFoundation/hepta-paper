@@ -1,8 +1,21 @@
 use serde_json::Value;
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn root() -> PathBuf {
-    let root = std::env::temp_dir().join(format!("hepta-supervisor-route-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "hepta-supervisor-route-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     fs::create_dir_all(&root).unwrap();
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     root

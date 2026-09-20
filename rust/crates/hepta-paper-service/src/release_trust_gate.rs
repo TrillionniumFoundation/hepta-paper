@@ -64,6 +64,40 @@ fn javascript_string_or_empty(value: Option<&Value>) -> String {
         .unwrap_or_default()
 }
 
+/// JSON.parse in the incumbent produces IEEE-754 numbers before the gate's
+/// record hash is computed.  serde_json can retain a lexical `1.0` float, so
+/// normalize integral finite values to the same JSON integer representation;
+/// this also makes `-0` serialize as the JavaScript `0`.
+fn normalize_javascript_json(value: &Value) -> Value {
+    match value {
+        Value::Number(number) => {
+            let Some(float) = number.as_f64() else {
+                return value.clone();
+            };
+            if !float.is_finite() || float.fract() != 0.0 {
+                return value.clone();
+            }
+            if (0.0..18_446_744_073_709_551_616.0).contains(&float) {
+                return Value::Number(serde_json::Number::from(float as u64));
+            }
+            if float >= -9_223_372_036_854_775_808.0 {
+                return Value::Number(serde_json::Number::from(float as i64));
+            }
+            value.clone()
+        }
+        Value::Array(values) => {
+            Value::Array(values.iter().map(normalize_javascript_json).collect())
+        }
+        Value::Object(values) => Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), normalize_javascript_json(value)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
 fn js_integer(value: Option<&Value>, label: &'static str) -> Result<u64, ReleaseTrustGateError> {
     let value = value.ok_or(ReleaseTrustGateError::CountInvalid(label))?;
     let number = match value {
@@ -138,6 +172,7 @@ fn build_release_trust_layer_gate_value_v1(
     release_bound_conformance_verified: u64,
     independent_production_operational_verified: u64,
 ) -> Result<Value, ReleaseTrustGateError> {
+    let release_commit_value = normalize_javascript_json(&release_commit_value);
     let release_commit = javascript_string_or_empty(Some(&release_commit_value));
     if release_commit.trim().is_empty() {
         return Err(ReleaseTrustGateError::ReleaseCommitRequired);

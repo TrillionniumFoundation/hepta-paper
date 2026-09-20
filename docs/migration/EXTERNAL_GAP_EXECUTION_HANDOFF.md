@@ -1,7 +1,7 @@
 # Rust replacement external-gap execution handoff
 
 This handoff is bound to the source-baseline candidate commit
-`d3bf4af366ea8644e053357ab5885f71a9943993` on
+`161d54f603152c95411beb7fc9a7ab79919ffe8d` on
 `codex/full-rust-replacement-progress-20260916`. It is an executable packet
 for evidence that cannot be produced by a local source checkout. It does not
 mark a route implemented, accepted, activated or retired.
@@ -12,15 +12,14 @@ The source-baseline branch was equal locally and remotely when captured. The
 full-history branch inventory for that baseline is:
 
 ```text
-candidateCommit=d3bf4af366ea8644e053357ab5885f71a9943993
-candidateTree=7c44c6b74ce8d79d9ba9af994cd8057fc429ea58
+candidateCommit=161d54f603152c95411beb7fc9a7ab79919ffe8d
+candidateTree=977a19fc6c34aafeb61401cd08f318d97641b219
 branchCount=228
 same_tree=0
-ancestor=49
+ancestor=50
 diverged=178
-descendant=1
-unresolvedBranchCount=179
-branchAuditSha256=sha256:4aec52de1b02f5dcb41105bdb47e27a0691bcdd146a732db9d5954bba07fd878
+unresolvedBranchCount=178
+branchAuditSha256=sha256:71b81a581d5c2556d1dfa95fc51bf553618171a7a1fc55c9e7cc20ed1d40f006
 ```
 
 Run the read-only audit from a full-history checkout:
@@ -43,7 +42,7 @@ activation is false and Node retirement is false. The generated ledger is
 bound to:
 
 ```text
-sha256:b459b8710dbac8d0c1224fbd8cdd18cf783de959708ebf1eeaef1118ecc01479
+sha256:a17f247de8d257d757dfbc488944686e51c444dd9d5367551dbba2a29384b8ca
 ```
 
 A bounded Rust preflight is evidence about inputs and safety boundaries. It is

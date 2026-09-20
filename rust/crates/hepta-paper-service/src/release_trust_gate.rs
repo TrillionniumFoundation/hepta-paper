@@ -28,6 +28,42 @@ fn bounded_count(
     Ok(value)
 }
 
+fn javascript_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(value) => value.as_f64().is_some_and(|value| value != 0.0),
+        Value::String(value) => !value.is_empty(),
+        // Arrays and objects are truthy in JavaScript, including empty ones.
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
+fn javascript_string(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_owned(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| match value {
+                Value::Null => String::new(),
+                _ => javascript_string(value),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Object(_) => "[object Object]".to_owned(),
+    }
+}
+
+fn javascript_string_or_empty(value: Option<&Value>) -> String {
+    value
+        .filter(|value| javascript_truthy(value))
+        .map(javascript_string)
+        .unwrap_or_default()
+}
+
 fn js_integer(value: Option<&Value>, label: &'static str) -> Result<u64, ReleaseTrustGateError> {
     let value = value.ok_or(ReleaseTrustGateError::CountInvalid(label))?;
     let number = match value {
@@ -45,6 +81,18 @@ fn js_integer(value: Option<&Value>, label: &'static str) -> Result<u64, Release
                 .or_else(|| value.strip_prefix("0X"))
             {
                 u64::from_str_radix(hex, 16)
+                    .map_err(|_| ReleaseTrustGateError::CountInvalid(label))? as f64
+            } else if let Some(binary) = value
+                .strip_prefix("0b")
+                .or_else(|| value.strip_prefix("0B"))
+            {
+                u64::from_str_radix(binary, 2)
+                    .map_err(|_| ReleaseTrustGateError::CountInvalid(label))? as f64
+            } else if let Some(octal) = value
+                .strip_prefix("0o")
+                .or_else(|| value.strip_prefix("0O"))
+            {
+                u64::from_str_radix(octal, 8)
                     .map_err(|_| ReleaseTrustGateError::CountInvalid(label))? as f64
             } else {
                 value
@@ -74,6 +122,23 @@ pub fn build_release_trust_layer_gate_v1(
     release_bound_conformance_verified: u64,
     independent_production_operational_verified: u64,
 ) -> Result<Value, ReleaseTrustGateError> {
+    build_release_trust_layer_gate_value_v1(
+        Value::String(release_commit.to_owned()),
+        capability_count,
+        implementation_verified,
+        release_bound_conformance_verified,
+        independent_production_operational_verified,
+    )
+}
+
+fn build_release_trust_layer_gate_value_v1(
+    release_commit_value: Value,
+    capability_count: u64,
+    implementation_verified: u64,
+    release_bound_conformance_verified: u64,
+    independent_production_operational_verified: u64,
+) -> Result<Value, ReleaseTrustGateError> {
+    let release_commit = javascript_string_or_empty(Some(&release_commit_value));
     if release_commit.trim().is_empty() {
         return Err(ReleaseTrustGateError::ReleaseCommitRequired);
     }
@@ -96,7 +161,7 @@ pub fn build_release_trust_layer_gate_v1(
         "version": 1,
         "kind": "ReleaseTrustLayerGate",
         "status": if implementation == capability_count && conformance == capability_count { "code_release_trust_layers_ready" } else { "code_release_trust_layers_blocked" },
-        "releaseCommit": release_commit,
+        "releaseCommit": release_commit_value,
         "capabilityCount": capability_count,
         "implementation": { "verified": implementation, "required": capability_count, "releaseBlocking": true },
         "releaseBoundConformance": { "verified": conformance, "required": capability_count, "releaseBlocking": true, "productionEligible": false },
@@ -122,11 +187,8 @@ pub fn build_release_trust_layer_gate_v1(
 pub fn build_release_trust_layer_gate_from_values_v1(
     input: &Value,
 ) -> Result<Value, ReleaseTrustGateError> {
-    let release_commit = input
-        .get("releaseCommit")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    build_release_trust_layer_gate_v1(
+    let release_commit = input.get("releaseCommit").cloned().unwrap_or(Value::Null);
+    build_release_trust_layer_gate_value_v1(
         release_commit,
         js_integer(input.get("capabilityCount"), "capability")?,
         js_integer(input.get("implementationVerified"), "implementation")?,

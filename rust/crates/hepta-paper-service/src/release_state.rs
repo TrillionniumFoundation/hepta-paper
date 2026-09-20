@@ -1,6 +1,7 @@
 //! Pure release-state consistency contract.
 
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -165,10 +166,23 @@ fn documentation(
 fn duplicate_values(values: &[String]) -> Vec<String> {
     let mut sorted = values.to_vec();
     sorted.sort();
-    sorted
+    let mut duplicates = sorted
         .windows(2)
         .filter(|pair| pair[0] == pair[1])
         .map(|pair| pair[0].clone())
+        .collect::<Vec<_>>();
+    // Match the Node Set-backed duplicateValues helper: a value repeated
+    // three or more times still contributes one diagnostic.
+    duplicates.dedup();
+    duplicates
+}
+
+fn unique_values(values: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    values
+        .iter()
+        .filter(|value| seen.insert((*value).clone()))
+        .cloned()
         .collect()
 }
 
@@ -187,8 +201,18 @@ fn inspect_tags(
                 .collect::<Option<Vec<_>>>()
         })
     };
-    let head = strings(head);
-    let all = strings(all);
+    // `inspectReleaseState` destructures `headTags = []` and `allTags = []`;
+    // an omitted property therefore means an empty snapshot.  Preserve the
+    // incumbent distinction between an omitted property and an explicit
+    // null/non-array value, which remains an invalid snapshot.
+    let head = match head {
+        None => Some(Vec::new()),
+        Some(value) => strings(Some(value)),
+    };
+    let all = match all {
+        None => Some(Vec::new()),
+        Some(value) => strings(Some(value)),
+    };
     if head.is_none() {
         errors.push("head_tag_snapshot_invalid".to_owned());
     }
@@ -210,7 +234,10 @@ fn inspect_tags(
         }
     }
     let current = format!("v{version_text}");
-    for tag in head.iter().filter(|tag| tag.starts_with('v')) {
+    for tag in unique_values(&head)
+        .iter()
+        .filter(|tag| tag.starts_with('v'))
+    {
         if version(
             tag.get(1..)
                 .map(|value| Value::String(value.to_owned()))
@@ -223,7 +250,10 @@ fn inspect_tags(
         }
     }
     if let Some(parsed) = parsed {
-        for tag in all.iter().filter(|tag| tag.starts_with('v')) {
+        for tag in unique_values(&all)
+            .iter()
+            .filter(|tag| tag.starts_with('v'))
+        {
             if let Some(other) = version(
                 tag.get(1..)
                     .map(|value| Value::String(value.to_owned()))

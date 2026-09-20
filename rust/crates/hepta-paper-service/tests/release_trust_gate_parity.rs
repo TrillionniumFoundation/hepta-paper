@@ -50,7 +50,13 @@ fn release_trust_gate_matches_node_oracle() {
         {"releaseCommit":"","capabilityCount":14,"implementationVerified":14,"releaseBoundConformanceVerified":14,"independentProductionOperationalVerified":0},
         {"releaseCommit":"commit-a","capabilityCount":14,"implementationVerified":15,"releaseBoundConformanceVerified":14,"independentProductionOperationalVerified":0},
         {"releaseCommit":"commit-a","capabilityCount":"14","implementationVerified":"14","releaseBoundConformanceVerified":null,"independentProductionOperationalVerified":false},
-        {"releaseCommit":"commit-a","capabilityCount":14,"implementationVerified":[],"releaseBoundConformanceVerified":[14],"independentProductionOperationalVerified":0}
+        {"releaseCommit":"commit-a","capabilityCount":14,"implementationVerified":[],"releaseBoundConformanceVerified":[14],"independentProductionOperationalVerified":0},
+        {"releaseCommit":123,"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":["commit-a"],"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":{},"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":[],"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"0b10","implementationVerified":2,"releaseBoundConformanceVerified":2,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"0o10","implementationVerified":8,"releaseBoundConformanceVerified":8,"independentProductionOperationalVerified":0}
     ]);
     let expected = oracle(&requests);
     for (index, request) in requests.as_array().unwrap().iter().enumerate() {

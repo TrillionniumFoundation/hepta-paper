@@ -6,7 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use hepta_legacy_compatibility::production_hash_record_v1;
+use hepta_legacy_compatibility::{production_digest_v1, production_hash_record_v1};
 use serde_json::{Value, json};
 use sha2::Digest;
 use std::{
@@ -184,6 +184,9 @@ fn read_request(path: &Path) -> Result<(Value, String), String> {
     if !parent_meta.is_dir() {
         return Err("submission_handoff_export_request_parent_not_directory".to_owned());
     }
+    if fs::canonicalize(parent).ok().as_deref() != Some(parent) {
+        return Err("submission_handoff_export_request_parent_symlinked".to_owned());
+    }
     let mut file = OpenOptions::new();
     file.read(true)
         .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC);
@@ -205,10 +208,20 @@ fn read_request(path: &Path) -> Result<(Value, String), String> {
     let after = handle
         .metadata()
         .map_err(|error| format!("submission_handoff_export_request_metadata_failed:{error}"))?;
+    let parent_after = fs::symlink_metadata(parent)
+        .map_err(|error| format!("submission_handoff_export_request_parent_unreadable:{error}"))?;
     if before.dev() != after.dev()
         || before.ino() != after.ino()
         || before.mode() != after.mode()
+        || before.nlink() != after.nlink()
         || before.len() != after.len()
+        || before.mtime() != after.mtime()
+        || before.mtime_nsec() != after.mtime_nsec()
+        || parent_after.dev() != parent_meta.dev()
+        || parent_after.ino() != parent_meta.ino()
+        || parent_after.mode() != parent_meta.mode()
+        || parent_after.nlink() != parent_meta.nlink()
+        || fs::canonicalize(parent).ok().as_deref() != Some(parent)
         || bytes.len() as u64 > REQUEST_MAX_BYTES
     {
         return Err("submission_handoff_export_request_changed_during_read".to_owned());
@@ -223,6 +236,190 @@ fn read_request(path: &Path) -> Result<(Value, String), String> {
             .collect::<String>()
     );
     Ok((value, content_hash))
+}
+
+fn paper_hash(value: &Value, kind: &str, hash_field: &str, aliases: &[&str]) -> Option<String> {
+    let mut payload = value.clone();
+    let map = payload.as_object_mut()?;
+    map.remove(hash_field);
+    for alias in aliases {
+        map.remove(*alias);
+    }
+    map.remove("semanticIdentityVersion");
+    map.remove("semanticIdentityHash");
+    let envelope = serde_json::json!({
+        "version": 1,
+        "kind": kind,
+        "payload": payload,
+    });
+    production_digest_v1(&envelope)
+        .ok()
+        .map(|digest| digest.as_str().to_owned())
+}
+
+fn verify_component_record(
+    blockers: &mut Vec<String>,
+    name: &str,
+    record: &Value,
+    kind: &str,
+    hash_field: &str,
+    aliases: &[&str],
+) {
+    let Some(object) = record.as_object() else {
+        blockers.push(format!("submission_handoff_export_{name}_required"));
+        return;
+    };
+    let Some(record_hash) = object.get(hash_field).and_then(Value::as_str) else {
+        blockers.push(format!("submission_handoff_export_{name}_hash_invalid"));
+        return;
+    };
+    if !sha256(&Value::String(record_hash.to_owned()))
+        || Some(record_hash) != paper_hash(record, kind, hash_field, aliases).as_deref()
+    {
+        blockers.push(format!("submission_handoff_export_{name}_hash_invalid"));
+    }
+}
+
+fn hashes_valid(record: &Value, fields: &[&str]) -> bool {
+    fields.iter().all(|field| sha256(&record[*field]))
+}
+
+fn nonempty(record: &Value, field: &str) -> bool {
+    record[field]
+        .as_str()
+        .is_some_and(|value| !value.is_empty())
+}
+
+fn verify_nested_contracts(value: &Value, blockers: &mut Vec<String>) {
+    let decision = &value["submissionDecisionPacket"];
+    let confirmed = decision["humanConfirmedFields"]
+        .as_array()
+        .map(|items| {
+            let mut values = items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            values.sort();
+            values.dedup();
+            values
+        })
+        .unwrap_or_default();
+    let expected_confirmed = [
+        "abstract",
+        "anonymity",
+        "authors",
+        "checklist",
+        "conflicts",
+        "coverLetter",
+        "keywords",
+        "subjectAreas",
+        "supplements",
+        "title",
+        "track",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    if decision["version"] != 1
+        || !nonempty(decision, "paperId")
+        || !nonempty(decision, "reviewedBy")
+        || !nonempty(decision, "reviewedAt")
+        || decision["reviewActorType"] != "human"
+        || decision["machineSuggestionsAreAuthority"] != false
+        || decision["localWorksheetGrantsAuthorization"] != false
+        || decision["blockers"]
+            .as_array()
+            .is_none_or(|items| !items.is_empty())
+        || confirmed != expected_confirmed
+    {
+        blockers.push("submission_handoff_export_decision_contract_invalid".to_owned());
+    }
+    if !decision["venueSubmissionPlanHash"].is_null()
+        && !sha256(&decision["venueSubmissionPlanHash"])
+    {
+        blockers.push("submission_handoff_export_decision_plan_hash_invalid".to_owned());
+    }
+
+    let preflight = &value["reviewedSubmitPreflightPacket"];
+    const PREFLIGHT_HASHES: [&str; 12] = [
+        "approvalHash",
+        "artifactPackageHash",
+        "freshVenueEvidenceBundleHash",
+        "independentRefereeAuthorityReceiptHash",
+        "liveSubmissionAuthorizationReceiptHash",
+        "manifestHash",
+        "manuscriptPromotionGateHash",
+        "outboxHash",
+        "replayGuardHash",
+        "reviewedSubmissionDecisionPacketHash",
+        "semanticPromotionLockHash",
+        "venueSubmissionPlanHash",
+    ];
+    if !hashes_valid(preflight, &PREFLIGHT_HASHES)
+        || preflight["blockers"]
+            .as_array()
+            .is_none_or(|items| !items.is_empty())
+        || preflight["safety"]["preflightOnly"] != true
+        || preflight["safety"]["grantsLiveExecutionInsideOverlay"] != false
+        || preflight["safety"]["requiresExternalExecutor"] != true
+        || preflight["safety"]["dualControlAuthorizationVerified"] != true
+        || preflight["safety"]["externalActionPerformed"] != false
+    {
+        blockers.push("submission_handoff_export_preflight_contract_invalid".to_owned());
+    }
+
+    let dispatch = &value["dispatchAuthorization"];
+    const DISPATCH_HASHES: [&str; 13] = [
+        "actionScopeKey",
+        "artifactPackageHash",
+        "controlledExecutorReceiptHash",
+        "dispatchCycleHash",
+        "executorCapabilitiesHash",
+        "executorDescriptorHash",
+        "liveAuthorizationHash",
+        "outboxHash",
+        "preflightHash",
+        "providerCapabilityVerificationReceiptHash",
+        "replayGuardHash",
+        "replayKey",
+        "reviewedSubmissionDecisionPacketHash",
+    ];
+    let expected_artifacts = dispatch["expectedArtifactHashes"].as_array();
+    let mut sorted_artifacts = expected_artifacts
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut unique_artifacts = sorted_artifacts.clone();
+    unique_artifacts.sort();
+    unique_artifacts.dedup();
+    sorted_artifacts.sort();
+    if !hashes_valid(dispatch, &DISPATCH_HASHES)
+        || expected_artifacts.is_none()
+        || sorted_artifacts.is_empty()
+        || sorted_artifacts
+            .iter()
+            .any(|hash| !sha256(&Value::String(hash.clone())))
+        || sorted_artifacts != unique_artifacts
+        || dispatch["attempt"]
+            .as_i64()
+            .is_none_or(|attempt| attempt <= 0)
+        || !nonempty(dispatch, "executorId")
+        || !nonempty(dispatch, "provider")
+        || !nonempty(dispatch, "accountId")
+        || !nonempty(dispatch, "nonce")
+        || !nonempty(dispatch, "portalRoute")
+        || dispatch["blockers"]
+            .as_array()
+            .is_none_or(|items| !items.is_empty())
+    {
+        blockers.push("submission_handoff_export_dispatch_contract_invalid".to_owned());
+    }
 }
 
 fn verify_request(value: &Value, expected_campaign: &str) -> Vec<String> {
@@ -253,37 +450,155 @@ fn verify_request(value: &Value, expected_campaign: &str) -> Vec<String> {
     {
         blockers.push("submission_handoff_export_request_hash_invalid".to_owned());
     }
-    for (name, field) in [
-        ("manifest", "manifestHash"),
-        ("handoff", "envelopeHash"),
-        ("replayGuard", "submissionReplayGuardHash"),
-        (
-            "reviewedSubmitPreflightPacket",
-            "reviewedSubmitPreflightPacketHash",
-        ),
-        (
-            "submissionDecisionPacket",
-            "reviewedSubmissionDecisionPacketHash",
-        ),
-        (
-            "dispatchAuthorization",
-            "submissionDispatchAuthorizationHash",
-        ),
+
+    verify_component_record(
+        &mut blockers,
+        "manifest",
+        &value["manifest"],
+        "PaperActionManifest",
+        "manifestHash",
+        &["hash"],
+    );
+    if value["manifest"]["kind"] != "PaperActionManifest"
+        || value["manifest"]["status"] != "ready_for_adapter"
+        || value["manifest"]["readyForAdapter"] != true
+        || value["manifest"]["action"] != "reviewed-submit"
+    {
+        blockers.push("submission_handoff_export_manifest_not_ready".to_owned());
+    }
+    if value["manifest"]["safety"]["executesExternalAction"] != false {
+        blockers.push("submission_handoff_export_manifest_safety_invalid".to_owned());
+    }
+    if !value["manifest"]["hash"].is_null()
+        && value["manifest"]["hash"] != value["manifest"]["manifestHash"]
+    {
+        blockers.push("submission_handoff_export_manifest_hash_alias_invalid".to_owned());
+    }
+
+    verify_component_record(
+        &mut blockers,
+        "handoff",
+        &value["handoff"],
+        "PaperHandoffEnvelope",
+        "envelopeHash",
+        &[],
+    );
+    if value["handoff"]["kind"] != "PaperHandoffEnvelope"
+        || value["handoff"]["status"] != "dry_run_ready"
+        || value["handoff"]["readyForExecution"] != false
+    {
+        blockers.push("submission_handoff_export_handoff_not_ready".to_owned());
+    }
+    if value["handoff"]["manifestHash"] != value["manifest"]["manifestHash"] {
+        blockers.push("submission_handoff_export_handoff_binding_invalid".to_owned());
+    }
+    if value["handoff"]["safety"]["executesExternalAction"] != false {
+        blockers.push("submission_handoff_export_handoff_safety_invalid".to_owned());
+    }
+
+    verify_component_record(
+        &mut blockers,
+        "replay_guard",
+        &value["replayGuard"],
+        "SubmissionReplayGuard",
+        "submissionReplayGuardHash",
+        &[],
+    );
+    if value["replayGuard"]["kind"] != "SubmissionReplayGuard"
+        || value["replayGuard"]["status"] != "dry_run_replay_allowed"
+        || value["replayGuard"]["manifestHash"] != value["manifest"]["manifestHash"]
+    {
+        blockers.push("submission_handoff_export_replay_guard_not_ready".to_owned());
+    }
+    if value["replayGuard"]["safety"]["grantsExecutionPermission"] != false
+        || value["replayGuard"]["safety"]["externalActionPerformed"] != false
+    {
+        blockers.push("submission_handoff_export_replay_guard_safety_invalid".to_owned());
+    }
+
+    verify_component_record(
+        &mut blockers,
+        "preflight",
+        &value["reviewedSubmitPreflightPacket"],
+        "ReviewedSubmitPreflightPacket",
+        "reviewedSubmitPreflightPacketHash",
+        &[],
+    );
+    if value["reviewedSubmitPreflightPacket"]["kind"] != "ReviewedSubmitPreflightPacket"
+        || value["reviewedSubmitPreflightPacket"]["status"]
+            != "reviewed_submit_preflight_ready_for_external_executor"
+        || value["reviewedSubmitPreflightPacket"]["externalExecutorHandoffReady"] != true
+        || value["reviewedSubmitPreflightPacket"]["liveExecutorBoundaryBlocked"] != false
+    {
+        blockers.push("submission_handoff_export_preflight_not_ready".to_owned());
+    }
+    if value["reviewedSubmitPreflightPacket"]["manifestHash"] != value["manifest"]["manifestHash"]
+        || value["reviewedSubmitPreflightPacket"]["replayGuardHash"]
+            != value["replayGuard"]["submissionReplayGuardHash"]
+        || value["reviewedSubmitPreflightPacket"]["safety"]["externalActionPerformed"] != false
+    {
+        blockers.push("submission_handoff_export_preflight_binding_invalid".to_owned());
+    }
+
+    verify_component_record(
+        &mut blockers,
+        "decision",
+        &value["submissionDecisionPacket"],
+        "ReviewedSubmissionDecisionPacket",
+        "reviewedSubmissionDecisionPacketHash",
+        &[],
+    );
+    if value["submissionDecisionPacket"]["kind"] != "ReviewedSubmissionDecisionPacket"
+        || value["submissionDecisionPacket"]["status"] != "reviewed_submission_decision_verified"
+        || value["submissionDecisionPacket"]["externalActionPerformed"] != false
+    {
+        blockers.push("submission_handoff_export_decision_not_ready".to_owned());
+    }
+
+    verify_component_record(
+        &mut blockers,
+        "dispatch",
+        &value["dispatchAuthorization"],
+        "SubmissionDispatchAuthorization",
+        "submissionDispatchAuthorizationHash",
+        &[],
+    );
+    if value["dispatchAuthorization"]["kind"] != "SubmissionDispatchAuthorization"
+        || value["dispatchAuthorization"]["status"] != "submission_dispatch_authorization_ready"
+        || value["dispatchAuthorization"]["externalActionPerformed"] != false
+    {
+        blockers.push("submission_handoff_export_dispatch_not_ready".to_owned());
+    }
+    if value["dispatchAuthorization"]["preflightHash"]
+        != value["reviewedSubmitPreflightPacket"]["reviewedSubmitPreflightPacketHash"]
+        || value["dispatchAuthorization"]["replayGuardHash"]
+            != value["replayGuard"]["submissionReplayGuardHash"]
+        || value["dispatchAuthorization"]["reviewedSubmissionDecisionPacketHash"]
+            != value["submissionDecisionPacket"]["reviewedSubmissionDecisionPacketHash"]
+    {
+        blockers.push("submission_handoff_export_dispatch_binding_invalid".to_owned());
+    }
+
+    verify_nested_contracts(value, &mut blockers);
+
+    for (name, record) in [
+        ("handoff", &value["handoff"]),
+        ("replay_guard", &value["replayGuard"]),
+        ("preflight", &value["reviewedSubmitPreflightPacket"]),
+        ("decision", &value["submissionDecisionPacket"]),
+        ("dispatch", &value["dispatchAuthorization"]),
     ] {
-        let value = &value[field_name(name)];
-        if !value.is_object() {
-            blockers.push(format!("submission_handoff_export_{name}_required"));
-        } else if !sha256(&value[field]) {
-            blockers.push(format!("submission_handoff_export_{name}_hash_invalid"));
+        if record["paperId"] != value["manifest"]["paperId"] {
+            blockers.push(format!("submission_handoff_export_{name}_paper_mismatch"));
+        }
+        if record["taskKey"] != value["manifest"]["taskKey"] {
+            blockers.push(format!("submission_handoff_export_{name}_task_mismatch"));
         }
     }
+
     blockers.push("submission_handoff_export_verified_release_required".to_owned());
     blockers.push("submission_handoff_export_persisted_authority_required".to_owned());
     blockers
-}
-
-fn field_name(name: &str) -> &str {
-    name
 }
 
 fn inspect_layout(bundle_root: &Path) -> Vec<String> {
@@ -301,10 +616,15 @@ fn inspect_layout(bundle_root: &Path) -> Vec<String> {
         Ok(_) => {}
         Err(_) => blockers.push("submission_handoff_export_output_parent_missing".to_owned()),
     }
-    if let Ok(meta) = fs::symlink_metadata(bundle_root)
-        && (!meta.is_dir() || meta.nlink() == 0)
-    {
-        blockers.push("submission_handoff_export_existing_bundle_root_invalid".to_owned());
+    match fs::symlink_metadata(bundle_root) {
+        Ok(meta) if !meta.is_dir() || meta.nlink() == 0 => {
+            blockers.push("submission_handoff_export_existing_bundle_root_invalid".to_owned());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => {
+            blockers.push("submission_handoff_export_existing_bundle_root_invalid".to_owned())
+        }
     }
     blockers
 }
@@ -325,14 +645,15 @@ pub fn inspect_submission_handoff_export_v1(
         }));
     }
     let mut blockers = inspect_layout(&options.bundle_root);
-    let (request, request_content_hash) = match read_request(&options.request_path) {
-        Ok(value) => value,
+    let (request, request_content_hash, request_read_ok) = match read_request(&options.request_path)
+    {
+        Ok(value) => (value.0, value.1, true),
         Err(error) => {
             blockers.push(error);
-            (Value::Null, String::new())
+            (Value::Null, String::new(), false)
         }
     };
-    if !request.is_null() {
+    if request_read_ok {
         blockers.extend(verify_request(&request, &options.campaign_id));
     }
     blockers.sort();
@@ -410,6 +731,68 @@ mod tests {
             error,
             "submission_handoff_export_bundle_root_absolute_path_required"
         );
+    }
+
+    #[test]
+    fn paper_manifest_hash_matches_node_record_hash_and_alias_is_ignored() {
+        let payload = json!({
+            "version": 1,
+            "kind": "PaperActionManifest",
+            "paperId": "p",
+            "taskKey": "t",
+            "action": "reviewed-submit",
+            "status": "ready_for_adapter",
+            "readyForAdapter": true,
+            "payload": {
+                "artifactPackageHash": format!("sha256:{}", "a".repeat(64)),
+                "manuscriptPromotionGateHash": format!("sha256:{}", "b".repeat(64))
+            },
+            "blockers": [],
+            "safety": {"executesExternalAction": false}
+        });
+        let mut sealed = payload.clone();
+        let expected = "sha256:7f53dcd8f7342d4d4d148cdcdaf13047531873a648b2d1b108d442a1ecc3db46";
+        sealed["manifestHash"] = Value::String(expected.to_owned());
+        sealed["hash"] = Value::String(expected.to_owned());
+        let mut blockers = Vec::new();
+        verify_component_record(
+            &mut blockers,
+            "manifest",
+            &sealed,
+            "PaperActionManifest",
+            "manifestHash",
+            &["hash"],
+        );
+        assert!(blockers.is_empty(), "unexpected blockers: {blockers:?}");
+    }
+
+    #[test]
+    fn null_request_is_not_treated_as_a_ready_empty_request() {
+        let parent = temp_path("null");
+        fs::create_dir_all(&parent).unwrap();
+        fs::write(parent.join("request.json"), "null").unwrap();
+        let options = SubmissionHandoffExportOptions {
+            campaign_id: "campaign".into(),
+            bundle_root: parent.join("bundle"),
+            request_path: parent.join("request.json"),
+            root: None,
+            runtime_root: None,
+            action: "inspect".into(),
+            help: false,
+        };
+        let report = inspect_submission_handoff_export_v1(&options).unwrap();
+        assert_eq!(
+            report["status"],
+            "submission_handoff_export_preflight_blocked"
+        );
+        assert!(
+            report["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "submission_handoff_export_request_object_required")
+        );
+        let _ = fs::remove_dir_all(parent);
     }
 
     #[test]

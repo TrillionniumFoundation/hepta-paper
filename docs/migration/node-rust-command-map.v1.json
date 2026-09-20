@@ -2006,7 +2006,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/submission_handoff_export.rs"
       ],
-      "remaining": "Rust now provides a bounded read-only request/layout preflight with nofollow regular-file identity checks, exact top-level request shape, campaign binding, production hash validation, and explicit no-mutation/no-provider semantics. Full Node parity still requires validating every nested authority record and consuming the current verified release/submission authority, crash-safe bundle publication/recovery, and independent acceptance; export action remains fail-closed and never publishes.",
+      "remaining": "Rust now provides a bounded read-only request/layout preflight with nofollow regular-file identity checks, stable parent/file metadata, exact top-level request shape, Node paper-record hash recomputation (including manifest hash alias), nested kind/status/safety/hash/binding and decision/preflight/dispatch contract checks, campaign binding, and explicit no-mutation/no-provider semantics. Full Node parity still requires persisted authority lineage verification, consuming the current verified release/submission authority, crash-safe bundle publication/recovery, broad JavaScript Date/number/wire coercion compatibility, and independent acceptance; export action remains fail-closed and never publishes.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/submission_handoff_export.rs"

@@ -2201,7 +2201,7 @@
     },
     {
       "id": "verify/repository-assets",
-      "rustEntrypoint": "hepta-paper-rust repository-assets ROOT MANIFEST [--handoff]",
+      "rustEntrypoint": "hepta-paper-rust repository-assets ROOT MANIFEST [--handoff] [--require-externalized]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -2215,9 +2215,10 @@
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs"
+        "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs",
+        "rust/crates/hepta-paper-service/tests/repository_assets_cli.rs"
       ],
-      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks, including the incumbent optional-transport guard; exact Node argument/runtime parity and independent release authority remain unimplemented.",
+      "remaining": "Rust ports the read-only repository asset identity, external-reference, restore-receipt and gitlink checks, including the incumbent optional-transport guard, strict duplicate/unknown/boolean argument handling, and --require-externalized fail-closed output. The Rust route still requires explicit ROOT/MANIFEST paths instead of the Node command's workspace defaults, and independent release authority remains unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/repository_assets.rs",
@@ -2227,6 +2228,14 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/repository_assets_parity.rs",
           "symbol": "repository_asset_inspection_and_handoff_match_node_oracle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/repository_assets_cli.rs",
+          "symbol": "require_externalized_matches_node_for_ready_manifest"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/repository_assets_cli.rs",
+          "symbol": "require_externalized_emits_blocked_report_and_preserves_strict_parser"
         }
       ]
     },

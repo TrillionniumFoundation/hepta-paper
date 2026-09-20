@@ -457,17 +457,44 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&migrate_node_store_v1(&PathBuf::from(&args[1]), target,)?)?
             );
         }
-        Some("repository-assets") if args.len() == 3 || args.len() == 4 => {
+        Some("repository-assets") if (3..=5).contains(&args.len()) => {
             let root = PathBuf::from(&args[1]);
             let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(&args[2])?)?;
-            let value = if args.get(3).map(String::as_str) == Some("--handoff") {
+            let mut handoff = false;
+            let mut require_externalized = false;
+            for token in args.iter().skip(3) {
+                if token == "--" {
+                    return Err("unexpected_cli_argument_separator".into());
+                }
+                let Some(raw) = token.strip_prefix("--") else {
+                    return Err(format!("unexpected_cli_positional:{token}").into());
+                };
+                let (key, inline_value) = raw
+                    .split_once('=')
+                    .map_or((raw, None), |(key, value)| (key, Some(value)));
+                let flag = match key {
+                    "handoff" => &mut handoff,
+                    "require-externalized" => &mut require_externalized,
+                    _ => return Err(format!("unknown_cli_option:--{key}").into()),
+                };
+                if inline_value.is_some() {
+                    return Err(format!("boolean_cli_option_does_not_take_value:--{key}").into());
+                }
+                if *flag {
+                    return Err(format!("duplicate_cli_option:--{key}").into());
+                }
+                *flag = true;
+            }
+            let inspection = inspect_repository_asset_externalization_v1(&root, &manifest)?;
+            let value = if handoff {
                 build_repository_asset_externalization_handoff_v1(&root, &manifest)?
-            } else if args.len() == 3 {
-                inspect_repository_asset_externalization_v1(&root, &manifest)?
             } else {
-                return Err("repository-assets accepts only --handoff".into());
+                inspection.clone()
             };
             println!("{}", serde_json::to_string(&value)?);
+            if require_externalized && inspection["fullyExternalized"] != true {
+                return Err("repository asset externalization required".into());
+            }
         }
         Some("command-surface") if args.len() == 2 || args.len() == 3 => {
             let root = PathBuf::from(&args[1]);
@@ -1713,7 +1740,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "automation-status --help [--json] | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
                 "store-migrate NODE_DB [TARGET_VERSION] | ",
-                "repository-assets ROOT MANIFEST [--handoff]",
+                "repository-assets ROOT MANIFEST [--handoff] [--require-externalized]",
                 " | command-surface ROOT [--write-package|--check-package|--npm-aliases|--help-artifact|--ci-matrix]",
                 " | verify-architecture ROOT [--json] [--strict]",
                 " | verify-critical [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--evidence ABSOLUTE_JSON_PATH --evidence-sha256 sha256:...] [--require-ok] [--json]",

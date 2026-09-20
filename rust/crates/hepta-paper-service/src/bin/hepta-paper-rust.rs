@@ -504,14 +504,15 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Some("repository-assets") => {
-            let (root, manifest_path, flag_start) = match args.len() {
-                1 | 2 if args.get(1).is_none_or(|value| value.starts_with("--")) => {
+            let (root, manifest_path, flag_start) =
+                if args.get(1).is_none_or(|value| value.starts_with("--")) {
                     let (root, manifest) = default_repository_asset_paths()?;
                     (root, manifest, 1)
-                }
-                count if count >= 3 => (PathBuf::from(&args[1]), PathBuf::from(&args[2]), 3),
-                _ => return Err("repository_asset_root_and_manifest_required".into()),
-            };
+                } else if args.len() >= 3 {
+                    (PathBuf::from(&args[1]), PathBuf::from(&args[2]), 3)
+                } else {
+                    return Err("repository_asset_root_and_manifest_required".into());
+                };
             let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(
                 manifest_path
                     .to_str()
@@ -560,7 +561,6 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 .get("fullyExternalized")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
-            eprintln!("DEBUG root={} manifest={} flags handoff={} require={} ready={} full={}", root.display(), manifest_path.display(), handoff, require_externalized, repository_boundary_ready, fully_externalized);
             if !repository_boundary_ready || (require_externalized && !fully_externalized) {
                 std::process::exit(1);
             }

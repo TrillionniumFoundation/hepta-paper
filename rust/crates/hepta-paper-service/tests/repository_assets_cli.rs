@@ -33,6 +33,15 @@ fn rust_command(root: &Path, manifest: &Path, flags: &[&str]) -> std::process::O
         .expect("repository-assets native command")
 }
 
+fn rust_default_command(flags: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .current_dir(repository_root())
+        .args(["repository-assets"])
+        .args(flags)
+        .output()
+        .expect("repository-assets native default command")
+}
+
 fn node_command(flags: &[&str]) -> std::process::Output {
     Command::new("node")
         .current_dir(repository_root())
@@ -40,6 +49,27 @@ fn node_command(flags: &[&str]) -> std::process::Output {
         .args(flags)
         .output()
         .expect("repository-assets Node command")
+}
+
+#[test]
+fn workspace_defaults_match_node_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
+    for flags in [
+        &[][..],
+        &["--handoff"][..],
+        &["--require-externalized"][..],
+        &["--handoff", "--require-externalized"][..],
+    ] {
+        let node = node_command(flags);
+        let native = rust_default_command(flags);
+        assert_eq!(native.status.code(), node.status.code(), "flags: {flags:?}");
+        assert_eq!(native.stderr, node.stderr, "flags: {flags:?}");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&native.stdout)?,
+            serde_json::from_slice::<Value>(&node.stdout)?,
+            "flags: {flags:?}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

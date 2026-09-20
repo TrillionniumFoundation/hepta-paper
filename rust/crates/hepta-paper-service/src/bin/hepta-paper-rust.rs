@@ -13,6 +13,10 @@ use hepta_paper_service::{
         autonomous_research_help_json_v1, execute_autonomous_research_v1,
         inspect_autonomous_research_v1, parse_autonomous_research_arguments,
     },
+    autonomous_state_provision::{
+        AUTONOMOUS_STATE_PROVISIONING_USAGE, execute_autonomous_state_provisioning_v1,
+        inspect_autonomous_state_provisioning_v1, parse_autonomous_state_provisioning_arguments,
+    },
     autonomous_submission_dispatcher::{
         AUTONOMOUS_SUBMISSION_DISPATCHER_USAGE, inspect_autonomous_submission_dispatcher_v1,
         parse_autonomous_submission_dispatcher_arguments,
@@ -973,6 +977,22 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Some("autonomous-state-provision") => {
+            let Some(options) = parse_autonomous_state_provisioning_arguments(&args[1..])? else {
+                println!("{AUTONOMOUS_STATE_PROVISIONING_USAGE}");
+                return Ok(());
+            };
+            if options.action == "plan" {
+                let report = inspect_autonomous_state_provisioning_v1(&options)?;
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                let report = execute_autonomous_state_provisioning_v1(&options)?;
+                println!("{}", serde_json::to_string(&report)?);
+                if report["ready"] != true {
+                    std::process::exit(2);
+                }
+            }
+        }
         Some("personal-gpu-operational-gate") => {
             let options = match parse_personal_gpu_arguments(&args[1..]) {
                 Ok(options) => options,
@@ -1476,6 +1496,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | generic-domain-capability-evidence --action status|converge --runtime-root ABSOLUTE_PATH",
                 " | research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]",
                 " | local-golden-dataset-provision --action plan|execute [options]",
+                " | autonomous-state-provision --action plan|execute [options]",
                 " | personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
                 " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
                 " | autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--launch-mode local-run|production-run|golden-bootstrap]",

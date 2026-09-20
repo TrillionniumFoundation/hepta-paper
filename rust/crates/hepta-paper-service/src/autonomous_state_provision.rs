@@ -1,0 +1,356 @@
+//! Bounded native preflight for autonomous research state provisioning.
+//!
+//! The plan path binds the same source inputs as the incumbent command and
+//! proves their local identity without creating a runtime.  The execute path
+//! is deliberately fail-closed until the ten repository constructors and
+//! their external authority boundary have a reviewed native implementation.
+
+use hepta_legacy_compatibility::production_hash_record_v1;
+use serde_json::{Value, json};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+};
+use thiserror::Error;
+
+const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
+const PROVISIONING_BLOCKER: &str = "rust_autonomous_state_provision_execute_not_ported";
+
+#[derive(Debug, Error)]
+#[error("{0}")]
+pub struct AutonomousStateProvisioningError(pub String);
+pub type Result<T> = std::result::Result<T, AutonomousStateProvisioningError>;
+fn error(code: impl Into<String>) -> AutonomousStateProvisioningError {
+    AutonomousStateProvisioningError(code.into())
+}
+
+pub const AUTONOMOUS_STATE_PROVISIONING_USAGE: &str = r#"Usage: autonomous-state-provision --action plan|execute [options]
+
+Native source-bound preflight for the autonomous research ten-database
+provisioning contract. Plan is read-only. Execute remains fail-closed until
+the native repository constructors and external authority boundary are ported.
+
+Required: --runtime-root PATH --machine-intake-config PATH
+          --topic-producer-profile PATH --dataset-root PATH
+Optional: --root WORKSPACE_PATH --machine-intake-genesis-authority external|root-owned-configuration
+          --runtime-reproducibility-maximum-attempts-per-epoch N
+          --runtime-reproducibility-maximum-cost-usd-per-epoch N
+          --plan-id sha256:... --execute
+"#;
+
+#[derive(Clone, Debug)]
+pub struct AutonomousStateProvisioningOptions {
+    pub action: String,
+    pub execute: bool,
+    pub expected_plan_id: Option<String>,
+    pub workspace_root: PathBuf,
+    pub runtime_root: PathBuf,
+    pub machine_intake_config: PathBuf,
+    pub topic_producer_profile: PathBuf,
+    pub dataset_root: PathBuf,
+    pub machine_intake_genesis_authority: String,
+    pub maximum_attempts_per_epoch: u64,
+    pub maximum_cost_usd_per_epoch: f64,
+}
+
+fn valid_hash(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn parse_positive_u64(value: &str, key: &str) -> Result<u64> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| error(format!("autonomous_state_provisioning_{key}_invalid")))?;
+    if parsed == 0 {
+        return Err(error(format!(
+            "autonomous_state_provisioning_{key}_invalid"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn parse_positive_f64(value: &str, key: &str) -> Result<f64> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| error(format!("autonomous_state_provisioning_{key}_invalid")))?;
+    if !parsed.is_finite() || parsed <= 0.0 {
+        return Err(error(format!(
+            "autonomous_state_provisioning_{key}_invalid"
+        )));
+    }
+    Ok(parsed)
+}
+
+pub fn parse_autonomous_state_provisioning_arguments(
+    argv: &[String],
+) -> Result<Option<AutonomousStateProvisioningOptions>> {
+    let value_flags = BTreeSet::from([
+        "action",
+        "plan-id",
+        "root",
+        "runtime-root",
+        "machine-intake-config",
+        "topic-producer-profile",
+        "dataset-root",
+        "machine-intake-genesis-authority",
+        "runtime-reproducibility-maximum-attempts-per-epoch",
+        "runtime-reproducibility-maximum-cost-usd-per-epoch",
+    ]);
+    let mut values = BTreeMap::new();
+    let mut execute = false;
+    let mut index = 0;
+    while index < argv.len() {
+        let token = &argv[index];
+        if token == "--help" {
+            if index + 1 != argv.len() {
+                return Err(error("autonomous_state_provisioning_arguments_invalid"));
+            }
+            return Ok(None);
+        }
+        if token == "--execute" {
+            if execute {
+                return Err(error("autonomous_state_provisioning_arguments_invalid"));
+            }
+            execute = true;
+            index += 1;
+            continue;
+        }
+        let Some(name) = token.strip_prefix("--") else {
+            return Err(error("autonomous_state_provisioning_arguments_invalid"));
+        };
+        if !value_flags.contains(name) || values.contains_key(name) {
+            return Err(error("autonomous_state_provisioning_arguments_invalid"));
+        }
+        let next = argv
+            .get(index + 1)
+            .filter(|value| !value.starts_with("--") && !value.is_empty())
+            .ok_or_else(|| error("autonomous_state_provisioning_arguments_invalid"))?;
+        values.insert(name.to_owned(), next.clone());
+        index += 2;
+    }
+    let action = values
+        .get("action")
+        .cloned()
+        .unwrap_or_else(|| "plan".into());
+    if !matches!(action.as_str(), "plan" | "execute") {
+        return Err(error(format!(
+            "autonomous_state_provisioning_action_invalid:{action}"
+        )));
+    }
+    for key in [
+        "runtime-root",
+        "machine-intake-config",
+        "topic-producer-profile",
+        "dataset-root",
+    ] {
+        if !values.contains_key(key) {
+            return Err(error(format!(
+                "autonomous_state_provisioning_input_required:{key}"
+            )));
+        }
+    }
+    if action == "plan" && (execute || values.contains_key("plan-id")) {
+        return Err(error(
+            "autonomous_state_provisioning_execute_options_forbidden",
+        ));
+    }
+    if action == "execute"
+        && (!execute || !values.get("plan-id").is_some_and(|value| valid_hash(value)))
+    {
+        return Err(error(
+            "autonomous_state_provisioning_execute_confirmation_or_plan_id_required",
+        ));
+    }
+    let attempts = values
+        .get("runtime-reproducibility-maximum-attempts-per-epoch")
+        .map(|value| parse_positive_u64(value, "maximum_attempts_per_epoch"))
+        .transpose()?
+        .unwrap_or(1);
+    let cost = values
+        .get("runtime-reproducibility-maximum-cost-usd-per-epoch")
+        .map(|value| parse_positive_f64(value, "maximum_cost_usd_per_epoch"))
+        .transpose()?
+        .unwrap_or(1.0);
+    let authority = values
+        .get("machine-intake-genesis-authority")
+        .cloned()
+        .unwrap_or_else(|| "external".into());
+    if !matches!(authority.as_str(), "external" | "root-owned-configuration") {
+        return Err(error(
+            "autonomous_state_provisioning_genesis_authority_invalid",
+        ));
+    }
+    let absolute = |key: &str| PathBuf::from(values.get(key).expect("validated"));
+    Ok(Some(AutonomousStateProvisioningOptions {
+        action,
+        execute,
+        expected_plan_id: values.get("plan-id").cloned(),
+        workspace_root: values
+            .get("root")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")),
+        runtime_root: absolute("runtime-root"),
+        machine_intake_config: absolute("machine-intake-config"),
+        topic_producer_profile: absolute("topic-producer-profile"),
+        dataset_root: absolute("dataset-root"),
+        machine_intake_genesis_authority: authority,
+        maximum_attempts_per_epoch: attempts,
+        maximum_cost_usd_per_epoch: cost,
+    }))
+}
+
+fn read_json(path: &Path) -> Result<Value> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| error("autonomous_state_provisioning_input_missing"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(error(
+            "autonomous_state_provisioning_input_identity_invalid",
+        ));
+    }
+    if metadata.len() > MAX_INPUT_BYTES {
+        return Err(error("autonomous_state_provisioning_input_too_large"));
+    }
+    let bytes =
+        fs::read(path).map_err(|_| error("autonomous_state_provisioning_input_unreadable"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|_| error("autonomous_state_provisioning_input_json_invalid"))
+}
+
+fn input_hash(kind: &str, value: &Value) -> Result<String> {
+    production_hash_record_v1(kind, value)
+        .map(|hash| hash.as_str().to_owned())
+        .map_err(|_| error("autonomous_state_provisioning_input_hash_failed"))
+}
+
+fn manifest(workspace_root: &Path) -> Result<Value> {
+    let path = workspace_root.join("paper-core/config/autonomous-research-state-databases.v1.json");
+    let value = read_json(&path)?;
+    if value["version"] != 1
+        || value["kind"] != "AutonomousResearchStateDatabaseManifest"
+        || value["databases"]
+            .as_array()
+            .is_none_or(|rows| rows.len() != 10)
+    {
+        return Err(error("autonomous_state_provisioning_manifest_invalid"));
+    }
+    Ok(value)
+}
+
+fn inspect_input(path: &Path, directory: bool) -> Result<Value> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| error("autonomous_state_provisioning_input_missing"))?;
+    if metadata.file_type().is_symlink()
+        || (directory && !metadata.is_dir())
+        || (!directory && !metadata.is_file())
+    {
+        return Err(error(
+            "autonomous_state_provisioning_input_identity_invalid",
+        ));
+    }
+    Ok(
+        json!({"path": path.to_string_lossy(), "device": metadata.dev(), "inode": metadata.ino(), "mode": metadata.mode() & 0o7777, "size": metadata.len()}),
+    )
+}
+
+fn plan_payload(options: &AutonomousStateProvisioningOptions) -> Result<Value> {
+    let machine = read_json(&options.machine_intake_config)?;
+    let topic = read_json(&options.topic_producer_profile)?;
+    if !machine.is_object() || !topic.is_object() {
+        return Err(error("autonomous_state_provisioning_input_shape_invalid"));
+    }
+    if machine["version"]
+        .as_i64()
+        .is_some_and(|version| version != 2)
+    {
+        return Err(error(
+            "autonomous_state_provisioning_machine_intake_version_invalid",
+        ));
+    }
+    let manifest = manifest(&options.workspace_root)?;
+    let machine_hash = machine
+        .get("configurationHash")
+        .and_then(Value::as_str)
+        .filter(|hash| valid_hash(hash))
+        .map(str::to_owned)
+        .unwrap_or(input_hash(
+            "AutonomousResearchMachineIntakeConfiguration",
+            &machine,
+        )?);
+    let topic_hash = topic
+        .get("producerProfileHash")
+        .and_then(Value::as_str)
+        .filter(|hash| valid_hash(hash))
+        .map(str::to_owned)
+        .unwrap_or(input_hash(
+            "AutonomousResearchTopicProducerProfile",
+            &topic,
+        )?);
+    let provider_hash = topic
+        .get("providerConfigurationHash")
+        .and_then(Value::as_str)
+        .filter(|hash| valid_hash(hash))
+        .map(str::to_owned)
+        .unwrap_or(input_hash(
+            "AutonomousResearchProviderConfiguration",
+            &topic,
+        )?);
+    let policy = json!({"maximumAttemptsPerEpoch": options.maximum_attempts_per_epoch, "maximumCostUsdPerEpoch": options.maximum_cost_usd_per_epoch});
+    let policy_hash = input_hash("RuntimeReproducibilityRefreshPolicy", &policy)?;
+    let manifest_hash = input_hash("AutonomousResearchStateDatabaseManifest", &manifest)?;
+    let identity = json!({"machineIntakeConfigurationHash": machine_hash, "machineIntakeGenesisAuthorityMode": options.machine_intake_genesis_authority, "providerCanaryPairMaximumCostUsd": options.maximum_cost_usd_per_epoch, "providerConfigurationHash": provider_hash, "runtimeReproducibilityRefreshPolicyHash": policy_hash, "topicProducerProfileHash": topic_hash, "writerManifestHash": input_hash("AutonomousResearchOnlineWriterOperationManifest", &json!({"version": 1}))?});
+    let roles = manifest["databases"]
+        .as_array()
+        .expect("validated")
+        .iter()
+        .filter_map(|row| row["role"].as_str())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut payload = json!({"version": 1, "kind": "AutonomousResearchStateBusinessSchemaProvisioningPlan", "status": "autonomous_research_state_business_schema_provisioning_plan_ready", "ready": true, "runtimeRoot": options.runtime_root, "stateDatabaseManifestHash": manifest_hash, "databaseRoles": roles, "provisioningIdentity": identity, "machineIntakeConfiguration": inspect_input(&options.machine_intake_config, false)?, "topicProducerProfile": inspect_input(&options.topic_producer_profile, false)?, "datasetRoot": inspect_input(&options.dataset_root, true)?, "freshRuntimeRequired": true, "stagedAtomicInstallationRequired": true, "onlineSchemaTransitionRequired": true});
+    let plan_id = input_hash(
+        "AutonomousResearchStateBusinessSchemaProvisioningPlan",
+        &payload,
+    )?;
+    payload["provisioningPlanId"] = json!(plan_id);
+    Ok(payload)
+}
+
+pub fn inspect_autonomous_state_provisioning_v1(
+    options: &AutonomousStateProvisioningOptions,
+) -> Result<Value> {
+    let runtime = if options.runtime_root.is_absolute() {
+        options.runtime_root.clone()
+    } else {
+        std::env::current_dir()
+            .map_err(|_| error("autonomous_state_provisioning_cwd_invalid"))?
+            .join(&options.runtime_root)
+    };
+    if runtime.exists() {
+        return Err(error(
+            "autonomous_state_provisioning_fresh_runtime_required",
+        ));
+    }
+    let mut payload = plan_payload(options)?;
+    payload["runtimeRoot"] = json!(runtime);
+    let plan_id = input_hash(
+        "AutonomousResearchStateBusinessSchemaProvisioningPlan",
+        &payload,
+    )?;
+    payload["provisioningPlanId"] = json!(plan_id);
+    Ok(payload)
+}
+
+pub fn execute_autonomous_state_provisioning_v1(
+    options: &AutonomousStateProvisioningOptions,
+) -> Result<Value> {
+    let plan = inspect_autonomous_state_provisioning_v1(options)?;
+    if options.expected_plan_id.as_deref() != plan["provisioningPlanId"].as_str() {
+        return Err(error("autonomous_state_provisioning_plan_mismatch"));
+    }
+    Ok(
+        json!({"version": 1, "kind": "AutonomousResearchStateBusinessSchemaProvisioningReceipt", "status": "autonomous_research_state_business_schema_provisioning_blocked", "ready": false, "provisioningPlanId": plan["provisioningPlanId"], "stateDatabaseManifestHash": plan["stateDatabaseManifestHash"], "databaseRoles": plan["databaseRoles"], "provisioningIdentity": plan["provisioningIdentity"], "freshRuntimeInstalled": false, "externalAuthorityInvoked": false, "runtimeEvidenceWritten": false, "blockers": [PROVISIONING_BLOCKER]}),
+    )
+}

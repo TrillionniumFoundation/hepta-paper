@@ -1673,14 +1673,46 @@
     },
     {
       "id": "maintenance/autonomous-state-provision",
-      "rustEntrypoint": null,
-      "scope": "unmapped",
-      "compatibilityDecision": "unmapped",
-      "callChain": [],
-      "tests": [],
-      "remaining": "Node binds machine-intake, topic-producer/profile, static intake, dataset manifest, provider configuration, runtime policy and writer/state manifest inputs into the provisioning plan identity, then creates the ten business database repositories in a capability-bound staging root, atomically renames them, and verifies inventory, schema transition and handoff receipts. Rust currently has only generic state-database manifest validation/hash and inventory/schema observers; it has no equivalent source-bound input loaders, semantic checks, ten-repository atomic provisioner or failure-cleanup/recovery chain. A caller-supplied identity or manifest-only wrapper would not be compatible evidence.",
-      "rustSources": [],
-      "testCases": []
+      "rustEntrypoint": "hepta-paper-rust autonomous-state-provision --action plan|execute [options]",
+      "scope": "partial_local_source",
+      "compatibilityDecision": "candidate",
+      "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "symbol": "command"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+          "symbol": "parse_autonomous_state_provisioning_arguments"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+          "symbol": "inspect_autonomous_state_provisioning_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+          "symbol": "execute_autonomous_state_provisioning_v1"
+        }
+      ],
+      "tests": [
+        "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs"
+      ],
+      "remaining": "Rust now binds the explicit machine-intake and topic-producer JSON identities, dataset-root identity, ten-role state manifest, runtime policy and stable provisioning plan hash in a read-only native preflight. Execute remains fail-closed: the ten repository constructors, capability-bound staging/atomic rename, schema-transition and handoff receipts, external authority inputs, and crash cleanup/recovery are not yet ported; no runtime is written and no external authority is invoked.",
+      "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+        "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs"
+      ],
+      "testCases": [
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+          "symbol": "parser_rejects_execute_without_confirmation_or_plan"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+          "symbol": "plan_is_source_bound_and_execute_is_fail_closed"
+        }
+      ]
     },
     {
       "id": "maintenance/autonomous-state-partial-root-maintenance",

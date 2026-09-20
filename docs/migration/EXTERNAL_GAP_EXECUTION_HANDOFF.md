@@ -1,7 +1,7 @@
 # Rust replacement external-gap execution handoff
 
 This handoff is bound to candidate commit
-`6bf4b7d409f101acfd213c9675dce5a8452d1bac` on
+`f2f594c30812e45215d918ad011558fb818bf751` on
 `codex/full-rust-replacement-progress-20260916`. It is an execution packet
 for evidence that cannot be produced by a local source checkout. It does not
 mark a route implemented, accepted, activated or retired.
@@ -18,13 +18,13 @@ same_tree=1
 ancestor=49
 diverged=178
 unresolvedBranchCount=178
-branchAuditSha256=sha256:ec587235eb07a1a0e5d10f5c8a58145da16a3a48253eaa9ecb561512dfae2f43
+branchAuditSha256=sha256:ed42edfd977377cb4a871d2295aa7b52480c628638c78a7e281937ac07c2ae00
 ```
 
 The audit command is read-only and must be run from a full-history checkout:
 
 ```sh
-python3 docs/tools/audit-branch-convergence.py --candidate 6bf4b7d409f101acfd213c9675dce5a8452d1bac
+python3 docs/tools/audit-branch-convergence.py --candidate f2f594c30812e45215d918ad011558fb818bf751
 ```
 
 Every divergent branch needs an owner, a decision (`absorb`, `supersede`,

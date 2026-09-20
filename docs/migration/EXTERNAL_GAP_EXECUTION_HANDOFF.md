@@ -1,7 +1,7 @@
 # Rust replacement external-gap execution handoff
 
 This handoff is bound to the source-baseline candidate commit
-`ca50b00451857e729a3dab6c83b4e4f308983e65` on
+`b1319faae8770ecc11191a20243d303109b6cc55` on
 `codex/full-rust-replacement-progress-20260916`. It is an executable packet
 for evidence that cannot be produced by a local source checkout. It does not
 mark a route implemented, accepted, activated or retired.
@@ -12,14 +12,14 @@ The source-baseline branch was equal locally and remotely when captured. The
 full-history branch inventory for that baseline is:
 
 ```text
-candidateCommit=ca50b00451857e729a3dab6c83b4e4f308983e65
-candidateTree=91f66599bd3aa64475e20551568088850b057908
+candidateCommit=b1319faae8770ecc11191a20243d303109b6cc55
+candidateTree=c3f952234f30f2cfa017c1f4565655b008c4bb66
 branchCount=228
 same_tree=1
 ancestor=49
 diverged=178
 unresolvedBranchCount=178
-branchAuditSha256=sha256:e31fdeec4ee1f066f89a68d97cff36ed5c91ef21789e2dd30f49222b862a1b7f
+branchAuditSha256=sha256:1a1c24a051712afd68d43d5658c10bd9f7aebeba7cdbdbb5764960de359198b6
 ```
 
 Run the read-only audit from a full-history checkout:

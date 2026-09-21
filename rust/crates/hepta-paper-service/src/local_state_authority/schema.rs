@@ -5,7 +5,7 @@ use crate::sqlite_mutation_coordinator::contracts::schema_transition::*;
 
 pub(super) fn handle(db: &Connection, ctx: &Context, request: &Value) -> Result<Value> {
     if request["version"] == 2 {
-        return super::schema_rebind::handle(db,ctx,request);
+        return super::schema_rebind::handle(db, ctx, request);
     }
     if request["version"] != 1 {
         return Err(error("local_state_authority_native_schema_rebind_required"));

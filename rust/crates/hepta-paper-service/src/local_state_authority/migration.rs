@@ -6,12 +6,14 @@ use super::{Result, json};
 use rusqlite::Connection;
 use serde_json::Value;
 
+mod cli;
 mod history;
 mod mutation_history;
 mod offline_image;
 mod schema_history;
 mod source_profile;
 mod source_rows;
+pub use cli::run_authority_journal_cli_v1;
 pub use history::LegacyAuthorityJournalVerifierV1;
 pub use offline_image::OfflineNativeAuthorityImageV1;
 

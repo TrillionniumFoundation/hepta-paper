@@ -165,6 +165,11 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
     pub(crate) fn verification_key(&self) -> &VerifyingKey {
         &self.public_key
     }
+    /// Names of retained public inputs, for avoiding output collisions. These
+    /// names carry no filesystem-publication or service-maintenance authority.
+    pub(crate) fn retained_configuration_paths(&self) -> [&Path; 2] {
+        [&self.configuration.path, &self.public_key_document.path]
+    }
     pub(crate) fn current(&self) -> Result<()> {
         self.configuration.assert_current()?;
         self.public_key_document.assert_current()

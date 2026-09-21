@@ -5,7 +5,7 @@ use crate::local_state_authority::storage;
 use crate::sqlite_mutation_coordinator::{
     Result,
     authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1, files::Snapshot},
-    error, hash, hash_bytes,
+    error, hash, hash_bytes, text,
 };
 use rusqlite::{Connection, TransactionState};
 use serde_json::{Value, json};
@@ -90,9 +90,31 @@ impl LegacyAuthorityJournalVerifierV1 {
         result.current()?;
         Ok(result)
     }
-    fn current(&self) -> Result<()> {
+    pub(super) fn current(&self) -> Result<()> {
         self.configuration_file.assert_current()?;
         self.authority.current()
+    }
+    pub(super) fn source_database_path(&self) -> Result<&Path> {
+        Ok(Path::new(text(&self.configuration, "stateDatabasePath")?))
+    }
+    pub(super) fn protected_input_paths(&self) -> Result<Vec<std::path::PathBuf>> {
+        let source = self.source_database_path()?;
+        let parent = source
+            .parent()
+            .ok_or_else(|| error("local_authority_history_source_path_invalid"))?;
+        let mut paths = vec![
+            parent.to_path_buf(),
+            self.configuration_file.path.clone(),
+            Path::new(text(&self.configuration, "privateKeyPath")?).to_path_buf(),
+            Path::new(text(&self.configuration, "socketPath")?).to_path_buf(),
+        ];
+        paths.extend(
+            self.authority
+                .retained_configuration_paths()
+                .into_iter()
+                .map(Path::to_path_buf),
+        );
+        Ok(paths)
     }
     /// Inspect a caller-owned actual main READ/WRITE transaction. This method
     /// opens no file, clones no descriptor, invokes no transport, changes no

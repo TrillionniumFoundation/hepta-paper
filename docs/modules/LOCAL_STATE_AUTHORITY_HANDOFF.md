@@ -230,3 +230,12 @@ only the native schema/key identity/version, and checks source/post logical
 equality before safe serialization. This method accepts no destination path,
 touches no source data and supplies no publisher, durable archive, real
 maintenance barrier or production migration permission.
+
+The [offline journal CLI](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/cli/HANDOFF.md)
+now exposes `inspect` and `export-native-image` with independently pinned daemon
+and online configurations. It owns a read-only main snapshot and explicitly
+closes SQLite before exporting into a fresh, separate private directory. The
+bundle publisher fsyncs and checks exact image/report bytes, uses atomic
+no-replace publication, and preserves committed/unknown failure outcomes.
+Its named source observation is not SQLite descriptor provenance, and the
+exported artifact supplies no live migration or service-retirement authority.

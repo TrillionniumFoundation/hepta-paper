@@ -42,8 +42,8 @@ existing canonical record hash implementation. Root pages must be positive,
 distinct, and within the actual page count, but physical allocation is excluded
 from the schema hash. The hash does not cover row history, current signed heads,
 database bytes, or WAL contents. A corrupt CHECK-constrained row is caught by
-`quick_check`; a structurally valid but false receipt remains the responsibility
-of a future complete history verifier.
+`quick_check`; structurally valid but false receipts require the separate
+[authenticated history verifier](../history/HANDOFF.md).
 
 No source path is opened or source file descriptor cloned or closed. Inspection
 uses the caller's held SQLite connection plus a separate in-memory reference,

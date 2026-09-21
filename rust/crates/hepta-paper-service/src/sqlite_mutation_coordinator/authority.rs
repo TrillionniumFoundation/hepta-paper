@@ -160,6 +160,11 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
     pub fn configuration_hash(&self) -> &str {
         &self.configuration_hash
     }
+    /// Borrow the independently pinned public key for pure historical
+    /// verification. This exposes no signing material or transport permission.
+    pub(crate) fn verification_key(&self) -> &VerifyingKey {
+        &self.public_key
+    }
     pub(crate) fn current(&self) -> Result<()> {
         self.configuration.assert_current()?;
         self.public_key_document.assert_current()

@@ -36,6 +36,31 @@ fn valid_path(value: &Value) -> bool {
             && !v.ends_with('/')
     })
 }
+pub(super) fn validate_configuration(value: &Value) -> Result<()> {
+    if !keys(value, CONFIGURATION_KEYS)
+        || value["version"] != 1
+        || value["kind"] != "HeptaLocalAutonomousResearchStateAuthorityConfiguration"
+        || !["authorityId", "keyId", "scopeId"]
+            .iter()
+            .all(|k| safe(&value[k]))
+        || !["databaseScopeHash", "writerManifestHash"]
+            .iter()
+            .all(|k| sha(&value[k]))
+        || !["privateKeyPath", "stateDatabasePath", "socketPath"]
+            .iter()
+            .all(|k| valid_path(&value[k]))
+        || !["maximumReservationLeaseMs", "maximumObservationAgeMs"]
+            .iter()
+            .all(|k| {
+                value[k]
+                    .as_i64()
+                    .is_some_and(|n| (1000..=900000).contains(&n))
+            })
+    {
+        return Err(error("local_state_authority_configuration_invalid"));
+    }
+    Ok(())
+}
 fn fresh_snapshot(path: &Path, maximum: u64, code: &str) -> Result<Snapshot> {
     // There is no SQLite handle yet. Temporary hashing descriptors close here.
     let mut file = OpenOptions::new()
@@ -170,28 +195,7 @@ impl Inputs {
         let code = "local_state_authority_configuration_invalid";
         let configuration = fresh_snapshot(path, 1024 * 1024, code)?;
         let value = configuration.json(code)?;
-        if !keys(&value, CONFIGURATION_KEYS)
-            || value["version"] != 1
-            || value["kind"] != "HeptaLocalAutonomousResearchStateAuthorityConfiguration"
-            || !["authorityId", "keyId", "scopeId"]
-                .iter()
-                .all(|k| safe(&value[k]))
-            || !["databaseScopeHash", "writerManifestHash"]
-                .iter()
-                .all(|k| sha(&value[k]))
-            || !["privateKeyPath", "stateDatabasePath", "socketPath"]
-                .iter()
-                .all(|k| valid_path(&value[k]))
-            || !["maximumReservationLeaseMs", "maximumObservationAgeMs"]
-                .iter()
-                .all(|k| {
-                    value[k]
-                        .as_i64()
-                        .is_some_and(|n| (1000..=900000).contains(&n))
-                })
-        {
-            return Err(error(code));
-        }
+        validate_configuration(&value)?;
         let key_code = "local_state_authority_private_key_invalid";
         let mut key = fresh_snapshot(
             Path::new(text(&value, "privateKeyPath")?),

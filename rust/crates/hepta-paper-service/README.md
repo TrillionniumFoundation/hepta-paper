@@ -386,3 +386,10 @@ metadata comparison and `quick_check`, with collection bounds and no source FD
 reopening. The report is explicitly schema-only; it does not verify signed row
 history, stop a service or permit journal rewriting. See the
 [inspection contract](src/local_state_authority/migration/source_profile/HANDOFF.md).
+
+A separate [signed-history inspector](src/local_state_authority/migration/history/HANDOFF.md)
+now authenticates a bounded settled legacy journal with independently pinned public
+inputs, reconstructs schema/rebind epochs and all mutation heads, and compares the
+complete terminal SQL state. It does not read private keys, sign or rewrite data.
+Pending/backup/oversized histories are refused; live migration and service handoff
+remain unimplemented.

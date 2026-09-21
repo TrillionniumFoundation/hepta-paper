@@ -1,14 +1,24 @@
 # Explicit Node authority journal migration design
 
-Status: **design only, 2026-09-21**. No migrator, maintenance capability or deployment approval is implemented by this document. Existing native `LocalStateAuthorityRuntimeV1::open` must continue refusing populated `user_version=0` journals with `local_state_authority_explicit_journal_migration_required`.
+Status: **migration executor design only, 2026-09-21**. Read-only schema and bounded authenticated-history prerequisites are implemented below. No migrator, maintenance capability or deployment approval is implemented by this document. Existing native `LocalStateAuthorityRuntimeV1::open` must continue refusing populated `user_version=0` journals with `local_state_authority_explicit_journal_migration_required`.
 
 The first read-only prerequisite is now implemented in
 [`migration/source_profile.rs`](migration/source_profile.rs), exposed by
 `migration::inspect_legacy_authority_journal_schema_v1`. It checks the exact
 source schema under the caller's actual main transaction, preserves connection
 settings and locks, and returns only a structural observation. See its
-[contract and limits](migration/source_profile/HANDOFF.md). All execution,
-history, archive and maintenance capabilities proposed below remain unimplemented.
+[contract and limits](migration/source_profile/HANDOFF.md).
+
+The second prerequisite, `migration::LegacyAuthorityJournalVerifierV1`, now
+loads independently pinned public inputs and observes the complete admitted
+SQL history under the same held transaction. Initial genesis, activated pristine
+rebinds, settled finalized mutations and a genuine aborted tail are re-derived
+and compared with actual metadata and all ten heads. Its
+[contract and limits](migration/history/HANDOFF.md) explicitly refuse pending
+operations, all backup history, unknown configurations and oversized histories.
+It opens no private key and grants no migration or stopped-service capability.
+Archive, format conversion/publication, uncertainty recovery and maintenance
+capabilities proposed below remain unimplemented.
 
 ## Concrete source compatibility
 
@@ -112,7 +122,7 @@ These counts are necessary, not sufficient; the signed history validation below 
 6. Verify every abort with its stored reservation, original request and actual signature. A genuine Node journal with the unconditional unique index can contain an aborted next-sequence tail but cannot legitimately continue through that consumed index slot. The aborted reservation must branch from the reconstructed current head and must not advance global/database state. Reject apparently repaired/custom histories outside the exact Node profile. Preserve the abort's request, receipt, rowid and global sequence; only the uniqueness rule changes.
 7. Require mutually exclusive status columns: `reserved` has no finalize/abort pair; `finalized` has exactly a finalize pair and no abort pair; `aborted` has exactly an abort pair and no finalize pair. Partial pairs, wrong SQL keys, duplicate identities, phantom heads, truncated chains and signed rows transplanted under another SQL key all fail.
 
-Existing helpers in `mutation.rs`, `schema.rs`, `schema_rebind.rs` and `backup.rs` verify individual retained receipts. Factor their pure validators where useful; calling a handler to "check" data would sign/mutate and is inappropriate. The migration verifier must add complete replay, deterministic Node head reconstruction and the source-format matrix; those features do not exist as a ready-made migration proof today.
+Existing helpers in `mutation.rs`, `schema.rs`, `schema_rebind.rs` and `backup.rs` verify individual retained receipts. Calling a handler to "check" data would sign/mutate and is inappropriate. The implemented pure `migration/schema_history.rs` and `migration/mutation_history.rs` now add deterministic Node genesis/head reconstruction and complete replay for the bounded admitted source matrix; `migration/history.rs` binds them to actual public-key/configuration pins and terminal SQL state. This is an authenticated observation, not a migration capability. An executing owner must still prove the private/public key relationship, exact installed source provenance, archive and held maintenance barrier before any rewrite.
 
 ### Why first-version backup refusal is necessary
 

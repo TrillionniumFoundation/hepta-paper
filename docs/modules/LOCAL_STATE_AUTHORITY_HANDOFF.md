@@ -213,3 +213,12 @@ schema against a memory-only reference, checks column/index metadata and actual
 and bounded-output violations are rejected without changing caller settings,
 rows or transaction ownership. The source descriptor is never reopened or cloned.
 This schema hash covers no row history or WAL and cannot authorize migration.
+
+The [bounded signed-history owner](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/history/HANDOFF.md)
+now composes that structural inspection with actual public-key/configuration pins,
+deterministic initial and activated-rebind genesis reconstruction, complete settled
+mutation replay and comparison against SQL metadata and all ten heads. It requires
+no private key and changes no source data. Pending operations, all backup rows and
+histories beyond its explicit resource profile are refused. This observation has
+no service-stop, archive, conversion, publication or migration capability; those
+execution and installation gaps remain open.

@@ -1,11 +1,16 @@
-//! Read-only prerequisites for explicit legacy journal migration. These
-//! observations never prove signed history, a stopped process or permission
-//! to rewrite a live journal. No migration executor is exposed here.
+//! Read-only schema and independently pinned signed-history observations for
+//! explicit legacy journal migration. Neither observation proves a stopped
+//! process or permission to rewrite a live journal. No executor is exposed.
 use super::{Result, json};
 use rusqlite::Connection;
 use serde_json::Value;
 
+mod history;
+mod mutation_history;
+mod schema_history;
 mod source_profile;
+mod source_rows;
+pub use history::LegacyAuthorityJournalVerifierV1;
 
 /// Inspect the exact incumbent Node authority schema using an already held
 /// SQLite READ or WRITE transaction. The caller retains its connection and

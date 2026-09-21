@@ -167,6 +167,29 @@ fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Match the incumbent coverage command's runtime-root default.  The Node
+/// entrypoint resolves `HEPTA_PAPER_RUNTIME_ROOT` from the caller's working
+/// directory and otherwise uses the sibling native-runtime deployment root,
+/// rather than a `runtime/` child of the source checkout.
+fn default_runtime_root(workspace_root: &Path) -> PathBuf {
+    if let Some(value) =
+        std::env::var_os("HEPTA_PAPER_RUNTIME_ROOT").filter(|value| !value.is_empty())
+    {
+        let candidate = PathBuf::from(value);
+        return if candidate.is_absolute() {
+            candidate
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("/"))
+                .join(candidate)
+        };
+    }
+    workspace_root
+        .parent()
+        .unwrap_or(workspace_root)
+        .join("hepta-paper-runtime/native-runtime")
+}
+
 fn inventory_from_policy_source(source: &[u8]) -> Vec<Value> {
     let text = String::from_utf8_lossy(source);
     let mut entries = BTreeMap::<String, bool>::new();
@@ -280,7 +303,7 @@ pub fn inspect_critical_module_coverage_v1(
     let runtime_root = options
         .runtime_root
         .clone()
-        .unwrap_or_else(|| workspace_root.join("runtime"));
+        .unwrap_or_else(|| default_runtime_root(workspace_root));
     let policy_path = root.join("paper-core/verification/critical-module-coverage-policy.mjs");
     let source = read_regular(&policy_path).ok();
     let targets = source

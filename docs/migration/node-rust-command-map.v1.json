@@ -2157,7 +2157,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs"
       ],
-      "remaining": "Rust now performs a bounded read-only inventory of the checked-in critical-module target registry and validates an explicitly pinned Node CriticalModuleCoverageReport shape/hash. It does not execute the isolated Node coverage/test batch, verify a cryptographic signature or external authority, recompute V8 coverage, or grant critical coverage parity; --require-ok remains fail-closed.",
+      "remaining": "Rust now performs a bounded read-only inventory of the checked-in critical-module target registry, matches the Node HEPTA_PAPER_RUNTIME_ROOT/sibling native-runtime default, and validates an explicitly pinned Node CriticalModuleCoverageReport shape/hash. It does not execute the isolated Node coverage/test batch, verify a cryptographic signature or external authority, recompute V8 coverage, or grant critical coverage parity; --require-ok remains fail-closed.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/critical_module_coverage.rs"

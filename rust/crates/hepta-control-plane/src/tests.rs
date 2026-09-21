@@ -1,3 +1,5 @@
+mod runtime_failure;
+
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -878,13 +880,23 @@ fn commit_failure_at_second_result_cannot_partially_mutate_state() {
     let (mut control, snapshot, frontier) = control_plane(64, sequencer);
     assert_eq!(
         control.run(&snapshot, &frontier, "tenant-1", 1_000),
-        Err(ControlPlaneError::CommitInvalid)
+        Err(ControlPlaneError::RunRequiresInspection)
     );
     assert_eq!(control.sequencer().current_state_hash(), &initial);
     assert_eq!(control.sequencer().receipt_count(), 0);
     let report = control.resource_report().expect("resource report");
-    assert!(report.reserved.is_zero());
-    assert_eq!(report.reservation_count, 0);
+    assert_eq!(report.reserved.cpu_millis, 20);
+    assert_eq!(report.reservation_count, 2);
+    let inspection = control.inspection_required().expect("blocked owner");
+    assert_eq!(inspection.cause(), Some(ControlPlaneError::CommitInvalid));
+    assert_eq!(
+        inspection.phase(),
+        ControlPlaneRunFailurePhaseV1::Finalization
+    );
+    assert_eq!(
+        control.run(&snapshot, &frontier, "tenant-1", 1_001),
+        Err(ControlPlaneError::RunRequiresInspection)
+    );
 }
 
 #[test]

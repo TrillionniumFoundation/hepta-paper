@@ -38,6 +38,65 @@ pub struct ControlPlaneRunReceiptV1 {
     pub receipt_hash: Sha256Digest,
 }
 
+/// Last boundary entered by a run whose reservations require inspection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlPlaneRunFailurePhaseV1 {
+    /// An executor was invoked; execution and result verification are incomplete.
+    Execution,
+    /// Execution results were verified, but final reconciliation or commit failed.
+    Finalization,
+}
+
+/// In-memory diagnostic for a blocked runtime owner, not a release capability.
+///
+/// All reservations in the selected plan remain charged, including later waves
+/// that might not have been dispatched. This record is not persisted, cannot be
+/// deserialized into an owner, and does not assert any business commit outcome.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlPlaneRunInspectionV1 {
+    snapshot_hash: Sha256Digest,
+    plan_hash: Sha256Digest,
+    reservation_ids: Vec<String>,
+    phase: ControlPlaneRunFailurePhaseV1,
+    cause: Option<ControlPlaneError>,
+}
+
+impl ControlPlaneRunInspectionV1 {
+    /// Returns the exact snapshot of the blocked run.
+    #[must_use]
+    pub fn snapshot_hash(&self) -> &Sha256Digest {
+        &self.snapshot_hash
+    }
+
+    /// Returns the selected plan whose reservations remain charged.
+    #[must_use]
+    pub fn plan_hash(&self) -> &Sha256Digest {
+        &self.plan_hash
+    }
+
+    /// Returns every retained reservation ID in admission order.
+    #[must_use]
+    pub fn reservation_ids(&self) -> &[String] {
+        &self.reservation_ids
+    }
+
+    /// Returns the last execution or finalization boundary entered.
+    #[must_use]
+    pub fn phase(&self) -> ControlPlaneRunFailurePhaseV1 {
+        self.phase
+    }
+
+    /// Returns the original returned error, if one was observed.
+    ///
+    /// The record is armed before dispatch. If an executor unwinds and its
+    /// caller catches that panic, the owner remains blocked with no invented
+    /// error cause. The runtime does not catch panics or reconcile their effects.
+    #[must_use]
+    pub fn cause(&self) -> Option<ControlPlaneError> {
+        self.cause
+    }
+}
+
 /// Generic authority-separated control-plane composition.
 #[derive(Debug)]
 pub struct ControlPlaneV1<E, V, C>
@@ -54,6 +113,7 @@ where
     verifier: V,
     sequencer: C,
     events: BoundedEventLogV1,
+    inspection_required: Option<ControlPlaneRunInspectionV1>,
 }
 
 impl<E, V, C> ControlPlaneV1<E, V, C>
@@ -96,10 +156,18 @@ where
             verifier,
             sequencer,
             events,
+            inspection_required: None,
         })
     }
 
     /// Runs snapshot → plan → reserve → prepare → verify → atomic commit/release/event publish.
+    ///
+    /// Once an executor has been called, any returned failure retains the whole
+    /// plan's reservations and returns `RunRequiresInspection`. This same owner
+    /// then refuses all subsequent runs before validation or dispatch. Inspect
+    /// the original cause with [`Self::inspection_required`]; there is no reset
+    /// or caller-supplied receipt that authorizes releasing these reservations.
+    /// This guard is in-memory only and is not durable recovery or containment.
     pub fn run(
         &mut self,
         snapshot: &ControlPlaneSnapshotV1,
@@ -107,6 +175,9 @@ where
         tenant_id: &str,
         now_unix_ms: u64,
     ) -> Result<ControlPlaneRunReceiptV1, ControlPlaneError> {
+        if self.inspection_required.is_some() {
+            return Err(ControlPlaneError::RunRequiresInspection);
+        }
         snapshot.validate(&self.registry)?;
         if snapshot.constraint_set_hash != self.hard_policy.policy_hash()?
             || snapshot.resource_limit != self.allocator.capacity()
@@ -164,20 +235,42 @@ where
             tenant_id,
             now_unix_ms,
         )?;
-        let verified = match self.process_admitted(&snapshot_hash, &plan, &waves, &requests) {
-            Ok(value) => value,
-            Err(error) => {
-                self.release_without_events(&reservation_ids)?;
-                return Err(error);
-            }
+        let pending_inspection = ControlPlaneRunInspectionV1 {
+            snapshot_hash: snapshot_hash.clone(),
+            plan_hash: plan.plan_hash.clone(),
+            reservation_ids: reservation_ids.clone(),
+            phase: ControlPlaneRunFailurePhaseV1::Execution,
+            cause: None,
         };
-        match self.finalize_atomic(&snapshot_hash, &plan, &requests, verified, event_start) {
-            Ok(receipt) => Ok(receipt),
-            Err(error) => {
-                self.release_without_events(&reservation_ids)?;
-                Err(error)
-            }
+        let verified = match self.process_admitted(
+            &snapshot_hash,
+            &plan,
+            &waves,
+            &requests,
+            pending_inspection,
+        ) {
+            Ok(value) => value,
+            Err(error) => return Err(self.fail_run(error, &reservation_ids)),
+        };
+        if let Some(inspection) = &mut self.inspection_required {
+            inspection.phase = ControlPlaneRunFailurePhaseV1::Finalization;
         }
+        match self.finalize_atomic(&snapshot_hash, &plan, &requests, verified, event_start) {
+            Ok(receipt) => {
+                self.inspection_required = None;
+                Ok(receipt)
+            }
+            Err(error) => Err(self.fail_run(error, &reservation_ids)),
+        }
+    }
+
+    /// Borrows the blocked owner's diagnostic, if execution requires inspection.
+    ///
+    /// Neither dropping a copy of this record nor constructing a new runtime
+    /// settles unknown work. No durable lease or worker termination is implied.
+    #[must_use]
+    pub fn inspection_required(&self) -> Option<&ControlPlaneRunInspectionV1> {
+        self.inspection_required.as_ref()
     }
 
     /// Borrows all emitted bounded events.
@@ -263,7 +356,9 @@ where
         plan: &PlanCertificateV1,
         waves: &[Vec<&ActionCandidateV1>],
         requests: &[ExecutionRequestV1],
+        pending_inspection: ControlPlaneRunInspectionV1,
     ) -> Result<VerifiedRunV1, ControlPlaneError> {
+        let mut pending_inspection = Some(pending_inspection);
         let requests_by_candidate = requests
             .iter()
             .map(|request| (request.candidate.candidate_id.as_str(), request))
@@ -285,6 +380,11 @@ where
                         .ok_or(ControlPlaneError::ExecutionInvalid)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            // Arm the guard before handing control to an unsealed executor.
+            // The same record covers every later wave and finalization step.
+            if let Some(inspection) = pending_inspection.take() {
+                self.inspection_required = Some(inspection);
+            }
             let prepared = self.executor.execute_batch(&wave_requests)?;
             if prepared.len() != wave_requests.len() {
                 return Err(ControlPlaneError::ExecutionInvalid);
@@ -445,6 +545,21 @@ where
         self.allocator = staged_allocator;
         self.events = staged_events;
         Ok(receipt)
+    }
+
+    fn fail_run(
+        &mut self,
+        cause: ControlPlaneError,
+        reservation_ids: &[String],
+    ) -> ControlPlaneError {
+        if let Some(inspection) = &mut self.inspection_required {
+            inspection.cause = Some(cause);
+            return ControlPlaneError::RunRequiresInspection;
+        }
+        match self.release_without_events(reservation_ids) {
+            Ok(()) => cause,
+            Err(error) => error,
+        }
     }
 
     fn release_without_events(

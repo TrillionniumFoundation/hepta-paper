@@ -182,3 +182,15 @@ Current channel is `authoritative`. A new version progresses through registered/
 - `RES-005` — `source_implemented`
 - `RES-006` — `source_implemented`
 - `RES-007` — `source_implemented`
+
+
+## Durable journal failure handling
+
+The standalone Rust lease journal now refuses further reads and mutations after
+an append may have changed disk without a confirmed result. Recovery validates
+all complete events before truncating an incomplete tail. Its checked
+`active_charges()` API cannot turn uncertain persistence into an empty charge
+list. See the [persistence handoff](../../../rust/crates/hepta-control-plane/src/durable_resource/HANDOFF.md)
+for exact API changes, tests and limits. This closes a local persistence error
+path; it does not supply trusted reconciliation receipts or connect the journal
+to mandatory hierarchical dispatch.

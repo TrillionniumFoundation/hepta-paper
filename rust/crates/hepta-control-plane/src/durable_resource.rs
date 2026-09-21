@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
 
@@ -184,6 +185,7 @@ pub struct DurableResourceLeaseLedgerV1 {
     leases: BTreeMap<String, DurableResourceLeaseV1>,
     next_sequence: u64,
     previous_event_hash: Option<Sha256Digest>,
+    inspection_required: bool,
 }
 
 impl DurableResourceLeaseLedgerV1 {
@@ -205,6 +207,12 @@ impl DurableResourceLeaseLedgerV1 {
             .read(true)
             .append(true)
             .create(true)
+            .custom_flags(
+                (nix::fcntl::OFlag::O_NOFOLLOW
+                    | nix::fcntl::OFlag::O_CLOEXEC
+                    | nix::fcntl::OFlag::O_NONBLOCK)
+                    .bits(),
+            )
             .open(path)
             .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
         file.try_lock()
@@ -212,23 +220,25 @@ impl DurableResourceLeaseLedgerV1 {
         let metadata = file
             .metadata()
             .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
-        if metadata.len() > MAXIMUM_LEDGER_BYTES_V1 {
+        if !metadata.is_file() || metadata.len() > MAXIMUM_LEDGER_BYTES_V1 {
             return Err(ControlPlaneError::ResourcePersistenceInvalid);
         }
         file.seek(SeekFrom::Start(0))
             .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
-        let mut bytes = Vec::with_capacity(
-            usize::try_from(metadata.len())
-                .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?,
-        );
-        file.read_to_end(&mut bytes)
-            .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
-        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
-            let Some(last_newline) = bytes.iter().rposition(|byte| *byte == b'\n') else {
-                return Err(ControlPlaneError::ResourcePersistenceInvalid);
-            };
-            let retained = last_newline + 1;
-            bytes.truncate(retained);
+        let bytes = read_ledger_bytes(&mut file, MAXIMUM_LEDGER_BYTES_V1)?;
+        let retained = if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+            bytes
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map(|offset| offset + 1)
+                .ok_or(ControlPlaneError::ResourcePersistenceInvalid)?
+        } else {
+            bytes.len()
+        };
+        // Validate the complete prefix before changing the backing file. A
+        // corrupt event followed by a torn tail must preserve both for inspection.
+        let (leases, next_sequence, previous_event_hash) = replay_events(&bytes[..retained])?;
+        if retained != bytes.len() {
             file.set_len(
                 u64::try_from(retained)
                     .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?,
@@ -237,13 +247,13 @@ impl DurableResourceLeaseLedgerV1 {
             file.sync_all()
                 .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
         }
-        let (leases, next_sequence, previous_event_hash) = replay_events(&bytes)?;
         Ok(Self {
             path: path.to_path_buf(),
             file,
             leases,
             next_sequence,
             previous_event_hash,
+            inspection_required: false,
         })
     }
 
@@ -258,6 +268,7 @@ impl DurableResourceLeaseLedgerV1 {
         &mut self,
         request: DurableResourcePrepareV1,
     ) -> Result<DurableResourceLeaseV1, ControlPlaneError> {
+        self.ensure_usable()?;
         request.validate()?;
         let candidate = lease_from_prepare(request)?;
         if let Some(existing) = self.leases.get(&candidate.reservation_id) {
@@ -352,7 +363,10 @@ impl DurableResourceLeaseLedgerV1 {
         Ok(next)
     }
 
-    /// Releases finalized or uncertain capacity only with a trusted reconciliation receipt.
+    /// Records release using a caller-supplied reconciliation receipt hash.
+    ///
+    /// The caller must independently establish receipt authority and terminal
+    /// disposition. This ledger does not authenticate the hash or verify release.
     pub fn reconcile_and_release(
         &mut self,
         reservation_id: &str,
@@ -395,6 +409,7 @@ impl DurableResourceLeaseLedgerV1 {
         &mut self,
         now_unix_ms: u64,
     ) -> Result<ResourceRecoveryReportV1, ControlPlaneError> {
+        self.ensure_usable()?;
         if now_unix_ms == 0 {
             return Err(ControlPlaneError::ResourcePersistenceInvalid);
         }
@@ -458,13 +473,30 @@ impl DurableResourceLeaseLedgerV1 {
     }
 
     /// Returns every lease that still consumes or conservatively retains capacity.
-    #[must_use]
-    pub fn active_charges(&self) -> Vec<DurableResourceLeaseV1> {
-        self.leases
+    /// Refuses uncertain append state: the cached list could omit a persisted prepare.
+    pub fn active_charges(&self) -> Result<Vec<DurableResourceLeaseV1>, ControlPlaneError> {
+        self.ensure_usable()?;
+        Ok(self
+            .leases
             .values()
             .filter(|lease| lease.state != DurableResourceLeaseStateV1::Released)
             .cloned()
-            .collect()
+            .collect())
+    }
+
+    /// Whether persistence may have changed the journal without a confirmed outcome.
+    /// Drop this owner and reopen/replay the actual ledger before using its state again.
+    #[must_use]
+    pub fn inspection_required(&self) -> bool {
+        self.inspection_required
+    }
+
+    fn ensure_usable(&self) -> Result<(), ControlPlaneError> {
+        if self.inspection_required {
+            Err(ControlPlaneError::ResourcePersistenceRequiresInspection)
+        } else {
+            Ok(())
+        }
     }
 
     /// Loads one exact reservation when present.
@@ -472,14 +504,18 @@ impl DurableResourceLeaseLedgerV1 {
         &self,
         reservation_id: &str,
     ) -> Result<Option<DurableResourceLeaseV1>, ControlPlaneError> {
+        self.ensure_usable()?;
         if !valid_identifier(reservation_id) {
             return Err(ControlPlaneError::ReservationInvalid);
         }
         Ok(self.leases.get(reservation_id).cloned())
     }
 
-    /// Checks every current lease self-hash. Event-chain integrity is verified on open and append.
+    /// Checks in-memory lease self-hashes and refuses uncertain append state.
+    /// Open validates the complete disk chain; appends validate the next transition.
+    /// This does not reread the journal or detect uncooperating external writers.
     pub fn validate_integrity(&self) -> Result<(), ControlPlaneError> {
+        self.ensure_usable()?;
         for lease in self.leases.values() {
             lease.validate()?;
         }
@@ -492,6 +528,7 @@ impl DurableResourceLeaseLedgerV1 {
         fence_generation: u64,
         fence_token_hash: &Sha256Digest,
     ) -> Result<DurableResourceLeaseV1, ControlPlaneError> {
+        self.ensure_usable()?;
         let lease = self
             .leases
             .get(reservation_id)
@@ -509,7 +546,23 @@ impl DurableResourceLeaseLedgerV1 {
         action: ResourceLedgerActionV1,
         lease: DurableResourceLeaseV1,
     ) -> Result<(), ControlPlaneError> {
+        self.append_with_persistence(action, lease, persist_event)
+    }
+
+    // Production always uses persist_event. Unit tests exercise real partial/full
+    // writes followed by an I/O error at this private boundary.
+    fn append_with_persistence(
+        &mut self,
+        action: ResourceLedgerActionV1,
+        lease: DurableResourceLeaseV1,
+        persist: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
+    ) -> Result<(), ControlPlaneError> {
+        self.ensure_usable()?;
         lease.validate()?;
+        let next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or(ControlPlaneError::ResourcePersistenceInvalid)?;
         let current = self.leases.get(&lease.reservation_id);
         validate_transition(action, current, &lease)?;
         let body = ResourceLedgerEventBodyV1 {
@@ -547,19 +600,38 @@ impl DurableResourceLeaseLedgerV1 {
         if next_size > MAXIMUM_LEDGER_BYTES_V1 {
             return Err(ControlPlaneError::ResourcePersistenceInvalid);
         }
-        self.file
-            .write_all(&encoded)
-            .and_then(|()| self.file.write_all(b"\n"))
-            .and_then(|()| self.file.sync_all())
-            .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
+        // Errors and unwinding after persistence begins leave this owner unusable.
+        self.inspection_required = true;
+        persist(&mut self.file, &encoded)
+            .map_err(|_| ControlPlaneError::ResourcePersistenceRequiresInspection)?;
         self.leases.insert(lease.reservation_id.clone(), lease);
         self.previous_event_hash = Some(event_hash);
-        self.next_sequence = self
-            .next_sequence
-            .checked_add(1)
-            .ok_or(ControlPlaneError::ResourcePersistenceInvalid)?;
+        self.next_sequence = next_sequence;
+        self.inspection_required = false;
         Ok(())
     }
+}
+
+fn persist_event(file: &mut File, encoded: &[u8]) -> std::io::Result<()> {
+    file.write_all(encoded)?;
+    file.write_all(b"\n")?;
+    file.sync_all()
+}
+
+fn read_ledger_bytes(file: &mut File, maximum: u64) -> Result<Vec<u8>, ControlPlaneError> {
+    let limit = maximum
+        .checked_add(1)
+        .ok_or(ControlPlaneError::ResourcePersistenceInvalid)?;
+    let mut bytes = Vec::new();
+    file.take(limit)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?;
+    if u64::try_from(bytes.len()).map_err(|_| ControlPlaneError::ResourcePersistenceInvalid)?
+        > maximum
+    {
+        return Err(ControlPlaneError::ResourcePersistenceInvalid);
+    }
+    Ok(bytes)
 }
 
 #[derive(Serialize)]
@@ -844,7 +916,7 @@ mod tests {
         }
         {
             let ledger = DurableResourceLeaseLedgerV1::open(&path).expect("reopen");
-            let active = ledger.active_charges();
+            let active = ledger.active_charges().expect("usable charges");
             assert_eq!(active.len(), 1);
             assert_eq!(active[0].state, DurableResourceLeaseStateV1::Uncertain);
             ledger.validate_integrity().expect("integrity");
@@ -871,7 +943,7 @@ mod tests {
         ledger
             .reconcile_and_release("r2", 7, &lease.fence_token_hash, digest('e'))
             .expect("release");
-        assert!(ledger.active_charges().is_empty());
+        assert!(ledger.active_charges().expect("usable charges").is_empty());
         drop(ledger);
         let _ = fs::remove_file(path);
     }
@@ -886,3 +958,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 }
+
+#[cfg(test)]
+#[path = "durable_resource/persistence_tests.rs"]
+mod persistence_tests;

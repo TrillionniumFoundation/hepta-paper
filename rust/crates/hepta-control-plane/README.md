@@ -129,11 +129,21 @@ snapshot/revision rejection, and expired writer rejection. Writer tests include
 an actual child process exiting with an open transaction, WAL recovery,
 signed-cutover preservation and backup/restore.
 
-Control errors remain bounded: `SnapshotInvalid` for snapshot/version bindings,
-`VerificationInvalid` for rejected prepared capabilities, `CommitInvalid` for
-bad sequencing/request contracts and `PersistenceInvalid` for storage, lease,
-budget or replay conflicts. The writer's detailed error enum is available for
-storage diagnostics. No test result is a production qualification certificate.
+Control errors remain bounded. Before dispatch, errors such as `SnapshotInvalid`
+retain their original meaning. Once the runtime invokes its executor, any
+execution, verification or finalization failure returns `RunRequiresInspection`,
+retains the complete plan's resource charges and blocks this owner from running
+again. The original error remains in `inspection_required().cause()`; see the
+[runtime failure contract](src/runtime/HANDOFF.md). This guard is in memory and
+does not establish restart protection or terminal resource reconciliation.
+
+The separate durable lease journal returns `ResourcePersistenceRequiresInspection`
+after an append with an uncertain result. All subsequent state reads and writes
+refuse until it is dropped and the actual journal is reopened and replayed.
+`active_charges()` now returns a `Result` so uncertainty cannot become an empty
+charge list. See the [persistence contract](src/durable_resource/HANDOFF.md) for
+recovery ordering, API changes and storage limitations. Neither a source test nor
+a caller-supplied reconciliation hash is a production qualification certificate.
 
 ## Scheduler arithmetic and evidence boundaries
 

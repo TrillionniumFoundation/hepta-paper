@@ -62,7 +62,7 @@ fn durable_resource_recovery_retains_ambiguous_capacity_until_reconciled() {
             .expect("load")
             .expect("lease");
         assert_eq!(uncertain.state, DurableResourceLeaseStateV1::Uncertain);
-        assert_eq!(ledger.active_charges().len(), 1);
+        assert_eq!(ledger.active_charges().expect("usable charges").len(), 1);
         let released = ledger
             .reconcile_and_release(
                 "reservation-source-owner",
@@ -72,7 +72,7 @@ fn durable_resource_recovery_retains_ambiguous_capacity_until_reconciled() {
             )
             .expect("reconcile release");
         assert_eq!(released.state, DurableResourceLeaseStateV1::Released);
-        assert!(ledger.active_charges().is_empty());
+        assert!(ledger.active_charges().expect("usable charges").is_empty());
         ledger.validate_integrity().expect("integrity");
     }
 
@@ -87,7 +87,12 @@ fn durable_resource_recovery_retains_ambiguous_capacity_until_reconciled() {
             released.reconciliation_receipt_hash,
             Some(reconciliation_receipt)
         );
-        assert!(reopened.active_charges().is_empty());
+        assert!(
+            reopened
+                .active_charges()
+                .expect("usable charges")
+                .is_empty()
+        );
         reopened.validate_integrity().expect("reopened integrity");
     }
 

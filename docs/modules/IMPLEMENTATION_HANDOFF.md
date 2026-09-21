@@ -127,7 +127,7 @@ from `rust`; the re-export alone does not switch existing consumers.
 
 **API and concrete types:** [rust/crates/hepta-control-plane/src/resource.rs](../../rust/crates/hepta-control-plane/src/resource.rs). **Engineering contract:** [RESOURCE_MODEL.md](../control-plane/RESOURCE_MODEL.md). **Module specification:** [resource-allocator](specs/resource-allocator.md).
 
-**Boundary and recovery:** ResourceAllocatorV1 reservations and the separate durable_resource.rs ledger are not physical CPU/GPU enforcement. Unknown consumption remains charged until reconciliation.
+**Boundary and recovery:** ResourceAllocatorV1 reservations and the separate durable_resource.rs ledger are not physical CPU/GPU enforcement. The standalone durable ledger retains finalized/uncertain charges until reconciliation. The actual `ControlPlaneV1` now retains its whole selected plan after a post-dispatch failure and blocks that same in-memory owner; [`runtime/HANDOFF.md`](../../rust/crates/hepta-control-plane/src/runtime/HANDOFF.md) defines its inspection state and original-error access. This runtime guard is not persisted across owner replacement/restart, and the standalone hierarchical/durable resource components are not mandatory gates in this runtime.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
 
@@ -158,7 +158,7 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **API and concrete types:** [rust/crates/hepta-paper-service/src/lib.rs](../../rust/crates/hepta-paper-service/src/lib.rs). **Engineering contract:** [README.md](../../rust/crates/hepta-paper-service/README.md). **Module specification:** [rust-control-plane-service](specs/rust-control-plane-service.md).
 
-**Boundary and recovery:** ServiceRunV1 is the closed local configuration. run_production_service_v1 requires opaque external authorities and currently accepts Native workers only; Process scientific workers are local/shadow.
+**Boundary and recovery:** ServiceRunV1 is the closed local configuration. run_production_service_v1 requires opaque external authorities and currently accepts Native workers only; Process scientific workers are local/shadow. Its `ControlPlaneV1` consumer returns `RunRequiresInspection` after a post-dispatch failure; the owner retains all plan reservations and exposes the original cause through `inspection_required()`. Reconstructing a service/runtime owner does not reconcile unknown work or provide durable dispatch recovery.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service`.
 

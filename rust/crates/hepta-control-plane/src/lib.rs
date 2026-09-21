@@ -69,7 +69,10 @@ pub use planner::{PlanCertificateV1, PlanModeV1, PlannerPolicyV1, select_plan_v1
 pub use resource::{
     AdmissionRequestV1, ResourceAccountingReportV1, ResourceAllocatorV1, ResourceReservationV1,
 };
-pub use runtime::{ControlPlaneRunReceiptV1, ControlPlaneV1};
+pub use runtime::{
+    ControlPlaneRunFailurePhaseV1, ControlPlaneRunInspectionV1, ControlPlaneRunReceiptV1,
+    ControlPlaneV1,
+};
 pub use source_closure::{
     HierarchicalResourcePolicyV1, PerformanceAssessmentV1, PerformanceBudgetV1,
     PerformanceSampleV1, ResourceEntitlementV1, SnapshotBuildRequestV1, assess_performance_v1,
@@ -120,6 +123,12 @@ pub enum ControlPlaneError {
     /// Durable resource lease persistence, integrity, or recovery failed.
     #[error("durable resource ledger is invalid")]
     ResourcePersistenceInvalid,
+    /// A resource append may have taken effect; this owner cannot continue.
+    #[error("durable resource ledger requires inspection and reopen")]
+    ResourcePersistenceRequiresInspection,
+    /// An executor was invoked and its run requires inspection before any reuse.
+    #[error("control-plane run requires inspection; reservations remain charged")]
+    RunRequiresInspection,
     /// Module execution returned an incomplete or mismatched batch.
     #[error("module execution batch is invalid")]
     ExecutionInvalid,

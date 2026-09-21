@@ -62,8 +62,10 @@ In `hepta-workspace`, a target created after the initial existence check causes
 the atomic publication step to fail with `AttemptAlreadyExists`. An existing
 empty directory, regular file or dangling link is preserved, as is the
 unpublished staging tree. No unsupported-kernel fallback performs an ordinary
-overwriting rename. Copy failure attempts to remove its staging tree; later
-sync/publication failures can leave staging for controlled recovery.
+overwriting rename. Copy, staging-inventory or staging-sync failure attempts to
+remove only the staging directory whose current metadata still matches its held
+directory descriptor. Failed cleanup or a publication collision can leave staging
+for controlled recovery; this identity check is not a live-writer exclusion lock.
 
 Copy and inventory use the same tree-counting rules with a fresh budget for each
 walk. Pending siblings consume budget before recursion, so separate subtrees
@@ -79,11 +81,35 @@ inside its unpublished staging tree. This handles growth after the initial size
 check without claiming a concurrent filesystem snapshot or an aggregate tree
 byte budget. The separate 1 GiB mutation ceiling is not a materialization quota.
 
-After a successful rename, parent sync, root opening or inventory can still
-fail. The current `WorkspaceError` does not encode a committed/unknown publication
-disposition. An error therefore does not prove that the final name is absent;
-inspect the owned namespace and retained evidence before retry or cleanup. Do
-not delete a published attempt merely because the caller received an error.
+The same bounded inventory now completes inside staging before the no-replace
+rename. Invalid inventory inputs, including non-UTF-8 child names, are rejected
+before a final name can be published. Inventory entries are relative to the tree
+root, so successful inputs retain their existing inventory and hash contract.
+After publication the producer repeats that bounded inventory, compares the
+complete value with the staging observation, and revalidates the final root.
+Changed file contents or metadata return `InventoryChanged`; newly invalid
+entries retain their specific error, such as `NonUtf8Path`. The two observations
+preserve the published-tree checking boundary but are not a consistent snapshot
+against non-cooperating concurrent modification.
+
+After a successful rename, parent sync, final-root opening/revalidation or the
+published inventory can still fail. These errors return
+`WorkspaceError::PublishedAttemptRequiresInspection` with `final_path`,
+`AttemptPublicationPhaseV1` (`ParentDirectorySync`, `PublishedRootOpen`,
+`PublishedRootValidation` or `PublishedInventoryValidation`),
+`parent_sync_completed` and the original boxed
+`WorkspaceError` cause. Final-root validation binds the actual published
+directory to the retained staging inode and identity, separately from the
+published content comparison. A false sync flag means durability remains unconfirmed,
+not that the rename was undone. A true flag records only that this call's parent
+directory sync completed, not that later namespace or content changes are safe.
+The producer neither removes an already-published directory nor retries. Inspect
+the namespace and original cause before recovery; retrying the same existing
+final name still fails with `AttemptAlreadyExists`.
+
+The function signatures remain unchanged. Adding public error variants can
+require changes to external exhaustive `WorkspaceError` matches; it is not
+source compatible with every possible external match expression.
 
 `recover_incomplete_attempts` has no live-writer lease, generation fence or process
 stop barrier. The caller must first exclude concurrent materializers. The name
@@ -130,3 +156,16 @@ counter test exercises the fixed production entry ceiling without creating
 offsets and rejection at the small byte limit plus one; the exact byte boundary
 still copies and hashes unchanged bytes. These tests do not claim a full-scale
 100,000-file or 512 MiB performance run. Public APIs expose no limit override.
+
+Publication tests also use a real non-UTF-8 source name to verify rejection and
+staging cleanup before any final name exists. Private phase hooks run only after
+the real rename, then inject parent-sync or final-root-open errors, or change the
+actual root mode to trigger real revalidation. They check the preserved phase,
+sync flag and original cause, retained final bytes and no overwrite on a same-ID
+retry. A real final-directory replacement is rejected against the retained
+staging identity and neither directory is reclaimed. Injected failures exercise
+the error protocol. Further post-rename hooks really rewrite a regular file
+without changing its length or add a non-UTF-8 regular-file name; directory
+identity remains unchanged while published inventory validation rejects them.
+Their final bytes survive both the error and a same-ID retry. These tests do not
+simulate or qualify physical storage durability.

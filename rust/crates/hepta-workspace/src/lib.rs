@@ -451,6 +451,9 @@ impl Serialize for PreparedHashView<'_> {
 }
 
 /// Materializes an isolated attempt through a private staging directory and no-clobber rename.
+/// Inventory validation runs before publication and is repeated after it. A
+/// `WorkspaceError::PublishedAttemptRequiresInspection` means the rename already
+/// succeeded; the final namespace must be inspected before any retry or cleanup.
 pub fn materialize_attempt(
     source: &WorkspaceRootV1,
     attempt_parent: impl AsRef<Path>,
@@ -473,6 +476,26 @@ fn materialize_attempt_with_limits(
     expected_owner_uid: u32,
     limits: WorkspaceLimits,
 ) -> Result<AttemptWorkspaceV1, WorkspaceError> {
+    materialize_attempt_with_publication_check(
+        source,
+        attempt_parent,
+        attempt_id,
+        expected_owner_uid,
+        limits,
+        |_, _| Ok(()),
+    )
+}
+
+// The fixed producer supplies a no-op observer. Private tests can inject a
+// failure only after the real no-replace rename, at an actual fallible phase.
+fn materialize_attempt_with_publication_check(
+    source: &WorkspaceRootV1,
+    attempt_parent: &Path,
+    attempt_id: &str,
+    expected_owner_uid: u32,
+    limits: WorkspaceLimits,
+    mut publication_check: impl FnMut(AttemptPublicationPhaseV1, &Path) -> Result<(), WorkspaceError>,
+) -> Result<AttemptWorkspaceV1, WorkspaceError> {
     validate_identifier(attempt_id)?;
     source.revalidate()?;
     let parent = inspect_private_attempt_parent(attempt_parent, expected_owner_uid)?;
@@ -488,28 +511,113 @@ fn materialize_attempt_with_limits(
     }
     fs::create_dir(&staging)
         .map_err(|error| WorkspaceError::Filesystem("attempt_staging", error.kind()))?;
-    fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))
-        .map_err(|error| WorkspaceError::Filesystem("attempt_staging_mode", error.kind()))?;
-    let mut entries = TreeEntryBudget::new(limits.tree_entries);
-    if let Err(error) = copy_tree(
-        &source.canonical_path,
-        &staging,
-        &mut entries,
-        limits.file_bytes,
-    ) {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error);
-    }
-    sync_directory(&staging)?;
+    let staging_directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(&staging)
+        .map_err(|error| WorkspaceError::Filesystem("attempt_staging_open", error.kind()))?;
+    let prepared = (|| {
+        staging_directory
+            .set_permissions(fs::Permissions::from_mode(0o700))
+            .map_err(|error| WorkspaceError::Filesystem("attempt_staging_mode", error.kind()))?;
+        let mut entries = TreeEntryBudget::new(limits.tree_entries);
+        copy_tree(
+            &source.canonical_path,
+            &staging,
+            &mut entries,
+            limits.file_bytes,
+        )?;
+        let root = WorkspaceRootV1::open(&staging, expected_owner_uid)?;
+        let held = staging_directory.metadata().map_err(|error| {
+            WorkspaceError::Filesystem("attempt_staging_metadata", error.kind())
+        })?;
+        let observed = root.directory.metadata().map_err(|error| {
+            WorkspaceError::Filesystem("attempt_staging_metadata", error.kind())
+        })?;
+        if !same_object(&held, &observed) {
+            return Err(WorkspaceError::RootChanged);
+        }
+        // Relative inventory entries and their hash do not depend on whether
+        // this directory has its private staging name or its published name.
+        let inventory = root.inventory_with_limits(limits)?;
+        source.revalidate()?;
+        root.revalidate()?;
+        staging_directory
+            .sync_all()
+            .map_err(|error| WorkspaceError::Filesystem("sync_directory", error.kind()))?;
+        root.revalidate()?;
+        Ok((root, inventory))
+    })();
+    let (staged_root, initial_inventory) = match prepared {
+        Ok(prepared) => prepared,
+        Err(cause) => {
+            cleanup_owned_staging(&staging, &staging_directory);
+            return Err(cause);
+        }
+    };
     publish_attempt_no_replace(&staging, &final_path)?;
-    sync_directory(&parent)?;
-    let root = WorkspaceRootV1::open(&final_path, expected_owner_uid)?;
-    let initial_inventory = root.inventory_with_limits(limits)?;
+    let published_error =
+        |phase, parent_sync_completed, cause| WorkspaceError::PublishedAttemptRequiresInspection {
+            final_path: final_path.clone(),
+            phase,
+            parent_sync_completed,
+            cause: Box::new(cause),
+        };
+    let sync_phase = AttemptPublicationPhaseV1::ParentDirectorySync;
+    publication_check(sync_phase, &final_path)
+        .and_then(|()| sync_directory(&parent))
+        .map_err(|cause| published_error(sync_phase, false, cause))?;
+    let open_phase = AttemptPublicationPhaseV1::PublishedRootOpen;
+    let root = publication_check(open_phase, &final_path)
+        .and_then(|()| WorkspaceRootV1::open(&final_path, expected_owner_uid))
+        .map_err(|cause| published_error(open_phase, true, cause))?;
+    let validation_phase = AttemptPublicationPhaseV1::PublishedRootValidation;
+    publication_check(validation_phase, &final_path)
+        .and_then(|()| validate_published_root(&staged_root, &root))
+        .map_err(|cause| published_error(validation_phase, true, cause))?;
+    let inventory_phase = AttemptPublicationPhaseV1::PublishedInventoryValidation;
+    publication_check(inventory_phase, &final_path)
+        .and_then(|()| {
+            let published_inventory = root.inventory_with_limits(limits)?;
+            if published_inventory != initial_inventory {
+                return Err(WorkspaceError::InventoryChanged);
+            }
+            root.revalidate()
+        })
+        .map_err(|cause| published_error(inventory_phase, true, cause))?;
     Ok(AttemptWorkspaceV1 {
         attempt_id: attempt_id.to_owned(),
         canonical_path: final_path,
         initial_inventory,
     })
+}
+
+fn cleanup_owned_staging(path: &Path, directory: &File) {
+    if let (Ok(named), Ok(held)) = (fs::symlink_metadata(path), directory.metadata())
+        && named.is_dir()
+        && !named.is_symlink()
+        && same_object(&named, &held)
+    {
+        let _ = fs::remove_dir_all(path);
+    }
+}
+
+fn validate_published_root(
+    staged: &WorkspaceRootV1,
+    published: &WorkspaceRootV1,
+) -> Result<(), WorkspaceError> {
+    let before = staged.identity();
+    let after = published.identity();
+    if before.device != after.device
+        || before.inode != after.inode
+        || before.mode != after.mode
+        || before.uid != after.uid
+        || before.gid != after.gid
+        || before.link_count != after.link_count
+    {
+        return Err(WorkspaceError::RootChanged);
+    }
+    published.revalidate()
 }
 
 fn publish_attempt_no_replace(staging: &Path, final_path: &Path) -> Result<(), WorkspaceError> {
@@ -897,12 +1005,23 @@ fn sync_directory(path: &Path) -> Result<(), WorkspaceError> {
         .map_err(|error| WorkspaceError::Filesystem("sync_directory", error.kind()))
 }
 
+/// Fallible phases reached only after the attempt's no-replace rename succeeded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttemptPublicationPhaseV1 {
+    ParentDirectorySync,
+    PublishedRootOpen,
+    PublishedRootValidation,
+    PublishedInventoryValidation,
+}
+
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum WorkspaceError {
     #[error("workspace root is not canonical, private, owned, and link-free")]
     RootInvalid,
     #[error("workspace root object changed")]
     RootChanged,
+    #[error("published workspace inventory differs from its staging observation")]
+    InventoryChanged,
     #[error("relative workspace path is invalid")]
     RelativePathInvalid,
     #[error("relative workspace path escapes the pinned root")]
@@ -927,6 +1046,19 @@ pub enum WorkspaceError {
     AttemptIdInvalid,
     #[error("attempt already exists")]
     AttemptAlreadyExists,
+    /// The final name was published and has not been removed by this producer.
+    /// Parent sync completion records only that this call returned success;
+    /// false means durability is unconfirmed, not that publication was undone.
+    #[error(
+        "published attempt at {final_path:?} requires inspection after {phase:?} (parent sync completed: {parent_sync_completed}): {cause}"
+    )]
+    PublishedAttemptRequiresInspection {
+        final_path: PathBuf,
+        phase: AttemptPublicationPhaseV1,
+        parent_sync_completed: bool,
+        #[source]
+        cause: Box<WorkspaceError>,
+    },
     #[error("incomplete attempt recovery found a foreign object")]
     AttemptRecoveryIdentityMismatch,
     #[error("clock is before the Unix epoch")]
@@ -944,8 +1076,12 @@ pub enum WorkspaceError {
 #[cfg(test)]
 mod tests {
     use std::{
+        ffi::OsString,
         io::{Seek, Write},
-        os::unix::fs::{MetadataExt, PermissionsExt, symlink},
+        os::unix::{
+            ffi::OsStringExt,
+            fs::{MetadataExt, PermissionsExt, symlink},
+        },
         sync::atomic::{AtomicU64, Ordering},
     };
 
@@ -1143,6 +1279,248 @@ mod tests {
             0
         );
         assert_eq!(source.inventory().expect("unchanged source"), before);
+    }
+
+    #[test]
+    fn non_utf8_inventory_rejection_cleans_staging_without_publishing() {
+        let tree = TempTree::new();
+        let path = tree
+            .source()
+            .join(OsString::from_vec(b"non-utf8-\xff".to_vec()));
+        fs::write(&path, b"source remains").expect("non-UTF-8 source file");
+        let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source root");
+        let failure = materialize_attempt(&source, &tree.attempts, "non-utf8", tree.uid)
+            .expect_err("inventory must reject before rename");
+        assert_eq!(failure, WorkspaceError::NonUtf8Path);
+        assert_eq!(
+            fs::symlink_metadata(tree.attempts.join("attempt-non-utf8"))
+                .expect_err("never published")
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert_eq!(fs::read_dir(&tree.attempts).expect("attempts").count(), 0);
+        assert_eq!(fs::read(path).expect("source retained"), b"source remains");
+    }
+
+    #[test]
+    fn errors_after_real_publication_keep_phase_cause_and_final_bytes() {
+        for (phase, expected_sync, cause) in [
+            (
+                AttemptPublicationPhaseV1::ParentDirectorySync,
+                false,
+                WorkspaceError::Filesystem("injected_parent_sync", std::io::ErrorKind::Other),
+            ),
+            (
+                AttemptPublicationPhaseV1::PublishedRootOpen,
+                true,
+                WorkspaceError::RootInvalid,
+            ),
+            (
+                AttemptPublicationPhaseV1::PublishedRootValidation,
+                true,
+                WorkspaceError::RootChanged,
+            ),
+        ] {
+            let tree = TempTree::new();
+            let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source root");
+            let before = source.inventory().expect("source inventory");
+            let destination = tree.attempts.join("attempt-published-error");
+            let mut reached = false;
+            let failure = materialize_attempt_with_publication_check(
+                &source,
+                &tree.attempts,
+                "published-error",
+                tree.uid,
+                WorkspaceLimits::PRODUCTION,
+                |current, published| {
+                    if current != phase {
+                        return Ok(());
+                    }
+                    reached = true;
+                    assert_eq!(published, destination);
+                    assert_eq!(
+                        fs::read(published.join("paper.tex")).expect("real published bytes"),
+                        b"draft"
+                    );
+                    assert_eq!(
+                        fs::read_dir(&tree.attempts)
+                            .expect("published namespace")
+                            .count(),
+                        1,
+                        "the real rename already consumed the staging name"
+                    );
+                    if phase == AttemptPublicationPhaseV1::PublishedRootValidation {
+                        // Exercise the actual revalidation after a real mode
+                        // change; this branch does not inject an error value.
+                        fs::set_permissions(published, fs::Permissions::from_mode(0o755))
+                            .expect("change observed root mode");
+                        Ok(())
+                    } else {
+                        Err(cause.clone())
+                    }
+                },
+            )
+            .expect_err("publication must retain a classified error");
+            assert!(reached);
+            assert_eq!(
+                failure,
+                WorkspaceError::PublishedAttemptRequiresInspection {
+                    final_path: destination.clone(),
+                    phase,
+                    parent_sync_completed: expected_sync,
+                    cause: Box::new(cause),
+                }
+            );
+            let published = fs::symlink_metadata(&destination).expect("final retained");
+            assert_eq!(
+                fs::read(destination.join("paper.tex")).expect("retained bytes"),
+                b"draft"
+            );
+            assert_eq!(
+                materialize_attempt(&source, &tree.attempts, "published-error", tree.uid)
+                    .expect_err("caller retry cannot overwrite the final name"),
+                WorkspaceError::AttemptAlreadyExists
+            );
+            assert!(same_object(
+                &published,
+                &fs::symlink_metadata(&destination).expect("same final")
+            ));
+            assert_eq!(
+                fs::read(destination.join("paper.tex")).expect("bytes after retry"),
+                b"draft"
+            );
+            assert_eq!(
+                source.inventory().expect("source remains unchanged"),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn published_root_must_be_the_actual_preinventoried_staging_object() {
+        let tree = TempTree::new();
+        let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source root");
+        let destination = tree.attempts.join("attempt-rebound");
+        let displaced = tree.attempts.join("displaced-published-attempt");
+        let failure = materialize_attempt_with_publication_check(
+            &source,
+            &tree.attempts,
+            "rebound",
+            tree.uid,
+            WorkspaceLimits::PRODUCTION,
+            |phase, published| {
+                if phase == AttemptPublicationPhaseV1::PublishedRootOpen {
+                    fs::rename(published, &displaced).expect("move actually published directory");
+                    fs::create_dir(published).expect("replacement final directory");
+                    fs::set_permissions(published, fs::Permissions::from_mode(0o700))
+                        .expect("replacement mode");
+                    fs::write(published.join("paper.tex"), b"replacement")
+                        .expect("replacement bytes");
+                }
+                Ok(())
+            },
+        )
+        .expect_err("the same final path cannot replace the original inode");
+        assert_eq!(
+            failure,
+            WorkspaceError::PublishedAttemptRequiresInspection {
+                final_path: destination.clone(),
+                phase: AttemptPublicationPhaseV1::PublishedRootValidation,
+                parent_sync_completed: true,
+                cause: Box::new(WorkspaceError::RootChanged),
+            }
+        );
+        assert_eq!(
+            fs::read(displaced.join("paper.tex")).expect("original preserved"),
+            b"draft"
+        );
+        assert_eq!(
+            fs::read(destination.join("paper.tex")).expect("replacement not reclaimed"),
+            b"replacement"
+        );
+    }
+
+    #[test]
+    fn published_inventory_rejects_changed_bytes_and_non_utf8_names() {
+        for non_utf8 in [false, true] {
+            let tree = TempTree::new();
+            let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source root");
+            let before = source.inventory().expect("source inventory");
+            let destination = tree.attempts.join("attempt-inventory-change");
+            let unexpected_name = OsString::from_vec(b"new-non-utf8-\xff".to_vec());
+            let mut reached = false;
+            let failure = materialize_attempt_with_publication_check(
+                &source,
+                &tree.attempts,
+                "inventory-change",
+                tree.uid,
+                WorkspaceLimits::PRODUCTION,
+                |phase, published| {
+                    if phase == AttemptPublicationPhaseV1::PublishedInventoryValidation {
+                        reached = true;
+                        assert_eq!(published, destination);
+                        assert_eq!(
+                            fs::read_dir(&tree.attempts)
+                                .expect("published namespace")
+                                .count(),
+                            1,
+                            "the real rename consumed staging before the mutation"
+                        );
+                        let previous_root = fs::metadata(published).expect("published root");
+                        if non_utf8 {
+                            fs::write(published.join(&unexpected_name), b"additional")
+                                .expect("add a real non-UTF-8 regular file");
+                        } else {
+                            // The byte count stays equal: content hashing must
+                            // detect a change that directory identity cannot.
+                            fs::write(published.join("paper.tex"), b"other")
+                                .expect("change real published file bytes");
+                        }
+                        assert!(same_object(
+                            &previous_root,
+                            &fs::metadata(published).expect("same root after mutation")
+                        ));
+                    }
+                    Ok(())
+                },
+            )
+            .expect_err("the published observation must be validated");
+            assert!(reached);
+            assert_eq!(
+                failure,
+                WorkspaceError::PublishedAttemptRequiresInspection {
+                    final_path: destination.clone(),
+                    phase: AttemptPublicationPhaseV1::PublishedInventoryValidation,
+                    parent_sync_completed: true,
+                    cause: Box::new(if non_utf8 {
+                        WorkspaceError::NonUtf8Path
+                    } else {
+                        WorkspaceError::InventoryChanged
+                    }),
+                }
+            );
+            let published = fs::metadata(&destination).expect("final retained");
+            assert_eq!(
+                materialize_attempt(&source, &tree.attempts, "inventory-change", tree.uid)
+                    .expect_err("retry must not overwrite the published tree"),
+                WorkspaceError::AttemptAlreadyExists
+            );
+            assert!(same_object(
+                &published,
+                &fs::metadata(&destination).expect("same final after retry")
+            ));
+            assert_eq!(
+                fs::read(destination.join("paper.tex")).expect("retained final bytes"),
+                if non_utf8 { b"draft" } else { b"other" }
+            );
+            if non_utf8 {
+                assert_eq!(
+                    fs::read(destination.join(&unexpected_name)).expect("new file retained"),
+                    b"additional"
+                );
+            }
+            assert_eq!(source.inventory().expect("source unchanged"), before);
+        }
     }
 
     #[test]

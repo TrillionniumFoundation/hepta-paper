@@ -4,112 +4,82 @@ use hepta_paper_service::{
 };
 use std::path::{Path, PathBuf};
 const USAGE: &str = "autonomous-research-supervisor-health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation|--require-current-machine-intake|--require-fully-autonomous]";
-fn main() {
-    let mut root: Option<String> = None;
-    let mut help = false;
-    let mut unsupported = false;
-    let mut unsupported_flag: Option<&str> = None;
-    let mut startup = false;
-    let mut machine = false;
-    // Node accepts this value option for the fully-autonomous prerequisite
-    // inspection.  The native observer still fails closed for that mode, but
-    // must preserve the incumbent parser contract before reaching it.
-    let mut _external_qualification_config: Option<String> = None;
-    let mut i = 0;
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    while i < args.len() {
-        let t = &args[i];
-        let Some(raw) = t.strip_prefix("--") else {
-            eprintln!("unexpected_cli_positional:{t}");
-            std::process::exit(1);
-        };
-        let (k, inline) = raw
+fn parse_options(args: &[String]) -> Result<std::collections::BTreeMap<&str, &str>, String> {
+    let mut options = std::collections::BTreeMap::new();
+    let mut index = 0;
+    while index < args.len() {
+        let token = args[index].as_str();
+        if token == "--" {
+            return Err("unexpected_cli_argument_separator".into());
+        }
+        let raw = token
+            .strip_prefix("--")
+            .ok_or_else(|| format!("unexpected_cli_positional:{token}"))?;
+        let (key, inline) = raw
             .split_once('=')
-            .map_or((raw, None), |(a, b)| (a, Some(b)));
-        match k {
-            "help" => {
-                if inline.is_some() || help {
-                    eprintln!(
-                        "{}",
-                        if inline.is_some() {
-                            "boolean_cli_option_does_not_take_value:--help"
-                        } else {
-                            "duplicate_cli_option:--help"
-                        }
-                    );
-                    std::process::exit(1)
-                };
-                help = true;
-            }
-            "require-startup-reconciliation" => {
-                if inline.is_some() || startup {
-                    eprintln!("duplicate_cli_option:--require-startup-reconciliation");
-                    std::process::exit(1)
-                };
-                startup = true;
-            }
-            "require-machine-intake-reconciliation" => {
-                if inline.is_some() || machine {
-                    eprintln!("duplicate_cli_option:--require-machine-intake-reconciliation");
-                    std::process::exit(1)
-                };
-                machine = true;
-            }
-            "require-current-machine-intake"
+            .map_or((raw, None), |(key, value)| (key, Some(value)));
+        if key.is_empty() {
+            return Err("empty_cli_option".into());
+        }
+        let value = match key {
+            "help"
+            | "require-startup-reconciliation"
+            | "require-machine-intake-reconciliation"
+            | "require-current-machine-intake"
             | "require-strict-machine-intake-reconciliation"
             | "require-fully-autonomous" => {
                 if inline.is_some() {
-                    eprintln!("boolean_cli_option_does_not_take_value:--{k}");
-                    std::process::exit(1);
+                    return Err(format!("boolean_cli_option_does_not_take_value:--{key}"));
                 }
-                if unsupported_flag == Some(k) {
-                    eprintln!("duplicate_cli_option:--{k}");
-                    std::process::exit(1);
-                }
-                unsupported = true;
-                unsupported_flag.get_or_insert(k);
+                ""
             }
-            "runtime-root" => {
-                if root.is_some() {
-                    eprintln!("duplicate_cli_option:--runtime-root");
-                    std::process::exit(1)
+            "runtime-root" | "external-qualification-config" => {
+                let value = match inline {
+                    Some(value) => value,
+                    None => {
+                        index += 1;
+                        args.get(index)
+                            .filter(|value| !value.starts_with("--"))
+                            .map(String::as_str)
+                            .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?
+                    }
                 };
-                let v = inline.map(str::to_owned).or_else(|| {
-                    i += 1;
-                    args.get(i).cloned()
-                });
-                match v.filter(|v| !v.is_empty() && !v.starts_with("--")) {
-                    Some(v) => root = Some(v),
-                    None => {
-                        eprintln!("missing_cli_option_value:--runtime-root");
-                        std::process::exit(1)
-                    }
+                if value.is_empty() {
+                    return Err(format!("empty_cli_option_value:--{key}"));
                 }
+                value
             }
-            "external-qualification-config" => {
-                if _external_qualification_config.is_some() {
-                    eprintln!("duplicate_cli_option:--external-qualification-config");
-                    std::process::exit(1)
-                }
-                let v = inline.map(str::to_owned).or_else(|| {
-                    i += 1;
-                    args.get(i).cloned()
-                });
-                match v.filter(|v| !v.is_empty() && !v.starts_with("--")) {
-                    Some(v) => _external_qualification_config = Some(v),
-                    None => {
-                        eprintln!("missing_cli_option_value:--external-qualification-config");
-                        std::process::exit(1)
-                    }
-                }
-            }
-            _ => {
-                eprintln!("unknown_cli_option:--{k}");
-                std::process::exit(1)
-            }
+            _ => return Err(format!("unknown_cli_option:--{key}")),
+        };
+        // Node validates a value before checking whether its option was repeated.
+        if options.insert(key, value).is_some() {
+            return Err(format!("duplicate_cli_option:--{key}"));
         }
-        i += 1;
+        index += 1;
     }
+    Ok(options)
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let options = match parse_options(&args) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    let root = options.get("runtime-root").map(|value| (*value).to_owned());
+    let help = options.contains_key("help");
+    let startup = options.contains_key("require-startup-reconciliation");
+    let machine = options.contains_key("require-machine-intake-reconciliation");
+    // Accept the qualification path option while keeping advanced modes fail-closed.
+    let unsupported_flag = args.iter().find_map(|arg| match arg.as_str() {
+        "--require-current-machine-intake"
+        | "--require-strict-machine-intake-reconciliation"
+        | "--require-fully-autonomous" => Some(arg.as_str()),
+        _ => None,
+    });
     if help {
         println!(
             "{{
@@ -122,12 +92,8 @@ fn main() {
         );
         return;
     }
-    if unsupported {
-        let Some(flag) = unsupported_flag else {
-            eprintln!("unsupported_supervisor_health_mode");
-            std::process::exit(1);
-        };
-        eprintln!("unsupported_supervisor_health_mode:--{flag}");
+    if let Some(flag) = unsupported_flag {
+        eprintln!("unsupported_supervisor_health_mode:{flag}");
         std::process::exit(1);
     }
     let cwd = match std::env::current_dir() {

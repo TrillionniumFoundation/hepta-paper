@@ -752,6 +752,14 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
           "symbol": "strict_cli_parse_errors_match_node_error_class"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
+          "symbol": "strict_cli_boundary_matrix_matches_node_error_precedence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
+          "symbol": "strict_cli_help_accepts_inline_option_like_values_without_runtime_access"
         }
       ]
     },

@@ -113,6 +113,17 @@ Capability bindings: `CAP-WS-AUTHORITY`. Related work identifiers: `MIG-003`, `G
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+### Concrete workspace selection and publication
+
+The [workspace implementation handoff](../WORKSPACE_IMPLEMENTATIONS_HANDOFF.md)
+compares the two Rust APIs field by field, including owner checks, actual file
+and tree limits, mutation policy differences and prepared-record trust. The
+`hepta-workspace` publisher uses atomic Linux `RENAME_NOREPLACE`; failure after
+publication and concurrent staging cleanup still require an owning recovery
+workflow. The descriptor-bound `hepta-workspace-authority` copy has different
+failure artifacts and no whole-attempt recovery entry. These source capabilities
+do not independently establish a sandbox, scientific verification or writer grant.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

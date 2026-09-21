@@ -45,6 +45,36 @@ Outputs:
 
 Every request, result, event, health record, and receipt carries explicit schema/kind/version, canonical encoding, maximum bytes/counts, freshness and authority requirements, idempotency identity where applicable, unknown-field policy, and confidentiality classification. Large or confidential content moves by immutable artifact reference rather than unbounded protocol payload.
 
+### Native bundle and separate PDF compilation
+
+`execute_native_business_for_capability_v1(job, "CAP-BUILD")` accepts
+`NativeBusinessJobV1::BuildPackage` (`kind: build_package`). Closed
+`BuildEntryV1` records use camelCase `path`, `content`, `mediaType` fields. The
+[encoder](../../../rust/crates/hepta-paper-service/src/native_business/build.rs)
+requires 1–4096 entries, safe relative paths up to 1024 UTF-8 bytes, nonempty
+media types up to 256 bytes and nonempty UTF-8 content up to 1 MiB per entry.
+It sorts paths and rejects duplicates, traversal and file/directory-prefix
+collisions. Aggregate content and encoded bundle are bounded at 16 MiB.
+
+Output order is contractual: first a `NativeBuildManifestV1` JSON artifact,
+then `HEPTA-NATIVE-BUNDLE-V1` bytes. The manifest binds sorted path/media type,
+byte length, content hashes and the bundle hash; `NativeBuildEvidenceV1` binds
+both artifacts. `verify_native_build_bundle_v1(bytes, expected_sha256)` checks
+hash and bounded framing and returns entries in memory without extracting or
+running content. The expected hash must come from the selected manifest/CAS
+context. See the [business handoff](../NATIVE_BUSINESS_HANDOFF.md) and
+[executable examples](../examples/native-business.v1.json).
+
+Actual PDF compilation uses `execute_scientific_job_v1(&profile, job,
+"CAP-BUILD")` or `hepta-scientific-worker`, with a `pdf_latex` profile. It
+requires `main.tex`, requests `paper.pdf` as `pdf`, and pins the canonical pdftex
+executable, explicit pdflatex format/argv and complete job hash. One to three
+passes share the execution timeout; no shell escape or package-download step is
+provided. The [scientific runtime handoff](../SCIENTIFIC_RUNTIME_HANDOFF.md)
+defines the exact argv, runtime files, private scratch, output limits and named
+manifest. PDF framing is checked; semantic PDF validation, publication, signing
+and immutable custody are separate responsibilities.
+
 ## State and authority
 
 Maximum authority class: `prepared_result_only`. Current static activation: `authoritative`. The registry declaration is a ceiling and request, not an authority grant. It may write only attempt-local workspace or prepared-result state. A verifier and the commit sequencer decide whether any result becomes authoritative.
@@ -64,6 +94,14 @@ Current implementation and contract roots:
 - `paper-application`
 - `paper-adapters/artifacts`
 
+Additive Rust implementation roots (the incumbent roots above remain distinct):
+
+- `rust/crates/hepta-paper-service/src/native_business.rs`
+- `rust/crates/hepta-paper-service/src/native_business/types.rs`
+- `rust/crates/hepta-paper-service/src/native_business/build.rs`
+- `rust/crates/hepta-paper-service/src/scientific_runtime.rs`
+- `rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs`
+
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
 ## Concurrency and resources
@@ -81,6 +119,16 @@ A candidate-producing module must expose feasible alternatives or a justified si
 ## Failure, recovery, and idempotency
 
 Reject mutable toolchains, missing lock/runtime identities, undeclared inputs, non-reproducible output, unsafe LaTeX/generated code, incomplete package inventory, SBOM drift, or artifact hash mismatch.
+
+Invalid entry identities/order/collisions or a mismatching/truncated bundle
+return `NativeBusinessError::Contract`; encoding and size failures remain
+explicit, with no partial accepted package. Direct bundle calls own no durable
+state and repeat deterministically. Scientific compiler identity drift,
+nonzero exit/timeout or invalid PDF output refuse prepared success and retain
+scratch. The service owns intent, prepared CAS output and SQLite replay: a
+prepared/committed attempt reuses its bytes, while started compilation without
+a durable prepared record stays ambiguous until reconciled. Neither path
+restores an older package over newer committed work automatically.
 
 Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
 
@@ -110,6 +158,22 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 Capability bindings: `CAP-BUILD`. Related work identifiers: `BUILD-001`. Implementation/contract roots: `paper-application`, `paper-adapters/artifacts`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
+### Focused Rust verification
+
+Run from the repository root:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business --test native_bundle_and_binding --test native_business_service
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test scientific_workflow
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test scientific_runtime actual_latex_compilation_produces_pdf_not_a_json_bundle -- --exact --ignored
+```
+
+Bundle tests exercise round-trip bytes, every truncation, digest/trailing-byte
+drift, length overflow, unsafe paths and collisions. Workflow/service tests
+exercise prepared content and durable replay. The last command requires the
+actual installed TeX tool; an ordinary run that leaves it ignored is not
+compiler evidence and no successful tool-host run is asserted here.
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback
@@ -119,4 +183,10 @@ Current channel is `authoritative`. A new version progresses through registered/
 ## Open blockers
 
 - `BUILD-001` — `source_implemented`
-- No additional repository-local implementation blocker is asserted by this specification; qualification, activation, and operation remain separate.
+
+The static work-item projection does not accept complete Rust build-role parity.
+The bundle encoder is not LaTeX/PDF compilation; the explicit PDF adapter does
+not implement BibTeX, package installation, complete transitive toolchain/SBOM
+closure, reproducible full incumbent packaging, release signing or immutable
+retention. Representative package/rebuild comparisons, failure recovery and
+qualified runtime/release composition remain separate acceptance work.

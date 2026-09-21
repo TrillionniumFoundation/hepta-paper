@@ -62,7 +62,8 @@ pub struct IndependentVerificationV1 {
     pub external_attestation_hash: Option<String>,
 }
 
-/// Verified capsule eligible for downstream policy evaluation.
+/// Capsule consistency result for downstream policy evaluation. Public fields
+/// allow direct construction; this is not an opaque authenticated capability.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedEvidenceCapsuleV1 {
     /// Producer capsule hash.
@@ -75,7 +76,9 @@ pub struct VerifiedEvidenceCapsuleV1 {
     pub artifact_hashes: Vec<String>,
 }
 
-/// Validates independent implementation, exact recomputation, and non-inflation.
+/// Checks supplied implementation identifiers, artifact-set recomputation claims
+/// and non-inflation. Actual artifact reads, scientific verification and external
+/// attestation authentication belong to independently controlled producers.
 pub fn verify_evidence_capsule_v1(
     producer: &ProducerEvidenceV1,
     verification: &IndependentVerificationV1,

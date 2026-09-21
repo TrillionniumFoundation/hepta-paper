@@ -112,6 +112,13 @@ Capability bindings: `CAP-EVD-VERIFY`. Related work identifiers: `CTL-006`. Impl
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+### Concrete Rust composition responsibility
+
+The function compares supplied records and digest sets; it does not recompute scientific artifacts or authenticate a verifier/attestation. Its publicly constructible capsule is not an opaque grant. The detailed contract specifies validation order, hash ordering, assurance-level behavior and the independent adapter responsibilities.
+
+See the [field-level development handoff](../../../rust/crates/hepta-scientific-evidence/HANDOFF.md) for
+limits, typed failures, external operation recovery and the actual test scope.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

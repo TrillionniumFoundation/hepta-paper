@@ -5,7 +5,7 @@
   "registryRef": "docs/system/truth/modules.v1.json#/modules/module.empirical-node",
   "specPath": "docs/modules/specs/empirical-node.md",
   "runbookPath": "docs/modules/specs/empirical-node.md#operational-runbook",
-  "implementationPaths": ["paper-application/automation","paper-adapters/runtime"],
+  "implementationPaths": ["paper-application/automation","paper-adapters/runtime","rust/crates/hepta-paper-service/src/native_business.rs","rust/crates/hepta-paper-service/src/native_business/types.rs","rust/crates/hepta-paper-service/src/native_business/empirical.rs","rust/crates/hepta-paper-service/src/native_business/inference.rs","rust/crates/hepta-paper-service/src/scientific_runtime.rs","rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs"],
   "capabilityIds": ["CAP-EMPIRICAL"],
   "authorityClass": "prepared_result_only",
   "ownerTeams": ["TEAM-EMPIRICAL","TEAM-NUMERICAL","TEAM-EVIDENCE"],

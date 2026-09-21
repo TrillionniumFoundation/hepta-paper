@@ -45,6 +45,41 @@ Outputs:
 
 Every request, result, event, health record, and receipt carries explicit schema/kind/version, canonical encoding, maximum bytes/counts, freshness and authority requirements, idempotency identity where applicable, unknown-field policy, and confidentiality classification. Large or confidential content moves by immutable artifact reference rather than unbounded protocol payload.
 
+### Implemented Rust empirical paths
+
+All native jobs pass through
+`execute_native_business_for_capability_v1(job, "CAP-EMPIRICAL")`; the two job
+kinds have different contracts:
+
+- `empirical_aggregate` consumes 1–1000000 `ObservationV1 {label, value}` records.
+  Labels are distinct bounded ASCII identifiers (256 bytes); values and
+  intermediate arithmetic must be finite. The
+  [aggregate implementation](../../../rust/crates/hepta-paper-service/src/native_business/empirical.rs)
+  uses an online mean/variance update in supplied order. One
+  `NativeEmpiricalAggregateV1` JSON artifact contains count, extrema, mean,
+  population variance, sample variance and the hash of the ordered observations;
+  sample variance is null for one observation. `NativeEmpiricalEvidenceV1`
+  binds report hash and count.
+- `empirical_inference` wraps a closed camelCase `AnalysisInferenceRequestV1`.
+  [inference.rs](../../../rust/crates/hepta-paper-service/src/native_business/inference.rs)
+  also exposes `evaluate_analysis_inference_v1(&request)`. It accepts 1–65536
+  finite paired values; bootstrap/sign-flip bounds and observation count must
+  fit the 4000000-work budget. The [paired-analysis contract](../NATIVE_PARITY_HANDOFF.md#paired-statistical-analysis)
+  defines seed/hash domains, supplied hypotheses, confidence/power fields and
+  every limit. `NativePairedAnalysisReportV1` retains
+  `scientificAcceptance=false`, `datasetAuthorityVerified=false` and
+  `productionActivation=false`.
+
+Actual program execution uses
+`execute_scientific_job_v1(&profile, job, "CAP-EMPIRICAL")` or
+`hepta-scientific-worker`, with `python_empirical` or `r_empirical` profiles.
+The [scientific runtime handoff](../SCIENTIFIC_RUNTIME_HANDOFF.md) binds the tool,
+runtime-file inventory, complete job hash, fixed argv, explicit named outputs
+and service integration. Aggregating supplied observations is not execution of
+an experiment; executing a program does not establish dataset or oracle authority.
+See the [kernel examples](../examples/native-business.v1.json) and
+[paired-analysis example](../examples/paired-analysis.v1.json) for separate inputs.
+
 ## State and authority
 
 Maximum authority class: `prepared_result_only`. Current static activation: `authoritative`. The registry declaration is a ceiling and request, not an authority grant. It may write only attempt-local workspace or prepared-result state. A verifier and the commit sequencer decide whether any result becomes authoritative.
@@ -64,6 +99,15 @@ Current implementation and contract roots:
 - `paper-application/automation`
 - `paper-adapters/runtime`
 
+Additive Rust implementation roots (the incumbent roots above remain distinct):
+
+- `rust/crates/hepta-paper-service/src/native_business.rs`
+- `rust/crates/hepta-paper-service/src/native_business/types.rs`
+- `rust/crates/hepta-paper-service/src/native_business/empirical.rs`
+- `rust/crates/hepta-paper-service/src/native_business/inference.rs`
+- `rust/crates/hepta-paper-service/src/scientific_runtime.rs`
+- `rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs`
+
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
 ## Concurrency and resources
@@ -81,6 +125,16 @@ A candidate-producing module must expose feasible alternatives or a justified si
 ## Failure, recovery, and idempotency
 
 Reject mutable/unidentified data, undeclared preprocessing, missing seeds/parameters, invalid statistical plans, leakage, non-finite output, resource overflow, or aggregates that cannot be recomputed from retained artifacts.
+
+The aggregate rejects duplicate labels or nonfinite arithmetic as `Numeric`;
+shape/count/identifier failures are `Contract`. Inference similarly refuses
+unsafe numeric/work/identity inputs without prepared success. Input order is
+part of the statistical and hash contract, not an invitation to reorder samples
+on retry. Pure calculations own no journal. Scientific process failures retain
+scratch; service-recorded prepared/committed outputs replay without another
+launch or debit, while started-without-prepared work remains ambiguous. No
+retry rule here authorizes repeating a provider action or changing a protocol,
+dataset, seed or statistical plan under the old identity.
 
 Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
 
@@ -110,6 +164,22 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 Capability bindings: `CAP-EMPIRICAL`. Related work identifiers: `EMP-001`. Implementation/contract roots: `paper-application/automation`, `paper-adapters/runtime`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
+### Focused Rust verification
+
+Run from the repository root with the pinned Node oracle for differential tests:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business --test analysis_inference_parity --test native_business_service
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test scientific_runtime --test scientific_workflow
+```
+
+The inference target compares actual incumbent Node statistical exports on the
+bounded corpus. Service tests exercise real CAS verification, SQLite integration
+and exact replay. Scientific tests execute Python and a real Rust worker, check
+named-output membership, and keep failed work ambiguous. R execution, dataset
+permission, representative scientific validity and independent replication are
+not established by these targets.
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback
@@ -119,4 +189,10 @@ Current channel is `authoritative`. A new version progresses through registered/
 ## Open blockers
 
 - `EMP-001` — `source_implemented`
-- No additional repository-local implementation blocker is asserted by this specification; qualification, activation, and operation remain separate.
+
+The registered static status does not establish full Rust empirical-role parity.
+Remaining role work includes complete incumbent protocol validation and
+experiment orchestration, dataset/preprocessing authority, runtime-specific
+reproducibility, independently controlled oracle/replication, resource and cost
+settlement, cancellation and representative full-workflow acceptance. Generic
+statistics on supplied values cannot substitute for these contracts.

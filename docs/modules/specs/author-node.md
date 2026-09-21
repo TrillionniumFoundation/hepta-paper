@@ -45,6 +45,32 @@ Outputs:
 
 Every request, result, event, health record, and receipt carries explicit schema/kind/version, canonical encoding, maximum bytes/counts, freshness and authority requirements, idempotency identity where applicable, unknown-field policy, and confidentiality classification. Large or confidential content moves by immutable artifact reference rather than unbounded protocol payload.
 
+### Implemented Rust author slice
+
+The public entry is `execute_native_business_for_capability_v1(job,
+"CAP-AUTHOR")` in [native_business.rs](../../../rust/crates/hepta-paper-service/src/native_business.rs).
+It accepts `NativeBusinessJobV1::AuthorDraft`; the private
+[author implementation](../../../rust/crates/hepta-paper-service/src/native_business/author.rs)
+assembles supplied text. It does not invoke an author model. The closed wire job
+uses `kind: author_draft` and snake_case `abstract_text` / `reference_keys`;
+`ManuscriptSectionV1` contains `heading` and `body`. Unknown typed fields fail.
+
+The title and each heading are nonempty, control-free and at most 512 UTF-8
+bytes. There are 1–256 sections with distinct headings. Abstract and each body
+are nonempty, at most 1 MiB, and admit newline/tab but no other control characters.
+There are at most 4096 distinct reference identifiers of at most 256 ASCII bytes;
+references are sorted before rendering. The input text budget is 16 MiB; the
+shared dispatcher separately rejects an artifact exceeding 16 MiB, including
+rendering overhead.
+
+The return is `NativeBusinessOutputV1`: one Markdown byte artifact and
+`NativeAuthorEvidenceV1` with its SHA-256, word/section/reference counts and
+`externalActionMayHaveStarted=false`. Word count uses whitespace separation.
+No filesystem path, CAS publication or commit receipt is created by this kernel.
+The [business handoff](../NATIVE_BUSINESS_HANDOFF.md) and
+[executable examples](../examples/native-business.v1.json) define the shared
+encoding and direct-call examples; they are not complete service configurations.
+
 ## State and authority
 
 Maximum authority class: `prepared_result_only`. Current static activation: `authoritative`. The registry declaration is a ceiling and request, not an authority grant. It may write only attempt-local workspace or prepared-result state. A verifier and the commit sequencer decide whether any result becomes authoritative.
@@ -64,6 +90,12 @@ Current implementation and contract roots:
 - `paper-application/automation`
 - `paper-adapters/automation`
 
+Additive Rust implementation roots (the incumbent roots above remain distinct):
+
+- `rust/crates/hepta-paper-service/src/native_business.rs`
+- `rust/crates/hepta-paper-service/src/native_business/types.rs`
+- `rust/crates/hepta-paper-service/src/native_business/author.rs`
+
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
 ## Concurrency and resources
@@ -81,6 +113,14 @@ A candidate-producing module must expose feasible alternatives or a justified si
 ## Failure, recovery, and idempotency
 
 Reject stale inputs, unauthorized tools, context/byte/resource overflow, forbidden credentials, unclassified mutations, malformed output, or results that cannot be linked to exact provenance. Model failure produces a typed non-authoritative result.
+
+The Rust slice returns `NativeBusinessError::Contract` for invalid text,
+identities, duplicate headings/references or capability mismatch, and
+`OutputLimit` if rendered bytes exceed the dispatcher bound. Encoding failure
+returns no accepted prepared output. It owns no durable state: repeating the
+same valid kernel input is deterministic. Through the service, dispatch intent,
+prepared CAS bytes and commit receipts belong to the existing service executor
+and sequencer; a kernel retry is not authorization to repeat a provider call.
 
 Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
 
@@ -110,6 +150,21 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 Capability bindings: `CAP-AUTHOR`. Related work identifiers: `AUTH-001`. Implementation/contract roots: `paper-application/automation`, `paper-adapters/automation`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
+### Focused Rust verification
+
+Run from the repository root:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business --test native_bundle_and_binding
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test scientific_workflow
+```
+
+The documentation target imports the checked-in example and verifies artifact,
+evidence, deterministic repeat and wrong-capability/unknown-field refusal. The
+workflow target checks a real scientific named output feeding manuscript and
+bundle construction, CAS verification and SQLite replay; it does not run an
+author model or measure manuscript quality.
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback
@@ -119,4 +174,11 @@ Current channel is `authoritative`. A new version progresses through registered/
 ## Open blockers
 
 - `AUTH-001` — `source_implemented`
-- No additional repository-local implementation blocker is asserted by this specification; qualification, activation, and operation remain separate.
+
+The registered static work-item state above describes the incumbent module;
+it does not accept full Rust role parity. The native slice still needs an
+explicit model/runtime call chain, research/code/revision workflow, independent
+quality review, attempt/cancellation and cost reconciliation, and representative
+Node-to-Rust role cases before it can replace that role. The scientific worker
+can supply an input artifact but does not supply model authorship. Keep these
+boundaries separate from target-host and external qualification.

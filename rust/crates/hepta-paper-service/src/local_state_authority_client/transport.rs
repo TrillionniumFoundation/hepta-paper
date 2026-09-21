@@ -37,6 +37,16 @@ fn annotated(cause: LocalStateAuthorityClientError, sent: usize) -> SqliteMutati
 }
 
 impl LocalStateAuthoritySocketTransportV1 {
+    /// Observe this socket origin's actual system-manager association before
+    /// opening any SQLite owner. The bus and its reader are destroyed before
+    /// return. This static observation does not establish installed authority,
+    /// native provenance, continued currentness, or permission to mutate.
+    pub fn observe_system_manager_v1(
+        &self,
+    ) -> CoordinatorResult<ObservedSocketPeerManagerAssociationV1> {
+        manager::observe(&self.origin, self.options.timeout_ms).map_err(|cause| annotated(cause, 0))
+    }
+
     pub fn connect(options: &LocalStateAuthorityClientOptionsV1) -> CoordinatorResult<Self> {
         let observe = || -> Result<Self> {
             configuration(options)?;

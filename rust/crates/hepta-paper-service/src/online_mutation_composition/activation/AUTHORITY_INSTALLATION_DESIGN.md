@@ -2,7 +2,8 @@
 
 Status: **static deployment prerequisite plus installation-owner design**.
 The supplied-key Rust authority, its real business integration, direct socket
-transport and [nine-role static Deployment V2 producer](../../deployment/HANDOFF.md)
+transport, [nine-role static Deployment V2 producer](../../deployment/HANDOFF.md)
+and [static system-manager observation](../../local_state_authority_client/manager/HANDOFF.md)
 are implemented. They do not yet establish a qualified installed authority
 process. Static file observations and socket-origin continuity remain separate
 prerequisites; neither constructs production activation.
@@ -106,8 +107,14 @@ manager owner and boot identity; changes invalidate the observation.
 This is manager association, not a new claim that the control process read the
 remote executable mapping. Independent installed-host evidence must cover that
 mapping and the admitted no-delegation/no-proxy service profile. A concrete
-native D-Bus adapter remains missing. Do not convert shell output or a diagnostic
-JSON report into an opaque installation proof.
+live installation owner remains missing. The implemented pre-SQLite native
+D-Bus observer borrows the actual socket-origin pidfd, authenticates the fixed
+system bus and root PID 1 manager, checks typed replies and destroys its bus
+resources before returning a static observation. It reads properties separately,
+does not match them to a V2 deployment and cannot revalidate them during an owning
+SQLite lifetime. Unexpected received FDs are rejected and closed; a future live
+owner must first isolate that descriptor lifetime from SQLite locks. Do not
+convert shell output or diagnostic JSON into an opaque installation proof.
 
 ## Owning integration and tests
 

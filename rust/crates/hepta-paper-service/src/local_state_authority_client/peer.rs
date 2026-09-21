@@ -8,7 +8,7 @@ use nix::{
     poll::{PollFd, PollFlags, PollTimeout, poll},
     sys::socket::{getsockopt, sockopt},
 };
-use std::os::fd::{AsFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd, RawFd};
 
 #[derive(Debug, Eq, PartialEq)]
 struct Credentials {
@@ -38,6 +38,18 @@ pub(super) struct SocketPeer {
     socket: RawFd,
 }
 impl SocketPeer {
+    pub(super) fn origin_pidfd(&self) -> BorrowedFd<'_> {
+        self.pidfd.as_fd()
+    }
+
+    pub(super) fn origin_credentials(&self) -> (i32, u32, u32) {
+        (
+            self.credentials.pid,
+            self.credentials.uid,
+            self.credentials.gid,
+        )
+    }
+
     pub(super) fn observe(stream: &UnixStream, deadline: Instant) -> Result<Self> {
         deadline_current(deadline)?;
         let credentials = Credentials::observe(stream)?;

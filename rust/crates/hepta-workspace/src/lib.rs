@@ -441,8 +441,7 @@ pub fn materialize_attempt(
         return Err(error);
     }
     sync_directory(&staging)?;
-    fs::rename(&staging, &final_path)
-        .map_err(|error| WorkspaceError::Filesystem("attempt_publish", error.kind()))?;
+    publish_attempt_no_replace(&staging, &final_path)?;
     sync_directory(&parent)?;
     let root = WorkspaceRootV1::open(&final_path, expected_owner_uid)?;
     let initial_inventory = root.inventory()?;
@@ -450,6 +449,24 @@ pub fn materialize_attempt(
         attempt_id: attempt_id.to_owned(),
         canonical_path: final_path,
         initial_inventory,
+    })
+}
+
+fn publish_attempt_no_replace(staging: &Path, final_path: &Path) -> Result<(), WorkspaceError> {
+    use nix::fcntl::{AT_FDCWD, RenameFlags, renameat2};
+    renameat2(
+        AT_FDCWD,
+        staging,
+        AT_FDCWD,
+        final_path,
+        RenameFlags::RENAME_NOREPLACE,
+    )
+    .map_err(|error| {
+        if error == nix::errno::Errno::EEXIST {
+            WorkspaceError::AttemptAlreadyExists
+        } else {
+            WorkspaceError::Filesystem("attempt_publish", std::io::Error::from(error).kind())
+        }
     })
 }
 
@@ -905,6 +922,47 @@ mod tests {
             source.inventory(),
             Err(WorkspaceError::SymlinkForbidden(_))
         ));
+    }
+
+    #[test]
+    fn publication_cannot_replace_an_object_created_after_the_initial_check() {
+        for existing in ["empty-directory", "file", "dangling-symlink"] {
+            let tree = TempTree::new();
+            let staging = tree.attempts.join(".attempt-race-1-1.creating");
+            let destination = tree.attempts.join("attempt-race");
+            fs::create_dir(&staging).expect("private staging");
+            fs::write(staging.join("copied.txt"), b"new attempt").expect("staged bytes");
+            assert!(!destination.exists(), "initial destination check");
+            // A concurrent publisher or same-owner actor creates the final
+            // name while this attempt is still copying. An empty directory
+            // would be silently replaced by ordinary fs::rename.
+            match existing {
+                "empty-directory" => fs::create_dir(&destination).expect("existing directory"),
+                "file" => fs::write(&destination, b"prior attempt").expect("existing file"),
+                _ => symlink("missing-target", &destination).expect("existing link"),
+            }
+            let before = fs::symlink_metadata(&destination).expect("existing identity");
+            assert_eq!(
+                publish_attempt_no_replace(&staging, &destination),
+                Err(WorkspaceError::AttemptAlreadyExists)
+            );
+            let after = fs::symlink_metadata(&destination).expect("preserved identity");
+            assert_eq!((before.dev(), before.ino()), (after.dev(), after.ino()));
+            assert_eq!(
+                fs::read(staging.join("copied.txt")).expect("unpublished bytes retained"),
+                b"new attempt"
+            );
+            match existing {
+                "empty-directory" => {
+                    assert_eq!(fs::read_dir(&destination).expect("directory").count(), 0)
+                }
+                "file" => assert_eq!(fs::read(&destination).expect("file"), b"prior attempt"),
+                _ => assert_eq!(
+                    fs::read_link(&destination).expect("link"),
+                    Path::new("missing-target")
+                ),
+            }
+        }
     }
 
     #[test]

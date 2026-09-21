@@ -22,8 +22,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod manager;
 mod peer;
 mod transport;
+pub use manager::ObservedSocketPeerManagerAssociationV1;
 pub use transport::LocalStateAuthoritySocketTransportV1;
 
 pub const HEPTA_LOCAL_STATE_AUTHORITY_SOCKET: &str =

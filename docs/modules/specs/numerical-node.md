@@ -45,6 +45,42 @@ Outputs:
 
 Every request, result, event, health record, and receipt carries explicit schema/kind/version, canonical encoding, maximum bytes/counts, freshness and authority requirements, idempotency identity where applicable, unknown-field policy, and confidentiality classification. Large or confidential content moves by immutable artifact reference rather than unbounded protocol payload.
 
+### Three distinct Rust numerical surfaces
+
+1. `execute_native_business_for_capability_v1(job, "CAP-NUMERICAL")` accepts
+   `NativeBusinessJobV1::NumericalLinearSolve` (`kind: numerical_linear_solve`).
+   The [kernel](../../../rust/crates/hepta-paper-service/src/native_business/numerical.rs)
+   requires a finite square matrix/RHS of dimension 1–128 and positive finite
+   tolerance. Partial pivoting and back substitution produce one
+   `NativeNumericalLinearSolutionV1` JSON artifact plus `NativeNumericalEvidenceV1`;
+   the report contains solution, residual infinity norm, tolerance and input
+   hash. Tolerance is the pivot-singularity threshold, not a forward-error bound
+   or an acceptance threshold imposed on the returned residual.
+2. `execute_scientific_job_v1(&profile, job, "CAP-NUMERICAL")` and the first-party
+   `hepta-scientific-worker` support `python_numerical` / `r_numerical`. Their
+   [scientific runtime contract](../SCIENTIFIC_RUNTIME_HANDOFF.md) binds the exact
+   tool, operator-supplied runtime inventory, typed job hash and named outputs.
+   They execute a trusted local program, not just the built-in linear solver.
+3. [advanced_numerical.rs](../../../rust/crates/hepta-paper-service/src/advanced_numerical.rs)
+   exposes `execute_advanced_numerical_plugin_v1(&serde_json::Value)` and the
+   `hepta-paper-rust advanced-numerical-plugin REQUEST` CLI. The
+   [advanced numerical handoff](../ADVANCED_NUMERICAL_PLUGIN_HANDOFF.md) maps it
+   to the actual incumbent reference-candidate route. It accepts a hash-bound
+   `AdvancedNumericalPluginRequest` with safe-integer seed and three assurance
+   contract hashes. The command limits raw JSON to 32 KiB; the library also
+   bounds serialized request bytes. Implemented families are `linear-algebra`,
+   `monte-carlo`, `optimization`: matrix dimension is at most 128 and
+   sample/iteration budgets at most 1000000. Output is a self-hashed
+   `AdvancedNumericalPluginResult`, with `nativeExecution=true`,
+   `productionQualified=false` and `reference_candidate_unqualified` status.
+
+These are distinct input/output contracts. The advanced result's local oracle
+and replay fields do not represent independently issued scientific evidence.
+It uses a deterministic native stream, without claiming byte parity with the
+Python reference generator. It is not the signed out-of-process plugin runner.
+The [business handoff](../NATIVE_BUSINESS_HANDOFF.md) supplies the linear-kernel
+example and shared byte/evidence conventions.
+
 ## State and authority
 
 Maximum authority class: `prepared_result_only`. Current static activation: `authoritative`. The registry declaration is a ceiling and request, not an authority grant. It may write only attempt-local workspace or prepared-result state. A verifier and the commit sequencer decide whether any result becomes authoritative.
@@ -64,6 +100,16 @@ Current implementation and contract roots:
 - `numerical-plugins`
 - `paper-adapters/runtime`
 
+Additive Rust implementation roots (the incumbent roots above remain distinct):
+
+- `rust/crates/hepta-paper-service/src/native_business.rs`
+- `rust/crates/hepta-paper-service/src/native_business/types.rs`
+- `rust/crates/hepta-paper-service/src/native_business/numerical.rs`
+- `rust/crates/hepta-paper-service/src/advanced_numerical.rs`
+- `rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs`
+- `rust/crates/hepta-paper-service/src/scientific_runtime.rs`
+- `rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs`
+
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
 ## Concurrency and resources
@@ -81,6 +127,15 @@ A candidate-producing module must expose feasible alternatives or a justified si
 ## Failure, recovery, and idempotency
 
 Reject invalid domains/units, non-convergence, instability, NaN/Inf, tolerance failure, resource exhaustion, incomplete artifacts, or oracle disagreement. Changing method or tolerance creates a new protocol identity.
+
+The linear kernel reports `Contract` for shape/nonfinite-input/tolerance errors,
+`SingularMatrix` for rejected pivots, and `Numeric` for nonfinite elimination,
+solution or residual terms; output/encoding errors cannot become prepared success.
+The advanced API has separate `Contract`, `UnsupportedFamily`, `Numeric`, `Hash`,
+`InputLimit`, `Computation` failures. Both direct computations own no journal.
+Scientific execution retains scratch on failure; service dispatch reuses durable
+prepared bytes and refuses automatic relaunch of ambiguous started work. A changed
+method, tolerance, seed, runtime or job requires a fresh bound identity.
 
 Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
 
@@ -110,6 +165,21 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 Capability bindings: `CAP-NUMERICAL`. Related work identifiers: `NUM-001`. Implementation/contract roots: `numerical-plugins`, `paper-adapters/runtime`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
+### Focused Rust verification
+
+Run from the repository root:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business --test scientific_runtime
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --lib advanced_numerical
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test advanced_numerical_plugin
+```
+
+The runtime suite executes an actual Python numerical program; it does not claim
+R execution. Advanced tests cover the real CLI, request-hash drift, unsupported
+families, oversized raw requests and deterministic unqualified results. They do
+not verify signed bundles or claim independent oracle/replay qualification.
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback
@@ -119,4 +189,11 @@ Current channel is `authoritative`. A new version progresses through registered/
 ## Open blockers
 
 - `NUM-001` — `source_implemented`
-- No additional repository-local implementation blocker is asserted by this specification; qualification, activation, and operation remain separate.
+
+The static work-item status does not accept complete Rust numerical-role parity.
+Seven of the ten declared advanced families, full incumbent argument/status
+modes, signed plugin bundle/trust-store/entrypoint identities, OS sandbox,
+physical CPU/GPU admission, runtime closure and independently controlled
+oracle/replay/uncertainty evidence remain outside the advanced reference slice.
+Representative scientific acceptance and complete plugin-runner replacement
+must be established separately from its finite local calculations.

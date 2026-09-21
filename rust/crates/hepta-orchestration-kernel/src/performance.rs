@@ -90,6 +90,11 @@ pub fn qualify_performance_v1(
     for workload in &workloads {
         validate_workload(workload)?;
     }
+    // Bound the rejection path before building a second collection of caller
+    // observations. A successful set can never exceed the workload ceiling.
+    if observations.len() > MAXIMUM_WORKLOADS {
+        return Err(PerformanceQualificationError::ObservationSetMismatch);
+    }
     let mut observations_by_id = BTreeMap::new();
     for observation in observations {
         if !valid_identifier(&observation.workload_id, 256)
@@ -361,6 +366,33 @@ mod tests {
             }
             other => panic!("unexpected qualification: {other:?}"),
         }
+    }
+
+    #[test]
+    fn oversized_observation_set_is_rejected_before_sample_processing() {
+        let observations = (0..=MAXIMUM_WORKLOADS)
+            .map(|index| PerformanceObservationV1 {
+                workload_id: format!("workload:{index}"),
+                // Invalid samples would produce ObservationInvalid if the
+                // per-item loop ran before the complete-set bound.
+                sample_durations_ns: Vec::new(),
+            })
+            .collect();
+        assert_eq!(
+            qualify_performance_v1(subject(), vec![workload()], observations),
+            Err(PerformanceQualificationError::ObservationSetMismatch)
+        );
+        assert_eq!(
+            qualify_performance_v1(
+                subject(),
+                vec![workload()],
+                vec![PerformanceObservationV1 {
+                    workload_id: "workload:route".to_owned(),
+                    sample_durations_ns: Vec::new(),
+                }],
+            ),
+            Err(PerformanceQualificationError::ObservationInvalid)
+        );
     }
 
     #[test]

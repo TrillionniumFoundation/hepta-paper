@@ -70,6 +70,13 @@ The [native business examples](NATIVE_BUSINESS_HANDOFF.md), [local workflow](LOC
 
 **Focused validation:** `node --test paper-core/tests/candidate-router.test.mjs`.
 
+**Additive orchestration API:** [`route_candidate_v1`](../../rust/crates/hepta-orchestration-kernel/src/router.rs).
+The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
+schema, limits, recovery and integration boundary. This additive Rust API filters, Pareto-reduces and scores a bounded five-axis integer tuple. The Node frontier collector retains contextual candidate semantics and deliberately avoids context-free Pareto deletion. They have different inputs, hashes and responsibilities; selecting the Rust API requires a reviewed mapping and currentness/hard-policy integration, not a type-name substitution.
+Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
+from `rust`; the re-export alone does not switch existing consumers.
+
+
 ## module.snapshot-builder
 
 **Implementation scope:** Registered Node snapshot construction.
@@ -79,6 +86,13 @@ The [native business examples](NATIVE_BUSINESS_HANDOFF.md), [local workflow](LOC
 **Boundary and recovery:** Bind every component generation, observation interval and schema. A consistent caller assertion does not create a database read transaction or authenticate a store.
 
 **Focused validation:** `node --test paper-core/tests/planning-snapshot-schema-conformance.test.mjs`.
+
+**Additive orchestration API:** [`build_planning_snapshot_v1`](../../rust/crates/hepta-orchestration-kernel/src/snapshot.rs).
+The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
+schema, limits, recovery and integration boundary. This Rust function checks caller-supplied revision, barrier, component time and digest consistency. It neither opens a read transaction nor verifies payload bytes or producer identity. Its 256-component and 64 GiB declared-payload limits and distinct snapshot hash are separate from the registered Node snapshot schema. A real read owner and explicit compatibility adapter remain required.
+Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
+from `rust`; the re-export alone does not switch existing consumers.
+
 
 ## module.policy-engine
 
@@ -100,6 +114,13 @@ The [native business examples](NATIVE_BUSINESS_HANDOFF.md), [local workflow](LOC
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
 
+**Additive orchestration API:** [`calibrate_predictions_v1`](../../rust/crates/hepta-orchestration-kernel/src/calibration.rs).
+The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
+schema, limits, recovery and integration boundary. This additive Rust API computes integer calibration errors from bounded caller-supplied observations. It is distinct from the similarly named optimizer_v2 types and does not promote a planner or authenticate samples. The V1 report hash binds observations and policy ID but not numeric policy thresholds; a qualified integration must bind the complete policy separately with explicit versioning.
+Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
+from `rust`; the re-export alone does not switch existing consumers.
+
+
 ## module.resource-allocator
 
 **Implementation scope:** Node governor and additive Rust allocation.
@@ -109,6 +130,13 @@ The [native business examples](NATIVE_BUSINESS_HANDOFF.md), [local workflow](LOC
 **Boundary and recovery:** ResourceAllocatorV1 reservations and the separate durable_resource.rs ledger are not physical CPU/GPU enforcement. Unknown consumption remains charged until reconciliation.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
+
+**Additive orchestration API:** [`ResourceLedgerV1`](../../rust/crates/hepta-orchestration-kernel/src/resource.rs).
+The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
+schema, limits, recovery and integration boundary. This in-memory Rust ledger checks hierarchical integer budgets, individual scope generations and prepare/commit/finalize/cancel transitions. Commit time must be within the inclusive creation/expiry interval; expired committed reservations remain charged as ambiguous. It has no durable load/replay or physical CPU/GPU enforcement and is separate from the control-plane durable lease ledger.
+Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
+from `rust`; the re-export alone does not switch existing consumers.
+
 
 ## module.node-control-plane
 
@@ -150,11 +178,14 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **Implementation scope:** Rust nonproduction fixture vertical.
 
-**API and concrete types:** [rust/crates/hepta-local-vertical/src/lib.rs](../../rust/crates/hepta-local-vertical/src/lib.rs). **Engineering contract:** [LOCAL_WORKFLOW_HANDOFF.md](LOCAL_WORKFLOW_HANDOFF.md). **Module specification:** [rust-local-vertical](specs/rust-local-vertical.md).
+**API and concrete types:** [rust/crates/hepta-local-vertical/tests/local_slice.rs](../../rust/crates/hepta-local-vertical/tests/local_slice.rs). **Engineering contract:** [LOCAL_WORKFLOW_HANDOFF.md](LOCAL_WORKFLOW_HANDOFF.md). **Module specification:** [rust-local-vertical](specs/rust-local-vertical.md).
 
 **Boundary and recovery:** The older fake-provider slice and the newer durable local workflow are distinct scopes. Neither is live model evaluation or production activation.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-local-vertical`.
+
+**Actual original fixture entry:** [local_slice.rs](../../rust/crates/hepta-local-vertical/tests/local_slice.rs) composes a real temporary workspace copy, deterministic fake author/reviewer result, locally signed cutover fixture and SQLite writer/reopen recovery. The crate library only declares a version constant. This fixture is separate from the newer service workflow and does not establish live model, independent installation or Node retirement. Run `cargo test -p hepta-local-vertical --test local_slice --locked` from `rust`.
+
 
 ## module.codex-broker
 
@@ -206,6 +237,9 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-workspace -p hepta-workspace-authority`.
 
+**Implementation selection and recovery:** [Two workspace contracts](WORKSPACE_IMPLEMENTATIONS_HANDOFF.md) distinguishes owner arguments, inventory/copy bounds, atomic publication, remaining post-publication ambiguity and the quiescence required by staging cleanup. Prepared records do not themselves authorize campaign writes.
+
+
 ## module.author-node
 
 **Implementation scope:** Incumbent Node role plus bounded Rust author kernel.
@@ -226,6 +260,9 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business`.
 
+**Negative review semantics:** A structurally valid result with `accepted=false` is a review outcome, not a parser/transport failure. The focused positive library fixture does not replace the full rejection/rubric matrix described in the module specification.
+
+
 ## module.formal-node
 
 **Implementation scope:** Rust bounded proof kernel plus external Lean adapter.
@@ -235,6 +272,9 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 **Boundary and recovery:** The built-in proposition/step enums bound supported proof rules. The Lean adapter separately requires tool and dependency identity, axiom policy and independent runtime verification.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business`.
+
+**Validation scope:** A generic scientific transport fixture running Python does not demonstrate a real Lean proof. Actual tool/version, proof result and independent evidence remain separate from protocol execution.
+
 
 ## module.empirical-node
 
@@ -250,6 +290,9 @@ durable service. It does not establish data provenance or independent replicatio
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test scientific_runtime --test scientific_workflow`.
 
+**Additional implemented slice:** [inference.rs](../../rust/crates/hepta-paper-service/src/native_business/inference.rs) and `analysis_inference_parity` cover the bounded native inference contract alongside simulation. Dataset acquisition, arbitrary experiment scheduling and full empirical role acceptance are separate.
+
+
 ## module.numerical-node
 
 **Implementation scope:** Rust linear solver plus external scientific execution.
@@ -260,6 +303,9 @@ durable service. It does not establish data provenance or independent replicatio
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test native_bundle_and_binding --test scientific_runtime`.
 
+**Three separate execution paths:** [native numerical kernel](../../rust/crates/hepta-paper-service/src/native_business/numerical.rs), [scientific runtime](../../rust/crates/hepta-paper-service/src/scientific_runtime.rs) and [advanced numerical family adapter](../../rust/crates/hepta-paper-service/src/advanced_numerical.rs) have distinct request/receipt contracts. See [advanced family/CLI handoff](ADVANCED_NUMERICAL_PLUGIN_HANDOFF.md) and `cargo test -p hepta-paper-service --test advanced_numerical_plugin --locked` from `rust`. Local family candidates remain unqualified; a solver kernel does not complete the full numerical role.
+
+
 ## module.build-package
 
 **Implementation scope:** Rust bundle encoder plus external PDF compiler adapter.
@@ -269,6 +315,9 @@ durable service. It does not establish data provenance or independent replicatio
 **Boundary and recovery:** The native bundle is not a PDF. Actual TeX compilation requires the explicit tool-equipped ignored test described in the linked handoff; publication and signing remain separate.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test native_bundle_and_binding`.
+
+**Validation scope:** The native deterministic bundle is not a compiled PDF, complete SBOM or release signature. The real LaTeX host test is explicitly ignored by default and must be selected on a provisioned host; a normal test run does not count it as passed.
+
 
 ## module.submission-port
 
@@ -290,6 +339,9 @@ durable service. It does not establish data provenance or independent replicatio
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-scientific-evidence`.
 
+**Detailed responsibility contract:** [Rust development handoff](../../rust/crates/hepta-scientific-evidence/HANDOFF.md). The function compares supplied records and digest sets; it does not recompute scientific artifacts or authenticate a verifier/attestation. Its publicly constructible capsule is not an opaque grant. The detailed contract specifies validation order, hash ordering, assurance-level behavior and the independent adapter responsibilities.
+
+
 ## module.external-authority-verifier
 
 **Implementation scope:** Rust external-receipt contracts.
@@ -299,6 +351,9 @@ durable service. It does not establish data provenance or independent replicatio
 **Boundary and recovery:** ExternalAuthorityRequestV1 and ExternalAuthorityReceiptV1 bind authority kind, subject and effects. ExternalReceiptVerifierV1 must be independently controlled, not a permissive callback.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-external-authority`.
+
+**Detailed responsibility contract:** [Rust development handoff](../../rust/crates/hepta-external-authority/HANDOFF.md). The wrapper validates explicit fields and delegates signature/subject/nonce/currentness verification to a supplied implementation. It owns no cryptographic verifier, provider transport or anti-replay journal. The detailed contract assigns each field and failure/retry decision to its actual owner; different domain strings alone do not prove independent control.
+
 
 ## module.qualification-ingest
 
@@ -320,6 +375,13 @@ durable service. It does not establish data provenance or independent replicatio
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
 
+**Additive orchestration API:** [`TelemetryAggregatorV1`](../../rust/crates/hepta-orchestration-kernel/src/telemetry.rs).
+The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
+schema, limits, recovery and integration boundary. This Rust accumulator accepts only closed labels/event classes and produces bounded counters and per-bucket latency counts. It does not persist raw events, implement retention or expose the existing control-plane observability journal. Bucket counts are non-cumulative; exporters must explicitly convert semantics. The handoff specifies allowed fields, cardinality, clock/error behavior and hash identity.
+Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
+from `rust`; the re-export alone does not switch existing consumers.
+
+
 ## module.performance-qualification
 
 **Implementation scope:** Rust measurement verification, not a measured host baseline.
@@ -329,6 +391,13 @@ durable service. It does not establish data provenance or independent replicatio
 **Boundary and recovery:** qualify_performance_v1 binds a PerformanceQualificationRequestV1 to its exact subject. Target-host measurements and reviewed thresholds remain required; do not invent SLO values.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
+
+**Additive orchestration API:** [`qualify_performance_v1`](../../rust/crates/hepta-orchestration-kernel/src/performance.rs).
+The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
+schema, limits, recovery and integration boundary. This pure Rust function computes integer median, nearest-rank p95, throughput and regression from supplied samples. It bounds the complete workload/observation sets before map construction, binds supplied subject digests and keeps productionAuthorityGranted false. It does not run a benchmark, observe binary provenance or consume independent target-host signatures; it is separate from the existing control-plane performance evaluator.
+Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
+from `rust`; the re-export alone does not switch existing consumers.
+
 
 ## module.compatibility-kernel
 

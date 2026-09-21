@@ -114,6 +114,17 @@ Capability bindings: `CAP-MOD-EXECUTION`, `CAP-EVD-VERIFY`, `CAP-AUTHOR`, `CAP-R
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+### Original executable fixture entry
+
+The original local slice is implemented in
+[`tests/local_slice.rs`](../../../rust/crates/hepta-local-vertical/tests/local_slice.rs),
+not the crate library's version constant. It composes temporary filesystem
+materialization, deterministic fake author/reviewer data, a real locally signed
+cutover fixture and SQLite writer recovery without duplicate integration. Run
+`cargo test -p hepta-local-vertical --test local_slice --locked` from `rust`.
+This is distinct from the newer service local workflow and its CLI; it does not
+qualify a live model, production installation or incumbent-process shutdown.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

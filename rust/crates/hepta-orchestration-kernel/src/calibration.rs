@@ -16,7 +16,8 @@ pub struct CalibrationPolicyV1 {
     pub maximum_mean_latency_error_ppm: u32,
 }
 
-/// One prediction paired with the corresponding trusted observation.
+/// One prediction paired with a caller-supplied observation. Authentication is
+/// the caller's responsibility; this data type does not establish that trust.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CalibrationObservationV1 {

@@ -164,10 +164,13 @@ Both are prerequisites and leave production activation and Node retirement false
 The fixed-native-store transaction inventory observer preserves non-target
 content and namespace checks without opening/closing target SQLite descriptors.
 It is constructed before opening the owning connection. Actual durable state is
-now available inside the same held writer lock; the future native admission must
-bind its exact production phase, scope, epoch and signature there. Neither local
-primitive grants production activation or bypasses the remaining retained write
-ownership described in the composition handoff.
+now available inside the same held writer lock. The crate-private native
+admission and consuming one-shot execution owner bind the exact phase, scope,
+epoch and genuine signatures there; the signed transfer owner carries that
+admission into the fixed reconciliation operations. These source paths do not
+expose a general writer or complete writable CLI. See the actual
+[execution owner](../../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/execution.rs)
+and [transfer owner](../../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/transfer.rs).
 
 
 Retained transaction evidence now composes complete source/cache pins, actual
@@ -175,5 +178,10 @@ startup post-inventory, initial or historical schema/replay, active/finalized
 signatures and the concrete recovery token. Recovery evidence retains its raw
 file owners across invalidation and blocks full re-observation while the token
 exists. The caller must close SQLite before releasing all scopes. This remains
-an internal observation prerequisite; native production writer admission and
-the sealed one-shot restricted write owner are still separate open work.
+an internal ownership boundary used by the implemented source admission and
+one-shot owner. Complete installed native authority provenance, direct-socket
+owning composition, V2 deployment/qualification consumption, the writable CLI
+and independent production acceptance remain open. The
+[nine-role deployment contract](../../../rust/crates/hepta-paper-service/src/deployment/HANDOFF.md)
+registers the state authority as a separate daemon/principal; sharing the Rust
+crate does not add its signing journal or private key to the control-plane role.

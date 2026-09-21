@@ -110,6 +110,13 @@ Capability bindings: `CAP-REL-VERIFY`. Related work identifiers: `REL-001`. Impl
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+### Concrete Rust composition responsibility
+
+The wrapper validates explicit fields and delegates signature/subject/nonce/currentness verification to a supplied implementation. It owns no cryptographic verifier, provider transport or anti-replay journal. The detailed contract assigns each field and failure/retry decision to its actual owner; different domain strings alone do not prove independent control.
+
+See the [field-level development handoff](../../../rust/crates/hepta-external-authority/HANDOFF.md) for
+limits, typed failures, external operation recovery and the actual test scope.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

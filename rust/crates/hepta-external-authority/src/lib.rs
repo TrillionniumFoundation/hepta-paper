@@ -128,7 +128,9 @@ pub fn validate_external_request_v1(
     validate_hash(&request.subject_hash)
 }
 
-/// Validates shape and exact subject binding before delegating cryptographic verification.
+/// Checks shape and explicit receipt/request fields, then delegates signature,
+/// subject and nonce binding to the supplied verifier. This wrapper does not
+/// decode the signature or maintain anti-replay/currentness state.
 pub fn verify_external_receipt_v1(
     request: &ExternalAuthorityRequestV1,
     receipt: &ExternalAuthorityReceiptV1,

@@ -18,7 +18,7 @@ pub struct PlanningComponentObservationV1 {
     pub payload_bytes: u64,
 }
 
-/// Closed request for one transaction-consistent planning snapshot.
+/// Closed request for a snapshot of caller-supplied planning observations.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlanningSnapshotRequestV1 {
@@ -46,8 +46,9 @@ pub struct PlanningSnapshotV1 {
     pub snapshot_hash: String,
 }
 
-/// Build a deterministic snapshot only when every component was observed under
-/// the same barrier and exact source revision.
+/// Build a deterministic snapshot when every supplied component declares the
+/// same barrier and exact source revision. This does not establish a database
+/// transaction, authenticate producers or inspect the referenced payload bytes.
 pub fn build_planning_snapshot_v1(
     mut request: PlanningSnapshotRequestV1,
 ) -> Result<PlanningSnapshotV1, PlanningSnapshotError> {

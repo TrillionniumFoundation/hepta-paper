@@ -5,7 +5,7 @@
   "registryRef": "docs/system/truth/modules.v1.json#/modules/module.build-package",
   "specPath": "docs/modules/specs/build-package.md",
   "runbookPath": "docs/modules/specs/build-package.md#operational-runbook",
-  "implementationPaths": ["paper-application","paper-adapters/artifacts"],
+  "implementationPaths": ["paper-application","paper-adapters/artifacts","rust/crates/hepta-paper-service/src/native_business.rs","rust/crates/hepta-paper-service/src/native_business/types.rs","rust/crates/hepta-paper-service/src/native_business/build.rs","rust/crates/hepta-paper-service/src/scientific_runtime.rs","rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs"],
   "capabilityIds": ["CAP-BUILD"],
   "authorityClass": "prepared_result_only",
   "ownerTeams": ["TEAM-BUILD","TEAM-WORKSPACE","TEAM-EVIDENCE"],

@@ -155,6 +155,18 @@ change activation, transfer ownership or widen authority.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+### Additive Rust orchestration contract
+
+[`build_planning_snapshot_v1`](../../../rust/crates/hepta-orchestration-kernel/src/snapshot.rs) is also available through
+`hepta_control_plane::orchestration_kernel`. This Rust function checks caller-supplied revision, barrier, component time and digest consistency. It neither opens a read transaction nor verifies payload bytes or producer identity. Its 256-component and 64 GiB declared-payload limits and distinct snapshot hash are separate from the registered Node snapshot schema. A real read owner and explicit compatibility adapter remain required.
+
+See the [Rust orchestration development handoff](../../../rust/crates/hepta-orchestration-kernel/HANDOFF.md)
+for exact fields/units, bounds, hash domains, failure/recovery behavior and
+implementation selection. The current re-export does not wire this API into
+an existing command. Focused source validation from `rust` is
+`cargo test -p hepta-orchestration-kernel --locked`; those fixtures do not establish
+Node parity, production activation or independent qualification.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

@@ -1,10 +1,14 @@
-//! Deterministic Rust orchestration primitives used by the production control plane.
+//! Additive deterministic Rust orchestration library contracts.
 //!
 //! The crate owns six repository-local responsibilities that must not be delegated
-//! to the legacy Node runtime: transaction-consistent planning snapshots,
+//! to the legacy Node runtime: consistent supplied planning observations,
 //! deterministic candidate routing, hierarchical resource reservations,
 //! privacy-bounded telemetry, canonical performance qualification, and bounded
 //! deterministic planner calibration.
+//!
+//! The control-plane re-export does not select these contracts for an existing
+//! command. Their supplied data is not a real read barrier, durable resource
+//! journal or independently authenticated performance observation.
 
 #![forbid(unsafe_code)]
 

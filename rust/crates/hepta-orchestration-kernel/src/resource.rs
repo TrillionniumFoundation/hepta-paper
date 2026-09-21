@@ -237,6 +237,7 @@ impl ResourceLedgerV1 {
             .ok_or(ResourceLedgerError::ReservationMissing)?;
         if reservation.state != ReservationStateV1::Prepared
             || observed_at_unix_ms == 0
+            || observed_at_unix_ms < reservation.created_at_unix_ms
             || observed_at_unix_ms > reservation.expires_at_unix_ms
         {
             return Err(ResourceLedgerError::StateTransition);
@@ -620,6 +621,48 @@ mod tests {
             ),
             Err(ResourceLedgerError::LimitExceeded)
         );
+    }
+
+    #[test]
+    fn commit_time_must_stay_inside_the_reservation_interval() {
+        for accepted_time in [10, 20] {
+            let mut value = ledger();
+            value
+                .prepare(
+                    "reservation:interval".to_owned(),
+                    "campaign:one".to_owned(),
+                    1,
+                    vector(30),
+                    10,
+                    20,
+                )
+                .expect("prepared interval");
+            for rejected_time in [0, 9, 21] {
+                assert_eq!(
+                    value.commit("reservation:interval", rejected_time),
+                    Err(ResourceLedgerError::StateTransition)
+                );
+                for scope in ["campaign:one", "tenant:one"] {
+                    assert_eq!(value.reserved(scope), Some(vector(30)));
+                    assert_eq!(value.consumed(scope), Some(ResourceVectorV1::default()));
+                }
+            }
+            assert_eq!(
+                value
+                    .commit("reservation:interval", accepted_time)
+                    .expect("inclusive interval boundary")
+                    .state,
+                ReservationStateV1::Committed
+            );
+            value
+                .finalize("reservation:interval", vector(20))
+                .expect("rejected attempts preserved the prepared reservation");
+            assert_eq!(
+                value.reserved("tenant:one"),
+                Some(ResourceVectorV1::default())
+            );
+            assert_eq!(value.consumed("tenant:one"), Some(vector(20)));
+        }
     }
 
     #[test]

@@ -45,6 +45,34 @@ Outputs:
 
 Every request, result, event, health record, and receipt carries explicit schema/kind/version, canonical encoding, maximum bytes/counts, freshness and authority requirements, idempotency identity where applicable, unknown-field policy, and confidentiality classification. Large or confidential content moves by immutable artifact reference rather than unbounded protocol payload.
 
+### Implemented Rust structural review
+
+Call `execute_native_business_for_capability_v1(job, "CAP-REVIEW")` with
+`NativeBusinessJobV1::ReviewerAssessment`. The
+[implementation](../../../rust/crates/hepta-paper-service/src/native_business/reviewer.rs)
+checks supplied manuscript bytes against `ReviewPolicyV1`; it does not call an
+independent model or verify scientific claims. The wire job uses
+`kind: reviewer_assessment`; its policy fields are camelCase
+`minimumWordCount`, `requiredHeadings`, `forbiddenMarkers`. Unknown typed fields
+are rejected.
+
+The manuscript is nonempty and at most 1 MiB of UTF-8, with newline/tab as the
+only permitted control characters. Each rule list has at most 4096 entries;
+each entry is nonempty, control-free and at most 512 UTF-8 bytes. Rules are
+sorted and deduplicated. Headings are extracted only from lines beginning
+exactly `## `, then trimmed; forbidden markers use case-sensitive substring
+matching. Word count uses whitespace separation. These are structural rules,
+not a Markdown parser or a review-rubric implementation.
+
+One `NativeReviewReportV1` JSON artifact records manuscript hash, word counts,
+missing headings, forbidden matches and `accepted`. `NativeReviewerEvidenceV1`
+binds its report hash. A valid request with failed review rules returns a valid
+report with `accepted=false`; that is distinct from a malformed-request error.
+The [business handoff](../NATIVE_BUSINESS_HANDOFF.md) and
+[executable examples](../examples/native-business.v1.json) cover actual wire and
+output conventions. An accepted structural report cannot act as independent
+scientific acceptance or reviewer-principal evidence.
+
 ## State and authority
 
 Maximum authority class: `prepared_result_only`. Current static activation: `authoritative`. The registry declaration is a ceiling and request, not an authority grant. It may write only attempt-local workspace or prepared-result state. A verifier and the commit sequencer decide whether any result becomes authoritative.
@@ -64,6 +92,12 @@ Current implementation and contract roots:
 - `paper-application/automation`
 - `paper-domain/research`
 
+Additive Rust implementation roots (the incumbent roots above remain distinct):
+
+- `rust/crates/hepta-paper-service/src/native_business.rs`
+- `rust/crates/hepta-paper-service/src/native_business/types.rs`
+- `rust/crates/hepta-paper-service/src/native_business/reviewer.rs`
+
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
 ## Concurrency and resources
@@ -81,6 +115,13 @@ A candidate-producing module must expose feasible alternatives or a justified si
 ## Failure, recovery, and idempotency
 
 Reject mutable author workspaces, hidden author session state, stale subjects, missing rubric/evidence, conflicts of interest, unbounded prose, or recommendations without normalized findings and exact reviewer identity.
+
+The Rust checker returns `NativeBusinessError::Contract` for malformed text,
+rule limits or capability mismatch; encoding/output-limit errors produce no
+prepared success. A negative assessment remains a replayable report, not a
+transport failure to retry until accepted. The pure checker has no review
+journal. The service owns prepared bytes and commit replay; reviewed artifact,
+policy and attempt identities must stay bound when a caller consumes the report.
 
 Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
 
@@ -110,6 +151,22 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 Capability bindings: `CAP-REVIEW`. Related work identifiers: `REVIEW-001`. Implementation/contract roots: `paper-application/automation`, `paper-domain/research`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
+### Focused Rust verification
+
+Run from the repository root:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test documented_native_business --test native_bundle_and_binding
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --lib native_business
+```
+
+The documented fixture executes the actual structural checker and verifies
+repeatable report/evidence; capability and unknown-field controls exercise the
+shared typed boundary. Library tests cover deterministic author-to-review
+assembly and a positive structural assessment. Negative rule outcomes need
+dedicated semantic cases. These commands do not establish live-model evaluation
+or author/reviewer principal isolation.
+
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ## Rollout and rollback
@@ -119,4 +176,10 @@ Current channel is `authoritative`. A new version progresses through registered/
 ## Open blockers
 
 - `REVIEW-001` — `source_implemented`
-- No additional repository-local implementation blocker is asserted by this specification; qualification, activation, and operation remain separate.
+
+The static work-item projection above does not establish complete Rust reviewer
+replacement. Model review, rubric/severity semantics, conflict-of-interest and
+principal isolation, independent evidence recomputation, disagreement/repair
+rounds and their crash/cancellation behavior need separately specified and
+verified role integration. The supplied-text checker provides none of those
+through its `accepted` field.

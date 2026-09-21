@@ -12,6 +12,7 @@ use zbus::{
     zvariant::{Fd, OwnedObjectPath, OwnedValue},
 };
 
+mod kernel_identity;
 #[cfg(test)]
 mod tests;
 mod wire;
@@ -85,6 +86,7 @@ pub(super) fn observe(
     let deadline = Instant::now() + Duration::from_millis(timeout_ms.min(MAXIMUM_OBSERVATION_MS));
     origin.assert_alive(deadline)?;
     let boot = BootObservation::load()?;
+    let kernel_identity = kernel_identity::observe(origin, deadline)?;
     let options = LocalStateAuthorityClientOptionsV1 {
         socket_path: BUS_PATH.into(),
         timeout_ms,
@@ -99,6 +101,11 @@ pub(super) fn observe(
     }
     let facts = exchange_manager(stream, origin.origin_pidfd(), deadline)?;
     boot.assert_current()?;
+    if kernel_identity::observe(origin, deadline)? != kernel_identity {
+        return Err(fail(
+            "local_state_authority_manager_kernel_identity_changed",
+        ));
+    }
     origin.assert_alive(deadline)?;
     let (pid, uid, gid) = origin.origin_credentials();
     Ok(ObservedSocketPeerManagerAssociationV1 {
@@ -107,6 +114,7 @@ pub(super) fn observe(
             "kind": "HeptaSocketPeerSystemManagerObservationV1",
             "evidenceScope": "static_socket_origin_manager_observation_no_installation_or_activation_authority",
             "socketOrigin": {"pid":pid,"uid":uid,"gid":gid},
+            "kernelCredentials":kernel_identity.report(),
             "bootId":boot.identity,
             "busPeer": {"pid":bus_credentials.pid(),"uid":bus_credentials.uid(),"gid":bus_credentials.gid()},
         "manager":facts,

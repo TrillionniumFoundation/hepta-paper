@@ -124,6 +124,16 @@ SQLite lifetime. Unexpected received FDs are rejected and closed; a future live
 owner must first isolate that descriptor lifetime from SQLite locks. Do not
 convert shell output or diagnostic JSON into an opaque installation proof.
 
+The observer now also reads actual process-leader UID/GID and supplementary
+groups from verified procfs, binding the subject and PID namespace through the
+original pidfd's kernel fdinfo. Equal reads bracket the manager exchange. This
+separates actual numeric groups from configured `SupplementaryGroups` names;
+all proc descriptors close before return and before SQLite. It does not prove
+every handler thread's credentials or exclude change-and-restoration between
+reads. Matching the V2 principal declaration still needs an explicit installed
+service profile and independent custody qualification; the diagnostic report
+cannot be reinterpreted as that proof.
+
 ## Owning integration and tests
 
 Establish the real installed endpoint before `PreparedSchemaInputV1::load`,

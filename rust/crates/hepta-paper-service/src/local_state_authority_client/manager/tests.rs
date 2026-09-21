@@ -448,6 +448,33 @@ fn actual_fixed_system_bus_observes_original_peer_and_closes_before_return() {
     assert_eq!(report["manager"]["ownerUid"], 0);
     assert_eq!(report["manager"]["ownerPid"], 1);
     assert_eq!(report["busClosedBeforeReturn"], true);
+    assert_eq!(
+        report["kernelCredentials"]["source"],
+        "original_socket_peer_process_leader_proc_status"
+    );
+    assert_eq!(report["kernelCredentials"]["pid"], std::process::id());
+    assert_eq!(
+        report["kernelCredentials"]["uid"]["effective"],
+        nix::unistd::geteuid().as_raw()
+    );
+    assert_eq!(
+        report["kernelCredentials"]["gid"]["effective"],
+        nix::unistd::getegid().as_raw()
+    );
+    assert_eq!(
+        report["kernelCredentials"]["supplementaryGids"],
+        json!(
+            nix::unistd::getgroups()
+                .unwrap()
+                .into_iter()
+                .map(|gid| gid.as_raw())
+                .collect::<Vec<_>>()
+        )
+    );
+    assert_eq!(
+        report["kernelCredentials"]["procDescriptorsClosedBeforeReturn"],
+        true
+    );
     assert_eq!(report["maximumReceivedBytes"], 4 * 1024 * 1024);
     assert_eq!(report["maximumReplyBytes"], 64 * 1024);
     assert_eq!(

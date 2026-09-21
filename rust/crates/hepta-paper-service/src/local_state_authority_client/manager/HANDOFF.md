@@ -12,7 +12,8 @@ match a V2 installation or prove Rust executable provenance.
 1. The transport must already hold the actual socket-origin `SO_PEERPIDFD` and
    `SO_PEERCRED`, captured by its existing empty probe. The manager call borrows
    that exact pidfd; it never opens a new pidfd from a numeric PID.
-2. Check original-peer liveness and retain/read the current kernel boot ID.
+2. Check original-peer liveness, retain/read the current kernel boot ID, and
+   observe its process-leader numeric credentials/groups through real procfs.
 3. Connect to the literal `/run/dbus/system_bus_socket`, bypassing environment
    bus addresses. Require actual connected peer UID 0 and a positive PID.
 4. Use D-Bus EXTERNAL authentication and resolve the systemd well-known name to
@@ -27,8 +28,9 @@ match a V2 installation or prove Rust executable provenance.
    supplies the Service properties below. Require matching unit ID/invocation.
    Repeat the original pidfd association, manager principal and unique-name
    checks at the end.
-7. Close/destroy all bus resources, recheck boot identity and original peer
-   liveness, then construct the observation value.
+7. Close/destroy all bus resources, repeat the kernel credential observation
+   and require it to equal the first, then recheck boot identity and original
+   peer liveness before constructing the observation value.
 
 Every successful reply must be a method return from the exact requested sender,
 fit the complete-message limit and carry no file descriptors before typed body
@@ -47,6 +49,45 @@ typed `ExecStart` tuples. The observation does not read Environment or private
 key files. Treat captured argv and host paths as host inventory, not public
 telemetry.
 
+`kernelCredentials` separately records the real/effective/saved/filesystem
+UIDs/GIDs, numeric supplementary GID list and namespace PID list observed for
+the original socket peer's process leader. It is distinct from systemd's
+configured `SupplementaryGroups` names. The kernel list is retained exactly,
+including an entry equal to the primary GID or repeated IDs; it is not normalized
+into the V2 declaration. This general observer accepts up to 65,536 groups,
+whereas Deployment V2 permits at most 32 declared supplementary groups.
+
+The private producer opens only fixed `/proc` with no-follow, directory and
+close-on-exec flags, and checks `PROC_SUPER_MAGIC` using `fstatfs`. Inside that
+verified filesystem it reads the fixed `self` magic link, requires a positive
+bounded numeric leaf, and opens that actual process's `fdinfo` directory without
+following links. It reads the fdinfo entry for the borrowed **original** peer
+pidfd, never a reopened numeric-PID pidfd. Kernel fdinfo identifies that pidfd's
+subject in the procfs mount's PID namespace. Its positive `Pid` must equal the
+socket-origin PID and the first `NSpid` element; missing, zero, negative or
+incompatible namespace observations refuse.
+
+Only then does descriptor-relative no-follow opening reach that numeric peer
+directory and `status` in the same procfs instance. The status `Pid`/`Tgid` must
+equal the peer PID, its complete `NSpid` list must equal the pidfd fdinfo list,
+and effective UID/GID must equal the original `SO_PEERCRED`. Every opened
+component has the same procfs device and filesystem type. Original pidfd liveness
+and a second fdinfo read bracket the status read. This avoids treating a
+coincidentally equal numeric PID in another proc mount as the original process.
+The binding follows the [kernel pidfd fdinfo implementation](https://github.com/torvalds/linux/blob/v6.12/fs/pidfs.c)
+and [proc status field semantics](https://www.man7.org/linux/man-pages/man5/proc_pid_status.5.html).
+
+Status reads are limited to 1 MiB plus one detection byte; pidfd fdinfo to
+4 KiB plus one. Parsing requires newline-terminated records, unique field names,
+all required identity fields, exact UID/GID cardinality, bounded unsigned decimal
+values, at most 256 fields and 32 namespace PIDs. All proc/status/fdinfo
+descriptors close before each observation returns, including failures.
+The two complete credential observations bracket the manager exchange and any
+difference refuses. They do not exclude a change and restoration between reads.
+Linux can have different per-thread credentials: these are the process leader's
+actual groups, not proof of every handler thread's groups or the groups at the
+historical instant of socket creation. No credentials are changed by the observer.
+
 | Limit | Meaning |
 |---|---|
 | `min(transport timeout, 5 seconds)` | One absolute monotonic deadline for socket connect, authentication, send/receive, protocol and asynchronous close. It is not a new timeout for each RPC. |
@@ -62,6 +103,8 @@ telemetry.
 The boot ID read is fixed-size and retained for recheck. The deadline is checked
 around operations; this is a userspace protocol budget, not a hard real-time
 guarantee against host scheduling stalls or synchronous kernel I/O stalls.
+The 64 KiB reply ceiling applies to each D-Bus message, not the returned combined
+report, which also contains the separately bounded procfs group list.
 
 ## Connection and descriptor lifetime
 
@@ -137,6 +180,17 @@ reply sender/type/byte validation and a dead original process. They cannot mint
 the public observation through an alternate production bus or owner override.
 A successful actual-system-bus fixture proves this observer path on that host;
 it is not a qualified nine-role Hepta installation.
+
+Kernel identity tests use actual socket-origin pidfds for the unchanged test
+process and an independently spawned Rust child, comparing numeric groups with
+that process's `getgroups` and effective IDs. The owned child also checks its
+actual descriptor table before and after repeated observations, and its parent
+verifies refusal after exit. Private parser tests cover duplicate/missing/malformed
+fields, pidfd/status subject mismatches and exact byte/group/namespace limits.
+These do not change process credentials or supply a cross-principal installation,
+handler-thread custody proof, namespace-remount qualification or SQLite-live
+manager observation. No test-provided proc path or credential override reaches
+the public producer.
 
 The [installation design](../../online_mutation_composition/activation/AUTHORITY_INSTALLATION_DESIGN.md)
 still requires V2 expectation matching, independently qualified executable and

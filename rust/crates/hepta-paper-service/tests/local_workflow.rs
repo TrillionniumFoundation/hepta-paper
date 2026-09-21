@@ -1,3 +1,6 @@
+#[path = "local_workflow/inspection.rs"]
+mod inspection;
+
 use hepta_campaign_writer::{CampaignStateV1, WriterLeaseV1};
 use hepta_control_plane::{
     ControlPlaneSnapshotV1, HardPolicyV1, PlannerPolicyV1, PlanningFrontierV1,

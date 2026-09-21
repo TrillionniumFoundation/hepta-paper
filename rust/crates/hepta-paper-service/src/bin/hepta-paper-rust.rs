@@ -182,7 +182,13 @@ fn default_repository_asset_paths() -> Result<(PathBuf, PathBuf), Box<dyn std::e
 
 fn main() {
     if let Err(error) = command() {
-        eprintln!("hepta-paper-rust: {error}");
+        if let Some(report) =
+            hepta_paper_service::service_control_inspection_report_v1(error.as_ref())
+        {
+            eprintln!("{report}");
+        } else {
+            eprintln!("hepta-paper-rust: {error}");
+        }
         std::process::exit(1);
     }
 }

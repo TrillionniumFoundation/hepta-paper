@@ -5071,17 +5071,23 @@
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/local_workflow.rs"
+        "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+        "rust/crates/hepta-paper-service/tests/local_workflow/inspection.rs"
       ],
-      "remaining": "Bounded local workflow advancement only; no Node batch production dispatch or provider semantics.",
+      "remaining": "Bounded local workflow advancement only; no Node batch production dispatch or provider semantics. Actual local workflow advancement now preserves the control-plane inspection-required failure through ServiceError and the real source chain to bounded CLI diagnostics. A real Rust worker marker test confirms that repeated identical unresolved attempts do not rerun that worker. The service still creates a fresh runtime for every call: the copied diagnostic does not persist whole-plan resource charges, qualify restart recovery or supply Node batch parity.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
-        "rust/crates/hepta-paper-service/src/workflow.rs"
+        "rust/crates/hepta-paper-service/src/workflow.rs",
+        "rust/crates/hepta-paper-service/src/control_error.rs"
       ],
       "testCases": [
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "actual_artifacts_flow_through_all_seven_documented_steps"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/inspection.rs",
+          "symbol": "actual_workflow_worker_failure_survives_typed_source_chain_and_cli_projection"
         }
       ]
     },

@@ -1,3 +1,6 @@
+#[path = "durable_service/inspection.rs"]
+mod inspection;
+
 use hepta_campaign_writer::WriterLeaseV1;
 use hepta_control_plane::{
     ControlPlaneSnapshotV1, FilesystemPreparedResultVerifierV1, HardPolicyV1, PlannerPolicyV1,
@@ -34,12 +37,22 @@ impl Drop for Temp {
 }
 
 fn configuration(temp: &Temp) -> ServiceRunV1 {
+    configuration_with_worker(temp, WorkerBindingV1::Native)
+}
+
+fn configuration_with_worker(temp: &Temp, binding: WorkerBindingV1) -> ServiceRunV1 {
     let objects = ObjectStoreV1::open(&temp.0).unwrap();
     let source = objects.put(b"real manuscript bytes\n").unwrap();
     let payload = objects
         .put(
-            &serde_json::to_vec(&NativeJobV1::ArtifactInventory {
-                artifacts: vec![source.clone()],
+            &serde_json::to_vec(&if matches!(&binding, WorkerBindingV1::Native) {
+                NativeJobV1::ArtifactInventory {
+                    artifacts: vec![source.clone()],
+                }
+            } else {
+                NativeJobV1::Process {
+                    input: serde_json::json!({"fixture": "inspection"}),
+                }
             })
             .unwrap(),
         )
@@ -68,7 +81,11 @@ fn configuration(temp: &Temp) -> ServiceRunV1 {
             module_version: "1.0.0".into(),
             protocol_min: 1,
             protocol_max: 1,
-            module_kind: ModuleKindV1::TrustedInProcess,
+            module_kind: if matches!(&binding, WorkerBindingV1::Native) {
+                ModuleKindV1::TrustedInProcess
+            } else {
+                ModuleKindV1::IsolatedProcess
+            },
             requested_authority: AuthorityClassV1::PreparedResultOnly,
             qualification: QualificationTierV1::Source,
             requested_activation: ActivationStateV1::Shadow,
@@ -78,8 +95,19 @@ fn configuration(temp: &Temp) -> ServiceRunV1 {
             secondary_owner: "TEAM-RUNTIME".into(),
             independent_reviewer: "TEAM-EVIDENCE".into(),
             rollback_version: "0.9.0".into(),
-            execution: ModuleExecutionV1::InProcess {
-                implementation_hash: native_implementation_hash_v1().unwrap(),
+            execution: match &binding {
+                WorkerBindingV1::Native => ModuleExecutionV1::InProcess {
+                    implementation_hash: native_implementation_hash_v1().unwrap(),
+                },
+                WorkerBindingV1::Process {
+                    executable_hash,
+                    network_declared,
+                    ..
+                } => ModuleExecutionV1::IsolatedProcess {
+                    executable_hash: executable_hash.clone(),
+                    configuration_hash: hepta_control_plane::canonical_hash_v1(&binding).unwrap(),
+                    network_declared: *network_declared,
+                },
             },
         })
         .unwrap();
@@ -161,7 +189,7 @@ fn configuration(temp: &Temp) -> ServiceRunV1 {
             expires_at_unix_ms: 100_000,
         },
         observed_at_unix_ms: 1_000,
-        workers: BTreeMap::from([("module.native-inventory".into(), WorkerBindingV1::Native)]),
+        workers: BTreeMap::from([("module.native-inventory".into(), binding)]),
     }
 }
 

@@ -196,7 +196,9 @@ pub fn run_production_service_v1(
             &tenant,
             config.service.observed_at_unix_ms,
         )
-        .map_err(|_| ServiceError::Control)?;
+        .map_err(|error| {
+            crate::control_error::map_control_run_error(error, control.inspection_required())
+        })?;
     if control_plane_receipt.automatic_activation || control_plane_receipt.production_activation {
         return Err(ServiceError::Control);
     }

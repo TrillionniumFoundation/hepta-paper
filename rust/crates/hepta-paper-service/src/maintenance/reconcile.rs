@@ -248,7 +248,9 @@ impl LocalMaintenanceSessionV1 {
         .map_err(|_| ServiceError::Control)?;
         let run = control
             .run(&config.snapshot, &config.frontier, &tenant, now)
-            .map_err(|_| ServiceError::Control)?;
+            .map_err(|error| {
+                crate::control_error::map_control_run_error(error, control.inspection_required())
+            })?;
         if run.commit_receipts.len() != 1 {
             return Err(ServiceError::Control);
         }

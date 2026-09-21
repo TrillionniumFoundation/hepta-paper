@@ -146,9 +146,15 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 fn main() {
-    if execute().is_err() {
+    if let Err(error) = execute() {
         // Parser diagnostics can contain user-supplied document text. Do not echo it.
-        eprintln!("local workflow command rejected; inspect private retained state");
+        if let Some(report) =
+            hepta_paper_service::service_control_inspection_report_v1(error.as_ref())
+        {
+            eprintln!("{report}");
+        } else {
+            eprintln!("local workflow command rejected; inspect private retained state");
+        }
         std::process::exit(1);
     }
 }

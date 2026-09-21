@@ -22,6 +22,7 @@ pub mod autonomous_submission_dispatcher_challenge;
 pub mod campaign_policy;
 pub mod campaign_slo;
 pub mod command_surface;
+mod control_error;
 pub mod critical_module_coverage;
 mod deployment;
 pub mod deployment_environment;
@@ -84,9 +85,10 @@ pub mod workflow;
 use hepta_campaign_writer::{CampaignWriterPolicyV1, CampaignWriterStoreV1, WriterLeaseV1};
 use hepta_codex_protocol::Sha256Digest;
 use hepta_control_plane::{
-    BoundedEventLogV1, ControlPlaneRunReceiptV1, ControlPlaneSnapshotV1, ControlPlaneV1,
-    FilesystemPreparedResultVerifierV1, HardPolicyV1, PlannerPolicyV1, PlanningFrontierV1,
-    ResourceAllocatorV1, SqliteCommitSequencerV1, canonical_hash_v1,
+    BoundedEventLogV1, ControlPlaneRunInspectionV1, ControlPlaneRunReceiptV1,
+    ControlPlaneSnapshotV1, ControlPlaneV1, FilesystemPreparedResultVerifierV1, HardPolicyV1,
+    PlannerPolicyV1, PlanningFrontierV1, ResourceAllocatorV1, SqliteCommitSequencerV1,
+    canonical_hash_v1,
 };
 pub use hepta_cutover::{
     LegacyDeletionDrillArchiveCaptureV1, LegacyDeletionDrillAttestError,
@@ -99,6 +101,8 @@ use hepta_module_platform::ModuleRegistryArtifactV1;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, os::unix::fs::MetadataExt, path::PathBuf};
 use thiserror::Error;
+
+pub use control_error::service_control_inspection_report_v1;
 
 pub use deployment::{
     LegacyNodeRuntimeDispositionV1, ProductionDeploymentError, ProductionDeploymentManifestV1,
@@ -176,6 +180,15 @@ pub enum ServiceError {
     /// Scheduling, verification or commit rejected operation.
     #[error("control-plane operation rejected")]
     Control,
+    /// An invoked control-plane executor requires inspection; automatic retry is unsafe.
+    ///
+    /// The diagnostic is copied before the local runtime owner is dropped. It is
+    /// not durable resource accounting, a worker outcome, or release authority.
+    #[error("control-plane execution requires inspection; automatic retry is not authorized")]
+    ControlRequiresInspection {
+        /// Original runtime diagnostic, when available. Absence does not make retry safe.
+        inspection: Option<Box<ControlPlaneRunInspectionV1>>,
+    },
 }
 
 /// Execute one admitted campaign plan using actual CAS bytes and durable SQLite.
@@ -311,7 +324,7 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
             &tenant,
             config.observed_at_unix_ms,
         )
-        .map_err(|_| ServiceError::Control)
+        .map_err(|error| control_error::map_control_run_error(error, control.inspection_required()))
 }
 
 /// Hash the full run configuration, for external binding and review.

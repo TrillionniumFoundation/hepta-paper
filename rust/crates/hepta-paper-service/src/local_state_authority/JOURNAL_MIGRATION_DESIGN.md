@@ -2,6 +2,14 @@
 
 Status: **design only, 2026-09-21**. No migrator, maintenance capability or deployment approval is implemented by this document. Existing native `LocalStateAuthorityRuntimeV1::open` must continue refusing populated `user_version=0` journals with `local_state_authority_explicit_journal_migration_required`.
 
+The first read-only prerequisite is now implemented in
+[`migration/source_profile.rs`](migration/source_profile.rs), exposed by
+`migration::inspect_legacy_authority_journal_schema_v1`. It checks the exact
+source schema under the caller's actual main transaction, preserves connection
+settings and locks, and returns only a structural observation. See its
+[contract and limits](migration/source_profile/HANDOFF.md). All execution,
+history, archive and maintenance capabilities proposed below remain unimplemented.
+
 ## Concrete source compatibility
 
 The source is the six-table authority database initialized by `paper-adapters/automation/local-autonomous-research-state-authority-runtime.mjs`, not the ten business databases and not `campaign.sqlite`.

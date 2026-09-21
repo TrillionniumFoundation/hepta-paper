@@ -379,3 +379,10 @@ writers. See the [local authority implementation contract](../../../docs/modules
 for exact configuration, transaction, socket, compatibility and recovery rules.
 Existing Node journals require explicit migration. Installed adapter/topology
 qualification, complete native writer composition and retirement remain open.
+
+Migration preparation now has a read-only original-journal schema inspector:
+actual held main transaction, closed six-table/index profile, complete SQLite
+metadata comparison and `quick_check`, with collection bounds and no source FD
+reopening. The report is explicitly schema-only; it does not verify signed row
+history, stop a service or permit journal rewriting. See the
+[inspection contract](src/local_state_authority/migration/source_profile/HANDOFF.md).

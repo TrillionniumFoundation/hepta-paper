@@ -203,3 +203,13 @@ requirements, archive and transaction order, and the still-required real
 maintenance barrier. In particular, the old Node runtime ignores user_version
 and can open a native-format journal. A database version or successful SQLite
 lock cannot prove that old authority writers have stopped.
+
+The [source-schema inspection layer](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/HANDOFF.md)
+now implements the first read-only migration prerequisite. Its public
+`inspect_legacy_authority_journal_schema_v1(&Connection)` requires a genuinely
+held main-database transaction, compares the entire Node six-table/twelve-object
+schema against a memory-only reference, checks column/index metadata and actual
+`quick_check`, and returns a schema-only report. Unsafe constraint/schema settings
+and bounded-output violations are rejected without changing caller settings,
+rows or transaction ownership. The source descriptor is never reopened or cloned.
+This schema hash covers no row history or WAL and cannot authorize migration.

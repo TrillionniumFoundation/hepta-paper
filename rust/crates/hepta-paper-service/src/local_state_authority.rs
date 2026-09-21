@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use std::cell::Cell;
 
 mod backup;
+pub mod migration;
 mod mutation;
 mod schema;
 mod schema_rebind;

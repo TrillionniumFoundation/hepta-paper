@@ -909,6 +909,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
           "symbol": "request_local_state_authority_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration.rs",
+          "symbol": "inspect_legacy_authority_journal_schema_v1"
         }
       ],
       "tests": [
@@ -930,9 +934,11 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
         "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
-        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs"
+        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/oracle.mjs"
       ],
-      "remaining": "Native five-mode CLI composes actual ten-database inspection, signed backup/drill, independent exact-bundle renewal, and pending reconciliation; copied-binary explicit workspace roots, real authority processes, blocked reports and exit classes are exercised. The concrete controller automatically selects authenticated historical snapshots for fixed business, heartbeat and mixed ranges under the complete original registry and compares actual replay with every live effective SQLite row before publishing or minting an epoch; complete original Node normal-controller/drill reports match. Selected failures cannot silently renew a backup. General history requires the full original registry and binds operation/writer/role/schema/provenance and allowed effects; custom non-heartbeat source fallback and reconstruction of callback invocation traces are not claimed. Deliberate stricter v2 authority-verifier requirements, SQLite engine-header byte differences, full activation composition, operational retention and independent target-host/authority acceptance also remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance.",
+      "remaining": "Native five-mode CLI composes actual ten-database inspection, signed backup/drill, independent exact-bundle renewal, and pending reconciliation; copied-binary explicit workspace roots, real authority processes, blocked reports and exit classes are exercised. The concrete controller automatically selects authenticated historical snapshots for fixed business, heartbeat and mixed ranges under the complete original registry and compares actual replay with every live effective SQLite row before publishing or minting an epoch; complete original Node normal-controller/drill reports match. Selected failures cannot silently renew a backup. General history requires the full original registry and binds operation/writer/role/schema/provenance and allowed effects; custom non-heartbeat source fallback and reconstruction of callback invocation traces are not claimed. Deliberate stricter v2 authority-verifier requirements, SQLite engine-header byte differences, full activation composition, operational retention and independent target-host/authority acceptance also remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only schema-only migration prerequisite now validates the exact original Node six-table and autoindex profile under an actually held main transaction, with bounded complete metadata and integrity checks while preserving source bytes and SQLite locks. It does not authenticate signed data history, establish source-file identity, stop Node, archive or rewrite a journal, or authorize migration.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/state_backup_authority.rs",
         "rust/crates/hepta-paper-service/src/state_backup_authority/contracts.rs",
@@ -985,7 +991,10 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/schema.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/runtime_tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/server/publication.rs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql"
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_schema.sql"
       ],
       "testCases": [
         {
@@ -1243,6 +1252,38 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
           "symbol": "staging_cleanup_preserves_same_inode_after_ancestor_rename_and_symlink"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "original_node_file_matches_complete_profile_without_byte_row_or_setting_changes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "requires_a_real_main_snapshot_and_does_not_create_one_for_the_caller"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "refuses_native_mixed_extra_and_semantically_changed_schemas"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "physical_root_page_allocation_is_checked_but_does_not_change_structural_hash"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "quick_check_rejects_corrupt_data_even_when_the_exact_schema_matches"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "query_helper_rejects_mutation_before_it_runs"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "oversized_catalogs_and_values_are_bounded_before_collection"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "genuine_delete_and_wal_writer_locks_survive_success_and_refusal"
         }
       ]
     },
@@ -1906,6 +1947,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
           "symbol": "request_local_state_authority_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration.rs",
+          "symbol": "inspect_legacy_authority_journal_schema_v1"
         }
       ],
       "tests": [
@@ -1950,9 +1995,11 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
         "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
-        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs"
+        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/oracle.mjs"
       ],
-      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. A sealed initial composition now owns concrete process pins, actual ten-database startup/finalized proofs, the same recoverability fence attached to the coordinator, and a final common expiry boundary; it grants no writes. Authenticated original schema checkpoints now feed a private bridge that merges all ten signed finalized chains, replays the complete registered effects in isolated copies, compares every effective table, and obtains fresh schema observation against the original FINAL and current terminal head; empty and actual heartbeat history pass while unjournaled rowid changes fail. Fresh external cutover-journal v2 storage keeps the adjacent enrollment sentinel and unchanged business inventory, with Node/Rust transaction exclusion. The owning constructor now explicitly retains initial versus historical schema evidence, authenticates the checkpoint before startup RPC, and binds subsequent proofs to actual post-startup inventory after pending-finalization recovery. A separate private observer re-verifies full deployment and retains the actual kernel executable, exact ELF hash/ancestry, nonroot real/effective/saved UID/GID and argv; a source-owned reconciliation digest is distinct from worker identity. This observation does not grant writer authority. A private fixed-native-store inventory guard now checks non-target bytes and complete namespaces without target descriptor opens/closes, and actual durable state is exposed inside the held writer lock. Retained transaction checks now compose actual source/cache descriptors, startup post-inventory, schema/checkpoint/history/replay, active/finalized signatures and the same concrete recovery fence, with exact opaque origin bindings and a final common expiry boundary. Recovery retains the original evidence allocation across failure/feedback and blocks full re-observation through fence clones until the scope ends. Separate-process SQLite-lock fixtures cover staged writes and invalidation. A crate-private consuming owner now binds actual signed qualification/deployment/preimage, closed native configuration/epoch, the exact locked Production/Canary writer/scope and external-v2 enrollment to the two fixed reconciliation operations. Full preflight precedes both SQLite connections; only retained checks run under locks; target and journal close before evidence drops, and committed/pending errors retain original details. Pure epoch, external observer and outcome tests do not constitute a genuine full installed-production owning acceptance. A private actual-Shadow signing diagnostic now derives the same runtime epoch/configuration under a retained lock and emits no authority; a private owning signed-transfer route now fully closes its preview scopes, binds the genuine signature to actual native subject/preimage/initial epoch, uses safe external-v2 full-Shadow CAS, and freshly admits one business operation using only the returned actual Canary lease. Cutover-success/business-failure and lower unknown-COMMIT outcomes preserve their separate truth and prohibit automatic workflow retry. Held online/backup command checks now verify actual ELF path/hash, root-owned installation and configuration/key pins without RPC or regular-file reopen; ELF alone does not prove a Rust adapter. Reviewed native authority adapter implementation/topology, complete writable CLI composition, subsequent-write admission beyond the first exact preimage, existing-v1 storage migration, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance.",
+      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. A sealed initial composition now owns concrete process pins, actual ten-database startup/finalized proofs, the same recoverability fence attached to the coordinator, and a final common expiry boundary; it grants no writes. Authenticated original schema checkpoints now feed a private bridge that merges all ten signed finalized chains, replays the complete registered effects in isolated copies, compares every effective table, and obtains fresh schema observation against the original FINAL and current terminal head; empty and actual heartbeat history pass while unjournaled rowid changes fail. Fresh external cutover-journal v2 storage keeps the adjacent enrollment sentinel and unchanged business inventory, with Node/Rust transaction exclusion. The owning constructor now explicitly retains initial versus historical schema evidence, authenticates the checkpoint before startup RPC, and binds subsequent proofs to actual post-startup inventory after pending-finalization recovery. A separate private observer re-verifies full deployment and retains the actual kernel executable, exact ELF hash/ancestry, nonroot real/effective/saved UID/GID and argv; a source-owned reconciliation digest is distinct from worker identity. This observation does not grant writer authority. A private fixed-native-store inventory guard now checks non-target bytes and complete namespaces without target descriptor opens/closes, and actual durable state is exposed inside the held writer lock. Retained transaction checks now compose actual source/cache descriptors, startup post-inventory, schema/checkpoint/history/replay, active/finalized signatures and the same concrete recovery fence, with exact opaque origin bindings and a final common expiry boundary. Recovery retains the original evidence allocation across failure/feedback and blocks full re-observation through fence clones until the scope ends. Separate-process SQLite-lock fixtures cover staged writes and invalidation. A crate-private consuming owner now binds actual signed qualification/deployment/preimage, closed native configuration/epoch, the exact locked Production/Canary writer/scope and external-v2 enrollment to the two fixed reconciliation operations. Full preflight precedes both SQLite connections; only retained checks run under locks; target and journal close before evidence drops, and committed/pending errors retain original details. Pure epoch, external observer and outcome tests do not constitute a genuine full installed-production owning acceptance. A private actual-Shadow signing diagnostic now derives the same runtime epoch/configuration under a retained lock and emits no authority; a private owning signed-transfer route now fully closes its preview scopes, binds the genuine signature to actual native subject/preimage/initial epoch, uses safe external-v2 full-Shadow CAS, and freshly admits one business operation using only the returned actual Canary lease. Cutover-success/business-failure and lower unknown-COMMIT outcomes preserve their separate truth and prohibit automatic workflow retry. Held online/backup command checks now verify actual ELF path/hash, root-owned installation and configuration/key pins without RPC or regular-file reopen; ELF alone does not prove a Rust adapter. Reviewed native authority adapter implementation/topology, complete writable CLI composition, subsequent-write admission beyond the first exact preimage, existing-v1 storage migration, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only schema-only migration prerequisite now validates the exact original Node six-table and autoindex profile under an actually held main transaction, with bounded complete metadata and integrity checks while preserving source bytes and SQLite locks. It does not authenticate signed data history, establish source-file identity, stop Node, archive or rewrite a journal, or authorize migration.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-automation-reconcile.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation.rs",
@@ -2016,7 +2063,10 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/schema.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/runtime_tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/server/publication.rs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql"
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_schema.sql"
       ],
       "testCases": [
         {
@@ -2918,6 +2968,38 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
           "symbol": "staging_cleanup_preserves_same_inode_after_ancestor_rename_and_symlink"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "original_node_file_matches_complete_profile_without_byte_row_or_setting_changes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "requires_a_real_main_snapshot_and_does_not_create_one_for_the_caller"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "refuses_native_mixed_extra_and_semantically_changed_schemas"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "physical_root_page_allocation_is_checked_but_does_not_change_structural_hash"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "quick_check_rejects_corrupt_data_even_when_the_exact_schema_matches"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "query_helper_rejects_mutation_before_it_runs"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "oversized_catalogs_and_values_are_bounded_before_collection"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "genuine_delete_and_wal_writer_locks_survive_success_and_refusal"
         }
       ]
     },
@@ -4102,6 +4184,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
           "symbol": "request_local_state_authority_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration.rs",
+          "symbol": "inspect_legacy_authority_journal_schema_v1"
         }
       ],
       "tests": [
@@ -4126,9 +4212,11 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
         "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
-        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs"
+        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/oracle.mjs"
       ],
-      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime. A read-only historical checkpoint loader now authenticates the original full signed post-inventory and exact retained database bytes while refusing missing/substituted evidence; a private all-ten-database bridge now verifies retained signed history and actual registered replay against every current table, binds a fresh schema observation to the original FINAL/current head and rejects unrecorded state changes. Owning restart activation, checkpoint capture/publication, missing-history recovery and full v2 service acceptance remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance.",
+      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime. A read-only historical checkpoint loader now authenticates the original full signed post-inventory and exact retained database bytes while refusing missing/substituted evidence; a private all-ten-database bridge now verifies retained signed history and actual registered replay against every current table, binds a fresh schema observation to the original FINAL/current head and rejects unrecorded state changes. Owning restart activation, checkpoint capture/publication, missing-history recovery and full v2 service acceptance remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only schema-only migration prerequisite now validates the exact original Node six-table and autoindex profile under an actually held main transaction, with bounded complete metadata and integrity checks while preserving source bytes and SQLite locks. It does not authenticate signed data history, establish source-file identity, stop Node, archive or rewrite a journal, or authorize migration.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
@@ -4179,7 +4267,10 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/schema.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/runtime_tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/server/publication.rs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql"
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_schema.sql"
       ],
       "testCases": [
         {
@@ -4469,6 +4560,38 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
           "symbol": "staging_cleanup_preserves_same_inode_after_ancestor_rename_and_symlink"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "original_node_file_matches_complete_profile_without_byte_row_or_setting_changes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "requires_a_real_main_snapshot_and_does_not_create_one_for_the_caller"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "refuses_native_mixed_extra_and_semantically_changed_schemas"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "physical_root_page_allocation_is_checked_but_does_not_change_structural_hash"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "quick_check_rejects_corrupt_data_even_when_the_exact_schema_matches"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "query_helper_rejects_mutation_before_it_runs"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "oversized_catalogs_and_values_are_bounded_before_collection"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_profile/tests.rs",
+          "symbol": "genuine_delete_and_wal_writer_locks_survive_success_and_refusal"
         }
       ]
     },

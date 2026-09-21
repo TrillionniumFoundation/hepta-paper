@@ -108,7 +108,7 @@ use hepta_paper_service::{
     state_recoverability::safety_inspection::{
         StateSafetyInspectionOptionsV1, inspect_autonomous_research_state_safety_v1,
     },
-    store_status::inspect_store_status_v1,
+    store_status::inspect_store_status_with_options_v1,
     strict_full_auto_acceptance::{
         STRICT_FULL_AUTO_ACCEPTANCE_USAGE, execute_strict_full_auto_acceptance_v1,
         inspect_strict_full_auto_acceptance_v1, parse_strict_full_auto_acceptance_arguments,
@@ -462,10 +462,34 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("sqlite logical integrity report blocked".into());
             }
         }
-        Some("store-status") if args.len() == 2 || args.len() == 3 => {
-            let runtime_root = args.get(2).map(PathBuf::from);
-            let report =
-                inspect_store_status_v1(&PathBuf::from(&args[1]), runtime_root.as_deref())?;
+        Some("store-status") if (1..=4).contains(&args.len()) => {
+            let mut database = None;
+            let mut runtime_root = None;
+            let mut allow_isolated_verification_evidence = false;
+            for token in args.iter().skip(1) {
+                if token == "--allow-isolated-verification-evidence" {
+                    if allow_isolated_verification_evidence {
+                        return Err(
+                            "duplicate_cli_option:--allow-isolated-verification-evidence".into(),
+                        );
+                    }
+                    allow_isolated_verification_evidence = true;
+                } else if token.starts_with("--") {
+                    return Err(format!("unknown_cli_option:{token}").into());
+                } else if database.is_none() {
+                    database = Some(PathBuf::from(token));
+                } else if runtime_root.is_none() {
+                    runtime_root = Some(PathBuf::from(token));
+                } else {
+                    return Err("store-status accepts at most two paths".into());
+                }
+            }
+            let database = database.unwrap_or_else(default_store_integrity_database_v1);
+            let report = inspect_store_status_with_options_v1(
+                &database,
+                runtime_root.as_deref(),
+                allow_isolated_verification_evidence,
+            )?;
             println!("{}", serde_json::to_string(&report)?);
         }
         Some("automation-status") if args.len() >= 2 => {
@@ -1625,9 +1649,49 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let mut help = false;
             let mut require_startup = false;
             let mut require_machine = false;
+            // The Node supervisor accepts this value option for its fully
+            // autonomous qualification path.  The native health observer is
+            // intentionally fail-closed for that path, but it still accepts
+            // the option so the unified command surface has the same CLI
+            // wire contract (including strict duplicate/missing-value errors).
+            let mut _external_qualification_config: Option<PathBuf> = None;
             let mut index = 1;
             while index < args.len() {
-                match args[index].as_str() {
+                let token = args[index].as_str();
+                if token == "--external-qualification-config"
+                    || token.starts_with("--external-qualification-config=")
+                {
+                    if _external_qualification_config.is_some() {
+                        return Err("duplicate_cli_option:--external-qualification-config".into());
+                    }
+                    let value = if token == "--external-qualification-config" {
+                        let next = args
+                            .get(index + 1)
+                            .ok_or("missing_cli_option_value:--external-qualification-config")?;
+                        if next.starts_with("--") {
+                            return Err(
+                                "missing_cli_option_value:--external-qualification-config".into()
+                            );
+                        }
+                        index += 2;
+                        next
+                    } else {
+                        let value = &token["--external-qualification-config=".len()..];
+                        if value.is_empty() {
+                            return Err(
+                                "empty_cli_option_value:--external-qualification-config".into()
+                            );
+                        }
+                        index += 1;
+                        value
+                    };
+                    if value.is_empty() {
+                        return Err("empty_cli_option_value:--external-qualification-config".into());
+                    }
+                    _external_qualification_config = Some(PathBuf::from(value));
+                    continue;
+                }
+                match token {
                     "--help" if !help => {
                         help = true;
                         index += 1;
@@ -1816,7 +1880,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "usage: hepta-paper-rust native-identity | put STATE FILE | ",
                 "run CONFIG | serve | inspect-db IMMUTABLE_DB | ",
                 "store-integrity [IMMUTABLE_DB] | ",
-                "store-status IMMUTABLE_DB [RUNTIME_ROOT] | ",
+                "store-status [IMMUTABLE_DB [RUNTIME_ROOT]] [--allow-isolated-verification-evidence] | ",
                 "automation-status --help [--json] | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
                 "store-migrate NODE_DB [TARGET_VERSION] | ",

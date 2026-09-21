@@ -186,7 +186,10 @@ fn quick_check(connection: &Connection) -> Result<String, StoreStatusError> {
     Ok(result.unwrap_or_else(|| "unknown".to_owned()))
 }
 
-fn contaminated_count(connection: &Connection) -> Result<u64, StoreStatusError> {
+fn contaminated_count(
+    connection: &Connection,
+    allow_isolated_verification_evidence: bool,
+) -> Result<u64, StoreStatusError> {
     if !has_table(connection, "receipt_ledger")?
         || !has_table(connection, "receipt_ledger_qualifications")?
     {
@@ -195,7 +198,8 @@ fn contaminated_count(connection: &Connection) -> Result<u64, StoreStatusError> 
     let count: i64 = connection.query_row(
         "SELECT count(*)
            FROM receipt_ledger AS receipt
-          WHERE ((environment='verification' AND evidence_class='technical_conformance')
+          WHERE ((environment='verification' AND evidence_class='technical_conformance'
+                  AND ?1 = 0)
              OR (environment='production' AND evidence_class='runtime_unclassified')
              OR (environment='production' AND evidence_class='release_conformance_with_operational_binding'))
             AND NOT EXISTS (
@@ -204,7 +208,7 @@ fn contaminated_count(connection: &Connection) -> Result<u64, StoreStatusError> 
                    AND qualification.disposition IN
                      ('administrative_exported','invalid','superseded','retention_tombstone')
             )",
-        [],
+        [i64::from(allow_isolated_verification_evidence)],
         |row| row.get(0),
     )?;
     u64::try_from(count).map_err(|_| StoreStatusError::Identity)
@@ -297,6 +301,18 @@ pub fn inspect_store_status_v1(
     database_path: &Path,
     runtime_root: Option<&Path>,
 ) -> Result<Value, StoreStatusError> {
+    inspect_store_status_with_options_v1(database_path, runtime_root, false)
+}
+
+/// Build the Node `hepta-store status` projection with its optional isolated
+/// verification-evidence policy. The flag only relaxes the diagnostic
+/// contamination gate for verification/technical-conformance rows; it never
+/// changes any persisted data or grants production authority.
+pub fn inspect_store_status_with_options_v1(
+    database_path: &Path,
+    runtime_root: Option<&Path>,
+    allow_isolated_verification_evidence: bool,
+) -> Result<Value, StoreStatusError> {
     let database_path = canonical_database(database_path)?;
     let connection = open_read_only(&database_path)?;
     let runtime_root =
@@ -307,7 +323,7 @@ pub fn inspect_store_status_v1(
         tables.insert(table.to_owned(), json!(count_table(&connection, table)?));
     }
     let quick = quick_check(&connection)?;
-    let unresolved = contaminated_count(&connection)?;
+    let unresolved = contaminated_count(&connection, allow_isolated_verification_evidence)?;
     let version = schema_version(&connection)?;
     let handoff = handoff(&connection, &runtime_root);
     let ready =

@@ -72,3 +72,47 @@ fn health_route_help_is_json_and_does_not_touch_runtime() {
     assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn unified_route_external_qualification_option_matches_node_parser_errors() {
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../paper-core/bin/autonomous-research-supervisor.mjs");
+    let binary = env!("CARGO_BIN_EXE_hepta-paper-rust");
+    for (args, code) in [
+        (
+            vec!["autonomous-supervisor", "--external-qualification-config"],
+            "missing_cli_option_value:--external-qualification-config",
+        ),
+        (
+            vec![
+                "autonomous-supervisor",
+                "--external-qualification-config",
+                "/tmp/a",
+                "--external-qualification-config",
+                "/tmp/b",
+            ],
+            "duplicate_cli_option:--external-qualification-config",
+        ),
+        (
+            vec!["autonomous-supervisor", "--external-qualification-config="],
+            "empty_cli_option_value:--external-qualification-config",
+        ),
+    ] {
+        let node = Command::new("node")
+            .arg(&script)
+            .args(&args[1..])
+            .output()
+            .unwrap();
+        let rust = Command::new(binary).args(args).output().unwrap();
+        assert_eq!(node.status.code(), Some(1), "{code}: node");
+        assert_eq!(rust.status.code(), Some(1), "{code}: rust");
+        assert!(
+            String::from_utf8_lossy(&node.stderr).contains(code),
+            "{code}: node"
+        );
+        assert!(
+            String::from_utf8_lossy(&rust.stderr).contains(code),
+            "{code}: rust"
+        );
+    }
+}

@@ -58,7 +58,7 @@
     },
     {
       "id": "operator/store",
-      "rustEntrypoint": "hepta-paper-rust store-status IMMUTABLE_DB [RUNTIME_ROOT]",
+      "rustEntrypoint": "hepta-paper-rust store-status [IMMUTABLE_DB [RUNTIME_ROOT]] [--allow-isolated-verification-evidence]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -69,13 +69,17 @@
         {
           "path": "rust/crates/hepta-paper-service/src/store_status.rs",
           "symbol": "inspect_store_status_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/store_status.rs",
+          "symbol": "inspect_store_status_with_options_v1"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/durable_service.rs",
         "rust/crates/hepta-paper-service/tests/store_status_parity.rs"
       ],
-      "remaining": "Rust now emits the full read-only HeptaNativeStoreStatus projection for an explicitly supplied canonical Node store and optional runtime root, including table counts, metadata, receipt/job classifications, contamination gate and submission-handoff cutover diagnostics; exact production store discovery, writable trust/repair/migration authority, and independent acceptance remain unimplemented.",
+      "remaining": "Rust now emits the full read-only HeptaNativeStoreStatus projection for an explicitly supplied canonical Node store and also matches Node's omitted-database HEPTA_PAPER_RUNTIME_ROOT discovery and --allow-isolated-verification-evidence mode, including table counts, metadata, receipt/job classifications, contamination gate and submission-handoff cutover diagnostics; production layout discovery beyond the configured runtime root, writable trust/repair/migration authority, and independent acceptance remain unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/store_status.rs",
@@ -93,6 +97,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/store_status_parity.rs",
           "symbol": "immutable_status_matches_node_when_handoff_is_missing"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/store_status_parity.rs",
+          "symbol": "isolated_verification_option_preserves_production_contamination_blockers"
         }
       ]
     },
@@ -1541,7 +1549,7 @@
     },
     {
       "id": "operator/autonomous-supervisor",
-      "rustEntrypoint": "hepta-paper-rust autonomous-supervisor --action health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation] [--help]",
+      "rustEntrypoint": "hepta-paper-rust autonomous-supervisor --action health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation] [--external-qualification-config PATH] [--help]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -1571,6 +1579,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs",
           "symbol": "health_route_help_is_json_and_does_not_touch_runtime"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs",
+          "symbol": "unified_route_external_qualification_option_matches_node_parser_errors"
         }
       ]
     },

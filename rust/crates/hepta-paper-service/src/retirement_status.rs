@@ -1,8 +1,10 @@
 //! Read-only legacy archive retirement status inspection.
 
+use crate::workspace_status::{WorkspaceLayoutOptionsV1, resolve_workspace_layout_v1};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::Read,
     os::unix::fs::MetadataExt,
@@ -260,10 +262,6 @@ fn push_unique(blockers: &mut Vec<String>, value: impl Into<String>) {
     }
 }
 
-fn paths_overlap(left: &Path, right: &Path) -> bool {
-    left.starts_with(right) || right.starts_with(left)
-}
-
 /// Inspect the destructive legacy archive retirement boundary without mutating anything.
 pub fn inspect_retirement_status_v1(input: &Value) -> Result<Value, RetirementStatusError> {
     let object = input
@@ -278,15 +276,36 @@ pub fn inspect_retirement_status_v1(input: &Value) -> Result<Value, RetirementSt
     let legacy_root = resolved_path(&request_path(object, "legacyRoot", default_legacy_root)?);
     let runtime_root = resolved_path(&request_path(object, "runtimeRoot", default_runtime_root)?);
     let asset_root = resolved_path(&request_path(object, "assetRoot", default_asset_root)?);
-    let roots = [&legacy_root, &runtime_root, &asset_root];
-    let physically_decoupled = roots.iter().enumerate().all(|(index, left)| {
-        roots[index + 1..]
-            .iter()
-            .all(|right| !paths_overlap(left, right))
-    });
+    let working_directory = std::env::current_dir()?;
+    let layout = resolve_workspace_layout_v1(
+        &workspace_root(),
+        &working_directory,
+        &BTreeMap::new(),
+        &WorkspaceLayoutOptionsV1 {
+            legacy_root: legacy_root.to_str(),
+            runtime_root: runtime_root.to_str(),
+            asset_root: asset_root.to_str(),
+        },
+    )
+    .map_err(|_| RetirementStatusError::RequestInvalid)?;
+    let layout = serde_json::to_value(layout).map_err(|_| RetirementStatusError::RequestInvalid)?;
+    let physically_decoupled = layout["physicallyDecoupled"] == true;
     let mut blockers = vec![EXECUTION_BLOCKER.to_owned()];
     if !physically_decoupled {
-        push_unique(&mut blockers, "workspace_layout_not_physically_decoupled");
+        let detail = layout["decouplingBlockers"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        push_unique(
+            &mut blockers,
+            format!("workspace_layout_not_physically_decoupled:{detail}"),
+        );
     }
     let legacy_kind = path_kind(&legacy_root);
     if legacy_kind != "directory" && legacy_kind != "missing" {

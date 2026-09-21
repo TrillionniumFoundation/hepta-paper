@@ -121,3 +121,25 @@ fn retirement_status_preserves_node_lexical_paths_for_symlink_roots() {
     assert_eq!(actual, expected["results"][0]["value"]);
     let _ = fs::remove_dir_all(root);
 }
+
+#[cfg(unix)]
+#[test]
+fn retirement_status_reports_node_physical_overlap_and_workspace_blockers() {
+    let root = fixture("overlap");
+    let target = root.join("target");
+    let link = root.join("legacy-link");
+    fs::create_dir_all(&target).expect("target");
+    std::os::unix::fs::symlink(&target, &link).expect("legacy link");
+    let workspace = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let requests = serde_json::json!([
+        {"legacyRoot":link,"runtimeRoot":target,"assetRoot":root.join("assets"),"version":"0.21.0"},
+        {"legacyRoot":root.join("legacy"),"runtimeRoot":workspace,"assetRoot":root.join("assets"),"version":"0.21.0"}
+    ]);
+    let expected = oracle(&requests);
+    for (index, request) in requests.as_array().expect("requests").iter().enumerate() {
+        let actual = inspect_retirement_status_v1(request).expect("Rust overlap report");
+        assert_eq!(actual, expected["results"][index]["value"]);
+        assert_eq!(actual["layoutPhysicallyDecoupled"], false);
+    }
+    let _ = fs::remove_dir_all(root);
+}

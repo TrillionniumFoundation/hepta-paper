@@ -2467,7 +2467,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/release_trust_gate_parity.rs"
       ],
-      "remaining": "Rust matches the covered pure Node release trust-layer gate and its Node 22 record hash, including JavaScript String(value || '') release-commit coercion, ECMAScript whitespace/BOM handling, array/object ToPrimitive cases, JavaScript number wire formatting across exponent thresholds, and 0b/0o numeric count forms. The count adapter remains intentionally bounded and fail-closed for arbitrary JavaScript Number edge cases outside the tested finite integral profile; runtime capability-proof loading, external owner signatures, release authority and production activation remain unimplemented and must stay fail-closed.",
+      "remaining": "Rust matches the covered pure Node release trust-layer gate and its Node 22 record hash, including JavaScript String(value || '') release-commit coercion, ECMAScript whitespace/BOM handling, array/object ToPrimitive cases, JavaScript number wire formatting across exponent thresholds, and 0b/0o numeric count forms, and preserves Node error precedence when multiple count inputs are invalid. The count adapter remains intentionally bounded and fail-closed for arbitrary JavaScript Number edge cases outside the tested finite integral profile; runtime capability-proof loading, external owner signatures, release authority and production activation remain unimplemented and must stay fail-closed.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/release_trust_gate.rs",

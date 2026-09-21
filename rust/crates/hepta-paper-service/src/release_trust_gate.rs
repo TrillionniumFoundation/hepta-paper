@@ -253,15 +253,48 @@ fn build_release_trust_layer_gate_value_v1(
 pub fn build_release_trust_layer_gate_from_values_v1(
     input: &Value,
 ) -> Result<Value, ReleaseTrustGateError> {
-    let release_commit = input.get("releaseCommit").cloned().unwrap_or(Value::Null);
+    let release_commit =
+        normalize_javascript_json(&input.get("releaseCommit").cloned().unwrap_or(Value::Null));
+    // `Number(capabilityCount)` cannot throw for JSON values, so the Node
+    // gate checks the release-commit requirement before exposing any count
+    // validation error. Keep that precedence at the JSON adapter boundary.
+    let release_commit_text = javascript_string_or_empty(Some(&release_commit));
+    if javascript_trim(&release_commit_text).is_empty() {
+        return Err(ReleaseTrustGateError::ReleaseCommitRequired);
+    }
+    // Keep coercion errors in the same observable order as the incumbent
+    // JavaScript call: capability, implementation, conformance, then
+    // operational.  Function-argument evaluation order is not a Rust API
+    // contract, so materialize each value before constructing the gate.
+    let capability_count = js_integer(input.get("capabilityCount"), "capability")?;
+    if capability_count == 0 {
+        return Err(ReleaseTrustGateError::CapabilityCountInvalid);
+    }
+    let implementation_verified =
+        js_integer(input.get("implementationVerified"), "implementation")?;
+    let implementation_verified =
+        bounded_count(implementation_verified, capability_count, "implementation")?;
+    let release_bound_conformance_verified =
+        js_integer(input.get("releaseBoundConformanceVerified"), "conformance")?;
+    let release_bound_conformance_verified = bounded_count(
+        release_bound_conformance_verified,
+        capability_count,
+        "conformance",
+    )?;
+    let independent_production_operational_verified = js_integer(
+        input.get("independentProductionOperationalVerified"),
+        "operational",
+    )?;
+    let independent_production_operational_verified = bounded_count(
+        independent_production_operational_verified,
+        capability_count,
+        "operational",
+    )?;
     build_release_trust_layer_gate_value_v1(
         release_commit,
-        js_integer(input.get("capabilityCount"), "capability")?,
-        js_integer(input.get("implementationVerified"), "implementation")?,
-        js_integer(input.get("releaseBoundConformanceVerified"), "conformance")?,
-        js_integer(
-            input.get("independentProductionOperationalVerified"),
-            "operational",
-        )?,
+        capability_count,
+        implementation_verified,
+        release_bound_conformance_verified,
+        independent_production_operational_verified,
     )
 }

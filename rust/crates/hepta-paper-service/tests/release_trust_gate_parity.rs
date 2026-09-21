@@ -86,7 +86,14 @@ fn release_trust_gate_matches_node_oracle() {
         {"releaseCommit":"commit-a","capabilityCount":"01","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
         {"releaseCommit":"commit-a","capabilityCount":"-0","implementationVerified":0,"releaseBoundConformanceVerified":0,"independentProductionOperationalVerified":0},
         {"releaseCommit":"commit-a","capabilityCount":"\u{0085}1","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
-        {"releaseCommit":"commit-a","capabilityCount":["1"],"implementationVerified":[null],"releaseBoundConformanceVerified":[["1"]],"independentProductionOperationalVerified":[[null]]}
+        {"releaseCommit":"commit-a","capabilityCount":["1"],"implementationVerified":[null],"releaseBoundConformanceVerified":[["1"]],"independentProductionOperationalVerified":[[null]]},
+        // All four values are coercible, but conformance exceeds the
+        // capability count while operational is also invalid. JavaScript
+        // reports the bounded conformance error first; the native adapter
+        // must preserve that observable order.
+        {"releaseCommit":18446744073709551615u64,"capabilityCount":[1],"implementationVerified":[],"releaseBoundConformanceVerified":18446744073709551615u64,"independentProductionOperationalVerified":1e20},
+        {"releaseCommit":"","capabilityCount":"not-a-number","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":1},
+        {"releaseCommit":null,"implementationVerified":"not-a-number","releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":1}
     ]);
     let expected = oracle(&requests);
     for (index, request) in requests.as_array().unwrap().iter().enumerate() {

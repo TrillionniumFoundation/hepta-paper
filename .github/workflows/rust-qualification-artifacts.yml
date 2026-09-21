@@ -98,6 +98,7 @@ jobs:
           ).read_text(encoding='utf-8')
           for required in [
               'validate_external_package_payload_v1(',
+              'verify_external_qualification_closure_v1(',
               'payload_semantics: "strict_package_v1"',
               'replay_protection: "durable_sqlite_v2"',
               'clock_rollback_protection: true',

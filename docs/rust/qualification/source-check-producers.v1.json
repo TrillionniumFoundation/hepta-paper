@@ -60,8 +60,8 @@
       "context": "validate-qualification-artifacts",
       "workflowId": 345180922,
       "workflowPath": ".github/workflows/rust-qualification-artifacts.yml",
-      "workflowGitBlobSha": "2a2d982bcd640e14dc1f8fc92121710ae71a8c9e",
-      "workflowSha256": "sha256:647c65f847a3dc14fcd9e51e401127f6a281001e306efe548e73cb34f2c47efa"
+      "workflowGitBlobSha": "ef135382479784c93145b342405e038d543c2085",
+      "workflowSha256": "sha256:0e271a1d7a14a09a6743bbb72f48e09f52c13470d9c641a96f8776d47c4c4b85"
     },
     {
       "context": "exact-head-source-snapshot",

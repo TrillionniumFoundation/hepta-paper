@@ -63,6 +63,11 @@ Current implementation and contract roots:
 
 - `rust/crates/hepta-qualification-ingest`
 
+The [implementation handoff](../../../rust/crates/hepta-qualification-ingest/HANDOFF.md)
+specifies the actual CLI and opaque factory, independent file ownership,
+per-package and aggregate limits, cross-package host/database checks, exact
+receipt compatibility, replay ledger transaction and remaining native consumers.
+
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
 ## Concurrency and resources

@@ -2,9 +2,9 @@
 //!
 //! This executable verifies every independently signed package envelope for one
 //! repository commit/tree, rejects incomplete or authority-collapsed sets, and emits a
-//! deterministic non-activating receipt. Package payloads remain content-addressed by
-//! their signed hashes and must be schema-validated by the package-specific external
-//! executor before publication.
+//! deterministic non-activating receipt. It validates the exact signed payloads,
+//! including their package-specific semantics and the complete set's shared host
+//! and database identities, before accepting any durable replay nonce.
 
 #[cfg(not(unix))]
 compile_error!("hepta-qualification-closure requires Unix file identity semantics");
@@ -24,9 +24,11 @@ use std::{
 use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::VerifyingKey;
 use hepta_qualification_ingest::{
-    QualificationIngestError, QualificationPackageIdV1, QualificationPayloadError,
-    QualificationSubjectV1, QualificationTrustStoreV1, VerifiedExternalQualificationV1,
-    load_external_qualification_file_v1, validate_external_package_payload_v1,
+    ExternalQualificationCandidateV1, ExternalQualificationClosureSubjectV1,
+    QualificationClosureError, QualificationIngestError, QualificationPackageIdV1,
+    QualificationPayloadError, QualificationSubjectV1, QualificationTrustStoreV1,
+    VerifiedExternalQualificationV1, load_external_qualification_file_v1,
+    validate_external_package_payload_v1, verify_external_qualification_closure_v1,
     verify_external_qualification_v1,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
@@ -37,6 +39,9 @@ use thiserror::Error;
 const MAXIMUM_REQUEST_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_TRUST_STORE_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_PAYLOAD_BYTES: u64 = 32 * 1024 * 1024;
+// Match the complete opaque verifier's aggregate raw-payload bound before reading
+// and retaining the next file. Payload buffers are moved, never cloned.
+const MAXIMUM_CLOSURE_PAYLOAD_BYTES: u64 = 64 * 1024 * 1024;
 const MAXIMUM_TRUST_VALIDITY_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 const REPLAY_LEDGER_APPLICATION_ID: i32 = 0x4851_4c31;
 const REPLAY_LEDGER_USER_VERSION: i32 = 2;
@@ -174,6 +179,13 @@ struct ExternalQualificationClosureReceiptV1 {
     receipt_hash: String,
 }
 
+struct VerifiedClosureTrustContextV1<'a> {
+    generation: u64,
+    hash: &'a str,
+    previous_hash: Option<&'a str>,
+    store: &'a QualificationTrustStoreV1,
+}
+
 #[derive(Debug, Error)]
 enum ClosureError {
     #[error("usage: hepta-qualification-closure <closure-request.json>")]
@@ -223,11 +235,33 @@ enum ClosureError {
     #[error(transparent)]
     Ingest(#[from] QualificationIngestError),
     #[error(transparent)]
+    Closure(QualificationClosureError),
+    #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
+}
+
+impl From<QualificationClosureError> for ClosureError {
+    fn from(error: QualificationClosureError) -> Self {
+        // Preserve the CLI's established diagnostics for checks shared with its
+        // previous per-package/receipt path. New joint failures stay precise.
+        match error {
+            QualificationClosureError::PackageSetIncomplete => Self::PackageSetIncomplete,
+            QualificationClosureError::DuplicatePackage => Self::DuplicatePackage,
+            QualificationClosureError::DuplicateNonce => Self::DuplicateNonce,
+            QualificationClosureError::DuplicatePayload => Self::DuplicatePayload,
+            QualificationClosureError::PayloadHashMismatch => Self::PayloadHashMismatch,
+            QualificationClosureError::AuthoritySeparationViolation => {
+                Self::AuthoritySeparationViolation
+            }
+            QualificationClosureError::Ingest(error) => Self::Ingest(error),
+            QualificationClosureError::Payload(error) => Self::Payload(error),
+            error => Self::Closure(error),
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -296,7 +330,8 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
         QualificationTrustStoreV1::new(trust_entries, trust_document.forbidden_authority_domains)
             .map_err(|_| ClosureError::TrustStoreInvalid)?;
 
-    let mut verified = Vec::with_capacity(request.envelopes.len());
+    let mut candidates = Vec::with_capacity(request.envelopes.len());
+    let mut total_payload_bytes = 0u64;
     for source in &request.envelopes {
         let envelope = load_external_qualification_file_v1(
             &source.path,
@@ -314,12 +349,23 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
         };
         let record =
             verify_external_qualification_v1(&envelope, &subject, now_unix_ms, &trust_store)?;
-        let payload_bytes = read_authority_file(
+        let remaining_payload_bytes = MAXIMUM_CLOSURE_PAYLOAD_BYTES
+            .checked_sub(total_payload_bytes)
+            .ok_or(QualificationClosureError::PayloadSizeInvalid)?;
+        let payload_bytes = read_bounded_authority_file(
             &source.payload_path,
             source.payload_owner_uid,
             request.consumer_uid,
             MAXIMUM_PAYLOAD_BYTES,
+            Some(remaining_payload_bytes),
         )?;
+        total_payload_bytes = total_payload_bytes
+            .checked_add(
+                u64::try_from(payload_bytes.len())
+                    .map_err(|_| QualificationClosureError::PayloadSizeInvalid)?,
+            )
+            .filter(|total| *total <= MAXIMUM_CLOSURE_PAYLOAD_BYTES)
+            .ok_or(QualificationClosureError::PayloadSizeInvalid)?;
         if hash_bytes(&payload_bytes) != envelope.payload_hash {
             return Err(ClosureError::PayloadHashMismatch);
         }
@@ -332,30 +378,77 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
             trust_generation,
             &trust_store,
         )?;
-        verified.push(record);
+        candidates.push(ExternalQualificationCandidateV1 {
+            envelope,
+            payload: payload_bytes,
+        });
     }
 
-    let receipt = assemble_receipt(
-        &request.repository,
-        &request.commit,
-        &request.tree,
-        trust_generation,
-        &trust_store_hash,
-        verified,
-    )?;
-    commit_replay_receipt(
-        &request.replay_ledger,
-        request.consumer_uid,
-        trust_generation,
-        &trust_store_hash,
-        previous_trust_store_hash.as_deref(),
+    let receipt = verify_and_commit_closure(
+        &request,
+        &candidates,
+        &VerifiedClosureTrustContextV1 {
+            generation: trust_generation,
+            hash: &trust_store_hash,
+            previous_hash: previous_trust_store_hash.as_deref(),
+            store: &trust_store,
+        },
         now_unix_ms,
-        &receipt,
     )?;
     let mut stdout = io::stdout().lock();
     serde_json::to_writer(&mut stdout, &receipt)?;
     stdout.write_all(b"\n")?;
     Ok(())
+}
+
+fn verify_and_commit_closure(
+    request: &ClosureRequestV1,
+    candidates: &[ExternalQualificationCandidateV1],
+    trust: &VerifiedClosureTrustContextV1<'_>,
+    now_unix_ms: u64,
+) -> Result<ExternalQualificationClosureReceiptV1, ClosureError> {
+    // The earlier per-file validation preserves established diagnostic order.
+    // Reverify the exact retained bytes through the complete public producer;
+    // only records from this genuine opaque result can enter the old receipt.
+    // Both checks intentionally use the CLI's original point-in-time sample.
+    let verified = verify_external_qualification_closure_v1(
+        candidates,
+        &ExternalQualificationClosureSubjectV1 {
+            repository: request.repository.clone(),
+            commit: request.commit.clone(),
+            tree: request.tree.clone(),
+        },
+        now_unix_ms,
+        trust.generation,
+        trust.store,
+    )?;
+    let records = QualificationPackageIdV1::ALL
+        .into_iter()
+        .map(|package| {
+            verified
+                .package(package)
+                .cloned()
+                .ok_or(ClosureError::PackageSetIncomplete)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let receipt = assemble_receipt(
+        &request.repository,
+        &request.commit,
+        &request.tree,
+        trust.generation,
+        trust.hash,
+        records,
+    )?;
+    commit_replay_receipt(
+        &request.replay_ledger,
+        request.consumer_uid,
+        trust.generation,
+        trust.hash,
+        trust.previous_hash,
+        now_unix_ms,
+        &receipt,
+    )?;
+    Ok(receipt)
 }
 
 fn validate_request(request: &ClosureRequestV1) -> Result<(), ClosureError> {
@@ -961,6 +1054,16 @@ fn read_authority_file(
     consumer_uid: u32,
     maximum_bytes: u64,
 ) -> Result<Vec<u8>, ClosureError> {
+    read_bounded_authority_file(path, expected_owner_uid, consumer_uid, maximum_bytes, None)
+}
+
+fn read_bounded_authority_file(
+    path: &Path,
+    expected_owner_uid: u32,
+    consumer_uid: u32,
+    maximum_bytes: u64,
+    remaining_payload_bytes: Option<u64>,
+) -> Result<Vec<u8>, ClosureError> {
     if expected_owner_uid == consumer_uid || !path.is_absolute() {
         return Err(ClosureError::FileAuthorityInvalid);
     }
@@ -981,6 +1084,9 @@ fn read_authority_file(
     {
         return Err(ClosureError::FileAuthorityInvalid);
     }
+    if remaining_payload_bytes.is_some_and(|remaining| before.size() > remaining) {
+        return Err(QualificationClosureError::PayloadSizeInvalid.into());
+    }
 
     let mut file = OpenOptions::new()
         .read(true)
@@ -992,13 +1098,20 @@ fn read_authority_file(
     }
     let capacity =
         usize::try_from(opened.size()).map_err(|_| ClosureError::FileAuthorityInvalid)?;
-    let mut bytes = Vec::with_capacity(capacity);
-    (&mut file)
-        .take(maximum_bytes.saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    if u64::try_from(bytes.len()).map_err(|_| ClosureError::FileAuthorityInvalid)? != opened.size()
-    {
-        return Err(ClosureError::FileChanged);
+    // A growing file must not make read_to_end double the final payload's
+    // allocation beyond the aggregate budget. The growth probe stays on stack.
+    let mut bytes = vec![0u8; capacity];
+    if let Err(error) = file.read_exact(&mut bytes) {
+        return Err(if error.kind() == io::ErrorKind::UnexpectedEof {
+            ClosureError::FileChanged
+        } else {
+            ClosureError::Io(error)
+        });
+    }
+    match file.read_exact(&mut [0u8; 1]) {
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {}
+        Ok(()) => return Err(ClosureError::FileChanged),
+        Err(error) => return Err(ClosureError::Io(error)),
     }
     let after_open = file.metadata()?;
     let after_path = fs::symlink_metadata(path)?;
@@ -1095,6 +1208,8 @@ fn hash_bytes(value: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    mod joint_closure;
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 

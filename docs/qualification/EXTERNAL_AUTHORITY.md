@@ -16,7 +16,7 @@ release, portal, or submission facts.
 | EXT-HOST-STORAGE-001 | GAP-HOST-002 | `external-host-storage-package-v1.schema.json` | destructive storage/host operator plus independent reviewer |
 | EXT-KEY-OWNER-001 | GAP-KEY-001 | `external-key-owner-drill-v1.schema.json` | capability key owner plus independent reviewer |
 | EXT-CODEX-ROLE-001 | GAP-CODEX-001 | `authenticated-codex-role-canary-v1.schema.json` | credential owner, target-host operator, and role reviewer |
-| EXT-CUTOVER-SOAK-001 | GAP-HOST-002 | `production-cutover-soak-v1.schema.json` | production writer/operator plus independent reviewer |
+| EXT-CUTOVER-SOAK-001 | GAP-REL-001 | `production-cutover-soak-v1.schema.json` | production writer/operator plus independent reviewer |
 | EXT-AUTHORITY-SET-001 | GAP-REL-001 | `external-authority-set-v1.schema.json` | release/KMS/HSM/WORM/portal/submission authorities and set reviewer |
 | LEGACY-REPLAY-001 | LEGACY-REPLAY-001 | `legacy-matrix-replay-closure-v1.schema.json` | private archive/replay operator plus independent reviewer; no production authority |
 
@@ -36,6 +36,15 @@ The package map remains machine-owned at
 `docs/rust/qualification/external-package-map.v1.json`; this document is its
 current human protocol/index projection. A schema or map change updates both in
 the same review.
+
+The [Rust implementation handoff](../../rust/crates/hepta-qualification-ingest/HANDOFF.md)
+defines the file boundaries, resource limits and durable replay behavior. The
+CLI supplies the actual seven envelopes and payloads to
+`verify_external_qualification_closure_v1` before opening its replay ledger.
+Cgroup/storage host identity and storage/cutover database identity must agree;
+individual package validity alone does not establish complete qualification.
+The existing report JSON and its digest remain distinct from the opaque
+`VerifiedExternalQualificationClosureV1` and cannot recreate that value.
 
 ## 3. Common envelope
 
@@ -71,7 +80,7 @@ Ingestion is non-activating by default:
 2. validate complete strict schema;
 3. recompute payload/subject hashes;
 4. verify trust generation, key role, signature, validity, and revocation;
-5. verify package-specific semantics and independence;
+5. verify package-specific semantics, independence and cross-package identities;
 6. atomically check replay/nonce/clock/trust state;
 7. append accepted receipt and derived non-activating status;
 8. require a separate activation/cutover decision.

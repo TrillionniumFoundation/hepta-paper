@@ -1574,7 +1574,7 @@
         "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
         "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs"
       ],
-      "remaining": "Rust now exposes the already-qualified read-only supervisor health observer through the unified service CLI, including missing-instance, startup and machine-intake status checks. Resident lifecycle execution, signals, instance/cycle leases, campaign scheduling/dispatch, provider canary, qualification renewal, machine-intake enqueue, external-action journal, startup/shutdown recovery and target-host qualification remain open.",
+      "remaining": "Rust now exposes the already-qualified read-only supervisor health observer through the unified service CLI, including missing-instance, startup and machine-intake status checks. Shared runtime-root and external-qualification-config options now match Node value-validation precedence and inline syntax; the native action selector follows the same strict grammar. Resident lifecycle execution, signals, instance/cycle leases, campaign scheduling/dispatch, provider canary, qualification renewal, machine-intake enqueue, external-action journal, startup/shutdown recovery and target-host qualification remain open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/supervisor_health.rs"
@@ -1591,6 +1591,18 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs",
           "symbol": "unified_route_external_qualification_option_matches_node_parser_errors"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs",
+          "symbol": "unified_route_shared_options_match_node_value_validation_precedence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs",
+          "symbol": "unified_route_shared_inline_paths_allow_help_without_reading_paths_like_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_supervisor_health_route.rs",
+          "symbol": "unified_route_native_action_selector_uses_node_strict_parser_rules"
         }
       ]
     },

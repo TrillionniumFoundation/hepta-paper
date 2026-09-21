@@ -315,6 +315,59 @@ fn parse_personal_gpu_arguments(args: &[String]) -> Result<BTreeMap<String, Stri
     Ok(parsed)
 }
 
+// Apply Node's strict value and duplicate ordering to the native health subset.
+// `action` is a native selector; resident execution remains blocked below.
+fn parse_supervisor_health_arguments(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+    let mut parsed = BTreeMap::new();
+    let mut index = 0;
+    while index < args.len() {
+        let token = args[index].as_str();
+        if token == "--" {
+            return Err("unexpected_cli_argument_separator".into());
+        }
+        let raw = token
+            .strip_prefix("--")
+            .ok_or_else(|| format!("unexpected_cli_positional:{token}"))?;
+        let (key, inline) = raw
+            .split_once('=')
+            .map_or((raw, None), |(key, value)| (key, Some(value)));
+        if key.is_empty() {
+            return Err("empty_cli_option".into());
+        }
+        let value = match key {
+            "help" | "require-startup-reconciliation" | "require-machine-intake-reconciliation" => {
+                if inline.is_some() {
+                    return Err(format!("boolean_cli_option_does_not_take_value:--{key}"));
+                }
+                "true"
+            }
+            "action" | "runtime-root" | "external-qualification-config" => {
+                let value = match inline {
+                    Some(value) => value,
+                    None => {
+                        index += 1;
+                        args.get(index)
+                            .filter(|value| !value.starts_with("--"))
+                            .map(String::as_str)
+                            .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?
+                    }
+                };
+                if value.is_empty() {
+                    return Err(format!("empty_cli_option_value:--{key}"));
+                }
+                value
+            }
+            _ => return Err(format!("unsupported_supervisor_mode:{token}")),
+        };
+        // Node validates a repeated value before reporting duplication.
+        if parsed.insert(key.to_owned(), value.to_owned()).is_some() {
+            return Err(format!("duplicate_cli_option:--{key}"));
+        }
+        index += 1;
+    }
+    Ok(parsed)
+}
+
 fn parse_dispatcher_challenge_arguments(
     args: &[String],
 ) -> Result<BTreeMap<String, String>, String> {
@@ -1644,77 +1697,15 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some("autonomous-supervisor") => {
-            let mut action = "health".to_owned();
-            let mut runtime_root = None;
-            let mut help = false;
-            let mut require_startup = false;
-            let mut require_machine = false;
-            // The Node supervisor accepts this value option for its fully
-            // autonomous qualification path.  The native health observer is
-            // intentionally fail-closed for that path, but it still accepts
-            // the option so the unified command surface has the same CLI
-            // wire contract (including strict duplicate/missing-value errors).
-            let mut _external_qualification_config: Option<PathBuf> = None;
-            let mut index = 1;
-            while index < args.len() {
-                let token = args[index].as_str();
-                if token == "--external-qualification-config"
-                    || token.starts_with("--external-qualification-config=")
-                {
-                    if _external_qualification_config.is_some() {
-                        return Err("duplicate_cli_option:--external-qualification-config".into());
-                    }
-                    let value = if token == "--external-qualification-config" {
-                        let next = args
-                            .get(index + 1)
-                            .ok_or("missing_cli_option_value:--external-qualification-config")?;
-                        if next.starts_with("--") {
-                            return Err(
-                                "missing_cli_option_value:--external-qualification-config".into()
-                            );
-                        }
-                        index += 2;
-                        next
-                    } else {
-                        let value = &token["--external-qualification-config=".len()..];
-                        if value.is_empty() {
-                            return Err(
-                                "empty_cli_option_value:--external-qualification-config".into()
-                            );
-                        }
-                        index += 1;
-                        value
-                    };
-                    if value.is_empty() {
-                        return Err("empty_cli_option_value:--external-qualification-config".into());
-                    }
-                    _external_qualification_config = Some(PathBuf::from(value));
-                    continue;
-                }
-                match token {
-                    "--help" if !help => {
-                        help = true;
-                        index += 1;
-                    }
-                    "--action" if index + 1 < args.len() => {
-                        action = args[index + 1].clone();
-                        index += 2;
-                    }
-                    "--runtime-root" if index + 1 < args.len() => {
-                        runtime_root = Some(PathBuf::from(&args[index + 1]));
-                        index += 2;
-                    }
-                    "--require-startup-reconciliation" if !require_startup => {
-                        require_startup = true;
-                        index += 1;
-                    }
-                    "--require-machine-intake-reconciliation" if !require_machine => {
-                        require_machine = true;
-                        index += 1;
-                    }
-                    token => return Err(format!("unsupported_supervisor_mode:{token}").into()),
-                }
-            }
+            let options = parse_supervisor_health_arguments(&args[1..])?;
+            let action = options
+                .get("action")
+                .map(String::as_str)
+                .unwrap_or("health");
+            let runtime_root = options.get("runtime-root").map(PathBuf::from);
+            let help = options.contains_key("help");
+            let require_startup = options.contains_key("require-startup-reconciliation");
+            let require_machine = options.contains_key("require-machine-intake-reconciliation");
             if help {
                 println!(
                     "{{\"version\":1,\"kind\":\"AutonomousSupervisorHealthUsage\",\"usage\":\"hepta-paper-rust autonomous-supervisor --action health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation]\",\"mutation\":\"none\"}}"

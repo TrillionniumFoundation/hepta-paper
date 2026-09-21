@@ -202,3 +202,49 @@ state, fixed writer/scope and signed authorization, rather than trusting a prior
 callback tests and the original 10 durable plus 6 external-storage cases pass,
 including real interprocess exclusion and same-process observer open/drop.
 The new callback API grants no independent qualification or native admission.
+
+
+## Retained evidence while SQLite is open
+
+The private `activation::transaction` check now composes retained startup,
+schema (initial or checkpoint/history/replay), finalized inventory, active
+inspection, complete source, cache and recoverability evidence. It takes actual
+opaque scopes made before opening the target connection, uses the original
+startup input only as the immutable subject, and binds the guard to the startup
+producer's actual post-recovery inventory by pointer identity. An independently
+observed equal inventory cannot substitute for that origin. Cache scope also
+binds the exact original verified-cache producer. No scoped check opens,
+clones or closes a regular-file descriptor, creates a private SQLite snapshot,
+renews evidence or invokes an authority transport. Held authority signatures and
+all original hashes, manifests, heads and final time windows remain checked.
+
+The schema path retains the original signed FINAL post-inventory hash and the
+actual previously completed replay. It does not replay staged target changes or
+claim they are authorized. Passive cache-based inspection is not accepted by
+this active-only transaction helper; the owning composition separately retains
+its actual verified active cache. A final real clock sample follows all I/O and
+checks every earlier receipt plus the concrete recovery token's origin,
+generation, evidence identity, head and resident/source deadlines.
+
+Recovery now retains the same `Rc<Evidence>` allocation through failures and
+coordinator feedback. A weak scope marker prevents full observations through any
+clone of that concrete fence while a transaction token exists. This is not a
+process-global protection against arbitrary other database opens. All original
+inventories and retained source/cache/recovery scopes must survive until the
+owning SQLite connection closes, including after rollback and on unwind; an idle
+WAL connection still holds locks. The upper sealed writer must enforce this
+lifetime and prohibit unrelated full observation during the connection lifetime.
+
+The actual signed owning tests cover initial FINAL and genuine pending
+finalization recovery followed by historical replay, staged native-store DML,
+wrong equal-report guard origin, incorrect pre/post startup binding, byte-identical
+schema/checkpoint replacement, no new RPC, and independent-process SQLite locks.
+These checks leave all activation/retirement flags false. They are prerequisites;
+fixed restricted operation ownership, native signed admission, locked production
+cutover binding, per-action invalidation and the writable CLI remain open.
+
+The retained owning suite passes 3/3 in 454.12 seconds (two complete signed
+composition scenarios and their actually invoked subprocess probe). Source/cache
+retention passes 8/8; inventory guard passes 16/16; recovery retention passes all
+8 cases plus the original 5 activation-binding regressions. These are targeted
+results, not a claim that the old full-service 714-test baseline ran again.

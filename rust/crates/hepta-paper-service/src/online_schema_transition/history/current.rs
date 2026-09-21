@@ -6,7 +6,7 @@ use crate::{
         active_refresh::VerifiedActiveAuthorityEvidenceV1,
         finalized_inventory::VerifiedFinalizedInventoryV1,
     },
-    online_writer_static::VerifiedWriterStaticCoverageV1,
+    online_writer_static::{RetainedWriterStaticInputsV1, VerifiedWriterStaticCoverageV1},
     sqlite_mutation_coordinator::{
         Result,
         authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1},
@@ -18,7 +18,9 @@ use crate::{
         },
         hash, text,
     },
-    state_database_inventory::ObservedStateDatabaseInventoryV1,
+    state_database_inventory::{
+        NativeStoreTransactionInventoryGuardV1, ObservedStateDatabaseInventoryV1,
+    },
     state_recoverability::{VerifiedCheckpointReplayV1, verify_checkpoint_effective_state_v1},
 };
 use serde_json::{Value, json};
@@ -108,17 +110,7 @@ impl VerifiedSchemaTransitionHistoryV1 {
             last: &self.checked_at,
         };
         let before = clock.now_millis()?;
-        if self.authority_hash != authority.configuration_hash()
-            || self.chain.authority_configuration_hash() != self.authority_hash
-            || input.source.value()["astGateReceiptHash"] != self.source_hash
-            || input.active.receipt_hash()? != self.active_hash
-            || finalized_hash(input.finalized)? != self.finalized_hash
-            || input.current.value()["inventoryHash"] != self.report["currentInventoryHash"]
-            || input.checkpoint.historical_inventory()["inventoryHash"]
-                != self.report["historicalInventoryHash"]
-        {
-            return Err(fail("subject_changed"));
-        }
+        self.assert_subject(input, authority)?;
         input.checkpoint.assert_current(input.current, authority)?;
         input.source.assert_current()?;
         input
@@ -151,6 +143,88 @@ impl VerifiedSchemaTransitionHistoryV1 {
         input
             .finalized
             .assert_time(authority.trust(), input.active, completed)
+    }
+    /// Recheck the actual completed history proof without obtaining another
+    /// snapshot of a database whose transaction is in progress. All original
+    /// FINAL, chain, replay, head, source and authority bindings remain required.
+    pub(crate) fn assert_retained_for_native_store_transaction<T: MutationAuthorityTransportV1>(
+        &self,
+        input: &SchemaHistoryInputsV1<'_>,
+        authority: &PinnedMutationAuthorityV1<T>,
+        retained_source: &RetainedWriterStaticInputsV1<'_>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+        clock: &mut dyn MutationClockV1,
+    ) -> Result<()> {
+        let mut clock = Clock {
+            inner: clock,
+            last: &self.checked_at,
+        };
+        let before = clock.now_millis()?;
+        self.assert_subject(input, authority)?;
+        input
+            .checkpoint
+            .assert_retained_for_native_store_transaction(input.current, authority, guard)?;
+        input.active.assert_retained_for_native_store_transaction(
+            authority,
+            input.current,
+            input.source,
+            retained_source,
+            guard,
+            before,
+        )?;
+        input
+            .finalized
+            .assert_retained_for_native_store_transaction(
+                input.current,
+                authority,
+                input.source,
+                input.active,
+                retained_source,
+                guard,
+                &mut clock,
+            )?;
+        self.replay.assert_retained_for_native_store_transaction(
+            input.checkpoint,
+            input.current,
+            &self.chain,
+            authority,
+            guard,
+        )?;
+        assert_head(&self.chain, input.active, Some(&self.observation))?;
+        authority.verify_schema_transition_observation(
+            &self.observation,
+            &self.request,
+            clock.now_millis()?,
+        )?;
+        guard.assert_bound_to(input.current)?;
+        let completed = clock.now_millis()?;
+        super::super::assert_readiness_time(
+            &self.observation,
+            authority.trust(),
+            before,
+            completed,
+        )?;
+        input
+            .finalized
+            .assert_time(authority.trust(), input.active, completed)
+    }
+    fn assert_subject<T: MutationAuthorityTransportV1>(
+        &self,
+        input: &SchemaHistoryInputsV1<'_>,
+        authority: &PinnedMutationAuthorityV1<T>,
+    ) -> Result<()> {
+        if self.authority_hash != authority.configuration_hash()
+            || self.chain.authority_configuration_hash() != self.authority_hash
+            || input.source.value()["astGateReceiptHash"] != self.source_hash
+            || input.active.receipt_hash()? != self.active_hash
+            || finalized_hash(input.finalized)? != self.finalized_hash
+            || input.current.value()["inventoryHash"] != self.report["currentInventoryHash"]
+            || input.checkpoint.historical_inventory()["inventoryHash"]
+                != self.report["historicalInventoryHash"]
+        {
+            return Err(fail("subject_changed"));
+        }
+        Ok(())
     }
 }
 /// No backup reservation or journal-range request is synthesized. The source

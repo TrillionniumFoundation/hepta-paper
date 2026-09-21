@@ -1,15 +1,21 @@
 //! Shared, concrete recoverability observations for explicitly named actions.
 //! This is not an Active runtime, a distributed lease, or business authorization.
 use super::*;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::{Rc, Weak},
+};
 
 #[path = "activation_binding.rs"]
 mod activation_binding;
+#[allow(unused_imports)]
+pub(crate) use activation_binding::RetainedNativeStoreRecoverabilityV1;
 pub(crate) use activation_binding::VerifiedRecoverabilityActivationBindingV1;
 
 struct State<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1> {
     controller: StateRecoverabilityControllerV1<B, O>,
     generation: Rc<()>,
+    native_transaction: Weak<()>,
 }
 
 /// An action observation minted only by a concrete recoverability controller.
@@ -43,6 +49,12 @@ impl VerifiedRecoverabilityActionV1 {
 /// production composition must own its real clock and authority transports.
 /// Supplying an arbitrary implementation of `RecoverabilityEpochFenceV1` cannot
 /// construct this handle or an action proof.
+///
+/// While the internal fixed native-store transaction scope is retained, all
+/// clones reject full observe/assert/reconcile operations before filesystem I/O.
+/// Memory-only finalization/reconciliation feedback remains available and can
+/// invalidate the scope. This is per-origin sequencing, not a process-global
+/// guard against unrelated code opening or closing database descriptors.
 pub struct SharedRecoverabilityEpochFenceV1<
     B: StateBackupAuthorityTransportV1,
     O: MutationAuthorityTransportV1,
@@ -74,6 +86,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
             state: Rc::new(RefCell::new(State {
                 controller,
                 generation: Rc::new(()),
+                native_transaction: Weak::new(),
             })),
             origin: Rc::new(()),
         }
@@ -99,6 +112,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         apply(&mut state.controller)
     }
     pub fn reconcile_with_validity(&self, required_validity_ms: i64) -> Result<Value> {
+        self.assert_no_native_transaction()?;
         self.transition(|c| c.reconcile_with_validity(required_validity_ms))
     }
     pub fn mark_finalized(&self, head: &Value) -> Result<Value> {
@@ -112,6 +126,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
             .state
             .try_borrow_mut()
             .map_err(|_| denied("fence_busy"))?;
+        state.assert_no_native_transaction()?;
         let permit = state.observe(action)?;
         Ok(VerifiedRecoverabilityActionV1 {
             permit,
@@ -136,6 +151,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
             .state
             .try_borrow_mut()
             .map_err(|_| denied("fence_busy"))?;
+        state.assert_no_native_transaction()?;
         if !Rc::ptr_eq(&state.generation, &token.generation) {
             return Err(denied("fence_generation_changed"));
         }
@@ -146,9 +162,23 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         }
         Ok(())
     }
+
+    fn assert_no_native_transaction(&self) -> Result<()> {
+        self.state
+            .try_borrow()
+            .map_err(|_| denied("fence_busy"))?
+            .assert_no_native_transaction()
+    }
 }
 impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1> State<B, O> {
+    fn assert_no_native_transaction(&self) -> Result<()> {
+        if self.native_transaction.upgrade().is_some() {
+            return Err(denied("native_transaction_full_observation_forbidden"));
+        }
+        Ok(())
+    }
     fn observe(&mut self, action: &str) -> Result<RecoverabilityEpochPermitV1> {
+        self.assert_no_native_transaction()?;
         let result = self.observe_checked(action);
         if let Err(mut e) = result {
             self.generation = Rc::new(());

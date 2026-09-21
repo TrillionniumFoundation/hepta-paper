@@ -13,7 +13,9 @@ use crate::{
         manifest::writer_manifest_hash_v1,
         timestamp,
     },
-    state_database_inventory::ObservedStateDatabaseInventoryV1,
+    state_database_inventory::{
+        NativeStoreTransactionInventoryGuardV1, ObservedStateDatabaseInventoryV1,
+    },
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -44,12 +46,52 @@ impl VerifiedSchemaTransitionReadinessV1 {
         clock: &mut dyn MutationClockV1,
     ) -> Result<()> {
         let before = clock.now_millis()?;
+        self.assert_initial_time(before)?;
+        inventory.assert_current()?;
+        self.assert_retained_inputs(inventory, authority, before)?;
+        assert_readiness_time(
+            &self.observation,
+            authority.trust(),
+            before,
+            clock.now_millis()?,
+        )
+    }
+    /// Revalidate the original signed schema evidence while one fixed native
+    /// store may have staged writes. The guard remains bound to the actual
+    /// preconnection inventory; this does not attest to the staged SQL itself.
+    pub(crate) fn assert_retained_for_native_store_transaction<T: MutationAuthorityTransportV1>(
+        &self,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+        clock: &mut dyn MutationClockV1,
+    ) -> Result<()> {
+        let before = clock.now_millis()?;
+        self.assert_initial_time(before)?;
+        guard.assert_bound_to(inventory)?;
+        self.assert_retained_inputs(inventory, authority, before)?;
+        guard.assert_bound_to(inventory)?;
+        assert_readiness_time(
+            &self.observation,
+            authority.trust(),
+            before,
+            clock.now_millis()?,
+        )
+    }
+    fn assert_initial_time(&self, before: i64) -> Result<()> {
         if before < self.checked_at {
             return Err(error(
                 "autonomous_research_online_schema_transition_readiness_clock_invalid",
             ));
         }
-        inventory.assert_current()?;
+        Ok(())
+    }
+    fn assert_retained_inputs<T: MutationAuthorityTransportV1>(
+        &self,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        before: i64,
+    ) -> Result<()> {
         self.audit.assert_current()?;
         if inventory.value()["inventoryHash"] != self.inventory_hash
             || authority.configuration_hash() != self.authority_configuration_hash
@@ -59,15 +101,10 @@ impl VerifiedSchemaTransitionReadinessV1 {
                 "autonomous_research_online_schema_transition_readiness_subject_changed",
             ));
         }
+        // Audit and authority use their retained descriptors. Never re-open
+        // a named regular file here, even when a substituted path is rejected.
         authority.verify_schema_transition_observation(&self.observation, &self.request, before)?;
-        // Signature verification also reopens pinned files. No I/O follows this
-        // last clock sample: an earlier timestamp cannot cover that work.
-        assert_readiness_time(
-            &self.observation,
-            authority.trust(),
-            before,
-            clock.now_millis()?,
-        )
+        Ok(())
     }
 }
 fn assert_readiness_time(

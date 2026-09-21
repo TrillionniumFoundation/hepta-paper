@@ -53,6 +53,7 @@ use std::{cell::Cell, fs, path::PathBuf};
 mod native_process;
 mod schema;
 mod temporal;
+mod transaction;
 use schema::{PreparedSchemaInputV1, RetainedSchemaEvidenceV1};
 #[cfg(test)]
 mod tests;

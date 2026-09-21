@@ -142,3 +142,23 @@ still requires the separate live inventory, startup recovery, full finalized
 head inspection, schema-transition, restore-source, recoverability and safe cache
 chains described in `ONLINE_RUNTIME_ACTIVATION_HANDOFF.md`. The static scanner
 alone never mints an active runtime capability.
+
+
+## Retained source scope for native-store transactions
+
+A crate-private preconnection constructor borrows the actual opaque source,
+inventory and active producers and retains one descriptor for every complete
+input file. It preserves the existing 20,000-file, 4,096-directory and 512 MiB
+aggregate limits; descriptor exhaustion fails before the target is opened. The
+original low-descriptor public currentness method is unchanged. During a fixed
+native-store transaction, only held `read_at`/metadata and directory enumeration
+are used. Complete namespaces, absent roots, bytes, owner/group, permissions and
+identities remain exact. No path is reopened even on rejection: a source name
+substituted with a hardlink to SQLite must not release process-wide SQLite locks.
+
+The scope requires exact original source/inventory/active pointer identities and
+hashes plus the inventory guard's actual origin. Active receipt verification
+uses this scope and the same original signature/head checks. Source retention is
+not active authorization; all scopes must outlive the owning connection. Local
+regressions exercise changed/missing/replaced/added inputs, bounds, actual signed
+producers and independent-process lock retention after an alias is rejected.

@@ -8,6 +8,7 @@ use crate::{
         authority::PinnedMutationAuthorityV1, finalized_history::VerifiedFinalizedMutationChainV1,
         manifest::writer_manifest_hash_v1,
     },
+    state_database_inventory::NativeStoreTransactionInventoryGuardV1,
 };
 
 pub(crate) struct VerifiedCheckpointReplayV1 {
@@ -25,6 +26,30 @@ impl VerifiedCheckpointReplayV1 {
         chain: &VerifiedFinalizedMutationChainV1,
         authority: &PinnedMutationAuthorityV1<T>,
     ) -> Result<()> {
+        self.assert_subject(checkpoint, current, chain, authority)?;
+        checkpoint.assert_current(current, authority)
+    }
+    /// Preserve the genuine completed replay's exact input binding. Staged
+    /// target writes are checked by the upper restricted operation, never by
+    /// replaying a new snapshot or reopening live SQLite during its transaction.
+    pub(crate) fn assert_retained_for_native_store_transaction<T: MutationAuthorityTransportV1>(
+        &self,
+        checkpoint: &VerifiedSchemaTransitionCheckpointV1,
+        current: &ObservedStateDatabaseInventoryV1,
+        chain: &VerifiedFinalizedMutationChainV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+    ) -> Result<()> {
+        self.assert_subject(checkpoint, current, chain, authority)?;
+        checkpoint.assert_retained_for_native_store_transaction(current, authority, guard)
+    }
+    fn assert_subject<T: MutationAuthorityTransportV1>(
+        &self,
+        checkpoint: &VerifiedSchemaTransitionCheckpointV1,
+        current: &ObservedStateDatabaseInventoryV1,
+        chain: &VerifiedFinalizedMutationChainV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+    ) -> Result<()> {
         ensure(
             self.authority_hash == authority.configuration_hash()
                 && self.authority_hash == chain.authority_configuration_hash()
@@ -33,8 +58,7 @@ impl VerifiedCheckpointReplayV1 {
                 && self.report["currentInventoryHash"] == current.value()["inventoryHash"]
                 && self.report["chainHash"] == chain_hash(chain)?,
             "autonomous_research_schema_checkpoint_replay_subject_changed",
-        )?;
-        checkpoint.assert_current(current, authority)
+        )
     }
 }
 fn chain_hash(chain: &VerifiedFinalizedMutationChainV1) -> Result<String> {

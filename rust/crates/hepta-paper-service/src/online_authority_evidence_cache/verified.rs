@@ -11,6 +11,10 @@ use crate::{
     state_database_inventory::ObservedStateDatabaseInventoryV1,
 };
 use std::path::PathBuf;
+#[allow(dead_code)] // Retained local inputs; the admitted transaction is separate.
+mod retained;
+#[allow(unused_imports)]
+pub(crate) use retained::RetainedVerifiedAuthorityCacheV1;
 pub struct VerifiedAuthorityCacheWriteV1 {
     receipt: Value,
     root: PathBuf,

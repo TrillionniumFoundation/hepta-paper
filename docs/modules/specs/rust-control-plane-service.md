@@ -161,3 +161,12 @@ now available inside the same held writer lock; the future native admission must
 bind its exact production phase, scope, epoch and signature there. Neither local
 primitive grants production activation or bypasses the remaining retained write
 ownership described in the composition handoff.
+
+
+Retained transaction evidence now composes complete source/cache pins, actual
+startup post-inventory, initial or historical schema/replay, active/finalized
+signatures and the concrete recovery token. Recovery evidence retains its raw
+file owners across invalidation and blocks full re-observation while the token
+exists. The caller must close SQLite before releasing all scopes. This remains
+an internal observation prerequisite; native production writer admission and
+the sealed one-shot restricted write owner are still separate open work.

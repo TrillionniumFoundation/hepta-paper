@@ -5,6 +5,7 @@ mod discovery;
 mod inspection;
 use crate::sqlite_mutation_coordinator::{Result, error, hash};
 pub use discovery::discover_online_writer_mutation_entrypoints_v1;
+pub(crate) use inspection::RetainedWriterStaticInputsV1;
 pub use inspection::{
     VerifiedWriterStaticCoverageV1, inspect_online_writer_static_coverage_v1,
     verify_online_writer_static_coverage_v1,

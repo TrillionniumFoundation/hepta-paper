@@ -2,6 +2,7 @@
 use super::files::{ObservedFile, no_sidecars};
 use super::*;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 const SCOPE: &str = "resident-autonomous-research-supervisor";
 const DATABASE: &str = "autonomous-research/supervisor/resident-instance.sqlite";
@@ -43,6 +44,44 @@ impl ObservedResidentLeaseV1 {
     pub fn assert_current(&self, now: i64) -> Result<()> {
         self.assert_valid_at(now)?;
         no_sidecars(&self.snapshot.path)?;
+        self.snapshot.assert_current()
+    }
+
+    /// Bind the actual validated row's retained inode and bytes to the fixed
+    /// non-target database in a genuine inventory. No live file is reopened.
+    /// A transaction guard must separately preserve that inventory's non-target
+    /// contents; this helper neither refreshes the row nor proves that guard.
+    pub(super) fn assert_inventory_binding(
+        &self,
+        inventory: &crate::state_database_inventory::ObservedStateDatabaseInventoryV1,
+    ) -> Result<()> {
+        const CODE: &str =
+            "autonomous_research_state_recoverability_resident_inventory_binding_mismatch";
+        self.snapshot.assert_current()?;
+        no_sidecars(&self.snapshot.path)?;
+        let mut rows = inventory.value()["instances"]
+            .as_array()
+            .ok_or_else(|| error(CODE))?
+            .iter()
+            .filter(|row| row["role"] == "resident-instance");
+        let row = rows.next().ok_or_else(|| error(CODE))?;
+        let stat = self.snapshot.file.metadata().map_err(|_| error(CODE))?;
+        let identity = json!({
+            "device":stat.dev().to_string(), "inode":stat.ino().to_string(),
+            "mode":stat.mode().to_string(), "links":stat.nlink().to_string(),
+            "bytes":stat.len().to_string(),
+            "modifiedNs":(i128::from(stat.mtime())*1_000_000_000+i128::from(stat.mtime_nsec())).to_string(),
+            "changedNs":(i128::from(stat.ctime())*1_000_000_000+i128::from(stat.ctime_nsec())).to_string(),
+        });
+        ensure(
+            rows.next().is_none()
+                && row["sourceRelativePath"] == DATABASE
+                && self.snapshot.path == inventory.runtime_root().join(DATABASE)
+                && row["sourceFileIdentity"] == identity
+                && row["walFileIdentity"].is_null()
+                && row["sourceSha256"] == hash_bytes(&self.snapshot.bytes(256 * 1024 * 1024)?),
+            CODE,
+        )?;
         self.snapshot.assert_current()
     }
 }

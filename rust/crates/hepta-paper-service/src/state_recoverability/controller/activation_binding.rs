@@ -15,6 +15,11 @@ use crate::{
 
 const ACTION: &str = "sqlite_online_mutation";
 
+#[allow(dead_code)]
+#[path = "activation_binding/native_transaction.rs"]
+mod native_transaction;
+pub(crate) use native_transaction::RetainedNativeStoreRecoverabilityV1;
+
 /// Only the originating shared controller can renew/check this proof. Its JSON
 /// fields are diagnostics and cannot be deserialized into a capability.
 pub(crate) struct VerifiedRecoverabilityActivationBindingV1 {
@@ -40,8 +45,20 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         authority: &PinnedMutationAuthorityV1<T>,
         action: &VerifiedRecoverabilityActionV1,
     ) -> Result<(Value, Value)> {
+        self.assert_no_native_transaction()?;
         inventory.assert_current()?;
         authority.current()?;
+        self.activation_projection_retained(inventory, authority, action)
+    }
+
+    // Pure subject projection. Its callers must separately establish either
+    // full preflight currentness or the fixed native transaction guard.
+    fn activation_projection_retained<T: MutationAuthorityTransportV1>(
+        &self,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        action: &VerifiedRecoverabilityActionV1,
+    ) -> Result<(Value, Value)> {
         let state = self.state.try_borrow().map_err(|_| denied("fence_busy"))?;
         let service = &state.controller.service;
         let evidence = state

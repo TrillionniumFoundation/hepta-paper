@@ -10,7 +10,10 @@ use nix::{
 use std::{
     fs::{self, File, Metadata},
     io::{Read, Write},
-    os::unix::fs::MetadataExt,
+    os::{
+        fd::AsRawFd,
+        unix::fs::{FileExt, MetadataExt},
+    },
     path::{Component, PathBuf},
 };
 pub(super) fn same(a: &Metadata, b: &Metadata) -> bool {
@@ -38,6 +41,50 @@ pub(super) struct FileEntry {
     pub bytes: Vec<u8>,
 }
 impl FileEntry {
+    /// Transaction-only retained observation. Unlike opening a name again,
+    /// this cannot close a descriptor belonging to a substituted SQLite file.
+    /// Directory traversal and named lstat never open the named regular file.
+    pub(super) fn assert_retained_bytes(&self, dir: &Directory, entry: &str) -> Result<()> {
+        let entry = name(entry)?;
+        dir.assert_current()?;
+        for after_read in [false, true] {
+            let named = fs::symlink_metadata(
+                PathBuf::from(format!("/proc/self/fd/{}", dir.held.as_raw_fd())).join(entry),
+            )
+            .map_err(|_| failure("target_changed"))?;
+            if !named.is_file()
+                || named.is_symlink()
+                || !same(&self.metadata, &named)
+                || !same(
+                    &self.metadata,
+                    &self
+                        .file
+                        .metadata()
+                        .map_err(|_| failure("target_changed"))?,
+                )
+            {
+                return Err(failure("target_changed"));
+            }
+            if !after_read {
+                if self.metadata.len() > MAXIMUM_BYTES
+                    || self.bytes.len() as u64 != self.metadata.len()
+                {
+                    return Err(failure("size_invalid"));
+                }
+                let mut buffer = [0u8; 64 * 1024];
+                for (index, expected) in self.bytes.chunks(buffer.len()).enumerate() {
+                    let bytes = &mut buffer[..expected.len()];
+                    self.file
+                        .read_exact_at(bytes, (index * 64 * 1024) as u64)
+                        .map_err(|_| failure("target_changed"))?;
+                    if bytes != expected {
+                        return Err(failure("target_changed"));
+                    }
+                }
+            }
+        }
+        dir.assert_current()
+    }
     pub fn same(&self, other: &Self) -> bool {
         same(&self.metadata, &other.metadata) && self.bytes == other.bytes
     }
@@ -69,6 +116,47 @@ pub(super) struct Directory {
     path: PathBuf,
     parents: Vec<(PathBuf, File)>,
 }
+/// Additional exact parent identity pins for the transaction-retained path.
+/// No descriptors are cloned; the actual Directory continues to own them.
+type ParentIdentity = (u64, u64, u32, u32, u32);
+pub(super) struct RetainedParentIdentities {
+    identities: Vec<(PathBuf, ParentIdentity)>,
+}
+fn parent_identity(metadata: &Metadata) -> ParentIdentity {
+    (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.mode(),
+        metadata.uid(),
+        metadata.gid(),
+    )
+}
+impl RetainedParentIdentities {
+    pub(super) fn assert_current(&self, directory: &Directory) -> Result<()> {
+        if self.identities.len() != directory.parents.len() + 1 {
+            return Err(failure("parent_changed"));
+        }
+        for ((path, held), (expected_path, expected)) in directory
+            .parents
+            .iter()
+            .map(|(path, file)| (path, file))
+            .chain(std::iter::once((&directory.path, &directory.held)))
+            .zip(&self.identities)
+        {
+            let named = fs::symlink_metadata(path).map_err(|_| failure("parent_changed"))?;
+            let held = held.metadata().map_err(|_| failure("parent_changed"))?;
+            if path != expected_path
+                || !named.is_dir()
+                || named.is_symlink()
+                || parent_identity(&named) != *expected
+                || parent_identity(&held) != *expected
+            {
+                return Err(failure("parent_changed"));
+            }
+        }
+        Ok(())
+    }
+}
 struct PendingCreatedEntry<'a> {
     directory: &'a Directory,
     name: &'a str,
@@ -82,6 +170,24 @@ impl Drop for PendingCreatedEntry<'_> {
     }
 }
 impl Directory {
+    pub(super) fn retain_parent_identities(&self) -> Result<RetainedParentIdentities> {
+        self.assert_current()?;
+        let identities = self
+            .parents
+            .iter()
+            .map(|(path, file)| (path, file))
+            .chain(std::iter::once((&self.path, &self.held)))
+            .map(|(path, file)| {
+                Ok((
+                    path.clone(),
+                    parent_identity(&file.metadata().map_err(|_| failure("parent_changed"))?),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let retained = RetainedParentIdentities { identities };
+        retained.assert_current(self)?;
+        Ok(retained)
+    }
     pub fn open(root: &Path, create: bool) -> Result<Self> {
         if !root.is_absolute()
             || root

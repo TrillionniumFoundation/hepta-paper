@@ -252,3 +252,23 @@ checkpoint capture/publication operator and migration of existing runtimes that
 lack original bytes are separate requirements; missing history still fails
 closed. A complete v2 service restart acceptance is not claimed by these v1
 fixtures.
+
+
+## Retained transaction checks
+
+Initial readiness, historical checkpoint, completed replay and current history
+now have crate-private fixed-native-store variants. They share the original
+subject, signature and retained-file verification with the complete public
+checks. The actual inventory guard replaces only full live-byte observation;
+it must be pointer-bound to the original preconnection opaque inventory. All
+checkpoint copies/report, audit identities, manifest/scope, chain hash, original
+FINAL hash and exact active/finalized heads remain bound. Replay is not repeated
+against in-flight bytes. The schema observation is verified again with pinned
+trust and exclusive expiry after all I/O. No SQLite snapshot or named regular
+file is opened during these checks. Their caller must still validate the actual
+restricted changeset and retain every descriptor owner until SQLite closes.
+
+The owning regression uses actual initial readiness and actual history after
+recovering a genuine committed-but-unfinalized Node heartbeat. Both preserve
+separate-process write exclusion through checks and byte-identical report
+replacement refusal. These observations grant no new writer or activation.

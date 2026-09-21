@@ -93,3 +93,39 @@ The fixed common `ready` path requires the real current-row proof described abov
 Seven publication unit tests exercise two simultaneous writers, actual child-process death while holding the kernel lock, hidden interrupted staging, unsafe lock aliases, stale expected hashes, concurrent child-directory churn, and actual parent replacement. Directory identity checks bind type, device, inode, owner, group and permissions; a directory link count may legitimately change as child directories are created or removed. Ordinary-file hardlink checks remain enforced. A 20,000-check concurrent child-churn regression must have zero false refusals, while real directory replacement remains an error and foreign data is preserved. Existing backup authority and stored-source differential suites must also pass after the read-only content-validation helper extraction. Strict production Clippy denies warnings, unsafe code, todo, unimplemented, unwrap, expect, and panic.
 
 Tests use private temporary synthetic runtimes and deterministic fixture-only Ed25519 keys; no production private key is read, written, or emitted. These results establish the native implementation slice and its tested boundaries. They do not constitute external authority deployment acceptance, a human live-action permit, or evidence that every remaining Node route has been replaced.
+
+
+## Native-store transaction evidence lifetime
+
+The concrete process-transport fence provides an internal retained native-store
+token. Its constructor performs full original activation binding checks before
+opening the owning SQLite connection. It requires the guard's actual original
+inventory and the recovery evidence's independently observed inventory to have
+identical whole reports and runtime roots. The actual validated resident
+snapshot must match the fixed resident role/path and its exact source-file
+identity; an otherwise valid resident lease from another root is rejected.
+
+Controller evidence uses `Rc`, and the token retains the same allocation without
+cloning descriptors. Fatal transitions, clock rollback, generation changes and
+coordinator feedback can invalidate the capability and clear controller evidence
+without closing those database/WAL/SHM descriptors. A weak active-scope marker
+makes full observe/assert/reconcile operations reject before file I/O through
+all clones of that fence. It is not a process-global lock against unrelated raw
+opens. Memory feedback remains available and invalidates the old generation.
+
+Scoped checks use the original inventory guard, held stored-source and head
+snapshots, exact resident identity/validated row and expiry, genuine process pins,
+original activation projection, clean state and original evidence identity.
+Resident SQLite is not re-opened: unchanged non-target inventory bytes preserve
+the already validated row. The terminal time check performs no I/O. Any scoped
+failure invalidates that scope and preserves its retained allocation until drop.
+The owning caller must close every target SQLite connection before dropping the
+token and every original inventory, even on unwind; transaction rollback alone
+is insufficient for idle WAL handles. The token itself is not native writer
+admission or permission to run an arbitrary SQL operation.
+
+Eight new native transaction tests pass, including actual DELETE and pre-existing
+WAL cases where coordinator feedback itself first clears populated evidence,
+clock rollback, pin rejection, non-target mutation, wrong resident root,
+same-head renewal and unwind. Independent subprocesses remain blocked until
+SQLite closes. The original five activation-binding regressions also pass.

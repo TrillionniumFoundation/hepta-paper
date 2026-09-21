@@ -1,6 +1,8 @@
 //! Concrete shared fence against the original real ten-database fixture.
 //! Fixture brokers sign actual protocol messages with test-only private keys.
 //! Fixture setup is retained from state_recoverability_parity, without its tests.
+#[path = "activation_binding/native_transaction/tests.rs"]
+mod native_transaction_tests;
 use crate::{
     sqlite_mutation_coordinator::{
         self as mutation,

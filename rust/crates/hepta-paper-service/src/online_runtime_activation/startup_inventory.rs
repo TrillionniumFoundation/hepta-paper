@@ -17,7 +17,9 @@ use crate::{
         startup::StartupMutationReconciliationV1,
         text,
     },
-    state_database_inventory::ObservedStateDatabaseInventoryV1,
+    state_database_inventory::{
+        NativeStoreTransactionInventoryGuardV1, ObservedStateDatabaseInventoryV1,
+    },
 };
 use serde_json::{Value, json};
 use std::{cell::Cell, path::PathBuf};
@@ -93,6 +95,34 @@ impl VerifiedStartupReconciliationSetV1 {
         };
         let before = clock.now_millis()?;
         self.post_inventory.assert_current()?;
+        self.assert_retained_confirmations(inventory, authority, before)?;
+        self.assert_confirmations_valid_at(authority, clock.now_millis()?)
+    }
+    /// `inventory` remains the immutable pre-startup input. The fixed-target
+    /// guard must instead borrow this producer's actual post-recovery inventory.
+    pub(crate) fn assert_retained_for_native_store_transaction<T: MutationAuthorityTransportV1>(
+        &self,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+        clock: &mut dyn MutationClockV1,
+    ) -> Result<()> {
+        let mut clock = MonotonicClock {
+            inner: clock,
+            high_water: &self.checked_at,
+        };
+        let before = clock.now_millis()?;
+        guard.assert_bound_to(&self.post_inventory)?;
+        self.assert_retained_confirmations(inventory, authority, before)?;
+        guard.assert_bound_to(&self.post_inventory)?;
+        self.assert_confirmations_valid_at(authority, clock.now_millis()?)
+    }
+    fn assert_retained_confirmations<T: MutationAuthorityTransportV1>(
+        &self,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        before: i64,
+    ) -> Result<()> {
         if inventory.runtime_root() != self.runtime_root
             || inventory.value()["inventoryHash"] != self.inventory_hash
             || authority.configuration_hash() != self.authority_configuration_hash
@@ -113,7 +143,13 @@ impl VerifiedStartupReconciliationSetV1 {
                 return Err(fail("database_binding_changed"));
             }
         }
-        let completed = clock.now_millis()?;
+        Ok(())
+    }
+    fn assert_confirmations_valid_at<T: MutationAuthorityTransportV1>(
+        &self,
+        authority: &PinnedMutationAuthorityV1<T>,
+        completed: i64,
+    ) -> Result<()> {
         for (_, _, proof) in &self.entries {
             proof.assert_confirmation_valid_at(authority.trust(), completed)?;
         }

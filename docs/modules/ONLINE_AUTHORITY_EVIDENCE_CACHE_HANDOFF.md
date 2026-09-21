@@ -101,3 +101,22 @@ or caller readiness boolean substitutes for that assembly or its independent
 production qualification.
 
 Final clock checks enforce both exclusive receipt expiry and the inclusive `maximumObservationAgeMs` limit of every signed head/challenge/scope receipt. A still-unexpired receipt is rejected when source/cache I/O crosses its observation-age limit. The real-signature cache regression uses a 1000 ms observation limit and 60000 ms expiry, accepts the exact 1000 ms boundary, and rejects 1001 ms at both retained-proof reuse and the final write sample.
+
+
+## Retained verified cache scope
+
+The private preconnection retainer accepts the actual verified cache-write
+producer plus genuine source, active and inventory objects. It pins `current.json`
+and its exact parent chain, including owner/group and mode, and binds their bytes
+and original cache/evidence hashes. Transaction reuse requires the original
+producer pointer and original source/active/inventory origins, verifies the
+cache contract and signed active receipts, and finishes with exclusive expiry
+and observation-age checks. It never reopens a named regular file or publishes
+another cache. The original public complete currentness path remains unchanged.
+
+Actual signed tests reject a second genuine same-receipt cache producer at the
+origin-binding boundary, a same-report source/inventory substitution, changes to
+parent permissions, replaced/missing/symlinked cache files, and a cache name
+hardlinked to the active SQLite target. Independent-process `SQLITE_BUSY` proves
+rejection did not close an aliased target descriptor. Retention is only an
+internal dependency of the future admitted writer, not a cache-based grant.

@@ -12,6 +12,10 @@ use crate::online_schema_transition::{
     },
     inspect_online_schema_transition_readiness_v1,
 };
+use crate::{
+    online_writer_static::RetainedWriterStaticInputsV1,
+    state_database_inventory::NativeStoreTransactionInventoryGuardV1,
+};
 
 pub(super) enum PreparedSchemaInputV1 {
     Initial(Box<VerifiedSchemaTransitionReadinessV1>),
@@ -96,6 +100,41 @@ impl PreparedSchemaInputV1 {
     }
 }
 impl RetainedSchemaEvidenceV1 {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn assert_retained_for_native_store_transaction(
+        &self,
+        current: &ObservedStateDatabaseInventoryV1,
+        source: &VerifiedWriterStaticCoverageV1,
+        active: &VerifiedActiveAuthorityEvidenceV1,
+        finalized: &VerifiedFinalizedInventoryV1,
+        authority: &Online,
+        retained_source: &RetainedWriterStaticInputsV1<'_>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+        clock: &mut dyn MutationClockV1,
+    ) -> Result<()> {
+        match self {
+            Self::Initial(proof) => {
+                proof.assert_retained_for_native_store_transaction(current, authority, guard, clock)
+            }
+            Self::Historical {
+                checkpoint,
+                history,
+            } => history.assert_retained_for_native_store_transaction(
+                &SchemaHistoryInputsV1 {
+                    checkpoint,
+                    current,
+                    source,
+                    active,
+                    finalized,
+                },
+                authority,
+                retained_source,
+                guard,
+                clock,
+            ),
+        }
+    }
+
     pub(super) fn value(&self) -> &Value {
         match self {
             Self::Initial(proof) => proof.value(),

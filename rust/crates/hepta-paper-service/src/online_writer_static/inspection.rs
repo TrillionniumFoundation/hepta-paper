@@ -4,6 +4,7 @@ mod proof_inputs;
 use crate::sqlite_mutation_coordinator::manifest::writer_manifest_hash_v1;
 use nix::fcntl::OFlag;
 use proof_inputs::CompleteStaticInputs;
+pub(crate) use proof_inputs::RetainedWriterStaticInputsV1;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{Metadata, OpenOptions},

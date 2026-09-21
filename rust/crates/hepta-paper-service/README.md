@@ -323,3 +323,13 @@ bytes and complete namespace membership without reopening target SQLite files.
 It is minted before opening SQLite and retains inventory through connection
 close. The durable cutover callback can now inspect actual state under its held
 lock. Both remain prerequisites for complete signed native write ownership.
+
+
+Private retained evidence checks now preserve original source/cache, startup,
+schema/history/replay, active/finalized and recovery bindings while SQLite is
+open. Constructors run before the owning connection; checks use held files and
+metadata only. Recovery holds the same evidence allocation through invalidation,
+so clearing controller evidence cannot close target descriptors prematurely.
+The owning caller must close SQLite before releasing any scope or inventory.
+Actual signed fixtures and separate-process lock checks cover these primitives;
+they do not expose an admitted business writer or grant production activation.

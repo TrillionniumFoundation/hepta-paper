@@ -5,6 +5,13 @@ use crate::sqlite_mutation_coordinator::{contracts::live, timestamp};
 
 impl PreparedInitialOnlineMutationCompositionV1 {
     pub(super) fn assert_valid_at(&self, now: i64) -> Result<()> {
+        self.assert_evidence_valid_at(now)?;
+        // Also binds origin/generation, resident expiry and restore-source age.
+        // No filesystem, SQLite, RPC or signature I/O follows the shared sample.
+        self.fence
+            .assert_activation_binding_valid_at_v1(&self.fence_binding, now)
+    }
+    pub(super) fn assert_evidence_valid_at(&self, now: i64) -> Result<()> {
         if now < self.checked_at.get() {
             return Err(fail("clock_invalid"));
         }
@@ -46,9 +53,6 @@ impl PreparedInitialOnlineMutationCompositionV1 {
         if timestamp(&self.cache.value()["expiresAt"]).is_none_or(|end| now >= end) {
             return Err(fail("cache_evidence_expired"));
         }
-        // Also binds origin/generation, resident expiry and restore-source age.
-        // No filesystem, SQLite, RPC or signature I/O follows the shared sample.
-        self.fence
-            .assert_activation_binding_valid_at_v1(&self.fence_binding, now)
+        Ok(())
     }
 }

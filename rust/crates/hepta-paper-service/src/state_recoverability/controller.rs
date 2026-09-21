@@ -8,6 +8,7 @@ use crate::sqlite_mutation_coordinator::{
     authority::MutationAuthorityTransportV1,
 };
 use crate::state_backup_authority::StateBackupAuthorityTransportV1;
+use std::rc::Rc;
 #[derive(Clone, Copy)]
 pub struct RecoverabilityPolicyV1 {
     pub fresh_snapshot_age_ms: i64,
@@ -49,7 +50,10 @@ pub struct StateRecoverabilityControllerV1<
     dirty: Option<Value>,
     requirements: Vec<Value>,
     fatal: Vec<String>,
-    evidence: Option<Evidence>,
+    // Native transaction scopes retain this SAME allocation until SQLite has
+    // closed. Clearing controller state must not close raw database descriptors
+    // while another descriptor in this process owns SQLite's POSIX locks.
+    evidence: Option<Rc<Evidence>>,
     last_clock: Option<i64>,
 }
 fn valid_head(v: &Value) -> bool {
@@ -381,11 +385,11 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         )?;
         self.verified = Some(candidate);
         self.dirty = None;
-        self.evidence = Some(Evidence {
+        self.evidence = Some(Rc::new(Evidence {
             sources,
             observation,
             resident,
-        });
+        }));
         Ok(result)
     }
     fn recovered(&mut self, heads: &Value) -> Result<()> {
@@ -523,5 +527,8 @@ mod heartbeat;
 mod automatic;
 
 mod fence;
-pub(crate) use fence::VerifiedRecoverabilityActivationBindingV1;
+#[allow(unused_imports)]
+pub(crate) use fence::{
+    RetainedNativeStoreRecoverabilityV1, VerifiedRecoverabilityActivationBindingV1,
+};
 pub use fence::{SharedRecoverabilityEpochFenceV1, VerifiedRecoverabilityActionV1};

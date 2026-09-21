@@ -16,7 +16,9 @@ use crate::{
         manifest::writer_manifest_hash_v1,
         sha, text,
     },
-    state_database_inventory::ObservedStateDatabaseInventoryV1,
+    state_database_inventory::{
+        NativeStoreTransactionInventoryGuardV1, ObservedStateDatabaseInventoryV1,
+    },
 };
 use nix::{
     fcntl::{OFlag, open, openat},
@@ -327,12 +329,40 @@ impl VerifiedSchemaTransitionCheckpointV1 {
         current: &ObservedStateDatabaseInventoryV1,
         authority: &PinnedMutationAuthorityV1<T>,
     ) -> Result<()> {
+        self.assert_subject(current, authority)?;
+        current.assert_current()?;
+        self.assert_retained_files(current, authority)?;
+        current.assert_current()
+    }
+    pub(crate) fn assert_retained_for_native_store_transaction<T: MutationAuthorityTransportV1>(
+        &self,
+        current: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+    ) -> Result<()> {
+        self.assert_subject(current, authority)?;
+        guard.assert_bound_to(current)?;
+        self.assert_retained_files(current, authority)?;
+        guard.assert_bound_to(current)
+    }
+    fn assert_subject<T: MutationAuthorityTransportV1>(
+        &self,
+        current: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+    ) -> Result<()> {
         require(
             authority.configuration_hash() == self.authority_hash
                 && current.runtime_root() == self.audit.runtime_root(),
             "subject_changed",
-        )?;
-        current.assert_current()?;
+        )
+    }
+    /// Every regular file below was opened during checkpoint construction.
+    /// Read only held descriptors and directory entries, including on failure.
+    fn assert_retained_files<T: MutationAuthorityTransportV1>(
+        &self,
+        current: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+    ) -> Result<()> {
         for directory in &self.ancestors {
             directory.current()?;
         }
@@ -359,8 +389,7 @@ impl VerifiedSchemaTransitionCheckpointV1 {
             &self.manifest_hash,
             authority,
         )?;
-        bind(&self.inventory, current.value(), &audit)?;
-        current.assert_current()
+        bind(&self.inventory, current.value(), &audit)
     }
 }
 fn bind(historical: &Value, current: &Value, audit: &Value) -> Result<()> {

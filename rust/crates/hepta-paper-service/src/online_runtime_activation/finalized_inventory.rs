@@ -9,7 +9,7 @@ use crate::{
         active_refresh::VerifiedActiveAuthorityEvidenceV1,
         inventory::assert_closed_activation_inventory_v1,
     },
-    online_writer_static::VerifiedWriterStaticCoverageV1,
+    online_writer_static::{RetainedWriterStaticInputsV1, VerifiedWriterStaticCoverageV1},
     sqlite_mutation_coordinator::{
         Result,
         authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1},
@@ -18,7 +18,9 @@ use crate::{
         manifest::writer_manifest_hash_v1,
         text,
     },
-    state_database_inventory::ObservedStateDatabaseInventoryV1,
+    state_database_inventory::{
+        NativeStoreTransactionInventoryGuardV1, ObservedStateDatabaseInventoryV1,
+    },
 };
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -84,6 +86,52 @@ impl VerifiedFinalizedInventoryV1 {
             last: &self.checked_at,
         };
         let before = clock.now_millis()?;
+        self.assert_subject(inventory, authority, source, evidence)?;
+        inventory.assert_current()?;
+        evidence.assert_current(authority, inventory.value(), source, before)?;
+        // No I/O after this sample. Immutable receipts were verified against the
+        // same pinned trust; every head's age and exclusive expiry remain live.
+        self.assert_time(authority.trust(), evidence, clock.now_millis()?)
+    }
+    /// Retains the completed ten-database inspection's original head and input
+    /// bindings while only the fixed native store has staged writes. No new
+    /// snapshot or claim about those writes is produced.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn assert_retained_for_native_store_transaction<T: MutationAuthorityTransportV1>(
+        &self,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        source: &VerifiedWriterStaticCoverageV1,
+        evidence: &VerifiedActiveAuthorityEvidenceV1,
+        retained_source: &RetainedWriterStaticInputsV1<'_>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+        clock: &mut dyn MutationClockV1,
+    ) -> Result<()> {
+        let mut clock = Clock {
+            inner: clock,
+            last: &self.checked_at,
+        };
+        let before = clock.now_millis()?;
+        self.assert_subject(inventory, authority, source, evidence)?;
+        guard.assert_bound_to(inventory)?;
+        evidence.assert_retained_for_native_store_transaction(
+            authority,
+            inventory,
+            source,
+            retained_source,
+            guard,
+            before,
+        )?;
+        guard.assert_bound_to(inventory)?;
+        self.assert_time(authority.trust(), evidence, clock.now_millis()?)
+    }
+    fn assert_subject<T: MutationAuthorityTransportV1>(
+        &self,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        authority: &PinnedMutationAuthorityV1<T>,
+        source: &VerifiedWriterStaticCoverageV1,
+        evidence: &VerifiedActiveAuthorityEvidenceV1,
+    ) -> Result<()> {
         if self.runtime_root != inventory.runtime_root()
             || inventory.value()["inventoryHash"] != self.inventory_hash
             || authority.configuration_hash() != self.authority_hash
@@ -92,11 +140,7 @@ impl VerifiedFinalizedInventoryV1 {
         {
             return Err(fail("subject_changed"));
         }
-        inventory.assert_current()?;
-        evidence.assert_current(authority, inventory.value(), source, before)?;
-        // No I/O after this sample. Immutable receipts were verified against the
-        // same pinned trust; every head's age and exclusive expiry remain live.
-        self.assert_time(authority.trust(), evidence, clock.now_millis()?)
+        Ok(())
     }
     pub(crate) fn assert_time(
         &self,

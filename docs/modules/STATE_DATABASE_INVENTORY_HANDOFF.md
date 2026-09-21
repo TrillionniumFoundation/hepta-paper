@@ -196,3 +196,10 @@ symlinks/hardlinks, extra database membership/blockers, target mode/identity and
 unsafe or replaced/disappearing sidecars. Existing WAL is held by a separate
 process while the guard is minted, avoiding unsafe same-process preflight.
 Strict service Clippy lib/tests checks pass. No native writer is activated.
+
+
+The guard additionally exposes its original opaque pre-inventory only inside the
+crate and can assert pointer identity against an expected producer. A genuinely
+independent observation with an identical report is refused as a replacement;
+this prevents retained upper evidence from switching origins mid-connection.
+The added origin regression also checks actual independent-process lock retention.

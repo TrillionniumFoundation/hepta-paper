@@ -205,8 +205,25 @@ impl ObservedStateDatabaseInventoryV1 {
 }
 
 impl NativeStoreTransactionInventoryGuardV1<'_> {
+    /// The genuine preconnection observation borrowed by this guard. Callers
+    /// may bind retained evidence to it; this cannot create a new observation.
+    pub(crate) fn pre_inventory(&self) -> &ObservedStateDatabaseInventoryV1 {
+        self.inventory
+    }
+
     pub(crate) fn instance(&self) -> &Value {
         self.instance
+    }
+
+    /// Bind an in-crate retained evidence check to this exact preconnection
+    /// observation. Even an independently observed identical report cannot
+    /// substitute for the borrowed origin. This still grants no write authority.
+    pub(crate) fn assert_bound_to(
+        &self,
+        expected: &ObservedStateDatabaseInventoryV1,
+    ) -> Result<()> {
+        ensure(std::ptr::eq(self.inventory, expected), CHANGED)?;
+        self.assert_during_transaction()
     }
 
     fn assert_tree(&self) -> Result<()> {

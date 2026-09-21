@@ -3,7 +3,7 @@
 use crate::{
     online_authority_evidence_cache::read_passive_authority_evidence_cache_v1,
     online_runtime_activation::active_refresh::VerifiedActiveAuthorityEvidenceV1,
-    online_writer_static::VerifiedWriterStaticCoverageV1,
+    online_writer_static::{RetainedWriterStaticInputsV1, VerifiedWriterStaticCoverageV1},
     sqlite_mutation_coordinator::{
         Result,
         authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1},
@@ -13,7 +13,9 @@ use crate::{
         manifest::writer_manifest_hash_v1,
         text, timestamp,
     },
-    state_database_inventory::ObservedStateDatabaseInventoryV1,
+    state_database_inventory::{
+        NativeStoreTransactionInventoryGuardV1, ObservedStateDatabaseInventoryV1,
+    },
 };
 use serde_json::{Value, json};
 const PASSIVE: &str = "passive-signed-receipt-validation";
@@ -101,6 +103,20 @@ fn verify<T: MutationAuthorityTransportV1>(
 ) -> Result<()> {
     inventory.assert_current()?;
     source.assert_current()?;
+    verify_retained_receipts(authority, evidence, inventory, source, manifest, now)?;
+    inventory.assert_current()?;
+    source.assert_current()
+}
+/// Only immutable documents and held authority snapshots are read here. Both
+/// callers separately require their concrete full or retained local proofs.
+fn verify_retained_receipts<T: MutationAuthorityTransportV1>(
+    authority: &PinnedMutationAuthorityV1<T>,
+    evidence: &Value,
+    inventory: &ObservedStateDatabaseInventoryV1,
+    source: &VerifiedWriterStaticCoverageV1,
+    manifest: &Value,
+    now: i64,
+) -> Result<()> {
     crate::online_runtime_activation::inventory::assert_closed_activation_inventory_v1(
         inventory.value(),
         manifest,
@@ -163,8 +179,6 @@ fn verify<T: MutationAuthorityTransportV1>(
             "autonomous_research_online_mutation_passive_evidence_binding_invalid",
         ));
     }
-    inventory.assert_current()?;
-    source.assert_current()?;
     Ok(())
 }
 
@@ -193,15 +207,7 @@ impl VerifiedOnlineAuthorityInspectionV1 {
         clock: &mut dyn MutationClockV1,
     ) -> Result<()> {
         let before = clock.now_millis()?;
-        if before < self.observed_at
-            || authority.configuration_hash() != self.authority_hash
-            || inventory.value()["inventoryHash"] != self.inventory_hash
-            || source.value()["astGateReceiptHash"] != self.source_hash
-        {
-            return Err(error(
-                "autonomous_research_online_mutation_inspection_subject_changed",
-            ));
-        }
+        self.assert_subject(authority, inventory, source, before)?;
         if let Some(expected) = &self.cache_hash {
             let cache = read_passive_authority_evidence_cache_v1(
                 inventory.runtime_root(),
@@ -223,7 +229,73 @@ impl VerifiedOnlineAuthorityInspectionV1 {
             &self.manifest,
             before,
         )?;
-        let after = clock.now_millis()?;
+        self.assert_time(authority, before, clock.now_millis()?)
+    }
+    /// Native-store transaction checks are restricted to this type's genuine
+    /// active producer. Passive cache inspection has no retained file scope and
+    /// is refused before any path access. The owning runtime retains its
+    /// separate verified cache proof for the whole connection lifetime.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn assert_retained_for_native_store_transaction<T: MutationAuthorityTransportV1>(
+        &self,
+        authority: &PinnedMutationAuthorityV1<T>,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        source: &VerifiedWriterStaticCoverageV1,
+        active: &VerifiedActiveAuthorityEvidenceV1,
+        retained_source: &RetainedWriterStaticInputsV1<'_>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+        clock: &mut dyn MutationClockV1,
+    ) -> Result<()> {
+        let before = clock.now_millis()?;
+        self.assert_subject(authority, inventory, source, before)?;
+        if self.cache_hash.is_some() || self.evidence != active.value()["authorityEvidence"] {
+            return Err(error(
+                "autonomous_research_online_mutation_inspection_active_origin_required",
+            ));
+        }
+        active.assert_retained_for_native_store_transaction(
+            authority,
+            inventory,
+            source,
+            retained_source,
+            guard,
+            before,
+        )?;
+        verify_retained_receipts(
+            authority,
+            &self.evidence,
+            inventory,
+            source,
+            &self.manifest,
+            before,
+        )?;
+        retained_source.assert_current(source, inventory, authority, active, guard)?;
+        self.assert_time(authority, before, clock.now_millis()?)
+    }
+    fn assert_subject<T: MutationAuthorityTransportV1>(
+        &self,
+        authority: &PinnedMutationAuthorityV1<T>,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        source: &VerifiedWriterStaticCoverageV1,
+        before: i64,
+    ) -> Result<()> {
+        if before < self.observed_at
+            || authority.configuration_hash() != self.authority_hash
+            || inventory.value()["inventoryHash"] != self.inventory_hash
+            || source.value()["astGateReceiptHash"] != self.source_hash
+        {
+            return Err(error(
+                "autonomous_research_online_mutation_inspection_subject_changed",
+            ));
+        }
+        Ok(())
+    }
+    fn assert_time<T: MutationAuthorityTransportV1>(
+        &self,
+        authority: &PinnedMutationAuthorityV1<T>,
+        before: i64,
+        after: i64,
+    ) -> Result<()> {
         let maximum_age =
             crate::sqlite_mutation_coordinator::int(authority.trust(), "maximumObservationAgeMs")?;
         let age_exceeded = [

@@ -94,7 +94,7 @@ impl Drop for Fixture {
 /// A distinct OS process is necessary: SQLite's same-process connection
 /// bookkeeping can conceal an accidental raw close releasing POSIX locks.
 fn probe_lock(path: &Path, expected: &str) {
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new("/proc/self/exe")
         .args([
             "--exact",
             "state_database_inventory::transaction_guard::tests::sqlite_lock_probe_child",
@@ -160,7 +160,7 @@ struct WalHolder {
 }
 impl WalHolder {
     fn new(path: &Path) -> Self {
-        let mut child = Command::new(std::env::current_exe().unwrap())
+        let mut child = Command::new("/proc/self/exe")
             .args([
                 "--exact",
                 "state_database_inventory::transaction_guard::tests::sqlite_wal_fixture_holder_child",
@@ -305,6 +305,26 @@ fn mint_requires_current_complete_inventory() {
         .execute_batch("UPDATE fixture_records SET value='changed-before-mint'")
         .unwrap();
     assert!(inventory.native_store_transaction_guard_v1().is_err());
+}
+
+#[test]
+fn equal_inventory_report_cannot_replace_guard_origin() {
+    let fixture = Fixture::new();
+    let inventory = fixture.observe();
+    let other = fixture.observe();
+    assert_eq!(inventory.value(), other.value());
+    let guard = inventory.native_store_transaction_guard_v1().unwrap();
+    guard.assert_bound_to(&inventory).unwrap();
+    assert!(guard.assert_bound_to(&other).is_err());
+    let database = Connection::open(fixture.path("native-store")).unwrap();
+    database
+        .execute_batch("BEGIN IMMEDIATE; UPDATE fixture_records SET value='during';")
+        .unwrap();
+    guard.assert_bound_to(&inventory).unwrap();
+    assert!(guard.assert_bound_to(&other).is_err());
+    probe_lock(&fixture.path("native-store"), "busy");
+    database.execute_batch("ROLLBACK;").unwrap();
+    database.close().unwrap();
 }
 
 #[test]

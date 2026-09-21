@@ -16,6 +16,12 @@ const MAX_FILES: usize = 20_000;
 const MAX_DIRECTORIES: usize = 4096;
 const MAX_PATH_COMPONENTS: usize = 256;
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
+// Separate preconnection retention for fixed native-store transactions. The
+// public proof keeps its existing low-descriptor currentness implementation.
+#[path = "proof_inputs/retained.rs"]
+#[allow(dead_code)] // The owning admitted transaction remains a separate step.
+mod retained;
+pub(crate) use retained::RetainedWriterStaticInputsV1;
 fn changed() -> crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorError {
     error("autonomous_research_online_writer_source_changed_during_scan")
 }

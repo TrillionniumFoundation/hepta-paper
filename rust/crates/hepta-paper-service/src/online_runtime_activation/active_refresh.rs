@@ -1,5 +1,5 @@
 //! A real active challenge chain; returned evidence is still not runtime activation.
-use crate::online_writer_static::VerifiedWriterStaticCoverageV1;
+use crate::online_writer_static::{RetainedWriterStaticInputsV1, VerifiedWriterStaticCoverageV1};
 use crate::sqlite_mutation_coordinator::{
     Result,
     authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1},
@@ -7,6 +7,9 @@ use crate::sqlite_mutation_coordinator::{
     contracts::online_mutation_receipt_hash_v1,
     error, hash,
     manifest::writer_manifest_hash_v1,
+};
+use crate::state_database_inventory::{
+    NativeStoreTransactionInventoryGuardV1, ObservedStateDatabaseInventoryV1,
 };
 use serde_json::{Value, json};
 fn now(clock: &mut dyn MutationClockV1, previous: &mut Option<i64>) -> Result<(i64, String)> {
@@ -91,6 +94,31 @@ impl VerifiedActiveAuthorityEvidenceV1 {
         now: i64,
     ) -> Result<()> {
         static_evidence.assert_current()?;
+        self.assert_binding_and_receipts(authority, inventory, static_evidence, now)
+    }
+    /// Recheck the original signed baseline during the one fixed native-store
+    /// transaction. Actual opaque source/inventory/active origins must match;
+    /// this is still evidence and grants neither native scope nor write access.
+    pub(crate) fn assert_retained_for_native_store_transaction<T: MutationAuthorityTransportV1>(
+        &self,
+        authority: &PinnedMutationAuthorityV1<T>,
+        inventory: &ObservedStateDatabaseInventoryV1,
+        static_evidence: &VerifiedWriterStaticCoverageV1,
+        retained: &RetainedWriterStaticInputsV1<'_>,
+        guard: &NativeStoreTransactionInventoryGuardV1<'_>,
+        now: i64,
+    ) -> Result<()> {
+        retained.assert_current(static_evidence, inventory, authority, self, guard)?;
+        self.assert_binding_and_receipts(authority, inventory.value(), static_evidence, now)?;
+        retained.assert_current(static_evidence, inventory, authority, self, guard)
+    }
+    fn assert_binding_and_receipts<T: MutationAuthorityTransportV1>(
+        &self,
+        authority: &PinnedMutationAuthorityV1<T>,
+        inventory: &Value,
+        static_evidence: &VerifiedWriterStaticCoverageV1,
+        now: i64,
+    ) -> Result<()> {
         if authority.configuration_hash() != self.authority_configuration_hash
             || inventory["inventoryHash"] != self.inventory_hash
             || static_evidence.value()["astGateReceiptHash"] != self.static_inspection_hash

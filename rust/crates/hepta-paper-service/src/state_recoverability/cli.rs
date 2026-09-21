@@ -1,5 +1,5 @@
-//! Complete state-backup command composition. Production authority calls use
-//! the pinned process clients; no Node, shell or fixture adapter is invoked.
+//! Complete state-backup command composition. Process profiles remain the
+//! default; an explicit independently pinned socket profile owns both clients.
 mod arguments;
 pub(super) mod inputs;
 use super::*;
@@ -7,11 +7,12 @@ use super::{
     renewal,
     service::{BackupRecoveryServiceOptionsV1, BackupRecoveryServiceV1},
 };
+use crate::local_state_authority_client::LocalStateAuthoritySocketTransportV1;
 use crate::sqlite_mutation_coordinator::authority::{
     MutationAuthorityTransportV1, PinnedMutationAuthorityV1, ProcessMutationAuthorityTransportV1,
 };
 use crate::state_backup_authority::{
-    PinnedStateBackupAuthorityV1, ProcessStateBackupAuthorityTransportV1,
+    PinnedStateBackupAuthorityV1, StateBackupAuthorityTransportV1,
 };
 use crate::state_database_inventory::inspect_state_database_inventory_v1;
 pub use arguments::StateBackupActionV1;
@@ -53,15 +54,19 @@ impl MutationAuthorityTransportV1 for OnlineTransport {
         }
     }
 }
-type ProcessService =
-    BackupRecoveryServiceV1<ProcessStateBackupAuthorityTransportV1, OnlineTransport>;
 fn reconciliation_failure(
     cause: &crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorError,
 ) -> Value {
-    json!({"version":1,"kind":"AutonomousResearchStateReconcileAndRenewReceipt","status":"autonomous_research_state_reconcile_and_renew_blocked","businessDmlReplayed":false,"backupAttempted":false,"initialInventoryHash":cause.details["initialInventoryHash"],"reconciledInventoryHash":cause.details["reconciledInventoryHash"],"databaseScopeHash":cause.details["databaseScopeHash"],"reconciliations":cause.details.get("reconciliations").cloned().unwrap_or_else(||json!([])),"pendingInspections":cause.details.get("pendingInspections").cloned().unwrap_or_else(||json!([])),"renewalReceipt":null,"blockers":[cause.code]})
+    renewal::retain_socket_authority_error(
+        json!({"version":1,"kind":"AutonomousResearchStateReconcileAndRenewReceipt","status":"autonomous_research_state_reconcile_and_renew_blocked","businessDmlReplayed":false,"backupAttempted":false,"initialInventoryHash":cause.details["initialInventoryHash"],"reconciledInventoryHash":cause.details["reconciledInventoryHash"],"databaseScopeHash":cause.details["databaseScopeHash"],"reconciliations":cause.details.get("reconciliations").cloned().unwrap_or_else(||json!([])),"pendingInspections":cause.details.get("pendingInspections").cloned().unwrap_or_else(||json!([])),"renewalReceipt":null,"blockers":[cause.code]}),
+        cause,
+    )
 }
-fn reconcile_and_renew_report(
-    service: &mut ProcessService,
+fn reconcile_and_renew_report<
+    B: StateBackupAuthorityTransportV1,
+    O: MutationAuthorityTransportV1,
+>(
+    service: &mut BackupRecoveryServiceV1<B, O>,
     clock: &mut dyn MutationClockV1,
 ) -> Value {
     let pending = match service.reconcile_pending(clock) {
@@ -154,6 +159,26 @@ fn run(
     )?;
     crate::state_backup_authority::manifest::assert_state_database_manifest_v1(&manifest.value)?;
     let writer = state_backup_writer_manifest_v1()?;
+    if let Some(socket) = &args.socket_configuration {
+        let path = arguments::resolve(cwd, Path::new(&socket.path))?;
+        manifest.assert_current()?;
+        let mut service = BackupRecoveryServiceV1::<
+            LocalStateAuthoritySocketTransportV1,
+            LocalStateAuthoritySocketTransportV1,
+        >::load_socket_v1(
+            &path,
+            &socket.raw_file_hash,
+            BackupRecoveryServiceOptionsV1 {
+                runtime_root: runtime.clone(),
+                backup_root: runtime.join("backups/autonomous-research-state"),
+                state_database_manifest: manifest.value.clone(),
+                writer_manifest: writer,
+            },
+        )?;
+        manifest.assert_current()?;
+        let report = action_report(&args, &mut service, cwd, clock)?;
+        return Ok(complete_socket_action(args.action, report, &manifest));
+    }
     let mut configuration_files = Vec::new();
     let mut backup_document = Value::Null;
     let backup = if let Some(path) = &args.backup_configuration {
@@ -224,29 +249,7 @@ fn run(
                 writer_manifest: writer,
             },
         )?;
-        match args.action {
-            StateBackupActionV1::Backup => service
-                .backup(clock)
-                .unwrap_or_else(|cause| renewal::backup_failure(&cause)),
-            StateBackupActionV1::RestoreDrill => {
-                let bundle = arguments::resolve(
-                    cwd,
-                    Path::new(args.bundle.as_deref().ok_or_else(|| {
-                        error("autonomous_research_state_backup_bundle_required")
-                    })?),
-                )?;
-                service
-                    .restore_drill(&bundle, clock)
-                    .unwrap_or_else(|cause| renewal::drill_failure(&cause, &bundle))
-            }
-            StateBackupActionV1::Renew => renewal::renew_report(&mut service, clock),
-            StateBackupActionV1::ReconcileAndRenew => {
-                reconcile_and_renew_report(&mut service, clock)
-            }
-            StateBackupActionV1::Status => {
-                return Err(error("autonomous_research_state_backup_action_invalid"));
-            }
-        }
+        action_report(&args, &mut service, cwd, clock)?
     } else {
         match args.action {
             StateBackupActionV1::Backup => renewal::backup_failure(&error(
@@ -273,10 +276,72 @@ fn run(
     for file in &configuration_files {
         file.assert_current()?;
     }
-    let exit_code = if report["status"] == args.action.ready_status() {
+    Ok(report_output(args.action, report))
+}
+
+fn action_report<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>(
+    args: &arguments::Arguments,
+    service: &mut BackupRecoveryServiceV1<B, O>,
+    cwd: &Path,
+    clock: &mut dyn MutationClockV1,
+) -> Result<Value> {
+    Ok(match args.action {
+        StateBackupActionV1::Backup => service
+            .backup(clock)
+            .unwrap_or_else(|cause| renewal::backup_failure(&cause)),
+        StateBackupActionV1::RestoreDrill => {
+            let bundle =
+                arguments::resolve(
+                    cwd,
+                    Path::new(args.bundle.as_deref().ok_or_else(|| {
+                        error("autonomous_research_state_backup_bundle_required")
+                    })?),
+                )?;
+            service
+                .restore_drill(&bundle, clock)
+                .unwrap_or_else(|cause| renewal::drill_failure(&cause, &bundle))
+        }
+        StateBackupActionV1::Renew => renewal::renew_report(service, clock),
+        StateBackupActionV1::ReconcileAndRenew => reconcile_and_renew_report(service, clock),
+        StateBackupActionV1::Status => {
+            return Err(error("autonomous_research_state_backup_action_invalid"));
+        }
+    })
+}
+
+fn report_output(action: StateBackupActionV1, report: Value) -> StateBackupCliOutputV1 {
+    let exit_code = if report["status"] == action.ready_status() {
         0
     } else {
         2
     };
-    Ok(StateBackupCliOutputV1::Report { report, exit_code })
+    StateBackupCliOutputV1::Report { report, exit_code }
 }
+
+/// After an operation, local input drift cannot erase a completed operation or
+/// its original uncertain authority outcome. This branch is socket-only; the
+/// incumbent Process report and trailing error behavior remain unchanged.
+fn complete_socket_action(
+    action: StateBackupActionV1,
+    report: Value,
+    manifest: &ManifestFile,
+) -> StateBackupCliOutputV1 {
+    match manifest.assert_current() {
+        Ok(()) => report_output(action, report),
+        Err(cause) => StateBackupCliOutputV1::Report {
+            report: json!({
+                "version":1,
+                "kind":"AutonomousResearchStateBackupSocketInspectionRequired",
+                "status":"autonomous_research_state_backup_socket_inspection_required",
+                "operationReport":report,
+                "error":{"code":cause.code,"details":cause.details},
+                "retryable":false,
+                "inspectionRequired":true,
+            }),
+            exit_code: 2,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests;

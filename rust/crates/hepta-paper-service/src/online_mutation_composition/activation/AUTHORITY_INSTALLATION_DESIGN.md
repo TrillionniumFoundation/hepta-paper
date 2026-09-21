@@ -131,8 +131,9 @@ scope and limits, and sends no subprocess command. The concrete recovery
 service's Socket V1 factory now consumes this profile with one original kernel
 peer shared by its online and backup clients. Actual ten-database backup,
 isolated restore and empty-pending reconciliation exercise that source path.
-The CLI, complete activation preparation and production recoverability fence
-still fix concrete process types. Their integration requires a shared qualified
+The backup CLI can now explicitly select the Socket service. Complete activation
+preparation and the production recoverability fence still fix concrete process
+types. Their integration requires a shared qualified
 installation and full retained-scope tests; it cannot silently reinterpret the
 old process configuration identity as the new socket installation subject.
 

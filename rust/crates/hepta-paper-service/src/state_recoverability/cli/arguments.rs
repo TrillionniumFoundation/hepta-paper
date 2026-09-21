@@ -26,7 +26,12 @@ pub(super) struct Arguments {
     pub workspace: Option<String>,
     pub backup_configuration: Option<String>,
     pub online_configuration: Option<String>,
+    pub socket_configuration: Option<SocketConfiguration>,
     pub bundle: Option<String>,
+}
+pub(super) struct SocketConfiguration {
+    pub path: String,
+    pub raw_file_hash: String,
 }
 pub(super) fn parse(argv: &[String]) -> std::result::Result<Arguments, String> {
     let mut parsed = std::collections::BTreeMap::new();
@@ -56,6 +61,8 @@ pub(super) fn parse(argv: &[String]) -> std::result::Result<Arguments, String> {
                 "root",
                 "authority-config",
                 "online-authority-process-config",
+                "authority-socket-config",
+                "authority-socket-config-sha256",
                 "bundle",
             ]
             .contains(&key)
@@ -101,7 +108,44 @@ pub(super) fn parse(argv: &[String]) -> std::result::Result<Arguments, String> {
     if action == StateBackupActionV1::RestoreDrill && !parsed.contains_key("bundle") {
         return Err("autonomous_research_state_backup_bundle_required".into());
     }
+    let socket_configuration = if help {
+        None
+    } else {
+        match (
+            parsed.remove("authority-socket-config"),
+            parsed.remove("authority-socket-config-sha256"),
+        ) {
+            (None, None) => None,
+            (Some(path), Some(raw_file_hash)) => {
+                if parsed.contains_key("authority-config")
+                    || parsed.contains_key("online-authority-process-config")
+                {
+                    return Err(
+                        "autonomous_research_state_backup_authority_profiles_conflict".into(),
+                    );
+                }
+                if action == StateBackupActionV1::Status {
+                    return Err("autonomous_research_state_backup_socket_status_unsupported".into());
+                }
+                if !crate::sqlite_mutation_coordinator::sha(&json!(raw_file_hash)) {
+                    return Err(
+                        "autonomous_research_state_backup_socket_configuration_hash_invalid".into(),
+                    );
+                }
+                Some(SocketConfiguration {
+                    path,
+                    raw_file_hash,
+                })
+            }
+            _ => {
+                return Err(
+                    "autonomous_research_state_backup_socket_configuration_required".into(),
+                );
+            }
+        }
+    };
     if action == StateBackupActionV1::ReconcileAndRenew
+        && socket_configuration.is_none()
         && (!parsed.contains_key("authority-config")
             || !parsed.contains_key("online-authority-process-config"))
     {
@@ -116,9 +160,13 @@ pub(super) fn parse(argv: &[String]) -> std::result::Result<Arguments, String> {
         workspace: parsed.remove("root"),
         backup_configuration: parsed.remove("authority-config"),
         online_configuration: parsed.remove("online-authority-process-config"),
+        socket_configuration,
         bundle: parsed.remove("bundle"),
     })
 }
+
+#[cfg(test)]
+mod tests;
 /// Node's POSIX path.resolve semantics. It normalizes lexical parent components
 /// before any filesystem access; it does not follow symlinks or create paths.
 pub(super) fn resolve(cwd: &Path, input: &Path) -> Result<PathBuf> {

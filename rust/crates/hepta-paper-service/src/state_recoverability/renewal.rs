@@ -8,16 +8,37 @@ use crate::sqlite_mutation_coordinator::{
 use crate::state_backup_authority::StateBackupAuthorityTransportV1;
 use std::path::Path;
 
+/// Only an actual socket transport error supplies delivery/outcome evidence.
+/// A blocked report alone cannot say whether the authority committed anything.
+pub(super) fn retain_socket_authority_error(
+    mut report: Value,
+    cause: &SqliteMutationCoordinatorError,
+) -> Value {
+    if cause.details["transport"] == "local-state-authority-socket-v1" {
+        report["authorityError"] = json!({
+            "code": cause.code,
+            "details": cause.details,
+            "retryable": false,
+        });
+    }
+    report
+}
+
 pub(super) fn backup_failure(cause: &SqliteMutationCoordinatorError) -> Value {
-    if cause.code == "autonomous_research_state_database_inventory_blocked"
+    let report = if cause.code == "autonomous_research_state_database_inventory_blocked"
         && cause.details["inventory"].is_object()
     {
-        return json!({"version":1,"kind":"AutonomousResearchStateBackupReceipt","status":"autonomous_research_state_backup_blocked","blockers":cause.details["inventory"]["blockers"],"inventory":cause.details["inventory"]});
-    }
-    json!({"version":1,"kind":"AutonomousResearchStateBackupReceipt","status":"autonomous_research_state_backup_blocked","blockers":[cause.code],"recoverableStagingPath":cause.details["recoverableStagingPath"]})
+        json!({"version":1,"kind":"AutonomousResearchStateBackupReceipt","status":"autonomous_research_state_backup_blocked","blockers":cause.details["inventory"]["blockers"],"inventory":cause.details["inventory"]})
+    } else {
+        json!({"version":1,"kind":"AutonomousResearchStateBackupReceipt","status":"autonomous_research_state_backup_blocked","blockers":[cause.code],"recoverableStagingPath":cause.details["recoverableStagingPath"]})
+    };
+    retain_socket_authority_error(report, cause)
 }
 pub(super) fn drill_failure(cause: &SqliteMutationCoordinatorError, path: &Path) -> Value {
-    json!({"version":1,"kind":"AutonomousResearchStateRestoreDrillReceipt","status":"autonomous_research_state_restore_drill_blocked","blockers":[cause.code],"bundlePath":path,"bundleManifestHash":cause.details["bundleManifestHash"],"authorityCurrentHeadReceiptHash":cause.details["authorityCurrentHeadReceiptHash"]})
+    retain_socket_authority_error(
+        json!({"version":1,"kind":"AutonomousResearchStateRestoreDrillReceipt","status":"autonomous_research_state_restore_drill_blocked","blockers":[cause.code],"bundlePath":path,"bundleManifestHash":cause.details["bundleManifestHash"],"authorityCurrentHeadReceiptHash":cause.details["authorityCurrentHeadReceiptHash"]}),
+        cause,
+    )
 }
 fn blocked(mut blockers: Vec<String>, backup: Value, drill: Value) -> Value {
     blockers.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
@@ -110,3 +131,6 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         Err(cause)
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -35,8 +35,10 @@ descriptors and private-copy SQLite handles are released before return, includin
 on errors; clients retain their public-input snapshots. Call this constructor
 before opening caller-owned SQLite connections. Subsequent service methods
 observe their own inventory. The factory grants no epoch or installed native
-identity. The existing CLI and production activation/fence still use Process
-V1/V2; see the [socket profile contract](../../rust/crates/hepta-paper-service/src/state_backup_authority/socket/HANDOFF.md).
+identity. The CLI can explicitly select this factory with a configuration path
+and independently supplied raw hash; its Process V1/V2 default remains available.
+Production activation/fence still use Process profiles; see the
+[socket profile contract](../../rust/crates/hepta-paper-service/src/state_backup_authority/socket/HANDOFF.md).
 
 `ResidentLeaseV1::new` accepts an identity claim. Only `assert_current` obtains an `ObservedResidentLeaseV1`, by reading the actual resident SQLite row, validating its complete persisted state, and binding its file observation. `LiveBackupHeadObservationV1` proves a fresh signed head for a verified stored source. Neither type alone is an epoch.
 

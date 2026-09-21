@@ -3,7 +3,8 @@
 This profile constructs an in-process backup verifier and transport. It does
 not identify a qualified Rust installation, establish a service-manager unit,
 stop the old authority, migrate its journal, activate a business writer, or
-retire Node. The existing backup CLI and owning activation still use their
+retire Node. The backup CLI now supports explicit selection of this profile
+with an independently supplied raw hash; owning activation still uses its
 process configuration profiles.
 
 ## Configuration and construction
@@ -91,8 +92,9 @@ one empty probe. Both transports share the one captured original peer through
 a private `Arc`; neither accepts a caller's expected PID or another endpoint.
 The service releases its temporary inventory before returning and retains
 the clients' public-input snapshots. Its existing backup, restore, inspection
-and reconciliation methods consume these concrete clients. The Process CLI,
-production fence, native transaction binding and owning activation preparation
+and reconciliation methods consume these concrete clients. The CLI now selects
+this factory through explicit Socket options. The production fence, native
+transaction binding and owning activation preparation
 still need their own versioned socket composition and qualified installation.
 The shared socket origin alone does not prove an installed invocation.
 

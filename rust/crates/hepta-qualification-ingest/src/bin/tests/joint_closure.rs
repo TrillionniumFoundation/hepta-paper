@@ -14,6 +14,8 @@ use hepta_qualification_ingest::{
 use rusqlite::types::Value as SqlValue;
 use serde_json::{Value, json};
 
+#[path = "joint_closure/clock_wait.rs"]
+mod clock_wait;
 #[path = "joint_closure/validity.rs"]
 mod validity;
 
@@ -603,6 +605,8 @@ impl AcceptanceFixture {
             hash: &self.signed.trust_hash,
             previous_hash: None,
             store: &self.signed.trust,
+            issued_at_unix_ms: NOW - 86_400_000,
+            expires_at_unix_ms: NOW + 86_400_000,
         };
         verify_and_commit_closure(&self.request, &self.signed.candidates, &trust, now)
     }

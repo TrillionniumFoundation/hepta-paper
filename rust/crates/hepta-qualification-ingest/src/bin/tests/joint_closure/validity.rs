@@ -24,7 +24,7 @@ fn closure(
     )
 }
 
-fn expire_payload(signed: &mut SignedPackages, index: usize, timestamp: &str) {
+pub(super) fn expire_payload(signed: &mut SignedPackages, index: usize, timestamp: &str) {
     signed.update_payload(index, |payload| {
         payload["expiresAt"] = json!(timestamp);
         if index == 6 {
@@ -33,7 +33,7 @@ fn expire_payload(signed: &mut SignedPackages, index: usize, timestamp: &str) {
     });
 }
 
-fn expire_inner(signed: &mut SignedPackages, index: usize, timestamp: &str) {
+pub(super) fn expire_inner(signed: &mut SignedPackages, index: usize, timestamp: &str) {
     signed.update_payload(6, |payload| {
         let subject = payload["subjectHash"]
             .as_str()

@@ -184,6 +184,21 @@ struct VerifiedClosureTrustContextV1<'a> {
     hash: &'a str,
     previous_hash: Option<&'a str>,
     store: &'a QualificationTrustStoreV1,
+    issued_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
+}
+
+impl VerifiedClosureTrustContextV1<'_> {
+    fn assert_current(&self, now_unix_ms: u64) -> Result<(), ClosureError> {
+        if self.issued_at_unix_ms == 0
+            || self.issued_at_unix_ms > now_unix_ms
+            || self.expires_at_unix_ms <= now_unix_ms
+            || self.expires_at_unix_ms <= self.issued_at_unix_ms
+        {
+            return Err(ClosureError::TrustStoreInvalid);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -313,6 +328,8 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
     validate_trust_document(&trust_document, now_unix_ms)?;
 
     let trust_generation = trust_document.generation;
+    let trust_issued_at_unix_ms = trust_document.issued_at_unix_ms;
+    let trust_expires_at_unix_ms = trust_document.expires_at_unix_ms;
     let previous_trust_store_hash = trust_document.previous_trust_store_hash.clone();
     let mut trust_entries = Vec::with_capacity(trust_document.keys.len());
     for key in trust_document.keys {
@@ -384,7 +401,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
         });
     }
 
-    let receipt = verify_and_commit_closure(
+    let receipt = verify_and_commit_closure_with_clock(
         &request,
         &candidates,
         &VerifiedClosureTrustContextV1 {
@@ -392,8 +409,11 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
             hash: &trust_store_hash,
             previous_hash: previous_trust_store_hash.as_deref(),
             store: &trust_store,
+            issued_at_unix_ms: trust_issued_at_unix_ms,
+            expires_at_unix_ms: trust_expires_at_unix_ms,
         },
         now_unix_ms,
+        system_unix_ms,
     )?;
     let mut stdout = io::stdout().lock();
     serde_json::to_writer(&mut stdout, &receipt)?;
@@ -401,16 +421,33 @@ fn run(arguments: Vec<OsString>) -> Result<(), ClosureError> {
     Ok(())
 }
 
+// Deterministic post-file tests retain their explicit-time semantics. Production
+// run() always selects the actual system clock through the worker below.
+#[cfg(test)]
 fn verify_and_commit_closure(
     request: &ClosureRequestV1,
     candidates: &[ExternalQualificationCandidateV1],
     trust: &VerifiedClosureTrustContextV1<'_>,
     now_unix_ms: u64,
 ) -> Result<ExternalQualificationClosureReceiptV1, ClosureError> {
+    verify_and_commit_closure_with_clock(request, candidates, trust, now_unix_ms, || {
+        Ok(now_unix_ms)
+    })
+}
+
+fn verify_and_commit_closure_with_clock(
+    request: &ClosureRequestV1,
+    candidates: &[ExternalQualificationCandidateV1],
+    trust: &VerifiedClosureTrustContextV1<'_>,
+    initial_now_unix_ms: u64,
+    mut clock: impl FnMut() -> Result<u64, ClosureError>,
+) -> Result<ExternalQualificationClosureReceiptV1, ClosureError> {
     // The earlier per-file validation preserves established diagnostic order.
     // Reverify the exact retained bytes through the complete public producer;
     // only records from this genuine opaque result can enter the old receipt.
-    // Both checks intentionally use the CLI's original point-in-time sample.
+    // This sample follows all authority file reads, before SQLite is opened.
+    let verified_at_unix_ms = sample_clock_after(&mut clock, initial_now_unix_ms)?;
+    trust.assert_current(verified_at_unix_ms)?;
     let verified = verify_external_qualification_closure_v1(
         candidates,
         &ExternalQualificationClosureSubjectV1 {
@@ -418,7 +455,7 @@ fn verify_and_commit_closure(
             commit: request.commit.clone(),
             tree: request.tree.clone(),
         },
-        now_unix_ms,
+        verified_at_unix_ms,
         trust.generation,
         trust.store,
     )?;
@@ -439,16 +476,38 @@ fn verify_and_commit_closure(
         trust.hash,
         records,
     )?;
-    commit_replay_receipt(
+    commit_replay_receipt_with_admission(
         &request.replay_ledger,
         request.consumer_uid,
         trust.generation,
         trust.hash,
         trust.previous_hash,
-        now_unix_ms,
+        || {
+            // BEGIN IMMEDIATE and ledger opening may both have waited. Recheck
+            // the actual opaque and original validated trust window in memory;
+            // do not reopen authority files while the SQLite connection is live.
+            let now_unix_ms = sample_clock_after(&mut clock, verified_at_unix_ms)?;
+            trust.assert_current(now_unix_ms)?;
+            verified.assert_current(now_unix_ms)?;
+            Ok(now_unix_ms)
+        },
         &receipt,
     )?;
     Ok(receipt)
+}
+
+fn sample_clock_after(
+    clock: &mut impl FnMut() -> Result<u64, ClosureError>,
+    previous_unix_ms: u64,
+) -> Result<u64, ClosureError> {
+    let now_unix_ms = clock()?;
+    if now_unix_ms == 0 || i64::try_from(now_unix_ms).is_err() {
+        return Err(ClosureError::ClockInvalid);
+    }
+    if now_unix_ms < previous_unix_ms {
+        return Err(ClosureError::ClockRollback);
+    }
+    Ok(now_unix_ms)
 }
 
 fn validate_request(request: &ClosureRequestV1) -> Result<(), ClosureError> {
@@ -841,6 +900,9 @@ fn normalize_sql(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+// Ledger-only unit tests exercise persistence deterministically. This unguarded
+// explicit-time wrapper is absent from the production binary.
+#[cfg(test)]
 fn commit_replay_receipt(
     ledger: &PrivateLedgerV1,
     consumer_uid: u32,
@@ -850,10 +912,32 @@ fn commit_replay_receipt(
     now_unix_ms: u64,
     receipt: &ExternalQualificationClosureReceiptV1,
 ) -> Result<(), ClosureError> {
+    commit_replay_receipt_with_admission(
+        ledger,
+        consumer_uid,
+        trust_store_generation,
+        trust_store_hash,
+        previous_trust_store_hash,
+        || Ok(now_unix_ms),
+        receipt,
+    )
+}
+
+fn commit_replay_receipt_with_admission(
+    ledger: &PrivateLedgerV1,
+    consumer_uid: u32,
+    trust_store_generation: u64,
+    trust_store_hash: &str,
+    previous_trust_store_hash: Option<&str>,
+    admission: impl FnOnce() -> Result<u64, ClosureError>,
+    receipt: &ExternalQualificationClosureReceiptV1,
+) -> Result<(), ClosureError> {
     let mut connection = open_replay_ledger(ledger, consumer_uid)?;
     let canonical_receipt = serde_json::to_vec(receipt)?;
-    let now = i64::try_from(now_unix_ms).map_err(|_| ClosureError::ClockInvalid)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    // No trust/clock advancement, nonce lookup, or duplicate-success decision
+    // may precede the post-wait qualification admission sample.
+    let now = i64::try_from(admission()?).map_err(|_| ClosureError::ClockInvalid)?;
     advance_verifier_clock(&transaction, now)?;
     advance_trust_store_state(
         &transaction,

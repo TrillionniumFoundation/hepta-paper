@@ -365,7 +365,7 @@ durable service. It does not establish data provenance or independent replicatio
 
 **API and concrete types:** [rust/crates/hepta-qualification-ingest/src/closure.rs](../../rust/crates/hepta-qualification-ingest/src/closure.rs). **Engineering contract:** [EXTERNAL_AUTHORITY.md](../qualification/EXTERNAL_AUTHORITY.md). **Module specification:** [qualification-ingest](specs/qualification-ingest.md).
 
-**Boundary and recovery:** verify_external_qualification_closure_v1 produces an opaque VerifiedExternalQualificationClosureV1 only after package/subject/currentness checks. Its retained expiry includes every signed payload and required inner authority receipt; millisecond checks preserve exact fractional expiry semantics. A narrowed expiry changes the opaque digest, while valid CLI report bytes remain compatible. Static documentation cannot construct acceptance.
+**Boundary and recovery:** verify_external_qualification_closure_v1 produces an opaque VerifiedExternalQualificationClosureV1 only after package/subject/currentness checks. Its retained expiry includes every signed payload and required inner authority receipt; millisecond checks preserve exact fractional expiry semantics. A narrowed expiry changes the opaque digest, while valid CLI report bytes remain compatible. Actual CLI admission resamples the system clock after all authority reads and after SQLite writer-lock acquisition, rechecking the retained trust/opaque windows before new acceptance or replay. Static documentation cannot construct acceptance.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-qualification-ingest`.
 

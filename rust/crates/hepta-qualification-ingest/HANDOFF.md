@@ -59,7 +59,10 @@ bytes, not total process RSS: parsed JSON and signature structures add overhead.
 2. For each package, verify the actual envelope signature and exact immutable
    subject, then read and hash its payload and validate package semantics. This
    order preserves the existing per-package diagnostic behavior.
-3. Pass the actual envelopes and payloads to the public opaque factory. It
+3. After every authority file is read and closed, sample the real system clock
+   again and require it not to precede the initial sample. Recheck the original
+   validated trust document's retained validity window. Pass the actual envelopes
+   and payloads to the public opaque factory at this fresh time. It
    re-verifies them, requires all seven package IDs, distinct nonces and payload
    hashes, and five independent authority groups. An authority domain cannot
    straddle those groups. Its retained exclusive expiry is the minimum of all
@@ -73,9 +76,13 @@ bytes, not total process RSS: parsed JSON and signature structures add overhead.
 5. Build the existing V1 report from records obtained through the opaque
    closure's `package()` accessors. Joint verification failure occurs before
    opening, creating or advancing the replay ledger.
-6. In one `BEGIN IMMEDIATE` transaction, advance monotonic verifier time and
-   trust generation and check all seven nonces, then insert the canonical
-   receipt and nonce bindings. Commit and sync precede stdout publication.
+6. Acquire `BEGIN IMMEDIATE`, which may wait behind another writer. Before any
+   clock/trust advancement or nonce query, sample the actual system clock again,
+   reject regression from step 3 and recheck both the original trust window and
+   the genuinely verified opaque closure. Advance monotonic verifier time and
+   trust generation using this post-lock sample; check all seven nonces, then
+   insert the canonical receipt and nonce bindings. Exact existing replay passes
+   the same fresh gate. Commit and sync precede stdout publication.
 
 The CLI deliberately repeats cryptographic and payload verification at step 3
 to preserve earlier error ordering while giving the opaque factory the original
@@ -117,9 +124,21 @@ including when old receipts for those sets already exist in the ledger.
 An I/O failure after SQLite commit can suppress stdout even though acceptance
 persisted. The CLI does not claim rollback or invent a successful receipt in
 that case; an exact, still-valid retry uses durable replay reconciliation.
-The current CLI samples wall time once before reading inputs. Acceptance is
-evaluated at that instant; the report is not a continuously current activation
-permit and carries no separate observation-time field.
+The CLI samples real wall time after the private request, after all authority
+input reads, and after acquiring the SQLite writer transaction. Failure before
+opening SQLite creates no ledger; failure after opening may leave an initialized
+empty ledger, but the rejected transaction advances none of its four tables.
+New receipts use the transaction-admission sample. Exact replay keeps its first
+receipt acceptance time while advancing the monotonic clock when appropriate.
+Zero, unrepresentable or backward clock samples fail closed.
+
+This is currentness at transaction admission. DELETE-mode commit can itself
+wait behind readers and filesystem sync may take time; there is no claim of an
+atomic clock/commit boundary. Retaining the original validated trust window does
+not monitor later file replacement or independently learn an unpublished
+revocation. All authority-file reads finish before SQLite opens; the transaction
+gate checks retained memory only. The report is not a continuously current
+activation permit and carries no separate observation-time field.
 
 ## Verification and remaining integration
 
@@ -134,8 +153,16 @@ each of the seven payloads and each of the four inner receipt expiries, exact
 and fractional millisecond boundaries, the earlier outer-envelope case, and
 unchanged CLI bytes/replay followed by rejection without ledger mutation at
 expiry. Private conversion tests cover long decimal fractions, calendar limits
-and checked arithmetic. Deterministic fixture time is not a system-clock or
-SQLite lock-wait currentness test. Fixture keys supply test evidence
+and checked arithmetic. A real owned child process separately holds SQLite
+`BEGIN IMMEDIATE`; the production worker waits, then must take a second clock
+sample before either a new acceptance or exact replay. Deterministic injected
+clock values cover envelope/payload/inner-receipt/trust expiry, rollback and
+unavailable clocks; all four tables remain unchanged on refusal. Positive cases
+check fresh persisted time and unchanged receipt bytes. The owned helper has
+bounded readiness/exit waits and kill/reap cleanup; its ignored test entry is
+invoked by the parent cases. These injected samples do not observe an OS clock
+change. The actual CLI always selects `system_unix_ms`; explicit-time test
+wrappers are absent from production builds. Fixture keys supply test evidence
 only; the helper tests do not claim an installed cross-UID file-ingestion pass.
 
 The public opaque factory remains the input boundary for a later owning native

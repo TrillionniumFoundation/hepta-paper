@@ -37,6 +37,7 @@ pub mod native_workspace;
 pub mod nested_runtime_cli;
 pub mod nested_runtime_qualification;
 pub mod node_migration;
+pub(crate) mod node_package_deletion_writer;
 mod objects;
 pub mod online_authority_evidence_cache;
 pub mod online_authority_inspection;

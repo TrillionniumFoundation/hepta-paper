@@ -117,6 +117,11 @@ The module documentation validator additionally proves one-to-one registry/spec/
 
 ### Runtime migration implementation details
 
+The [automation reconciliation execution handoff](../AUTOMATION_RECONCILIATION_EXECUTION_HANDOFF.md)
+specifies the schema-25 offline transaction, private receipt issuer, shared Node
+package lock, local cutover admission, rollback behavior and remaining production
+and online execution gaps.
+
 The executable source is now in `rust/crates/hepta-paper-service`. See [runtime migration implementation and commands](../../rust/RUNTIME_MIGRATION_IMPLEMENTATION.md), the [control-plane contract](../../../rust/crates/hepta-control-plane/README.md), and the [durable campaign writer contract](../../../rust/crates/hepta-campaign-writer/README.md) for concrete request fields, persisted state, exact replay, shadow inspection, local execution and verification commands.
 
 The static module state is `source_implemented`, matching the Identity section and module registry; activation remains `disabled`. Implemented local/shadow and guarded production API source do not establish accepted production composition. `CTL-001` source implementation and its separate effective qualification must not be conflated. Real runtime identity, independent host/evidence authority, complete Node business coverage and rollout acceptance remain required. No local command generates production qualification or activation.

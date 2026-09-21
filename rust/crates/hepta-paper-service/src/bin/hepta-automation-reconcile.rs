@@ -1,9 +1,13 @@
-use hepta_paper_service::automation_runtime_reconciliation::inspect_automation_runtime_reconciliation_v1;
-use std::{env, path::Path};
+use hepta_paper_service::automation_runtime_reconciliation::{
+    LocalOfflineReconciliationRequestV1,
+    execute_local_offline_automation_runtime_reconciliation_v1,
+    inspect_automation_runtime_reconciliation_v1,
+};
+use std::{env, fs::OpenOptions, io::Read, os::unix::fs::OpenOptionsExt, path::Path};
 
 fn usage() {
     println!(
-        "{{\"version\":1,\"kind\":\"AutomationRuntimeReconciliationUsage\",\"usage\":\"hepta-automation-reconcile --database ABSOLUTE_SQLITE --at ISO_TIME [--campaign-id ID] [--no-progress-seconds N]\",\"readOnly\":true,\"externalActionPerformed\":false,\"mutationSupported\":false}}"
+        "{{\"version\":1,\"kind\":\"AutomationRuntimeReconciliationUsage\",\"usage\":\"hepta-automation-reconcile --database ABSOLUTE_SQLITE --at ISO_TIME [--campaign-id ID] [--no-progress-seconds N]\",\"localExecuteUsage\":\"hepta-automation-reconcile --execute-local REQUEST_JSON\",\"readOnly\":true,\"externalActionPerformed\":false,\"localMutationSupported\":true,\"productionMutationSupported\":false}}"
     );
 }
 
@@ -30,6 +34,39 @@ fn main() {
     }
     let mut index = 0;
     let result: Result<(), String> = (|| {
+        if args.first().is_some_and(|arg| arg == "--execute-local") {
+            if args.len() != 2 {
+                return Err("--execute-local requires exactly one request file".into());
+            }
+            let file = OpenOptions::new()
+                .read(true)
+                .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
+                .open(&args[1])
+                .map_err(|_| "local request file unavailable")?;
+            if !file
+                .metadata()
+                .map_err(|_| "local request file unavailable")?
+                .is_file()
+            {
+                return Err("local request must be a regular file".into());
+            }
+            let mut bytes = Vec::new();
+            file.take(1_048_577)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "local request unreadable")?;
+            if bytes.len() > 1_048_576 {
+                return Err("local request too large".into());
+            }
+            let request: LocalOfflineReconciliationRequestV1 =
+                serde_json::from_slice(&bytes).map_err(|_| "local request invalid")?;
+            let report = execute_local_offline_automation_runtime_reconciliation_v1(&request)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "{}",
+                serde_json::to_string(&report).map_err(|_| "json encode")?
+            );
+            return Ok(());
+        }
         while index < args.len() {
             let (key, value) = args[index]
                 .split_once('=')

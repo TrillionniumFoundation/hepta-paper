@@ -1619,18 +1619,36 @@
         {
           "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation.rs",
           "symbol": "inspect_automation_runtime_reconciliation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "execute_local_offline_automation_runtime_reconciliation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution.rs",
+          "symbol": "execute_on_admitted_connection"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer.rs",
+          "symbol": "acquire"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
-        "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs"
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+        "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs"
       ],
-      "remaining": "Native Rust now matches the read-only Node automation reconciliation plan for clean, required, campaign-scoped and legacy-terminal observations, including expired node/resource rows, no-progress campaigns, terminal queued/active rows, preserved legacy rows, plan hashes, fractional-millisecond Date TimeClip cutoffs and strict help/error boundaries. Node reconciliation execute still owns fenced SQLite mutation, event/receipt publication, lease recovery, campaign pause/settlement, crash rollback and external worker/authority boundaries; independent acceptance and production activation remain open.",
+      "remaining": "Native Rust matches passive plans and now executes the complete incumbent offline schema-25 reconciliation transaction under explicit local cutover admission: node recovery, no-progress pause, terminal settlement, resource deletion, exact event/failure/17-column receipt JSON, strict row preconditions and rollback. The private fixed issuer, actual Node package flock, schema/online-metadata gates and durable writer epoch are connected to --execute-local; actual Node differential, stale-row/collision, process-death and CLI tests cover this path. Production signed writer/epoch/scope binding, online reserve/apply/finalize execution, live-clock/default-root CLI composition, legacy-terminal-active-residue mode, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-automation-reconcile.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation.rs",
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
-        "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs"
+        "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+        "rust/crates/hepta-paper-service/src/node_package_deletion_writer.rs"
       ],
       "testCases": [
         {
@@ -1643,7 +1661,7 @@
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
-          "symbol": "help_is_explicitly_read_only_and_mutation_free"
+          "symbol": "help_is_read_only_and_declares_guarded_local_execution"
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
@@ -1656,12 +1674,92 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
           "symbol": "fractional_no_progress_cutoffs_and_hashes_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "offline_reconciliation_matches_complete_node_state_and_receipts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "offline_reconciliation_rolls_back_all_changes_on_stale_rows_events_or_receipts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "fixed_clock_repeat_uses_strict_receipt_insert_and_preserves_prior_commit"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "process_death_before_commit_recovers_without_partial_business_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "writer_scope_revalidation_failure_rolls_back_receipt_and_every_transition"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "scoped_resources_elapsed_run_time_integrated_outcomes_and_release_commit_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "admitted_schema25_transaction_commits_and_node_ownership_is_fenced"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "enrollment_epoch_scope_and_rollback_are_required"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "schema_history_and_online_authority_objects_block_before_mutation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "canonical_separate_roots_and_single_link_database_are_required"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "nonregular_database_and_production_enrollment_are_rejected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_shares_actual_flock_both_directions"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_matches_prepared_deleting_deleted_aborted"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_rejects_replaced_lock_repository_and_runtime"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_rejects_inventory_modes_symlinks_hardlinks_and_changed_hash"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_cleans_only_safe_temporary_inodes_and_releases_on_unwind"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_validates_exact_record_contract_after_resealing"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_preserves_incumbent_operation_coercion_and_extended_dates"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_rejects_unsafe_roots_and_lock_files_before_callback"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
+          "symbol": "local_execute_cli_consumes_existing_epoch_and_matches_node_receipt"
         }
       ]
     },
     {
       "id": "operator/reconcile-apply",
-      "rustEntrypoint": "hepta-local-maintenance prepared-commit STATE PLAN HASH NOW",
+      "rustEntrypoint": "hepta-automation-reconcile --execute-local REQUEST_JSON",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -1672,20 +1770,125 @@
         {
           "path": "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
           "symbol": "apply_prepared_reconciliation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-automation-reconcile.rs",
+          "symbol": "main"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "execute_local_offline_automation_runtime_reconciliation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution.rs",
+          "symbol": "execute_on_admitted_connection"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer.rs",
+          "symbol": "acquire"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs"
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
+        "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+        "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs"
       ],
-      "remaining": "Prepared local reconciliation commit only; Node automation reconciliation and external effects remain unimplemented.",
+      "remaining": "Native Rust matches passive plans and now executes the complete incumbent offline schema-25 reconciliation transaction under explicit local cutover admission: node recovery, no-progress pause, terminal settlement, resource deletion, exact event/failure/17-column receipt JSON, strict row preconditions and rollback. The private fixed issuer, actual Node package flock, schema/online-metadata gates and durable writer epoch are connected to --execute-local; actual Node differential, stale-row/collision, process-death and CLI tests cover this path. Production signed writer/epoch/scope binding, online reserve/apply/finalize execution, live-clock/default-root CLI composition, legacy-terminal-active-residue mode, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
-        "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs"
+        "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-automation-reconcile.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution.rs",
+        "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+        "rust/crates/hepta-paper-service/src/node_package_deletion_writer.rs"
       ],
       "testCases": [
         {
           "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
           "symbol": "prepared_commit_cli_consumes_a_hash_bound_raw_plan"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "offline_reconciliation_matches_complete_node_state_and_receipts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "offline_reconciliation_rolls_back_all_changes_on_stale_rows_events_or_receipts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "fixed_clock_repeat_uses_strict_receipt_insert_and_preserves_prior_commit"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "process_death_before_commit_recovers_without_partial_business_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "writer_scope_revalidation_failure_rolls_back_receipt_and_every_transition"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "scoped_resources_elapsed_run_time_integrated_outcomes_and_release_commit_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "admitted_schema25_transaction_commits_and_node_ownership_is_fenced"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "enrollment_epoch_scope_and_rollback_are_required"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "schema_history_and_online_authority_objects_block_before_mutation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "canonical_separate_roots_and_single_link_database_are_required"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "nonregular_database_and_production_enrollment_are_rejected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_shares_actual_flock_both_directions"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_matches_prepared_deleting_deleted_aborted"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_rejects_replaced_lock_repository_and_runtime"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_rejects_inventory_modes_symlinks_hardlinks_and_changed_hash"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_cleans_only_safe_temporary_inodes_and_releases_on_unwind"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_validates_exact_record_contract_after_resealing"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_preserves_incumbent_operation_coercion_and_extended_dates"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs",
+          "symbol": "node_package_guard_rejects_unsafe_roots_and_lock_files_before_callback"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
+          "symbol": "local_execute_cli_consumes_existing_epoch_and_matches_node_receipt"
         }
       ]
     },

@@ -1,8 +1,8 @@
-//! Differential coverage for the read-only automation reconciliation plan.
+//! Differential coverage for the plan and guarded local execution command.
 //!
 //! The fixture is created through the real Node migration/store path and the
-//! same SQLite bytes are then inspected by the native binary.  Mutation,
-//! receipt publication and external workers are intentionally out of scope.
+//! same SQLite bytes are then consumed by the native binary. Execution requires
+//! an explicitly established local cutover; no production or external workers.
 
 use serde_json::Value;
 use std::{
@@ -200,7 +200,7 @@ fn campaign_scope_and_errors_match_node_boundary() {
 }
 
 #[test]
-fn help_is_explicitly_read_only_and_mutation_free() {
+fn help_is_read_only_and_declares_guarded_local_execution() {
     let output = Command::new(env!("CARGO_BIN_EXE_hepta-automation-reconcile"))
         .arg("--help")
         .output()
@@ -210,7 +210,114 @@ fn help_is_explicitly_read_only_and_mutation_free() {
     assert_eq!(help["kind"], "AutomationRuntimeReconciliationUsage");
     assert_eq!(help["readOnly"], true);
     assert_eq!(help["externalActionPerformed"], false);
-    assert_eq!(help["mutationSupported"], false);
+    assert_eq!(help["localMutationSupported"], true);
+    assert_eq!(help["productionMutationSupported"], false);
+    assert!(
+        help["localExecuteUsage"]
+            .as_str()
+            .unwrap()
+            .contains("--execute-local")
+    );
+}
+
+#[test]
+fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
+    use hepta_cutover::{DurableCutoverCoordinatorV1, DurableCutoverModeV1};
+    use hepta_paper_service::automation_runtime_reconciliation::{
+        LOCAL_RECONCILIATION_WRITER_ID_V1, LocalOfflineReconciliationRequestV1,
+        RECONCILIATION_WRITER_SCOPE_V1,
+    };
+    use std::os::unix::fs::PermissionsExt;
+    let (directory, original) = database("local-cli");
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let node_plan = run_node(&original, true, None, None);
+    for name in ["workspace", "assets", "runtime", "legacy"] {
+        fs::create_dir(directory.join(name)).unwrap();
+        fs::set_permissions(directory.join(name), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let native = directory.join("runtime/hepta-paper.sqlite");
+    fs::copy(&original, &native).unwrap();
+    fs::set_permissions(&native, fs::Permissions::from_mode(0o600)).unwrap();
+    let rust_plan = run_rust(&native, None, None);
+    let mut coordinator = DurableCutoverCoordinatorV1::create(
+        &native,
+        "cli-reconciliation",
+        "node",
+        LOCAL_RECONCILIATION_WRITER_ID_V1,
+        DurableCutoverModeV1::LocalDrill,
+    )
+    .unwrap();
+    coordinator.quiesce(0).unwrap();
+    coordinator
+        .backup_restore_drill(
+            1,
+            &directory.join("backup.sqlite"),
+            &directory.join("restore.sqlite"),
+        )
+        .unwrap();
+    coordinator
+        .compare_shadow(
+            2,
+            "measured-plan",
+            &serde_json::to_vec(&node_plan).unwrap(),
+            &serde_json::to_vec(&rust_plan).unwrap(),
+        )
+        .unwrap();
+    let fence = coordinator
+        .start_local_canary(3, vec![RECONCILIATION_WRITER_SCOPE_V1.into()])
+        .unwrap()
+        .writer_fence()
+        .unwrap();
+    let request = LocalOfflineReconciliationRequestV1 {
+        version: 1,
+        workspace_root: directory.join("workspace"),
+        asset_root: directory.join("assets"),
+        runtime_root: directory.join("runtime"),
+        legacy_root: directory.join("legacy"),
+        writer_fence: fence,
+        now: NOW.into(),
+        no_progress_seconds: 1800.0,
+        campaign_id: None,
+        release_commit: None,
+    };
+    let request_path = directory.join("request.json");
+    fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let node = Command::new("node")
+        .arg(root().join("rust/oracle/automation-runtime-reconciliation-execute-v1.mjs"))
+        .args(["--database", original.to_str().unwrap(), "--at", NOW])
+        .env_remove("HEPTA_RELEASE_COMMIT")
+        .output()
+        .unwrap();
+    assert!(
+        node.status.success(),
+        "{}",
+        String::from_utf8_lossy(&node.stderr)
+    );
+    let node: Value = serde_json::from_slice(&node.stdout).unwrap();
+    assert_eq!(node["ok"], true);
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-automation-reconcile"))
+        .args(["--execute-local", request_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["reconciliation"], node["receipts"][0]);
+    assert_eq!(report["productionActivation"], false);
+    assert_eq!(report["nodeRetirementVerified"], false);
+    coordinator.rollback_local(4).unwrap();
+    let before = fs::read(&native).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_hepta-automation-reconcile"))
+        .args(["--execute-local", request_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(2));
+    assert_eq!(fs::read(&native).unwrap(), before);
+    drop(coordinator);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

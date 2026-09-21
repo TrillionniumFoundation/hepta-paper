@@ -1,6 +1,6 @@
 # State backup authority and stored restore-source verification
 
-Status: native library implementation; the `operator/autonomous-state-backup` route remains partial. This module is not the complete backup CLI, backup creation service, restore replay engine, renewal controller, runtime activation chain, or recoverability epoch controller.
+Status: native authority and stored-source verification library; the `operator/autonomous-state-backup` route remains partial. The surrounding backup/restore/renewal service and CLI are documented separately in [state recoverability](STATE_RECOVERABILITY_HANDOFF.md) and the [backup command](STATE_BACKUP_CLI_HANDOFF.md). This module alone does not establish runtime activation or a recoverability epoch.
 
 ## Original sources
 
@@ -18,9 +18,18 @@ Implementation: `rust/crates/hepta-paper-service/src/state_backup_authority.rs` 
 
 `PinnedStateBackupAuthorityV1<T>::load(configuration_path, configuration_file_hash, transport)` requires an independently supplied raw SHA-256 configuration pin. `load_process` builds the bounded local process transport. `trust()` and `configuration_hash()` expose public identities. No private key is loaded by production controller code.
 
+`PinnedStateBackupAuthorityV1<LocalStateAuthoritySocketTransportV1>::load_socket_v1`
+constructs the concrete direct transport from a separate, strictly pinned Socket
+Configuration V1. It requires matching backup/online signing keys, identities
+and lease limits, binds all operations to the pinned online scope, and retains
+both public-key snapshots. Process V1/V2 still require their command pins. The
+[socket profile contract](../../rust/crates/hepta-paper-service/src/state_backup_authority/socket/HANDOFF.md)
+describes fields, pure verification, RPC uncertainty and the remaining owning
+composition boundary.
+
 The raw `StateBackupAuthorityTransportV1::invoke` interface returns untrusted JSON. `verify_reservation`, `verify_finalization`, `verify_current_head`, and `verify_journal_range` apply exact contracts and real Ed25519 verification before creating `VerifiedBackupAuthorityReceiptV1`. Process operations `reserve_snapshot`, `finalize_snapshot`, `observe_current_head`, and `read_finalized_mutation_journal` perform the same validation on returned bytes. Verified fields and constructors are private; the values have no `Deserialize` implementation or mutable accessor. Finalization requires a reservation verified under the same complete configuration identity.
 
-A signed journal envelope does not authenticate every nested mutation by itself. `verify_finalized_journal_chain` requires v2 online trust, verifies every online reservation and finalization using the independently pinned mutation verifier, binds authority/key/scope/manifest, and checks global and per-database continuity plus terminal signed database heads. Its `VerifiedFinalizedJournalEvidenceV1` is journal evidence, not proof that a SQLite replay has run.
+A signed journal envelope does not authenticate every nested mutation by itself. `verify_finalized_journal_chain` requires the online trust supplied by Process V2 or Socket V1, verifies every online reservation and finalization using the independently pinned mutation verifier, binds authority/key/scope/manifest, and checks global and per-database continuity plus terminal signed database heads. Its `VerifiedFinalizedJournalEvidenceV1` is journal evidence, not proof that a SQLite replay has run.
 
 `restore_source::verify_stored_restore_source_v1` takes `StoredRestoreSourceOptionsV1`: an absolute selected bundle directory, raw pins for `AUTONOMOUS_RESEARCH_STATE_BACKUP.json` and `RESTORE_DRILL_RECEIPT.json`, a validated state database manifest, an expected current inventory, and observed time. It returns `VerifiedStoredRestoreSourceV1` only after stored receipt/authority/journal checks, actual snapshot hashes and SQLite inspections succeed. `inspection()` exposes the Node-compatible source projection. `assert_current(inventory, now)` rechecks the selected source snapshots, database directory membership, exact inventory claim and freshness.
 
@@ -64,4 +73,14 @@ No fixture signature is production authority, and no successful local test is a 
 
 ## Remaining route work
 
-The full route still needs actual SQLite backup creation, snapshot publication and candidate selection; fresh restore/replay into isolated copies; renewal and pending-mutation reconciliation composition; resident lease verification; full recoverability reconciliation with sticky fatal state and retryable deferral; a fresh signed authority observation bound to the selected source before epoch permits; and final CLI/service assembly with exact original flags and outputs. Those dependencies must produce real evidence and cannot be replaced with an injected `ready` or `externalAuthorityVerified` boolean.
+Actual SQLite backup creation, snapshot publication and candidate selection,
+private restore/replay, renewal, pending reconciliation, resident lease checks,
+and the concrete epoch controller are now implemented by the adjacent
+[recoverability service](STATE_RECOVERABILITY_HANDOFF.md). The existing
+[five-action CLI](STATE_BACKUP_CLI_HANDOFF.md) composes its pinned process
+transports. These implementations do not close native authority installation,
+the owning production activation chain, independent command acceptance or Node
+retirement. A direct socket verifier must also be connected to the actual
+service/fence composition under a versioned installed-host identity; its library
+constructor cannot replace those facts with `ready` or
+`externalAuthorityVerified` booleans.

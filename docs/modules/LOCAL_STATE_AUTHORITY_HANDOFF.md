@@ -272,6 +272,7 @@ authority outcome; no automatic retry or peer-baseline replacement occurs.
 See the [client transport contract](../../rust/crates/hepta-paper-service/src/local_state_authority_client/HANDOFF.md).
 This establishes process continuity, not Rust provenance, installed unit
 membership or a stop barrier. Full preparation still uses concrete process
-transports; versioned socket backup configuration, owning integration and the
+transports. A [versioned socket backup verifier](../../rust/crates/hepta-paper-service/src/state_backup_authority/socket/HANDOFF.md)
+now binds the direct backup RPCs to pinned online trust; owning integration and the
 [qualified installation subject](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/AUTHORITY_INSTALLATION_DESIGN.md)
 remain separate work.

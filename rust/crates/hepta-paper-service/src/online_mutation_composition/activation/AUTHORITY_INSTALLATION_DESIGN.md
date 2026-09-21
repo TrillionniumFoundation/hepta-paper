@@ -108,12 +108,14 @@ regular-file scopes must precede SQLite. During SQLite ownership, recheck only
 held regular descriptors and namespace metadata; do not reopen aliases of the
 main/WAL/SHM files. Close SQLite before dropping those scopes on every path.
 
-The backup generic verifier currently still captures a process command from
-its configuration. A direct socket backup route needs an explicit versioned
-configuration and constructor; silently ignoring those existing command pins
-would weaken its declared contract. The complete preparation/recoverability
-composition also currently fixes concrete process types. Refactor it only with
-actual direct transport consumers and full retained-scope tests.
+The backup verifier now has a separate [Socket Configuration V1 constructor](../../state_backup_authority/socket/HANDOFF.md).
+Its original Process V1/V2 profiles still capture and enforce their process
+command pins. The direct constructor binds the actual online/backup public keys,
+scope and limits, and sends no subprocess command. Complete owning
+preparation/recoverability still fixes concrete process types. Connecting the
+new verifier requires actual direct transport consumers, a shared qualified
+origin and full retained-scope tests; it cannot silently reinterpret the old
+process configuration identity as the new socket installation subject.
 
 Required source tests include real signed observe/reserve/finalize calls through
 the new transport and existing verifier; original-listener exit with a child

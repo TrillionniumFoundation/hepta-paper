@@ -7,6 +7,7 @@ use crate::sqlite_mutation_coordinator::authority::files as pinned_files;
 mod process;
 mod recovery_support;
 pub mod restore_source;
+mod socket;
 use crate::sqlite_mutation_coordinator::authority::{
     MutationAuthorityTransportV1, PinnedMutationAuthorityV1,
 };
@@ -42,10 +43,24 @@ impl MutationAuthorityTransportV1 for NoOnlineTransport {
         ))
     }
 }
+enum ConfigurationProfile {
+    Process { command: Box<Snapshot> },
+    Socket,
+}
+impl ConfigurationProfile {
+    fn process_command(&self) -> Result<&Snapshot> {
+        match self {
+            Self::Process { command } => Ok(command),
+            Self::Socket => Err(error(
+                "autonomous_research_state_backup_authority_process_identity_mismatch",
+            )),
+        }
+    }
+}
 pub struct PinnedStateBackupAuthorityV1<T> {
     configuration: Snapshot,
     public_document: Snapshot,
-    command: Snapshot,
+    profile: ConfigurationProfile,
     trust: Value,
     key: VerifyingKey,
     configuration_hash: String,
@@ -150,6 +165,42 @@ fn load_configuration(path: &Path, pin: &str) -> Result<(Snapshot, Value)> {
     }
     Ok((file, value))
 }
+fn parse_public_key(public_document: &Snapshot, value: &Value) -> Result<VerifyingKey> {
+    let document =
+        public_document.json("autonomous_research_state_backup_authority_public_key_invalid")?;
+    if !keys(
+        &document,
+        &[
+            "version",
+            "kind",
+            "authorityId",
+            "keyId",
+            "algorithm",
+            "publicKeyPem",
+        ],
+    ) || number(&document["version"]) != Some(1)
+        || document["kind"] != "AutonomousResearchStateBackupAuthorityPublicKey"
+        || document["algorithm"] != "ed25519"
+        || !safe_id(&document["authorityId"])
+        || !safe_id(&document["keyId"])
+    {
+        return Err(error(
+            "autonomous_research_state_backup_authority_public_key_invalid",
+        ));
+    }
+    let pem = document["publicKeyPem"]
+        .as_str()
+        .filter(|v| v.contains("-----BEGIN PUBLIC KEY-----") && !v.contains("PRIVATE KEY-----"))
+        .ok_or_else(|| error("autonomous_research_state_backup_authority_public_key_invalid"))?;
+    let key = VerifyingKey::from_public_key_pem(pem)
+        .map_err(|_| error("autonomous_research_state_backup_authority_public_key_invalid"))?;
+    if document["authorityId"] != value["authorityId"] || document["keyId"] != value["keyId"] {
+        return Err(error(
+            "autonomous_research_state_backup_authority_public_key_identity_mismatch",
+        ));
+    }
+    Ok(key)
+}
 impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
     /// Requires a separately supplied raw-byte configuration pin. Version two
     /// also loads the independently pinned online mutation verifier for replay.
@@ -171,41 +222,7 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         if !command.executable() {
             return Err(error(code));
         }
-        let document = public_document
-            .json("autonomous_research_state_backup_authority_public_key_invalid")?;
-        if !keys(
-            &document,
-            &[
-                "version",
-                "kind",
-                "authorityId",
-                "keyId",
-                "algorithm",
-                "publicKeyPem",
-            ],
-        ) || number(&document["version"]) != Some(1)
-            || document["kind"] != "AutonomousResearchStateBackupAuthorityPublicKey"
-            || document["algorithm"] != "ed25519"
-            || !safe_id(&document["authorityId"])
-            || !safe_id(&document["keyId"])
-        {
-            return Err(error(
-                "autonomous_research_state_backup_authority_public_key_invalid",
-            ));
-        }
-        let pem = document["publicKeyPem"]
-            .as_str()
-            .filter(|v| v.contains("-----BEGIN PUBLIC KEY-----") && !v.contains("PRIVATE KEY-----"))
-            .ok_or_else(|| {
-                error("autonomous_research_state_backup_authority_public_key_invalid")
-            })?;
-        let key = VerifyingKey::from_public_key_pem(pem)
-            .map_err(|_| error("autonomous_research_state_backup_authority_public_key_invalid"))?;
-        if document["authorityId"] != value["authorityId"] || document["keyId"] != value["keyId"] {
-            return Err(error(
-                "autonomous_research_state_backup_authority_public_key_identity_mismatch",
-            ));
-        }
+        let key = parse_public_key(&public_document, &value)?;
         let online_configuration = if number(&value["version"]) == Some(2) {
             Some(Snapshot::load(
                 Path::new(text(&value, "onlineMutationAuthorityConfigurationPath")?),
@@ -229,7 +246,9 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         let result = Self {
             configuration,
             public_document,
-            command,
+            profile: ConfigurationProfile::Process {
+                command: Box::new(command),
+            },
             trust,
             key,
             configuration_hash: hash(
@@ -253,12 +272,32 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         self.online.as_ref().map(|v| v.trust())
     }
     fn current(&self) -> Result<()> {
-        for file in [&self.configuration, &self.public_document, &self.command]
-            .into_iter()
-            .chain(self.online_configuration.as_ref())
-        {
-            file.assert_current()
-                .map_err(|_| error("autonomous_research_state_backup_authority_command_changed"))?;
+        let code = match self.profile {
+            ConfigurationProfile::Process { .. } => {
+                "autonomous_research_state_backup_authority_command_changed"
+            }
+            ConfigurationProfile::Socket => {
+                "autonomous_research_state_backup_authority_socket_inputs_changed"
+            }
+        };
+        self.configuration
+            .assert_current()
+            .map_err(|_| error(code))?;
+        self.public_document
+            .assert_current()
+            .map_err(|_| error(code))?;
+        if let ConfigurationProfile::Process { command } = &self.profile {
+            command.assert_current().map_err(|_| error(code))?;
+        }
+        if let Some(configuration) = &self.online_configuration {
+            configuration.assert_current().map_err(|_| error(code))?;
+        }
+        if matches!(self.profile, ConfigurationProfile::Socket) {
+            self.online
+                .as_ref()
+                .ok_or_else(|| error(code))?
+                .current()
+                .map_err(|_| error(code))?;
         }
         Ok(())
     }
@@ -336,6 +375,7 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         request: &Value,
         now: i64,
     ) -> Result<VerifiedBackupAuthorityReceiptV1> {
+        socket::assert_request(self, request, socket::Operation::Reserve)?;
         self.checked(
             receipt,
             contracts::reservation(self, receipt, request, now)?,
@@ -350,6 +390,7 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         now: i64,
     ) -> Result<VerifiedBackupAuthorityReceiptV1> {
         self.reservation(reservation)?;
+        socket::assert_request(self, request, socket::Operation::Finalize)?;
         self.checked(
             receipt,
             contracts::finalization(self, receipt, request, reservation.value(), now)?,
@@ -362,6 +403,7 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         request: &Value,
         now: i64,
     ) -> Result<VerifiedBackupAuthorityReceiptV1> {
+        socket::assert_request(self, request, socket::Operation::Head)?;
         self.checked(
             receipt,
             contracts::current_head(self, receipt, request, now)?,
@@ -376,6 +418,7 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         request: &Value,
         now: i64,
     ) -> Result<VerifiedBackupAuthorityReceiptV1> {
+        socket::assert_request(self, request, socket::Operation::Journal)?;
         self.checked(
             receipt,
             contracts::journal_range(self, receipt, request, now)?,
@@ -387,9 +430,12 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         request: &Value,
         now: i64,
     ) -> Result<VerifiedBackupAuthorityReceiptV1> {
-        self.current()?;
+        let preflight = self
+            .current()
+            .and_then(|()| socket::assert_request(self, request, socket::Operation::Reserve));
+        socket::rpc_result(self, preflight, false)?;
         let receipt = self.transport.invoke(request)?;
-        self.verify_reservation(&receipt, request, now)
+        socket::rpc_result(self, self.verify_reservation(&receipt, request, now), true)
     }
     pub fn finalize_snapshot(
         &mut self,
@@ -397,27 +443,44 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         reservation: &VerifiedBackupAuthorityReceiptV1,
         now: i64,
     ) -> Result<VerifiedBackupAuthorityReceiptV1> {
-        self.reservation(reservation)?;
+        let preflight = self
+            .reservation(reservation)
+            .and_then(|()| socket::assert_request(self, request, socket::Operation::Finalize));
+        socket::rpc_result(self, preflight, false)?;
         let receipt = self.transport.invoke(request)?;
-        self.verify_finalization(&receipt, request, reservation, now)
+        socket::rpc_result(
+            self,
+            self.verify_finalization(&receipt, request, reservation, now),
+            true,
+        )
     }
     pub fn observe_current_head(
         &mut self,
         request: &Value,
         now: i64,
     ) -> Result<VerifiedBackupAuthorityReceiptV1> {
-        self.current()?;
+        let preflight = self
+            .current()
+            .and_then(|()| socket::assert_request(self, request, socket::Operation::Head));
+        socket::rpc_result(self, preflight, false)?;
         let receipt = self.transport.invoke(request)?;
-        self.verify_current_head(&receipt, request, now)
+        socket::rpc_result(self, self.verify_current_head(&receipt, request, now), true)
     }
     pub fn read_finalized_mutation_journal(
         &mut self,
         request: &Value,
         now: i64,
     ) -> Result<VerifiedBackupAuthorityReceiptV1> {
-        self.current()?;
+        let preflight = self
+            .current()
+            .and_then(|()| socket::assert_request(self, request, socket::Operation::Journal));
+        socket::rpc_result(self, preflight, false)?;
         let receipt = self.transport.invoke(request)?;
-        self.verify_journal_range(&receipt, request, now)
+        socket::rpc_result(
+            self,
+            self.verify_journal_range(&receipt, request, now),
+            true,
+        )
     }
 }
 impl PinnedStateBackupAuthorityV1<ProcessStateBackupAuthorityTransportV1> {

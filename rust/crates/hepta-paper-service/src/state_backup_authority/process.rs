@@ -107,11 +107,13 @@ impl PinnedStateBackupAuthorityV1<ProcessStateBackupAuthorityTransportV1> {
         if let Some(online) = &self.online {
             online.current()?;
         }
-        self.command.assert_native_elf_command_v1(
-            expected_command_path,
-            expected_command_hash,
-            "autonomous_research_state_backup_authority_native_command_invalid",
-        )?;
+        self.profile
+            .process_command()?
+            .assert_native_elf_command_v1(
+                expected_command_path,
+                expected_command_hash,
+                "autonomous_research_state_backup_authority_native_command_invalid",
+            )?;
         self.transport
             .assert_native_process_command_v1(expected_command_path, expected_command_hash)?;
         if let Some(online) = &self.online {

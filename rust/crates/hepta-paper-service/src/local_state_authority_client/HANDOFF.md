@@ -47,6 +47,13 @@ The transport never silently adopts a new origin. Explicitly creating another
 transport after a restart establishes only another untrusted observation;
 the owning composition must independently rebuild any required evidence.
 
+The same concrete transport implements `StateBackupAuthorityTransportV1` by
+delegating to this exchange. The dedicated
+[`load_socket_v1` backup constructor](../state_backup_authority/socket/HANDOFF.md)
+creates it from a separately pinned socket profile after capturing all regular
+inputs. It does not waive the original backup process command pins, accept an
+arbitrary caller transport, or establish native installation authority.
+
 These are connection-creator credentials, captured by the kernel at
 connect/listen time. They do not identify which thread or descendant processes
 each byte when a still-live creator passes or inherits sockets, detect every

@@ -96,5 +96,15 @@ impl MutationAuthorityTransportV1 for LocalStateAuthoritySocketTransportV1 {
     }
 }
 
+// The same bounded untrusted socket wire protocol serves both receipt families.
+// Authentication and configuration/scope binding remain in the backup verifier.
+impl crate::state_backup_authority::StateBackupAuthorityTransportV1
+    for LocalStateAuthoritySocketTransportV1
+{
+    fn invoke(&mut self, request: &Value) -> CoordinatorResult<Value> {
+        <Self as MutationAuthorityTransportV1>::invoke(self, request)
+    }
+}
+
 #[cfg(test)]
 mod tests;

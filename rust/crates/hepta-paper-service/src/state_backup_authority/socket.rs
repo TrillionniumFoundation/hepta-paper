@@ -84,6 +84,9 @@ pub(crate) struct ObservedSocketAuthorityInputsV1 {
     configuration_hash: String,
     options: LocalStateAuthorityClientOptionsV1,
 }
+type SocketBackup = PinnedStateBackupAuthorityV1<LocalStateAuthoritySocketTransportV1>;
+type SocketOnline = PinnedMutationAuthorityV1<LocalStateAuthoritySocketTransportV1>;
+
 impl ObservedSocketAuthorityInputsV1 {
     pub(crate) fn load(path: &Path, raw_file_pin: &str) -> Result<Self> {
         if !path.to_str().is_some_and(valid_path_text) {
@@ -183,6 +186,30 @@ impl ObservedSocketAuthorityInputsV1 {
         files.extend(self.online.retained_configuration_files());
         files
     }
+
+    /// Consume the actual pinned inputs after the owning recovery service has
+    /// checked its options and observed database scope. There is no transport
+    /// argument: both clients originate from one real kernel observation.
+    pub(crate) fn connect_recovery_pair(self) -> Result<(SocketBackup, SocketOnline)> {
+        self.assert_current()?;
+        let (backup_transport, online_transport) =
+            LocalStateAuthoritySocketTransportV1::connect_recovery_pair(&self.options)?;
+        // The preflight already loaded and validated these exact pinned bytes.
+        // Retain a separate actual verifier for the service's online operations;
+        // this repeat load is still before any caller-owned SQLite connection.
+        let online = PinnedMutationAuthorityV1::load(
+            Path::new(text(
+                &self.value,
+                "onlineMutationAuthorityConfigurationPath",
+            )?),
+            text(&self.value, "onlineMutationAuthorityConfigurationSha256")?,
+            online_transport,
+        )?;
+        self.assert_current()?;
+        let backup = SocketBackup::from_socket_inputs(self, backup_transport)?;
+        online.current()?;
+        Ok((backup, online))
+    }
 }
 impl PinnedStateBackupAuthorityV1<LocalStateAuthoritySocketTransportV1> {
     /// Capture actual pinned public inputs and the socket's origin. This does
@@ -191,6 +218,15 @@ impl PinnedStateBackupAuthorityV1<LocalStateAuthoritySocketTransportV1> {
         let inputs = ObservedSocketAuthorityInputsV1::load(path, raw_file_pin)?;
         // Original validation and pre-probe currentness order is preserved.
         let transport = LocalStateAuthoritySocketTransportV1::connect(&inputs.options)?;
+        Self::from_socket_inputs(inputs, transport)
+    }
+
+    // Only this module's fixed single/pair producers call this constructor.
+    // Public callers cannot inject a transport or substitute pinned inputs.
+    fn from_socket_inputs(
+        inputs: ObservedSocketAuthorityInputsV1,
+        transport: LocalStateAuthoritySocketTransportV1,
+    ) -> Result<Self> {
         let result = Self {
             configuration: inputs.configuration,
             public_document: inputs.public_document,

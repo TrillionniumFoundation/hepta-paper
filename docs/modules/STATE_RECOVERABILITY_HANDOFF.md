@@ -22,6 +22,22 @@ The Node oracle is fixed to Node 22.23.1, ICU 78.2, CLDR 48, en-US production co
 
 Public methods are `backup`, `restore_drill`, `recover_backup`, `inspect_sources`, `reconcile_pending`, and `reconcile_and_renew`. They return real execution results or typed coordinator errors. A JSON status supplied by a caller cannot construct their internal verified source/inventory evidence.
 
+The concrete `BackupRecoveryServiceV1<LocalStateAuthoritySocketTransportV1,
+LocalStateAuthoritySocketTransportV1>::load_socket_v1` takes a Socket V1 backup
+configuration path, its independent raw file hash, and these same service
+options. It validates the pinned public inputs, both manifests, absolute roots,
+actual writer-manifest hash, and actual runtime inventory scope before a single
+empty socket probe. Both clients retain the same original kernel peer pidfd and
+endpoint options; separately matching JSON is not used to establish their common
+origin. The online verifier is loaded again from the same actual pinned file,
+then all input and inventory observations are rechecked. Temporary inventory
+descriptors and private-copy SQLite handles are released before return, including
+on errors; clients retain their public-input snapshots. Call this constructor
+before opening caller-owned SQLite connections. Subsequent service methods
+observe their own inventory. The factory grants no epoch or installed native
+identity. The existing CLI and production activation/fence still use Process
+V1/V2; see the [socket profile contract](../../rust/crates/hepta-paper-service/src/state_backup_authority/socket/HANDOFF.md).
+
 `ResidentLeaseV1::new` accepts an identity claim. Only `assert_current` obtains an `ObservedResidentLeaseV1`, by reading the actual resident SQLite row, validating its complete persisted state, and binding its file observation. `LiveBackupHeadObservationV1` proves a fresh signed head for a verified stored source. Neither type alone is an epoch.
 
 `StateRecoverabilityControllerV1` owns this concrete service, resident lease claim, and clock. It starts dirty with no verified head; there is deliberately no caller-supplied initial verified head. Its methods are `reconcile_with_validity`, `reconcile_existing_heartbeat_history_v1`, `assert_for_action`, `mark_finalized`, `require_reconciliation`, `epoch_status`, and `policy`. The epoch permit has private fields and a read-only value projection. The controller implements the coordinator's `RecoverabilityEpochFenceV1`; production composition must use this real implementation rather than an arbitrary successful test fence.
@@ -71,6 +87,27 @@ Before the common readiness fix, a real reproduction created a native ten-databa
 The fixed common `ready` path requires the real current-row proof described above, including for a new controller with no cached proof. The regression must now reject the same data mismatch and withhold an epoch. The separate heartbeat path must preserve the old drill receipt on an invalid nested signature, an extra unsigned row, a NULL-primary-key row, or a change injected during its completion clock. A legitimate fresh controller with exact recovered rows remains a positive control. Historical `inspect_sources`/standalone drill reports remain available as historical diagnostics and do not themselves issue live authority.
 
 ## Verification
+
+`state_recoverability_socket` creates ten actual incumbent-format databases,
+installs their schema through the real Rust authority daemon, then constructs
+the direct service and runs pending reconciliation, native backup and an isolated
+restore drill. It checks ten actual SQLite backup files, the persisted drill
+receipt and the daemon's committed backup-finalization row. Its pending set is
+empty, so it does not cover recovery of an unresolved online finalization.
+Malformed pins/options, mismatched actual scope/writer hash and a different
+backup public key fail with their exact error codes before any probe. Rebinding
+the socket to a different live process rejects both backup and online operations
+before sending bytes; original creator exit rejects both before connecting.
+The fixture pauses only its child daemon before replacement so that the daemon's
+own correct socket-identity rejection does not turn this live-origin case into
+an exited-origin case. It then terminates that child to check the latter path.
+The original qualified Node oracle supplies schema/data and checks installation
+receipts only; the recovery service and authority operations run in Rust. These
+same-UID supplied-key fixtures do not establish production installation.
+
+The transport and backup socket suites separately retain actual commit-with-lost-
+reply, nonretryable unknown-outcome, and DELETE/WAL lock regressions. The new
+service fixture does not independently inject those lower-level failures.
 
 `state_recoverability_resident_parity` has three groups: real Node-created resident row equality/exclusive expiry; invalid identities and persisted state; and replacement, aliases, permissions, sidecar, and deterministic observation races.
 

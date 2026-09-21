@@ -86,6 +86,26 @@ fn assert_only_empty_probe(listener: &UnixListener) {
 }
 
 #[test]
+fn bound_recovery_clients_retain_real_public_inputs_and_one_probe() {
+    let fixture = Fixture::new();
+    let listener = fixture.listener();
+    let pin = hash_bytes(&serde_json::to_vec(&fixture.configuration).unwrap());
+    let inputs =
+        ObservedSocketAuthorityInputsV1::load(&fixture.root.join("socket.json"), &pin).unwrap();
+    let (backup, online) = inputs.connect_recovery_pair().unwrap();
+    assert_eq!(
+        backup.online_mutation_configuration_hash(),
+        Some(online.configuration_hash())
+    );
+    backup.current().unwrap();
+    online.current().unwrap();
+    assert_only_empty_probe(&listener);
+    fs::write(fixture.root.join("online-public.json"), b"changed").unwrap();
+    assert!(backup.current().is_err());
+    assert!(online.current().is_err());
+}
+
+#[test]
 fn socket_configuration_has_closed_numeric_and_path_bounds_before_connect() {
     let fixture = Fixture::new();
     for (field, value) in [

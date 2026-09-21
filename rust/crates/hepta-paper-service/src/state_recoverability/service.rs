@@ -1,5 +1,6 @@
 //! Concrete recovery service. Every ready source comes from the real inventory
 //! resolver, actual backup bytes, signed authority and SQLite restore execution.
+mod socket;
 use super::*;
 use super::{
     observation::{LiveBackupHeadObservationV1, observe_stored_backup_head_v1},
@@ -35,6 +36,27 @@ pub struct BackupRecoveryServiceV1<B, O> {
     pub(super) online: PinnedMutationAuthorityV1<O>,
     pub(super) options: BackupRecoveryServiceOptionsV1,
 }
+
+/// Keep the existing constructor's pure validation and error order shared with
+/// the socket producer, which must finish all these checks before its probe.
+fn validate_service_options(
+    options: &BackupRecoveryServiceOptionsV1,
+    backup_online_configuration_hash: Option<&str>,
+    online_configuration_hash: &str,
+) -> Result<()> {
+    crate::state_backup_authority::manifest::assert_state_database_manifest_v1(
+        &options.state_database_manifest,
+    )?;
+    crate::sqlite_mutation_coordinator::manifest::assert_writer_manifest_v1(
+        &options.writer_manifest,
+    )?;
+    ensure(
+        options.runtime_root.is_absolute()
+            && options.backup_root.is_absolute()
+            && backup_online_configuration_hash == Some(online_configuration_hash),
+        "autonomous_research_state_reconcile_and_renew_backup_online_authority_mismatch",
+    )
+}
 pub(super) struct CurrentRestoreSourcesV1 {
     pub source: VerifiedStoredRestoreSourceV1,
     pub inventory: ObservedStateDatabaseInventoryV1,
@@ -62,17 +84,10 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         online: PinnedMutationAuthorityV1<O>,
         options: BackupRecoveryServiceOptionsV1,
     ) -> Result<Self> {
-        crate::state_backup_authority::manifest::assert_state_database_manifest_v1(
-            &options.state_database_manifest,
-        )?;
-        crate::sqlite_mutation_coordinator::manifest::assert_writer_manifest_v1(
-            &options.writer_manifest,
-        )?;
-        ensure(
-            options.runtime_root.is_absolute()
-                && options.backup_root.is_absolute()
-                && backup.online_mutation_configuration_hash() == Some(online.configuration_hash()),
-            "autonomous_research_state_reconcile_and_renew_backup_online_authority_mismatch",
+        validate_service_options(
+            &options,
+            backup.online_mutation_configuration_hash(),
+            online.configuration_hash(),
         )?;
         Ok(Self {
             backup,

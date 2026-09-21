@@ -127,11 +127,14 @@ main/WAL/SHM files. Close SQLite before dropping those scopes on every path.
 The backup verifier now has a separate [Socket Configuration V1 constructor](../../state_backup_authority/socket/HANDOFF.md).
 Its original Process V1/V2 profiles still capture and enforce their process
 command pins. The direct constructor binds the actual online/backup public keys,
-scope and limits, and sends no subprocess command. Complete owning
-preparation/recoverability still fixes concrete process types. Connecting the
-new verifier requires actual direct transport consumers, a shared qualified
-origin and full retained-scope tests; it cannot silently reinterpret the old
-process configuration identity as the new socket installation subject.
+scope and limits, and sends no subprocess command. The concrete recovery
+service's Socket V1 factory now consumes this profile with one original kernel
+peer shared by its online and backup clients. Actual ten-database backup,
+isolated restore and empty-pending reconciliation exercise that source path.
+The CLI, complete activation preparation and production recoverability fence
+still fix concrete process types. Their integration requires a shared qualified
+installation and full retained-scope tests; it cannot silently reinterpret the
+old process configuration identity as the new socket installation subject.
 
 Required source tests include real signed observe/reserve/finalize calls through
 the new transport and existing verifier; original-listener exit with a child

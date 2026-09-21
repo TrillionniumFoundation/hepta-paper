@@ -7,6 +7,7 @@ use crate::sqlite_mutation_coordinator::{
     authority::MutationAuthorityTransportV1, error,
 };
 use peer::SocketPeer;
+use std::sync::Arc;
 
 /// Concrete untrusted transport accepted by `PinnedMutationAuthorityV1::load`.
 /// The original connected peer is observed from the kernel, not from expected
@@ -19,7 +20,7 @@ use peer::SocketPeer;
 #[derive(Debug)]
 pub struct LocalStateAuthoritySocketTransportV1 {
     options: LocalStateAuthorityClientOptionsV1,
-    origin: SocketPeer,
+    origin: Arc<SocketPeer>,
 }
 
 fn annotated(cause: LocalStateAuthorityClientError, sent: usize) -> SqliteMutationCoordinatorError {
@@ -56,10 +57,24 @@ impl LocalStateAuthoritySocketTransportV1 {
             origin.assert_alive(deadline)?;
             Ok(Self {
                 options: options.clone(),
-                origin,
+                origin: Arc::new(origin),
             })
         };
         observe().map_err(|cause| annotated(cause, 0))
+    }
+
+    /// The recovery-service producer is the only consumer. Both channels keep
+    /// the exact captured kernel origin and options; this never reconnects or
+    /// accepts a caller's expected PID, credentials or alternate endpoint.
+    pub(crate) fn connect_recovery_pair(
+        options: &LocalStateAuthorityClientOptionsV1,
+    ) -> CoordinatorResult<(Self, Self)> {
+        let first = Self::connect(options)?;
+        let second = Self {
+            options: first.options.clone(),
+            origin: Arc::clone(&first.origin),
+        };
+        Ok((first, second))
     }
 }
 

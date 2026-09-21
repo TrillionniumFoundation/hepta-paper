@@ -56,6 +56,37 @@ fn assert_unknown(error: &SqliteMutationCoordinatorError, sent: usize) {
 }
 
 #[test]
+fn recovery_pair_retains_one_origin_and_makes_only_one_empty_probe() {
+    let fixture = Fixture::new();
+    let options = fixture.options();
+    let listener = UnixListener::bind(&options.socket_path).unwrap();
+    let (first, second) =
+        LocalStateAuthoritySocketTransportV1::connect_recovery_pair(&options).unwrap();
+    assert!(Arc::ptr_eq(&first.origin, &second.origin));
+    let weak = Arc::downgrade(&first.origin);
+    let (mut probe, _) = listener.accept().unwrap();
+    probe
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let mut bytes = Vec::new();
+    probe.read_to_end(&mut bytes).unwrap();
+    assert!(bytes.is_empty());
+    listener.set_nonblocking(true).unwrap();
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    drop(first);
+    assert_eq!(weak.strong_count(), 1);
+    second
+        .origin
+        .assert_alive(Instant::now() + Duration::from_secs(1))
+        .unwrap();
+    drop(second);
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
 fn invalid_requests_are_not_sent_and_do_not_consume_the_origin() {
     let fixture = Fixture::new();
     let options = fixture.options();

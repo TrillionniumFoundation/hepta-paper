@@ -54,6 +54,15 @@ creates it from a separately pinned socket profile after capturing all regular
 inputs. It does not waive the original backup process command pins, accept an
 arbitrary caller transport, or establish native installation authority.
 
+The concrete socket recovery-service factory uses the crate-private
+`connect_recovery_pair` producer. It makes one empty probe, then retains the
+same original `SocketPeer` allocation in both transports. Dropping either
+client leaves the original pidfd owned by the other; neither channel refreshes
+its origin after a restart. This producer exposes no public arbitrary clone,
+alternate endpoint or caller-supplied peer. Its service validates public pins,
+options and actual database/writer scope before probing and releases temporary
+inventory descriptors before returning.
+
 These are connection-creator credentials, captured by the kernel at
 connect/listen time. They do not identify which thread or descendant processes
 each byte when a still-live creator passes or inherits sockets, detect every

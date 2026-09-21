@@ -83,12 +83,18 @@ does not acquire database handles or confer a transaction permit.
 
 ## Integration boundary
 
-The generic backup recovery service can consume the verifier; it already checks
-the embedded online configuration against its online verifier. The concrete
-production fence, native transaction binding and owning preparation still need
-a versioned socket composition and one shared verified authority origin.
-Separately constructed transports with matching JSON are not evidence of one
-installed invocation.
+The concrete recovery-service
+[`load_socket_v1`](../../state_recoverability/service/socket.rs) now constructs
+both clients from this same pinned profile. It validates service options,
+the actual complete runtime inventory scope and writer-manifest hash before
+one empty probe. Both transports share the one captured original peer through
+a private `Arc`; neither accepts a caller's expected PID or another endpoint.
+The service releases its temporary inventory before returning and retains
+the clients' public-input snapshots. Its existing backup, restore, inspection
+and reconciliation methods consume these concrete clients. The Process CLI,
+production fence, native transaction binding and owning activation preparation
+still need their own versioned socket composition and qualified installation.
+The shared socket origin alone does not prove an installed invocation.
 
 The [installation design](../../online_mutation_composition/activation/AUTHORITY_INSTALLATION_DESIGN.md)
 requires the complete additional daemon role to be part of the independently
@@ -122,3 +128,12 @@ the original snapshots remain owned until SQLite closes. Existing
 `state_backup_authority_parity` and `local_state_authority_socket_transport`
 targets continue to cover the original Node process contracts and kernel
 origin lifetime, listener replacement, forged signatures and transport limits.
+
+The pair-construction unit tests require exactly one empty probe and retain the
+same origin across either client's destruction; actual public-key drift still
+invalidates the bound clients. `tests/state_recoverability_socket.rs` additionally
+runs the concrete service through a real ten-database backup, isolated restore
+and empty-pending reconciliation, checks the persisted authority finalization,
+and refuses replacement/dead origins through both channels. It uses a supplied
+test key and the original qualified Node schema fixture, not an installed-host
+qualification or pending-finalization recovery claim.

@@ -78,7 +78,15 @@ fn release_trust_gate_matches_node_oracle() {
         {"releaseCommit":"commit-a","capabilityCount":[["\u{FEFF}1\u{FEFF}"]],"implementationVerified":[[1]],"releaseBoundConformanceVerified":[["1"]],"independentProductionOperationalVerified":[null]},
         {"releaseCommit":"commit-a","capabilityCount":1,"implementationVerified":[null,null],"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
         {"releaseCommit":"commit-a","capabilityCount":"\u{0085}1","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
-        {"releaseCommit":"\u{0085}","capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0}
+        {"releaseCommit":"\u{0085}","capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"+0x10","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"-0x1","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"0x","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"1e+2","implementationVerified":100,"releaseBoundConformanceVerified":100,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"01","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"-0","implementationVerified":0,"releaseBoundConformanceVerified":0,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"\u{0085}1","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":["1"],"implementationVerified":[null],"releaseBoundConformanceVerified":[["1"]],"independentProductionOperationalVerified":[[null]]}
     ]);
     let expected = oracle(&requests);
     for (index, request) in requests.as_array().unwrap().iter().enumerate() {

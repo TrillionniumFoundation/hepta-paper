@@ -31,6 +31,8 @@ pub mod full_suite_verification;
 pub mod generic_domain_capability_evidence;
 pub mod journal_connector_coverage;
 pub mod local_golden_dataset;
+pub mod local_state_authority;
+pub mod local_state_authority_client;
 pub mod maintenance;
 pub mod native_business;
 pub mod native_workspace;

@@ -901,6 +901,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/state_recoverability/renewal.rs",
           "symbol": "renew"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority.rs",
+          "symbol": "handle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
+          "symbol": "request_local_state_authority_v1"
         }
       ],
       "tests": [
@@ -912,9 +920,19 @@
         "rust/crates/hepta-paper-service/tests/state_recoverability_heartbeat_parity.rs",
         "rust/crates/hepta-paper-service/tests/state_backup_relocated_binary.rs",
         "rust/crates/hepta-paper-service/tests/state_recoverability_automatic_parity.rs",
-        "rust/crates/hepta-paper-service/tests/state_recoverability_mixed_parity.rs"
+        "rust/crates/hepta-paper-service/tests/state_recoverability_mixed_parity.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+        "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
+        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs"
       ],
-      "remaining": "Native five-mode CLI composes actual ten-database inspection, signed backup/drill, independent exact-bundle renewal, and pending reconciliation; copied-binary explicit workspace roots, real authority processes, blocked reports and exit classes are exercised. The concrete controller automatically selects authenticated historical snapshots for fixed business, heartbeat and mixed ranges under the complete original registry and compares actual replay with every live effective SQLite row before publishing or minting an epoch; complete original Node normal-controller/drill reports match. Selected failures cannot silently renew a backup. General history requires the full original registry and binds operation/writer/role/schema/provenance and allowed effects; custom non-heartbeat source fallback and reconstruction of callback invocation traces are not claimed. Deliberate stricter v2 authority-verifier requirements, SQLite engine-header byte differences, full activation composition, operational retention and independent target-host/authority acceptance also remain open.",
+      "remaining": "Native five-mode CLI composes actual ten-database inspection, signed backup/drill, independent exact-bundle renewal, and pending reconciliation; copied-binary explicit workspace roots, real authority processes, blocked reports and exit classes are exercised. The concrete controller automatically selects authenticated historical snapshots for fixed business, heartbeat and mixed ranges under the complete original registry and compares actual replay with every live effective SQLite row before publishing or minting an epoch; complete original Node normal-controller/drill reports match. Selected failures cannot silently renew a backup. General history requires the full original registry and binds operation/writer/role/schema/provenance and allowed effects; custom non-heartbeat source fallback and reconstruction of callback invocation traces are not claimed. Deliberate stricter v2 authority-verifier requirements, SQLite engine-header byte differences, full activation composition, operational retention and independent target-host/authority acceptance also remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/state_backup_authority.rs",
         "rust/crates/hepta-paper-service/src/state_backup_authority/contracts.rs",
@@ -954,7 +972,20 @@
         "rust/crates/hepta-paper-service/src/native_workspace.rs",
         "rust/crates/hepta-paper-service/src/state_recoverability/controller/automatic.rs",
         "rust/crates/hepta-paper-service/src/state_recoverability/history/selection.rs",
-        "rust/crates/hepta-paper-service/src/state_recoverability/history/registered.rs"
+        "rust/crates/hepta-paper-service/src/state_recoverability/history/registered.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-state-authority-client.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-state-authority-daemon.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/backup.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/storage.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/mutation.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/runtime_tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server/publication.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql"
       ],
       "testCases": [
         {
@@ -1008,6 +1039,210 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/state_recoverability_automatic_parity.rs",
           "symbol": "automatic_reconciliation_reuses_old_snapshot_for_running_and_fresh_controller"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "native_schema_genesis_persists_and_original_node_verifies_real_signatures"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "schema_expiry_renewal_and_tampered_storage_do_not_publish_false_receipts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "provided_key_configuration_and_database_names_are_retained_until_sqlite_closes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "native_restart_rejects_changed_signing_key_schema_and_implicit_node_migration"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "genuine_signed_backup_reserve_finalize_head_match_original_node_and_replay_idempotently"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "live_signed_backup_blocks_actual_mutation_and_release_allows_progress"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "expired_backup_cannot_claim_fencing_after_real_mutation_or_pending_reservation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "finalized_journal_uses_real_signed_history_and_rejects_stale_or_forged_ranges"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "persisted_receipt_binding_signature_and_idempotent_conflict_are_checked"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "backup_rows_roll_back_after_real_signed_writes_until_owner_commits"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "malformed_backup_requests_match_node_and_leave_journal_unchanged"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "original_node_client_and_native_client_use_real_native_signing_server"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "socket_publication_never_overwrites_or_removes_other_owners_names"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "socket_permission_change_fences_serving_before_any_request"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "idle_or_trickling_peers_do_not_block_other_complete_requests"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "full_ancestor_rename_and_symlink_are_rejected_without_releasing_sqlite_locks"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "directory_children_may_change_but_mode_identity_and_missing_ancestors_cannot"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "capture_refuses_existing_ancestor_symlink_and_binds_the_opened_directory"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "real_signed_rebind_requires_actual_file_restart_under_exact_target_and_supports_another_pristine_rebind"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "renewal_at_expiry_replaces_signed_reservation_and_invalidates_old_installations"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "exact_target_key_signed_receipts_and_unchanged_pristine_heads_are_required_for_activation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "activation_failure_rolls_back_all_ten_head_updates_and_leaves_restart_pending"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "first_reserve_requires_signed_initial_genesis_zero_sequences_and_no_unfinished_backups"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "signed_reservation_is_idempotent_and_globally_exclusive"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "abort_retains_signed_evidence_and_reuses_unconsumed_sequence_then_finalizes_once"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "genuine_signed_resolution_and_unresolved_observations_track_pending_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "invalid_time_scope_extra_fields_and_tampered_receipts_cannot_advance_heads"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "clock_rollback_and_sequence_exhaustion_fail_without_new_reservations"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "failed_finalization_rolls_back_both_heads_and_retains_pending_reservation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "two_actual_sqlite_connections_cannot_reserve_the_same_global_head"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "actual_refused_socket_is_reclaimed_and_live_listener_is_preserved"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "files_symlinks_and_hardlinked_sockets_are_never_reclaimed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "full_listen_backlog_is_uncertain_and_cannot_trigger_unlink"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "private_parent_and_sticky_trusted_ancestors_are_enforced"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "cleanup_preserves_replacements_and_namespace_drift"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "actual_sigkill_residue_can_be_republished_safely"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "native_client_interoperates_with_actual_incumbent_unix_server_and_client"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "half_close_chunked_envelopes_and_remote_errors_match_actual_node_client"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "strict_json_rejects_ambiguous_inputs_and_responses_before_returning_a_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "byte_limits_configuration_and_connection_failures_are_bounded"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "absolute_deadline_expires_despite_response_progress"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "absolute_deadline_bounds_full_connect_backlog_and_blocked_write"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "exact_byte_limit_includes_request_and_response_newlines"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "strict_cli_arguments_help_and_stdin_errors_match_actual_node_entry_function"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
+          "symbol": "fixed_native_cli_help_and_input_errors"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+          "symbol": "daemon_argument_modes_match_original_node_without_starting_node_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+          "symbol": "actual_native_daemon_with_zero_umask_serves_and_cleans_up_on_sigterm"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "refusal_never_authorizes_unlink_after_identity_permission_or_parent_change"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "staging_cleanup_cannot_delete_replaced_socket_or_directory"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "long_parent_and_short_socket_match_actual_node_staging_path_budget"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "staging_cleanup_preserves_same_inode_after_ancestor_rename_and_symlink"
         }
       ]
     },
@@ -1663,6 +1898,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/current.rs",
           "symbol": "verify_schema_transition_history_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority.rs",
+          "symbol": "handle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
+          "symbol": "request_local_state_authority_v1"
         }
       ],
       "tests": [
@@ -1697,9 +1940,19 @@
         "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/tests/native_business.rs",
         "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/transfer/tests.rs",
         "rust/crates/hepta-cutover/src/durable/external_transfer/tests.rs",
-        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process/native_command/tests.rs"
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process/native_command/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+        "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
+        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs"
       ],
-      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. A sealed initial composition now owns concrete process pins, actual ten-database startup/finalized proofs, the same recoverability fence attached to the coordinator, and a final common expiry boundary; it grants no writes. Authenticated original schema checkpoints now feed a private bridge that merges all ten signed finalized chains, replays the complete registered effects in isolated copies, compares every effective table, and obtains fresh schema observation against the original FINAL and current terminal head; empty and actual heartbeat history pass while unjournaled rowid changes fail. Fresh external cutover-journal v2 storage keeps the adjacent enrollment sentinel and unchanged business inventory, with Node/Rust transaction exclusion. The owning constructor now explicitly retains initial versus historical schema evidence, authenticates the checkpoint before startup RPC, and binds subsequent proofs to actual post-startup inventory after pending-finalization recovery. A separate private observer re-verifies full deployment and retains the actual kernel executable, exact ELF hash/ancestry, nonroot real/effective/saved UID/GID and argv; a source-owned reconciliation digest is distinct from worker identity. This observation does not grant writer authority. A private fixed-native-store inventory guard now checks non-target bytes and complete namespaces without target descriptor opens/closes, and actual durable state is exposed inside the held writer lock. Retained transaction checks now compose actual source/cache descriptors, startup post-inventory, schema/checkpoint/history/replay, active/finalized signatures and the same concrete recovery fence, with exact opaque origin bindings and a final common expiry boundary. Recovery retains the original evidence allocation across failure/feedback and blocks full re-observation through fence clones until the scope ends. Separate-process SQLite-lock fixtures cover staged writes and invalidation. A crate-private consuming owner now binds actual signed qualification/deployment/preimage, closed native configuration/epoch, the exact locked Production/Canary writer/scope and external-v2 enrollment to the two fixed reconciliation operations. Full preflight precedes both SQLite connections; only retained checks run under locks; target and journal close before evidence drops, and committed/pending errors retain original details. Pure epoch, external observer and outcome tests do not constitute a genuine full installed-production owning acceptance. A private actual-Shadow signing diagnostic now derives the same runtime epoch/configuration under a retained lock and emits no authority; a private owning signed-transfer route now fully closes its preview scopes, binds the genuine signature to actual native subject/preimage/initial epoch, uses safe external-v2 full-Shadow CAS, and freshly admits one business operation using only the returned actual Canary lease. Cutover-success/business-failure and lower unknown-COMMIT outcomes preserve their separate truth and prohibit automatic workflow retry. Held online/backup command checks now verify actual ELF path/hash, root-owned installation and configuration/key pins without RPC or regular-file reopen; ELF alone does not prove a Rust adapter. Reviewed native authority adapter implementation/topology, complete writable CLI composition, subsequent-write admission beyond the first exact preimage, existing-v1 storage migration, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
+      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. A sealed initial composition now owns concrete process pins, actual ten-database startup/finalized proofs, the same recoverability fence attached to the coordinator, and a final common expiry boundary; it grants no writes. Authenticated original schema checkpoints now feed a private bridge that merges all ten signed finalized chains, replays the complete registered effects in isolated copies, compares every effective table, and obtains fresh schema observation against the original FINAL and current terminal head; empty and actual heartbeat history pass while unjournaled rowid changes fail. Fresh external cutover-journal v2 storage keeps the adjacent enrollment sentinel and unchanged business inventory, with Node/Rust transaction exclusion. The owning constructor now explicitly retains initial versus historical schema evidence, authenticates the checkpoint before startup RPC, and binds subsequent proofs to actual post-startup inventory after pending-finalization recovery. A separate private observer re-verifies full deployment and retains the actual kernel executable, exact ELF hash/ancestry, nonroot real/effective/saved UID/GID and argv; a source-owned reconciliation digest is distinct from worker identity. This observation does not grant writer authority. A private fixed-native-store inventory guard now checks non-target bytes and complete namespaces without target descriptor opens/closes, and actual durable state is exposed inside the held writer lock. Retained transaction checks now compose actual source/cache descriptors, startup post-inventory, schema/checkpoint/history/replay, active/finalized signatures and the same concrete recovery fence, with exact opaque origin bindings and a final common expiry boundary. Recovery retains the original evidence allocation across failure/feedback and blocks full re-observation through fence clones until the scope ends. Separate-process SQLite-lock fixtures cover staged writes and invalidation. A crate-private consuming owner now binds actual signed qualification/deployment/preimage, closed native configuration/epoch, the exact locked Production/Canary writer/scope and external-v2 enrollment to the two fixed reconciliation operations. Full preflight precedes both SQLite connections; only retained checks run under locks; target and journal close before evidence drops, and committed/pending errors retain original details. Pure epoch, external observer and outcome tests do not constitute a genuine full installed-production owning acceptance. A private actual-Shadow signing diagnostic now derives the same runtime epoch/configuration under a retained lock and emits no authority; a private owning signed-transfer route now fully closes its preview scopes, binds the genuine signature to actual native subject/preimage/initial epoch, uses safe external-v2 full-Shadow CAS, and freshly admits one business operation using only the returned actual Canary lease. Cutover-success/business-failure and lower unknown-COMMIT outcomes preserve their separate truth and prohibit automatic workflow retry. Held online/backup command checks now verify actual ELF path/hash, root-owned installation and configuration/key pins without RPC or regular-file reopen; ELF alone does not prove a Rust adapter. Reviewed native authority adapter implementation/topology, complete writable CLI composition, subsequent-write admission beyond the first exact preimage, existing-v1 storage migration, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-automation-reconcile.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation.rs",
@@ -1750,7 +2003,20 @@
         "rust/crates/hepta-cutover/src/durable/external_transfer/preimage.rs",
         "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process.rs",
         "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process/native_command.rs",
-        "rust/crates/hepta-paper-service/src/state_backup_authority/process.rs"
+        "rust/crates/hepta-paper-service/src/state_backup_authority/process.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-state-authority-client.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-state-authority-daemon.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/backup.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/storage.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/mutation.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/runtime_tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server/publication.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql"
       ],
       "testCases": [
         {
@@ -2448,6 +2714,210 @@
         {
           "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process/native_command/tests.rs",
           "symbol": "command_path_hardlink_replacement_is_rejected_without_opening_live_database"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "native_schema_genesis_persists_and_original_node_verifies_real_signatures"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "schema_expiry_renewal_and_tampered_storage_do_not_publish_false_receipts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "provided_key_configuration_and_database_names_are_retained_until_sqlite_closes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "native_restart_rejects_changed_signing_key_schema_and_implicit_node_migration"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "genuine_signed_backup_reserve_finalize_head_match_original_node_and_replay_idempotently"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "live_signed_backup_blocks_actual_mutation_and_release_allows_progress"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "expired_backup_cannot_claim_fencing_after_real_mutation_or_pending_reservation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "finalized_journal_uses_real_signed_history_and_rejects_stale_or_forged_ranges"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "persisted_receipt_binding_signature_and_idempotent_conflict_are_checked"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "backup_rows_roll_back_after_real_signed_writes_until_owner_commits"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "malformed_backup_requests_match_node_and_leave_journal_unchanged"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "original_node_client_and_native_client_use_real_native_signing_server"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "socket_publication_never_overwrites_or_removes_other_owners_names"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "socket_permission_change_fences_serving_before_any_request"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "idle_or_trickling_peers_do_not_block_other_complete_requests"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "full_ancestor_rename_and_symlink_are_rejected_without_releasing_sqlite_locks"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "directory_children_may_change_but_mode_identity_and_missing_ancestors_cannot"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "capture_refuses_existing_ancestor_symlink_and_binds_the_opened_directory"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "real_signed_rebind_requires_actual_file_restart_under_exact_target_and_supports_another_pristine_rebind"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "renewal_at_expiry_replaces_signed_reservation_and_invalidates_old_installations"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "exact_target_key_signed_receipts_and_unchanged_pristine_heads_are_required_for_activation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "activation_failure_rolls_back_all_ten_head_updates_and_leaves_restart_pending"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "first_reserve_requires_signed_initial_genesis_zero_sequences_and_no_unfinished_backups"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "signed_reservation_is_idempotent_and_globally_exclusive"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "abort_retains_signed_evidence_and_reuses_unconsumed_sequence_then_finalizes_once"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "genuine_signed_resolution_and_unresolved_observations_track_pending_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "invalid_time_scope_extra_fields_and_tampered_receipts_cannot_advance_heads"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "clock_rollback_and_sequence_exhaustion_fail_without_new_reservations"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "failed_finalization_rolls_back_both_heads_and_retains_pending_reservation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "two_actual_sqlite_connections_cannot_reserve_the_same_global_head"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "actual_refused_socket_is_reclaimed_and_live_listener_is_preserved"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "files_symlinks_and_hardlinked_sockets_are_never_reclaimed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "full_listen_backlog_is_uncertain_and_cannot_trigger_unlink"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "private_parent_and_sticky_trusted_ancestors_are_enforced"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "cleanup_preserves_replacements_and_namespace_drift"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "actual_sigkill_residue_can_be_republished_safely"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "native_client_interoperates_with_actual_incumbent_unix_server_and_client"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "half_close_chunked_envelopes_and_remote_errors_match_actual_node_client"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "strict_json_rejects_ambiguous_inputs_and_responses_before_returning_a_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "byte_limits_configuration_and_connection_failures_are_bounded"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "absolute_deadline_expires_despite_response_progress"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "absolute_deadline_bounds_full_connect_backlog_and_blocked_write"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "exact_byte_limit_includes_request_and_response_newlines"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "strict_cli_arguments_help_and_stdin_errors_match_actual_node_entry_function"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
+          "symbol": "fixed_native_cli_help_and_input_errors"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+          "symbol": "daemon_argument_modes_match_original_node_without_starting_node_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+          "symbol": "actual_native_daemon_with_zero_umask_serves_and_cleans_up_on_sigterm"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "refusal_never_authorizes_unlink_after_identity_permission_or_parent_change"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "staging_cleanup_cannot_delete_replaced_socket_or_directory"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "long_parent_and_short_socket_match_actual_node_staging_path_budget"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "staging_cleanup_preserves_same_inode_after_ancestor_rename_and_symlink"
         }
       ]
     },
@@ -3624,6 +4094,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/current.rs",
           "symbol": "verify_schema_transition_history_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority.rs",
+          "symbol": "handle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
+          "symbol": "request_local_state_authority_v1"
         }
       ],
       "tests": [
@@ -3638,9 +4116,19 @@
         "rust/crates/hepta-paper-service/tests/state_recoverability_fence.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/history/current/tests.rs",
-        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/finalized_history/tests.rs"
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/finalized_history/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+        "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
+        "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs"
       ],
-      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime. A read-only historical checkpoint loader now authenticates the original full signed post-inventory and exact retained database bytes while refusing missing/substituted evidence; a private all-ten-database bridge now verifies retained signed history and actual registered replay against every current table, binds a fresh schema observation to the original FINAL/current head and rejects unrecorded state changes. Owning restart activation, checkpoint capture/publication, missing-history recovery and full v2 service acceptance remain open.",
+      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime. A read-only historical checkpoint loader now authenticates the original full signed post-inventory and exact retained database bytes while refusing missing/substituted evidence; a private all-ten-database bridge now verifies retained signed history and actual registered replay against every current table, binds a fresh schema observation to the original FINAL/current head and rejects unrecorded state changes. Owning restart activation, checkpoint capture/publication, missing-history recovery and full v2 service acceptance remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
@@ -3678,7 +4166,20 @@
         "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/history/current.rs",
         "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/finalized_history.rs",
-        "rust/crates/hepta-paper-service/src/state_recoverability/history/checkpoint_replay.rs"
+        "rust/crates/hepta-paper-service/src/state_recoverability/history/checkpoint_replay.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority_client.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-state-authority-client.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-state-authority-daemon.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/backup.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/storage.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/mutation.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/runtime_tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/server/publication.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/schema.sql"
       ],
       "testCases": [
         {
@@ -3764,6 +4265,210 @@
         {
           "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/finalized_history/tests.rs",
           "symbol": "signed_current_genesis_cannot_replace_original_schema_genesis"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "native_schema_genesis_persists_and_original_node_verifies_real_signatures"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "schema_expiry_renewal_and_tampered_storage_do_not_publish_false_receipts"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "provided_key_configuration_and_database_names_are_retained_until_sqlite_closes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+          "symbol": "native_restart_rejects_changed_signing_key_schema_and_implicit_node_migration"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "genuine_signed_backup_reserve_finalize_head_match_original_node_and_replay_idempotently"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "live_signed_backup_blocks_actual_mutation_and_release_allows_progress"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "expired_backup_cannot_claim_fencing_after_real_mutation_or_pending_reservation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "finalized_journal_uses_real_signed_history_and_rejects_stale_or_forged_ranges"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "persisted_receipt_binding_signature_and_idempotent_conflict_are_checked"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "backup_rows_roll_back_after_real_signed_writes_until_owner_commits"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/backup/tests.rs",
+          "symbol": "malformed_backup_requests_match_node_and_leave_journal_unchanged"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "original_node_client_and_native_client_use_real_native_signing_server"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "socket_publication_never_overwrites_or_removes_other_owners_names"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "socket_permission_change_fences_serving_before_any_request"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests/server_tests.rs",
+          "symbol": "idle_or_trickling_peers_do_not_block_other_complete_requests"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "full_ancestor_rename_and_symlink_are_rejected_without_releasing_sqlite_locks"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "directory_children_may_change_but_mode_identity_and_missing_ancestors_cannot"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/storage/tests.rs",
+          "symbol": "capture_refuses_existing_ancestor_symlink_and_binds_the_opened_directory"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "real_signed_rebind_requires_actual_file_restart_under_exact_target_and_supports_another_pristine_rebind"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "renewal_at_expiry_replaces_signed_reservation_and_invalidates_old_installations"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "exact_target_key_signed_receipts_and_unchanged_pristine_heads_are_required_for_activation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "activation_failure_rolls_back_all_ten_head_updates_and_leaves_restart_pending"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/schema_rebind/tests.rs",
+          "symbol": "first_reserve_requires_signed_initial_genesis_zero_sequences_and_no_unfinished_backups"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "signed_reservation_is_idempotent_and_globally_exclusive"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "abort_retains_signed_evidence_and_reuses_unconsumed_sequence_then_finalizes_once"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "genuine_signed_resolution_and_unresolved_observations_track_pending_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "invalid_time_scope_extra_fields_and_tampered_receipts_cannot_advance_heads"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "clock_rollback_and_sequence_exhaustion_fail_without_new_reservations"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "failed_finalization_rolls_back_both_heads_and_retains_pending_reservation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/mutation/tests.rs",
+          "symbol": "two_actual_sqlite_connections_cannot_reserve_the_same_global_head"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "actual_refused_socket_is_reclaimed_and_live_listener_is_preserved"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "files_symlinks_and_hardlinked_sockets_are_never_reclaimed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "full_listen_backlog_is_uncertain_and_cannot_trigger_unlink"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "private_parent_and_sticky_trusted_ancestors_are_enforced"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "cleanup_preserves_replacements_and_namespace_drift"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "actual_sigkill_residue_can_be_republished_safely"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "native_client_interoperates_with_actual_incumbent_unix_server_and_client"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "half_close_chunked_envelopes_and_remote_errors_match_actual_node_client"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "strict_json_rejects_ambiguous_inputs_and_responses_before_returning_a_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "byte_limits_configuration_and_connection_failures_are_bounded"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "absolute_deadline_expires_despite_response_progress"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "absolute_deadline_bounds_full_connect_backlog_and_blocked_write"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "exact_byte_limit_includes_request_and_response_newlines"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/tests.rs",
+          "symbol": "strict_cli_arguments_help_and_stdin_errors_match_actual_node_entry_function"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_client_cli.rs",
+          "symbol": "fixed_native_cli_help_and_input_errors"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+          "symbol": "daemon_argument_modes_match_original_node_without_starting_node_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_state_authority_daemon_cli.rs",
+          "symbol": "actual_native_daemon_with_zero_umask_serves_and_cleans_up_on_sigterm"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "refusal_never_authorizes_unlink_after_identity_permission_or_parent_change"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "staging_cleanup_cannot_delete_replaced_socket_or_directory"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "long_parent_and_short_socket_match_actual_node_staging_path_budget"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/server/publication/tests.rs",
+          "symbol": "staging_cleanup_preserves_same_inode_after_ancestor_rename_and_symlink"
         }
       ]
     },

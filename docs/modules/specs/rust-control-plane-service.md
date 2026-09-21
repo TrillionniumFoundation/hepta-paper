@@ -117,6 +117,13 @@ The module documentation validator additionally proves one-to-one registry/spec/
 
 ### Runtime migration implementation details
 
+The [local state authority handoff](../LOCAL_STATE_AUTHORITY_HANDOFF.md) documents
+the separate native authority client/daemon, its supplied-key signing and private
+journal. Its source lives in the same crate for shared contracts; that does not
+grant this control-plane role the daemon's key custody or change this module's
+`prepared_result_only` ceiling. Installed principal/topology separation, old Node
+journal migration and independent host acceptance remain required.
+
 The [automation reconciliation execution handoff](../AUTOMATION_RECONCILIATION_EXECUTION_HANDOFF.md)
 specifies the schema-25 offline transaction, private receipt issuer, shared Node
 package lock, local cutover admission, live/default-root passive CLI, exact signed

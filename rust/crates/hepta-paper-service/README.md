@@ -367,3 +367,15 @@ for both online and backup clients. It does not invoke an RPC or change generic
 script support. An ELF can be Node itself: reviewed Rust adapter semantics and
 child topology binding remain necessary before exposing the native writer.
 See the [composition handoff](../../../docs/modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md).
+
+Native `hepta-paper-state-authority-client` and
+`hepta-paper-state-authority-daemon` now implement the Unix protocol and all 15
+local authority request kinds, including genuine Ed25519 signing from an
+operator-provided key, native SQLite persistence, mutation/backup fencing and
+pristine schema rebind. The target-config restart atomically activates ten heads
+and fences an already running old configuration. The dedicated daemon has its
+own key-custody requirements; the library API does not prove OS separation from
+writers. See the [local authority implementation contract](../../../docs/modules/LOCAL_STATE_AUTHORITY_HANDOFF.md)
+for exact configuration, transaction, socket, compatibility and recovery rules.
+Existing Node journals require explicit migration. Installed adapter/topology
+qualification, complete native writer composition and retirement remain open.

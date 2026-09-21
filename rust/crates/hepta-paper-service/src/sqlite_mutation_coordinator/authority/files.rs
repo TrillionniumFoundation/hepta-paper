@@ -145,6 +145,12 @@ impl Snapshot {
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+    /// Retain the descriptor and identity after an authority has decoded its
+    /// private key, without retaining a second plaintext copy of that key.
+    pub(crate) fn clear_secret_bytes(&mut self) {
+        use zeroize::Zeroize;
+        self.bytes.zeroize();
+    }
     pub fn json(&self, code: &str) -> Result<Value> {
         parse(&self.bytes, code)
     }

@@ -496,3 +496,21 @@ DELETE main/WAL SHM lock probes. The existing online all-actions process parity
 and backup v1/v2 process parity tests each pass using the qualified Node oracle;
 strict service Clippy also passes. The [source-adjacent contract](../../rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process/NATIVE_COMMAND_HANDOFF.md)
 records the exact API and its limits.
+
+## Native local authority service implementation
+
+The [native authority implementation](LOCAL_STATE_AUTHORITY_HANDOFF.md) now has
+two actual Rust binaries, the EOF-framed Unix client/server, all 15 authority
+request kinds, the supplied-key signer and an exact native SQLite journal.
+Mutation/backup exclusion, signed chain verification and atomic target-config
+schema rebind are implemented; a stale source instance is fenced inside its
+next transaction. These source components can replace the incumbent protocol
+handlers after their distinct installation and migration requirements are met.
+
+They do not by themselves bind the authority child to the qualified deployment,
+prove old-Node-process shutdown, migrate an existing Node authority journal,
+or establish independent principal/key custody. The private native composition
+still needs that actual installed adapter/topology proof before exposing a
+writable production CLI. No Boolean readiness or activation flag is promoted by
+adding the daemon. The dedicated daemon's key-loading behavior is not a new
+credential capability for the control-plane module.

@@ -20,7 +20,7 @@ import {createAutonomousResearchOnlineMutationReceiptVerifier}
   from '../../paper-adapters/automation/autonomous-research-online-mutation-authority.mjs';
 import * as schema from '../../paper-domain/automation/autonomous-research-online-schema-transition-contract.mjs';
 import * as online from '../../paper-domain/automation/autonomous-research-online-mutation-contract.mjs';
-import {autonomousResearchOnlineUnresolvedReservationSetHash}
+import {autonomousResearchOnlineUnresolvedReservationSetHash,verifyAutonomousResearchOnlineUnresolvedReservationList}
   from '../../paper-domain/automation/autonomous-research-online-unresolved-reservation-contract.mjs';
 import {autonomousResearchStateBackupAuthoritySignaturePayload as backupPayload}
   from '../../paper-adapters/automation/autonomous-research-state-backup-authority.mjs';
@@ -28,6 +28,7 @@ import {hashBytes,hashRecord} from '../../workflow-kernel/record-hash.mjs';
 import {productionOracleProfile} from './production-record-hash-v1.mjs';
 import {createExternallyFencedSqliteMutationCoordinator} from '../../paper-adapters/automation/externally-fenced-sqlite-mutation-coordinator.mjs';
 import {AUTONOMOUS_RESEARCH_ONLINE_MUTATION_OPERATION_PLANS} from '../../paper-composition/bootstrap/autonomous-research-online-mutation-operation-plans.mjs';
+import {buildExternallyFencedSqliteMutationFinalizeRequest} from '../../paper-adapters/automation/externally-fenced-sqlite-mutation-recovery.mjs';
 
 const REPO=path.resolve(import.meta.dirname,'../..');
 const LEASE_MS=900000;
@@ -110,7 +111,7 @@ export async function brokerMain(root){
   const q=JSON.parse(fs.readFileSync(0,'utf8'));
   fs.appendFileSync(path.join(root,'calls.jsonl'),`${JSON.stringify(q)}\n`,{mode:0o600});
   const trust=JSON.parse(fs.readFileSync(f.onlineConfiguration,'utf8'));
-  const expiresAt=new Date(Date.parse(q.requestedAt)+LEASE_MS).toISOString();
+  const expiresAt=new Date(Date.parse(q.requestedAt||new Date().toISOString())+LEASE_MS).toISOString();
   const journal=readJournal(root),{globalSequence,globalHash,databaseHeads}=currentHead(f,journal);
   const common={version:1,authorityId:trust.authorityId,keyId:trust.keyId,requestHash:hashRecord(q.kind,q)};
   const scope=pick(q,['protocol','scopeId','databaseScopeHash','writerManifestHash']);
@@ -122,9 +123,15 @@ export async function brokerMain(root){
       if(q[key]!==original[key])throw Error('historical_schema_request_mismatch');
     receipt={...onlineBase,kind:'AutonomousResearchOnlineSchemaTransitionObservationReceipt',status:'autonomous_research_online_schema_transition_observed_finalized',...pick(q,['transitionId','transitionInventoryHash','schemaBundleHash','finalizationReceiptHash','postInventoryHash','postPristineRuntimeStateHash']),transitionState:'finalized',observedAt:q.requestedAt};
   }else if(q.kind==='AutonomousResearchOnlineUnresolvedReservationListRequest'){
-    receipt={...q,...common,kind:'AutonomousResearchOnlineUnresolvedReservationListReceipt',status:'autonomous_research_online_unresolved_reservations_observed',unresolvedReservations:[],unresolvedReservationCount:0,unresolvedReservationSetHash:autonomousResearchOnlineUnresolvedReservationSetHash([]),observedAt:q.requestedAt,expiresAt};
+    const pending=journal?.pending,entries=pending&&pending.reservation.databaseRole===q.databaseRole&&pending.reservation.databaseInstanceId===q.databaseInstanceId?[{reserveRequest:pending.reserveRequest,reservation:pending.reservation}]:[];
+    receipt=sign({...q,...common,kind:'AutonomousResearchOnlineUnresolvedReservationListReceipt',status:'autonomous_research_online_unresolved_reservations_observed',unresolvedReservations:entries,unresolvedReservationCount:entries.length,unresolvedReservationSetHash:autonomousResearchOnlineUnresolvedReservationSetHash(entries),observedAt:q.requestedAt,expiresAt});
+    const verifier=createAutonomousResearchOnlineMutationReceiptVerifier({configurationPath:f.onlineConfiguration});
+    const verification={trust:verifier.trust,verifySignature:verifier.verifySignedReceipt,hashChangesetBase64:value=>hashBytes(Buffer.from(value,'base64'))};
+    if(!verifyAutonomousResearchOnlineUnresolvedReservationList({receipt,request:q,now:new Date(q.requestedAt),...verification,verifyStoredReservation:({receipt,request})=>online.verifyAutonomousResearchOnlineMutationReservation({receipt,request,now:new Date(receipt.issuedAt),...verification})}))throw Error('fixture_unresolved_receipt_invalid');
+  }else if(q.kind==='AutonomousResearchOnlineMutationFinalizeRequest'){
+    receipt=finalizePending(root,f,journal,q);
   }else if(q.kind==='AutonomousResearchOnlineMutationCurrentHeadRequest'){
-    receipt={...onlineBase,kind:'AutonomousResearchOnlineMutationCurrentHeadReceipt',status:'autonomous_research_online_mutation_current_head_observed',databaseHeads,unresolvedReservationCount:0,observedAt:q.requestedAt};
+    receipt={...onlineBase,kind:'AutonomousResearchOnlineMutationCurrentHeadReceipt',status:'autonomous_research_online_mutation_current_head_observed',databaseHeads,unresolvedReservationCount:journal?.pending?1:0,observedAt:q.requestedAt};
   }else if(q.kind==='AutonomousResearchOnlineMutationActiveChallengeRequest'){
     receipt={...onlineBase,kind:'AutonomousResearchOnlineMutationActiveChallengeReceipt',status:'autonomous_research_online_mutation_active_challenge_verified',databaseHeads,challengeNonce:q.challengeNonce,challengedAt:q.requestedAt};
   }else if(q.kind==='AutonomousResearchOnlineMutationScopeRequest'){
@@ -149,10 +156,26 @@ export async function brokerMain(root){
 }
 function readJournal(root){const file=path.join(root,'journal-fixture.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;}
 function currentHead(f,journal){
-  return journal?{globalSequence:journal.entries.at(-1).reservationReceipt.globalSequence,globalHash:journal.globalHash,databaseHeads:journal.databaseHeads}:{globalSequence:f.audit.finalization.globalSequence,globalHash:f.audit.finalization.globalHash,databaseHeads:f.genesis.map(i=>({databaseRole:i.databaseRole,databaseInstanceId:i.databaseInstanceId,sequence:i.databaseSequence,hash:i.databaseHash,schemaHash:i.schemaHash,stateHash:i.stateHash}))};
+  return journal?.entries.length?{globalSequence:journal.entries.at(-1).reservationReceipt.globalSequence,globalHash:journal.globalHash,databaseHeads:journal.databaseHeads}:{globalSequence:f.audit.finalization.globalSequence,globalHash:f.audit.finalization.globalHash,databaseHeads:f.genesis.map(i=>({databaseRole:i.databaseRole,databaseInstanceId:i.databaseInstanceId,sequence:i.databaseSequence,hash:i.databaseHash,schemaHash:i.schemaHash,stateHash:i.stateHash}))};
 }
-function heartbeat(root,input){
+function finalizePending(root,f,journal,request){
+  const hash=hashRecord(request.kind,request);
+  const recorded=journal?.entries.find(entry=>entry.reservationReceipt.reservationId===request.reservationId);
+  if(recorded){if(hash!==hashRecord(recorded.finalizeRequest.kind,recorded.finalizeRequest))throw Error('fixture_finalize_request_changed');return recorded.finalizationReceipt;}
+  const pending=journal?.pending;if(!pending||hash!==hashRecord(pending.finalizeRequest.kind,pending.finalizeRequest))throw Error('fixture_pending_finalize_request_required');
+  online.assertAutonomousResearchOnlineMutationFinalizeRequest(request,pending.reservation);
+  const verifier=createAutonomousResearchOnlineMutationReceiptVerifier({configurationPath:f.onlineConfiguration});
+  const now=new Date(),{committedAt,...mirror}=request;
+  const receipt=sign({...mirror,kind:'AutonomousResearchOnlineMutationFinalizationReceipt',status:'autonomous_research_online_mutation_finalized',authorityId:verifier.trust.authorityId,keyId:verifier.trust.keyId,requestHash:hash,sideEffectPermitHash:hashRecord('InitialCompositionSignedHeartbeatFixture',{label:`permit:${pending.reservation.globalSequence}`}),finalizedAt:now.toISOString()});
+  if(!online.verifyAutonomousResearchOnlineMutationFinalization({receipt,request,reservation:pending.reservation,trust:verifier.trust,now,verifySignature:verifier.verifySignedReceipt}))throw Error('fixture_recovered_finalization_invalid');
+  const reservation=pending.reservation;
+  const heads=currentHead(f,journal).databaseHeads.map(head=>head.databaseInstanceId===reservation.databaseInstanceId?{...head,sequence:reservation.databaseSequence,hash:reservation.databaseHash,stateHash:reservation.postStateHash}:head);
+  const settled={...journal,lease:pending.lease,entries:[...journal.entries,{reserveRequest:pending.reserveRequest,reservationReceipt:reservation,finalizeRequest:request,finalizationReceipt:receipt}],globalHash:reservation.globalHash,databaseHeads:heads};
+  delete settled.pending;write(path.join(root,'journal-fixture.json'),settled);return receipt;
+}
+function heartbeat(root,input,pendingMode=false){
   checkRoot(root);const f=JSON.parse(fs.readFileSync(path.join(root,'fixture.json'),'utf8')),prior=readJournal(root);
+  if(prior?.pending)throw Error('fixture_pending_mutation_must_recover_first');
   const raw=JSON.parse(fs.readFileSync(f.onlineConfiguration,'utf8'));
   const trust={...pick(raw,['authorityId','keyId','scopeId','databaseScopeHash','writerManifestHash','maximumReservationLeaseMs','maximumObservationAgeMs']),version:1,kind:'AutonomousResearchOnlineMutationAuthorityTrust'};
   const PROTOCOL=online.AUTONOMOUS_RESEARCH_ONLINE_MUTATION_PROTOCOL;
@@ -165,7 +188,7 @@ function heartbeat(root,input){
     observeCurrentHead({request,now,expectedDatabaseInstances}){calls.push(request);const receipt=sign({...pick(trust,['authorityId','keyId','scopeId','databaseScopeHash','writerManifestHash']),version:1,kind:'AutonomousResearchOnlineMutationCurrentHeadReceipt',status:'autonomous_research_online_mutation_current_head_observed',protocol:PROTOCOL,requestHash:hashRecord(request.kind,request),...before,unresolvedReservationCount:0,observedAt:now.toISOString(),expiresAt});if(!online.verifyAutonomousResearchOnlineMutationCurrentHead({receipt,request,now,expectedDatabaseInstances,...shared}))throw Error('fixture_head_invalid');return receipt;},
     reserveMutation({request,now}){calls.push(request);reserveRequest=request;const {requestedAt,requestedLeaseMs,...mirror}=request;reservation=sign({...mirror,kind:'AutonomousResearchOnlineMutationReservationReceipt',status:'autonomous_research_online_mutation_reserved',authorityId:trust.authorityId,keyId:trust.keyId,requestHash:hashRecord(request.kind,request),reservationId:`heartbeat:${before.globalSequence+1}`,globalSequence:request.globalPreviousSequence+1,globalHash:H(`global:${before.globalSequence+1}`),databaseSequence:request.databasePreviousSequence+1,databaseHash:H(`database:${request.databaseInstanceId}:${request.databasePreviousSequence+1}`),issuedAt:now.toISOString(),expiresAt:new Date(now.getTime()+request.requestedLeaseMs).toISOString()});if(!online.verifyAutonomousResearchOnlineMutationReservation({receipt:reservation,request,now,...shared}))throw Error('fixture_reservation_invalid');return reservation;},
     verifyStoredReservation({receipt,request}){return online.verifyAutonomousResearchOnlineMutationReservation({receipt,request,now:new Date(receipt.issuedAt),...shared});},
-    finalizeMutation({request,reservation,now}){calls.push(request);finalizeRequest=request;const {committedAt,...mirror}=request;finalization=sign({...mirror,kind:'AutonomousResearchOnlineMutationFinalizationReceipt',status:'autonomous_research_online_mutation_finalized',authorityId:trust.authorityId,keyId:trust.keyId,requestHash:hashRecord(request.kind,request),sideEffectPermitHash:H(`permit:${before.globalSequence+1}`),finalizedAt:now.toISOString()});if(!online.verifyAutonomousResearchOnlineMutationFinalization({receipt:finalization,request,reservation,now,...shared}))throw Error('fixture_finalization_invalid');return finalization;},
+    finalizeMutation({request,reservation,now}){calls.push(request);finalizeRequest=request;online.assertAutonomousResearchOnlineMutationFinalizeRequest(request,reservation);if(pendingMode)throw Error('injected_fixture_finalization_unavailable');const {committedAt,...mirror}=request;finalization=sign({...mirror,kind:'AutonomousResearchOnlineMutationFinalizationReceipt',status:'autonomous_research_online_mutation_finalized',authorityId:trust.authorityId,keyId:trust.keyId,requestHash:hashRecord(request.kind,request),sideEffectPermitHash:H(`permit:${before.globalSequence+1}`),finalizedAt:now.toISOString()});if(!online.verifyAutonomousResearchOnlineMutationFinalization({receipt:finalization,request,reservation,now,...shared}))throw Error('fixture_finalization_invalid');return finalization;},
     abortMutation(){throw Error('unexpected_fixture_abort');},resolveMutationAttempt(){throw Error('unexpected_fixture_resolution');},
   };
   // This test-only callback records the actual finalize notification; it does
@@ -173,7 +196,34 @@ function heartbeat(root,input){
   const fence={markMutationFinalized:value=>marked.push(value),markMutationReconciliationRequired:value=>marked.push({reconciliation:value}),assertCurrent(){throw Error('fixture_has_no_active_epoch');},reconcile(){throw Error('fixture_has_no_active_epoch');}};
   const coordinator=createExternallyFencedSqliteMutationCoordinator({authorityClient:client,manifest:f.writerManifest,operationPlans:AUTONOMOUS_RESEARCH_ONLINE_MUTATION_OPERATION_PLANS,databaseInstances:before.databaseHeads.map(({databaseRole,databaseInstanceId,schemaHash})=>({databaseRole,databaseInstanceId,schemaHash})),recoverabilityEpochFence:fence,clock:{now:()=>new Date(now)}});
   const repository=createAutonomousResearchSupervisorInstanceRepository({runtimeRoot:f.runtime,create:true,offlineProvision:false,mutationCoordinator:coordinator,requireExternallyFencedMutations:false});
-  let lease,row;try{lease=repository.heartbeatInstanceLease({lease:prior?.lease||f.lease,cycleReceipt:{autonomousResearchSupervisorCycleReceiptHash:H(`cycle:${before.globalSequence+1}`)},now:new Date(now)});row=repository.assertInstanceLease({lease,now:new Date(now)});}finally{repository.close();}
+  let lease,row,outcome;const originalLease=prior?.lease||f.lease;
+  try{
+    try{lease=repository.heartbeatInstanceLease({lease:originalLease,cycleReceipt:{autonomousResearchSupervisorCycleReceiptHash:H(`cycle:${before.globalSequence+1}`)},now:new Date(now)});}
+    catch(error){
+      if(!pendingMode)throw error;
+      outcome={error:error.message,committed:error.committed,stateRecoverabilityDeferred:error.stateRecoverabilityDeferred,retryable:error.retryable,reservationId:error.reservationId,mutationAttemptId:error.mutationAttemptId};
+      if(outcome.error!=='externally_fenced_sqlite_mutation_committed_finalization_pending'||outcome.committed!==true)throw error;
+      row=repository.assertInstanceLease({lease:originalLease,now:new Date(now)});lease={...originalLease,expiresAt:row.leaseExpiresAt};
+    }
+    row=repository.assertInstanceLease({lease,now:new Date(now)});
+  }finally{repository.close();}
+  if(pendingMode){
+    if(!outcome||!reservation||!finalizeRequest||finalization||marked.length!==1||marked[0].reconciliation?.committed!==true||row.lastHeartbeatAt!==now||row.lastCycleReceiptHash!==H(`cycle:${before.globalSequence+1}`))throw Error('actual_committed_pending_heartbeat_required');
+    const reconstructed=buildExternallyFencedSqliteMutationFinalizeRequest(reservation,finalizeRequest.committedAt);
+    if(hashRecord(reconstructed.kind,reconstructed)!==hashRecord(finalizeRequest.kind,finalizeRequest))throw Error('fixture_pending_finalize_reconstruction_failed');
+    const instance=f.inventory.instances.find(instance=>instance.instanceId===reservation.databaseInstanceId);
+    const db=new DatabaseSync(path.join(f.runtime,instance.sourceRelativePath),{readOnly:true});let markerCount,finalizationCount;
+    try{
+      const marker=db.prepare('SELECT * FROM autonomous_research_online_mutation_authority_marker WHERE reservation_id=?').get(reservation.reservationId);
+      markerCount=db.prepare('SELECT count(*) n FROM autonomous_research_online_mutation_authority_marker').get().n;
+      finalizationCount=db.prepare('SELECT count(*) n FROM autonomous_research_online_mutation_finalization_receipt').get().n;
+      if(!marker||marker.local_marker_hash!==finalizeRequest.localMarkerHash||hashRecord(reserveRequest.kind,JSON.parse(marker.reserve_request_json))!==hashRecord(reserveRequest.kind,reserveRequest)||hashRecord(reservation.kind,JSON.parse(marker.reservation_receipt_json))!==hashRecord(reservation.kind,reservation)||db.prepare('SELECT count(*) n FROM autonomous_research_online_mutation_finalization_receipt WHERE reservation_id=?').get(reservation.reservationId).n!==0)throw Error('actual_pending_marker_required');
+    }finally{db.close();}
+    const pending={reserveRequest,reservation,finalizeRequest,lease},journal={entries:prior?.entries||[],globalHash:before.globalHash,databaseHeads:before.databaseHeads,pending};
+    write(path.join(root,'journal-fixture.json'),journal);
+    const inventory=resolveAutonomousResearchStateDatabaseInventory({runtimeRoot:f.runtime,manifest:f.manifest});if(inventory.blockers.length)throw Error('pending_heartbeat_inventory_invalid');
+    return {lease,row,journal,pending,outcome,inventory,calls,marked,now,markerCount,finalizationCount};
+  }
   if(!lease||!reservation||!finalization||marked.length!==1)throw Error('actual_signed_heartbeat_required');
   const databaseHeads=before.databaseHeads.map(head=>head.databaseInstanceId===reservation.databaseInstanceId?{...head,sequence:reservation.databaseSequence,hash:reservation.databaseHash,stateHash:reservation.postStateHash}:head);
   const journal={lease,entries:[...(prior?.entries||[]),{reserveRequest,reservationReceipt:reservation,finalizeRequest,finalizationReceipt:finalization}],globalHash:reservation.globalHash,databaseHeads};
@@ -184,7 +234,7 @@ function heartbeat(root,input){
 if(pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
   try{
     const input=JSON.parse(fs.readFileSync(0,'utf8'));
-    const value=input.mode==='fixture'?fixture(input.root):input.mode==='heartbeat'?heartbeat(input.root,input):(()=>{throw Error('unknown_fixture_operation');})();
+    const value=input.mode==='fixture'?fixture(input.root):input.mode==='heartbeat'?heartbeat(input.root,input):input.mode==='pending-heartbeat'?heartbeat(input.root,input,true):(()=>{throw Error('unknown_fixture_operation');})();
     process.stdout.write(JSON.stringify({profile:productionOracleProfile(),ok:true,value}));
   }catch(error){process.stdout.write(JSON.stringify({profile:productionOracleProfile(),ok:false,error:error.message}));}
 }

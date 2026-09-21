@@ -178,7 +178,9 @@ pub struct VerifiedWriterCutoverV1 {
 }
 
 impl VerifiedWriterCutoverV1 {
-    pub(crate) fn assert_current(&self, now_unix_ms: u64) -> Result<(), CampaignWriterError> {
+    /// Recheck the verified authorization's time window. This does not observe
+    /// database state, a durable writer epoch, or current deployment identity.
+    pub fn assert_current(&self, now_unix_ms: u64) -> Result<(), CampaignWriterError> {
         if now_unix_ms == 0 || now_unix_ms < self.issued_at_unix_ms {
             return Err(CampaignWriterError::CutoverNotYetValid);
         }
@@ -194,7 +196,10 @@ impl VerifiedWriterCutoverV1 {
         &self.database_preimage_hash
     }
 
-    pub(crate) fn initial_writer_lease_hash(&self) -> &Sha256Digest {
+    /// Independently signed initial lease identity. A consuming writer must
+    /// derive and compare its own exact lease hash; this getter grants no lease.
+    #[must_use]
+    pub fn initial_writer_lease_hash(&self) -> &Sha256Digest {
         &self.initial_writer_lease_hash
     }
 

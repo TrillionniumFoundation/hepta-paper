@@ -146,6 +146,9 @@ See [the composition handoff](../ONLINE_MUTATION_COMPOSITION_HANDOFF.md) for
 ordering and remaining native writer/cutover/transaction requirements. Historical
 schema checkpoint loading authenticates the original full inventory and copied
 bytes; a separate internal bridge now proves current-state equivalence by
-actual registered replay and all-table comparison against fresh signed heads. See
+actual registered replay and all-table comparison against fresh signed heads.
+The owning constructor explicitly retains this historical branch and the actual
+post-startup inventory, including recovered finalizations, while preserving the
+original pre-startup subject for the startup proof. See
 [the schema readiness handoff](../ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md).
 Both are prerequisites and leave production activation and Node retirement false.

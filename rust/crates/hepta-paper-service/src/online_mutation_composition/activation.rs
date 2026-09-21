@@ -21,9 +21,6 @@ use crate::{
             VerifiedStartupReconciliationSetV1, reconcile_online_mutation_startup_set_v1,
         },
     },
-    online_schema_transition::{
-        VerifiedSchemaTransitionReadinessV1, inspect_online_schema_transition_readiness_v1,
-    },
     online_writer_static::{
         VerifiedWriterStaticCoverageV1, verify_online_writer_static_coverage_v1,
     },
@@ -53,7 +50,10 @@ use crate::{
 use serde_json::{Value, json};
 use std::{cell::Cell, fs, path::PathBuf};
 
+mod native_process;
+mod schema;
 mod temporal;
+use schema::{PreparedSchemaInputV1, RetainedSchemaEvidenceV1};
 #[cfg(test)]
 mod tests;
 
@@ -76,6 +76,7 @@ pub(crate) struct InitialOnlineMutationCompositionRequestV1 {
     pub resident_owner_id: String,
     pub resident_lease_token: String,
     pub resident_lease_generation: i64,
+    pub schema_checkpoint_root: Option<PathBuf>,
 }
 
 /// Private fields retain actual verification producers, not only their JSON
@@ -86,7 +87,7 @@ pub(crate) struct PreparedInitialOnlineMutationCompositionV1 {
     manifest: ManifestFile,
     initial_inventory: ObservedStateDatabaseInventoryV1,
     startup: VerifiedStartupReconciliationSetV1,
-    schema: VerifiedSchemaTransitionReadinessV1,
+    schema: RetainedSchemaEvidenceV1,
     source: VerifiedWriterStaticCoverageV1,
     active: VerifiedActiveAuthorityEvidenceV1,
     finalized: VerifiedFinalizedInventoryV1,
@@ -175,8 +176,8 @@ fn construct(
         observe_state_database_inventory_v1(&request.runtime_root, &manifest.value)?;
     let checked_at = Cell::new(i64::MIN);
     let mut clock = CompositionClock(&checked_at);
-    let schema = inspect_online_schema_transition_readiness_v1(
-        &request.runtime_root,
+    let schema = PreparedSchemaInputV1::load(
+        request,
         &initial_inventory,
         builtin.writer_manifest(),
         &mut authority,
@@ -189,12 +190,7 @@ fn construct(
         &mut clock,
     )?;
     let inventory = startup.post_inventory();
-    // This initial path cannot silently reinterpret an old schema receipt as
-    // proof of changed current bytes. Historical restart uses a separate bridge.
-    if inventory.value() != initial_inventory.value() {
-        return Err(fail("schema_history_bridge_required"));
-    }
-    schema.assert_current(inventory, &authority, &mut clock)?;
+    schema.assert_post_startup(&initial_inventory, inventory, &authority, &mut clock)?;
     let service = BackupRecoveryServiceV1::new(
         backup,
         recovery_online,
@@ -241,6 +237,14 @@ fn construct(
         &active,
         &mut clock,
     )?;
+    let schema = schema.finish(
+        inventory,
+        &source,
+        &active,
+        &finalized,
+        &mut authority,
+        &mut clock,
+    )?;
     let head = &active.value()["authorityEvidence"]["currentHead"]["receipt"];
     if head["globalSequence"] != fence_binding.value()["globalSequence"]
         || head["globalHash"] != fence_binding.value()["globalHash"]
@@ -249,7 +253,9 @@ fn construct(
     }
     fence.assert_activation_binding_current_v1(&fence_binding, inventory, &authority)?;
     startup.assert_current(&initial_inventory, &authority, &mut clock)?;
-    schema.assert_current(inventory, &authority, &mut clock)?;
+    schema.assert_current(
+        inventory, &source, &active, &finalized, &authority, &mut clock,
+    )?;
     manifest.assert_current()?;
     package.assert_current().map_err(|e| error(e.to_string()))?;
     authority.assert_process_current_v1()?;
@@ -296,6 +302,7 @@ fn construct(
     let report = json!({"version":1,"kind":"PreparedInitialOnlineMutationComposition",
         "status":"online_initial_evidence_prepared_native_authorization_required",
         "inventoryHash":inventory.value()["inventoryHash"],"schemaReadiness":schema.value(),
+        "schemaEvidenceMode":schema.mode(),
         "startupReconciliation":startup.value(),"recoverabilityBinding":fence_binding.value(),
         "activeRefresh":active.value(),"finalizedInventory":finalized.value(),
         "authorityCache":cache.value(),"onlineInspection":inspection.value(),"stateSafety":safety,
@@ -334,11 +341,18 @@ impl PreparedInitialOnlineMutationCompositionV1 {
             .map_err(|e| error(e.to_string()))?;
         self.manifest.assert_current()?;
         self.verifier.assert_process_current_v1()?;
-        self.initial_inventory.assert_current()?;
+        // Startup retains and checks its real post-write inventory. Its original
+        // input remains the immutable subject binding, not a current byte claim.
         self.startup
             .assert_current(&self.initial_inventory, &self.verifier, &mut clock)?;
-        self.schema
-            .assert_current(inventory, &self.verifier, &mut clock)?;
+        self.schema.assert_current(
+            inventory,
+            &self.source,
+            &self.active,
+            &self.finalized,
+            &self.verifier,
+            &mut clock,
+        )?;
         self.source.assert_current()?;
         self.finalized.assert_current(
             inventory,

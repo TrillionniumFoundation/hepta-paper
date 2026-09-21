@@ -302,7 +302,17 @@ startup/finalized proof chain, a concrete shared recovery fence and a final comm
 expiry check. It is crate-private and cannot execute business mutations or grant
 native activation. Historical schema checkpoint loading verifies original signed
 inventory and exact copied bytes. A separate internal history bridge now proves actual registered replay
-and all-table equivalence to the current signed finalized head; owning restart
-activation remains separate. See the repository's
+and all-table equivalence to the current signed finalized head. The owning
+evidence constructor explicitly retains this historical branch and the actual
+post-startup inventory, including recovered pending finalizations; signed native
+admission and complete writable transaction ownership remain separate. See the repository's
 [composition handoff](../../../docs/modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md)
 and [schema readiness handoff](../../../docs/modules/ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md).
+
+
+A private native-process observer now independently re-verifies the actual
+production deployment and retains the current kernel executable, safe ancestry,
+ELF hash, nonroot UID/GID and exact argv binding. Its separate source-owned
+reconciliation digest is a prerequisite for signed native admission, not a
+substitute for independent qualification or a writable transaction scope.
+See the composition handoff for the actual-process tests and deployment limits.

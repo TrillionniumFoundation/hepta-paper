@@ -40,6 +40,7 @@ fn request(root: &Path) -> InitialOnlineMutationCompositionRequestV1 {
         resident_owner_id: "resident:test".into(),
         resident_lease_token: "token:test".into(),
         resident_lease_generation: 1,
+        schema_checkpoint_root: None,
     }
 }
 #[test]
@@ -70,7 +71,7 @@ fn unsafe_roots_fail_before_any_authority_or_runtime_write() {
             .is_none()
     );
 }
-fn fixture(root: &Path) -> Value {
+fn oracle(root: &Path, mode: &str) -> Value {
     let mut child = Command::new("node")
         .arg(
             Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -85,7 +86,7 @@ fn fixture(root: &Path) -> Value {
         .stdin
         .take()
         .unwrap()
-        .write_all(json!({"mode":"fixture","root":root}).to_string().as_bytes())
+        .write_all(json!({"mode":mode,"root":root}).to_string().as_bytes())
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(
@@ -98,12 +99,9 @@ fn fixture(root: &Path) -> Value {
     assert_eq!(response["ok"], true, "{response}");
     response["value"].clone()
 }
-#[test]
-fn actual_signed_initial_composition_retains_producers_and_refuses_native_authorization() {
-    let root = Root::new();
-    let value = fixture(&root.0);
+fn request_from_fixture(value: &Value) -> InitialOnlineMutationCompositionRequestV1 {
     let path = |name: &str| PathBuf::from(value[name].as_str().unwrap());
-    let request = InitialOnlineMutationCompositionRequestV1 {
+    InitialOnlineMutationCompositionRequestV1 {
         workspace_root: path("workspace"),
         runtime_root: path("runtime"),
         backup_root: path("backupRoot"),
@@ -117,7 +115,14 @@ fn actual_signed_initial_composition_retains_producers_and_refuses_native_author
         resident_owner_id: value["lease"]["ownerId"].as_str().unwrap().into(),
         resident_lease_token: value["lease"]["leaseToken"].as_str().unwrap().into(),
         resident_lease_generation: value["lease"]["generation"].as_i64().unwrap(),
-    };
+        schema_checkpoint_root: None,
+    }
+}
+#[test]
+fn actual_signed_initial_composition_retains_producers_and_refuses_native_authorization() {
+    let root = Root::new();
+    let value = oracle(&root.0, "fixture");
+    let request = request_from_fixture(&value);
     let prepared = prepare_initial_online_mutation_composition_v1(&request)
         .unwrap_or_else(|e| panic!("{} {}", e.code, e.details));
     assert_eq!(prepared.value()["runtimeReady"], false);
@@ -170,4 +175,115 @@ fn actual_signed_initial_composition_retains_producers_and_refuses_native_author
     drop(prepared);
     PackageDeletionWriterGuard::acquire(&request.runtime_root, RECONCILIATION_WRITER_SCOPE_V1)
         .unwrap();
+}
+
+#[test]
+fn historical_owning_composition_retains_actual_replayed_checkpoint_after_heartbeat() {
+    let root = Root::new();
+    let value = oracle(&root.0, "fixture");
+    let heartbeat = oracle(&root.0, "heartbeat");
+    assert_eq!(heartbeat["journal"]["entries"].as_array().unwrap().len(), 1);
+    let mut request = request_from_fixture(&value);
+    request.schema_checkpoint_root = Some(PathBuf::from(value["checkpointRoot"].as_str().unwrap()));
+    let prepared = prepare_initial_online_mutation_composition_v1(&request)
+        .unwrap_or_else(|e| panic!("{} {}", e.code, e.details));
+    assert_eq!(
+        prepared.value()["schemaEvidenceMode"],
+        "historical-checkpoint-replay"
+    );
+    assert_eq!(
+        prepared.value()["schemaReadiness"]["globalSequence"],
+        heartbeat["journal"]["entries"][0]["reservationReceipt"]["globalSequence"]
+    );
+    assert_ne!(
+        prepared.value()["schemaReadiness"]["historicalInventoryHash"],
+        prepared.value()["inventoryHash"]
+    );
+    assert_eq!(
+        prepared.value()["schemaReadiness"]["currentInventoryHash"],
+        prepared.value()["inventoryHash"]
+    );
+    assert_eq!(prepared.startup.database_reconciliations().len(), 10);
+    assert_eq!(prepared.finalized.database_inspections().len(), 10);
+    for field in [
+        "runtimeReady",
+        "productionActivation",
+        "nodeRetirementVerified",
+    ] {
+        assert_eq!(prepared.value()[field], false);
+    }
+    let calls = fs::read(root.0.join("calls.jsonl")).unwrap();
+    prepared.assert_current().unwrap();
+    assert_eq!(fs::read(root.0.join("calls.jsonl")).unwrap(), calls);
+    let expiry =
+        crate::sqlite_mutation_coordinator::timestamp(&prepared.schema.value()["expiresAt"])
+            .unwrap();
+    assert!(prepared.assert_valid_at(expiry).is_err());
+    let report = request
+        .schema_checkpoint_root
+        .as_ref()
+        .unwrap()
+        .join("POST_INVENTORY.json");
+    let bytes = fs::read(&report).unwrap();
+    let replacement = report.with_extension("replacement");
+    fs::write(&replacement, bytes).unwrap();
+    fs::set_permissions(&replacement, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::rename(replacement, report).unwrap();
+    assert!(
+        prepared.assert_current().is_err(),
+        "held checkpoint identity must remain current"
+    );
+}
+
+#[test]
+fn historical_owning_composition_recovers_real_pending_finalization_and_uses_post_inventory() {
+    let root = Root::new();
+    let value = oracle(&root.0, "fixture");
+    let pending = oracle(&root.0, "pending-heartbeat");
+    assert_eq!(pending["markerCount"], 1);
+    assert_eq!(pending["finalizationCount"], 0);
+    assert_eq!(pending["outcome"]["committed"], true);
+    let mut request = request_from_fixture(&value);
+    request.schema_checkpoint_root = Some(root.0.join("missing-checkpoint"));
+    let before_calls = fs::read(root.0.join("calls.jsonl")).ok();
+    assert!(prepare_initial_online_mutation_composition_v1(&request).is_err());
+    assert_eq!(
+        fs::read(root.0.join("calls.jsonl")).ok(),
+        before_calls,
+        "explicit missing checkpoint must fail before startup RPC with no fallback"
+    );
+    request.schema_checkpoint_root = Some(PathBuf::from(value["checkpointRoot"].as_str().unwrap()));
+    let prepared = prepare_initial_online_mutation_composition_v1(&request)
+        .unwrap_or_else(|e| panic!("{} {}", e.code, e.details));
+    assert_eq!(
+        prepared.value()["schemaEvidenceMode"],
+        "historical-checkpoint-replay"
+    );
+    let recovered = prepared
+        .startup
+        .database_reconciliations()
+        .iter()
+        .flat_map(|(_, _, proof)| proof.value()["recoveredReservationIds"].as_array().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        recovered,
+        vec![&pending["pending"]["reservation"]["reservationId"]]
+    );
+    assert_ne!(
+        prepared.initial_inventory.value()["inventoryHash"],
+        prepared.startup.post_inventory().value()["inventoryHash"],
+        "real startup recovery must append the missing local finalization"
+    );
+    assert_eq!(
+        prepared.value()["schemaReadiness"]["currentInventoryHash"],
+        prepared.startup.post_inventory().value()["inventoryHash"]
+    );
+    assert_eq!(
+        prepared.value()["schemaReadiness"]["globalSequence"],
+        pending["pending"]["reservation"]["globalSequence"]
+    );
+    assert_eq!(prepared.value()["runtimeReady"], false);
+    let after_calls = fs::read(root.0.join("calls.jsonl")).unwrap();
+    prepared.assert_current().unwrap();
+    assert_eq!(fs::read(root.0.join("calls.jsonl")).unwrap(), after_calls);
 }

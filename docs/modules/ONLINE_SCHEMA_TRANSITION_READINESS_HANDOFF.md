@@ -181,7 +181,8 @@ observation primitives. A complete operator workflow, final durable receipt
 completion/recovery, schema CLI and runtime activation remain open integration
 work. The historical checkpoint loader does not capture missing old snapshots.
 The separate private history bridge below proves their signed replay to current
-rows; owning restart activation must still select and retain it after startup recovery.
+rows; the owning evidence constructor now explicitly selects and retains this
+branch using startup recovery's actual post-write inventory.
 Whole runtime activation must compose actual startup recovery,
 finalized-head inspection, active writer coverage/head/challenge/scope evidence,
 recoverability epochs/restore proofs, safe cache publication and final inventory
@@ -244,9 +245,9 @@ substitution. JSON integral decimal spellings retain their original ECMAScript
 Number meaning; strings/booleans are not coerced.
 
 The bridge currently accepts the existing closed ten-instance profile and at
-most 4096 finalized entries. Full owning activation must still select and retain
-this history path after startup recovery, obtain its independent recoverability
-and native-writer admission, and retain a transaction-aware write scope. A
+most 4096 finalized entries. The owning evidence constructor now selects and retains this history path after
+startup recovery with its concrete recoverability controller. Native-writer
+admission and a transaction-aware write scope remain separate requirements. A
 checkpoint capture/publication operator and migration of existing runtimes that
 lack original bytes are separate requirements; missing history still fails
 closed. A complete v2 service restart acceptance is not claimed by these v1

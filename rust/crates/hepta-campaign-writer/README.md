@@ -128,3 +128,10 @@ uncommitted budget/revision change and partial event effects did not survive.
 to adopt or modify that database. `ControlLogConflict` means immutable binding,
 identity, sequence or exact retry content disagreed. Existing detailed lease,
 budget, filesystem, schema and SQLite error variants remain available.
+
+The opaque `VerifiedWriterCutoverV1` exposes read-only `assert_current` and
+`initial_writer_lease_hash` for other native compositions. They do not grant a
+writer or validate a durable epoch. Each consumer must derive and compare its
+exact signed lease identity, bind the database/deployment subject and retain the
+actual fence. The existing HPCW lease hash contract is unchanged; a durable
+native reconciliation epoch requires its own distinct hash domain.

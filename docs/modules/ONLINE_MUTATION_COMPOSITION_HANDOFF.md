@@ -31,11 +31,13 @@ Results are recorded against the final integrated commit and its logs. This sour
 The crate-private `prepare_initial_online_mutation_composition_v1` is a second,
 sealed stage. It owns a real system clock, actual process transports and their
 pinned configuration/key/executable inputs. Callers supply canonical source,
-runtime and backup roots and an existing resident lease identity; they cannot
+runtime and backup roots, an existing resident lease identity and an optional
+explicit original schema checkpoint root; they cannot
 inject a clock, alternative SQL registry, generic fence or ready JSON.
 
 The stage retains the actual source manifest file, initial and post-startup
-inventory objects, signed schema readiness, all ten startup confirmations,
+inventory objects, signed initial schema readiness or the actual checkpoint and
+verified historical replay, all ten startup confirmations,
 complete source coverage, three active authority receipts, ten finalized-chain
 proofs, authority inspection and verified cache write. It constructs the concrete
 backup/recovery controller and attaches a clone of that same shared controller
@@ -47,8 +49,9 @@ generation prevent a same-head renewal from reviving an old binding.
 Recovery reconciliation runs before the active chain because it can change the
 observed head. The active head must equal the retained recovery head. Startup
 recovery is the existing signed finalization primitive, not business DML. This
-initial stage requires unchanged full inventory after startup; changed bytes
-require the separate historical schema bridge. The cache is a passive report,
+initial mode requires unchanged full inventory after startup. An explicit
+checkpoint selects the historical path before any startup RPC; missing or
+invalid checkpoint evidence fails without falling back. The cache is a passive report,
 and cannot recreate this owning object.
 
 Retained checks revalidate all actual files and signatures, then take one final
@@ -99,9 +102,81 @@ This remains local prerequisite coverage, not acceptance
 of writable online reconciliation or a production deployment.
 
 
-The historical schema bridge now verifies an original authenticated checkpoint
-through retained signed finalized records and actual private replay to every
-current table. It obtains a fresh schema observation against the original FINAL
-hash and the current terminal head. This remains a separate crate-private proof:
-the initial owning constructor still requires unchanged startup inventory, and
-must explicitly select/retain the historical branch before restart activation.
+## Owning historical restart evidence
+
+The constructor now selects and retains the historical branch when
+`schema_checkpoint_root` is supplied. It authenticates the original full
+checkpoint against the actual pre-startup inventory before requesting recovery.
+Startup may append only genuine recovered finalization rows. The original
+inventory object remains owned for the startup proof's immutable input binding;
+it is not reinterpreted as a current byte snapshot after those authorized writes.
+Every subsequent controller/source/active/finalized/history/inspection/cache
+consumer receives the startup producer's actual retained post-write inventory.
+
+The retained schema enum owns either original initial readiness, or both the
+original checkpoint and its verified current history. The historical branch
+merges retained signed finalized records and performs actual private replay to
+every current table, then obtains a new schema observation bound to the original
+FINAL hash and the current terminal head. The final common temporal check covers
+both modes. Retained verification rechecks checkpoint files and current inventory
+and performs no broker calls. No ordinary DML is added by evidence preparation.
+
+Tests exercise a genuine original registered heartbeat and a genuine committed
+heartbeat whose original coordinator deliberately receives a finalization
+failure. The latter begins with one local marker and no local finalization; the
+Rust startup producer obtains the signed finalization and appends it, then the
+owning composition proves current state from the original checkpoint. The test
+requires different pre/post inventory hashes and exact recovered reservation ID.
+An explicitly missing checkpoint is refused before startup RPC. These are local
+source tests; runtimeReady, productionActivation and nodeRetirementVerified
+remain false. Native signed admission and the complete retained transaction
+scope remain required before exposing writable reconciliation.
+
+The latest full initial regression passed in 297.64 seconds. The owning
+historical heartbeat case passed in 420.29 seconds; genuine pending-finalization
+recovery, missing-checkpoint refusal and retained post-inventory verification
+passed in 404.69 seconds under the pinned Node 22.23.1 oracle profile.
+
+
+## Retained actual native process prerequisite
+
+The crate-private `activation::native_process::RetainedNativeControlProcessV1`
+accepts the genuine opaque verified production deployment and its complete typed
+manifest. It reruns the original deployment verifier, requires the identical
+verified result, and selects the sole ControlPlane unit. It never accepts a JSON
+report or caller-provided current-process facts as verification.
+
+The observer retains the named executable and every canonical directory's
+identity, owner and permissions. Production ancestry must be root owned and not
+group/other writable; the executable remains the declared single-link native
+ELF with exact content hash, mode and ownership. The kernel `/proc/self/exe`
+descriptor and current executable path must identify that same inode. Real,
+effective and saved UID/GID must equal the unit's nonroot principal, and the
+kernel argument vector must exactly equal the canonical executable path plus
+the declared arguments. Errors identify the failed contract without including
+argument values. A PID change, byte-identical file/directory replacement,
+permission change or content change invalidates the retained observation.
+
+Currentness rechecks the actual process, re-verifies the complete deployment,
+then checks the retained process again. The separate source-owned reconciliation
+implementation digest covers the explicitly embedded reconciliation kernels and
+fixed statement registry; it is distinct from the older native worker digest.
+The independently signed ELF and exact tree must still bind the complete build;
+this source digest does not prove reproducible compilation.
+
+Local tests exercise a real re-executed native test binary and its real kernel
+identity, wrong principal/arguments, changed executable/directory, unsafe
+permissions, symlink/hardlink and content replacement. Temporary test ownership
+is used only by the private low-level observation primitive. A user-owned test
+binary is rejected by the genuine full deployment verifier. No root-owned
+production installation or full successful deployment admission is fabricated.
+Environment, cgroup, loaded-library and realtime host attestation are outside
+this observer; actual independent host/service qualification remains required.
+The observer itself grants no writer, cutover, transaction or retirement authority.
+
+
+The native-process targeted suite passed 5/5 in 109.78 seconds, including four
+actual re-executed process modes. Strict service Clippy lib/tests checks pass.
+Opaque cutover authorization now also exposes read-only currentness and initial
+lease-hash accessors; consumers must still compute the native epoch's separate
+hash domain and compare it with the signed value under the actual cutover lock.

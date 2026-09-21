@@ -127,8 +127,8 @@ fn main() {
             Some(database) => PathBuf::from(database),
             None => default_database()?,
         };
-        let report = if now.is_none() {
-            inspect_current_automation_runtime_reconciliation_v1(
+        let report = match now.as_deref() {
+            None => inspect_current_automation_runtime_reconciliation_v1(
                 &database,
                 no_progress_seconds,
                 campaign_id.as_deref(),
@@ -137,22 +137,22 @@ fn main() {
                 } else {
                     LocalReconciliationOperationV1::Standard
                 },
-            )
-        } else if legacy_terminal_active_residue {
-            inspect_legacy_terminal_active_residue_v1(
+            ),
+            Some(now) if legacy_terminal_active_residue => {
+                inspect_legacy_terminal_active_residue_v1(
+                    &database,
+                    now,
+                    campaign_id
+                        .as_deref()
+                        .ok_or("--campaign-id is required for legacy maintenance")?,
+                )
+            }
+            Some(now) => inspect_automation_runtime_reconciliation_v1(
                 &database,
-                now.as_deref().expect("explicit time branch"),
-                campaign_id
-                    .as_deref()
-                    .ok_or("--campaign-id is required for legacy maintenance")?,
-            )
-        } else {
-            inspect_automation_runtime_reconciliation_v1(
-                &database,
-                now.as_deref().expect("explicit time branch"),
+                now,
                 no_progress_seconds,
                 campaign_id.as_deref(),
-            )
+            ),
         }
         .map_err(|error| error.to_string())?;
         println!(

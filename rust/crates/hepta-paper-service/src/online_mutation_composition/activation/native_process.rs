@@ -463,9 +463,7 @@ pub(crate) fn native_reconciliation_implementation_hash_v1() -> Sha256Digest {
         hash.update((bytes.len() as u64).to_be_bytes());
         hash.update(bytes);
     }
-    format!("sha256:{}", hex::encode(hash.finalize()))
-        .parse()
-        .expect("SHA-256 encoding")
+    Sha256Digest::from_digest_bytes(hash.finalize().into())
 }
 
 #[cfg(test)]

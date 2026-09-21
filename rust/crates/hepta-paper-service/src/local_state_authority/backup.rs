@@ -85,7 +85,7 @@ fn lease(ctx: &Context, request: &Value) -> Result<i64> {
     if timestamp(&request["requestedAt"]).is_none() || duration.is_none() {
         return Err(error("local_state_authority_backup_lease_invalid"));
     }
-    Ok(duration.unwrap())
+    duration.ok_or_else(|| error("local_state_authority_backup_lease_invalid"))
 }
 fn reserve_valid(ctx: &Context, request: &Value) -> Result<()> {
     if !keys(request, RESERVE_KEYS)
@@ -144,6 +144,13 @@ fn base(ctx: &Context, request: &Value, kind: &str, status: &str) -> Result<Valu
         json!({"version":1,"kind":kind,"status":status,"authorityId":ctx.configuration["authorityId"],"keyId":ctx.configuration["keyId"],"requestHash":hash(text(request,"kind")?,request)?}),
     )
 }
+fn extend_body(body: &mut Value, fields: Value) -> Result<()> {
+    let (Value::Object(body), Value::Object(fields)) = (body, fields) else {
+        return Err(error("local_state_authority_backup_state_invalid"));
+    };
+    body.extend(fields);
+    Ok(())
+}
 fn reservation_body(
     ctx: &Context,
     q: &Value,
@@ -158,7 +165,10 @@ fn reservation_body(
         "AutonomousResearchStateBackupAuthorityReservation",
         "autonomous_research_state_backup_authority_reserved",
     )?;
-    r.as_object_mut().unwrap().extend(json!({"reservationId":id,"inventoryHash":q["inventoryHash"],"databaseScopeHash":q["databaseScopeHash"],"databaseInstanceIds":q["databaseInstanceIds"],"headSequence":sequence,"headHash":head,"issuedAt":issued,"expiresAt":ctx.expiry(issued,lease(ctx,q)?)?,"mutationFenceProtocol":ONLINE_MUTATION_PROTOCOL,"allRegisteredMutationsFenced":true}).as_object().unwrap().clone());
+    extend_body(
+        &mut r,
+        json!({"reservationId":id,"inventoryHash":q["inventoryHash"],"databaseScopeHash":q["databaseScopeHash"],"databaseInstanceIds":q["databaseInstanceIds"],"headSequence":sequence,"headHash":head,"issuedAt":issued,"expiresAt":ctx.expiry(issued,lease(ctx,q)?)?,"mutationFenceProtocol":ONLINE_MUTATION_PROTOCOL,"allRegisteredMutationsFenced":true}),
+    )?;
     Ok(r)
 }
 fn stored_reservation(ctx: &Context, q: &Value, r: &Value, id: &str) -> Result<()> {
@@ -214,7 +224,10 @@ fn finalization_body(ctx: &Context, q: &Value, r: &Value, at: &str) -> Result<Va
         "AutonomousResearchStateBackupAuthorityFinalization",
         "autonomous_research_state_backup_authority_finalized",
     )?;
-    value.as_object_mut().unwrap().extend(json!({"reservationId":r["reservationId"],"inventoryHash":r["inventoryHash"],"databaseScopeHash":r["databaseScopeHash"],"snapshotContentHash":q["snapshotContentHash"],"headSequence":r["headSequence"],"headHash":r["headHash"],"finalizedAt":at,"allRegisteredMutationsFencedThroughFinalize":true}).as_object().unwrap().clone());
+    extend_body(
+        &mut value,
+        json!({"reservationId":r["reservationId"],"inventoryHash":r["inventoryHash"],"databaseScopeHash":r["databaseScopeHash"],"snapshotContentHash":q["snapshotContentHash"],"headSequence":r["headSequence"],"headHash":r["headHash"],"finalizedAt":at,"allRegisteredMutationsFencedThroughFinalize":true}),
+    )?;
     Ok(value)
 }
 fn finalize(db: &Connection, ctx: &Context, q: &Value) -> Result<Value> {
@@ -300,7 +313,10 @@ fn head(db: &Connection, ctx: &Context, q: &Value) -> Result<Value> {
         "AutonomousResearchStateBackupAuthorityCurrentHead",
         "autonomous_research_state_backup_authority_head_observed",
     )?;
-    receipt.as_object_mut().unwrap().extend(json!({"reservationId":q["reservationId"],"databaseScopeHash":q["databaseScopeHash"],"headSequence":current.global_sequence,"headHash":current.global_hash,"observedAt":at,"expiresAt":ctx.expiry(&at,duration)?,"mutationFenceProtocol":"external-linearizable-restore-validation-v1","allRegisteredMutationsFenced":true}).as_object().unwrap().clone());
+    extend_body(
+        &mut receipt,
+        json!({"reservationId":q["reservationId"],"databaseScopeHash":q["databaseScopeHash"],"headSequence":current.global_sequence,"headHash":current.global_hash,"observedAt":at,"expiresAt":ctx.expiry(&at,duration)?,"mutationFenceProtocol":"external-linearizable-restore-validation-v1","allRegisteredMutationsFenced":true}),
+    )?;
     ctx.sign_backup(&receipt)
 }
 fn journal(db: &Connection, ctx: &Context, q: &Value) -> Result<Value> {
@@ -435,7 +451,10 @@ fn journal(db: &Connection, ctx: &Context, q: &Value) -> Result<Value> {
     ] {
         receipt[k] = q[k].clone();
     }
-    receipt.as_object_mut().unwrap().extend(json!({"databaseHeads":heads,"entries":entries,"observedAt":at,"expiresAt":ctx.expiry(&at,duration)?,"mutationFenceProtocol":FINALIZED_JOURNAL_PROTOCOL,"completeFinalizedMutationJournal":true}).as_object().unwrap().clone());
+    extend_body(
+        &mut receipt,
+        json!({"databaseHeads":heads,"entries":entries,"observedAt":at,"expiresAt":ctx.expiry(&at,duration)?,"mutationFenceProtocol":FINALIZED_JOURNAL_PROTOCOL,"completeFinalizedMutationJournal":true}),
+    )?;
     ctx.sign_backup(&receipt)
 }
 

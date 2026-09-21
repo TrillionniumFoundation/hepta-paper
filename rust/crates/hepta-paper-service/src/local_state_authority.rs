@@ -115,7 +115,7 @@ impl LocalStateAuthorityRuntimeV1 {
         if let Some(fields) = rebind.as_object() {
             value
                 .as_object_mut()
-                .expect("object")
+                .ok_or_else(|| error("local_state_authority_inspection_invalid"))?
                 .extend(fields.clone());
         }
         self.inputs.assert_current()?;

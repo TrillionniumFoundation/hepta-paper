@@ -378,8 +378,15 @@ fn default_runtime_root(workspace_root: &Path) -> PathBuf {
 }
 
 pub fn full_production_readiness_help_json_v1() -> Value {
-    serde_json::from_str(FULL_PRODUCTION_READINESS_USAGE)
-        .expect("static full production readiness usage JSON")
+    json!({
+        "version": 1,
+        "kind": "FullProductionReadinessUsage",
+        "usage": "full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+        "localObservationEffects": "none",
+        "externalAction": "never",
+        "semanticNotReadyExitCode": 2,
+        "rustBoundary": "pinned owner signature and operational proof verification; package recovery execution, live automation and off-host WORM remain fail-closed"
+    })
 }
 
 /// Inspect local references without executing or mutating anything.
@@ -650,9 +657,11 @@ fn inspect_with_owner_references(
     blockers.extend(inspection_errors.iter().cloned());
     blockers.sort();
     blockers.dedup();
-    let object = payload.as_object_mut().expect("readiness report object");
+    let object = payload
+        .as_object_mut()
+        .ok_or_else(|| "full_production_readiness_report_object_invalid".to_owned())?;
     object.remove("fullProductionReadinessStatusHash");
-    object.extend(json!({
+    let Value::Object(metadata) = json!({
         "root": root, "runtimeRoot": runtime_root,
         "deploymentEnvironment": deployment_environment.inspection,
         "references": {"ownerTrustStore": owner_trust, "ownerAcceptanceDocument": owner_acceptance, "packageRecoveryReadinessCommand": package_command},
@@ -662,7 +671,10 @@ fn inspect_with_owner_references(
         "externalActionPerformed": false, "serviceStateChanged": false,
         "blockers": blockers, "inspectionErrors": inspection_errors,
         "rustBoundary": "pinned-owner-and-operational-proof-verification",
-    }).as_object().expect("metadata object").clone());
+    }) else {
+        return Err("full_production_readiness_metadata_object_invalid".to_owned());
+    };
+    object.extend(metadata);
     // Retain the original source and authority snapshots through aggregation.
     // A replacement invalidates the observation instead of retaining an earlier
     // positive count in a newly hashed report.

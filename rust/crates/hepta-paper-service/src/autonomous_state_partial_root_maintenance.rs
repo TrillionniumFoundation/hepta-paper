@@ -200,21 +200,20 @@ pub fn parse_autonomous_state_partial_root_maintenance_arguments(
             "autonomous_state_partial_root_action_invalid:{action}"
         )));
     }
-    for key in [
-        "rescue-root",
-        "writer-quiescence-receipt",
-        "machine-intake-config",
-        "topic-producer-profile",
-        "dataset-root",
-        "runtime-reproducibility-maximum-attempts-per-epoch",
-        "runtime-reproducibility-maximum-cost-usd-per-epoch",
-    ] {
-        if !values.contains_key(key) {
-            return Err(error(format!(
+    let required = |key: &str| {
+        values.get(key).map(String::as_str).ok_or_else(|| {
+            error(format!(
                 "autonomous_state_partial_root_input_paths_required:{key}"
-            )));
-        }
-    }
+            ))
+        })
+    };
+    let rescue_root = required("rescue-root")?;
+    let writer_quiescence_receipt = required("writer-quiescence-receipt")?;
+    let machine_intake_config = required("machine-intake-config")?;
+    let topic_producer_profile = required("topic-producer-profile")?;
+    let dataset_root = required("dataset-root")?;
+    let maximum_attempts = required("runtime-reproducibility-maximum-attempts-per-epoch")?;
+    let maximum_cost = required("runtime-reproducibility-maximum-cost-usd-per-epoch")?;
     if action == "plan" && (execute || values.contains_key("maintenance-plan-id")) {
         return Err(error(
             "autonomous_state_partial_root_execute_options_forbidden",
@@ -252,29 +251,13 @@ pub fn parse_autonomous_state_partial_root_maintenance_arguments(
                         .unwrap_or(default_runtime)
                 }
             }),
-        rescue_root: absolute_path(values.get("rescue-root").expect("validated"))?,
-        writer_quiescence_receipt: absolute_path(
-            values.get("writer-quiescence-receipt").expect("validated"),
-        )?,
-        machine_intake_config: absolute_path(
-            values.get("machine-intake-config").expect("validated"),
-        )?,
-        topic_producer_profile: absolute_path(
-            values.get("topic-producer-profile").expect("validated"),
-        )?,
-        dataset_root: absolute_path(values.get("dataset-root").expect("validated"))?,
-        maximum_attempts_per_epoch: positive_u64(
-            values
-                .get("runtime-reproducibility-maximum-attempts-per-epoch")
-                .expect("validated"),
-            "maximum_attempts_per_epoch",
-        )?,
-        maximum_cost_usd_per_epoch: nonnegative_f64(
-            values
-                .get("runtime-reproducibility-maximum-cost-usd-per-epoch")
-                .expect("validated"),
-            "maximum_cost_usd_per_epoch",
-        )?,
+        rescue_root: absolute_path(rescue_root)?,
+        writer_quiescence_receipt: absolute_path(writer_quiescence_receipt)?,
+        machine_intake_config: absolute_path(machine_intake_config)?,
+        topic_producer_profile: absolute_path(topic_producer_profile)?,
+        dataset_root: absolute_path(dataset_root)?,
+        maximum_attempts_per_epoch: positive_u64(maximum_attempts, "maximum_attempts_per_epoch")?,
+        maximum_cost_usd_per_epoch: nonnegative_f64(maximum_cost, "maximum_cost_usd_per_epoch")?,
     }))
 }
 

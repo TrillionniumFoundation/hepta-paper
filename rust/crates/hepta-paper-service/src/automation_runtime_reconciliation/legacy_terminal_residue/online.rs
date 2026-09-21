@@ -48,7 +48,7 @@ pub(in crate::automation_runtime_reconciliation) fn apply_online(
             "close-legacy-terminal-active-residue",
             vec![
                 settlement.failure.value["reason"].clone(),
-                json!(settlement.failure.wire()),
+                json!(settlement.failure.wire().map_err(business_error)?),
                 json!(settlement.failure_hash),
                 plan["plannedAt"].clone(),
                 node["nodeId"].clone(),
@@ -76,7 +76,7 @@ pub(in crate::automation_runtime_reconciliation) fn apply_online(
                 plan["campaignId"].clone(),
                 node["nodeId"].clone(),
                 settlement.event.value["kind"].clone(),
-                json!(settlement.event.wire()),
+                json!(settlement.event.wire().map_err(business_error)?),
                 json!(settlement.event_hash),
                 plan["plannedAt"].clone(),
             ],

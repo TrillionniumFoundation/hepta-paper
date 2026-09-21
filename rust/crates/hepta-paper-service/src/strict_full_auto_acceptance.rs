@@ -231,7 +231,12 @@ fn read_configuration(path: &Path) -> Value {
 }
 
 pub fn strict_full_auto_acceptance_help_json_v1() -> Value {
-    serde_json::from_str(STRICT_FULL_AUTO_ACCEPTANCE_USAGE).expect("static usage JSON")
+    json!({
+        "version": 1,
+        "kind": "StrictFullAutoAcceptanceUsage",
+        "usage": "hepta-paper operator strict-full-auto-acceptance -- --action plan|inspect-runtime-adoption-candidate|adoption-status|adopt-runtime|status|execute|converge --configuration PATH [--plan-hash sha256:... --execute]",
+        "rustBoundary": "strict argument and configuration preflight only; no lease, checkpoint, runtime adoption, external authority, provider, or acceptance action"
+    })
 }
 
 pub fn inspect_strict_full_auto_acceptance_v1(options: &StrictFullAutoAcceptanceOptions) -> Value {

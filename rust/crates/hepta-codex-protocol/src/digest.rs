@@ -9,6 +9,28 @@ use thiserror::Error;
 pub struct Sha256Digest(String);
 
 impl Sha256Digest {
+    /// Encodes an already-computed, 32-byte SHA-256 digest in canonical form.
+    ///
+    /// These bytes are the digest itself, not input to be hashed. This method
+    /// performs no hashing and accepts every possible SHA-256 output.
+    #[must_use]
+    pub fn from_digest_bytes(bytes: [u8; 32]) -> Self {
+        fn digit(nibble: u8) -> char {
+            char::from(if nibble < 10 {
+                b'0' + nibble
+            } else {
+                b'a' + nibble - 10
+            })
+        }
+        let mut encoded = String::with_capacity(71);
+        encoded.push_str("sha256:");
+        for byte in bytes {
+            encoded.push(digit(byte >> 4));
+            encoded.push(digit(byte & 0x0f));
+        }
+        Self(encoded)
+    }
+
     /// Returns the canonical string representation.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -80,6 +102,23 @@ mod tests {
     use std::str::FromStr;
 
     use super::{DigestParseError, Sha256Digest};
+
+    #[test]
+    fn encodes_existing_digest_bytes_without_hashing() {
+        let bytes = std::array::from_fn(|index| index as u8);
+        let digest = Sha256Digest::from_digest_bytes(bytes);
+        let expected = "sha256:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        assert_eq!(digest.as_str(), expected);
+        assert_eq!(Sha256Digest::from_str(expected).unwrap(), digest);
+        assert_eq!(
+            Sha256Digest::from_digest_bytes([0xff; 32]).as_str(),
+            format!("sha256:{}", "ff".repeat(32))
+        );
+        assert_eq!(
+            Sha256Digest::from_digest_bytes([0; 32]).as_str(),
+            format!("sha256:{}", "00".repeat(32))
+        );
+    }
 
     #[test]
     fn accepts_canonical_digest() {

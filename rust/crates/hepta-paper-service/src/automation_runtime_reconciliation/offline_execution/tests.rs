@@ -87,7 +87,7 @@ fn snapshot(db: &Connection) -> Value {
         for row in &mut contents {
             for value in row.as_object_mut().unwrap().values_mut() {
                 if value.is_number() {
-                    *value = serde_json::from_str(&wire(value)).unwrap();
+                    *value = serde_json::from_str(&wire(value).unwrap()).unwrap();
                 }
             }
         }

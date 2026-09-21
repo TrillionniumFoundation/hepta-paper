@@ -13,7 +13,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use hepta_legacy_compatibility::{
     ProductionCollationV1, production_hash_record_v1, production_stable_json_v1,
 };
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
@@ -320,23 +320,34 @@ fn same_identity(left: &Metadata, right: &Metadata) -> bool {
         && left.ctime_nsec() == right.ctime_nsec()
 }
 
+fn blocked_fields(blocker: &str) -> Map<String, Value> {
+    Map::from_iter(
+        [
+            (
+                "status",
+                json!("production_external_author_identity_input_blocked"),
+            ),
+            ("readyForRuntimeBinding", json!(false)),
+            ("configured", json!(false)),
+            ("configurationVersion", Value::Null),
+            ("stablePolicyPinned", json!(false)),
+            ("configurationPinned", json!(false)),
+            ("observedConfigurationHash", Value::Null),
+            ("authoritySubjectHash", Value::Null),
+            ("authorityEnvelopeHash", Value::Null),
+            ("authorityVerificationReceiptHash", Value::Null),
+            ("attestationExpiresAt", Value::Null),
+            ("cryptographicAuthorityReady", json!(false)),
+            ("externalActionPerformed", json!(false)),
+            ("blockers", json!([blocker])),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value)),
+    )
+}
+
 fn blocked(blocker: &str) -> Value {
-    json!({
-        "status": "production_external_author_identity_input_blocked",
-        "readyForRuntimeBinding": false,
-        "configured": false,
-        "configurationVersion": null,
-        "stablePolicyPinned": false,
-        "configurationPinned": false,
-        "observedConfigurationHash": null,
-        "authoritySubjectHash": null,
-        "authorityEnvelopeHash": null,
-        "authorityVerificationReceiptHash": null,
-        "attestationExpiresAt": null,
-        "cryptographicAuthorityReady": false,
-        "externalActionPerformed": false,
-        "blockers": [blocker]
-    })
+    Value::Object(blocked_fields(blocker))
 }
 
 fn unique(values: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -415,6 +426,7 @@ fn policy_for(subject: &Value) -> Option<Value> {
 
 #[derive(Clone)]
 struct TrustKey {
+    id: String,
     value: Value,
     key: VerifyingKey,
     spki_hash: String,
@@ -439,7 +451,10 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
     let mut ids = BTreeSet::new();
     let mut spkis = BTreeSet::new();
     let mut input_ids = Vec::new();
-    for candidate in value["keys"].as_array().expect("checked above") {
+    let candidates = value["keys"]
+        .as_array()
+        .ok_or("pinned_external_evidence_trust_store_invalid")?;
+    for candidate in candidates {
         if !exact(candidate, TRUST_KEY_KEYS)
             || !identifier(&candidate["keyId"])
             || !identifier(&candidate["subjectId"])
@@ -492,7 +507,10 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
             .to_public_key_der()
             .map_err(|_| "pinned_external_evidence_trust_key_invalid")?;
         let spki_hash = bytes_hash(der.as_bytes());
-        let id = candidate["keyId"].as_str().unwrap().to_owned();
+        let id = candidate["keyId"]
+            .as_str()
+            .ok_or("pinned_external_evidence_trust_key_invalid")?
+            .to_owned();
         input_ids.push(id.clone());
         if !ids.insert(id.clone()) || !spkis.insert(spki_hash.clone()) {
             return Err("pinned_external_evidence_trust_key_invalid".into());
@@ -503,6 +521,7 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
             "effectiveFrom": candidate["effectiveFrom"], "expiresAt": candidate["expiresAt"], "revokedAt": candidate["revokedAt"],
         });
         keys.push(TrustKey {
+            id,
             value: canonical,
             key,
             spki_hash,
@@ -527,12 +546,7 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
     if expected_ids.is_empty() || expected_ids.iter().any(|id| !ids.contains(id)) {
         return Err("pinned_external_evidence_expected_key_missing".into());
     }
-    keys.sort_by(|left, right| {
-        collation.compare(
-            left.value["keyId"].as_str().unwrap(),
-            right.value["keyId"].as_str().unwrap(),
-        )
-    });
+    keys.sort_by(|left, right| collation.compare(&left.id, &right.id));
     let canonical = json!({"version":1,"kind":"AuthorityTrustStore","keys":keys.iter().map(|key| key.value.clone()).collect::<Vec<_>>()});
     let hash = canonical_hash("PinnedExternalEvidenceTrustStore", &canonical)
         .ok_or("pinned_external_evidence_trust_store_invalid")?;
@@ -621,14 +635,17 @@ fn envelope_valid(
     let payload = Value::Object(
         value
             .as_object()
-            .unwrap()
+            .ok_or("pinned_external_evidence_envelope_shape_invalid")?
             .iter()
             .filter(|(key, _)| *key != "signatures")
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
     );
-    let payload_bytes = canonical_json(&payload);
-    let signatures = value["signatures"].as_array().unwrap();
+    let payload_bytes =
+        canonical_json(&payload).map_err(|_| "pinned_external_evidence_envelope_invalid")?;
+    let signatures = value["signatures"]
+        .as_array()
+        .ok_or("pinned_external_evidence_envelope_invalid")?;
     let mut seen = BTreeSet::new();
     let mut verified = Vec::new();
     for signature in signatures {
@@ -644,7 +661,7 @@ fn envelope_valid(
         let key = trust
             .keys
             .iter()
-            .find(|key| key.value["keyId"] == key_id)
+            .find(|key| key.id == key_id)
             .ok_or("immutable_signed_json_authority_signature_invalid")?;
         if !key.value["roles"]
             .as_array()
@@ -676,8 +693,8 @@ fn envelope_valid(
         let key = trust
             .keys
             .iter()
-            .find(|key| key.value["keyId"] == *key_id)
-            .unwrap();
+            .find(|key| key.id == *key_id)
+            .ok_or("immutable_signed_json_authority_signature_invalid")?;
         let effective = instant(&key.value["effectiveFrom"]);
         let key_expires = instant(&key.value["expiresAt"]);
         let revoked = instant(&key.value["revokedAt"]);
@@ -699,7 +716,7 @@ fn envelope_valid(
             trust
                 .keys
                 .iter()
-                .find(|key| key.value["keyId"] == *key_id)
+                .find(|key| key.id == *key_id)
                 .and_then(|key| key.value["subjectId"].as_str())
                 .map(str::to_owned)
         })
@@ -710,7 +727,7 @@ fn envelope_valid(
             trust
                 .keys
                 .iter()
-                .find(|key| key.value["keyId"] == *key_id)
+                .find(|key| key.id == *key_id)
                 .map(|key| key.spki_hash.clone())
         })
         .collect::<Vec<_>>();
@@ -718,7 +735,10 @@ fn envelope_valid(
     verified_spki_hashes.sort();
     Ok((
         envelope_hash,
-        value["expiresAt"].as_str().unwrap().to_owned(),
+        value["expiresAt"]
+            .as_str()
+            .ok_or("pinned_external_evidence_envelope_invalid")?
+            .to_owned(),
         verified,
         verified_subject_ids,
         verified_spki_hashes,
@@ -773,7 +793,7 @@ fn blocked_receipt_hash(
     canonical_hash("PinnedExternalEvidenceVerificationReceipt", &payload)
 }
 
-fn canonical_json(value: &Value) -> Vec<u8> {
+fn canonical_json(value: &Value) -> Result<Vec<u8>, serde_json::Error> {
     match value {
         Value::Object(object) => {
             let mut fields = object.iter().collect::<Vec<_>>();
@@ -783,12 +803,12 @@ fn canonical_json(value: &Value) -> Vec<u8> {
                 if index > 0 {
                     out.push(b',');
                 }
-                out.extend(serde_json::to_vec(key).unwrap());
+                out.extend(serde_json::to_vec(key)?);
                 out.push(b':');
-                out.extend(canonical_json(value));
+                out.extend(canonical_json(value)?);
             }
             out.push(b'}');
-            out
+            Ok(out)
         }
         Value::Array(items) => {
             let mut out = Vec::from(*b"[");
@@ -796,12 +816,12 @@ fn canonical_json(value: &Value) -> Vec<u8> {
                 if index > 0 {
                     out.push(b',');
                 }
-                out.extend(canonical_json(item));
+                out.extend(canonical_json(item)?);
             }
             out.push(b']');
-            out
+            Ok(out)
         }
-        _ => serde_json::to_vec(value).unwrap_or_default(),
+        _ => serde_json::to_vec(value),
     }
 }
 
@@ -870,20 +890,25 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
     // selected lifetime, rather than the verifier's wider default window.
     // Keep that distinction so a recomputed hash cannot make an overlong
     // subject appear statically configured.
-    let static_lifetime = parsed["maximumLifetimeMs"].as_u64().unwrap();
+    let Some(static_lifetime) = parsed["maximumLifetimeMs"].as_u64() else {
+        return blocked("autonomous_research_author_identity_configuration_verification_failed");
+    };
+    let Some(observed_hash) = observed_hash else {
+        return blocked("autonomous_research_author_identity_configuration_verification_failed");
+    };
     let static_subject_valid = subject_valid(static_subject, None, static_lifetime)
         && static_subject["assuranceProfile"]
             == "pinned-provider-account-and-platform-attestation-v1";
     let static_policy_valid = version != Some(2)
         || (exact(&parsed["identityPolicy"], POLICY_KEYS)
             && policy_for(static_subject).as_ref() == Some(&parsed["identityPolicy"]));
-    let static_input_ids = parsed["signerKeyIds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
+    let Some(static_input_ids) = parsed["signerKeyIds"].as_array().and_then(|ids| {
+        ids.iter()
+            .map(|id| id.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+    }) else {
+        return blocked("autonomous_research_author_identity_configuration_verification_failed");
+    };
     let mut static_ids = static_input_ids.clone();
     static_ids.sort();
     static_ids.dedup();
@@ -906,19 +931,18 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
     {
         return blocked("autonomous_research_author_identity_configuration_verification_failed");
     }
-    let mut report =
-        blocked("autonomous_research_author_identity_configuration_verification_failed");
-    let object = report.as_object_mut().unwrap();
+    let mut object =
+        blocked_fields("autonomous_research_author_identity_configuration_verification_failed");
     object.insert("configured".into(), Value::Bool(true));
     object.insert("configurationVersion".into(), parsed["version"].clone());
     object.insert(
         "observedConfigurationHash".into(),
-        Value::String(observed_hash.clone().unwrap()),
+        Value::String(observed_hash.clone()),
     );
     let expected = expected_hash.map(str::to_ascii_lowercase);
     let pin_blocker = match expected.as_deref() {
         None => Some("autonomous_research_author_identity_configuration_pin_required"),
-        Some(expected) if expected != observed_hash.as_deref().unwrap() => {
+        Some(expected) if expected != observed_hash => {
             Some("autonomous_research_author_identity_configuration_pin_mismatch")
         }
         Some(_) => None,
@@ -928,7 +952,7 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
         .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    let lifetime = parsed["maximumLifetimeMs"].as_u64().unwrap();
+    let lifetime = static_lifetime;
     let subject = &parsed["subject"];
     let subject_hash = subject["externalPrincipalIdentityAttestationSubjectHash"]
         .as_str()
@@ -954,13 +978,7 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
     {
         blockers.push("autonomous_research_author_identity_policy_binding_invalid".into());
     }
-    let input_trust_ids = parsed["signerKeyIds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
+    let input_trust_ids = static_input_ids;
     let mut trust_ids = input_trust_ids.clone();
     trust_ids.sort();
     trust_ids.dedup();
@@ -974,7 +992,7 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
         Err(blocker) => {
             blockers.push(blocker);
             object.insert("blockers".into(), json!(unique(blockers)));
-            return report;
+            return Value::Object(object);
         }
     };
     if parsed["trustStoreHash"] != trust.hash {
@@ -1066,7 +1084,7 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
         ),
     );
     object.insert("blockers".into(), json!(blockers));
-    report
+    Value::Object(object)
 }
 
 #[cfg(test)]

@@ -335,14 +335,15 @@ pub(super) fn bind(path: &Path) -> Result<(UnixListener, PublishedSocket)> {
     let provisional = fs::symlink_metadata(&temporary).map_err(|_| error(PUBLICATION))?;
     staging.socket = Some(provisional);
     staging.assert_current()?;
-    if !owned_socket(staging.socket.as_ref().unwrap(), 1) {
+    let original_socket = staging.socket.as_ref().ok_or_else(|| error(PUBLICATION))?;
+    if !owned_socket(original_socket, 1) {
         return Err(error(PUBLICATION));
     }
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o660))
         .map_err(|_| error(PUBLICATION))?;
     let metadata = fs::symlink_metadata(&temporary).map_err(|_| error(PUBLICATION))?;
     if !owned_socket(&metadata, 1)
-        || identity(&metadata) != identity(staging.socket.as_ref().unwrap())
+        || identity(&metadata) != identity(original_socket)
         || metadata.mode() & 0o7777 != 0o660
     {
         return Err(error(PUBLICATION));

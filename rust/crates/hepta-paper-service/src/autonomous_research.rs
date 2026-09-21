@@ -112,7 +112,21 @@ pub fn parse_autonomous_research_arguments(
 }
 
 pub fn autonomous_research_help_json_v1() -> Value {
-    serde_json::from_str(AUTONOMOUS_RESEARCH_USAGE).expect("static autonomous research usage JSON")
+    json!({
+        "version": 4,
+        "kind": "AutonomousResearchCampaignUsage",
+        "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
+        "defaultLaunchMode": "local-run",
+        "safety": {
+            "operatorApprovalClaimed": false,
+            "selfSignedExternalTrustClaimed": false,
+            "externalSubmissionEnabled": false,
+            "universalResearchValidityClaimed": false,
+            "naturalLanguageToLeanEquivalenceMachineProven": false,
+            "automaticBudgetExpansionEnabled": false
+        },
+        "rustBoundary": "strict argument parsing and fail-closed diagnostic only; no campaign persistence, provider execution, external qualification, or submission"
+    })
 }
 
 pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Value {

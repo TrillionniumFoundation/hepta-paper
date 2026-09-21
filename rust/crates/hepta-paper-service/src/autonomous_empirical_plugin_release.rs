@@ -421,8 +421,17 @@ fn generated_template(options: &AutonomousEmpiricalPluginReleaseOptions) -> Valu
 fn inspect_template(options: &AutonomousEmpiricalPluginReleaseOptions) -> (Value, Option<Value>) {
     let Some(path) = options.template.as_deref() else {
         let template = generated_template(options);
+        let bytes = match serde_json::to_vec(&template) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return (
+                    json!({"source":"generated","valid":false,"reason":"template_encoding_failed","sha256":null,"profileCount":template["profiles"].as_array().map_or(0, Vec::len)}),
+                    None,
+                );
+            }
+        };
         return (
-            json!({"source":"generated","valid":true,"sha256":digest(serde_json::to_string(&template).unwrap().as_bytes()),"profileCount":template["profiles"].as_array().map_or(0, Vec::len)}),
+            json!({"source":"generated","valid":true,"sha256":digest(&bytes),"profileCount":template["profiles"].as_array().map_or(0, Vec::len)}),
             Some(template),
         );
     };
@@ -447,7 +456,15 @@ fn blocker(blockers: &mut Vec<String>, value: &str) {
 }
 
 pub fn autonomous_empirical_plugin_release_help_json_v1() -> Value {
-    serde_json::from_str(AUTONOMOUS_EMPIRICAL_PLUGIN_RELEASE_USAGE).expect("static usage")
+    json!({
+      "version": 1,
+      "kind": "AutonomousEmpiricalPluginReleaseUsage",
+      "usage": "hepta-paper-rust autonomous-empirical-plugin-release --action template|plan|publish|inspect [--template PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config PATH] [--install-root PATH] [--activation PATH]",
+      "rustBoundary": "read-only template/reference preflight; no private-key loading, signer execution, bundle verification authority, or installation",
+      "externalAction": false,
+      "serviceStateChanged": false,
+      "semanticNotReadyExitCode": 2
+    })
 }
 
 pub fn inspect_autonomous_empirical_plugin_release_v1(
@@ -526,6 +543,17 @@ pub fn execute_autonomous_empirical_plugin_release_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn help_matches_published_usage_contract() {
+        let published: Value =
+            serde_json::from_str(AUTONOMOUS_EMPIRICAL_PLUGIN_RELEASE_USAGE).unwrap();
+        assert_eq!(
+            autonomous_empirical_plugin_release_help_json_v1(),
+            published
+        );
+    }
+
     #[test]
     fn parser_rejects_private_key_and_requires_publish_root() {
         assert!(

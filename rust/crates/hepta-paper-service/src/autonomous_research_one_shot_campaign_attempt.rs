@@ -180,8 +180,28 @@ pub fn parse_autonomous_research_one_shot_campaign_attempt_arguments(
 }
 
 pub fn autonomous_research_one_shot_campaign_attempt_help_json_v1() -> Value {
-    serde_json::from_str(AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_ATTEMPT_USAGE)
-        .expect("static one-shot usage JSON")
+    json!({
+        "version": 1,
+        "kind": "AutonomousResearchOneShotCampaignAttemptUsage",
+        "usage": "autonomous-research-one-shot-campaign-attempt --action plan|preflight|execute|status [options]",
+        "fixedCampaignId": "autonomous-research:local-auto-20260730-57",
+        "protectedCampaignId": "autonomous-research:local-auto-20260730-51",
+        "options": {
+            "--dataset-mount-file": "JSON dataset mount array; required by plan, preflight, and execute",
+            "--attempt-id": "exact attempt identity; required by status",
+            "--root": "absolute paper asset root",
+            "--runtime-root": "absolute native runtime root",
+            "--control-root": "absolute dedicated one-shot control root"
+        },
+        "safety": {
+            "providerInvocationPerformed": false,
+            "networkAccessPerformed": false,
+            "journalWritePerformed": false,
+            "nativeDatabaseWritePerformed": false,
+            "executionAuthorized": false,
+            "rustBoundary": "bounded no-follow/hash preflight; execute and status are fail-closed"
+        }
+    })
 }
 
 fn digest(bytes: &[u8]) -> String {

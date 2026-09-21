@@ -97,6 +97,12 @@ has kind `LocalOfflineAutomationRuntimeReconciliationExecution`, contains the
 Node-compatible receipt under `reconciliation`, and reports
 `productionActivation: false` and `nodeRetirementVerified: false`.
 
+Ordered wire encoding is fallible. Encoding or numeric conversion failures
+propagate as row errors through both offline and online callbacks before their
+transaction can commit; no empty JSON field or panic substitutes for a failed
+encoding. The existing field order, ECMAScript number spelling and digest input
+bytes remain the compatibility contract.
+
 Both planners reject SQLite INTEGER values outside JavaScript's exact range
 (-9,007,199,254,740,991 through 9,007,199,254,740,991), matching the Node reader's
 rejection before hashing. Otherwise distinct integer CAS values could alias to

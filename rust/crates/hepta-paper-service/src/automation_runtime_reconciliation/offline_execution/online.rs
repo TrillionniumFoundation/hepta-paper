@@ -38,7 +38,7 @@ fn event_insert(
             event.campaign,
             event.node,
             json!(event.kind),
-            json!(event.payload.wire()),
+            json!(event.payload.wire().map_err(business_error)?),
             json!(event.hash),
             json!(at),
         ],
@@ -63,8 +63,8 @@ pub(in crate::automation_runtime_reconciliation) fn apply(
                 node["lease_owner"].clone(),
                 node["attempt_id"].clone(),
                 node["attempt_id"].clone(),
-                number_or_zero(&node["lease_generation"]),
-                number_or_zero(&node["node_revision"]),
+                number_or_zero(&node["lease_generation"]).map_err(business_error)?,
+                number_or_zero(&node["node_revision"]).map_err(business_error)?,
                 json!(at),
             ],
             "automation_runtime_reconciliation_node_precondition_failed",
@@ -103,7 +103,7 @@ pub(in crate::automation_runtime_reconciliation) fn apply(
             .field("previousUpdatedAt", campaign["updated_at"].clone())
             .field(
                 "queuedNodeCount",
-                number_or_zero(&campaign["queued_node_count"]),
+                number_or_zero(&campaign["queued_node_count"]).map_err(business_error)?,
             )
             .field("noProgressCutoff", plan["noProgressCutoff"].clone())
             .field(
@@ -152,11 +152,11 @@ pub(in crate::automation_runtime_reconciliation) fn apply(
             .field("previousAttemptId", truthy_or_null(&node["attempt_id"]))
             .field(
                 "previousLeaseGeneration",
-                number_or_zero(&node["lease_generation"]),
+                number_or_zero(&node["lease_generation"]).map_err(business_error)?,
             )
             .field(
                 "previousNodeRevision",
-                number_or_zero(&node["node_revision"]),
+                number_or_zero(&node["node_revision"]).map_err(business_error)?,
             )
             .field("preparedIntegrationStatus", json!(integration))
             .field(
@@ -171,7 +171,7 @@ pub(in crate::automation_runtime_reconciliation) fn apply(
             vec![
                 json!(status),
                 json!(class),
-                json!(failure.wire()),
+                json!(failure.wire().map_err(business_error)?),
                 json!(failure_hash),
                 json!(at),
                 node["node_id"].clone(),
@@ -181,8 +181,8 @@ pub(in crate::automation_runtime_reconciliation) fn apply(
                 truthy_or_null(&node["lease_owner"]),
                 truthy_or_null(&node["attempt_id"]),
                 truthy_or_null(&node["attempt_id"]),
-                number_or_zero(&node["lease_generation"]),
-                number_or_zero(&node["node_revision"]),
+                number_or_zero(&node["lease_generation"]).map_err(business_error)?,
+                number_or_zero(&node["node_revision"]).map_err(business_error)?,
                 json!(integration),
             ],
             "automation_runtime_reconciliation_terminal_active_node_precondition_failed",

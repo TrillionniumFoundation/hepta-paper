@@ -429,10 +429,10 @@ fn valid_record(v: &Value, runtime: &Path, lifecycle: &str) -> bool {
         _ => false,
     };
     let mut payload = v.clone();
-    payload
-        .as_object_mut()
-        .expect("object checked")
-        .remove("runtimeRetentionPackageDeletionFenceHash");
+    let Some(object) = payload.as_object_mut() else {
+        return false;
+    };
+    object.remove("runtimeRetentionPackageDeletionFenceHash");
     state_ok
         && production_hash_record_v1("RuntimeRetentionPackageDeletionFence", &payload)
             .ok()

@@ -246,7 +246,10 @@ fn inspect_directory(path: &Path) -> Value {
     })
 }
 
-fn read_reference(path: &Path) -> Value {
+fn read_reference(path: Option<&Path>) -> Value {
+    let Some(path) = path else {
+        return json!({"path": Value::Null, "valid": false, "reason": "not_supplied", "observedSha256": Value::Null});
+    };
     let path_text = path.to_string_lossy().into_owned();
     if !path.is_absolute() {
         return json!({"path": path_text, "valid": false, "reason": "path_not_absolute", "observedSha256": Value::Null});
@@ -324,15 +327,11 @@ fn read_reference(path: &Path) -> Value {
     })
 }
 
-fn compute_plan_hash(payload: &Value) -> String {
-    digest(
-        serde_json::to_vec(payload)
-            .expect("plan JSON serializes")
-            .as_slice(),
-    )
+fn compute_plan_hash(payload: &Value) -> Result<String, serde_json::Error> {
+    serde_json::to_vec(payload).map(|bytes| digest(&bytes))
 }
 
-fn plan_report(options: &AutonomousIntakeAuthorityRotationOptions) -> Value {
+fn plan_report(options: &AutonomousIntakeAuthorityRotationOptions, apply: bool) -> Value {
     let default_runtime_root = absolute_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../../../hepta-paper-runtime/native-runtime"),
@@ -341,18 +340,8 @@ fn plan_report(options: &AutonomousIntakeAuthorityRotationOptions) -> Value {
         .runtime_root
         .as_deref()
         .unwrap_or(&default_runtime_root);
-    let config = read_reference(
-        options
-            .next_machine_intake_config
-            .as_deref()
-            .expect("parser requires config"),
-    );
-    let profile = read_reference(
-        options
-            .topic_producer_profile
-            .as_deref()
-            .expect("parser requires profile"),
-    );
+    let config = read_reference(options.next_machine_intake_config.as_deref());
+    let profile = read_reference(options.topic_producer_profile.as_deref());
     let authority_root = inspect_directory(Path::new(AUTHORITY_ROTATION_ROOT));
     let runtime_identity = inspect_directory(runtime_root);
     let config_v2 = config["declaredVersion"] == 2 && config["machineAppendEnabled"] == true;
@@ -394,8 +383,43 @@ fn plan_report(options: &AutonomousIntakeAuthorityRotationOptions) -> Value {
         "topicProfileHashMatches": profile_hash_matches,
         "externalActionPerformed": false,
     });
-    let plan_hash = compute_plan_hash(&payload);
-    json!({
+    let plan_hash = match compute_plan_hash(&payload) {
+        Ok(hash) => Some(hash),
+        Err(_) => {
+            blockers.push("autonomous_intake_authority_rotation_plan_encoding_failed".to_owned());
+            None
+        }
+    };
+    let rotation_intent = if apply {
+        if plan_hash
+            .as_deref()
+            .is_none_or(|hash| options.plan_hash.as_deref() != Some(hash))
+        {
+            blockers.push("autonomous_intake_authority_rotation_plan_hash_mismatch".to_owned());
+        }
+        if options.expected_authority_generation != Some(1) {
+            blockers.push(
+                "autonomous_intake_authority_rotation_expected_authority_generation_mismatch"
+                    .to_owned(),
+            );
+        }
+        let intent = options.rotation_intent.as_deref().map(|path| {
+            let reference = read_reference(Some(path));
+            json!({
+                "path": reference["path"], "valid": reference["valid"],
+                "observedSha256": reference["observedSha256"],
+                "signatureVerificationPerformed": false,
+            })
+        });
+        blockers.push(
+            "autonomous_intake_authority_rotation_signed_intent_and_external_authority_required"
+                .to_owned(),
+        );
+        intent
+    } else {
+        None
+    };
+    let mut report = json!({
         "version": 1,
         "kind": "AutonomousResearchMachineIntakeAuthorityRotationPlanReport",
         "status": "autonomous_research_machine_intake_authority_rotation_blocked",
@@ -407,55 +431,73 @@ fn plan_report(options: &AutonomousIntakeAuthorityRotationOptions) -> Value {
         "externalActionPerformed": false,
         "networkUse": false,
         "providerCostUsd": 0,
-    })
+    });
+    if let Some(intent) = rotation_intent {
+        report["rotationIntent"] = intent;
+    }
+    report
 }
 
 pub fn autonomous_intake_authority_rotation_help_json_v1() -> Value {
-    serde_json::from_str(AUTONOMOUS_INTAKE_AUTHORITY_ROTATION_USAGE).expect("static usage JSON")
+    json!({
+      "version": 1,
+      "kind": "AutonomousIntakeAuthorityRotationUsage",
+      "usage": "autonomous-intake-authority-rotation --action plan|apply --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",
+      "localObservationEffects": "bounded read-only file and identity inspection",
+      "externalAction": "never",
+      "mutation": "never; apply remains fail-closed until independently reviewed authority adapter exists",
+      "semanticNotReadyExitCode": 2
+    })
 }
 
 pub fn inspect_autonomous_intake_authority_rotation_v1(
     options: &AutonomousIntakeAuthorityRotationOptions,
 ) -> Value {
-    plan_report(options)
+    plan_report(options, false)
 }
 
 pub fn execute_autonomous_intake_authority_rotation_v1(
     options: &AutonomousIntakeAuthorityRotationOptions,
 ) -> Value {
-    let mut report = plan_report(options);
-    let plan_hash = report["plan"]["planHash"].as_str().unwrap_or_default();
-    if options.plan_hash.as_deref() != Some(plan_hash) {
-        report["blockers"]
-            .as_array_mut()
-            .expect("blockers array")
-            .push(json!(
-                "autonomous_intake_authority_rotation_plan_hash_mismatch"
-            ));
+    plan_report(options, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_matches_published_usage_contract() {
+        let published: Value =
+            serde_json::from_str(AUTONOMOUS_INTAKE_AUTHORITY_ROTATION_USAGE).unwrap();
+        assert_eq!(
+            autonomous_intake_authority_rotation_help_json_v1(),
+            published
+        );
     }
-    if options.expected_authority_generation != Some(1) {
-        report["blockers"]
-            .as_array_mut()
-            .expect("blockers array")
-            .push(json!(
-                "autonomous_intake_authority_rotation_expected_authority_generation_mismatch"
-            ));
+
+    #[test]
+    fn direct_library_calls_report_missing_target_paths() {
+        let options = AutonomousIntakeAuthorityRotationOptions::default();
+        for report in [
+            inspect_autonomous_intake_authority_rotation_v1(&options),
+            execute_autonomous_intake_authority_rotation_v1(&options),
+        ] {
+            assert_eq!(report["ready"], false);
+            assert_eq!(report["externalActionPerformed"], false);
+            let payload = &report["plan"]["payload"];
+            for field in ["nextMachineIntakeConfig", "topicProducerProfile"] {
+                assert_eq!(payload[field]["valid"], false);
+                assert_eq!(payload[field]["reason"], "not_supplied");
+                assert!(payload[field]["path"].is_null());
+            }
+            let blockers = report["blockers"].as_array().unwrap();
+            assert!(blockers.contains(&json!(
+                "autonomous_intake_authority_rotation_next_machine_intake_config_invalid"
+            )));
+            assert!(blockers.contains(&json!(
+                "autonomous_intake_authority_rotation_topic_producer_profile_invalid"
+            )));
+        }
     }
-    if let Some(intent) = options.rotation_intent.as_deref() {
-        let reference = read_reference(intent);
-        report["rotationIntent"] = json!({
-            "path": reference["path"], "valid": reference["valid"],
-            "observedSha256": reference["observedSha256"],
-            "signatureVerificationPerformed": false,
-        });
-    }
-    report["status"] = json!("autonomous_research_machine_intake_authority_rotation_blocked");
-    report["ready"] = json!(false);
-    report["blockers"]
-        .as_array_mut()
-        .expect("blockers array")
-        .push(json!(
-            "autonomous_intake_authority_rotation_signed_intent_and_external_authority_required"
-        ));
-    report
 }

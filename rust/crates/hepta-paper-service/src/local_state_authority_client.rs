@@ -334,7 +334,11 @@ fn js_string(value: &Value) -> Result<String> {
         Value::Bool(value) => value.to_string(),
         Value::String(value) => value.clone(),
         Value::Number(value) => ryu_js::Buffer::new()
-            .format(value.as_f64().expect("JSON number"))
+            .format(
+                value
+                    .as_f64()
+                    .ok_or_else(|| fail("local_state_authority_client_response_invalid"))?,
+            )
             .into(),
         Value::Array(values) => values
             .iter()

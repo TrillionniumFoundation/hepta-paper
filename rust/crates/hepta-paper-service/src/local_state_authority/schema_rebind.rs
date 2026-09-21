@@ -425,14 +425,16 @@ pub(super) fn inspect(db: &Connection, ctx: &Context) -> Result<Value> {
         )
         .optional()?;
     let row = id.map(|id| stored(db, ctx, &id)).transpose()?.flatten();
-    let finalized = row.as_ref().filter(|r| r.finalization.is_some());
-    let restart = finalized.is_some_and(|r| r.target != current.configuration_hash);
+    let finalized = row
+        .as_ref()
+        .and_then(|row| row.finalization.as_ref().map(|receipt| (row, receipt)));
+    let pending = finalized.filter(|(row, _)| row.target != current.configuration_hash);
     Ok(
-        json!({"configurationHash":current.configuration_hash,"authorityWriterManifestHash":current.writer_manifest_hash,"schemaRebindRestartRequired":restart,
-        "pendingTargetWriterManifestHash":if restart {row.as_ref().unwrap().request["writerManifestHash"].clone()} else {Value::Null},
-        "pendingTargetAuthorityConfigurationHash":if restart {json!(row.as_ref().unwrap().target)} else {Value::Null},
-        "schemaRebindFinalizationReceiptHash":finalized.map(|r|schema_transition_receipt_hash_v1(r.finalization.as_ref().unwrap())).transpose()?,
-        "schemaRebindTargetConfigurationHash":finalized.map(|r|r.target.clone()),"schemaRebindActivated":finalized.is_some_and(|r|r.target==current.configuration_hash),
+        json!({"configurationHash":current.configuration_hash,"authorityWriterManifestHash":current.writer_manifest_hash,"schemaRebindRestartRequired":pending.is_some(),
+        "pendingTargetWriterManifestHash":pending.map(|(row, _)|row.request["writerManifestHash"].clone()),
+        "pendingTargetAuthorityConfigurationHash":pending.map(|(row, _)|&row.target),
+        "schemaRebindFinalizationReceiptHash":finalized.map(|(_, receipt)|schema_transition_receipt_hash_v1(receipt)).transpose()?,
+        "schemaRebindTargetConfigurationHash":finalized.map(|(row, _)|&row.target),"schemaRebindActivated":finalized.is_some_and(|(row, _)|row.target==current.configuration_hash),
         "unfinishedSchemaRebindCount":count(db,"SELECT count(*) FROM authority_schema_rebind WHERE finalization_receipt_json IS NULL")?,"unfinishedBackupCount":count(db,"SELECT count(*) FROM authority_backup_reservation WHERE finalization_receipt_json IS NULL")?}),
     )
 }

@@ -1,6 +1,7 @@
 //! `Number` coercion for SQLite scalar fields, including the non-STRICT schema's
 //! TEXT values. JSON.stringify represents non-finite results as null; binding a
 //! failed conversion must never fall back to the original text and match a CAS.
+use super::AutomationRuntimeReconciliationError as Error;
 use serde_json::{Value, json};
 
 fn trim(value: &str) -> &str {
@@ -75,27 +76,33 @@ fn string_number(value: &str) -> Option<f64> {
     if value == "-Infinity" {
         return Some(f64::NEG_INFINITY);
     }
-    static DECIMAL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let pattern = DECIMAL.get_or_init(|| {
-        regex::Regex::new(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
-            .expect("constant number grammar")
-    });
+    static DECIMAL: std::sync::OnceLock<Result<regex::Regex, regex::Error>> =
+        std::sync::OnceLock::new();
+    let pattern = DECIMAL
+        .get_or_init(|| {
+            regex::Regex::new(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
+        })
+        .as_ref()
+        .ok()?;
     if !pattern.is_match(value) {
         return None;
     }
     value.parse().ok()
 }
-pub(super) fn number(value: &Value) -> Value {
+pub(super) fn number(value: &Value) -> Result<Value, Error> {
     let number = match value {
-        Value::Null => return json!(0),
-        Value::Bool(value) => return json!(i64::from(*value)),
-        Value::Number(_) => return value.clone(),
+        Value::Null => return Ok(json!(0)),
+        Value::Bool(value) => return Ok(json!(i64::from(*value))),
+        Value::Number(_) => return Ok(value.clone()),
         Value::String(value) => string_number(value),
         _ => None, // The admitted row reader rejects SQLite BLOBs.
     };
-    number.filter(|n| n.is_finite()).map_or(Value::Null, |n| {
-        serde_json::from_str(ryu_js::Buffer::new().format(n)).expect("finite ECMAScript number")
-    })
+    let Some(number) = number.filter(|number| number.is_finite()) else {
+        return Ok(Value::Null);
+    };
+    // Retain the existing ECMAScript spelling and serde_json parsing path, so
+    // integer variants and any floating-point rounding stay wire-compatible.
+    serde_json::from_str(ryu_js::Buffer::new().format(number)).map_err(|_| Error::Row)
 }
 
 #[cfg(test)]
@@ -137,6 +144,21 @@ mod tests {
                 "-0",
                 "1e3",
                 "1e309",
+                "-1e309",
+                "1e-324",
+                "5e-324",
+                "1e-7",
+                "1e20",
+                "1e21",
+                "9007199254740993",
+                "9223372036854775807",
+                "18446744073709551615",
+                "2.2250738585072014e-308",
+                "2.2250738585072012e-308",
+                "0.84551240822557006",
+                "1.2345678901234567",
+                "9.999999999999999e22",
+                "1.0000000000000002",
                 "1_000",
                 "0x1000000000000081",
                 "0x100000000000007f",
@@ -157,7 +179,7 @@ mod tests {
         );
         let expected: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
         for (input, expected) in values.iter().zip(expected) {
-            assert_eq!(number(input), expected, "input={input}");
+            assert_eq!(number(input).unwrap(), expected, "input={input}");
         }
     }
 }

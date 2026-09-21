@@ -187,7 +187,13 @@ pub fn parse_autonomous_state_provisioning_arguments(
             "autonomous_state_provisioning_genesis_authority_invalid",
         ));
     }
-    let absolute = |key: &str| PathBuf::from(values.get(key).expect("validated"));
+    let absolute = |key: &str| {
+        values.get(key).map(PathBuf::from).ok_or_else(|| {
+            error(format!(
+                "autonomous_state_provisioning_input_required:{key}"
+            ))
+        })
+    };
     Ok(Some(AutonomousStateProvisioningOptions {
         action,
         execute,
@@ -196,10 +202,10 @@ pub fn parse_autonomous_state_provisioning_arguments(
             .get("root")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")),
-        runtime_root: absolute("runtime-root"),
-        machine_intake_config: absolute("machine-intake-config"),
-        topic_producer_profile: absolute("topic-producer-profile"),
-        dataset_root: absolute("dataset-root"),
+        runtime_root: absolute("runtime-root")?,
+        machine_intake_config: absolute("machine-intake-config")?,
+        topic_producer_profile: absolute("topic-producer-profile")?,
+        dataset_root: absolute("dataset-root")?,
         machine_intake_genesis_authority: authority,
         maximum_attempts_per_epoch: attempts,
         maximum_cost_usd_per_epoch: cost,
@@ -288,7 +294,7 @@ fn plan_payload(options: &AutonomousStateProvisioningOptions) -> Result<Value> {
     let identity = json!({"machineIntakeConfigurationHash": machine_hash, "machineIntakeGenesisAuthorityMode": options.machine_intake_genesis_authority, "providerCanaryPairMaximumCostUsd": options.maximum_cost_usd_per_epoch, "providerConfigurationHash": provider_hash, "runtimeReproducibilityRefreshPolicyHash": policy_hash, "topicProducerProfileHash": topic_hash, "writerManifestHash": writer_hash, "callerDeclaredMachineIntakeConfigurationHash": machine.get("configurationHash"), "callerDeclaredTopicProducerProfileHash": topic.get("producerProfileHash"), "callerDeclaredProviderConfigurationHash": topic.get("providerConfigurationHash")});
     let roles = manifest["databases"]
         .as_array()
-        .expect("validated")
+        .ok_or_else(|| error("autonomous_state_provisioning_manifest_invalid"))?
         .iter()
         .filter_map(|row| row["role"].as_str())
         .map(str::to_owned)

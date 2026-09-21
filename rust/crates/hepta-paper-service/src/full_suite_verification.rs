@@ -256,7 +256,14 @@ fn workspace_members(cargo_toml: &[u8]) -> Vec<String> {
 }
 
 pub fn full_suite_verification_help_json_v1() -> Value {
-    serde_json::from_str(FULL_SUITE_VERIFICATION_USAGE).expect("static full-suite usage JSON")
+    json!({
+        "version": 1,
+        "kind": "FullSuiteVerificationUsage",
+        "usage": "hepta-paper-rust verify-full --workspace-root ABSOLUTE_PATH [--require-parity] [--json]",
+        "effects": "read-only",
+        "semanticNotReadyExitCode": 2,
+        "rustBoundary": "static Node test-manifest/source inventory and Rust workspace provenance only; Node/npm execution and parity acceptance remain fail-closed"
+    })
 }
 
 pub fn inspect_full_suite_verification_v1(

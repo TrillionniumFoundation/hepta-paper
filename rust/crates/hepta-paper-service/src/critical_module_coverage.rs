@@ -304,7 +304,14 @@ fn inspect_evidence(path: Option<&Path>, expected_hash: Option<&str>, targets: &
 }
 
 pub fn critical_module_coverage_help_json_v1() -> Value {
-    serde_json::from_str(CRITICAL_MODULE_COVERAGE_USAGE).expect("static critical usage JSON")
+    json!({
+        "version": 1,
+        "kind": "CriticalModuleCoveragePreflightUsage",
+        "usage": "hepta-paper-rust verify-critical [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--evidence ABSOLUTE_JSON_PATH --evidence-sha256 sha256:...] [--require-ok] [--json]",
+        "effects": "read-only",
+        "semanticNotReadyExitCode": 2,
+        "rustBoundary": "static target inventory and pinned Node evidence inspection only; Node coverage execution, signature verification, and acceptance remain fail-closed"
+    })
 }
 
 pub fn inspect_critical_module_coverage_v1(

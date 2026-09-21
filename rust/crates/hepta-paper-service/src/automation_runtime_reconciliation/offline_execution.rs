@@ -22,7 +22,7 @@ type Result<T> = std::result::Result<T, Error>;
 // retain construction order separately for receipt_json/event_json/failure_json.
 struct Record {
     value: Value,
-    fields: Vec<(String, String)>,
+    fields: Vec<(String, Result<String>)>,
 }
 impl Record {
     fn new() -> Self {
@@ -41,26 +41,35 @@ impl Record {
         self.value[key] = value.value.clone();
         self
     }
-    fn wire(&self) -> String {
-        format!(
-            "{{{}}}",
-            self.fields
-                .iter()
-                .map(|(k, v)| format!("{}:{v}", wire(&json!(k))))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
+    fn wire(&self) -> Result<String> {
+        let fields = self
+            .fields
+            .iter()
+            .map(|(key, value)| {
+                // JSON encoding failures are retained until the persisted wire
+                // value is requested; they never become empty JSON fields.
+                let value = value.as_ref().map_err(|_| Error::Row)?;
+                Ok(format!("{}:{value}", wire(&json!(key))?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(format!("{{{}}}", fields.join(",")))
     }
 }
-fn wire(v: &Value) -> String {
-    match v {
-        Value::Number(n) => {
-            let n = n.as_f64().expect("JSON number");
-            ryu_js::Buffer::new().format(n).into()
-        }
-        Value::Array(a) => format!("[{}]", a.iter().map(wire).collect::<Vec<_>>().join(",")),
-        _ => serde_json::to_string(v).expect("representable JSON"),
-    }
+fn wire(value: &Value) -> Result<String> {
+    Ok(match value {
+        Value::Number(number) => ryu_js::Buffer::new()
+            .format(number.as_f64().ok_or(Error::Row)?)
+            .to_owned(),
+        Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(wire)
+                .collect::<Result<Vec<_>>>()?
+                .join(",")
+        ),
+        _ => serde_json::to_string(value).map_err(|_| Error::Row)?,
+    })
 }
 fn hash(kind: &str, value: &Value) -> Result<String> {
     production_hash_record_v1(kind, value)
@@ -77,7 +86,7 @@ fn truthy_or_null(value: &Value) -> Value {
         value.clone()
     }
 }
-fn number_or_zero(value: &Value) -> Value {
+fn number_or_zero(value: &Value) -> Result<Value> {
     super::sqlite_number::number(value)
 }
 struct Event {
@@ -154,7 +163,7 @@ fn insert_event(tx: &Transaction<'_>, e: Event, at: &str) -> Result<()> {
             e.campaign,
             e.node,
             json!(e.kind),
-            json!(e.payload.wire()),
+            json!(e.payload.wire()?),
             json!(e.hash),
             json!(at),
         ],
@@ -266,7 +275,7 @@ fn prepare_receipt_from_payload(
         Value::Null,
         json!("AutomationRuntimeReconciliationReceipt"),
         json!("automation_runtime_reconciled"),
-        json!(payload.wire()),
+        json!(payload.wire()?),
         json!(receipt_hash),
         json!(ledger_at),
         json!("administrative"),
@@ -297,8 +306,8 @@ fn apply(tx: &Transaction<'_>, plan: &Value, prepared: &PreparedReceipt, at: &st
                 node["status"].clone(),
                 truthy_or_null(&node["lease_owner"]),
                 truthy_or_null(&node["attempt_id"]),
-                number_or_zero(&node["lease_generation"]),
-                number_or_zero(&node["node_revision"]),
+                number_or_zero(&node["lease_generation"])?,
+                number_or_zero(&node["node_revision"])?,
                 node["lease_expires_at"].clone(),
                 json!(at),
                 node["campaign_revision"].clone(),
@@ -337,7 +346,7 @@ fn apply(tx: &Transaction<'_>, plan: &Value, prepared: &PreparedReceipt, at: &st
                 campaign["updated_at"].clone(),
                 campaign["current_phase"].clone(),
                 plan["noProgressCutoff"].clone(),
-                number_or_zero(&campaign["queued_node_count"]),
+                number_or_zero(&campaign["queued_node_count"])?,
             ],
         )?;
         let detail = Record::new()
@@ -346,7 +355,7 @@ fn apply(tx: &Transaction<'_>, plan: &Value, prepared: &PreparedReceipt, at: &st
             .field("previousUpdatedAt", campaign["updated_at"].clone())
             .field(
                 "queuedNodeCount",
-                number_or_zero(&campaign["queued_node_count"]),
+                number_or_zero(&campaign["queued_node_count"])?,
             )
             .field("noProgressCutoff", plan["noProgressCutoff"].clone())
             .field(
@@ -394,11 +403,11 @@ fn apply(tx: &Transaction<'_>, plan: &Value, prepared: &PreparedReceipt, at: &st
             .field("previousAttemptId", truthy_or_null(&node["attempt_id"]))
             .field(
                 "previousLeaseGeneration",
-                number_or_zero(&node["lease_generation"]),
+                number_or_zero(&node["lease_generation"])?,
             )
             .field(
                 "previousNodeRevision",
-                number_or_zero(&node["node_revision"]),
+                number_or_zero(&node["node_revision"])?,
             )
             .field("preparedIntegrationStatus", json!(integration))
             .field(
@@ -412,7 +421,7 @@ fn apply(tx: &Transaction<'_>, plan: &Value, prepared: &PreparedReceipt, at: &st
             vec![
                 json!(status),
                 json!(class),
-                json!(failure.wire()),
+                json!(failure.wire()?),
                 json!(failure_hash),
                 json!(at),
                 node["node_id"].clone(),
@@ -421,8 +430,8 @@ fn apply(tx: &Transaction<'_>, plan: &Value, prepared: &PreparedReceipt, at: &st
                 truthy_or_null(&node["lease_owner"]),
                 truthy_or_null(&node["attempt_id"]),
                 node["lease_expires_at"].clone(),
-                number_or_zero(&node["lease_generation"]),
-                number_or_zero(&node["node_revision"]),
+                number_or_zero(&node["lease_generation"])?,
+                number_or_zero(&node["node_revision"])?,
                 json!(integration),
                 node["campaign_status"].clone(),
                 node["campaign_revision"].clone(),
@@ -457,7 +466,7 @@ fn apply(tx: &Transaction<'_>, plan: &Value, prepared: &PreparedReceipt, at: &st
                 json!(at),
                 node["node_id"].clone(),
                 node["campaign_id"].clone(),
-                number_or_zero(&node["node_revision"]),
+                number_or_zero(&node["node_revision"])?,
                 node["campaign_status"].clone(),
                 node["campaign_revision"].clone(),
                 node["stop_reason"].clone(),

@@ -52,10 +52,17 @@ fn main() {
     if execute {
         report["status"] = json!("legacy_archive_retirement_execute_blocked");
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&report).expect("JSON report")
-    );
+    let encoded = match serde_json::to_string_pretty(&report) {
+        Ok(encoded) => encoded,
+        Err(cause) => {
+            error(
+                "legacy_archive_retirement_status_failed",
+                &cause.to_string(),
+            );
+            std::process::exit(1);
+        }
+    };
+    println!("{encoded}");
     if execute {
         std::process::exit(1);
     }

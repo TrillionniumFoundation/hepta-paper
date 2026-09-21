@@ -82,7 +82,7 @@ fn snapshot(db: &Connection) -> Value {
     let mut out = json!({});
     for table in rows(db,"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",[]).unwrap(){
         let name=table["name"].as_str().unwrap();let mut contents=rows(db,&format!("SELECT * FROM \"{}\"",name.replace('"',"\"\"")),[]).unwrap();
-        for row in &mut contents{for v in row.as_object_mut().unwrap().values_mut(){if v.is_number(){*v=serde_json::from_str(&wire(v)).unwrap();}}}out[name]=json!(contents);
+        for row in &mut contents{for v in row.as_object_mut().unwrap().values_mut(){if v.is_number(){*v=serde_json::from_str(&wire(v).unwrap()).unwrap();}}}out[name]=json!(contents);
     }
     canonical_snapshot(&out)
 }

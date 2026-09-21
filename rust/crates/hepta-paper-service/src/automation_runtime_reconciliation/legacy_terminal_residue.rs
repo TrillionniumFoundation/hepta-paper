@@ -19,13 +19,13 @@ fn require(ok: bool, code: &'static str) -> Result<()> {
 // streaming digest; serde_json maps intentionally keep a separate lookup view.
 struct Record {
     value: Value,
-    fields: Vec<(String, String)>,
+    fields: Vec<(String, Result<String>)>,
 }
 impl Record {
     fn new() -> Self {
         Self {
             value: json!({}),
-            fields: vec![],
+            fields: Vec::new(),
         }
     }
     fn field(mut self, key: &str, value: Value) -> Self {
@@ -38,25 +38,35 @@ impl Record {
         self.value[key] = value.value.clone();
         self
     }
-    fn wire(&self) -> String {
-        format!(
-            "{{{}}}",
-            self.fields
-                .iter()
-                .map(|(k, v)| format!("{}:{v}", wire(&json!(k))))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
+    fn wire(&self) -> Result<String> {
+        let fields = self
+            .fields
+            .iter()
+            .map(|(key, value)| {
+                // JSON encoding failures are retained until the persisted wire
+                // value is requested; they never become empty JSON fields.
+                let value = value.as_ref().map_err(|_| Error::Row)?;
+                Ok(format!("{}:{value}", wire(&json!(key))?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(format!("{{{}}}", fields.join(",")))
     }
 }
-fn wire(v: &Value) -> String {
-    match v {
-        Value::Number(n) => ryu_js::Buffer::new()
-            .format(n.as_f64().expect("JSON number"))
+fn wire(value: &Value) -> Result<String> {
+    Ok(match value {
+        Value::Number(number) => ryu_js::Buffer::new()
+            .format(number.as_f64().ok_or(Error::Row)?)
             .to_owned(),
-        Value::Array(a) => format!("[{}]", a.iter().map(wire).collect::<Vec<_>>().join(",")),
-        _ => serde_json::to_string(v).expect("representable JSON"),
-    }
+        Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(wire)
+                .collect::<Result<Vec<_>>>()?
+                .join(",")
+        ),
+        _ => serde_json::to_string(value).map_err(|_| Error::Row)?,
+    })
 }
 fn hash(kind: &str, value: &Value) -> Result<String> {
     production_hash_record_v1(kind, value)
@@ -70,14 +80,14 @@ fn or_null(v: &Value) -> Value {
         v.clone()
     }
 }
-fn number(v: &Value) -> Value {
+fn number(v: &Value) -> Result<Value> {
     super::sqlite_number::number(v)
 }
-fn text_or_none(v: &Value) -> String {
+fn text_or_none(v: &Value) -> Result<String> {
     if or_null(v).is_null() {
-        "none".into()
+        Ok("none".into())
     } else if let Some(s) = v.as_str() {
-        s.into()
+        Ok(s.into())
     } else {
         wire(v)
     }
@@ -89,8 +99,9 @@ fn millis(value: &str) -> Option<i64> {
     }
     // Native/SQLite emit UTC timestamps. Support the incumbent's date-only and
     // explicit ISO offset/fraction spellings without invoking a JS process.
-    static ISO: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let pattern=ISO.get_or_init(||regex::Regex::new(r"^([0-9]{4}|[+-][0-9]{6})-([0-9]{2})-([0-9]{2})(?:[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]+))?)?([Zz]|[+-][0-9]{2}:?[0-9]{2})?)?$").expect("constant regex"));
+    static ISO: std::sync::OnceLock<std::result::Result<regex::Regex, regex::Error>> =
+        std::sync::OnceLock::new();
+    let pattern=ISO.get_or_init(||regex::Regex::new(r"^([0-9]{4}|[+-][0-9]{6})-([0-9]{2})-([0-9]{2})(?:[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]+))?)?([Zz]|[+-][0-9]{2}:?[0-9]{2})?)?$")).as_ref().ok()?;
     let c = pattern.captures(value)?;
     let day = c[3].parse::<i64>().ok()?;
     if !(1..=31).contains(&day) {
@@ -147,25 +158,25 @@ fn millis(value: &str) -> Option<i64> {
 fn normalize_node(row: &Value) -> Result<Value> {
     let payload = json!({"nodeId":row["node_id"],"campaignId":row["campaign_id"],"status":row["status"],
         "leaseOwner":or_null(&row["lease_owner"]),"leaseExpiresAt":or_null(&row["lease_expires_at"]),
-        "attemptId":or_null(&row["attempt_id"]),"leaseGeneration":number(&row["lease_generation"]),
-        "nodeRevision":number(&row["node_revision"]),"preparedIntegrationStatus":text_or_none(&row["prepared_integration_status"])});
+        "attemptId":or_null(&row["attempt_id"]),"leaseGeneration":number(&row["lease_generation"])?,
+        "nodeRevision":number(&row["node_revision"])?,"preparedIntegrationStatus":text_or_none(&row["prepared_integration_status"])?});
     let digest = hash("LegacyTerminalActiveResidueNodeState", &payload)?;
     let mut value = payload;
     value["nodeStateHash"] = json!(digest);
     Ok(value)
 }
-fn queued_record(row: &Value) -> Record {
-    Record::new()
+fn queued_record(row: &Value) -> Result<Record> {
+    Ok(Record::new()
         .field("nodeId", row["node_id"].clone())
         .field("status", row["status"].clone())
-        .field("nodeRevision", number(&row["node_revision"]))
+        .field("nodeRevision", number(&row["node_revision"])?)
         .field("leaseOwner", or_null(&row["lease_owner"]))
         .field("leaseExpiresAt", or_null(&row["lease_expires_at"]))
         .field("attemptId", or_null(&row["attempt_id"]))
-        .field("leaseGeneration", number(&row["lease_generation"]))
+        .field("leaseGeneration", number(&row["lease_generation"])?)
         .field(
             "preparedIntegrationStatus",
-            json!(text_or_none(&row["prepared_integration_status"])),
+            json!(text_or_none(&row["prepared_integration_status"])?),
         )
         .field(
             "preparedResultHash",
@@ -174,7 +185,7 @@ fn queued_record(row: &Value) -> Record {
         .field("resultHash", or_null(&row["result_sha256"]))
         .field("failureClass", or_null(&row["failure_class"]))
         .field("failureHash", or_null(&row["failure_sha256"]))
-        .field("updatedAt", row["updated_at"].clone())
+        .field("updatedAt", row["updated_at"].clone()))
 }
 fn queued_state(db: &Connection, campaign: &str) -> Result<(usize, String)> {
     let mut digest = Sha256::new();
@@ -188,7 +199,7 @@ fn queued_state(db: &Connection, campaign: &str) -> Result<(usize, String)> {
             params![campaign, last],
         )?;
         for row in &page {
-            let encoded = queued_record(row).wire();
+            let encoded = queued_record(row)?.wire()?;
             digest.update(format!("{}:", encoded.len()).as_bytes());
             digest.update(encoded.as_bytes());
         }
@@ -230,7 +241,7 @@ fn read_campaign(db: &Connection, campaign: &str) -> Result<(Value, &'static str
     let encoding = if parent["policy_type"].is_null() {
         "missing_legacy_v0"
     } else if parent["policy_type"] == "integer"
-        && number(&parent["policy_version"]).as_f64() == Some(0.0)
+        && number(&parent["policy_version"])?.as_f64() == Some(0.0)
     {
         "explicit_integer_v0"
     } else {
@@ -300,7 +311,7 @@ pub(super) fn plan_on_connection(
         coordinated.is_empty(),
         "legacy_terminal_active_residue_coordination_rows_present",
     )?;
-    let mut payload = json!({"version":1,"kind":"LegacyTerminalActiveResidueSettlementPlan","status":if nodes.is_empty(){"legacy_terminal_active_residue_settlement_clean"}else{"legacy_terminal_active_residue_settlement_required"},"campaignId":campaign,"paperId":parent["paper_id"],"campaignStatus":parent["status"],"campaignRevision":number(&parent["revision"]),"campaignStopReason":or_null(&parent["stop_reason"]),"terminalSiblingSettlementPolicyVersion":0,"terminalSiblingSettlementPolicyEncoding":encoding,"plannedAt":planned_at,"nodes":nodes,"preservedQueuedNodeCount":queued_count,"preservedQueuedNodeStateHash":queued_hash,"workersStarted":false,"externalActionPerformed":false});
+    let mut payload = json!({"version":1,"kind":"LegacyTerminalActiveResidueSettlementPlan","status":if nodes.is_empty(){"legacy_terminal_active_residue_settlement_clean"}else{"legacy_terminal_active_residue_settlement_required"},"campaignId":campaign,"paperId":parent["paper_id"],"campaignStatus":parent["status"],"campaignRevision":number(&parent["revision"])?,"campaignStopReason":or_null(&parent["stop_reason"]),"terminalSiblingSettlementPolicyVersion":0,"terminalSiblingSettlementPolicyEncoding":encoding,"plannedAt":planned_at,"nodes":nodes,"preservedQueuedNodeCount":queued_count,"preservedQueuedNodeStateHash":queued_hash,"workersStarted":false,"externalActionPerformed":false});
     let digest = hash("LegacyTerminalActiveResidueSettlementPlan", &payload)?;
     payload["settlementPlanHash"] = json!(digest);
     Ok(payload)
@@ -346,7 +357,10 @@ fn settlements(plan: &Value) -> Result<Vec<Settlement>> {
                 .field("status", json!("skipped"))
                 .field("failureClass", failure.value["reason"].clone())
                 .field("failureHash", json!(failure_hash));
-            detail.fields.extend(failure.fields.iter().cloned());
+            for (key, encoded) in &failure.fields {
+                let encoded = encoded.as_ref().map_err(|_| Error::Row)?.clone();
+                detail.fields.push((key.clone(), Ok(encoded)));
+            }
             for (key, value) in failure.value.as_object().ok_or(Error::Row)? {
                 detail.value[key] = value.clone();
             }
@@ -451,7 +465,7 @@ fn prepare(
         Value::Null,
         json!("AutomationRuntimeReconciliationReceipt"),
         json!("legacy_terminal_active_residue_settled"),
-        json!(payload.wire()),
+        json!(payload.wire()?),
         json!(digest),
         json!(ledger_at),
         json!("administrative"),
@@ -478,9 +492,10 @@ fn one(tx: &Transaction<'_>, sql: &str, values: Vec<Value>) -> Result<()> {
             Ok(match v {
                 Value::Null => S::Null,
                 Value::String(s) => S::Text(s),
-                Value::Number(n) => n
-                    .as_i64()
-                    .map_or_else(|| S::Real(n.as_f64().expect("number")), S::Integer),
+                Value::Number(n) => match n.as_i64() {
+                    Some(integer) => S::Integer(integer),
+                    None => S::Real(n.as_f64().ok_or(Error::Row)?),
+                },
                 Value::Bool(b) => S::Integer(i64::from(b)),
                 _ => return Err(Error::Row),
             })
@@ -516,7 +531,7 @@ fn apply(
             "UPDATE campaign_nodes SET status='skipped',failure_class=?,failure_json=?,failure_sha256=?,lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=? WHERE node_id=? AND campaign_id=? AND status=? AND lease_owner IS ? AND lease_expires_at=? AND attempt_id IS ? AND lease_generation=? AND node_revision=? AND prepared_integration_status=? AND status IN ('leased','running') AND julianday(lease_expires_at)<=julianday(?) AND prepared_integration_status NOT IN ('integrating','integrated') AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status=? AND c.revision=? AND c.status IN ('failed','cancelled','stopped','completed') AND (json_type(c.spec_json,'$.terminalSiblingSettlementPolicyVersion') IS NULL OR (json_type(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')='integer' AND json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')=0)))",
             vec![
                 s.failure.value["reason"].clone(),
-                json!(s.failure.wire()),
+                json!(s.failure.wire()?),
                 json!(s.failure_hash),
                 plan["plannedAt"].clone(),
                 n["nodeId"].clone(),
@@ -541,7 +556,7 @@ fn apply(
                 plan["campaignId"].clone(),
                 n["nodeId"].clone(),
                 s.event.value["kind"].clone(),
-                json!(s.event.wire()),
+                json!(s.event.wire()?),
                 json!(s.event_hash),
                 plan["plannedAt"].clone(),
             ],

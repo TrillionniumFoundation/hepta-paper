@@ -25,13 +25,23 @@ fn run_node(
     campaign_id: Option<&str>,
     no_progress_seconds: Option<&str>,
 ) -> Value {
+    run_node_at(database, prepare, campaign_id, no_progress_seconds, NOW)
+}
+
+fn run_node_at(
+    database: &Path,
+    prepare: bool,
+    campaign_id: Option<&str>,
+    no_progress_seconds: Option<&str>,
+    now: &str,
+) -> Value {
     let mut command = Command::new("node");
     command.current_dir(root()).args([
         "rust/oracle/automation-runtime-reconciliation-v1.mjs",
         "--database",
         database.to_str().unwrap(),
         "--at",
-        NOW,
+        now,
     ]);
     if prepare {
         command.arg("--prepare");
@@ -56,8 +66,17 @@ fn run_rust(
     campaign_id: Option<&str>,
     no_progress_seconds: Option<&str>,
 ) -> Value {
+    run_rust_at(database, campaign_id, no_progress_seconds, NOW)
+}
+
+fn run_rust_at(
+    database: &Path,
+    campaign_id: Option<&str>,
+    no_progress_seconds: Option<&str>,
+    now: &str,
+) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_hepta-automation-reconcile"));
-    command.args(["--database", database.to_str().unwrap(), "--at", NOW]);
+    command.args(["--database", database.to_str().unwrap(), "--at", now]);
     if let Some(campaign_id) = campaign_id {
         command.args(["--campaign-id", campaign_id]);
     }
@@ -125,6 +144,32 @@ fn clean_and_required_plans_match_node() {
     let rust_negative = run_rust(&required_database, None, Some("-1"));
     assert_eq!(rust_negative, node_negative);
     fs::remove_dir_all(required_root).unwrap();
+}
+
+#[test]
+fn fractional_no_progress_cutoffs_and_hashes_match_node() {
+    let (directory, database) = database("fractional-cutoff");
+    let _ = run_node(&database, true, None, None);
+    // A campaign exactly on the old rounded boundary must not be selected by
+    // the true fractional cutoff. This checks row selection as well as hashes.
+    {
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection.execute(
+            "UPDATE paper_campaigns SET updated_at='2026-07-13T07:59:00.000Z' WHERE campaign_id='campaign-2'",
+            [],
+        ).unwrap();
+    }
+    for now in [NOW, "1970-01-01T00:00:00.000Z", "1970-01-01T00:01:00.000Z"] {
+        for seconds in ["60.0001", "60.0005", "60.0009", "1800.0001"] {
+            let node = run_node_at(&database, false, None, Some(seconds), now);
+            assert!(node["noProgressCampaigns"].as_array().unwrap().is_empty());
+            let before = fs::read(&database).unwrap();
+            let rust = run_rust_at(&database, None, Some(seconds), now);
+            assert_eq!(fs::read(&database).unwrap(), before);
+            assert_eq!(rust, node, "now: {now}, no-progress seconds: {seconds}");
+        }
+    }
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

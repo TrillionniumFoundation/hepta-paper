@@ -182,10 +182,14 @@ pub fn inspect_automation_runtime_reconciliation_v1(
     } else {
         no_progress_seconds.max(MAX_NO_PROGRESS_SECONDS)
     };
-    let no_progress_millis = (effective_no_progress_seconds * 1000.0).round() as i64;
-    let cutoff_millis = now_millis
-        .checked_sub(no_progress_millis)
-        .ok_or(AutomationRuntimeReconciliationError::Input)?;
+    // Node subtracts in binary64 before Date's TimeClip truncates the result
+    // toward zero. Rounding the interval first changes fractional-millisecond
+    // cutoffs (and therefore the selected rows and reconciliation plan hash).
+    let cutoff = now_millis as f64 - effective_no_progress_seconds * 1000.0;
+    if !cutoff.is_finite() || cutoff.abs() > 8_640_000_000_000_000.0 {
+        return Err(AutomationRuntimeReconciliationError::Input);
+    }
+    let cutoff_millis = cutoff.trunc() as i64;
     let no_progress_cutoff = crate::sqlite_mutation_coordinator::clock::iso(cutoff_millis)
         .map_err(|_| AutomationRuntimeReconciliationError::Input)?;
     let expired_nodes = if let Some(id) = campaign_id {

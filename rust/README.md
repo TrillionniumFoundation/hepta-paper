@@ -60,16 +60,24 @@ Hosted CI evidence is not target-host or external-authority evidence.
 ## Local validation
 
 The toolchain is pinned in `rust/rust-toolchain.toml` and the lockfile is
-mandatory.
+mandatory. Run Cargo from the `rust/` directory so rustup selects that
+toolchain. Differential tests also require the actual Node **v22.23.1**
+executable on `PATH`, matching `rust-foundation.yml`. A different Node patch
+version fails the oracle identity checks before behavioral comparisons; do not
+change or bypass those checks to obtain a passing result. If using a separately
+installed Node, prepend its `bin` directory to `PATH` for the validation run.
 
 ```bash
-cargo metadata --manifest-path rust/Cargo.toml --locked --no-deps --format-version 1
-cargo fmt --manifest-path rust/Cargo.toml --all -- --check
-cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --manifest-path rust/Cargo.toml --workspace --all-features --locked
-RUSTDOCFLAGS=-Dwarnings cargo doc --manifest-path rust/Cargo.toml --workspace --all-features --locked --no-deps
-python3 docs/rust/tools/validate-program-truth.py
-python3 docs/rust/tools/test-plan-v4-qualification.py
+set -euo pipefail
+cd rust
+test "$(node --version)" = "v22.23.1"
+cargo metadata --locked --no-deps --format-version 1
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --all-features --locked --no-deps
+python3 ../docs/rust/tools/validate-program-truth.py
+python3 ../docs/rust/tools/test-plan-v4-qualification.py
 ```
 
 `derive-effective-status.py` is not a local self-approval command. It requires a

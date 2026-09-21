@@ -250,3 +250,11 @@ archive publisher, live CAS or migration authority. The
 [maintenance-owner design](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/MAINTENANCE_OWNER_DESIGN.md)
 documents the separately required persistent manager barrier and installation
 binding; it does not implement or activate that barrier.
+
+The [schema wire adapter](../../rust/crates/hepta-paper-service/src/local_state_authority/server/wire/HANDOFF.md)
+preserves original JSON member order for semantically identical `instances` and
+`installations` echoes, as required by the actual Node schema contract. The
+client's strict raw JSON path preserves these bytes through both socket sides.
+Signatures and stored state still come only from the normal authority handlers;
+the adapter cannot replace receipt fields with unequal request data. Capture
+runs before mutation, and raw copies remain within the existing wire budget.

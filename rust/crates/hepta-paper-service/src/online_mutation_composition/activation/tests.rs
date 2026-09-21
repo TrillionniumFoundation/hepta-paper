@@ -1,4 +1,5 @@
 use super::*;
+mod native_authority_business;
 mod native_business;
 mod transaction;
 use std::{

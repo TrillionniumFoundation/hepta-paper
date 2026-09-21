@@ -22,6 +22,7 @@ pub struct LocalStateAuthorityServerV1 {
     socket: PublishedSocket,
 }
 mod publication;
+mod wire;
 use publication::PublishedSocket;
 impl LocalStateAuthorityServerV1 {
     pub fn bind(runtime: LocalStateAuthorityRuntimeV1) -> Result<Self> {
@@ -111,27 +112,45 @@ impl Peer {
                     Ok(0) => {
                         server.socket.assert_current()?;
                         let bytes = std::mem::take(&mut self.input);
-                        let request = files::parse(&bytes, "local_state_authority_request_invalid");
-                        drop(bytes);
-                        // Only complete requests enter the single SQLite owner.
-                        // Waiting for EOF or socket output never owns its queue.
-                        let result = request.and_then(|value| server.runtime.handle(&value));
+                        let request = files::parse(&bytes, "local_state_authority_request_invalid")
+                            .and_then(|value| {
+                                let echo = wire::CapturedEchoFields::capture(
+                                    &bytes,
+                                    available.min(MAX_BYTES).saturating_sub(bytes.len()),
+                                )?;
+                                Ok((value, echo))
+                            });
                         if Instant::now() >= self.deadline {
                             return Ok(false);
                         }
-                        let envelope = match result {
-                            Ok(receipt) => json!({"ok":true,"receipt":receipt}),
-                            Err(cause) => json!({"ok":false,"error":cause.code}),
-                        };
+                        // Only complete requests enter the single SQLite owner.
+                        // Waiting for EOF or socket output never owns its queue.
+                        let result = request.and_then(|(value, echo)| {
+                            server.runtime.handle(&value).map(|receipt| (receipt, echo))
+                        });
+                        drop(bytes);
+                        if Instant::now() >= self.deadline {
+                            return Ok(false);
+                        }
                         let mut output = BoundedOutput {
                             bytes: Vec::new(),
                             maximum: available.min(MAX_BYTES),
                         };
                         // Response loss cannot undo an already committed state
                         // transition; the caller must use protocol resolution.
-                        if serde_json::to_writer(&mut output, &envelope).is_err()
-                            || output.write_all(b"\n").is_err()
-                        {
+                        let encoded = match result {
+                            Ok((receipt, echo)) => {
+                                let envelope = echo.bind(&receipt);
+                                output.maximum =
+                                    output.maximum.saturating_sub(envelope.retained_bytes());
+                                serde_json::to_writer(&mut output, &envelope)
+                            }
+                            Err(cause) => serde_json::to_writer(
+                                &mut output,
+                                &json!({"ok":false,"error":cause.code}),
+                            ),
+                        };
+                        if encoded.is_err() || output.write_all(b"\n").is_err() {
                             return Ok(false);
                         }
                         self.output = Some(output.bytes);

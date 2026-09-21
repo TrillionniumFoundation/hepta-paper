@@ -33,9 +33,20 @@ The existing repository strict JSON parser is reused; it has no 16 MiB sublimit.
 It rejects duplicate keys, invalid UTF-8, lone UTF-16 surrogate escapes, nonfinite
 numbers and inputs beyond serde's nesting limit. Node accepts some of those
 forms. The native path intentionally fails closed rather than adding another
-permissive parser. Object key order and numeric spelling follow native serde JSON;
-protocol object semantics are covered, not exact `JSON.stringify` byte ordering
-or V8 rounding of unsafe integers. Normal authority protocol integers must
+permissive parser. The installed CLI now uses
+`run_local_state_authority_client_json_v1` and
+`request_local_state_authority_json_v1`: strict validation happens first, then
+the original request bytes and the checked envelope's raw receipt preserve
+object member order. This is required because the original Node schema contract
+compares echoed `instances` and `installations` using `JSON.stringify`.
+`RawValue` retains syntax only; it never bypasses strict validation. The existing
+Value APIs remain semantic interfaces and cannot recover an order already lost
+when a caller constructed a sorted Value. There is no workspace-wide
+`preserve_order` change or change to canonical signature hashing.
+
+The raw path preserves whitespace and numeric spelling as provided instead of
+claiming exact V8 stringify compaction/rounding for arbitrary input. Normal
+authority protocol integers must
 already satisfy their safe-integer contracts. No hash/signature verification is
 performed on reserialized transport bytes here. Non-string error coercion is
 retained where representable; an uncoercible object returns a controlled error
@@ -53,3 +64,9 @@ deadline. `tests/local_state_authority_client_cli.rs` runs the actual native
 executable for help and failures that cannot contact a production authority.
 The Node server fixture echoes request data; it has no signing keys and is not
 used to qualify an authority or claim production native admission.
+
+Additional raw-wire tests capture exact request bytes after half-close, return
+nested nonalphabetical receipt members in fragmented envelopes, check preserved
+CLI output order, and refuse duplicate/invalid requests and responses before any
+untrusted receipt is returned. Full signed schema interoperability is exercised
+separately by the actual Rust authority/business composition fixture.

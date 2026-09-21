@@ -6,6 +6,8 @@ use nix::{
     errno::Errno,
     sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, connect, socket},
 };
+use serde::Deserialize;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use std::{
     fmt,
@@ -110,12 +112,41 @@ pub fn request_local_state_authority_v1(
     request: &Value,
     options: &LocalStateAuthorityClientOptionsV1,
 ) -> Result<Value> {
+    // Preserve this semantic API's original argument-error precedence before
+    // serialization and before the raw transport applies its byte limit.
     configuration(options)?;
     if !request.is_object() {
         return Err(fail("local_state_authority_client_configuration_invalid"));
     }
-    let mut payload = serde_json::to_vec(request)
+    let bytes = serde_json::to_vec(request)
         .map_err(|_| fail("local_state_authority_client_request_invalid"))?;
+    let receipt = request_local_state_authority_json_v1(&bytes, options)?;
+    parse(
+        receipt.get().as_bytes(),
+        "local_state_authority_client_response_invalid",
+    )
+    .map_err(|_| fail("local_state_authority_client_response_invalid"))
+}
+
+/// Preserve the validated request and returned receipt's JSON member order.
+/// The incumbent schema protocol compares echoed object arrays using
+/// JSON.stringify, so a semantic Value round trip is insufficient for that
+/// wire contract. This transports untrusted JSON, not verified authority.
+pub fn request_local_state_authority_json_v1(
+    request: &[u8],
+    options: &LocalStateAuthorityClientOptionsV1,
+) -> Result<Box<RawValue>> {
+    configuration(options)?;
+    if request.len() > options.maximum_message_bytes {
+        return Err(fail("local_state_authority_client_request_too_large"));
+    }
+    let checked = parse(request, "local_state_authority_client_request_invalid")
+        .map_err(|_| fail("local_state_authority_client_request_invalid"))?;
+    if !checked.is_object() {
+        return Err(fail("local_state_authority_client_configuration_invalid"));
+    }
+    drop(checked);
+    let mut payload = request.to_vec();
     payload.push(b'\n');
     if payload.len() > options.maximum_message_bytes {
         return Err(fail("local_state_authority_client_request_too_large"));
@@ -165,7 +196,16 @@ pub fn request_local_state_authority_v1(
             None => "local_state_authority_client_request_rejected".into(),
         }));
     }
-    Ok(envelope["receipt"].clone())
+    #[derive(Deserialize)]
+    struct ReceiptEnvelope {
+        receipt: Box<RawValue>,
+    }
+    // The complete envelope has already passed strict duplicate-key/number
+    // validation. RawValue is only the original syntax of that checked member.
+    let raw: ReceiptEnvelope = serde_json::from_slice(&response)
+        .map_err(|_| fail("local_state_authority_client_response_invalid"))?;
+    deadline_current(deadline)?;
+    Ok(raw.receipt)
 }
 
 /// Parse all arguments before help/input. Raw stdin is also byte bounded; its
@@ -175,6 +215,21 @@ pub fn run_local_state_authority_client_v1(
     input: impl Read,
     options: &LocalStateAuthorityClientOptionsV1,
 ) -> Result<Value> {
+    let receipt = run_local_state_authority_client_json_v1(argv, input, options)?;
+    parse(
+        receipt.get().as_bytes(),
+        "local_state_authority_client_response_invalid",
+    )
+    .map_err(|_| fail("local_state_authority_client_response_invalid"))
+}
+
+/// Installed CLI wire path. Preserve original JSON order through both sides
+/// of the transport; callers wanting a semantic Value may use the older API.
+pub fn run_local_state_authority_client_json_v1(
+    argv: &[String],
+    input: impl Read,
+    options: &LocalStateAuthorityClientOptionsV1,
+) -> Result<Box<RawValue>> {
     let mut help = false;
     for argument in argv {
         if argument == "--" {
@@ -199,7 +254,8 @@ pub fn run_local_state_authority_client_v1(
         help = true;
     }
     if help {
-        return Ok(json!({"help": USAGE}));
+        return serde_json::value::to_raw_value(&json!({"help": USAGE}))
+            .map_err(|_| fail("local_state_authority_client_response_invalid"));
     }
     configuration(options)?;
     let mut bytes = Vec::new();
@@ -210,9 +266,21 @@ pub fn run_local_state_authority_client_v1(
     if bytes.len() > options.maximum_message_bytes {
         return Err(fail("local_state_authority_client_request_too_large"));
     }
-    let request = parse(&bytes, "local_state_authority_client_request_invalid")
-        .map_err(|_| fail("local_state_authority_client_request_invalid"))?;
-    request_local_state_authority_v1(&request, options)
+    request_local_state_authority_json_v1(&bytes, options)
+}
+
+/// Preserve receipt member order while retaining the incumbent help convention.
+pub fn format_local_state_authority_client_json_output_v1(receipt: &RawValue) -> Result<String> {
+    let checked = parse(
+        receipt.get().as_bytes(),
+        "local_state_authority_client_response_invalid",
+    )
+    .map_err(|_| fail("local_state_authority_client_response_invalid"))?;
+    if checked.get("help").is_some_and(truthy) {
+        format_local_state_authority_client_output_v1(&checked)
+    } else {
+        Ok(format!("{}\n", receipt.get()))
+    }
 }
 
 /// Preserve the incumbent CLI's help response convention and trailing newline.

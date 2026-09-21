@@ -514,3 +514,16 @@ still needs that actual installed adapter/topology proof before exposing a
 writable production CLI. No Boolean readiness or activation flag is promoted by
 adding the daemon. The dedicated daemon's key-loading behavior is not a new
 credential capability for the control-plane module.
+
+The [native authority/business fixture](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/tests/native_authority_business/HANDOFF.md)
+now connects the actual Rust client/server and supplied-key journal to the
+retained standard reconciliation path. Original Node code provisions the ten
+databases and executes its real schema protocol; all authority responses come
+from Rust. This exposed the Node schema contract's member-order-sensitive
+receipt comparison, which is now addressed at the client/server wire boundary
+without reordering the oracle request or changing a signed value. The fixture
+checks actual business effects, signed heads, rollback/abort and writer locks.
+It uses an explicitly test-only Cargo example adapter under a private temporary
+socket; no installed adapter/topology proof or production activation capability
+is manufactured by these tests. Build that helper before running the dedicated
+tests, as documented in their handoff.

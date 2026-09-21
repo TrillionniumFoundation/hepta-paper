@@ -239,3 +239,14 @@ bundle publisher fsyncs and checks exact image/report bytes, uses atomic
 no-replace publication, and preserves committed/unknown failure outcomes.
 Its named source observation is not SQLite descriptor provenance, and the
 exported artifact supplies no live migration or service-retirement authority.
+
+The same independently pinned owner now builds a
+[complete original-format archive](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/archive/HANDOFF.md)
+through SQLite's backup API from an already held READ snapshot. It checks
+bounded, strictly completing backup progress and re-verifies the full copied
+history before serialization. Genuine uncheckpointed WAL snapshots and the
+original Node runtime's reopen are tested. This library API has no durable
+archive publisher, live CAS or migration authority. The
+[maintenance-owner design](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/MAINTENANCE_OWNER_DESIGN.md)
+documents the separately required persistent manager barrier and installation
+binding; it does not implement or activate that barrier.

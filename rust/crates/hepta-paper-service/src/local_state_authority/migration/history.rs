@@ -1,6 +1,8 @@
 //! Public-key-only observation of one exact legacy SQL snapshot. Neither this
 //! owner nor its serializable report can authorize source mutation or shutdown.
-use super::{mutation_history, offline_image, schema_history, source_profile, source_rows};
+use super::{
+    archive, mutation_history, offline_image, schema_history, source_profile, source_rows,
+};
 use crate::local_state_authority::storage;
 use crate::sqlite_mutation_coordinator::{
     Result,
@@ -125,6 +127,38 @@ impl LegacyAuthorityJournalVerifierV1 {
     /// permission to omit historical rows. See the migration history handoff.
     pub fn inspect(&self, database: &Connection) -> Result<Value> {
         Ok(self.observe_snapshot(database)?.report)
+    }
+    /// Copy a completely verified, already-held main READ snapshot through
+    /// SQLite's backup API into fresh memory, then serialize that original
+    /// Node format. This preserves the original schema rather than migrating it.
+    /// The opaque bytes have no archive-publication or maintenance authority.
+    /// A main WRITE transaction is refused because SQLite backup cannot read
+    /// from its own active writer. Source settings/transaction remain owned by
+    /// the caller; this operation never opens another source descriptor.
+    pub fn build_offline_legacy_archive(
+        &self,
+        database: &Connection,
+    ) -> Result<archive::OfflineLegacyAuthorityArchiveV1> {
+        archive::require_read_snapshot(database)?;
+        let source = self.observe_snapshot(database)?;
+        let copied = archive::copy_snapshot(database)?;
+        copied.execute_batch("BEGIN DEFERRED")?;
+        copied.query_row("SELECT count(*) FROM main.sqlite_schema", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+        let copied_history = self.inspect(&copied)?;
+        if copied_history != source.report {
+            return Err(error("local_authority_archive_copied_history_mismatch"));
+        }
+        copied.execute_batch("ROLLBACK")?;
+        let result = archive::seal(copied, &source.report)?;
+        self.current()?;
+        if database.total_changes() != source.changes
+            || database.transaction_state(Some("main"))? != source.transaction
+        {
+            return Err(error("local_authority_history_transaction_changed"));
+        }
+        Ok(result)
     }
     /// Build a detached, serialized native SQLite image in newly allocated
     /// memory. The original six tables, rowids and TEXT bytes are preserved.

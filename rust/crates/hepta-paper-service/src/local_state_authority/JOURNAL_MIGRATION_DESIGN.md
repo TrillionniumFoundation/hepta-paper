@@ -138,6 +138,15 @@ Do not silently discard, re-sign, relabel or trust these rows. An unrestricted b
 
 ## In-place transaction and durable archive
 
+The [offline original-format archive builder](migration/archive/HANDOFF.md)
+now implements only the verified snapshot-to-memory backup prerequisite.
+It preserves original Node format and requires a held READ transaction before
+any final migration WRITE transaction. Its opaque bytes and report have no
+filesystem-publication, source-provenance or maintenance authority. The live
+owning sequence below, including durable archive publication and source CAS,
+is still a design. The [maintenance owner design](migration/MAINTENANCE_OWNER_DESIGN.md)
+details the actual installed systemd service barrier that sequence requires.
+
 Prefer an in-place transaction because it preserves the signed `stateDatabasePath` and complete configuration hash, does not replace an inode under a live SQLite handle, and avoids publishing a separate database/WAL/SHM file family.
 
 The owning sequence is:

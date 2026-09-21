@@ -3,6 +3,7 @@ use super::super::{
     source_profile::inspect_source_schema, source_rows::read_source_rows,
 };
 use super::*;
+mod legacy_archive;
 use crate::{
     local_state_authority::LocalStateAuthorityRuntimeV1,
     sqlite_mutation_coordinator::{ONLINE_MUTATION_PROTOCOL, contracts, timestamp},

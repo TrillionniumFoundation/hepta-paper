@@ -1,9 +1,11 @@
-# Native offline automation reconciliation
+# Native automation reconciliation
 
 The native service implements the incumbent offline schema-25 business transaction
 from `paper-adapters/automation/automation-runtime-reconciler.mjs`. It is reachable
-through a guarded local execution command. Production admission, the online
-reserve/apply/finalize path and independent route acceptance remain open.
+through a guarded local execution command. Both registered online business
+callbacks now use the real signed reserve/apply/finalize coordinator privately.
+Their concrete runtime activation, production admission and independent route
+acceptance remain open.
 
 ## Source and entrypoints
 
@@ -16,6 +18,19 @@ hepta-automation-reconcile --database /absolute/runtime/hepta-paper.sqlite \
   --at 2026-07-13T08:00:00.000Z --no-progress-seconds 1800
 hepta-automation-reconcile --execute-local /absolute/local-request.json
 ```
+
+For passive inspection, both `--database` and `--at` are optional. An omitted
+database uses nonempty `HEPTA_PAPER_RUNTIME_ROOT`, resolved lexically from the
+working directory, then `hepta-paper.sqlite`. Without that variable it uses the
+installed workspace sibling `hepta-paper-runtime/native-runtime`; native deployment
+relocation is selected by `HEPTA_PAPER_WORKSPACE_ROOT`, with the compiled source
+workspace as its default. An explicit database wins over both defaults. Existing
+canonical-path/single-link/read-only checks remain mandatory; a missing database
+is never created. Without `--at`, standard planning samples ISO and cutoff time
+separately from SystemTime; legacy planning samples once after ID syntax validation.
+An explicit time keeps deterministic inspection. The legacy mode ignores the
+standard no-progress threshold. The original Node CLI and native CLI are compared
+using the actual original entrypoint with replayed observed clock samples.
 
 `--execute-local` is a native extension; it is not an alias for unrestricted Node
 `--execute`. Its closed `LocalOfflineReconciliationRequestV1` document contains
@@ -86,7 +101,12 @@ Both planners reject SQLite INTEGER values outside JavaScript's exact range
 (-9,007,199,254,740,991 through 9,007,199,254,740,991), matching the Node reader's
 rejection before hashing. Otherwise distinct integer CAS values could alias to
 the same binary64 plan/receipt hash. Active, queued and parent integer fields
-are tested at and beyond both boundaries.
+are tested at and beyond both boundaries. SQLite INTEGER affinity does not
+ensure integer storage: text generations/revisions are converted with the
+incumbent scalar `Number(...)` rules, including ECMAScript whitespace, decimal and
+radix grammar and binary64 rounding. Invalid numeric text cannot become a matching
+text CAS parameter and authorize a write; actual Node/Rust rejection tests cover
+both offline and online transactions.
 
 Replay is not an upsert. Repeating an identical clean execution at the same fixed
 clock collides with its strict receipt ID. Live execution preserves the six Node
@@ -138,10 +158,56 @@ clocks, read-only CLI and typed execution selection.
 
 Node's broad V8 `Date.parse` compatibility is not fully ported. Canonical UTC,
 ISO date-only and explicit ISO offsets/fractions are supported; timezone-less
-and unsupported legacy/RFC spellings fail closed. A real Node test with
+and unsupported legacy/RFC spellings fail closed. Hour 24 accepts only an entirely
+zero raw fraction; nonzero digits beyond millisecond precision must be rejected
+before truncation, matching V8. A real Node test with
 `TZ=Asia/Shanghai` proves that the native gate never silently interprets a local
 time as UTC. This input compatibility gap remains open and blocks claiming
 complete parity for the legacy mode.
+
+## Private signed online business path
+
+`online_execution.rs` fixes the writer ID to
+`writer:native-store:automation-runtime-reconciler:v1` and the two registered
+standard/legacy operation IDs. Child `offline_execution/online.rs` and
+`legacy_terminal_residue/online.rs` prepare source-owned events and 17-column
+receipts, then use only `RestrictedMutationTransactionV1` statement IDs. The
+callbacks never execute raw SQL or accept caller-owned receipt authorization.
+The real coordinator verifies metadata, plan/writer hashes, signed current head,
+reservation and finalization, and captures the actual business/ledger changeset.
+
+The online registered predicates intentionally differ from the offline SQL:
+standard pause is running-only, some row guards are narrower, resource deletion
+uses the exact resulting counts, and legacy queued state remains count-fenced.
+Competing-write fixtures compare these actual Node predicates rather than
+silently strengthening them or reusing offline SQL. Both paths preserve the
+source-owned receipt issuer and exact persisted event/receipt JSON.
+
+Three source-private checks are distinct: before application, after application,
+and the genuine precommit check after signed reservation and local marker insertion.
+`execute_mutation_with_precommit_guard_v1` runs the final guard before the final
+lease-time observation and COMMIT. A rejected guard rolls back all business and
+marker rows and attempts a signed abort. An unwind rolls back locally; it does
+not prove the remote reservation was aborted. Existing public coordinator calls
+retain their original clock sequence through a no-op guard.
+
+Coordinator fatal/deferred/retryable errors are preserved. If the business
+clock/after-plan fails after successful finalization, the returned error carries
+`committed: true`, reservation ID, reservation receipt hash and finalization
+receipt hash. Such an error must not be retried as though no transaction occurred.
+
+This core is private and deliberately has no constructor accepting a writable
+connection or readiness JSON as production authority. It is not an online CLI
+activation. The missing owning composition must retain concrete process authority
+transports, resident lease, source/static/schema/startup/finalized inventory/cache
+proofs, package/database identity and the same concrete shared recoverability
+fence used for feedback. Feedback alone never proves the epoch is current. A
+transaction-aware final guard must distinguish expected target writes from
+unrelated scope replacement; comparing an old database byte hash after valid DML
+would incorrectly reject every mutation. Restart after prior writes also needs
+the signed historical schema-audit-to-current-finalized-history bridge. Successful
+writes or pending finalization invalidate frozen proofs until refreshed. Existing
+Node static-callsite coverage does not establish native callback coverage.
 
 ## Verification and remaining integration
 
@@ -162,11 +228,14 @@ From `rust/` with the actual pinned Node executable on `PATH`:
 cargo test --locked -p hepta-paper-service --lib automation_runtime_reconciliation
 cargo test --locked -p hepta-paper-service --lib node_package_deletion_writer
 cargo test --locked -p hepta-paper-service --test automation_runtime_reconciliation_parity
+cargo test --locked -p hepta-paper-service --test automation_reconciliation_default_cli
+cargo test --locked -p hepta-paper-service --lib precommit_tests
+cargo test --locked -p hepta-paper-service --test sqlite_mutation_coordinator_parity
 ```
 
 Remaining source work includes the native production signed subject's binding to
-this exact writer/epoch/operation scope, default-root and complete CLI composition,
-full legacy Date.parse compatibility, and the online mutation path. The
+this exact writer/epoch/operation scope, complete writable CLI/activation composition,
+full legacy Date.parse compatibility, and the retained online admission/lifecycle path. The
 existing cutover preimage hash can recognize Node SQLite bytes; schema format is
 not the reason production is disabled here. Production must not be enabled merely
 by observing a past coordinator `production_activation` flag. Target-host execution,

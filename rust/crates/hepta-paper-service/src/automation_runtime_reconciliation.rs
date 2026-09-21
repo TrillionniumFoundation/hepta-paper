@@ -15,7 +15,12 @@ use std::{fs, os::unix::fs::MetadataExt, path::Path};
 // package-deletion admission before obtaining its writable connection.
 mod legacy_terminal_residue;
 mod offline_execution;
+// Real online callback code is tested below; production entry remains sealed
+// until the concrete retained activation composition is implemented.
+#[allow(dead_code)]
+mod online_execution;
 mod scoped_execution;
+mod sqlite_number;
 pub use scoped_execution::*;
 
 const MAX_NO_PROGRESS_SECONDS: f64 = 60.0;
@@ -191,6 +196,40 @@ pub fn inspect_automation_runtime_reconciliation_v1(
     }
     let connection = open_database(database)?;
     plan_on_connection(&connection, now, no_progress_seconds, campaign_id)
+}
+
+/// Read a current passive plan using the incumbent's separate system-clock samples.
+pub fn inspect_current_automation_runtime_reconciliation_v1(
+    database: &Path,
+    no_progress_seconds: f64,
+    campaign_id: Option<&str>,
+    operation: LocalReconciliationOperationV1,
+) -> Result<Value, AutomationRuntimeReconciliationError> {
+    use offline_execution::{ReconciliationClockV1, SystemReconciliationClockV1};
+    if matches!(operation, LocalReconciliationOperationV1::Standard)
+        && !no_progress_seconds.is_finite()
+    {
+        return Err(AutomationRuntimeReconciliationError::Input);
+    }
+    let connection = open_database(database)?;
+    let mut clock = SystemReconciliationClockV1;
+    match operation {
+        LocalReconciliationOperationV1::Standard => offline_execution::plan_with_clock(
+            &connection,
+            &mut clock,
+            no_progress_seconds,
+            campaign_id,
+        ),
+        LocalReconciliationOperationV1::LegacyTerminalActiveResidue => {
+            let campaign_id =
+                campaign_id.ok_or(AutomationRuntimeReconciliationError::Precondition(
+                    "legacy_terminal_active_residue_campaign_id_invalid",
+                ))?;
+            legacy_terminal_residue::plan_with_clock(&connection, campaign_id, &mut || {
+                clock.now_iso()
+            })
+        }
+    }
 }
 
 /// Inspect the incumbent policy-v0 maintenance plan without acquiring a writer.

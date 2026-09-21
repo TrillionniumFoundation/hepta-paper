@@ -14,6 +14,8 @@ use hepta_legacy_compatibility::production_hash_record_v1;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params_from_iter};
 use serde_json::{Value, json};
 
+pub(super) mod online;
+
 type Result<T> = std::result::Result<T, Error>;
 
 // serde_json::Map sorts keys. The incumbent persists JSON.stringify bytes, so
@@ -76,11 +78,7 @@ fn truthy_or_null(value: &Value) -> Value {
     }
 }
 fn number_or_zero(value: &Value) -> Value {
-    if value.is_null() || value == false || value == "" {
-        json!(0)
-    } else {
-        value.clone()
-    }
+    super::sqlite_number::number(value)
 }
 struct Event {
     id: String,
@@ -583,7 +581,7 @@ impl ReconciliationClockV1 for FixedReconciliationClockV1<'_> {
         Ok(self.millis)
     }
 }
-fn plan_with_clock(
+pub(super) fn plan_with_clock(
     connection: &Connection,
     clock: &mut dyn ReconciliationClockV1,
     no_progress_seconds: f64,

@@ -166,6 +166,18 @@ immediately before `COMMIT`. The marker persists the original reserve request,
 request hash, signed reservation, receipt hash, previous/new state/head fields,
 local marker hash and commit time in the same transaction as business DML.
 
+Source-owned compositions can use the crate-private
+`execute_mutation_with_precommit_guard_v1` to recheck retained admission after
+marker insertion and before the existing final lease-time check. The guard runs
+after the authenticated reservation, so changes during authority RPC are still
+refused before COMMIT. Its rejection follows normal rollback/abort handling and
+retains rich error flags unless abort itself fails. A slow guard is covered by
+the final lease observation. The public method delegates a no-op guard without
+adding clock samples. Neither method creates activation authority. Signed tests
+cover success, rich guard rejection, elapsed lease, unwind and no-change. An
+unwind after reservation guarantees local rollback but requires explicit remote
+reservation reconciliation.
+
 Before a commit attempt, failure rolls back and attempts an authenticated abort
 with the stage-specific reason. Abort failure reports `reservation_abort_pending`.
 Once a commit has been attempted, failure is conservatively reported as

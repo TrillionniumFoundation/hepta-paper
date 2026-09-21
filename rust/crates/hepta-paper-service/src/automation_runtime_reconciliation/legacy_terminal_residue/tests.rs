@@ -97,6 +97,58 @@ fn run(db: &mut Connection) -> Result<Value> {
     )
 }
 #[test]
+fn legacy_residue_scope_and_clock_validation_order_matches_node() {
+    for scenario in ["valid", "invalid", "nonterminal", "missing"] {
+        let fixture = Fixture::new(1);
+        if scenario == "nonterminal" {
+            fixture.oracle(&["--setup", "nonterminal"]);
+            fixture.copy();
+        }
+        let campaign = match scenario {
+            "invalid" => "bad/id",
+            "missing" => "missing-campaign",
+            _ => CAMPAIGN,
+        };
+        let mut database = fixture.native();
+        let expected = fixture.oracle(&["--campaign-id", campaign]);
+        let mut samples = 0;
+        let planned = plan_with_clock(&database, campaign, &mut || {
+            samples += 1;
+            Ok(NOW.into())
+        });
+        assert_eq!(json!(samples), expected["clockCalls"], "{scenario}");
+        match planned {
+            Ok(plan) => assert_eq!(plan, expected["report"], "{scenario}"),
+            Err(cause) => assert_eq!(cause.to_string(), expected["error"], "{scenario}"),
+        }
+
+        // The same ordering must be retained by prepare_operation, including
+        // the early ID rejection before any receipt or business mutation.
+        let expected = fixture.oracle(&["--execute", "--campaign-id", campaign]);
+        let mut samples = 0;
+        let executed = execute_on_admitted_connection(
+            &mut database,
+            campaign,
+            None,
+            &mut || {
+                samples += 1;
+                Ok(NOW.into())
+            },
+            |_| Ok(()),
+            || Ok(()),
+        );
+        assert_eq!(json!(samples), expected["clockCalls"], "{scenario}");
+        match executed {
+            Ok(receipt) => assert_eq!(receipt, expected["report"], "{scenario}"),
+            Err(cause) => assert_eq!(cause.to_string(), expected["error"], "{scenario}"),
+        }
+        assert_eq!(
+            snapshot(&database),
+            canonical_snapshot(&expected["snapshot"])
+        );
+    }
+}
+#[test]
 fn legacy_residue_plan_and_execution_match_node_full_state_and_exact_wire() {
     for queued in [0, 512, 2538] {
         let f = Fixture::new(queued);
@@ -376,6 +428,55 @@ fn legacy_residue_explicit_offset_matches_but_timezone_less_lease_fails_closed()
     );
     assert_eq!(snapshot(&db), before);
 }
+#[test]
+fn legacy_residue_midnight_checks_raw_fraction_before_millisecond_truncation() {
+    let inputs = [
+        "2026-07-30T24:00:00Z",
+        "2026-07-30T24:00:00.0000Z",
+        "2026-07-30T24:00:00.00000000000000+08:00",
+        "2026-07-30T24:00:00.0001Z",
+        "2026-07-30T24:00:00.00000000000001+08:00",
+        "2026-07-30T24:00:00.0010Z",
+        "2026-07-30T24:00:01.0000Z",
+        "2026-07-30T24:01:00.0000Z",
+        "2026-07-30T23:59:59.0001Z",
+    ];
+    let output = Command::new("node")
+        .args([
+            "--input-type=module",
+            "-e",
+            "if(process.versions.node!=='22.23.1')throw Error('pinned_node_required');process.stdout.write(JSON.stringify(JSON.parse(process.argv[1]).map(Date.parse)));",
+            &serde_json::to_string(&inputs).unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected: Vec<Option<i64>> = serde_json::from_slice(&output.stdout).unwrap();
+    for (input, expected) in inputs.into_iter().zip(expected) {
+        assert_eq!(millis(input), expected, "{input}");
+    }
+
+    let f = Fixture::new(1);
+    Connection::open(&f.node)
+        .unwrap()
+        .execute(
+            "UPDATE campaign_nodes SET lease_expires_at=? WHERE node_id='legacy:expired-b'",
+            ["2026-07-30T24:00:00.0001Z"],
+        )
+        .unwrap();
+    f.copy();
+    let mut db = f.native();
+    let before = snapshot(&db);
+    let expected = f.oracle(&["--execute"]);
+    assert_eq!(expected["ok"], false);
+    assert_eq!(run(&mut db).unwrap_err().to_string(), expected["error"]);
+    assert_eq!(snapshot(&db), before);
+}
+
 #[test]
 fn legacy_residue_crash_child() {
     let Ok(path) = std::env::var("HEPTA_LEGACY_RESIDUE_TEST_CRASH_DB") else {

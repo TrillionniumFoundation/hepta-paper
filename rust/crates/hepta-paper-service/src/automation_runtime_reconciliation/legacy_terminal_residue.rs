@@ -6,6 +6,7 @@ use hepta_legacy_compatibility::production_hash_record_v1;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params, params_from_iter};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+pub(super) mod online;
 type Result<T> = std::result::Result<T, Error>;
 fn failure(code: &'static str) -> Error {
     Error::Precondition(code)
@@ -70,17 +71,7 @@ fn or_null(v: &Value) -> Value {
     }
 }
 fn number(v: &Value) -> Value {
-    match v {
-        Value::Null => json!(0),
-        Value::Bool(v) => json!(i64::from(*v)),
-        Value::String(v) if v.trim().is_empty() => json!(0),
-        Value::String(v) => v
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map_or(Value::Null, |v| json!(v)),
-        _ => v.clone(),
-    }
+    super::sqlite_number::number(v)
 }
 fn text_or_none(v: &Value) -> String {
     if or_null(v).is_null() {
@@ -114,17 +105,18 @@ fn millis(value: &str) -> Option<i64> {
     let second = c
         .get(6)
         .map_or(Some(0), |v| v.as_str().parse::<i64>().ok())?;
-    let mut fraction = c
-        .get(7)
-        .map_or("", |v| v.as_str())
-        .chars()
-        .take(3)
-        .collect::<String>();
+    let raw_fraction = c.get(7).map_or("", |v| v.as_str());
+    let mut fraction = raw_fraction.chars().take(3).collect::<String>();
     while fraction.len() < 3 {
         fraction.push('0');
     }
     let fraction = fraction.parse::<i64>().ok()?;
-    if hour > 24 || minute > 59 || second > 59 || (hour == 24 && minute + second + fraction != 0) {
+    if hour > 24
+        || minute > 59
+        || second > 59
+        || (hour == 24
+            && (minute != 0 || second != 0 || raw_fraction.bytes().any(|digit| digit != b'0')))
+    {
         return None;
     }
     let base = canonical(&format!("{}-{}-01T00:00:00.000Z", &c[1], &c[2]))?;
@@ -248,6 +240,19 @@ fn read_campaign(db: &Connection, campaign: &str) -> Result<(Value, &'static str
 }
 pub(super) fn verify_campaign_scope(db: &Connection, campaign: &str) -> Result<()> {
     read_campaign(db, campaign).map(|_| ())
+}
+/// The incumbent rejects malformed IDs before observing its clock, then reads
+/// the campaign and policy only after the plan timestamp has been sampled.
+pub(super) fn plan_with_clock(
+    db: &Connection,
+    campaign: &str,
+    now_iso: &mut impl FnMut() -> Result<String>,
+) -> Result<Value> {
+    require(
+        valid_campaign_id(campaign),
+        "legacy_terminal_active_residue_campaign_id_invalid",
+    )?;
+    plan_on_connection(db, &now_iso()?, campaign)
 }
 pub(super) fn plan_on_connection(
     db: &Connection,
@@ -559,7 +564,7 @@ fn prepare_operation(
     release: Option<&str>,
     now_iso: &mut impl FnMut() -> Result<String>,
 ) -> Result<PreparedOperation> {
-    let plan = plan_on_connection(connection, &now_iso()?, campaign)?;
+    let plan = plan_with_clock(connection, campaign, now_iso)?;
     let settlements = settlements(&plan)?;
     require(
         !settlements.is_empty(),

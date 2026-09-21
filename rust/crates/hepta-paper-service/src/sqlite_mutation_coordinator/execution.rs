@@ -173,6 +173,23 @@ impl<T: MutationAuthorityTransportV1> SqliteMutationCoordinatorV1<T> {
         input: &Value,
         mutate: impl FnOnce(&mut RestrictedMutationTransactionV1<'_>) -> Result<Value>,
     ) -> Result<Value> {
+        self.execute_mutation_with_precommit_guard_v1(database, input, mutate, || Ok(()))
+    }
+    /// Source-owned compositions may recheck their independently established
+    /// scope after reservation and marker insertion, immediately before the
+    /// final lease-time check and durable commit. This hook creates no runtime
+    /// activation or recoverability permission and is not a public predicate.
+    ///
+    /// A rejected guard follows the normal rollback and reservation-abort path.
+    /// An unwind rolls back locally through `RollbackOnExit`; as for a callback
+    /// unwind, the external reservation needs explicit reconciliation.
+    pub(crate) fn execute_mutation_with_precommit_guard_v1(
+        &mut self,
+        database: &mut Connection,
+        input: &Value,
+        mutate: impl FnOnce(&mut RestrictedMutationTransactionV1<'_>) -> Result<Value>,
+        before_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Value> {
         let operation_id = input["operationId"].as_str().unwrap_or("");
         let operation = self.manifest["operations"]
             .as_array()
@@ -364,6 +381,9 @@ impl<T: MutationAuthorityTransportV1> SqliteMutationCoordinatorV1<T> {
             abort_reason = "local-marker-failed";
             storage::insert_marker(database, reserved.value(), &final_request, &request)?;
             abort_reason = "local-commit-failed";
+            before_commit()?;
+            // The guard may inspect files/signatures. Sample the lease only
+            // after that work, retaining the public path's clock-call order.
             if expires - observe(self.clock.as_mut())?.0 < self.commit_safety_margin_ms {
                 return Err(error(
                     "externally_fenced_sqlite_mutation_reservation_expiring",
@@ -420,3 +440,7 @@ impl<T: MutationAuthorityTransportV1> SqliteMutationCoordinatorV1<T> {
         operation
     }
 }
+
+#[cfg(test)]
+#[path = "precommit_tests.rs"]
+mod precommit_tests;

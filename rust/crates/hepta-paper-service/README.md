@@ -33,12 +33,14 @@ clock and local writer token. It is not a deployment configuration.
 
 ## Command and configuration contracts
 
-`hepta-automation-reconcile` also provides read-only reconciliation plans and
+`hepta-automation-reconcile` provides read-only reconciliation plans with runtime
+environment defaults and a live clock (or explicit `--database`/`--at`), and
 `--execute-local REQUEST_JSON` for the complete incumbent offline schema-25
 transaction under an already established local cutover epoch. The
 [execution handoff](../../../docs/modules/AUTOMATION_RECONCILIATION_EXECUTION_HANDOFF.md)
 documents the exact request, shared Node locks, receipt and rollback semantics,
-tests, and remaining production/online admission gaps.
+tests, the private signed online callbacks and precommit scope hook, and remaining
+production/online activation and admission gaps.
 
 `hepta-paper-rust` implements:
 

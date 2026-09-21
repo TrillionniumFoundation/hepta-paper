@@ -1,14 +1,43 @@
 use hepta_paper_service::automation_runtime_reconciliation::{
-    LocalOfflineReconciliationRequestV1,
+    LocalOfflineReconciliationRequestV1, LocalReconciliationOperationV1,
     execute_local_offline_automation_runtime_reconciliation_v1,
-    inspect_automation_runtime_reconciliation_v1, inspect_legacy_terminal_active_residue_v1,
+    inspect_automation_runtime_reconciliation_v1,
+    inspect_current_automation_runtime_reconciliation_v1,
+    inspect_legacy_terminal_active_residue_v1,
 };
-use std::{env, fs::OpenOptions, io::Read, os::unix::fs::OpenOptionsExt, path::Path};
+use hepta_paper_service::native_workspace::resolve_native_workspace_root_v1;
+use std::{
+    env,
+    fs::OpenOptions,
+    io::Read,
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+};
 
 fn usage() {
     println!(
-        "{{\"version\":1,\"kind\":\"AutomationRuntimeReconciliationUsage\",\"usage\":\"hepta-automation-reconcile --database ABSOLUTE_SQLITE --at ISO_TIME [--campaign-id ID] [--no-progress-seconds N] [--legacy-terminal-active-residue]\",\"localExecuteUsage\":\"hepta-automation-reconcile --execute-local REQUEST_JSON\",\"readOnly\":true,\"externalActionPerformed\":false,\"localMutationSupported\":true,\"productionMutationSupported\":false}}"
+        "{{\"version\":1,\"kind\":\"AutomationRuntimeReconciliationUsage\",\"usage\":\"hepta-automation-reconcile [--database ABSOLUTE_SQLITE] [--at ISO_TIME] [--campaign-id ID] [--no-progress-seconds N] [--legacy-terminal-active-residue]\",\"localExecuteUsage\":\"hepta-automation-reconcile --execute-local REQUEST_JSON\",\"readOnly\":true,\"externalActionPerformed\":false,\"localMutationSupported\":true,\"productionMutationSupported\":false}}"
     );
+}
+
+fn default_database() -> Result<PathBuf, String> {
+    let cwd = env::current_dir().map_err(|_| "working directory unavailable")?;
+    let workspace = env::var_os("HEPTA_PAPER_WORKSPACE_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let compiled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let workspace = resolve_native_workspace_root_v1(&cwd, &compiled, workspace.as_deref())?;
+    let runtime_default = workspace
+        .parent()
+        .unwrap_or(&workspace)
+        .join("hepta-paper-runtime/native-runtime");
+    let runtime = env::var_os("HEPTA_PAPER_RUNTIME_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    Ok(
+        resolve_native_workspace_root_v1(&cwd, &runtime_default, runtime.as_deref())?
+            .join("hepta-paper.sqlite"),
+    )
 }
 
 fn main() {
@@ -94,20 +123,33 @@ fn main() {
             }
             index += 1;
         }
-        let database = database.ok_or("--database is required")?;
-        let now = now.ok_or("--at is required")?;
-        let report = if legacy_terminal_active_residue {
+        let database = match database {
+            Some(database) => PathBuf::from(database),
+            None => default_database()?,
+        };
+        let report = if now.is_none() {
+            inspect_current_automation_runtime_reconciliation_v1(
+                &database,
+                no_progress_seconds,
+                campaign_id.as_deref(),
+                if legacy_terminal_active_residue {
+                    LocalReconciliationOperationV1::LegacyTerminalActiveResidue
+                } else {
+                    LocalReconciliationOperationV1::Standard
+                },
+            )
+        } else if legacy_terminal_active_residue {
             inspect_legacy_terminal_active_residue_v1(
-                Path::new(&database),
-                &now,
+                &database,
+                now.as_deref().expect("explicit time branch"),
                 campaign_id
                     .as_deref()
                     .ok_or("--campaign-id is required for legacy maintenance")?,
             )
         } else {
             inspect_automation_runtime_reconciliation_v1(
-                Path::new(&database),
-                &now,
+                &database,
+                now.as_deref().expect("explicit time branch"),
                 no_progress_seconds,
                 campaign_id.as_deref(),
             )

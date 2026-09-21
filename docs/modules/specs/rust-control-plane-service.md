@@ -119,8 +119,9 @@ The module documentation validator additionally proves one-to-one registry/spec/
 
 The [automation reconciliation execution handoff](../AUTOMATION_RECONCILIATION_EXECUTION_HANDOFF.md)
 specifies the schema-25 offline transaction, private receipt issuer, shared Node
-package lock, local cutover admission, rollback behavior and remaining production
-and online execution gaps.
+package lock, local cutover admission, live/default-root passive CLI, exact signed
+online callbacks, post-reservation precommit hook, rollback/recovery behavior and
+remaining production/online activation gaps.
 
 The executable source is now in `rust/crates/hepta-paper-service`. See [runtime migration implementation and commands](../../rust/RUNTIME_MIGRATION_IMPLEMENTATION.md), the [control-plane contract](../../../rust/crates/hepta-control-plane/README.md), and the [durable campaign writer contract](../../../rust/crates/hepta-campaign-writer/README.md) for concrete request fields, persisted state, exact replay, shadow inspection, local execution and verification commands.
 

@@ -108,6 +108,54 @@ fn canonical_snapshot(value: &Value) -> Value {
     value
 }
 #[test]
+fn offline_reconciliation_rejects_text_numeric_fences_like_node_without_partial_writes() {
+    for column in ["lease_generation", "node_revision"] {
+        for value in ["bogus", "0x10", "\u{feff}17", "inf", "Infinity", "", " "] {
+            let fixture = Fixture::new(true);
+            let node = Connection::open(&fixture.node).unwrap();
+            node.execute(
+                &format!("UPDATE campaign_nodes SET {column}=? WHERE node_id='node-4'"),
+                [value],
+            )
+            .unwrap();
+            assert_eq!(
+                node.query_row(
+                    &format!("SELECT typeof({column}) FROM campaign_nodes WHERE node_id='node-4'"),
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+                "text"
+            );
+            drop(node);
+            fs::copy(&fixture.node, &fixture.rust).unwrap();
+            let mut db = fixture.native();
+            let before = snapshot(&db);
+            let expected = fixture.oracle(&[]);
+            assert_eq!(expected["ok"], false, "{column}={value:?}");
+            assert!(
+                execute_on_admitted_connection(
+                    &mut db,
+                    NOW,
+                    1800.,
+                    None,
+                    None,
+                    |_| Ok(()),
+                    || Ok(())
+                )
+                .is_err(),
+                "{column}={value:?}"
+            );
+            assert_eq!(snapshot(&db), before, "{column}={value:?}");
+            assert_eq!(
+                snapshot(&Connection::open(&fixture.node).unwrap()),
+                before,
+                "Node changed rows for {column}={value:?}"
+            );
+        }
+    }
+}
+#[test]
 fn offline_reconciliation_matches_complete_node_state_and_receipts() {
     for (populated, campaign) in [
         (false, None),

@@ -5,15 +5,15 @@ compile_error!("hepta-cgroup-containment requires Linux cgroup-v2 semantics");
 
 use std::{
     collections::BTreeSet,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
 
+mod owner;
+
+use owner::{Control, OperationOwner, RootOwner};
 use thiserror::Error;
 
 const VERSION: u16 = 1;
@@ -82,11 +82,11 @@ impl CgroupV2PolicyV1 {
 
     /// Returns true only for a validated real cgroup-v2 hierarchy.
     pub fn production_eligible(&self) -> Result<bool, CgroupV2Error> {
-        self.validate()?;
+        let _observed = RootOwner::capture(self)?;
         Ok(self.authority_mode == CgroupAuthorityModeV1::ProductionSystem)
     }
 
-    fn validate(&self) -> Result<(), CgroupV2Error> {
+    fn validate_limits(&self) -> Result<(), CgroupV2Error> {
         if self.version != VERSION
             || self.pids_max == 0
             || self.memory_max == 0
@@ -97,25 +97,6 @@ impl CgroupV2PolicyV1 {
             || self.poll_interval_ms > self.cleanup_timeout_ms
         {
             return Err(CgroupV2Error::InvalidPolicy);
-        }
-        inspect_root(&self.delegated_root, self.owner_uid)?;
-        if self.authority_mode == CgroupAuthorityModeV1::ProductionSystem {
-            let canonical = fs::canonicalize(&self.delegated_root)
-                .map_err(|_| CgroupV2Error::InvalidHierarchy)?;
-            if !canonical.starts_with("/sys/fs/cgroup")
-                || !canonical.join("cgroup.controllers").is_file()
-                || !canonical.join("cgroup.subtree_control").is_file()
-            {
-                return Err(CgroupV2Error::InvalidHierarchy);
-            }
-            let filesystems = fs::read_to_string("/proc/filesystems")
-                .map_err(|_| CgroupV2Error::InvalidHierarchy)?;
-            if !filesystems
-                .lines()
-                .any(|line| line.trim_end().ends_with("cgroup2"))
-            {
-                return Err(CgroupV2Error::InvalidHierarchy);
-            }
         }
         Ok(())
     }
@@ -140,43 +121,38 @@ impl ProcessContainmentModeV1 {
     }
 }
 
-/// One exact operation cgroup.
+/// One retained operation cgroup. This owner does not prevent namespace revocation.
+/// Name creation/removal requires cooperating ownership of the delegated namespace.
 pub struct CgroupV2OperationV1 {
     path: PathBuf,
     policy: CgroupV2PolicyV1,
+    owner: OperationOwner,
     fixture_members: Option<Mutex<BTreeSet<u32>>>,
-    cleaned: bool,
+    cleanup_armed: bool,
 }
 
 impl CgroupV2OperationV1 {
-    /// Creates an exclusive operation cgroup and installs limits before attachment.
+    /// Creates a retained operation and installs limits before attachment.
+    /// Partial initialization errors leave the name for inspection, not blind removal.
     pub fn create(policy: CgroupV2PolicyV1, operation_id: &str) -> Result<Self, CgroupV2Error> {
-        policy.validate()?;
+        let root = RootOwner::capture(&policy)?;
         validate_identifier(operation_id)?;
-        let path = policy.delegated_root.join(operation_id);
-        fs::create_dir(&path).map_err(|error| CgroupV2Error::Filesystem("create", error.kind()))?;
+        let owner = root.create(operation_id)?;
         if policy.authority_mode == CgroupAuthorityModeV1::LocalFixture {
-            create_fixture_controls(&path)?;
+            owner.create_fixture_controls()?;
         }
-        inspect_operation(&path, policy.owner_uid)?;
-        write_control(&path.join("pids.max"), &policy.pids_max.to_string())?;
-        write_control(&path.join("memory.max"), &policy.memory_max.to_string())?;
-        write_control(
-            &path.join("cpu.max"),
+        owner.write(Control::PidsMax, &policy.pids_max.to_string())?;
+        owner.write(Control::MemoryMax, &policy.memory_max.to_string())?;
+        owner.write(
+            Control::CpuMax,
             &format!("{} {}", policy.cpu_quota_us, policy.cpu_period_us),
         )?;
-        let fixture_members = (policy.authority_mode == CgroupAuthorityModeV1::LocalFixture)
-            .then(|| Mutex::new(BTreeSet::new()));
-        Ok(Self {
-            path,
-            policy,
-            fixture_members,
-            cleaned: false,
-        })
+        owner.assert_current()?;
+        Ok(Self::from_owner(policy, operation_id, owner))
     }
 
-    /// Reopens only the exact operation directory recorded before target release.
-    /// Absence is an idempotent cleanup result; a replacement is never adopted.
+    /// Reopens the expected operation under a newly observed retained root.
+    /// Use the root-bound variant when a durable record also specifies root identity.
     pub fn recover_existing(
         policy: CgroupV2PolicyV1,
         operation_id: &str,
@@ -185,221 +161,190 @@ impl CgroupV2OperationV1 {
         expected_changed_seconds: i64,
         expected_changed_nanoseconds: i64,
     ) -> Result<Option<Self>, CgroupV2Error> {
-        policy.validate()?;
+        Self::recover_inner(
+            policy,
+            operation_id,
+            None,
+            (
+                expected_device,
+                expected_inode,
+                expected_changed_seconds,
+                expected_changed_nanoseconds,
+            ),
+        )
+    }
+
+    /// Checks the actual retained root before observing operation absence or
+    /// arming cleanup. Neither a replacement root nor operation is adopted.
+    pub fn recover_existing_with_root_identity(
+        policy: CgroupV2PolicyV1,
+        operation_id: &str,
+        expected_root: (u64, u64),
+        expected_operation: (u64, u64, i64, i64),
+    ) -> Result<Option<Self>, CgroupV2Error> {
+        Self::recover_inner(
+            policy,
+            operation_id,
+            Some(expected_root),
+            expected_operation,
+        )
+    }
+
+    fn recover_inner(
+        policy: CgroupV2PolicyV1,
+        operation_id: &str,
+        expected_root: Option<(u64, u64)>,
+        expected_operation: (u64, u64, i64, i64),
+    ) -> Result<Option<Self>, CgroupV2Error> {
+        let root = RootOwner::capture(&policy)?;
         validate_identifier(operation_id)?;
-        let path = policy.delegated_root.join(operation_id);
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(CgroupV2Error::Filesystem("recover", error.kind())),
-        };
-        inspect_operation(&path, policy.owner_uid)?;
-        if metadata.dev() != expected_device
-            || metadata.ino() != expected_inode
-            || metadata.ctime() != expected_changed_seconds
-            || metadata.ctime_nsec() != expected_changed_nanoseconds
-        {
+        if expected_root.is_some_and(|expected| expected != root.identity()) {
             return Err(CgroupV2Error::RecoveryIdentityMismatch);
         }
+        root.recover(operation_id, expected_operation)
+            .map(|owner| owner.map(|owner| Self::from_owner(policy, operation_id, owner)))
+    }
+
+    fn from_owner(policy: CgroupV2PolicyV1, operation_id: &str, owner: OperationOwner) -> Self {
         let fixture_members = (policy.authority_mode == CgroupAuthorityModeV1::LocalFixture)
             .then(|| Mutex::new(BTreeSet::new()));
-        Ok(Some(Self {
-            path,
+        Self {
+            path: policy.delegated_root.join(operation_id),
             policy,
+            owner,
             fixture_members,
-            cleaned: false,
-        }))
+            cleanup_armed: true,
+        }
     }
 
-    /// Captures the exact directory identity for durable crash recovery.
+    /// Observes the actual held operation for durable recovery. Namespace drift
+    /// makes this owner terminal; observations do not grant continued authority.
     pub fn directory_identity(&self) -> Result<(u64, u64, i64, i64), CgroupV2Error> {
-        inspect_operation(&self.path, self.policy.owner_uid)?;
-        let metadata = fs::symlink_metadata(&self.path)
-            .map_err(|error| CgroupV2Error::Filesystem("identity", error.kind()))?;
-        Ok((
-            metadata.dev(),
-            metadata.ino(),
-            metadata.ctime(),
-            metadata.ctime_nsec(),
-        ))
+        self.owner.directory_identity()
     }
 
-    /// Attaches one process. Descendants remain members after `setsid` or double-fork.
+    /// Observes the root retained by the same operation owner, never a new baseline.
+    pub fn root_directory_identity(&self) -> Result<(u64, u64), CgroupV2Error> {
+        self.owner.root_identity()
+    }
+
+    /// Attaches to the retained cgroup only. A failing observation may follow a
+    /// write to the original object, and must not be interpreted as no effect.
     pub fn attach_pid(&self, pid: u32) -> Result<(), CgroupV2Error> {
         if pid == 0 || pid > i32::MAX as u32 {
             return Err(CgroupV2Error::InvalidPid(pid));
         }
+        self.owner.assert_current()?;
         if let Some(fixture_members) = &self.fixture_members {
             let mut members = fixture_members
                 .lock()
-                .map_err(|_| CgroupV2Error::FixtureStatePoisoned)?;
+                .map_err(|_| self.owner.invalidate(CgroupV2Error::FixtureStatePoisoned))?;
             let maximum =
                 usize::try_from(self.policy.pids_max).map_err(|_| CgroupV2Error::InvalidPolicy)?;
             if !members.contains(&pid) && members.len() >= maximum {
                 return Err(CgroupV2Error::PidLimitExceeded);
             }
-            members.insert(pid);
-            write_fixture_process_set(&self.path.join("cgroup.procs"), &members)?;
-            write_control(&self.path.join("cgroup.events"), "populated 1\nfrozen 0")?;
+            let mut next = members.clone();
+            next.insert(pid);
+            let value = next
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            if value.len() > MAX_FIXTURE_PROCESS_SET_BYTES {
+                return Err(CgroupV2Error::InvalidControlValue);
+            }
+            self.owner.write(Control::Procs, &value)?;
+            self.owner.write(Control::Events, "populated 1\nfrozen 0")?;
+            *members = next;
             return Ok(());
         }
-        write_control(&self.path.join("cgroup.procs"), &pid.to_string())
+        let value = pid.to_string();
+        if value.len() > MAX_CONTROL_BYTES {
+            return Err(CgroupV2Error::InvalidControlValue);
+        }
+        self.owner.write(Control::Procs, &value)
     }
 
-    /// Kills all members, proves `populated 0`, and removes the exact cgroup.
+    /// Attempts kill, bounded empty observation and cooperating name removal once.
+    /// Errors require inspection; Drop does not retry this explicit attempt.
     pub fn kill_and_cleanup(mut self) -> Result<(), CgroupV2Error> {
+        self.cleanup_once()
+    }
+
+    fn cleanup_once(&mut self) -> Result<(), CgroupV2Error> {
+        self.cleanup_armed = false;
         self.cleanup_inner()
     }
 
-    /// Exact operation path.
+    /// Caller-visible path for display only; I/O uses retained descriptors.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    fn cleanup_inner(&mut self) -> Result<(), CgroupV2Error> {
-        if self.cleaned {
-            return Ok(());
-        }
-        write_control(&self.path.join("cgroup.kill"), "1")?;
+    fn read_populated(&self) -> Result<bool, CgroupV2Error> {
+        let bytes = self.owner.events()?;
+        parse_populated(&bytes).map_err(|error| self.owner.invalidate(error))
+    }
+
+    fn cleanup_inner(&self) -> Result<(), CgroupV2Error> {
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(self.policy.cleanup_timeout_ms))
+            .ok_or(CgroupV2Error::InvalidPolicy)?;
+        // Validate bounded input before the first cleanup effect. Fixture event
+        // updates below simulate population only; they are not kernel evidence.
+        self.read_populated()?;
+        self.owner.write(Control::Kill, "1")?;
         if self.policy.authority_mode == CgroupAuthorityModeV1::LocalFixture {
-            write_control(&self.path.join("cgroup.events"), "populated 0\nfrozen 0")?;
+            self.owner.write(Control::Events, "populated 0\nfrozen 0")?;
         }
-        let deadline = Instant::now() + Duration::from_millis(self.policy.cleanup_timeout_ms);
-        while read_populated(&self.path.join("cgroup.events"))? {
-            if Instant::now() >= deadline {
-                return Err(CgroupV2Error::CleanupTimeout);
-            }
-            thread::sleep(Duration::from_millis(self.policy.poll_interval_ms));
+        while self.read_populated()? {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or_else(|| self.owner.invalidate(CgroupV2Error::CleanupTimeout))?;
+            thread::sleep(Duration::from_millis(self.policy.poll_interval_ms).min(remaining));
         }
-        if self.policy.authority_mode == CgroupAuthorityModeV1::LocalFixture {
-            for name in [
-                "cgroup.procs",
-                "cgroup.events",
-                "cgroup.kill",
-                "pids.max",
-                "memory.max",
-                "cpu.max",
-            ] {
-                fs::remove_file(self.path.join(name))
-                    .map_err(|error| CgroupV2Error::Filesystem("fixture_cleanup", error.kind()))?;
-            }
-        }
-        fs::remove_dir(&self.path)
-            .map_err(|error| CgroupV2Error::Filesystem("remove", error.kind()))?;
-        // cgroup2 is a kernel pseudo-filesystem: directory fsync returns EINVAL.
-        // Its cleanup proof is populated=0 followed by successful removal, not
-        // filesystem durability. Only the on-disk test hierarchy uses fsync;
-        // the broker separately fsyncs its real-filesystem recovery record.
-        if self.policy.authority_mode == CgroupAuthorityModeV1::LocalFixture {
-            File::open(&self.policy.delegated_root)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|error| CgroupV2Error::Filesystem("sync_parent", error.kind()))?;
-        }
-        self.cleaned = true;
-        Ok(())
+        self.owner.remove()
     }
 }
 
 impl Drop for CgroupV2OperationV1 {
     fn drop(&mut self) {
-        if !self.cleaned {
-            let _ = self.cleanup_inner();
+        if self.cleanup_armed && !self.owner.failed() {
+            let _ = self.cleanup_once();
         }
     }
 }
 
-fn inspect_root(path: &Path, owner_uid: u32) -> Result<(), CgroupV2Error> {
-    if !path.is_absolute() {
-        return Err(CgroupV2Error::InvalidHierarchy);
+fn parse_populated(bytes: &[u8]) -> Result<bool, CgroupV2Error> {
+    let text = std::str::from_utf8(bytes).map_err(|_| CgroupV2Error::EventsMalformed)?;
+    let mut keys = BTreeSet::new();
+    let mut populated = None;
+    for line in text.lines() {
+        let mut fields = line.split_ascii_whitespace();
+        let key = fields.next().ok_or(CgroupV2Error::EventsMalformed)?;
+        let value = fields.next().ok_or(CgroupV2Error::EventsMalformed)?;
+        if fields.next().is_some()
+            || !keys.insert(key)
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+            || value.is_empty()
+            || !value.bytes().all(|byte| byte.is_ascii_digit())
+            || value.parse::<u64>().is_err()
+        {
+            return Err(CgroupV2Error::EventsMalformed);
+        }
+        if key == "populated" {
+            populated = Some(match value {
+                "0" => false,
+                "1" => true,
+                _ => return Err(CgroupV2Error::EventsMalformed),
+            });
+        }
     }
-    let canonical = fs::canonicalize(path).map_err(|_| CgroupV2Error::InvalidHierarchy)?;
-    let metadata = fs::symlink_metadata(path).map_err(|_| CgroupV2Error::InvalidHierarchy)?;
-    if canonical != path
-        || metadata.file_type().is_symlink()
-        || !metadata.is_dir()
-        || metadata.uid() != owner_uid
-        || metadata.mode() & 0o002 != 0
-    {
-        return Err(CgroupV2Error::InvalidHierarchy);
-    }
-    Ok(())
-}
-
-fn inspect_operation(path: &Path, owner_uid: u32) -> Result<(), CgroupV2Error> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| CgroupV2Error::InvalidHierarchy)?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() || metadata.uid() != owner_uid {
-        return Err(CgroupV2Error::InvalidHierarchy);
-    }
-    Ok(())
-}
-
-fn create_fixture_controls(path: &Path) -> Result<(), CgroupV2Error> {
-    for (name, contents) in [
-        ("cgroup.procs", ""),
-        ("cgroup.events", "populated 0\nfrozen 0"),
-        ("cgroup.kill", "0"),
-        ("pids.max", "max"),
-        ("memory.max", "max"),
-        ("cpu.max", "max 100000"),
-    ] {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(path.join(name))
-            .map_err(|error| CgroupV2Error::Filesystem("fixture_control", error.kind()))?;
-        file.write_all(contents.as_bytes())
-            .map_err(|error| CgroupV2Error::Filesystem("fixture_control", error.kind()))?;
-    }
-    Ok(())
-}
-
-fn write_fixture_process_set(path: &Path, members: &BTreeSet<u32>) -> Result<(), CgroupV2Error> {
-    let value = members
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join("\n");
-    if value.len() > MAX_FIXTURE_PROCESS_SET_BYTES {
-        return Err(CgroupV2Error::InvalidControlValue);
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(path)
-        .map_err(|error| CgroupV2Error::Filesystem("fixture_process_set_write", error.kind()))?;
-    file.write_all(value.as_bytes())
-        .map_err(|error| CgroupV2Error::Filesystem("fixture_process_set_write", error.kind()))
-}
-
-fn write_control(path: &Path, value: &str) -> Result<(), CgroupV2Error> {
-    if value.is_empty() || value.len() > MAX_CONTROL_BYTES || value.as_bytes().contains(&0) {
-        return Err(CgroupV2Error::InvalidControlValue);
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(path)
-        .map_err(|error| CgroupV2Error::Filesystem("control_write", error.kind()))?;
-    file.write_all(value.as_bytes())
-        .map_err(|error| CgroupV2Error::Filesystem("control_write", error.kind()))
-}
-
-fn read_populated(path: &Path) -> Result<bool, CgroupV2Error> {
-    let mut contents = String::new();
-    File::open(path)
-        .and_then(|mut file| file.read_to_string(&mut contents))
-        .map_err(|error| CgroupV2Error::Filesystem("events_read", error.kind()))?;
-    contents
-        .lines()
-        .find_map(|line| line.strip_prefix("populated "))
-        .and_then(|value| match value {
-            "0" => Some(false),
-            "1" => Some(true),
-            _ => None,
-        })
-        .ok_or(CgroupV2Error::EventsMalformed)
+    populated.ok_or(CgroupV2Error::EventsMalformed)
 }
 
 fn validate_identifier(value: &str) -> Result<(), CgroupV2Error> {
@@ -427,6 +372,15 @@ pub enum CgroupV2Error {
     /// The durable operation directory has been replaced.
     #[error("cgroup-v2 recovery directory identity mismatch")]
     RecoveryIdentityMismatch,
+    /// The retained directory no longer has the observed namespace or authority.
+    #[error("cgroup-v2 retained directory namespace changed")]
+    NamespaceChanged,
+    /// This owner observed a failure and cannot establish a new baseline.
+    #[error("cgroup-v2 owner requires inspection")]
+    OwnerRequiresInspection,
+    /// A control is not an eligible kernel or private regular fixture file.
+    #[error("cgroup-v2 control file is invalid")]
+    InvalidControlFile,
     /// Operation identifier is invalid.
     #[error("cgroup-v2 operation id is invalid")]
     InvalidOperationId,

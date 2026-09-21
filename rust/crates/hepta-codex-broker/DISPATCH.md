@@ -55,6 +55,13 @@ recovery; it is not a signed prepared-result receipt.
 
 ## Restart containment
 
+The [cgroup ownership contract](../hepta-cgroup-containment/HANDOFF.md) specifies
+retained hierarchy/operation descriptors, actual cgroup2 filesystem checks,
+control-file bounds, terminal failure behavior, and the remaining cooperative
+namespace requirement for creation and final directory removal. The broker
+records identities from the actual retained owner and supplies the recorded
+root identity to recovery before interpreting an operation as absent.
+
 `recover_codex_dispatch_containment` must run before generic process
 reconciliation and listener readiness. It validates the private record's exact
 journal request binding and the cgroup root/operation device and inode plus the

@@ -34,7 +34,12 @@ pub(crate) fn bind_containment(
     operation: &CgroupV2OperationV1,
 ) -> Result<PathBuf, CodexDispatchError> {
     let journal = store.load_journal(operation_id)?;
-    let metadata = fs::symlink_metadata(&policy.delegated_root)?;
+    if operation.path() != policy.delegated_root.join(operation_id) {
+        return Err(CodexDispatchError::InvalidBinding(
+            "containment_operation_path",
+        ));
+    }
+    let (root_device, root_inode) = operation.root_directory_identity()?;
     let (
         operation_device,
         operation_inode,
@@ -46,8 +51,8 @@ pub(crate) fn bind_containment(
         operation_id: operation_id.to_owned(),
         request_hash: journal.request_hash,
         delegated_root: policy.delegated_root.clone(),
-        root_device: metadata.dev(),
-        root_inode: metadata.ino(),
+        root_device,
+        root_inode,
         operation_device,
         operation_inode,
         operation_changed_seconds,
@@ -94,7 +99,6 @@ pub fn recover_codex_dispatch_containment(
 ) -> Result<usize, CodexDispatchError> {
     let _quiescence =
         crate::dispatch_backup::acquire_dispatch_lock(state_directory, policy.owner_uid, true)?;
-    let root = fs::symlink_metadata(&policy.delegated_root)?;
     let mut recovered = 0;
     let mut scanned = 0;
     for entry in fs::read_dir(state_directory)? {
@@ -130,8 +134,6 @@ pub fn recover_codex_dispatch_containment(
         if record.version != 1
             || record.request_hash != journal.request_hash
             || record.delegated_root != policy.delegated_root
-            || record.root_device != root.dev()
-            || record.root_inode != root.ino()
             || entry.file_name()
                 != std::ffi::OsString::from(format!("{PREFIX}{}.json", record.operation_id))
         {
@@ -139,13 +141,18 @@ pub fn recover_codex_dispatch_containment(
                 "containment_recovery_identity",
             ));
         }
-        if let Some(operation) = CgroupV2OperationV1::recover_existing(
+        // Validate the recorded hierarchy on the actual retained owner before
+        // interpreting absence or arming cleanup of an existing operation.
+        if let Some(operation) = CgroupV2OperationV1::recover_existing_with_root_identity(
             policy.clone(),
             &record.operation_id,
-            record.operation_device,
-            record.operation_inode,
-            record.operation_changed_seconds,
-            record.operation_changed_nanoseconds,
+            (record.root_device, record.root_inode),
+            (
+                record.operation_device,
+                record.operation_inode,
+                record.operation_changed_seconds,
+                record.operation_changed_nanoseconds,
+            ),
         )? {
             operation.kill_and_cleanup()?;
         }

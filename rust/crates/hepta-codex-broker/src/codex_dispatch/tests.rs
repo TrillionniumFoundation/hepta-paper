@@ -26,6 +26,9 @@ use std::{
 };
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
+#[path = "tests/containment_owner.rs"]
+mod containment_owner;
 struct Clock;
 impl BrokerClockV1 for Clock {
     fn now_unix_ms(&self) -> Result<u64, crate::BrokerServerError> {
@@ -456,10 +459,7 @@ fn cgroup_cleanup_recovery_uses_durable_directory_identity() {
     let cgroup_root = fixture.root.join("cgroups");
     fs::create_dir(&cgroup_root).unwrap();
     let policy = CgroupV2PolicyV1::local_fixture(cgroup_root.clone(), fixture.uid);
-    let operation = CgroupV2OperationV1::create(policy.clone(), "dispatch-1").unwrap();
-    bind_containment(&store, "dispatch-1", &fixture.root, &policy, &operation).unwrap();
-    // Mimic owner-process loss: the recovery record must survive until cleanup has been proved.
-    std::mem::forget(operation);
+    containment_owner::create_record_then_exit(&fixture);
     assert_eq!(
         crate::recover_codex_dispatch_containment(&store, &fixture.root, &policy).unwrap(),
         1
@@ -478,9 +478,7 @@ fn replacement_cgroup_is_not_adopted_or_killed_during_recovery() {
     let root = fixture.root.join("cgroups");
     fs::create_dir(&root).unwrap();
     let policy = CgroupV2PolicyV1::local_fixture(root.clone(), fixture.uid);
-    let operation = CgroupV2OperationV1::create(policy.clone(), "dispatch-1").unwrap();
-    bind_containment(&store, "dispatch-1", &fixture.root, &policy, &operation).unwrap();
-    std::mem::forget(operation);
+    containment_owner::create_record_then_exit(&fixture);
     fs::rename(root.join("dispatch-1"), root.join("old-operation")).unwrap();
     let replacement = CgroupV2OperationV1::create(policy.clone(), "dispatch-1").unwrap();
     assert!(matches!(

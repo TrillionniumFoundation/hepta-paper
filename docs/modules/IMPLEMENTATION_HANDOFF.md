@@ -199,6 +199,8 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **Worker ownership:** Worker errors/unwinding stop acceptance; startup and accept-loop failures close the queue, join every spawned worker and attempt listener cleanup before returning the first observed error. A normal connection cap drains without cancellation. The shared cancellation flag does not forcibly terminate a non-cooperative adapter. `BrokerServerError::WorkerSpawn(ErrorKind)` is an additive public enum variant requiring exhaustive-match updates. Real Unix lifecycle tests and a deterministic join test cover this source behavior; they do not qualify a production dispatcher.
 
+**Containment ownership:** The [cgroup implementation contract](../../rust/crates/hepta-cgroup-containment/HANDOFF.md) covers held root/operation descriptors, actual filesystem checks, fixed-leaf control I/O, terminal refusal, and the broker's consumption of those identities for durable recovery. Ordinary filesystem fixtures do not qualify Linux cgroup behavior; final name removal still requires the documented cooperating namespace owner.
+
 ## module.execution-dispatcher
 
 **Implementation scope:** Rust execution and prepared-byte verification.

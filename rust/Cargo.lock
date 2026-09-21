@@ -710,6 +710,7 @@ dependencies = [
 name = "hepta-cgroup-containment"
 version = "0.1.0"
 dependencies = [
+ "nix",
  "thiserror",
 ]
 

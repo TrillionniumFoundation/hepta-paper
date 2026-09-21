@@ -2816,10 +2816,14 @@
     },
     {
       "id": "retirement/status",
-      "rustEntrypoint": "hepta-paper-rust retirement-status [REQUEST]",
+      "rustEntrypoint": "hepta-retire-legacy-archive [status|--help|-h|--execute]; hepta-paper-rust retirement-status [REQUEST]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-retire-legacy-archive.rs",
+          "symbol": "main"
+        },
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
           "symbol": "command"
@@ -2830,10 +2834,12 @@
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs"
+        "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
+        "rust/crates/hepta-paper-service/tests/retirement_cli_parity.rs"
       ],
-      "remaining": "Rust matches the pure read-only legacy archive status contract for explicit roots and version, and now matches Node package-version plus workspace/env default resolution when request fields are omitted. The route remains strictly read-only; destructive identity-bound execution, exact retirement authority and independent acceptance remain unimplemented.",
+      "remaining": "Rust matches the pure read-only legacy archive status contract for explicit roots and version, Node package-version plus workspace/env default resolution, and the standalone incumbent CLI default/status/help/argument-error/blocked-execute JSON and exit-code contract. The route remains strictly read-only; destructive identity-bound execution, exact retirement authority and independent acceptance remain unimplemented.",
       "rustSources": [
+        "rust/crates/hepta-paper-service/src/bin/hepta-retire-legacy-archive.rs",
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/retirement_status.rs",
         "rust/oracle/retirement-status-v1.mjs"
@@ -2862,6 +2868,14 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
           "symbol": "retirement_status_reports_node_physical_overlap_and_workspace_blockers"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_cli_parity.rs",
+          "symbol": "retirement_cli_matches_node_status_and_blocked_execute_without_mutation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_cli_parity.rs",
+          "symbol": "retirement_cli_matches_node_help_and_argument_errors"
         }
       ]
     },

@@ -659,6 +659,14 @@ fn cli_missing_configuration_is_readonly_blocked_and_flag_errors_match_node() {
             .output()
             .unwrap()
     };
+    let native_help = invoke(true, &["--help"]);
+    let incumbent_help = invoke(false, &["--help"]);
+    assert_eq!(native_help.status.code(), Some(0));
+    assert_eq!(incumbent_help.status.code(), Some(0));
+    assert_eq!(
+        native_help.stdout, incumbent_help.stdout,
+        "runtime image help wire contract"
+    );
     let native = invoke(true, &[]);
     let incumbent = invoke(false, &[]);
     assert_eq!(native.status.code(), Some(2));

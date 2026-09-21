@@ -1,7 +1,10 @@
 use hepta_paper_service::runtime_image_reproducibility::runtime_image_reproducibility_report_v2;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf};
-const USAGE: &str = "Usage: hepta-runtime-image-reproducibility --action status|request|verify|publish [--config PATH] [--receipt PATH] [--runtime-root PATH] [--root PATH]\n\nstatus and request are read-only. verify invokes both pinned external verifiers.\npublish uses the offline SQLite authority and atomic derived mirror; it does not grant online fenced authority.";
+// Keep this byte-for-byte aligned with paper-core/bin/runtime-image-
+// reproducibility.mjs. The standalone Rust executable is also invoked through
+// the package command surface, so help output is part of its wire contract.
+const USAGE: &str = "Usage: hepta-paper operator runtime-image-reproducibility -- --action status|request|verify|publish [options]\n\nActions:\n  status   Read and fully revalidate the persisted receipt; never invokes a verifier or writes.\n  request  Emit the current code/release/canonical-context-bound request; never invokes a verifier.\n  verify   Invoke both configured independent external verifiers and validate their Ed25519 attestations.\n  publish  Verify, then atomically publish only a fully valid and currently eligible receipt.\n\nOptions:\n  --config PATH        External verifier process/trust configuration.\n  --receipt PATH       Receipt location (default: isolated runtime root).\n  --runtime-root PATH  Isolated writable runtime root.\n  --root PATH          Repository root containing all canonical Docker contexts.\n\nAll three registered profiles are mandatory. Local Docker output and unsigned record hashes\nare diagnostic only and can never satisfy production readiness.";
 fn run() -> Result<i32, String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let mut flags = BTreeMap::<String, String>::new();

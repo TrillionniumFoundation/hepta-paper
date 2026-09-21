@@ -13,6 +13,17 @@ fn main() {
     let mut campaign_id = None;
     let mut no_progress_seconds = 1800.0_f64;
     let args: Vec<String> = env::args().skip(1).collect();
+    // The incumbent scans every argument before opening the store. Preserve
+    // that precedence even for help or otherwise invalid native arguments.
+    if args
+        .iter()
+        .filter(|arg| arg.as_str() == "--campaign-id" || arg.starts_with("--campaign-id="))
+        .count()
+        > 1
+    {
+        eprintln!("automation_runtime_reconciliation_campaign_id_duplicate");
+        std::process::exit(1);
+    }
     if args.iter().any(|arg| arg == "--help") {
         usage();
         return;

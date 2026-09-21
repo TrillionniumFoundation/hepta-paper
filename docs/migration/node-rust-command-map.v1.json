@@ -1634,6 +1634,10 @@
           "symbol": "help_is_explicitly_read_only_and_mutation_free"
         },
         {
+          "path": "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
+          "symbol": "duplicate_campaign_arguments_match_node_before_help_or_store_access"
+        },
+        {
           "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
           "symbol": "prepared_reconciliation_commits_actual_cached_output_once_without_execution"
         }

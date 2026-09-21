@@ -167,3 +167,58 @@ fn help_is_explicitly_read_only_and_mutation_free() {
     assert_eq!(help["externalActionPerformed"], false);
     assert_eq!(help["mutationSupported"], false);
 }
+
+#[test]
+fn duplicate_campaign_arguments_match_node_before_help_or_store_access() {
+    const ERROR: &str = "automation_runtime_reconciliation_campaign_id_duplicate";
+    let (directory, absent_database) = database("duplicate-campaign");
+    let absent_runtime = directory.join("absent-runtime");
+    let absent_assets = directory.join("absent-assets");
+    for arguments in [
+        vec!["--campaign-id", "campaign-3", "--campaign-id", "campaign-4"],
+        vec!["--campaign-id=campaign-3", "--campaign-id=campaign-4"],
+        vec!["--campaign-id", "campaign-3", "--campaign-id=campaign-4"],
+        vec!["--campaign-id=", "--campaign-id"],
+        vec!["--campaign-id", "--campaign-id"],
+        vec![
+            "--help",
+            "--campaign-id=campaign-3",
+            "--campaign-id=campaign-4",
+        ],
+        vec![
+            "--unknown",
+            "--campaign-id=campaign-3",
+            "--campaign-id=campaign-4",
+        ],
+    ] {
+        let node = Command::new("node")
+            .arg(root().join("paper-core/bin/automation-reconcile.mjs"))
+            .args(&arguments)
+            .env("HEPTA_PAPER_RUNTIME_ROOT", &absent_runtime)
+            .env("HEPTA_PAPER_ASSET_ROOT", &absent_assets)
+            .output()
+            .unwrap();
+        let native = Command::new(env!("CARGO_BIN_EXE_hepta-automation-reconcile"))
+            .args(["--database", absent_database.to_str().unwrap(), "--at", NOW])
+            .args(&arguments)
+            .output()
+            .unwrap();
+        assert_eq!(node.status.code(), Some(1), "{arguments:?}");
+        assert_eq!(native.status.code(), node.status.code(), "{arguments:?}");
+        assert!(
+            String::from_utf8_lossy(&node.stderr).contains(ERROR),
+            "{arguments:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&native.stderr).trim(),
+            ERROR,
+            "{arguments:?}"
+        );
+        assert!(node.stdout.is_empty(), "{arguments:?}");
+        assert!(native.stdout.is_empty(), "{arguments:?}");
+        assert!(!absent_database.exists());
+        assert!(!absent_runtime.exists());
+        assert!(!absent_assets.exists());
+    }
+    fs::remove_dir_all(directory).unwrap();
+}

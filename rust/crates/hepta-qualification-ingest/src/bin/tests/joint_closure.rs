@@ -14,6 +14,9 @@ use hepta_qualification_ingest::{
 use rusqlite::types::Value as SqlValue;
 use serde_json::{Value, json};
 
+#[path = "joint_closure/validity.rs"]
+mod validity;
+
 const COMMIT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TREE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const SHA: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

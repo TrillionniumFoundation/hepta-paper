@@ -62,7 +62,10 @@ bytes, not total process RSS: parsed JSON and signature structures add overhead.
 3. Pass the actual envelopes and payloads to the public opaque factory. It
    re-verifies them, requires all seven package IDs, distinct nonces and payload
    hashes, and five independent authority groups. An authority domain cannot
-   straddle those groups.
+   straddle those groups. Its retained exclusive expiry is the minimum of all
+   seven envelope expiries, all seven payload expiries and the four required
+   inner authority-receipt expiries. The payload-derived bound is returned only
+   after payload validation and every required nested signature succeeds.
 4. Require cgroup and storage packages to agree on `hostIdentityHash`; storage
    and cutover/soak packages must agree on `databaseIdentityHash`. The factory
    also derives service identity, Codex runtime identity and writer-transfer
@@ -79,6 +82,14 @@ to preserve earlier error ordering while giving the opaque factory the original
 signed inputs. It does not manufacture an opaque value from public per-package
 records or from the report JSON.
 
+The opaque window rejects clocks before its original verification sample or at
+and after the earliest expiry. Exact decimal UTC timestamps round upward to
+the first invalid integer millisecond: `.1000` expires at millisecond 100;
+`.1005` remains valid at 100 and expires at 101. Conversion uses checked integer
+arithmetic and agrees with the payload validator's exact decimal comparison.
+`assert_current` checks the retained window; it does not observe later key
+revocation, re-read files or establish current installed host state.
+
 ## Replay, failure and compatibility
 
 The private ledger is consumer-owned, mode `0600`, in a canonical `0700` parent.
@@ -93,7 +104,11 @@ Time regression, trust rollback, skipped generations and chain forks are
 rejected; a new ledger starts at trust generation 1. No migration of older
 ledger schemas is implicit.
 
-Valid report field order, bytes, receipt digest and replay keys remain unchanged.
+Valid CLI report field order, bytes, receipt digest and replay keys remain unchanged.
+The separate opaque closure digest includes its derived expiry: it changes for
+inputs whose payload or inner receipt narrows the previously envelope-only
+window. This correction requires downstream signatures binding that digest to
+be regenerated; the envelope and nested-signature formats do not change.
 `payloadSemantics=strict_package_v1`, `replayProtection=durable_sqlite_v2`,
 `automaticActivation=false` and `productionActivation=false` remain mandatory.
 Previously individually valid but cross-inconsistent sets are now refused,
@@ -114,7 +129,13 @@ replay, trust generations, clock rollback and malformed SQLite schema. Joint
 closure tests use seven genuinely signed fixture packages and actual SQLite to
 exercise the production verification/commit helper, including re-signed host
 and database disagreement, no ledger creation or mutation on rejection, stable
-positive report bytes and conflicting replay. Fixture keys supply test evidence
+positive report bytes and conflicting replay. Genuine signatures also cover
+each of the seven payloads and each of the four inner receipt expiries, exact
+and fractional millisecond boundaries, the earlier outer-envelope case, and
+unchanged CLI bytes/replay followed by rejection without ledger mutation at
+expiry. Private conversion tests cover long decimal fractions, calendar limits
+and checked arithmetic. Deterministic fixture time is not a system-clock or
+SQLite lock-wait currentness test. Fixture keys supply test evidence
 only; the helper tests do not claim an installed cross-UID file-ingestion pass.
 
 The public opaque factory remains the input boundary for a later owning native

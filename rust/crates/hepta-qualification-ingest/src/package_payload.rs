@@ -104,6 +104,30 @@ pub fn validate_external_package_payload_v1(
     trust_generation: u64,
     trust_store: &QualificationTrustStoreV1,
 ) -> Result<(), QualificationPayloadError> {
+    validate_external_package_payload_with_expiry_v1(
+        bytes,
+        subject,
+        envelope_authority_domain,
+        envelope_signer_key_id,
+        verifier_now_unix_ms,
+        trust_generation,
+        trust_store,
+    )
+    .map(|_| ())
+}
+
+// The closure factory authenticates the envelope and exact payload hash first.
+// Return the derived bound only after the same strict payload validation and all
+// required inner signatures succeed; an independently parsed expiry is no proof.
+pub(crate) fn validate_external_package_payload_with_expiry_v1(
+    bytes: &[u8],
+    subject: &QualificationSubjectV1,
+    envelope_authority_domain: &str,
+    envelope_signer_key_id: &str,
+    verifier_now_unix_ms: u64,
+    trust_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<u64, QualificationPayloadError> {
     validate_external_package_payload_shape_v1(
         bytes,
         subject,
@@ -113,8 +137,8 @@ pub fn validate_external_package_payload_v1(
     let value: Value =
         serde_json::from_slice(bytes).map_err(|_| QualificationPayloadError::EncodingInvalid)?;
     let root = object(&value)?;
-    current_time_window(root, verifier_now_unix_ms)?;
-    if subject.package_id == QualificationPackageIdV1::ExtAuthoritySet001 {
+    let (_, root_expires) = current_time_window(root, verifier_now_unix_ms)?;
+    let expires = if subject.package_id == QualificationPackageIdV1::ExtAuthoritySet001 {
         validate_authority_set_crypto_v1(
             root,
             subject,
@@ -123,9 +147,11 @@ pub fn validate_external_package_payload_v1(
             verifier_now_unix_ms,
             trust_generation,
             trust_store,
-        )?;
-    }
-    Ok(())
+        )?
+    } else {
+        root_expires
+    };
+    first_invalid_unix_ms(&expires)
 }
 
 fn validate_external_package_payload_shape_v1(
@@ -863,7 +889,7 @@ fn validate_authority_set_crypto_v1(
     verifier_now_unix_ms: u64,
     trust_generation: u64,
     trust_store: &QualificationTrustStoreV1,
-) -> Result<(), QualificationPayloadError> {
+) -> Result<ParsedUtcTimestamp, QualificationPayloadError> {
     if trust_generation == 0 {
         return Err(QualificationPayloadError::SemanticInvalid);
     }
@@ -872,7 +898,7 @@ fn validate_authority_set_crypto_v1(
     if subject_hash != expected_subject_hash {
         return Err(QualificationPayloadError::SubjectMismatch);
     }
-    let (set_issued, _) = current_time_window(root, verifier_now_unix_ms)?;
+    let (set_issued, mut earliest_expiry) = current_time_window(root, verifier_now_unix_ms)?;
 
     for receipt_value in array(root, "receipts")? {
         let receipt = object(receipt_value)?;
@@ -895,6 +921,9 @@ fn validate_authority_set_crypto_v1(
             &message,
             signature_field(receipt, "signatureBase64")?,
         )?;
+        if compare_timestamps(&receipt_expires, &earliest_expiry) == Ordering::Less {
+            earliest_expiry = receipt_expires;
+        }
     }
 
     let payload = Value::Object(root.clone());
@@ -905,7 +934,8 @@ fn validate_authority_set_crypto_v1(
         envelope_key,
         &message,
         signature_field(root, "setSignatureBase64")?,
-    )
+    )?;
+    Ok(earliest_expiry)
 }
 
 /// Computes the exact candidate hash bound into `EXT-AUTHORITY-SET-001`.
@@ -1024,6 +1054,25 @@ fn verify_authority_signature_v1(
 struct ParsedUtcTimestamp {
     epoch_seconds: i64,
     fraction: Vec<u8>,
+}
+
+// current_time_window compares exact integer-millisecond samples against decimal
+// timestamps. Ceil is their first invalid sample: .1000 -> 100, .1005 -> 101.
+fn first_invalid_unix_ms(expires: &ParsedUtcTimestamp) -> Result<u64, QualificationPayloadError> {
+    let seconds = u64::try_from(expires.epoch_seconds)
+        .map_err(|_| QualificationPayloadError::SemanticInvalid)?;
+    let mut milliseconds = 0_u64;
+    for index in 0..3 {
+        // ParsedUtcTimestamp fractions contain only ASCII decimal digits.
+        let digit = expires.fraction.get(index).copied().unwrap_or(b'0');
+        milliseconds = milliseconds * 10 + u64::from(digit - b'0');
+    }
+    let submillisecond_remainder = expires.fraction.iter().skip(3).any(|digit| *digit != b'0');
+    seconds
+        .checked_mul(1_000)
+        .and_then(|value| value.checked_add(milliseconds))
+        .and_then(|value| value.checked_add(u64::from(submillisecond_remainder)))
+        .ok_or(QualificationPayloadError::SemanticInvalid)
 }
 
 fn parsed_time_window(
@@ -1464,6 +1513,9 @@ fn valid_check_name(value: &str) -> bool {
 fn valid_utc_timestamp(value: &str) -> bool {
     parse_utc_timestamp(value).is_ok()
 }
+
+#[cfg(test)]
+mod expiry_tests;
 
 #[cfg(test)]
 mod tests {

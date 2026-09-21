@@ -13,11 +13,11 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::package_payload::validate_external_package_payload_with_expiry_v1;
 use crate::{
     ExternalQualificationEnvelopeV1, QualificationIngestError, QualificationPackageIdV1,
     QualificationPayloadError, QualificationSubjectV1, QualificationTrustStoreV1,
-    VerifiedExternalQualificationV1, validate_external_package_payload_v1,
-    verify_external_qualification_v1,
+    VerifiedExternalQualificationV1, verify_external_qualification_v1,
 };
 
 const MAXIMUM_PACKAGE_PAYLOAD_BYTES: usize = 32 * 1024 * 1024;
@@ -105,7 +105,8 @@ impl VerifiedExternalQualificationClosureV1 {
         Ok(())
     }
 
-    /// Earliest expiry among the seven independently signed packages.
+    /// First invalid millisecond across signed envelopes, payloads and required
+    /// inner authority receipts. Exact submillisecond expirations round upward.
     #[must_use]
     pub const fn expires_at_unix_ms(&self) -> u64 {
         self.expires_at_unix_ms
@@ -145,7 +146,7 @@ pub fn verify_external_qualification_closure_v1(
     if trust_store_generation == 0 || candidates.len() != QualificationPackageIdV1::ALL.len() {
         return Err(QualificationClosureError::PackageSetIncomplete);
     }
-    let expires_at_unix_ms = candidates
+    let mut expires_at_unix_ms = candidates
         .iter()
         .map(|candidate| candidate.envelope.expires_at_unix_ms)
         .min()
@@ -177,7 +178,7 @@ pub fn verify_external_qualification_closure_v1(
         if hash_bytes(&candidate.payload) != verified.payload_hash {
             return Err(QualificationClosureError::PayloadHashMismatch);
         }
-        validate_external_package_payload_v1(
+        let payload_expires_at_unix_ms = validate_external_package_payload_with_expiry_v1(
             &candidate.payload,
             &package_subject,
             &verified.authority_domain_id,
@@ -186,6 +187,7 @@ pub fn verify_external_qualification_closure_v1(
             trust_store_generation,
             trust_store,
         )?;
+        expires_at_unix_ms = expires_at_unix_ms.min(payload_expires_at_unix_ms);
         let payload: Value = serde_json::from_slice(&candidate.payload)
             .map_err(|_| QualificationClosureError::PayloadFactsInvalid)?;
         records.push((verified, payload));

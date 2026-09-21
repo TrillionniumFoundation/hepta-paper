@@ -2825,6 +2825,10 @@
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
+          "symbol": "retirement_status_normalizes_explicit_version_like_node_path_join"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
           "symbol": "retirement_status_cli_uses_node_defaults_without_a_request_file"
         },
         {

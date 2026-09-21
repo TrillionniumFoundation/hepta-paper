@@ -127,6 +127,37 @@ fn resolved_path(path: &Path) -> PathBuf {
     resolved
 }
 
+/// Match Node's POSIX `path.join(parent, "hepta-paper-legacy-reference", version)`
+/// semantics for the explicit package-version segment.  `PathBuf::join`
+/// preserves `.`/`..`, repeated separators, and an absolute child, while the
+/// incumbent Node route collapses those lexically and does not let the child
+/// reset the already-built parent.  Keep a trailing slash when Node preserves
+/// one so the serialized status remains byte-compatible for unusual inputs.
+fn node_archive_root(parent: &Path, version: &str) -> PathBuf {
+    let mut result = parent.to_path_buf();
+    result.push("hepta-paper-legacy-reference");
+    let trailing = version.ends_with('/');
+    for segment in version.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            result.pop();
+        } else {
+            result.push(segment);
+        }
+    }
+    if trailing {
+        let mut text = result.to_string_lossy().into_owned();
+        if !text.ends_with('/') {
+            text.push('/');
+        }
+        PathBuf::from(text)
+    } else {
+        result
+    }
+}
+
 fn path_kind(path: &Path) -> &'static str {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => "symlink",
@@ -320,11 +351,10 @@ pub fn inspect_retirement_status_v1(input: &Value) -> Result<Value, RetirementSt
             "kind": if legacy_kind == "directory" { path_kind(&legacy_root.join(relative)) } else { "missing" },
         })
     }).collect::<Vec<_>>();
-    let archive_root = legacy_root
-        .parent()
-        .unwrap_or_else(|| Path::new("/"))
-        .join("hepta-paper-legacy-reference")
-        .join(&version);
+    let archive_root = node_archive_root(
+        legacy_root.parent().unwrap_or_else(|| Path::new("/")),
+        &version,
+    );
     let archive =
         archive_status(&archive_root.join("paper-factory-control-plane-reference.tar.gz"))?;
     if let Some(blocker) = archive.get("blocker").and_then(Value::as_str) {

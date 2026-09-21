@@ -87,6 +87,49 @@ fn retirement_status_uses_node_workspace_defaults_when_fields_are_omitted() {
 }
 
 #[test]
+fn retirement_status_normalizes_explicit_version_like_node_path_join() {
+    let root = fixture("version-path");
+    let request_base = serde_json::json!({
+        "legacyRoot": root.join("legacy"),
+        "runtimeRoot": root.join("runtime"),
+        "assetRoot": root.join("assets")
+    });
+    for version in [
+        "", ".", "./", "..", "../", "/abs", "/abs/", "a//b", "a//b/", "a/../b",
+    ] {
+        let mut request = request_base.clone();
+        request["version"] = Value::String(version.to_owned());
+        let expected = oracle(&serde_json::json!([request.clone()]));
+        let actual = inspect_retirement_status_v1(&request).expect("Rust version report");
+        assert_eq!(
+            actual, expected["results"][0]["value"],
+            "version={version:?}"
+        );
+        let request_path = root.join("request.json");
+        fs::write(
+            &request_path,
+            serde_json::to_vec(&request).expect("request JSON"),
+        )
+        .expect("request file");
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .args([
+                "retirement-status",
+                request_path.to_str().expect("UTF-8 path"),
+            ])
+            .output()
+            .expect("Rust retirement-status CLI");
+        assert!(
+            output.status.success(),
+            "version={version:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cli: Value = serde_json::from_slice(&output.stdout).expect("CLI JSON");
+        assert_eq!(cli, expected["results"][0]["value"], "version={version:?}");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn retirement_status_cli_uses_node_defaults_without_a_request_file() {
     let expected = oracle(&serde_json::json!([{}]));
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))

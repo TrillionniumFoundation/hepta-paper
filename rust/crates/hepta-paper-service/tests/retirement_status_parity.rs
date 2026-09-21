@@ -101,3 +101,23 @@ fn retirement_status_cli_uses_node_defaults_without_a_request_file() {
     let actual: Value = serde_json::from_slice(&output.stdout).expect("Rust report JSON");
     assert_eq!(actual, expected["results"][0]["value"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn retirement_status_preserves_node_lexical_paths_for_symlink_roots() {
+    let root = fixture("symlink");
+    let target = root.join("legacy-target");
+    let link = root.join("legacy-link");
+    fs::create_dir_all(&target).expect("legacy target");
+    std::os::unix::fs::symlink(&target, &link).expect("legacy link");
+    let request = serde_json::json!({
+        "legacyRoot": link,
+        "runtimeRoot": root.join("runtime"),
+        "assetRoot": root.join("assets"),
+        "version": "0.21.0"
+    });
+    let expected = oracle(&serde_json::json!([request.clone()]));
+    let actual = inspect_retirement_status_v1(&request).expect("Rust symlink report");
+    assert_eq!(actual, expected["results"][0]["value"]);
+    let _ = fs::remove_dir_all(root);
+}

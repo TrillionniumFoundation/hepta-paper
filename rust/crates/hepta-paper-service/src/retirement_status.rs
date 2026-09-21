@@ -6,7 +6,7 @@ use std::{
     fs::{self, File},
     io::Read,
     os::unix::fs::MetadataExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 use thiserror::Error;
 
@@ -109,22 +109,18 @@ fn absolute(path: &Path) -> PathBuf {
 }
 
 fn resolved_path(path: &Path) -> PathBuf {
-    let path = absolute(path);
-    if let Ok(value) = fs::canonicalize(&path) {
-        return value;
-    }
-    let mut missing = Vec::new();
-    let mut cursor = path.as_path();
-    while !cursor.exists() {
-        if let Some(name) = cursor.file_name() {
-            missing.push(name.to_owned());
+    let absolute = absolute(path);
+    let mut resolved = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(name) => resolved.push(name),
         }
-        let Some(parent) = cursor.parent() else { break };
-        cursor = parent;
-    }
-    let mut resolved = fs::canonicalize(cursor).unwrap_or_else(|_| cursor.to_path_buf());
-    for name in missing.iter().rev() {
-        resolved.push(name);
     }
     resolved
 }

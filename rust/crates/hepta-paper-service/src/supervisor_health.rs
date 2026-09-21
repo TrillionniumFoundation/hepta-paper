@@ -216,8 +216,8 @@ fn inspect_private(path: &Path) -> Result<Value, String> {
 }
 
 /// Return Node-compatible base/startup/machine-intake readiness from an
-/// inode-pinned private snapshot. The three advanced modes remain unsupported
-/// until their dependent evidence chains are implemented.
+/// inode-pinned private snapshot. Current V1 intake checks have a separate
+/// owning composition below; strict/full modes still require their evidence chains.
 pub fn inspect_supervisor_health_v1(runtime_root: &Path, now_millis: i64) -> Result<Value, String> {
     let inspected_at = iso_now(now_millis)?;
     let relative = Path::new(DATABASE_RELATIVE);
@@ -317,4 +317,43 @@ fn report(instance: Option<Value>, blockers: Vec<String>, inspected_at: String) 
         "blockers":blockers,"healthBlockers":blockers,
         "inspectedAt":inspected_at,"statusReadOnly":true
     })
+}
+
+/// Compare the actual builtin V1 intake observation with the resident's recorded
+/// configuration and dataset identity. This is a read-only diagnostic; the V2,
+/// strict reconciliation and fully autonomous chains require additional ports.
+pub fn inspect_supervisor_health_current_intake_v1(
+    runtime_root: &Path,
+    environment: &std::collections::BTreeMap<String, String>,
+    working_directory: &Path,
+    now_millis: i64,
+) -> Result<Value, String> {
+    let mut status = inspect_supervisor_health_v1(runtime_root, now_millis)?;
+    let intake = crate::machine_intake::inspect_machine_intake_status_v1(
+        runtime_root,
+        environment,
+        working_directory,
+        now_millis,
+    );
+    let current_dataset = intake["topicProducerDatasetSnapshotHash"].clone();
+    let reconciled_dataset = status["instance"]["machineIntakeDatasetSnapshotHash"].clone();
+    let current = intake["coldStartAutonomyReady"] == true
+        && status["ready"] == true
+        && intake["configurationHash"] == status["instance"]["machineIntakeConfigurationHash"]
+        && current_dataset == reconciled_dataset;
+    let fields = json!({
+        "currentMachineIntakeReady":current,
+        "currentMachineIntakeConfigurationHash":intake["configurationHash"],
+        "currentTopicProducerDatasetSnapshotHash":current_dataset,
+        "reconciledTopicProducerDatasetSnapshotHash":reconciled_dataset,
+        "residentPrerequisites":null,"residentPrerequisiteIdentityCurrent":false,
+        "autonomousStateSafety":null,"autonomousStateSafetyReady":false,
+        "autonomousStateSafetyBlockers":[],"fullyAutonomousReady":false,
+        "strictMachineIntakeReconciliation":null,"strictMachineIntakeReconciliationReady":false,
+        "currentMachineIntakeBlockers":intake["blockers"]
+    });
+    if let (Some(report), Some(fields)) = (status.as_object_mut(), fields.as_object()) {
+        report.extend(fields.clone());
+    }
+    Ok(status)
 }

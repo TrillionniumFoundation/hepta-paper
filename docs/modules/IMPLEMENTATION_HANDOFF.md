@@ -160,6 +160,8 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **Boundary and recovery:** ServiceRunV1 is the closed local configuration. run_production_service_v1 requires opaque external authorities and currently accepts Native workers only; Process scientific workers are local/shadow. Its actual run consumers now propagate `ServiceError::ControlRequiresInspection` with the original runtime diagnostic; the three related CLIs preserve that disposition through the actual error/source chain. [`control_error/HANDOFF.md`](../../rust/crates/hepta-paper-service/src/control_error/HANDOFF.md) specifies the bounded projection and unchanged noninspection errors. Every service call still creates and drops its own runtime: the copied diagnostic does not persist charged capacity, block a new plan or provide durable dispatch recovery.
 
+**Resident health and intake:** The [current intake V1 contract](../../rust/crates/hepta-paper-service/src/machine_intake/HANDOFF.md) describes actual configuration/static files, template budgets, provider precedence, generation-one SQLite/WAL state and the real current-intake health CLI. Its V1 builtin coverage does not implement topic-producer V2 authority, strict reconciliation or the fully autonomous prerequisite chain.
+
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service`.
 
 **Local maintenance extension:** [MAINTENANCE.md](../../rust/crates/hepta-paper-service/MAINTENANCE.md) binds immutable local recovery, explicit native-only purge and cached-result-only commit to `local_recovery_gc` regressions. Purge never selects live CAS; reconciliation never dispatches a worker. These are partial local scopes, not accepted command or production parity.

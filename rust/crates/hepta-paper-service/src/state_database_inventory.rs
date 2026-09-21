@@ -284,12 +284,36 @@ pub(crate) fn with_database_snapshot_path_v1<R>(
     role: &str,
     inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
 ) -> Result<R> {
+    with_selected_database_snapshot_path_v1(runtime_root, relative, role, false, inspect)
+}
+
+/// Inspect effective SQLite state, including an observed committed WAL, through
+/// owned private copies. Original database/sidecar descriptors never enter SQLite.
+pub(crate) fn with_database_effective_snapshot_path_v1<R>(
+    runtime_root: &Path,
+    relative: &Path,
+    role: &str,
+    inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
+) -> Result<R> {
+    with_selected_database_snapshot_path_v1(runtime_root, relative, role, true, inspect)
+}
+
+fn with_selected_database_snapshot_path_v1<R>(
+    runtime_root: &Path,
+    relative: &Path,
+    role: &str,
+    include_sidecars: bool,
+    inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
+) -> Result<R> {
     let (_, ancestors) = files::open_root(runtime_root)?;
     let root = ancestors.last().ok_or_else(files::changed)?;
     let mut budget = files::Budget::default();
     let observation = files::DatabaseObservation::observe(root, relative, role, &mut budget)?;
-    let result =
-        snapshot::with_main_only_snapshot(&observation, |path| inspect(path).map_err(error))?;
+    let result = if include_sidecars {
+        snapshot::with_snapshot(&observation, |path| inspect(path).map_err(error))?
+    } else {
+        snapshot::with_main_only_snapshot(&observation, |path| inspect(path).map_err(error))?
+    };
     observation.assert_current()?;
     for ancestor in ancestors {
         ancestor.assert_current()?;

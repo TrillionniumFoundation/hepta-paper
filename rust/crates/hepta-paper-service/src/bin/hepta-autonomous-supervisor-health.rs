@@ -1,6 +1,9 @@
 use hepta_paper_service::{
+    machine_intake::MACHINE_INTAKE_ENVIRONMENT_KEYS_V1,
     native_workspace::resolve_native_workspace_root_v1,
-    supervisor_health::inspect_supervisor_health_v1,
+    supervisor_health::{
+        inspect_supervisor_health_current_intake_v1, inspect_supervisor_health_v1,
+    },
 };
 use std::path::{Path, PathBuf};
 const USAGE: &str = "autonomous-research-supervisor-health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation|--require-current-machine-intake|--require-fully-autonomous]";
@@ -73,11 +76,12 @@ fn main() {
     let help = options.contains_key("help");
     let startup = options.contains_key("require-startup-reconciliation");
     let machine = options.contains_key("require-machine-intake-reconciliation");
-    // Accept the qualification path option while keeping advanced modes fail-closed.
+    let current_intake = options.contains_key("require-current-machine-intake");
+    // Remaining chains still require their actual native evidence producers.
     let unsupported_flag = args.iter().find_map(|arg| match arg.as_str() {
-        "--require-current-machine-intake"
-        | "--require-strict-machine-intake-reconciliation"
-        | "--require-fully-autonomous" => Some(arg.as_str()),
+        "--require-strict-machine-intake-reconciliation" | "--require-fully-autonomous" => {
+            Some(arg.as_str())
+        }
         _ => None,
     });
     if help {
@@ -128,7 +132,27 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let report = match inspect_supervisor_health_v1(&root, now) {
+    let inspected = if current_intake {
+        let mut environment = std::collections::BTreeMap::new();
+        for key in MACHINE_INTAKE_ENVIRONMENT_KEYS_V1 {
+            match std::env::var(key) {
+                Ok(value) => {
+                    environment.insert(key.to_owned(), value);
+                }
+                Err(std::env::VarError::NotPresent) => {}
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    eprintln!(
+                        "autonomous_research_machine_intake_environment_encoding_invalid:{key}"
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+        inspect_supervisor_health_current_intake_v1(&root, &environment, &cwd, now)
+    } else {
+        inspect_supervisor_health_v1(&root, now)
+    };
+    let report = match inspected {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{e}");
@@ -143,7 +167,9 @@ fn main() {
         }
     };
     println!("{output}");
-    let passing = if machine {
+    let passing = if current_intake {
+        report["currentMachineIntakeReady"] == true
+    } else if machine {
         report["ready"] == true
     } else if startup {
         report["startupReady"] == true

@@ -165,10 +165,9 @@ fn empty_and_stopped_states_match_node() {
     }
 }
 #[test]
-fn unsupported_advanced_modes_are_explicitly_rejected() {
+fn remaining_unsupported_advanced_modes_are_explicitly_rejected() {
     let binary = env!("CARGO_BIN_EXE_hepta-autonomous-supervisor-health");
     for flag in [
-        "--require-current-machine-intake",
         "--require-strict-machine-intake-reconciliation",
         "--require-fully-autonomous",
     ] {

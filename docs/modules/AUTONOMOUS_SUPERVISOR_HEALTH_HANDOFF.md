@@ -8,7 +8,7 @@
 - `--require-startup-reconciliation` (`startupReady`);
 - `--require-machine-intake-reconciliation` (`ready`, matching the incumbent's status gate).
 
-The command inspects only `autonomous-research/supervisor/resident-instance.sqlite` below the selected runtime root. It never probes a process, sends a signal, opens the live source through SQLite, or writes runtime state.
+Those base modes inspect `autonomous-research/supervisor/resident-instance.sqlite` below the selected runtime root. It never probes a process, sends a signal, opens the live source through SQLite, or writes runtime state.
 
 ## Snapshot and race boundary
 
@@ -18,6 +18,6 @@ A missing database or empty resident table reports the incumbent missing-instanc
 
 ## CLI contract and open work
 
-Help JSON, strict option errors, default runtime-root resolution, report status and exit classes match the incumbent for the three supported modes. `--require-current-machine-intake`, `--require-strict-machine-intake-reconciliation`, and `--require-fully-autonomous` are explicitly rejected as unsupported until their dependent Rust evidence chains are complete; they must not be represented by a synthetic `ready: false` result.
+Help JSON, strict option errors, default runtime-root resolution, report status and exit classes match the incumbent for the three base modes. `--require-current-machine-intake` additionally observes the actual builtin V1 intake configuration/static files and private intake database, then compares the current configuration and dataset identity with the resident. Its [detailed implementation contract](../../rust/crates/hepta-paper-service/src/machine_intake/HANDOFF.md) specifies resource closure, hashes, ownership, size bounds, supported inputs and compatibility limits. V2/plugin/local-golden scoped intake evidence remains explicitly blocked; `--require-strict-machine-intake-reconciliation` and `--require-fully-autonomous` remain unsupported until their full native evidence chains exist.
 
 The differential test uses a real Node-created SQLite row with a fixed lease token and covers startup/machine transitions, stopped and empty states, safe and malformed WAL sidecars, unsafe permissions, invalid timing, and CLI parse errors. Host-level process probes and independent production qualification remain outside this module.

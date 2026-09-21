@@ -3,6 +3,7 @@ use hepta_paper_service::critical_module_coverage::{
     parse_critical_module_coverage_arguments,
 };
 use std::{
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -61,4 +62,30 @@ fn runtime_root_default_matches_node_coverage_entrypoint() {
         inspect_critical_module_coverage_v1(&CriticalModuleCoverageOptions::default(), &workspace)
             .expect("Rust report");
     assert_eq!(report["runtimeRoot"], expected);
+}
+
+#[test]
+fn cli_default_workspace_root_matches_node_coverage_entrypoint() {
+    let cwd =
+        std::env::temp_dir().join(format!("hepta-critical-cli-default-{}", std::process::id()));
+    fs::create_dir_all(&cwd).expect("temporary cwd");
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .current_dir(&cwd)
+        .env_remove("HEPTA_WORKSPACE_ROOT")
+        .arg("verify-critical")
+        .arg("--json")
+        .output()
+        .expect("Rust critical coverage CLI");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let expected = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .unwrap();
+    assert_eq!(report["root"], expected.to_string_lossy().as_ref());
+    let _ = fs::remove_dir_all(cwd);
 }

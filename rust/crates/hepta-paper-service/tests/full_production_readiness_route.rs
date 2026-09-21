@@ -97,3 +97,59 @@ fn pinned_references_still_fail_closed_without_external_authority() {
     );
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn omitted_roots_use_the_node_compiled_workspace_siblings() {
+    let root = temp_root();
+    let trust = root.join("OWNER_TRUST_STORE.json");
+    let acceptance = root.join("CAPABILITY_OWNER_ACCEPTANCE.json");
+    let command = root.join("package-readiness-helper");
+    let trust_bytes = br#"{}"#;
+    let acceptance_bytes = br#"{}"#;
+    let command_bytes = b"#!/bin/sh\nexit 0\n";
+    fs::write(&trust, trust_bytes).unwrap();
+    fs::write(&acceptance, acceptance_bytes).unwrap();
+    fs::write(&command, command_bytes).unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o555)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .current_dir(&root)
+        .env_remove("HEPTA_WORKSPACE_ROOT")
+        .env_remove("HEPTA_PAPER_ASSET_ROOT")
+        .env_remove("HEPTA_PAPER_RUNTIME_ROOT")
+        .args([
+            "full-production-readiness",
+            "--owner-trust-store",
+            trust.to_str().unwrap(),
+            "--owner-trust-store-sha256",
+            &hash(trust_bytes),
+            "--owner-acceptance-document",
+            acceptance.to_str().unwrap(),
+            "--owner-acceptance-document-sha256",
+            &hash(acceptance_bytes),
+            "--package-recovery-readiness-command",
+            command.to_str().unwrap(),
+            "--package-recovery-readiness-command-sha256",
+            &hash(command_bytes),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .unwrap();
+    let parent = workspace.parent().unwrap();
+    assert_eq!(
+        report["root"],
+        parent.join("hepta-paper-assets").to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        report["runtimeRoot"],
+        parent
+            .join("hepta-paper-runtime/native-runtime")
+            .to_string_lossy()
+            .as_ref()
+    );
+    let _ = fs::remove_dir_all(root);
+}

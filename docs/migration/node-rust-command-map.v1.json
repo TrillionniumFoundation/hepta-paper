@@ -32,7 +32,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/workspace_status_parity.rs"
       ],
-      "remaining": "Native read-only workspace-root, asset/runtime/legacy layout and physical-decoupling diagnostics match the Node oracle for the UTF-8 relocatable profile, including missing-suffix symlink resolution, hop limits, and overlap blockers. Native CLI relocation is covered separately; exact incumbent default deployment-root selection and independent command acceptance remain open.",
+      "remaining": "Native read-only workspace-root, asset/runtime/legacy layout and physical-decoupling diagnostics match the Node oracle for the UTF-8 relocatable profile, including missing-suffix symlink resolution, hop limits, overlap blockers, and the incumbent compiled deployment-root default. Native CLI relocation remains covered separately; independent command acceptance remains open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/workspace_status.rs",
         "rust/crates/hepta-paper-service/src/bin/hepta-workspace-status.rs"
@@ -49,6 +49,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/workspace_status_parity.rs",
           "symbol": "status_report_is_read_only_and_cli_root_is_relocatable"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workspace_status_parity.rs",
+          "symbol": "cli_default_workspace_root_matches_node_entrypoint"
         }
       ]
     },
@@ -2157,7 +2161,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs"
       ],
-      "remaining": "Rust now performs a bounded read-only inventory of the checked-in critical-module target registry, matches the Node HEPTA_PAPER_RUNTIME_ROOT/sibling native-runtime default, and validates an explicitly pinned Node CriticalModuleCoverageReport shape/hash. It does not execute the isolated Node coverage/test batch, verify a cryptographic signature or external authority, recompute V8 coverage, or grant critical coverage parity; --require-ok remains fail-closed.",
+      "remaining": "Rust now performs a bounded read-only inventory of the checked-in critical-module target registry, matches the Node compiled workspace root and HEPTA_PAPER_RUNTIME_ROOT/sibling native-runtime defaults, and validates an explicitly pinned Node CriticalModuleCoverageReport shape/hash. It does not execute the isolated Node coverage/test batch, verify a cryptographic signature or external authority, recompute V8 coverage, or grant critical coverage parity; --require-ok remains fail-closed.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/critical_module_coverage.rs"
@@ -2174,6 +2178,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs",
           "symbol": "runtime_root_default_matches_node_coverage_entrypoint"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs",
+          "symbol": "cli_default_workspace_root_matches_node_coverage_entrypoint"
         }
       ]
     },
@@ -2298,7 +2306,7 @@
         "rust/crates/hepta-paper-service/src/full_production_readiness/package_recovery_tests.rs",
         "rust/crates/hepta-paper-service/src/full_production_readiness/offhost.rs"
       ],
-      "remaining": "Rust now pins and executes the package readiness helper through a protected descriptor with bounded output, timeout, restricted environment, exact JSON policy and postflight identity checks. It validates the exact off-host WORM status protocol but does not probe mounts or custody stores. Native off-host WORM custody and live automation/provider/release-attestor aggregation still require target-host/external evidence; accepted command parity and full production remain blocked. See docs/modules/FULL_PRODUCTION_READINESS_HANDOFF.md.",
+      "remaining": "Rust now pins and executes the package readiness helper through a protected descriptor with bounded output, timeout, restricted environment, exact JSON policy and postflight identity checks. Its relative root/runtime arguments and omitted-root sibling defaults now match Node's path.resolve and workspace-layout contract. It validates the exact off-host WORM status protocol but does not probe mounts or custody stores. Native off-host WORM custody and live automation/provider/release-attestor aggregation still require target-host/external evidence; accepted command parity and full production remain blocked. See docs/modules/FULL_PRODUCTION_READINESS_HANDOFF.md.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
@@ -2325,6 +2333,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
           "symbol": "inspection_is_always_blocked_and_never_claims_external_action"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/full_production_readiness.rs",
+          "symbol": "roots_match_node_path_resolve_and_workspace_layout_defaults"
         },
         {
           "path": "rust/crates/hepta-paper-service/src/full_production_readiness/composition_tests.rs",
@@ -2357,6 +2369,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/full_production_readiness/offhost.rs",
           "symbol": "node_target_and_aggregate_fixture_matches_rust_protocol_boundary"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/full_production_readiness_route.rs",
+          "symbol": "omitted_roots_use_the_node_compiled_workspace_siblings"
         }
       ]
     },
@@ -2420,7 +2436,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/release_state_parity.rs"
       ],
-      "remaining": "Rust matches the pure Node package/document/tag consistency contract, including omitted tag snapshots, duplicate-tag diagnostics and newer-tag deduplication. npm security audit, complete release verification suite, target-host release authority and production publication remain unimplemented.",
+      "remaining": "Rust matches the pure Node package/document/tag consistency contract, including omitted tag snapshots, duplicate-tag diagnostics, newer-tag deduplication, and finite JavaScript Number rounding/stringification at the JSON boundary. Extremely large JSON numbers that Node parses as Infinity remain fail-closed because the native bounded parser rejects them; npm security audit, complete release verification suite, target-host release authority and production publication remain unimplemented.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/release_state.rs",

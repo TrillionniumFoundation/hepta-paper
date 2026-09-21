@@ -401,6 +401,7 @@ fn inspect_with_owner_references(
     )
         -> Result<owner::PinnedOwnerReferences, owner::OwnerAcceptanceInspectionError>,
 ) -> Result<Value, String> {
+    let workspace_root = resolve_path_from_process(workspace_root.to_path_buf());
     if !workspace_root.is_absolute() {
         return Err("full_production_readiness_workspace_root_must_be_absolute".to_owned());
     }
@@ -423,7 +424,7 @@ fn inspect_with_owner_references(
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
         })
-        .unwrap_or_else(|| default_asset_root(workspace_root));
+        .unwrap_or_else(|| default_asset_root(&workspace_root));
     let runtime_root = options
         .runtime_root
         .clone()
@@ -433,12 +434,9 @@ fn inspect_with_owner_references(
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
         })
-        .unwrap_or_else(|| default_runtime_root(workspace_root));
+        .unwrap_or_else(|| default_runtime_root(&workspace_root));
     let root = resolve_path_from_process(root);
     let runtime_root = resolve_path_from_process(runtime_root);
-    if !workspace_root.is_absolute() {
-        return Err("full_production_readiness_root_paths_must_be_absolute".to_owned());
-    }
     let owner_trust = inspect_reference(
         options.owner_trust_store.as_deref(),
         options.owner_trust_store_sha256.as_deref(),
@@ -482,7 +480,7 @@ fn inspect_with_owner_references(
     let references = references.ok();
     let owner_inspection = references.as_ref().and_then(|references| {
         references
-            .inspect_workspace(workspace_root)
+            .inspect_workspace(&workspace_root)
             .map_err(|error| {
                 inspection_errors.push(error.to_string());
             })
@@ -490,7 +488,7 @@ fn inspect_with_owner_references(
     });
     let operational_inspection = references.as_ref().and_then(|references| {
         crate::operational_status::production::inspect_production_proofs(
-            workspace_root,
+            &workspace_root,
             &runtime_root,
             references.trust_document(),
         )
@@ -555,7 +553,7 @@ fn inspect_with_owner_references(
                 command_hash,
                 &root,
                 &runtime_root,
-                workspace_root,
+                &workspace_root,
                 &deployment_environment.environment,
             ) {
                 Ok(result) => result["inspection"].clone(),

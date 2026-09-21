@@ -17,6 +17,11 @@ inspects their signatures and operational receipts, evaluates the policy, and
 rechecks retained evidence before hashing its report. The command does not invoke
 Node at runtime. Node is used only by differential tests.
 
+Relative `--root` and `--runtime-root` values use the caller's lexical
+`path.resolve` equivalent. Omitted roots use the compiled workspace's sibling
+`hepta-paper-assets` and `hepta-paper-runtime/native-runtime` directories, and
+the CLI uses that same compiled workspace root when invoked from another cwd.
+
 The existing six mandatory reference arguments remain unchanged. Explicit roots
 override the deployment-file and ambient environment defaults. Public owner
 inputs must be the exact `OWNER_TRUST_STORE.json` and

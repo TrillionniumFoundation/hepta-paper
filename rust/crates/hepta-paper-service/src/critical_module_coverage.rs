@@ -14,7 +14,7 @@ use std::{
     collections::BTreeMap,
     fs,
     os::unix::fs::{FileTypeExt, MetadataExt},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -171,23 +171,41 @@ fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
 /// entrypoint resolves `HEPTA_PAPER_RUNTIME_ROOT` from the caller's working
 /// directory and otherwise uses the sibling native-runtime deployment root,
 /// rather than a `runtime/` child of the source checkout.
+fn lexical_absolute(path: &Path) -> PathBuf {
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(path)
+    };
+    let mut resolved = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            Component::RootDir => resolved.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(value) => resolved.push(value),
+            Component::Prefix(value) => resolved.push(value.as_os_str()),
+        }
+    }
+    resolved
+}
+
 fn default_runtime_root(workspace_root: &Path) -> PathBuf {
     if let Some(value) =
         std::env::var_os("HEPTA_PAPER_RUNTIME_ROOT").filter(|value| !value.is_empty())
     {
-        let candidate = PathBuf::from(value);
-        return if candidate.is_absolute() {
-            candidate
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("/"))
-                .join(candidate)
-        };
+        return lexical_absolute(&PathBuf::from(value));
     }
-    workspace_root
-        .parent()
-        .unwrap_or(workspace_root)
-        .join("hepta-paper-runtime/native-runtime")
+    lexical_absolute(
+        &workspace_root
+            .parent()
+            .unwrap_or(workspace_root)
+            .join("hepta-paper-runtime/native-runtime"),
+    )
 }
 
 fn inventory_from_policy_source(source: &[u8]) -> Vec<Value> {
@@ -296,14 +314,15 @@ pub fn inspect_critical_module_coverage_v1(
     if !workspace_root.is_absolute() {
         return Err("critical_module_coverage_workspace_root_must_be_absolute".to_owned());
     }
+    let workspace_root = lexical_absolute(workspace_root);
     let root = options
         .root
         .clone()
-        .unwrap_or_else(|| workspace_root.to_path_buf());
+        .unwrap_or_else(|| workspace_root.clone());
     let runtime_root = options
         .runtime_root
         .clone()
-        .unwrap_or_else(|| default_runtime_root(workspace_root));
+        .unwrap_or_else(|| default_runtime_root(&workspace_root));
     let policy_path = root.join("paper-core/verification/critical-module-coverage-policy.mjs");
     let source = read_regular(&policy_path).ok();
     let targets = source

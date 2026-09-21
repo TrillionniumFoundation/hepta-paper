@@ -344,9 +344,15 @@ pub fn workspace_status_cli_v1(
             explicit = Some(value);
         }
     }
+    // The incumbent `paper-core/bin/workspace-status.mjs` resolves its
+    // workspace from the installed module location (`HEPTA_WORKSPACE_ROOT`),
+    // rather than from the caller's cwd. Keep the explicit relocation and
+    // environment override for native deployments, but make the no-argument
+    // invocation observe the same compiled deployment root as Node.
+    let compiled_workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let root = requested(explicit, environment, "HEPTA_PAPER_WORKSPACE_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| working_directory.to_owned());
+        .unwrap_or(compiled_workspace_root);
     let report = inspect_workspace_status_v1(&root, working_directory, environment)?;
     let code =
         if argv.iter().any(|a| a == "--require-decoupled") && !report.layout.physically_decoupled {

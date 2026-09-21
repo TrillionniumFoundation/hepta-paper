@@ -239,3 +239,62 @@ fn status_report_is_read_only_and_cli_root_is_relocatable() {
     );
     assert_eq!(cli["status"], "hepta_workspace_physically_decoupled");
 }
+
+#[test]
+fn cli_default_workspace_root_matches_node_entrypoint() {
+    let root = Temp::new();
+    for name in ["asset", "runtime", "legacy"] {
+        fs::create_dir(root.path(name)).unwrap();
+    }
+    fs::write(root.path("runtime/hepta-paper.sqlite"), b"not sqlite").unwrap();
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let node = Command::new("node")
+        .current_dir(&root.0)
+        .arg(repository.join("paper-core/bin/workspace-status.mjs"))
+        .env("HEPTA_PAPER_ASSET_ROOT", root.path("asset"))
+        .env("HEPTA_PAPER_RUNTIME_ROOT", root.path("runtime"))
+        .env("PAPER_FACTORY_LEGACY_ROOT", root.path("legacy"))
+        .env_remove("HEPTA_PAPER_WORKSPACE_ROOT")
+        .output()
+        .unwrap();
+    assert!(
+        node.status.success(),
+        "{}",
+        String::from_utf8_lossy(&node.stderr)
+    );
+    let node: Value = serde_json::from_slice(&node.stdout).unwrap();
+    let native = Command::new(env!("CARGO_BIN_EXE_hepta-workspace-status"))
+        .current_dir(&root.0)
+        .env("HEPTA_PAPER_ASSET_ROOT", root.path("asset"))
+        .env("HEPTA_PAPER_RUNTIME_ROOT", root.path("runtime"))
+        .env("PAPER_FACTORY_LEGACY_ROOT", root.path("legacy"))
+        .env_remove("HEPTA_PAPER_WORKSPACE_ROOT")
+        .output()
+        .unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    let native: Value = serde_json::from_slice(&native.stdout).unwrap();
+    for field in [
+        "workspaceRoot",
+        "assetRoot",
+        "runtimeRoot",
+        "legacyRoot",
+        "realPaths",
+        "physicallyDecoupled",
+        "decouplingBlockers",
+        "workspaceRealPath",
+        "assetRealPath",
+        "runtimeRealPath",
+        "legacyRealPath",
+        "workspacePresent",
+        "assetRootPresent",
+        "runtimeRootPresent",
+        "nativeStorePresent",
+        "status",
+    ] {
+        assert_eq!(native[field], node[field], "field={field}");
+    }
+}

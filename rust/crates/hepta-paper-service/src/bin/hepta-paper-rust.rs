@@ -642,7 +642,11 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            let workspace_root = env::current_dir()?;
+            // The Node command binds its workspace to the installed source
+            // tree (`HEPTA_WORKSPACE_ROOT`), so invoking the native command
+            // from another cwd must not silently switch its deployment
+            // defaults to that caller directory.
+            let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
             let report = inspect_critical_module_coverage_v1(&options, &workspace_root)
                 .map_err(|error| format!("critical module coverage preflight failed: {error}"))?;
             if options.json {
@@ -1573,7 +1577,11 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                     .map(|(key, value)| (key, serde_json::Value::String(value)))
                     .collect(),
             );
-            let workspace_root = env::current_dir()?;
+            // The Node command binds its workspace to the installed source
+            // tree (`HEPTA_WORKSPACE_ROOT`), so invoking the native command
+            // from another cwd must not silently switch its deployment
+            // defaults to that caller directory.
+            let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
             let report = if options.require_full_production {
                 execute_full_production_readiness_v1(&options, &workspace_root)?
             } else {

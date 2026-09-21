@@ -196,6 +196,19 @@ fn strict_cli_parse_errors_match_node_error_class() {
             vec!["--runtime-root"],
             "missing_cli_option_value:--runtime-root",
         ),
+        (
+            vec!["--external-qualification-config"],
+            "missing_cli_option_value:--external-qualification-config",
+        ),
+        (
+            vec![
+                "--external-qualification-config",
+                "/tmp/a",
+                "--external-qualification-config",
+                "/tmp/b",
+            ],
+            "duplicate_cli_option:--external-qualification-config",
+        ),
         (vec!["positional"], "unexpected_cli_positional:positional"),
     ] {
         let node = Command::new("node")

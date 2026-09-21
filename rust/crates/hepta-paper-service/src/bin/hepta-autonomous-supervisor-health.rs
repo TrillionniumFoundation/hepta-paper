@@ -11,6 +11,10 @@ fn main() {
     let mut unsupported_flag: Option<&str> = None;
     let mut startup = false;
     let mut machine = false;
+    // Node accepts this value option for the fully-autonomous prerequisite
+    // inspection.  The native observer still fails closed for that mode, but
+    // must preserve the incumbent parser contract before reaching it.
+    let mut _external_qualification_config: Option<String> = None;
     let mut i = 0;
     let args: Vec<String> = std::env::args().skip(1).collect();
     while i < args.len() {
@@ -78,6 +82,23 @@ fn main() {
                     Some(v) => root = Some(v),
                     None => {
                         eprintln!("missing_cli_option_value:--runtime-root");
+                        std::process::exit(1)
+                    }
+                }
+            }
+            "external-qualification-config" => {
+                if _external_qualification_config.is_some() {
+                    eprintln!("duplicate_cli_option:--external-qualification-config");
+                    std::process::exit(1)
+                }
+                let v = inline.map(str::to_owned).or_else(|| {
+                    i += 1;
+                    args.get(i).cloned()
+                });
+                match v.filter(|v| !v.is_empty() && !v.starts_with("--")) {
+                    Some(v) => _external_qualification_config = Some(v),
+                    None => {
+                        eprintln!("missing_cli_option_value:--external-qualification-config");
                         std::process::exit(1)
                     }
                 }

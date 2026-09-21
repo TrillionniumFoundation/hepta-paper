@@ -41,6 +41,9 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 #[path = "admission_deadline/lock_wait.rs"]
 mod lock_wait;
 
+#[path = "admission_deadline/worker_lifecycle.rs"]
+mod worker_lifecycle;
+
 struct Fixture {
     root: PathBuf,
     uid: u32,
@@ -210,6 +213,28 @@ impl Fixture {
         manager: Arc<CapabilityTrustBundleManagerV1>,
         clock: Arc<dyn BrokerClockV1>,
     ) -> RunningServer {
+        self.server_with_policy(
+            manager,
+            clock,
+            BrokerServerPolicyV1 {
+                worker_threads: 1,
+                queue_capacity: 1,
+                accept_poll_ms: 1,
+                write_timeout_ms: 1_000,
+                maximum_connections: 1,
+                ..BrokerServerPolicyV1::default()
+            },
+            None,
+        )
+    }
+
+    fn server_with_policy(
+        &self,
+        manager: Arc<CapabilityTrustBundleManagerV1>,
+        clock: Arc<dyn BrokerClockV1>,
+        policy: BrokerServerPolicyV1,
+        dispatcher: Option<Arc<dyn hepta_codex_broker::BrokerOperationDispatcherV1>>,
+    ) -> RunningServer {
         let peers = self.peers();
         let (_, _, bundle_hash) = manager.snapshot(now()).expect("fixture trust snapshot");
         let socket_path = self.root.join("broker.sock");
@@ -240,19 +265,17 @@ impl Fixture {
             admission(2_000),
             self.journal_path(),
             BrokerJournalPolicyV1::strict(self.uid),
-            BrokerServerPolicyV1 {
-                worker_threads: 1,
-                queue_capacity: 1,
-                accept_poll_ms: 1,
-                write_timeout_ms: 1_000,
-                maximum_connections: 1,
-                ..BrokerServerPolicyV1::default()
-            },
+            policy,
             BrokerResponseFramePolicyV1::default(),
             clock,
             shutdown.clone(),
         )
         .expect("actual reservation-only server");
+        let server = if let Some(dispatcher) = dispatcher {
+            server.with_dispatcher(dispatcher)
+        } else {
+            server
+        };
         let (done_tx, done_rx) = mpsc::sync_channel(1);
         let handle = thread::spawn(move || {
             let result = server.run();
@@ -327,8 +350,8 @@ impl Drop for RunningServer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         self.client.take();
-        // The server owns at most one incomplete connection and has a read
-        // deadline. Close the client and join even if a test assertion unwinds.
+        // Connections have read deadlines and lifecycle fixture dispatchers
+        // observe cancellation. Always join if a test assertion unwinds.
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

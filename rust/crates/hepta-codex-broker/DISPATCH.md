@@ -92,6 +92,36 @@ Its `recover_before_ready` composes containment recovery; `dispatch` resolves lo
 bound inputs and calls the qualified API. Only fresh reservations are dispatched.
 Without an adapter the server continues to provide admission/reservation only.
 
+## Server worker ownership
+
+After workers start, journal-open, thread-spawn, accept and socket-configuration
+failures use a common cleanup path. Worker errors and unwinding set the shared
+shutdown flag before the accept loop joins them, so a long-running server does
+not keep accepting requests after its workers fail. The accept owner retains no
+queue receiver. Cleanup closes the sender, joins every successfully spawned
+worker, attempts listener shutdown, and then returns the first observed error;
+subsequent worker failures are counted in telemetry. Listener cleanup remains
+subject to its existing path-identity checks.
+
+Reaching the configured connection limit closes the queue and drains accepted
+work without setting cancellation. A normally completed worker likewise does
+not cancel another worker's dispatch. Failure or caller shutdown provides the
+existing cancellation flag to dispatch adapters. Joining threads cannot impose
+a deadline on an arbitrary adapter that ignores cancellation; adapters must own
+their execution bounds. Cleanup does not roll back a dispatched provider action,
+reconcile an ambiguous operation, or authorize automatic replay. Process abort
+and termination still require the durable restart recovery contract.
+
+Thread creation uses a fallible builder. The additive public error variant
+`BrokerServerError::WorkerSpawn(std::io::ErrorKind)` requires downstream
+exhaustive matches to be updated; protocol and journal formats are unchanged.
+Real Unix integration tests exercise failure below the connection cap,
+cancellation and completion of a second active worker, and normal-cap draining.
+A deterministic two-thread test exercises the actual join helper with a failed
+first worker and an explicitly released second worker. The dispatch adapter in
+these lifecycle tests is only a controlled completion fixture, not Codex
+execution or host/provider qualification.
+
 ## Journal schema identity and bounded admission
 
 `BrokerJournalStoreV1::open` checks the actual stored schema on its read-only

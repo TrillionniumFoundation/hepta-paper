@@ -215,9 +215,17 @@ impl BrokerServerV1 {
         let (sender, receiver) = sync_channel(self.server_policy.queue_capacity);
         let receiver = Arc::new(Mutex::new(receiver));
         let mut worker_handles = Vec::with_capacity(self.server_policy.worker_threads);
+        let mut first_error = None;
         for _ in 0..self.server_policy.worker_threads {
-            let journal = BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)?;
-            worker_handles.push(spawn_worker(
+            let journal = match BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)
+            {
+                Ok(journal) => journal,
+                Err(error) => {
+                    first_error = Some(error.into());
+                    break;
+                }
+            };
+            match spawn_worker(
                 receiver.clone(),
                 journal,
                 self.peer_policy.clone(),
@@ -230,72 +238,107 @@ impl BrokerServerV1 {
                 self.server_policy.write_timeout_ms,
                 self.telemetry.clone(),
                 self.dispatcher.clone(),
-            ));
+            ) {
+                Ok(handle) => worker_handles.push(handle),
+                Err(error) => {
+                    first_error = Some(error);
+                    break;
+                }
+            }
         }
+        // Only workers own receivers after startup. An exited worker must not
+        // leave an unreachable queue artificially connected to the accept loop.
+        drop(receiver);
 
         let mut accepted_connections = 0_u64;
         let mut queued_connections = 0_u64;
         let mut busy_connections = 0_u64;
-        while !self.shutdown.load(Ordering::Acquire)
-            && accepted_connections < self.server_policy.maximum_connections
-        {
-            match self.listener.accept()? {
-                Some(stream) => {
-                    accepted_connections = accepted_connections.saturating_add(1);
-                    self.telemetry.accepted();
-                    match sender.try_send(stream) {
-                        Ok(()) => {
-                            queued_connections = queued_connections.saturating_add(1);
-                            self.telemetry.queued();
-                        }
-                        Err(TrySendError::Full(mut stream)) => {
-                            busy_connections = busy_connections.saturating_add(1);
-                            self.telemetry.busy();
-                            configure_write_timeout(&stream, self.server_policy.write_timeout_ms)?;
-                            let response =
-                                BrokerResponseV1::busy(self.server_policy.busy_retry_after_ms);
-                            if write_response_frame(&mut stream, &response, self.response_policy)
-                                .is_err()
-                            {
-                                self.telemetry.response_write_failed();
+        if first_error.is_none() {
+            // Every error after the first worker starts returns to the common
+            // cleanup below; no live JoinHandle is detached by an early `?`.
+            let acceptance = (|| -> Result<(), BrokerServerError> {
+                while !self.shutdown.load(Ordering::Acquire)
+                    && accepted_connections < self.server_policy.maximum_connections
+                {
+                    match self.listener.accept()? {
+                        Some(stream) => {
+                            accepted_connections = accepted_connections.saturating_add(1);
+                            self.telemetry.accepted();
+                            match sender.try_send(stream) {
+                                Ok(()) => {
+                                    queued_connections = queued_connections.saturating_add(1);
+                                    self.telemetry.queued();
+                                }
+                                Err(TrySendError::Full(mut stream)) => {
+                                    busy_connections = busy_connections.saturating_add(1);
+                                    self.telemetry.busy();
+                                    configure_write_timeout(
+                                        &stream,
+                                        self.server_policy.write_timeout_ms,
+                                    )?;
+                                    let response = BrokerResponseV1::busy(
+                                        self.server_policy.busy_retry_after_ms,
+                                    );
+                                    if write_response_frame(
+                                        &mut stream,
+                                        &response,
+                                        self.response_policy,
+                                    )
+                                    .is_err()
+                                    {
+                                        self.telemetry.response_write_failed();
+                                    }
+                                }
+                                Err(TrySendError::Disconnected(mut stream)) => {
+                                    self.shutdown.store(true, Ordering::Release);
+                                    configure_write_timeout(
+                                        &stream,
+                                        self.server_policy.write_timeout_ms,
+                                    )?;
+                                    let response = BrokerResponseV1::rejected(
+                                        BrokerMachineCodeV1::ServiceStopping,
+                                        None,
+                                    );
+                                    if write_response_frame(
+                                        &mut stream,
+                                        &response,
+                                        self.response_policy,
+                                    )
+                                    .is_err()
+                                    {
+                                        self.telemetry.response_write_failed();
+                                    }
+                                    break;
+                                }
                             }
                         }
-                        Err(TrySendError::Disconnected(mut stream)) => {
-                            self.shutdown.store(true, Ordering::Release);
-                            let response = BrokerResponseV1::rejected(
-                                BrokerMachineCodeV1::ServiceStopping,
-                                None,
-                            );
-                            if write_response_frame(&mut stream, &response, self.response_policy)
-                                .is_err()
-                            {
-                                self.telemetry.response_write_failed();
-                            }
-                            break;
+                        None => {
+                            thread::sleep(Duration::from_millis(self.server_policy.accept_poll_ms));
                         }
                     }
                 }
-                None => thread::sleep(Duration::from_millis(self.server_policy.accept_poll_ms)),
+                Ok(())
+            })();
+            if let Err(error) = acceptance {
+                first_error = Some(error);
             }
         }
 
         // Reaching the acceptance cap drains already admitted work. Only an explicit
-        // shutdown request cancels a released operation; closing the queue wakes workers.
-        drop(sender);
-        for handle in worker_handles {
-            match handle.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    self.telemetry.worker_failed();
-                    return Err(error);
-                }
-                Err(_) => {
-                    self.telemetry.worker_failed();
-                    return Err(BrokerServerError::WorkerPanicked);
-                }
-            }
+        // shutdown or failure cancels a released operation; closing the queue wakes workers.
+        if first_error.is_some() {
+            self.shutdown.store(true, Ordering::Release);
         }
-        self.listener.shutdown()?;
+        drop(sender);
+        join_workers(worker_handles, &self.telemetry, &mut first_error);
+        if let Err(error) = self.listener.shutdown()
+            && first_error.is_none()
+        {
+            first_error = Some(error.into());
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
         let telemetry = self.telemetry.snapshot();
         Ok(BrokerServerRunSummaryV1 {
             listener_qualification: qualification,
@@ -306,6 +349,41 @@ impl BrokerServerV1 {
             graceful_shutdown: true,
             telemetry,
         })
+    }
+}
+
+fn join_workers(
+    handles: Vec<thread::JoinHandle<Result<(), BrokerServerError>>>,
+    telemetry: &BrokerTelemetryV1,
+    first_error: &mut Option<BrokerServerError>,
+) {
+    for handle in handles {
+        let failure = match handle.join() {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(error),
+            Err(_) => Some(BrokerServerError::WorkerPanicked),
+        };
+        if let Some(error) = failure {
+            telemetry.worker_failed();
+            if first_error.is_none() {
+                *first_error = Some(error);
+            }
+        }
+    }
+}
+
+/// A worker failure, including unwinding, must stop acceptance even before join.
+/// Normal queue draining must not cancel another worker's in-flight operation.
+struct WorkerExitGuard {
+    shutdown: Arc<AtomicBool>,
+    completed: bool,
+}
+
+impl Drop for WorkerExitGuard {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.shutdown.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -345,8 +423,13 @@ fn spawn_worker(
     write_timeout_ms: u64,
     telemetry: Arc<BrokerTelemetryV1>,
     dispatcher: Option<Arc<dyn BrokerOperationDispatcherV1>>,
-) -> thread::JoinHandle<Result<(), BrokerServerError>> {
-    thread::spawn(move || {
+) -> Result<thread::JoinHandle<Result<(), BrokerServerError>>, BrokerServerError> {
+    let builder = thread::Builder::new().name("hepta-broker-worker".to_owned());
+    let handle = builder.spawn(move || {
+        let mut exit_guard = WorkerExitGuard {
+            shutdown: shutdown.clone(),
+            completed: false,
+        };
         loop {
             let received = {
                 let receiver = receiver
@@ -521,8 +604,10 @@ fn spawn_worker(
                 }
             }
         }
+        exit_guard.completed = true;
         Ok(())
-    })
+    });
+    handle.map_err(|error| BrokerServerError::WorkerSpawn(error.kind()))
 }
 
 enum ServerReservationError {
@@ -588,6 +673,8 @@ pub enum BrokerServerError {
     WorkerQueuePoisoned,
     #[error("broker worker panicked")]
     WorkerPanicked,
+    #[error("broker worker creation failed: {0:?}")]
+    WorkerSpawn(std::io::ErrorKind),
     #[error("socket configuration failed: {0:?}")]
     SocketConfiguration(std::io::ErrorKind),
     #[error(transparent)]
@@ -701,5 +788,72 @@ mod tests {
             disposition: ProcessReconciliationDispositionV1::BlockedGateTerminated,
         }];
         assert_eq!(validate_startup_reconciliation(&records).expect("count"), 1);
+    }
+
+    #[test]
+    fn join_workers_waits_for_every_worker_after_first_failure() {
+        use std::sync::mpsc::{RecvTimeoutError, channel};
+
+        let (first_ready_tx, first_ready_rx) = channel();
+        let first = thread::spawn(move || {
+            first_ready_tx.send(()).expect("first worker ready");
+            Err(BrokerServerError::ClockUnavailable)
+        });
+        first_ready_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first failure is ready before joining");
+
+        let (second_ready_tx, second_ready_rx) = channel();
+        let (release_tx, release_rx) = channel();
+        let completed = Arc::new(AtomicBool::new(false));
+        let second_completed = completed.clone();
+        let second = thread::spawn(move || {
+            second_ready_tx.send(()).expect("second worker ready");
+            release_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("owned second worker release");
+            second_completed.store(true, Ordering::Release);
+            Ok(())
+        });
+        second_ready_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second worker is still active");
+
+        let (joining_tx, joining_rx) = channel();
+        let (done_tx, done_rx) = channel();
+        let owner = thread::spawn(move || {
+            let telemetry = BrokerTelemetryV1::default();
+            let mut first_error = None;
+            joining_tx.send(()).expect("join owner ready");
+            // This is the same helper consumed by the public server, with a
+            // deterministic failing-first order and an actually blocked worker.
+            join_workers(vec![first, second], &telemetry, &mut first_error);
+            done_tx
+                .send((first_error, telemetry.snapshot()))
+                .expect("joined worker result");
+        });
+        joining_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("join owner started");
+        let premature = done_rx.recv_timeout(Duration::from_millis(50));
+        // Release before asserting so even a regressed early-return helper does
+        // not leave this owned test worker waiting indefinitely.
+        release_tx.send(()).expect("release second worker");
+        let returned_early = premature.is_ok();
+        let (error, telemetry) = match premature {
+            Ok(value) => value,
+            Err(RecvTimeoutError::Timeout) => done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("all workers joined after release"),
+            Err(RecvTimeoutError::Disconnected) => panic!("join owner disconnected"),
+        };
+        owner.join().expect("join owner does not panic");
+        assert!(
+            !returned_early,
+            "first failure must not detach later workers"
+        );
+        assert!(completed.load(Ordering::Acquire));
+        assert!(matches!(error, Some(BrokerServerError::ClockUnavailable)));
+        assert_eq!(telemetry.worker_failures, 1);
     }
 }

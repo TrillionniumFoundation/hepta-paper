@@ -197,6 +197,8 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-broker`.
 
+**Worker ownership:** Worker errors/unwinding stop acceptance; startup and accept-loop failures close the queue, join every spawned worker and attempt listener cleanup before returning the first observed error. A normal connection cap drains without cancellation. The shared cancellation flag does not forcibly terminate a non-cooperative adapter. `BrokerServerError::WorkerSpawn(ErrorKind)` is an additive public enum variant requiring exhaustive-match updates. Real Unix lifecycle tests and a deterministic join test cover this source behavior; they do not qualify a production dispatcher.
+
 ## module.execution-dispatcher
 
 **Implementation scope:** Rust execution and prepared-byte verification.

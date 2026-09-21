@@ -63,7 +63,7 @@ impl ProcessStateBackupAuthorityTransportV1 {
             timeout_ms,
         })
     }
-    fn current(&self) -> Result<()> {
+    pub(super) fn current(&self) -> Result<()> {
         for file in [&self.configuration, &self.public_document, &self.command]
             .into_iter()
             .chain(self.online_configuration.as_ref())

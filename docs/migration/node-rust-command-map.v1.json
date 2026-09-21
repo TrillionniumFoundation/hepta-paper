@@ -1651,6 +1651,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/execution.rs",
           "symbol": "execute_mutation_with_precommit_guard_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_mutation_composition/activation.rs",
+          "symbol": "prepare_initial_online_mutation_composition_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint.rs",
+          "symbol": "load_schema_transition_checkpoint_v1"
         }
       ],
       "tests": [
@@ -1663,9 +1671,12 @@
         "rust/crates/hepta-paper-service/tests/automation_reconciliation_default_cli.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/online_execution/tests.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/sqlite_number.rs",
-        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/precommit_tests.rs"
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/precommit_tests.rs",
+        "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/tests.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs"
       ],
-      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. Concrete retained online activation/recoverability lifecycle and historical-schema-to-current-finalized-history restart binding, native production signed writer/epoch/scope binding, complete writable CLI composition, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
+      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. A sealed initial composition now owns concrete process pins, actual ten-database startup/finalized proofs, the same recoverability fence attached to the coordinator, and a final common expiry boundary; it grants no writes. Authenticated original schema checkpoints retain signed full inventory and exact copied bytes after later main/WAL changes, without claiming replay equivalence. Transaction-aware retained write scope, historical checkpoint-to-current finalized replay, native production signed writer/epoch/scope binding, explicit cutover-journal inventory integration, complete writable CLI composition, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-automation-reconcile.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation.rs",
@@ -1679,7 +1690,11 @@
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/online.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/legacy_terminal_residue/online.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/sqlite_number.rs",
-        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/execution.rs"
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/execution.rs",
+        "rust/crates/hepta-paper-service/src/online_mutation_composition/activation.rs",
+        "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/temporal.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint.rs"
       ],
       "testCases": [
         {
@@ -1937,6 +1952,42 @@
         {
           "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
           "symbol": "offline_reconciliation_rejects_text_numeric_fences_like_node_without_partial_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/tests.rs",
+          "symbol": "unsafe_roots_fail_before_any_authority_or_runtime_write"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/tests.rs",
+          "symbol": "actual_signed_initial_composition_retains_producers_and_refuses_native_authorization"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "binding_uses_actual_sources_and_one_controller_generation_without_rpc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "terminal_binding_time_uses_real_exclusive_deadlines_and_never_regresses"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "binding_rejects_cross_runtime_inventory_and_authority_even_for_the_same_signed_head"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "binding_rechecks_real_files_resident_and_expiry_after_pin_io"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "concrete_process_pin_checks_reject_replaced_inputs_without_invoking_commands"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs",
+          "symbol": "real_signed_original_checkpoint_survives_later_main_and_wal_changes_without_claiming_parity"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs",
+          "symbol": "checkpoint_rejects_missing_substituted_extra_and_unsafe_historical_evidence"
         }
       ]
     },
@@ -1989,6 +2040,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/execution.rs",
           "symbol": "execute_mutation_with_precommit_guard_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_mutation_composition/activation.rs",
+          "symbol": "prepare_initial_online_mutation_composition_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint.rs",
+          "symbol": "load_schema_transition_checkpoint_v1"
         }
       ],
       "tests": [
@@ -2001,9 +2060,12 @@
         "rust/crates/hepta-paper-service/tests/automation_reconciliation_default_cli.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/online_execution/tests.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/sqlite_number.rs",
-        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/precommit_tests.rs"
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/precommit_tests.rs",
+        "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/tests.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs"
       ],
-      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. Concrete retained online activation/recoverability lifecycle and historical-schema-to-current-finalized-history restart binding, native production signed writer/epoch/scope binding, complete writable CLI composition, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
+      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. A sealed initial composition now owns concrete process pins, actual ten-database startup/finalized proofs, the same recoverability fence attached to the coordinator, and a final common expiry boundary; it grants no writes. Authenticated original schema checkpoints retain signed full inventory and exact copied bytes after later main/WAL changes, without claiming replay equivalence. Transaction-aware retained write scope, historical checkpoint-to-current finalized replay, native production signed writer/epoch/scope binding, explicit cutover-journal inventory integration, complete writable CLI composition, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
         "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
@@ -2017,7 +2079,11 @@
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/online.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/legacy_terminal_residue/online.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/sqlite_number.rs",
-        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/execution.rs"
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/execution.rs",
+        "rust/crates/hepta-paper-service/src/online_mutation_composition/activation.rs",
+        "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/temporal.rs",
+        "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint.rs"
       ],
       "testCases": [
         {
@@ -2275,6 +2341,42 @@
         {
           "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
           "symbol": "offline_reconciliation_rejects_text_numeric_fences_like_node_without_partial_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/tests.rs",
+          "symbol": "unsafe_roots_fail_before_any_authority_or_runtime_write"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_mutation_composition/activation/tests.rs",
+          "symbol": "actual_signed_initial_composition_retains_producers_and_refuses_native_authorization"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "binding_uses_actual_sources_and_one_controller_generation_without_rpc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "terminal_binding_time_uses_real_exclusive_deadlines_and_never_regresses"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "binding_rejects_cross_runtime_inventory_and_authority_even_for_the_same_signed_head"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "binding_rechecks_real_files_resident_and_expiry_after_pin_io"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/activation_binding_tests.rs",
+          "symbol": "concrete_process_pin_checks_reject_replaced_inputs_without_invoking_commands"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs",
+          "symbol": "real_signed_original_checkpoint_survives_later_main_and_wal_changes_without_claiming_parity"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs",
+          "symbol": "checkpoint_rejects_missing_substituted_extra_and_unsafe_historical_evidence"
         }
       ]
     },
@@ -2594,6 +2696,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller/fence.rs",
           "symbol": "observe_action"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint.rs",
+          "symbol": "load_schema_transition_checkpoint_v1"
         }
       ],
       "tests": [
@@ -2605,9 +2711,10 @@
         "rust/crates/hepta-paper-service/tests/schema_installation_parity.rs",
         "rust/crates/hepta-paper-service/tests/schema_installation_state_parity.rs",
         "rust/crates/hepta-paper-service/tests/online_finalized_inventory_parity.rs",
-        "rust/crates/hepta-paper-service/tests/state_recoverability_fence.rs"
+        "rust/crates/hepta-paper-service/tests/state_recoverability_fence.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs"
       ],
-      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime.",
+      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime. A read-only historical checkpoint loader now authenticates the original full signed post-inventory and exact retained database bytes while refusing missing/substituted evidence; complete historical replay to a fresh finalized current head remains open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
@@ -2641,7 +2748,8 @@
         "rust/crates/hepta-paper-service/src/state_recoverability/controller/fence.rs",
         "rust/crates/hepta-paper-service/src/state_recoverability/schema_installation_repository.rs",
         "rust/crates/hepta-paper-service/src/online_schema_execution/plan/installation_support.rs",
-        "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/installation_support.rs"
+        "rust/crates/hepta-paper-service/src/state_database_inventory/schema_source/installation_support.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint.rs"
       ],
       "testCases": [
         {
@@ -2703,6 +2811,14 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/state_recoverability_fence.rs",
           "symbol": "action_tokens_bind_one_controller_generation_and_exact_action_without_rpc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs",
+          "symbol": "real_signed_original_checkpoint_survives_later_main_and_wal_changes_without_claiming_parity"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/online_schema_transition/history/checkpoint/tests.rs",
+          "symbol": "checkpoint_rejects_missing_substituted_extra_and_unsafe_historical_evidence"
         }
       ]
     },

@@ -295,3 +295,13 @@ jobs retain their meaning. See the [native parity handoff](../../../docs/modules
 for exact input domains, limits, Node source/profile oracles, errors, tests and
 rollback exclusions. A dependency-set decision is not in-flight cancellation;
 computed SLOs and p-values are not independently qualified observations.
+
+
+Initial online composition now retains actual pinned process clients, the full
+startup/finalized proof chain, a concrete shared recovery fence and a final common
+expiry check. It is crate-private and cannot execute business mutations or grant
+native activation. Historical schema checkpoint loading verifies original signed
+inventory and exact copied bytes; replay equivalence to current state remains a
+separate prerequisite. See the repository's
+[composition handoff](../../../docs/modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md)
+and [schema readiness handoff](../../../docs/modules/ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md).

@@ -25,3 +25,72 @@ An isolated cold-process complete 134-operation/486-statement Node/Rust comparis
 The isolated tests export the original full registry under pinned Node 22.23.1 and compare all definitions, normalized native plan projections and manifest hash. A separate case provisions ten real SQLite databases using the original signed schema fixture, loads actual pinned public trust files, and checks the configured status. Wrong writer hash, wrong database scope, modified trust bytes, and changed inventory are rejected. An explicit rejecting transport with a call counter verifies zero authority calls. The tests do not obtain production credentials or activation permission.
 
 Results are recorded against the final integrated commit and its logs. This source slice remains separate from business-operation parity, complete live activation and independent command acceptance.
+
+## Initial owning evidence preparation
+
+The crate-private `prepare_initial_online_mutation_composition_v1` is a second,
+sealed stage. It owns a real system clock, actual process transports and their
+pinned configuration/key/executable inputs. Callers supply canonical source,
+runtime and backup roots and an existing resident lease identity; they cannot
+inject a clock, alternative SQL registry, generic fence or ready JSON.
+
+The stage retains the actual source manifest file, initial and post-startup
+inventory objects, signed schema readiness, all ten startup confirmations,
+complete source coverage, three active authority receipts, ten finalized-chain
+proofs, authority inspection and verified cache write. It constructs the concrete
+backup/recovery controller and attaches a clone of that same shared controller
+to the actual fixed-plan coordinator. The recovery binding checks identical
+inventory, manifest, authority configuration and process invocation contract,
+backup-to-online trust, restore source and global head. Controller origin and
+generation prevent a same-head renewal from reviving an old binding.
+
+Recovery reconciliation runs before the active chain because it can change the
+observed head. The active head must equal the retained recovery head. Startup
+recovery is the existing signed finalization primitive, not business DML. This
+initial stage requires unchanged full inventory after startup; changed bytes
+require the separate historical schema bridge. The cache is a passive report,
+and cannot recreate this owning object.
+
+Retained checks revalidate all actual files and signatures, then take one final
+system-clock sample after the last I/O. Memory-only checks cover schema,
+startup, active, finalized, inspection and cache receipt windows, plus the
+originating recovery binding's resident/head expiry and restore-source age.
+Clock rollback is rejected. The original Node package-deletion flock remains
+held for the lifetime of the object and is released on failure or drop.
+
+The actual coordinator's status remains configured. The returned object has no
+public API, business mutation method, inner coordinator accessor, deserializer
+or activation extraction path. `runtimeReady`, `productionActivation` and
+`nodeRetirementVerified` remain false. Source coverage still attests the Node
+writer tree; native executable admission and a retained transaction scope are
+separate requirements. Whole-runtime currentness checks cannot be reused after
+DML by simply ignoring changed database bytes.
+
+## Cutover inventory integration
+
+The existing durable cutover protocol stores
+`hepta-paper.sqlite.rust-cutover.sqlite` beside the business database. The
+incumbent closed inventory correctly treats it as unregistered. Initial evidence
+preparation therefore neither creates nor treats that journal as an accepted
+business database. Enrolled runtimes remain blocked by the original inventory
+rules. The future writable composition needs an explicit Node/Rust-compatible
+coordinator-storage contract, with retained enrollment/database identity and
+journal verification; a filename exclusion would not establish this binding.
+
+## Initial composition validation
+
+`online_mutation_composition/activation/tests.rs` uses
+`rust/oracle/online-initial-composition-v1.mjs`. The fixture copies the complete
+original source scan/import surfaces, creates ten real SQLite files and a real
+resident lease before migration, and runs the original schema executor with
+actual Ed25519 signatures. Actual subprocess brokers bind schema, startup,
+active/finalized and backup observations to the same signed genesis. Test keys
+and generous bounded test observation windows confer no production permission.
+The composition test checks retained no-RPC reuse, final expiry refusal,
+byte-identical process-file replacement, correct protocol instance projection,
+held package exclusion and release. Root validation refuses aliases and overlap
+before runtime writes. Both new composition groups pass; the real process
+composition case completed in 324.20 seconds on this host. The two existing
+configured-stage groups also pass, including all 134 operations and 486 statements.
+This remains local prerequisite coverage, not acceptance
+of writable online reconciliation or a production deployment.

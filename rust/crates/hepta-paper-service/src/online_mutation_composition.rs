@@ -1,5 +1,9 @@
 //! Fixed original writer-plan composition. A configured coordinator is not an
 //! activated runtime, current recoverability epoch, or deployment qualification.
+// This owning evidence stage remains sealed until native executable admission
+// and the transaction-aware retained writer scope are both implemented.
+#[allow(dead_code)]
+pub(crate) mod activation;
 use crate::{
     online_runtime_activation::inventory::assert_closed_activation_inventory_v1,
     sqlite_mutation_coordinator::{
@@ -102,6 +106,27 @@ pub fn compose_configured_online_mutation_coordinator_v1<T: MutationAuthorityTra
             "autonomous_research_online_mutation_composition_authority_scope_mismatch",
         ));
     }
+    let instances = coordinator_database_instances(inventory)?;
+    let coordinator = SqliteMutationCoordinatorV1::new(
+        authority,
+        SqliteMutationCoordinatorOptionsV1 {
+            manifest: builtin.manifest,
+            operation_plans: builtin.plans,
+            database_instances: instances,
+            requested_lease_ms: None,
+            commit_safety_margin_ms: 1000,
+        },
+        clock,
+        None,
+    )?;
+    inventory.assert_current()?;
+    let configured = ConfiguredOnlineMutationCompositionV1 { coordinator };
+    configured.assert_configuration_current()?;
+    Ok(configured)
+}
+
+/// Use the authority protocol projection, never the wider raw inventory rows.
+fn coordinator_database_instances(inventory: &ObservedStateDatabaseInventoryV1) -> Result<Value> {
     let instances = inventory.value()["instances"].as_array().ok_or_else(|| {
         error("autonomous_research_online_mutation_composition_prerequisites_missing")
     })?;
@@ -114,20 +139,5 @@ pub fn compose_configured_online_mutation_coordinator_v1<T: MutationAuthorityTra
             b["databaseInstanceId"].as_str().unwrap_or(""),
         )
     });
-    let coordinator = SqliteMutationCoordinatorV1::new(
-        authority,
-        SqliteMutationCoordinatorOptionsV1 {
-            manifest: builtin.manifest,
-            operation_plans: builtin.plans,
-            database_instances: json!(instances),
-            requested_lease_ms: None,
-            commit_safety_margin_ms: 1000,
-        },
-        clock,
-        None,
-    )?;
-    inventory.assert_current()?;
-    let configured = ConfiguredOnlineMutationCompositionV1 { coordinator };
-    configured.assert_configuration_current()?;
-    Ok(configured)
+    Ok(json!(instances))
 }

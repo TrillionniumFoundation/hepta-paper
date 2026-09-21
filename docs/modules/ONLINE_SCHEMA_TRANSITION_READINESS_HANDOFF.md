@@ -120,15 +120,71 @@ Version 2 has contract and process coverage; the complete ten-database source
 execution/readiness fixture is version 1. A complete version 2 migration and
 service restart integration is not claimed by these tests.
 
+## Historical checkpoint
+
+`online_schema_transition::history::checkpoint::load_schema_transition_checkpoint_v1`
+loads retained historical evidence into the opaque
+`VerifiedSchemaTransitionCheckpointV1`. It accepts a checkpoint directory, an
+actual `ObservedStateDatabaseInventoryV1`, a writer manifest and pinned authority.
+There is no JSON proof constructor, Deserialize implementation, capture writer,
+authority RPC, SQLite open, or live database write in this API.
+
+The directory must contain exactly `POST_INVENTORY.json` and `databases/`.
+The latter holds `000.sqlite` through `009.sqlite` in the original inventory's
+instance order, together with exactly the corresponding `.sqlite-wal` files
+recorded by that inventory. The full original inventory is retained, including
+original main/WAL file identities and hashes. Retained copies have their own held
+file identities; their metadata is never presented as original source metadata.
+The loader recomputes the complete inventory hash, then passes that historical
+inventory to the unchanged strict audit verifier. All three real historical
+signatures must bind `FINAL.postInventoryHash` to that exact hash. Main/WAL copy
+lengths and bytes must match the signed inventory's `sourceSha256`/`walSha256`.
+Missing historical bytes, a later backup, or a caller's ready flag cannot fill
+this gap.
+
+The proof retains no-follow file/directory handles, exact file metadata, original
+audit bytes and the authority configuration binding. It rejects extra files,
+aliases, hardlinks, nonregular files, duplicate JSON keys, unsafe permissions or
+owners, replacement and content drift. Bounds are 16 MiB for the inventory,
+256 MiB per copied file and 1 GiB total database/WAL bytes. Revalidation checks
+the retained evidence, real current ten-database membership, manifests, paths,
+schema/contracts and stable source device/inode/mode/link identities, including
+their binding to the signed schema reserve request.
+
+This proves an authenticated historical starting point only. Current in-place
+business changes and newly created current WAL files do not invalidate that
+historical fact, and are not authenticated by it. The original readiness API
+still rejects a current inventory different from `FINAL.postInventoryHash`.
+Current business parity requires a separate contiguous signed history verifier,
+isolated changeset replay and complete effective-state comparison. The checkpoint
+does not grant runtime readiness, a current-head lease, native provenance, or
+mutation authority; it is not consumed as an activation shortcut.
+
+The new `rust/oracle/schema-checkpoint-v1.mjs` uses the existing real ten-database
+schema fixture/executor and genuine test-only Ed25519 verification. The pinned
+Node 22.23.1 run passed both native test groups: two main/WAL-current evolution
+cases (43.84 seconds) and fifteen historical evidence rejection cases
+(200.69 seconds), seventeen cases total. Rejections cover missing report/main
+copy, later substituted bytes, extra database/WAL, symlink/hardlink/FIFO, writable
+copy, duplicate or forged inventory JSON, ready-only claims, bad signature,
+source inode substitution and checkpoint directory substitution. The original
+schema executor forbids WAL/SHM at finalization; the successful source fixture
+therefore captures DELETE-mode originals and introduces real current WAL writes
+only afterward. Successful original-WAL schema execution is not claimed.
+`cargo clippy -p hepta-paper-service --lib -- -D warnings` also passed.
+
 ## Remaining scope
 
-This slice does not execute schema migration, normalize/checkpoint journals,
-install schema objects, resume a interrupted migration, or implement the schema
-operator CLI. Those remain separate source chains. Whole runtime activation
-still requires actual startup recovery, finalized-head inspection, active writer
-coverage/head/challenge/scope evidence, recoverability epochs/restore proofs,
-safe cache publication, and a final inventory equality check. External authority
-service qualification remains a deployment requirement.
+The separate [schema execution module](ONLINE_SCHEMA_EXECUTION_HANDOFF.md)
+already implements normalization, installation, resume, finalization and
+observation primitives. A complete operator workflow, final durable receipt
+completion/recovery, schema CLI and runtime activation remain open integration
+work. The historical checkpoint loader does not capture missing old snapshots
+and does not yet bridge their authenticated finalized mutation history to current
+business rows. Whole runtime activation must compose actual startup recovery,
+finalized-head inspection, active writer coverage/head/challenge/scope evidence,
+recoverability epochs/restore proofs, safe cache publication and final inventory
+checks. External authority service qualification remains a deployment requirement.
 
 The signed `targetAuthorityConfigurationHash` belongs to the separate
 `HeptaLocalAutonomousResearchStateAuthorityConfiguration` hash domain. It is not

@@ -1,6 +1,7 @@
 //! Actual audit-to-live-observation readiness with pinned signatures and inventory.
 pub(crate) mod audit;
 mod files;
+pub mod history;
 pub mod target_schema;
 use crate::{
     sqlite_mutation_coordinator::{

@@ -71,6 +71,13 @@ impl VerifiedStartupReconciliationSetV1 {
         &self.entries
     }
 
+    /// The actual retained inventory observed after startup recovery. Later
+    /// composition stages must bind this object rather than reconstructing a
+    /// current-inventory claim from the serialized startup report.
+    pub(crate) fn post_inventory(&self) -> &ObservedStateDatabaseInventoryV1 {
+        &self.post_inventory
+    }
+
     /// Rechecks every held database identity and every confirmation signature.
     /// It intentionally does not call an authority mutation or construct an
     /// active coordinator.

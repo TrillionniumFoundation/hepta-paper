@@ -3,6 +3,10 @@
 use super::*;
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "activation_binding.rs"]
+mod activation_binding;
+pub(crate) use activation_binding::VerifiedRecoverabilityActivationBindingV1;
+
 struct State<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1> {
     controller: StateRecoverabilityControllerV1<B, O>,
     generation: Rc<()>,

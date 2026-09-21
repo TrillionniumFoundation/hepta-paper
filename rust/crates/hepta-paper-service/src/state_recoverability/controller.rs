@@ -523,4 +523,5 @@ mod heartbeat;
 mod automatic;
 
 mod fence;
+pub(crate) use fence::VerifiedRecoverabilityActivationBindingV1;
 pub use fence::{SharedRecoverabilityEpochFenceV1, VerifiedRecoverabilityActionV1};

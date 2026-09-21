@@ -410,6 +410,12 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
     }
 }
 impl PinnedMutationAuthorityV1<ProcessMutationAuthorityTransportV1> {
+    /// Revalidate the verifier pins and this concrete process configuration and
+    /// executable without invoking the external authority.
+    pub(crate) fn assert_process_current_v1(&self) -> Result<()> {
+        self.current()?;
+        self.transport.current()
+    }
     pub fn load_process(
         path: &Path,
         expected_process_configuration_file_hash: &str,

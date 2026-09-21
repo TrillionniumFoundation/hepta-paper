@@ -421,6 +421,11 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
     }
 }
 impl PinnedStateBackupAuthorityV1<ProcessStateBackupAuthorityTransportV1> {
+    /// Check every pinned verifier/process input without an authority RPC.
+    pub(crate) fn assert_process_current_v1(&self) -> Result<()> {
+        self.current()?;
+        self.transport.current()
+    }
     pub fn load_process(path: &Path, pin: &str) -> Result<Self> {
         Self::load(
             path,

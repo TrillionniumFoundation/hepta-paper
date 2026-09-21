@@ -15,6 +15,7 @@ use crate::state_backup_authority::{
 };
 use crate::state_database_inventory::inspect_state_database_inventory_v1;
 pub use arguments::StateBackupActionV1;
+pub(crate) use inputs::ManifestFile;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},

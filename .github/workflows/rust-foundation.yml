@@ -23,9 +23,10 @@ jobs:
   validate:
     name: format, lint, test, docs
     runs-on: ubuntu-24.04
-    # Native ten-database CLI/replay and real history differentials increase
-    # full-suite time; allow the complete suite without reducing coverage.
-    timeout-minutes: 60
+    # Run 35649917716 reached the 60-minute job limit while late ten-database
+    # parity tests were still progressing. Preserve the complete test command
+    # and allow time for the remaining tests, Rustdoc and retained logs.
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

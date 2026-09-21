@@ -92,6 +92,48 @@ Its `recover_before_ready` composes containment recovery; `dispatch` resolves lo
 bound inputs and calls the qualified API. Only fresh reservations are dispatched.
 Without an adapter the server continues to provide admission/reservation only.
 
+## Journal schema identity and bounded admission
+
+`BrokerJournalStoreV1::open` checks the actual stored schema on its read-only
+preflight connection before creating a writer connection or applying persistent
+pragmas or querying caller-controlled metadata tables/views. Interrupted
+initialization uses the same literal-prefix rule and refuses a foreign schema
+without consuming the initialization marker. The closed object inventory and five STRICT tables are necessary but
+insufficient: each table and trigger now also matches `type`, `name`, `tbl_name`
+and the complete stored SQL definition produced by the compiled `SCHEMA_SQL` in
+a fresh in-memory SQLite database. No source SQL is executed to construct that
+reference. At most 20 rows are read, with 256-byte fields and a 64 KiB SQL limit
+per definition. The literal reserved `sqlite_` prefix is excluded; a name such as
+`sqliteXforeign` is an extra object and is refused.
+
+This exact comparison preserves the SQLite normalization of the existing compiled
+schema and rejects changed trigger bodies, CHECK constraints, foreign keys,
+column definitions and differently formatted replacement definitions. It does
+not silently migrate, repair, adopt, or restamp an existing database. The same
+check runs through explicit integrity validation and the existing backup/restore
+contract consumers. `BrokerJournalError::SchemaDefinitionMismatch` is a new
+public error variant; downstream exhaustive matches must handle it. The error
+contains no untrusted SQL or database content. Current schema and wire versions
+are unchanged. A check is an observation at that boundary, not continuous
+protection against a separately authorized writer changing the database later.
+
+The socket admission reader uses one monotonic elapsed-time budget across the
+complete frame header and body; successful partial reads do not reset it. The
+actual server samples its clock and trust state after the complete frame is read
+and uses that time for capability verification and reservation. Explicit-time
+library APIs retain their caller-supplied-time contract. These checks do not yet
+resample time after SQLite `BEGIN IMMEDIATE` waits; transaction-wait freshness is
+an additional integration requirement. They grant no installed host, runtime,
+provider, process identity or production activation authority.
+
+Focused source regressions replace every one of the 14 actual append-only
+triggers, weaken an actual table constraint, alter a trigger's target table,
+exercise oversized definitions and reserved-prefix lookalikes, and reopen an
+unchanged journal with real persisted history. The read-only refusal tests
+compare the actual source bytes and require no new sidecars or initialization
+marker. Real socket and signed-request tests cover the admission time boundary;
+these local tests remain distinct from independent host/provider qualification.
+
 ## Output schema contract
 
 The bounded local schema validator supports boolean schemas, object/array/string/

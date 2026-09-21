@@ -776,3 +776,6 @@ fn unmarked_empty_database_is_not_adopted() {
         Err(BrokerJournalError::DatabaseIdentityMismatch { .. }),
     ));
 }
+
+#[path = "tests/schema_definitions.rs"]
+mod schema_definitions;

@@ -1441,6 +1441,8 @@ pub enum BrokerJournalError {
         expected: Vec<(String, String)>,
         observed: Vec<(String, String)>,
     },
+    #[error("broker journal schema definitions differ from the compiled contract")]
+    SchemaDefinitionMismatch,
     #[error("broker journal table is not STRICT: {0}")]
     TableNotStrict(&'static str),
     #[error("authenticated broker request is internally inconsistent")]

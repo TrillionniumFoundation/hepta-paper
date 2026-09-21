@@ -115,7 +115,8 @@ fn preflight_database_before_writer(
     let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if initialization_marker_present && application_id == 0 && user_version == 0 {
         let object_count: i64 = connection.query_row(
-            "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+            "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema
+             WHERE name NOT GLOB 'sqlite_*' LIMIT 1)",
             [],
             |row| row.get(0),
         )?;
@@ -133,8 +134,8 @@ fn preflight_database_before_writer(
             user_version,
         });
     }
-    verify_schema_version(&connection)?;
     verify_schema_shape(&connection)?;
+    verify_schema_version(&connection)?;
     Ok(DatabasePreflightV1 {
         disposition: DatabaseOpenDispositionV1::Existing,
         file_identity,
@@ -527,8 +528,8 @@ fn configure_size_limit(
 
 pub(super) fn verify_database_contract(connection: &Connection) -> Result<(), BrokerJournalError> {
     verify_connection_pragmas(connection)?;
-    verify_schema_version(connection)?;
-    verify_schema_shape(connection)
+    verify_schema_shape(connection)?;
+    verify_schema_version(connection)
 }
 
 fn verify_database_identity(connection: &Connection) -> Result<(), BrokerJournalError> {
@@ -577,11 +578,11 @@ fn verify_schema_version(connection: &Connection) -> Result<(), BrokerJournalErr
 
 fn verify_schema_shape(connection: &Connection) -> Result<(), BrokerJournalError> {
     let mut statement = connection.prepare(
-        "SELECT type, name FROM sqlite_schema
-         WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        "SELECT substr(type, 1, 257), substr(name, 1, 257) FROM main.sqlite_schema
+         WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name LIMIT ?1",
     )?;
     let observed = statement
-        .query_map([], |row| {
+        .query_map([schema_query_row_limit()?], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -608,5 +609,55 @@ fn verify_schema_shape(connection: &Connection) -> Result<(), BrokerJournalError
             return Err(BrokerJournalError::TableNotStrict(table));
         }
     }
+    verify_schema_definitions(connection)
+}
+
+/// Compare the actual stored definitions with SQLite's normalization of our
+/// compiled schema. The reference is fresh memory, never caller SQL or a second
+/// connection to the journal file. In particular, names and STRICT alone do not
+/// establish the append-only triggers, CHECK constraints, or foreign keys.
+fn verify_schema_definitions(connection: &Connection) -> Result<(), BrokerJournalError> {
+    let reference = Connection::open_in_memory()?;
+    reference.execute_batch(SCHEMA_SQL)?;
+    let mut expected_statement = reference.prepare(SCHEMA_DEFINITION_QUERY)?;
+    let mut expected_rows = expected_statement.query([schema_query_row_limit()?])?;
+    let mut observed_statement = connection.prepare(SCHEMA_DEFINITION_QUERY)?;
+    let mut observed_rows = observed_statement.query([schema_query_row_limit()?])?;
+    for _ in EXPECTED_SCHEMA_OBJECTS {
+        let expected = expected_rows
+            .next()?
+            .ok_or(BrokerJournalError::SchemaDefinitionMismatch)?;
+        let observed = observed_rows
+            .next()?
+            .ok_or(BrokerJournalError::SchemaDefinitionMismatch)?;
+        for column in 0..4 {
+            let expected: Option<String> = expected.get(column)?;
+            let observed: Option<String> = observed.get(column)?;
+            // NULL includes definitions exceeding the SQL-side byte bound.
+            if expected.is_none() || expected != observed {
+                return Err(BrokerJournalError::SchemaDefinitionMismatch);
+            }
+        }
+    }
+    if expected_rows.next()?.is_some() || observed_rows.next()?.is_some() {
+        return Err(BrokerJournalError::SchemaDefinitionMismatch);
+    }
     Ok(())
+}
+
+// At most the qualified object count plus one, with bounded text materialized
+// from each row. Internal SQLite objects have their literal reserved prefix;
+// LIKE 'sqlite_%' would also hide a caller-created name such as sqliteXforeign.
+const SCHEMA_DEFINITION_QUERY: &str = "
+    SELECT CASE WHEN length(CAST(type AS BLOB)) <= 256 THEN type END,
+           CASE WHEN length(CAST(name AS BLOB)) <= 256 THEN name END,
+           CASE WHEN length(CAST(tbl_name AS BLOB)) <= 256 THEN tbl_name END,
+           CASE WHEN length(CAST(sql AS BLOB)) <= 65536 THEN sql END
+    FROM main.sqlite_schema
+    WHERE name NOT GLOB 'sqlite_*'
+    ORDER BY type, name LIMIT ?1";
+
+fn schema_query_row_limit() -> Result<i64, BrokerJournalError> {
+    i64::try_from(EXPECTED_SCHEMA_OBJECTS.len() + 1)
+        .map_err(|_| BrokerJournalError::NumericOverflow)
 }

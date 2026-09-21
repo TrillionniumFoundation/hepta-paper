@@ -4,9 +4,9 @@ use hepta_codex_protocol::Sha256Digest;
 use thiserror::Error;
 
 use crate::{
-    AdmissionError, AdmissionPolicyV1, BrokerJournalError, BrokerJournalStoreV1,
-    CapabilityTrustStoreV1, FaultInjectionPointV1, PeerIdentityV1, PeerPolicyV1,
-    ReservationOutcomeV1, admit_unix_stream,
+    AdmissionError, AdmissionPolicyV1, AuthenticatedBrokerRequestV1, BrokerJournalError,
+    BrokerJournalStoreV1, CapabilityTrustStoreV1, FaultInjectionPointV1, PeerIdentityV1,
+    PeerPolicyV1, ReservationOutcomeV1, admit_unix_stream,
 };
 
 /// Durable result of one peer-authenticated broker admission.
@@ -42,6 +42,15 @@ pub fn admit_and_reserve_unix_stream(
         now_unix_ms,
         admission_policy,
     )?;
+    reserve_authenticated_request(admitted, journal, now_unix_ms, fault)
+}
+
+pub(crate) fn reserve_authenticated_request(
+    admitted: AuthenticatedBrokerRequestV1,
+    journal: &mut BrokerJournalStoreV1,
+    now_unix_ms: u64,
+    fault: FaultInjectionPointV1,
+) -> Result<BrokerReservationV1, BrokerStateError> {
     let operation_id = admitted.request().operation_id.clone();
     let request_hash = admitted.request_hash().clone();
     let peer = admitted.peer();

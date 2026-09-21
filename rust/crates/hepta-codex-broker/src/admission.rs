@@ -5,6 +5,7 @@ use hepta_codex_protocol::{
 };
 use thiserror::Error;
 
+use crate::frame::{DeadlineSocketReader, DecodedRequestFrameV1};
 use crate::{
     BrokerFrameError, BrokerFramePolicyV1, CapabilityPolicyV1, CapabilityTrustStoreV1,
     CapabilityVerificationError, PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1,
@@ -160,29 +161,60 @@ pub fn admit_unix_stream(
     now_unix_ms: u64,
     policy: AdmissionPolicyV1,
 ) -> Result<AuthenticatedBrokerRequestV1, AdmissionError> {
+    read_unix_request(stream, peer_policy, policy)?.authenticate(trust_store, now_unix_ms)
+}
+
+/// A real peer and complete canonical frame, still awaiting capability checks.
+/// Kept private to the crate so the server can sample its clock after socket I/O.
+pub(crate) struct PendingBrokerRequestV1 {
+    frame: DecodedRequestFrameV1,
+    peer: PeerIdentityV1,
+    capability_policy: CapabilityPolicyV1,
+}
+
+impl PendingBrokerRequestV1 {
+    pub(crate) fn authenticate(
+        self,
+        trust_store: &CapabilityTrustStoreV1,
+        now_unix_ms: u64,
+    ) -> Result<AuthenticatedBrokerRequestV1, AdmissionError> {
+        let capability = verify_request_capability(
+            &self.frame.request,
+            self.peer,
+            now_unix_ms,
+            self.capability_policy,
+            trust_store,
+        )
+        .map_err(AdmissionError::Capability)?;
+        Ok(AuthenticatedBrokerRequestV1 {
+            request: self.frame.request,
+            request_payload: self.frame.payload,
+            request_hash: self.frame.payload_hash,
+            peer: self.peer,
+            capability,
+        })
+    }
+}
+
+pub(crate) fn read_unix_request(
+    stream: &UnixStream,
+    peer_policy: &PeerPolicyV1,
+    policy: AdmissionPolicyV1,
+) -> Result<PendingBrokerRequestV1, AdmissionError> {
     let policy = policy.validate()?;
     let peer = inspect_peer_identity(stream).map_err(AdmissionError::Peer)?;
     peer_policy.authorize(peer).map_err(AdmissionError::Peer)?;
     stream
         .set_read_timeout(Some(Duration::from_millis(policy.read_timeout_ms)))
         .map_err(|error| AdmissionError::SocketConfiguration(error.kind()))?;
-    let mut reader = stream;
+    let mut reader =
+        DeadlineSocketReader::new(stream, Duration::from_millis(policy.read_timeout_ms));
     let frame = read_request_frame(&mut reader, policy.frame).map_err(AdmissionError::Frame)?;
     policy.role.authorize(&frame.request)?;
-    let capability = verify_request_capability(
-        &frame.request,
+    Ok(PendingBrokerRequestV1 {
+        frame,
         peer,
-        now_unix_ms,
-        policy.capability,
-        trust_store,
-    )
-    .map_err(AdmissionError::Capability)?;
-    Ok(AuthenticatedBrokerRequestV1 {
-        request: frame.request,
-        request_payload: frame.payload,
-        request_hash: frame.payload_hash,
-        peer,
-        capability,
+        capability_policy: policy.capability,
     })
 }
 

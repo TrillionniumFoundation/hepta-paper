@@ -193,7 +193,7 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 **API and concrete types:** [rust/crates/hepta-codex-broker/src/codex_dispatch.rs](../../rust/crates/hepta-codex-broker/src/codex_dispatch.rs). **Engineering contract:** [DISPATCH.md](../../rust/crates/hepta-codex-broker/DISPATCH.md). **Module specification:** [codex-broker](specs/codex-broker.md).
 
-**Boundary and recovery:** Role-separated principals, pre-exec release, journal and cgroup containment are required. A timeout is ambiguous after a provider action may have started; do not blindly relaunch.
+**Boundary and recovery:** Role-separated principals, pre-exec release, journal and cgroup containment are required. A timeout is ambiguous after a provider action may have started; do not blindly relaunch. Journal read-only preflight now compares complete actual table/trigger definitions against the compiled in-memory schema before the writer opens; same-name trigger replacements are refused without repair. Socket frame reads share a single elapsed deadline, and the server samples time/trust after reading; SQLite transaction-wait freshness remains a separate gap. See the engineering contract for bounds, compatibility and source-test scope.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-broker`.
 

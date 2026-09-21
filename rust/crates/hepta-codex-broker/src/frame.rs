@@ -1,6 +1,8 @@
 use std::{
     io::{self, Read, Write},
+    os::unix::net::UnixStream,
     str::FromStr,
+    time::{Duration, Instant},
 };
 
 use hepta_codex_protocol::{CodexExecutionRequestV1, Sha256Digest};
@@ -10,6 +12,45 @@ use thiserror::Error;
 const FRAME_MAGIC: [u8; 8] = *b"HEPTACX1";
 const FRAME_HEADER_BYTES: usize = 16;
 const HARD_MAXIMUM_PAYLOAD_BYTES: usize = 1024 * 1024;
+
+/// One elapsed-time budget for every read of the header and payload. Socket
+/// receive timeouts alone restart for each read and do not bound a whole frame.
+pub(crate) struct DeadlineSocketReader<'a> {
+    stream: &'a UnixStream,
+    started: Instant,
+    timeout: Duration,
+}
+
+impl<'a> DeadlineSocketReader<'a> {
+    pub(crate) fn new(stream: &'a UnixStream, timeout: Duration) -> Self {
+        Self {
+            stream,
+            started: Instant::now(),
+            timeout,
+        }
+    }
+
+    fn remaining(&self) -> io::Result<Duration> {
+        self.timeout
+            .checked_sub(self.started.elapsed())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))
+    }
+}
+
+impl Read for DeadlineSocketReader<'_> {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        let result = self.stream.read(bytes);
+        // Even a read that returns some bytes may have consumed the remaining
+        // budget. Never renew it on progress, interruptions, or the next field.
+        self.remaining()?;
+        result
+    }
+}
 
 /// Size policy applied before a request is allocated or parsed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

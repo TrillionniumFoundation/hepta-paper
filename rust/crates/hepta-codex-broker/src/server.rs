@@ -19,8 +19,9 @@ use crate::{
     BrokerResponseV1, BrokerStateError, BrokerTelemetrySnapshotV1, BrokerTelemetryV1,
     CapabilityTrustBundleManagerV1, FaultInjectionPointV1, PeerAuthorizationError, PeerPolicyV1,
     ProcessReconciliationDispositionV1, ReservationOutcomeV1, TrustBundleError,
-    admit_and_reserve_unix_stream, write_response_frame,
+    write_response_frame,
 };
+use crate::{admission::read_unix_request, service::reserve_authenticated_request};
 
 const HARD_MAXIMUM_WORKERS: usize = 32;
 const HARD_MAXIMUM_QUEUE_CAPACITY: usize = 256;
@@ -360,6 +361,22 @@ fn spawn_worker(
                 Err(RecvTimeoutError::Disconnected) => break,
             };
             configure_write_timeout(&stream, write_timeout_ms)?;
+            let pending = match read_unix_request(&stream, &peer_policy, admission_policy.clone()) {
+                Ok(pending) => pending,
+                Err(_) => {
+                    telemetry.admission_rejected();
+                    if !write_rejection(
+                        &mut stream,
+                        BrokerMachineCodeV1::AdmissionRejected,
+                        response_policy,
+                    ) {
+                        telemetry.response_write_failed();
+                    }
+                    continue;
+                }
+            };
+            // Socket I/O has finished. Use the actual current clock and trust
+            // state, never the time observed before a potentially slow frame.
             let now = clock.now_unix_ms()?;
             let (trust_store, _, _) = match trust_manager.snapshot(now) {
                 Ok(value) if value.2 == startup_bundle_hash => value,
@@ -384,15 +401,18 @@ fn spawn_worker(
                     continue;
                 }
             };
-            match admit_and_reserve_unix_stream(
-                &stream,
-                &peer_policy,
-                &trust_store,
-                &mut journal,
-                now,
-                admission_policy.clone(),
-                FaultInjectionPointV1::None,
-            ) {
+            let reservation = pending
+                .authenticate(&trust_store, now)
+                .map_err(BrokerStateError::Admission)
+                .and_then(|admitted| {
+                    reserve_authenticated_request(
+                        admitted,
+                        &mut journal,
+                        now,
+                        FaultInjectionPointV1::None,
+                    )
+                });
+            match reservation {
                 Ok(reservation) => {
                     let (kind, mut journal_state) = match reservation.outcome {
                         ReservationOutcomeV1::Reserved(journal) => (true, journal.current_state),

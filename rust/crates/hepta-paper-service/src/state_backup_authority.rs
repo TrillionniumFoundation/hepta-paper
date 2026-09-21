@@ -7,7 +7,7 @@ use crate::sqlite_mutation_coordinator::authority::files as pinned_files;
 mod process;
 mod recovery_support;
 pub mod restore_source;
-mod socket;
+pub(crate) mod socket;
 use crate::sqlite_mutation_coordinator::authority::{
     MutationAuthorityTransportV1, PinnedMutationAuthorityV1,
 };

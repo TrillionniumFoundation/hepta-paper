@@ -22,6 +22,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod v2;
+pub use v2::{
+    ProductionAuthorityInstallationV2, ProductionAuthorityIpcRootV2,
+    ProductionDeploymentManifestV2, ProductionPublicFileV2, ProductionServiceRoleV2,
+    ProductionServiceUnitV2, VerifiedProductionDeploymentV2, verify_production_deployment_v2,
+};
+
 const MAXIMUM_DEPLOYMENT_SERVICES: usize = 32;
 const MAXIMUM_ARGUMENTS: usize = 64;
 const MAXIMUM_ENVIRONMENT_KEYS: usize = 128;
@@ -757,6 +764,17 @@ pub enum ProductionDeploymentError {
     /// Observed bytes do not match the manifest digest.
     #[error("production executable hash mismatch: {0}")]
     ExecutableHashMismatch(String),
+    /// V2 authority configuration, principal or namespace binding is inconsistent.
+    #[error("production authority installation binding is invalid")]
+    AuthorityInstallationInvalid,
+    /// V2 paths traverse an unsafe, changed or incorrectly owned namespace.
+    #[error("production deployment namespace is invalid or changed")]
+    NamespaceInvalid,
+    /// Actual public authority input failed its existing strict verifier.
+    #[error("production authority public input rejected: {0}")]
+    AuthorityInput(
+        #[source] Box<crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorError>,
+    ),
     /// Canonical deployment receipt encoding failed.
     #[error("production deployment encoding failed")]
     EncodingInvalid,

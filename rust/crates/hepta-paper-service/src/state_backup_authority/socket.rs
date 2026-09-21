@@ -70,12 +70,22 @@ fn valid_configuration(value: &Value) -> bool {
             .all(|key| number(&value[key]).is_some_and(|n| (1000..=900000).contains(&n)))
 }
 
-impl PinnedStateBackupAuthorityV1<LocalStateAuthoritySocketTransportV1> {
-    /// Load the strict, separately pinned SocketConfiguration V1 profile and
-    /// capture the actual socket origin before any protocol request is sent.
-    /// All public files are pinned before the empty socket probe. This is an
-    /// untrusted transport plus signature verifier, not installation authority.
-    pub fn load_socket_v1(path: &Path, raw_file_pin: &str) -> Result<Self> {
+/// Actual public configuration inputs. Loading does not connect a socket or
+/// authenticate an installed process. All snapshots survive until this owner
+/// is dropped or consumed by the existing socket constructor.
+pub(crate) struct ObservedSocketAuthorityInputsV1 {
+    configuration: Snapshot,
+    public_document: Snapshot,
+    online_configuration: Snapshot,
+    online: PinnedMutationAuthorityV1<NoOnlineTransport>,
+    value: Value,
+    trust: Value,
+    key: VerifyingKey,
+    configuration_hash: String,
+    options: LocalStateAuthorityClientOptionsV1,
+}
+impl ObservedSocketAuthorityInputsV1 {
+    pub(crate) fn load(path: &Path, raw_file_pin: &str) -> Result<Self> {
         if !path.to_str().is_some_and(valid_path_text) {
             return Err(error(CONFIGURATION_INVALID));
         }
@@ -129,21 +139,67 @@ impl PinnedStateBackupAuthorityV1<LocalStateAuthoritySocketTransportV1> {
             )
             .map_err(|_| error(CONFIGURATION_INVALID))?,
         };
-        // No regular file is captured after the probe or any future invocation.
-        configuration.assert_current()?;
-        public_document.assert_current()?;
-        online_configuration.assert_current()?;
-        online.current()?;
-        let transport = LocalStateAuthoritySocketTransportV1::connect(&options)?;
         let result = Self {
             configuration,
             public_document,
-            profile: ConfigurationProfile::Socket,
+            online_configuration,
+            online,
+            value,
             trust,
             key,
             configuration_hash,
-            online: Some(online),
-            online_configuration: Some(online_configuration),
+            options,
+        };
+        result.assert_current()?;
+        Ok(result)
+    }
+    pub(crate) fn assert_current(&self) -> Result<()> {
+        self.configuration.assert_current()?;
+        self.public_document.assert_current()?;
+        self.online_configuration.assert_current()?;
+        self.online.current()
+    }
+    pub(crate) fn value(&self) -> &Value {
+        &self.value
+    }
+    pub(crate) fn online_trust(&self) -> &Value {
+        self.online.trust()
+    }
+    pub(crate) fn online_configuration_hash(&self) -> &str {
+        self.online.configuration_hash()
+    }
+    pub(crate) fn configuration_hash(&self) -> &str {
+        &self.configuration_hash
+    }
+    pub(crate) fn verification_key(&self) -> &VerifyingKey {
+        &self.key
+    }
+    pub(crate) fn files(&self) -> Vec<&Snapshot> {
+        let mut files = vec![
+            &self.configuration,
+            &self.public_document,
+            &self.online_configuration,
+        ];
+        files.extend(self.online.retained_configuration_files());
+        files
+    }
+}
+impl PinnedStateBackupAuthorityV1<LocalStateAuthoritySocketTransportV1> {
+    /// Capture actual pinned public inputs and the socket's origin. This does
+    /// not establish installation authority. Construct before owning SQLite.
+    pub fn load_socket_v1(path: &Path, raw_file_pin: &str) -> Result<Self> {
+        let inputs = ObservedSocketAuthorityInputsV1::load(path, raw_file_pin)?;
+        // Original validation and pre-probe currentness order is preserved.
+        let transport = LocalStateAuthoritySocketTransportV1::connect(&inputs.options)?;
+        let result = Self {
+            configuration: inputs.configuration,
+            public_document: inputs.public_document,
+            profile: ConfigurationProfile::Socket,
+            trust: inputs.trust,
+            key: inputs.key,
+            configuration_hash: inputs.configuration_hash,
+            online: Some(inputs.online),
+            online_configuration: Some(inputs.online_configuration),
             transport,
         };
         result.current()?;

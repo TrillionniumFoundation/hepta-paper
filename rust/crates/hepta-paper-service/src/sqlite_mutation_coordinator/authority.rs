@@ -170,6 +170,10 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
     pub(crate) fn retained_configuration_paths(&self) -> [&Path; 2] {
         [&self.configuration.path, &self.public_key_document.path]
     }
+    /// Borrow the actual retained public descriptors; no new file is opened.
+    pub(crate) fn retained_configuration_files(&self) -> [&Snapshot; 2] {
+        [&self.configuration, &self.public_key_document]
+    }
     pub(crate) fn current(&self) -> Result<()> {
         self.configuration.assert_current()?;
         self.public_key_document.assert_current()

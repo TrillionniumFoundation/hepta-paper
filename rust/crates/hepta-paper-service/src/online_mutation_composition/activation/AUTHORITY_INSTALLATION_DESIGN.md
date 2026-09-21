@@ -1,10 +1,11 @@
 # Native authority installation binding
 
-Status: **installation owner design only, 2026-09-21**. The supplied-key Rust
-authority and its real business integration are implemented. They do not yet
-establish a qualified installed authority process. The new direct socket
-transport is a separate continuity prerequisite; no object described below is
-currently a production installation constructor.
+Status: **static deployment prerequisite plus installation-owner design**.
+The supplied-key Rust authority, its real business integration, direct socket
+transport and [nine-role static Deployment V2 producer](../../deployment/HANDOFF.md)
+are implemented. They do not yet establish a qualified installed authority
+process. Static file observations and socket-origin continuity remain separate
+prerequisites; neither constructs production activation.
 
 ## Concrete missing edge
 
@@ -16,7 +17,8 @@ would prove only the checked command's ELF format and exact installed bytes.
 They cannot identify the daemon behind its Unix socket or establish Rust
 provenance. A renamed interpreter is also an ELF file.
 
-`ProductionDeploymentManifestV1` has exactly eight closed roles. The authority
+`ProductionDeploymentManifestV1` has exactly eight closed role types and admits
+8–32 service instances. The authority
 daemon is not one of them. A client executable launched by the control plane
 shares that principal; pretending it is another independently isolated service
 would misrepresent the actual topology. Keep the existing V1 roles and digest
@@ -55,13 +57,20 @@ that observation is not a qualification of every target kernel.
 
 ## Versioned installation subject
 
-A future V2 deployment contract needs one additional independent authority
-daemon role, with the actual dedicated principal, fixed daemon executable,
-closed argv, retained full configuration pin, state/key/socket namespace and
-manager unit inventory. Direct in-process RPC code is already part of the
-control executable; the standalone client can remain an offline tool rather
-than an invented independent service. This is a protocol extension requiring
-its own validation and compatibility tests, not another optional V1 field.
+The V2 static deployment contract adds an independent authority daemon role,
+dedicated UID and IPC group, fixed daemon executable and argv, actual pinned
+public configuration/key files and state/key/socket namespaces. It explicitly
+binds each declared systemd unit. It checks static files and permission topology;
+the manager inventory digest is still a commitment requiring independent
+verification. Direct in-process RPC code belongs to the control executable;
+the standalone client is an offline tool, not another isolated service role.
+
+Public configuration and public-key documents must be root-owned and readable
+by the dedicated IPC group. The daemon's private root stays `0700`; control
+binds its configured private paths without opening the key or database. The
+shared original service group may contain other roles and cannot prove exclusive
+control/authority access. V2's declared group topology must later be checked
+against actual installed principals and running processes.
 
 The complete V2 topology identity must replace the old eight-role identity in
 both the independent host qualification's `service_identity_hash` and the

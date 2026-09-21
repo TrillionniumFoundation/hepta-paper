@@ -57,7 +57,28 @@ fn release_trust_gate_matches_node_oracle() {
         {"releaseCommit":[],"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
         {"releaseCommit":1.0,"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
         {"releaseCommit":"commit-a","capabilityCount":"0b10","implementationVerified":2,"releaseBoundConformanceVerified":2,"independentProductionOperationalVerified":0},
-        {"releaseCommit":"commit-a","capabilityCount":"0o10","implementationVerified":8,"releaseBoundConformanceVerified":8,"independentProductionOperationalVerified":0}
+        {"releaseCommit":"commit-a","capabilityCount":"0o10","implementationVerified":8,"releaseBoundConformanceVerified":8,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":[true],"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":[false],"implementationVerified":0,"releaseBoundConformanceVerified":0,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":[null],"implementationVerified":0,"releaseBoundConformanceVerified":0,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":[[true]],"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"\u{FEFF}14","implementationVerified":14,"releaseBoundConformanceVerified":14,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"\u{FEFF}commit-a","capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"\u{FEFF}","capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":1e21,"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":1e20,"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":1e-7,"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":1e-6,"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":1.2345678901234567,"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":[1e21,1e-7,1e-6],"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":{"nested":[1e21,1e-7,1e-6]},"capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":1,"implementationVerified":[true],"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":[false],"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":[[true]]},
+        {"releaseCommit":"commit-a","capabilityCount":[["\u{FEFF}1\u{FEFF}"]],"implementationVerified":[[1]],"releaseBoundConformanceVerified":[["1"]],"independentProductionOperationalVerified":[null]},
+        {"releaseCommit":"commit-a","capabilityCount":1,"implementationVerified":[null,null],"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"commit-a","capabilityCount":"\u{0085}1","implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0},
+        {"releaseCommit":"\u{0085}","capabilityCount":1,"implementationVerified":1,"releaseBoundConformanceVerified":1,"independentProductionOperationalVerified":0}
     ]);
     let expected = oracle(&requests);
     for (index, request) in requests.as_array().unwrap().iter().enumerate() {

@@ -1,7 +1,7 @@
 //! Pure release trust-layer gate. It evaluates supplied counts only; it never
 //! mints external signatures or claims production activation.
 
-use hepta_control_plane::canonical_hash_v1;
+use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
 use thiserror::Error;
 
@@ -64,6 +64,65 @@ fn javascript_string_or_empty(value: Option<&Value>) -> String {
         .unwrap_or_default()
 }
 
+/// `Number(string)` trims ECMAScript WhiteSpace and LineTerminator code points.
+/// This is not the Unicode White_Space set used by Rust's `str::trim`: JavaScript
+/// includes BOM (U+FEFF) and excludes Next Line (U+0085).
+fn javascript_trim(value: &str) -> &str {
+    value.trim_matches(|character| {
+        matches!(
+            character,
+            '\u{0009}'..='\u{000D}'
+                | '\u{0020}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+        )
+    })
+}
+
+fn javascript_number_string(
+    value: &str,
+    label: &'static str,
+) -> Result<f64, ReleaseTrustGateError> {
+    let value = javascript_trim(value);
+    if value.is_empty() {
+        return Ok(0.0);
+    }
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        return u64::from_str_radix(hex, 16)
+            .map(|number| number as f64)
+            .map_err(|_| ReleaseTrustGateError::CountInvalid(label));
+    }
+    if let Some(binary) = value
+        .strip_prefix("0b")
+        .or_else(|| value.strip_prefix("0B"))
+    {
+        return u64::from_str_radix(binary, 2)
+            .map(|number| number as f64)
+            .map_err(|_| ReleaseTrustGateError::CountInvalid(label));
+    }
+    if let Some(octal) = value
+        .strip_prefix("0o")
+        .or_else(|| value.strip_prefix("0O"))
+    {
+        return u64::from_str_radix(octal, 8)
+            .map(|number| number as f64)
+            .map_err(|_| ReleaseTrustGateError::CountInvalid(label));
+    }
+    value
+        .parse::<f64>()
+        .map_err(|_| ReleaseTrustGateError::CountInvalid(label))
+}
+
 /// JSON.parse in the incumbent produces IEEE-754 numbers before the gate's
 /// record hash is computed.  serde_json can retain a lexical `1.0` float, so
 /// normalize integral finite values to the same JSON integer representation;
@@ -106,40 +165,13 @@ fn js_integer(value: Option<&Value>, label: &'static str) -> Result<u64, Release
         Value::Number(value) => value
             .as_f64()
             .ok_or(ReleaseTrustGateError::CountInvalid(label))?,
-        Value::String(value) => {
-            let value = value.trim();
-            if value.is_empty() {
-                0.0
-            } else if let Some(hex) = value
-                .strip_prefix("0x")
-                .or_else(|| value.strip_prefix("0X"))
-            {
-                u64::from_str_radix(hex, 16)
-                    .map_err(|_| ReleaseTrustGateError::CountInvalid(label))? as f64
-            } else if let Some(binary) = value
-                .strip_prefix("0b")
-                .or_else(|| value.strip_prefix("0B"))
-            {
-                u64::from_str_radix(binary, 2)
-                    .map_err(|_| ReleaseTrustGateError::CountInvalid(label))? as f64
-            } else if let Some(octal) = value
-                .strip_prefix("0o")
-                .or_else(|| value.strip_prefix("0O"))
-            {
-                u64::from_str_radix(octal, 8)
-                    .map_err(|_| ReleaseTrustGateError::CountInvalid(label))? as f64
-            } else {
-                value
-                    .parse::<f64>()
-                    .map_err(|_| ReleaseTrustGateError::CountInvalid(label))?
-            }
-        }
-        // JavaScript converts [] to 0 and [x] through String(x). Other objects
-        // become NaN; keep the same fail-closed result for those cases.
-        Value::Array(values) if values.is_empty() => 0.0,
-        Value::Array(values) if values.len() == 1 => js_integer(values.first(), label)? as f64,
+        // `Number(value)` first applies ToPrimitive. For JSON arrays that is
+        // Array#toString (null elements become empty fields); recursively
+        // converting a singleton boolean would incorrectly turn [true] into
+        // 1 instead of the JavaScript NaN from Number("true").
+        Value::String(value) => javascript_number_string(value, label)?,
         Value::Array(_) | Value::Object(_) => {
-            return Err(ReleaseTrustGateError::CountInvalid(label));
+            javascript_number_string(&javascript_string(value), label)?
         }
     };
     if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > u64::MAX as f64 {
@@ -174,7 +206,7 @@ fn build_release_trust_layer_gate_value_v1(
 ) -> Result<Value, ReleaseTrustGateError> {
     let release_commit_value = normalize_javascript_json(&release_commit_value);
     let release_commit = javascript_string_or_empty(Some(&release_commit_value));
-    if release_commit.trim().is_empty() {
+    if javascript_trim(&release_commit).is_empty() {
         return Err(ReleaseTrustGateError::ReleaseCommitRequired);
     }
     if capability_count == 0 {
@@ -204,16 +236,15 @@ fn build_release_trust_layer_gate_value_v1(
         "conformanceCannotQualifyAsOperationalProof": true,
         "operationalProofCannotSubstituteForReleaseBoundConformance": true,
     });
-    let hash =
-        canonical_hash_v1(&json!({"kind": "ReleaseTrustLayerGate", "value": payload.clone()}))
-            .map_err(|_| ReleaseTrustGateError::Encoding)?;
+    let hash = production_hash_record_v1("ReleaseTrustLayerGate", &payload)
+        .map_err(|_| ReleaseTrustGateError::Encoding)?;
     let mut result = payload;
     result
         .as_object_mut()
         .ok_or(ReleaseTrustGateError::Encoding)?
         .insert(
             "releaseTrustLayerGateHash".to_owned(),
-            Value::String(hash.to_string()),
+            Value::String(hash.as_str().to_owned()),
         );
     Ok(result)
 }

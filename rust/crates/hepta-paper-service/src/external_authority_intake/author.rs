@@ -10,15 +10,20 @@
 use base64ct::{Base64, Encoding};
 use ed25519_dalek::pkcs8::{DecodePublicKey, EncodePublicKey};
 use ed25519_dalek::{Signature, VerifyingKey};
-use hepta_legacy_compatibility::production_hash_record_v1;
+use hepta_legacy_compatibility::{
+    ProductionCollationV1, production_hash_record_v1, production_stable_json_v1,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
-    fs,
-    os::unix::fs::MetadataExt,
+    fs::{self, Metadata, OpenOptions},
+    io::Read,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
 };
+
+mod wire_order;
 
 const SUBJECT_KIND: &str = "ExternalPrincipalIdentityAttestationSubject";
 const CONFIG_KIND: &str = "AutonomousResearchAuthorIdentityConfiguration";
@@ -93,6 +98,18 @@ const ENVELOPE_KEYS: &[&str] = &[
     "version",
 ];
 const SIGNATURE_KEYS: &[&str] = &["algorithm", "keyId", "role", "value"];
+const TRUST_KEY_KEYS: &[&str] = &[
+    "algorithm",
+    "effectiveFrom",
+    "expiresAt",
+    "keyId",
+    "organization",
+    "publicKeyPem",
+    "revokedAt",
+    "roles",
+    "status",
+    "subjectId",
+];
 
 fn exact(value: &Value, keys: &[&str]) -> bool {
     value.as_object().is_some_and(|object| {
@@ -192,10 +209,30 @@ fn instant(value: &Value) -> Option<i64> {
     Some(((days * 24 + hour) * 60 + minute) * 60000 + second * 1000 + millis)
 }
 
+pub(super) fn is_canonical_instant(value: &str) -> bool {
+    instant(&Value::String(value.to_owned())).is_some()
+}
+
 fn canonical_hash(kind: &str, value: &Value) -> Option<String> {
     production_hash_record_v1(kind, value)
         .ok()
         .map(|hash| hash.as_str().to_owned())
+}
+
+fn normalize_numbers(value: &mut Value) {
+    match value {
+        Value::Number(_) => {
+            if let Some(normalized) = production_stable_json_v1(value)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            {
+                *value = normalized;
+            }
+        }
+        Value::Array(values) => values.iter_mut().for_each(normalize_numbers),
+        Value::Object(values) => values.values_mut().for_each(normalize_numbers),
+        _ => {}
+    }
 }
 
 fn bytes_hash(bytes: &[u8]) -> String {
@@ -247,21 +284,40 @@ fn read_pinned(path: &Path) -> Option<Vec<u8>> {
     {
         return None;
     }
-    let bytes = fs::read(&candidate).ok()?;
-    let after = fs::metadata(&candidate).ok()?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(&candidate)
+        .ok()?;
+    let opened = file.metadata().ok()?;
+    if !same_identity(&before, &opened) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(MAXIMUM_CONFIG_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let after = file.metadata().ok()?;
     let path_after = fs::symlink_metadata(&candidate).ok()?;
     (bytes.len() as u64 == before.len()
-        && after.dev() == before.dev()
-        && after.ino() == before.ino()
-        && after.size() == before.size()
-        && after.mtime() == before.mtime()
-        && after.mtime_nsec() == before.mtime_nsec()
-        && path_after.dev() == before.dev()
-        && path_after.ino() == before.ino()
-        && path_after.size() == before.size()
-        && path_after.mtime() == before.mtime()
-        && path_after.mtime_nsec() == before.mtime_nsec())
+        && same_identity(&before, &after)
+        && same_identity(&before, &path_after))
     .then_some(bytes)
+}
+
+fn same_identity(left: &Metadata, right: &Metadata) -> bool {
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.mode() == right.mode()
+        && left.nlink() == right.nlink()
+        && left.uid() == right.uid()
+        && left.gid() == right.gid()
+        && left.len() == right.len()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
 }
 
 fn blocked(blocker: &str) -> Value {
@@ -382,35 +438,33 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
     let mut keys = Vec::new();
     let mut ids = BTreeSet::new();
     let mut spkis = BTreeSet::new();
+    let mut input_ids = Vec::new();
     for candidate in value["keys"].as_array().expect("checked above") {
-        let allowed = [
-            "algorithm",
-            "effectiveFrom",
-            "expiresAt",
-            "keyId",
-            "organization",
-            "publicKeyPem",
-            "revokedAt",
-            "roles",
-            "status",
-            "subjectId",
-        ];
-        if candidate
-            .as_object()
-            .is_none_or(|object| object.keys().any(|key| !allowed.contains(&key.as_str())))
+        if !exact(candidate, TRUST_KEY_KEYS)
             || !identifier(&candidate["keyId"])
             || !identifier(&candidate["subjectId"])
             || candidate["algorithm"] != "ed25519"
             || candidate["status"] != "active"
-            || candidate["privateKeyPem"].is_string()
+            || (!candidate["organization"].is_null() && !candidate["organization"].is_string())
         {
             return Err("pinned_external_evidence_trust_key_invalid".into());
         }
         let roles = candidate["roles"]
             .as_array()
             .ok_or("pinned_external_evidence_trust_key_invalid")?;
+        let raw_roles = roles
+            .iter()
+            .map(|role| role.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+            .ok_or("pinned_external_evidence_trust_key_invalid")?;
+        let mut canonical_roles = raw_roles.clone();
+        canonical_roles.sort();
+        canonical_roles.dedup();
         if roles.is_empty()
-            || roles.iter().any(|role| !identifier(role))
+            || raw_roles != canonical_roles
+            || raw_roles
+                .iter()
+                .any(|role| !identifier(&Value::String(role.clone())))
             || candidate["publicKeyPem"]
                 .as_str()
                 .is_none_or(|pem| pem.contains("PRIVATE KEY"))
@@ -439,19 +493,13 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
             .map_err(|_| "pinned_external_evidence_trust_key_invalid")?;
         let spki_hash = bytes_hash(der.as_bytes());
         let id = candidate["keyId"].as_str().unwrap().to_owned();
+        input_ids.push(id.clone());
         if !ids.insert(id.clone()) || !spkis.insert(spki_hash.clone()) {
             return Err("pinned_external_evidence_trust_key_invalid".into());
         }
-        let mut roles = roles
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        roles.sort();
-        roles.dedup();
         let canonical = json!({
             "keyId": id, "subjectId": candidate["subjectId"], "organization": candidate["organization"],
-            "algorithm": "ed25519", "publicKeyPem": pem, "roles": roles, "status": "active",
+            "algorithm": "ed25519", "publicKeyPem": pem, "roles": canonical_roles, "status": "active",
             "effectiveFrom": candidate["effectiveFrom"], "expiresAt": candidate["expiresAt"], "revokedAt": candidate["revokedAt"],
         });
         keys.push(TrustKey {
@@ -468,13 +516,22 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
     if !role_ok {
         return Err("pinned_external_evidence_trust_role_missing".into());
     }
+    let collation = ProductionCollationV1::load()
+        .map_err(|_| "pinned_external_evidence_trust_store_invalid")?;
+    if input_ids
+        .windows(2)
+        .any(|window| collation.compare(&window[0], &window[1]).is_gt())
+    {
+        return Err("pinned_external_evidence_trust_key_invalid".into());
+    }
     if expected_ids.is_empty() || expected_ids.iter().any(|id| !ids.contains(id)) {
         return Err("pinned_external_evidence_expected_key_missing".into());
     }
     keys.sort_by(|left, right| {
-        left.value["keyId"]
-            .as_str()
-            .cmp(&right.value["keyId"].as_str())
+        collation.compare(
+            left.value["keyId"].as_str().unwrap(),
+            right.value["keyId"].as_str().unwrap(),
+        )
     });
     let canonical = json!({"version":1,"kind":"AuthorityTrustStore","keys":keys.iter().map(|key| key.value.clone()).collect::<Vec<_>>()});
     let hash = canonical_hash("PinnedExternalEvidenceTrustStore", &canonical)
@@ -484,6 +541,50 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
 
 type EnvelopeVerification = (String, String, Vec<String>, Vec<String>, Vec<String>);
 
+struct EnvelopeErrors(Vec<String>);
+
+impl From<&str> for EnvelopeErrors {
+    fn from(value: &str) -> Self {
+        Self(vec![value.to_owned()])
+    }
+}
+
+// The incumbent coerces the three signature reference fields with
+// String(value || ''). Arrays therefore retain Array#join semantics.
+fn javascript_string(value: &Value) -> Option<String> {
+    Some(match value {
+        Value::Null => "null".to_owned(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(_) => String::from_utf8(production_stable_json_v1(value).ok()?).ok()?,
+        Value::String(value) => value.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| {
+                if value.is_null() {
+                    Some(String::new())
+                } else {
+                    javascript_string(value)
+                }
+            })
+            .collect::<Option<Vec<_>>>()?
+            .join(","),
+        Value::Object(value) => {
+            if value.contains_key("toString") {
+                return None;
+            }
+            "[object Object]".to_owned()
+        }
+    })
+}
+
+fn signature_string(value: &Value) -> Result<String, EnvelopeErrors> {
+    if value.is_null() || value == false || value.as_f64().is_some_and(|number| number == 0.0) {
+        return Ok(String::new());
+    }
+    javascript_string(value)
+        .ok_or_else(|| "immutable_signed_json_authority_signature_invalid".into())
+}
+
 fn envelope_valid(
     value: &Value,
     subject_hash: &str,
@@ -491,7 +592,7 @@ fn envelope_valid(
     expected_ids: &[String],
     now: i64,
     maximum_lifetime: u64,
-) -> Result<EnvelopeVerification, String> {
+) -> Result<EnvelopeVerification, EnvelopeErrors> {
     if !exact(value, ENVELOPE_KEYS) {
         return Err("pinned_external_evidence_envelope_shape_invalid".into());
     }
@@ -531,14 +632,15 @@ fn envelope_valid(
     let mut seen = BTreeSet::new();
     let mut verified = Vec::new();
     for signature in signatures {
+        let key_id = signature_string(&signature["keyId"])?;
         if !exact(signature, SIGNATURE_KEYS)
             || signature["algorithm"] != "ed25519"
-            || signature["role"] != SIGNER_ROLE
-            || !seen.insert(signature["keyId"].as_str().unwrap_or_default().to_owned())
+            || signature_string(&signature["role"])? != SIGNER_ROLE
+            || key_id.is_empty()
+            || !seen.insert(key_id.clone())
         {
             return Err("immutable_signed_json_authority_signature_invalid".into());
         }
-        let key_id = signature["keyId"].as_str().unwrap_or_default();
         let key = trust
             .keys
             .iter()
@@ -550,10 +652,8 @@ fn envelope_valid(
         {
             return Err("immutable_signed_json_authority_signature_invalid".into());
         }
-        let encoded = signature["value"]
-            .as_str()
-            .ok_or("immutable_signed_json_authority_signature_invalid")?;
-        let bytes = Base64::decode_vec(encoded)
+        let encoded = signature_string(&signature["value"])?;
+        let bytes = Base64::decode_vec(&encoded)
             .map_err(|_| "immutable_signed_json_authority_signature_invalid")?;
         if bytes.len() != 64 || Base64::encode_string(&bytes) != encoded {
             return Err("immutable_signed_json_authority_signature_invalid".into());
@@ -563,6 +663,21 @@ fn envelope_valid(
         key.key
             .verify_strict(&payload_bytes, &signature)
             .map_err(|_| "immutable_signed_json_authority_signature_invalid")?;
+        verified.push(key_id);
+    }
+    verified.sort();
+    let mut blockers = Vec::new();
+    if verified != expected_ids {
+        blockers.push("pinned_external_evidence_signer_key_binding_invalid".to_owned());
+    }
+    // Node finishes every signature before evaluating key-time policy, so a
+    // later bad signature takes precedence over an earlier expired key.
+    for key_id in &verified {
+        let key = trust
+            .keys
+            .iter()
+            .find(|key| key.value["keyId"] == *key_id)
+            .unwrap();
         let effective = instant(&key.value["effectiveFrom"]);
         let key_expires = instant(&key.value["expiresAt"]);
         let revoked = instant(&key.value["revokedAt"]);
@@ -570,13 +685,11 @@ fn envelope_valid(
             || key_expires.is_some_and(|at| signed >= at)
             || revoked.is_some_and(|at| signed >= at)
         {
-            return Err("pinned_external_evidence_signer_outside_key_time_window".into());
+            blockers.push("pinned_external_evidence_signer_outside_key_time_window".to_owned());
         }
-        verified.push(key_id.to_owned());
     }
-    verified.sort();
-    if verified != expected_ids {
-        return Err("pinned_external_evidence_signer_key_binding_invalid".into());
+    if !blockers.is_empty() {
+        return Err(EnvelopeErrors(unique(blockers)));
     }
     let envelope_hash = canonical_hash("PinnedExternalEvidenceEnvelope", value)
         .ok_or("pinned_external_evidence_envelope_invalid")?;
@@ -635,7 +748,7 @@ fn blocked_receipt_hash(
     envelope_hash: &str,
     trust_hash: &str,
     now: &str,
-    blocker: &str,
+    blockers: &[String],
 ) -> Option<String> {
     let payload = json!({
         "version": 1,
@@ -655,7 +768,7 @@ fn blocked_receipt_hash(
         "verifiedAt": now,
         "cryptographicAuthorityReady": false,
         "externalActionPerformed": false,
-        "blockers": [blocker],
+        "blockers": blockers,
     });
     canonical_hash("PinnedExternalEvidenceVerificationReceipt", &payload)
 }
@@ -700,10 +813,14 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
     let Some(bytes) = read_pinned(path) else {
         return blocked("autonomous_research_author_identity_configuration_file_invalid");
     };
-    let parsed = match serde_json::from_slice::<Value>(&bytes) {
+    let mut parsed = match serde_json::from_slice::<Value>(&bytes) {
         Ok(value) => value,
         Err(_) => return blocked("autonomous_research_author_identity_configuration_file_invalid"),
     };
+    if !wire_order::canonical_configuration_key_order(&bytes) {
+        return blocked("autonomous_research_author_identity_configuration_verification_failed");
+    }
+    normalize_numbers(&mut parsed);
     let version = parsed["version"].as_u64();
     let keys = if version == Some(2) {
         CONFIG_V2_KEYS
@@ -711,6 +828,7 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
         CONFIG_V1_KEYS
     };
     let valid_shape = exact(&parsed, keys)
+        && version.is_some_and(|version| version == 1 || version == 2)
         && parsed["kind"] == CONFIG_KIND
         && parsed["status"] == "autonomous_research_author_identity_configured"
         && parsed["signerRole"] == SIGNER_ROLE
@@ -753,7 +871,9 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
     // Keep that distinction so a recomputed hash cannot make an overlong
     // subject appear statically configured.
     let static_lifetime = parsed["maximumLifetimeMs"].as_u64().unwrap();
-    let static_subject_valid = subject_valid(static_subject, None, static_lifetime);
+    let static_subject_valid = subject_valid(static_subject, None, static_lifetime)
+        && static_subject["assuranceProfile"]
+            == "pinned-provider-account-and-platform-attestation-v1";
     let static_policy_valid = version != Some(2)
         || (exact(&parsed["identityPolicy"], POLICY_KEYS)
             && policy_for(static_subject).as_ref() == Some(&parsed["identityPolicy"]));
@@ -819,20 +939,20 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
         .is_some_and(|((at, start), end)| at >= start && at < end);
     let platform =
         subject["assuranceProfile"] == "pinned-provider-account-and-platform-attestation-v1";
+    if version != Some(2) {
+        blockers.push("autonomous_research_author_identity_stable_policy_v2_required".into());
+    }
     if !subject_valid(subject, instant(&Value::String(now.to_owned())), lifetime)
         || !platform
         || !subject_current
     {
         blockers.push("autonomous_research_author_identity_subject_not_current".into());
     }
-    if version == Some(2) {
-        if !exact(&parsed["identityPolicy"], POLICY_KEYS)
-            || policy_for(subject).as_ref() != Some(&parsed["identityPolicy"])
-        {
-            blockers.push("autonomous_research_author_identity_policy_binding_invalid".into());
-        }
-    } else {
-        blockers.push("autonomous_research_author_identity_stable_policy_v2_required".into());
+    if version == Some(2)
+        && (!exact(&parsed["identityPolicy"], POLICY_KEYS)
+            || policy_for(subject).as_ref() != Some(&parsed["identityPolicy"]))
+    {
+        blockers.push("autonomous_research_author_identity_policy_binding_invalid".into());
     }
     let input_trust_ids = parsed["signerKeyIds"]
         .as_array()
@@ -894,12 +1014,13 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
         });
         receipt_hash = canonical_hash("PinnedExternalEvidenceVerificationReceipt", &receipt);
         true
-    } else if let Err(blocker) = envelope {
+    } else if let Err(EnvelopeErrors(envelope_blockers)) = envelope {
         if let Some(hash) = envelope_candidate_hash {
             envelope_hash = Some(hash.clone());
-            receipt_hash = blocked_receipt_hash(subject_hash, &hash, &trust.hash, now, &blocker);
+            receipt_hash =
+                blocked_receipt_hash(subject_hash, &hash, &trust.hash, now, &envelope_blockers);
         }
-        blockers.push(blocker);
+        blockers.extend(envelope_blockers);
         false
     } else {
         false

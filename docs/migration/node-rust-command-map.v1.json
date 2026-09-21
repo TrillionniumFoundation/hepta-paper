@@ -229,11 +229,12 @@
         "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs",
         "rust/crates/hepta-paper-service/tests/author_identity_intake_parity.rs"
       ],
-      "remaining": "Rust now matches the passive Node author-input composition for missing, malformed, expired, bad-signature, and valid v2 configurations: it performs pinned regular-file identity checks, exact v1/v2 shape and configuration-hash verification, subject/policy validation, canonical Ed25519 trust-store and envelope verification, receipt/hash projection, relative path resolution, and fail-closed --require-ready behavior. Release-attestor inspection remains a bounded header path; external-kms v3 backend identity, hardware/KMS authority, live signer challenge, external author binding, independent acceptance, production activation, and Node retirement remain blocked behind external authority and target-host evidence.",
+      "remaining": "Rust now matches the covered passive Node author-input cases for missing, malformed, expired, bad-signature, invalid-version, reordered-object, numeric-signature-key, and valid v2 configurations: it performs pinned regular-file identity checks, Node insertion-order JSON shape and configuration-hash verification, subject/policy validation, canonical Ed25519 trust-store and envelope verification, receipt/hash projection, relative path resolution, JavaScript String-coercion signature references, and fail-closed --require-ready behavior. Release-attestor inspection remains a bounded header path; external-kms v3 backend identity, hardware/KMS authority, live signer challenge, external author binding, independent acceptance, production activation, and Node retirement remain blocked behind external authority and target-host evidence.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/external_authority_intake.rs",
-        "rust/crates/hepta-paper-service/src/external_authority_intake/author.rs"
+        "rust/crates/hepta-paper-service/src/external_authority_intake/author.rs",
+        "rust/crates/hepta-paper-service/src/external_authority_intake/author/wire_order.rs"
       ],
       "testCases": [
         {

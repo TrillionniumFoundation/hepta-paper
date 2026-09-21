@@ -13,8 +13,9 @@ use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    fs,
-    os::unix::fs::MetadataExt,
+    fs::{self, Metadata, OpenOptions},
+    io::Read,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
 };
 use thiserror::Error;
@@ -103,21 +104,40 @@ fn read_pinned(path: &Path, maximum_bytes: u64) -> Option<Vec<u8>> {
     {
         return None;
     }
-    let bytes = fs::read(&candidate).ok()?;
-    let after = fs::metadata(&candidate).ok()?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(&candidate)
+        .ok()?;
+    let opened = file.metadata().ok()?;
+    if !same_identity(&before, &opened) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(maximum_bytes + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let after = file.metadata().ok()?;
     let path_after = fs::symlink_metadata(&candidate).ok()?;
     (bytes.len() as u64 == before.len()
-        && after.dev() == before.dev()
-        && after.ino() == before.ino()
-        && after.size() == before.size()
-        && after.mtime() == before.mtime()
-        && after.mtime_nsec() == before.mtime_nsec()
-        && path_after.dev() == before.dev()
-        && path_after.ino() == before.ino()
-        && path_after.size() == before.size()
-        && path_after.mtime() == before.mtime()
-        && path_after.mtime_nsec() == before.mtime_nsec())
+        && same_identity(&before, &after)
+        && same_identity(&before, &path_after))
     .then_some(bytes)
+}
+
+fn same_identity(left: &Metadata, right: &Metadata) -> bool {
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.mode() == right.mode()
+        && left.nlink() == right.nlink()
+        && left.uid() == right.uid()
+        && left.gid() == right.gid()
+        && left.len() == right.len()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
 }
 
 fn bytes_hash(bytes: &[u8]) -> String {
@@ -127,6 +147,26 @@ fn bytes_hash(bytes: &[u8]) -> String {
 fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, now: &str) -> Value {
     author::inspect_author(path, expected_hash, now)
 }
+
+fn selected_path(path: Option<&Path>) -> Option<PathBuf> {
+    let value = javascript_trim(path?.to_str()?);
+    (!value.is_empty()).then(|| PathBuf::from(value))
+}
+
+fn selected_hash(value: Option<&str>) -> Option<String> {
+    let value = javascript_trim(value?);
+    (!value.is_empty()).then(|| value.to_ascii_lowercase())
+}
+
+fn javascript_trim(value: &str) -> &str {
+    value.trim_matches(|character| {
+        matches!(character,
+            '\u{0009}'..='\u{000D}' | '\u{0020}' | '\u{00A0}' | '\u{1680}'
+                | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}'
+                | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
+    })
+}
+
 fn inspect_release(path: Option<&Path>, expected_hash: Option<&str>) -> Value {
     let Some(path) = path else {
         return blocked_release(RELEASE_PATH_MISSING);
@@ -200,11 +240,15 @@ pub fn inspect_external_authority_intake_v1(
     release_expected_hash: Option<&str>,
     observed_at: &str,
 ) -> Result<Value, ExternalAuthorityIntakeError> {
-    if observed_at.is_empty() {
+    if !author::is_canonical_instant(observed_at) {
         return Err(ExternalAuthorityIntakeError::Clock);
     }
-    let author = inspect_author(author_path, author_expected_hash, observed_at);
-    let release = inspect_release(release_path, release_expected_hash);
+    let author_path = selected_path(author_path);
+    let release_path = selected_path(release_path);
+    let author_hash = selected_hash(author_expected_hash);
+    let release_hash = selected_hash(release_expected_hash);
+    let author = inspect_author(author_path.as_deref(), author_hash.as_deref(), observed_at);
+    let release = inspect_release(release_path.as_deref(), release_hash.as_deref());
     let author_blockers = author
         .get("blockers")
         .and_then(Value::as_array)

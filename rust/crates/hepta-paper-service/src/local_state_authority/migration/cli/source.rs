@@ -1,10 +1,13 @@
 //! Owning read-only CLI adapter. Namespace observations identify the named
 //! source before/after a logical SQLite snapshot; they are not a live writer,
 //! stopped-service, key-custody or connection-provenance capability.
-use super::Options;
+use super::{Mode, Options};
 use crate::{
     local_state_authority::{
-        migration::{LegacyAuthorityJournalVerifierV1, OfflineNativeAuthorityImageV1},
+        migration::{
+            LegacyAuthorityJournalVerifierV1, OfflineLegacyAuthorityArchiveV1,
+            OfflineNativeAuthorityImageV1,
+        },
         storage::Ancestors,
     },
     sqlite_mutation_coordinator::{Result, error},
@@ -20,8 +23,15 @@ use std::{
 
 pub(super) struct SourceResult {
     pub(super) report: Value,
-    pub(super) image: Option<OfflineNativeAuthorityImageV1>,
+    pub(super) artifact: Option<SourceArtifact>,
     pub(super) protected_paths: Vec<PathBuf>,
+}
+
+// Only the genuine opaque builders can supply either representation. A mode
+// cannot substitute a caller-provided byte vector or diagnostic JSON for one.
+pub(super) enum SourceArtifact {
+    NativeImage(OfflineNativeAuthorityImageV1),
+    LegacyArchive(OfflineLegacyAuthorityArchiveV1),
 }
 
 struct NamedFile {
@@ -77,7 +87,7 @@ fn canonical_name(path: &Path) -> bool {
             .all(|part| matches!(part, Component::RootDir | Component::Normal(_)))
 }
 
-pub(super) fn read_source(options: &Options, export: bool) -> Result<SourceResult> {
+pub(super) fn read_source(options: &Options, mode: Mode) -> Result<SourceResult> {
     for path in [&options.daemon_configuration, &options.online_configuration] {
         if !canonical_name(path) {
             return Err(error("local_authority_journal_configuration_path_invalid"));
@@ -131,11 +141,22 @@ pub(super) fn read_source(options: &Options, export: bool) -> Result<SourceResul
         for sidecar in &sidecars {
             sidecar.current()?;
         }
-        let (history, image) = if export {
-            let image = verifier.build_offline_native_image(&db)?;
-            (image.report()["sourceHistory"].clone(), Some(image))
-        } else {
-            (verifier.inspect(&db)?, None)
+        let (history, artifact) = match mode {
+            Mode::Inspect => (verifier.inspect(&db)?, None),
+            Mode::ExportNativeImage => {
+                let image = verifier.build_offline_native_image(&db)?;
+                (
+                    image.report()["sourceHistory"].clone(),
+                    Some(SourceArtifact::NativeImage(image)),
+                )
+            }
+            Mode::ExportLegacyArchive => {
+                let archive = verifier.build_offline_legacy_archive(&db)?;
+                (
+                    archive.report()["sourceHistory"].clone(),
+                    Some(SourceArtifact::LegacyArchive(archive)),
+                )
+            }
         };
         verifier.current()?;
         ancestors.assert_current()?;
@@ -143,14 +164,14 @@ pub(super) fn read_source(options: &Options, export: bool) -> Result<SourceResul
         for sidecar in &sidecars {
             sidecar.current()?;
         }
-        Ok((history, image))
+        Ok((history, artifact))
     })();
     let rollback = if db.is_autocommit() {
         Ok(())
     } else {
         db.execute_batch("ROLLBACK")
     };
-    // Close is an explicit barrier before the returned image may reach the
+    // Close is an explicit barrier before the returned artifact may reach the
     // filesystem publisher. Drop any failed close's returned connection before
     // the retained public-input verifier leaves this function.
     let close = db.close();
@@ -161,7 +182,7 @@ pub(super) fn read_source(options: &Options, export: bool) -> Result<SourceResul
         return Err(failure);
     }
     rollback?;
-    let (history, image) = observed?;
+    let (history, artifact) = observed?;
     verifier.current()?;
     ancestors.assert_current()?;
     main.current()?;
@@ -178,7 +199,7 @@ pub(super) fn read_source(options: &Options, export: bool) -> Result<SourceResul
     });
     Ok(SourceResult {
         report,
-        image,
+        artifact,
         protected_paths,
     })
 }

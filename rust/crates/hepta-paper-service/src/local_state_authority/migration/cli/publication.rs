@@ -2,7 +2,10 @@
 //! This private filesystem operation does not establish source provenance,
 //! process retirement, native deployment, or permission to replace a journal.
 use crate::{
-    local_state_authority::{migration::OfflineNativeAuthorityImageV1, storage},
+    local_state_authority::{
+        migration::{OfflineLegacyAuthorityArchiveV1, OfflineNativeAuthorityImageV1},
+        storage,
+    },
     sqlite_mutation_coordinator::{Result, SqliteMutationCoordinatorError, error, hash_bytes},
 };
 use nix::{
@@ -29,7 +32,83 @@ const FAILED: &str = "local_authority_offline_publication_failed";
 const EXISTS: &str = "local_authority_offline_publication_output_exists";
 const PROTECTED: &str = "local_authority_offline_publication_protected_path";
 const IMAGE: &str = "authority.sqlite";
+const ARCHIVE: &str = "legacy-authority.sqlite";
 const REPORT: &str = "report.json";
+
+// Closed, private dispatch over independently verified opaque objects. There
+// is deliberately no byte/report constructor or public generic publisher.
+enum ArtifactRef<'a> {
+    NativeImage(&'a OfflineNativeAuthorityImageV1),
+    LegacyArchive(&'a OfflineLegacyAuthorityArchiveV1),
+}
+impl ArtifactRef<'_> {
+    fn filename(&self) -> &'static str {
+        match self {
+            Self::NativeImage(_) => IMAGE,
+            Self::LegacyArchive(_) => ARCHIVE,
+        }
+    }
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::NativeImage(image) => image.bytes(),
+            Self::LegacyArchive(archive) => archive.bytes(),
+        }
+    }
+    fn assert_bytes(&self) -> Result<()> {
+        let (report, hash_key, length_key, mismatch) = match self {
+            Self::NativeImage(image) => (
+                image.report(),
+                "imageSha256",
+                "imageByteLength",
+                "local_authority_offline_publication_image_mismatch",
+            ),
+            Self::LegacyArchive(archive) => (
+                archive.report(),
+                "archiveSha256",
+                "archiveByteLength",
+                "local_authority_offline_publication_archive_mismatch",
+            ),
+        };
+        if report[hash_key] != hash_bytes(self.bytes())
+            || report[length_key].as_u64() != Some(self.bytes().len() as u64)
+        {
+            return Err(error(mismatch));
+        }
+        Ok(())
+    }
+    fn bundle_report(&self, source_report: &Value) -> Value {
+        match self {
+            Self::NativeImage(image) => json!({
+                "version":1,"kind":"HeptaLocalStateAuthorityOfflineNativeImageBundleV1",
+                "evidenceScope":"offline_artifact_no_migration_or_publication_authority",
+                "image":image.report(),"sourceNamespaceObservation":source_report,
+            }),
+            Self::LegacyArchive(archive) => json!({
+                "version":1,"kind":"HeptaLocalStateAuthorityOfflineLegacyArchiveBundleV1",
+                "evidenceScope":"offline_original_format_archive_no_migration_or_restore_authority",
+                "archive":archive.report(),"sourceNamespaceObservation":source_report,
+            }),
+        }
+    }
+    fn publication_report(&self, output: &Path, report: &[u8]) -> Value {
+        match self {
+            Self::NativeImage(image) => json!({
+                "version":1,"kind":"HeptaLocalStateAuthorityOfflineNativeImagePublicationV1",
+                "evidenceScope":"offline_artifact_no_live_migration_authority","publicationCommitted":true,
+                "outputPath":output,"imagePath":output.join(IMAGE),"reportPath":output.join(REPORT),
+                "imageSha256":image.report()["imageSha256"],"reportSha256":hash_bytes(report),
+                "imageByteLength":image.bytes().len(),"reportByteLength":report.len(),
+            }),
+            Self::LegacyArchive(archive) => json!({
+                "version":1,"kind":"HeptaLocalStateAuthorityOfflineLegacyArchivePublicationV1",
+                "evidenceScope":"offline_original_format_archive_no_live_migration_authority","publicationCommitted":true,
+                "outputPath":output,"archivePath":output.join(ARCHIVE),"reportPath":output.join(REPORT),
+                "archiveSha256":archive.report()["archiveSha256"],"reportSha256":hash_bytes(report),
+                "archiveByteLength":archive.bytes().len(),"reportByteLength":report.len(),
+            }),
+        }
+    }
+}
 
 fn canonical_shape(path: &Path) -> bool {
     path.to_str().is_some_and(|s| {
@@ -381,6 +460,36 @@ pub(super) fn publish_image(
     source_report: &Value,
     protected_paths: &[PathBuf],
 ) -> Result<Value> {
+    publish_artifact(
+        output,
+        ArtifactRef::NativeImage(image),
+        source_report,
+        protected_paths,
+    )
+}
+
+/// Original-format archive publication retains its distinct filename, report
+/// and version. It does not authorize restoring or restarting the Node daemon.
+pub(super) fn publish_legacy_archive(
+    output: &Path,
+    archive: &OfflineLegacyAuthorityArchiveV1,
+    source_report: &Value,
+    protected_paths: &[PathBuf],
+) -> Result<Value> {
+    publish_artifact(
+        output,
+        ArtifactRef::LegacyArchive(archive),
+        source_report,
+        protected_paths,
+    )
+}
+
+fn publish_artifact(
+    output: &Path,
+    artifact: ArtifactRef<'_>,
+    source_report: &Value,
+    protected_paths: &[PathBuf],
+) -> Result<Value> {
     let prepare = || -> Result<(Parent, Vec<u8>)> {
         if !canonical_shape(output) || output == Path::new("/") || protected_paths.is_empty() {
             return Err(error(INVALID));
@@ -393,25 +502,17 @@ pub(super) fn publish_image(
                 return Err(error(PROTECTED));
             }
         }
-        if image.report()["imageSha256"] != hash_bytes(image.bytes())
-            || image.report()["imageByteLength"].as_u64() != Some(image.bytes().len() as u64)
-        {
-            return Err(error("local_authority_offline_publication_image_mismatch"));
-        }
+        artifact.assert_bytes()?;
         let parent = Parent::open(output.parent().ok_or_else(|| error(INVALID))?)?;
         parent.absent(Path::new(output.file_name().ok_or_else(|| error(INVALID))?))?;
-        let report = serde_json::to_vec_pretty(&json!({
-            "version":1,"kind":"HeptaLocalStateAuthorityOfflineNativeImageBundleV1",
-            "evidenceScope":"offline_artifact_no_migration_or_publication_authority",
-            "image":image.report(),"sourceNamespaceObservation":source_report,
-        }))
-        .map_err(|_| error(FAILED))?;
+        let report = serde_json::to_vec_pretty(&artifact.bundle_report(source_report))
+            .map_err(|_| error(FAILED))?;
         Ok((parent, report))
     };
     let (parent, report) = prepare().map_err(|e| annotate(e, output, Some(false)))?;
     let mut stage = Stage::create(&parent).map_err(|e| annotate(e, output, Some(false)))?;
     stage
-        .write_new(IMAGE, image.bytes())
+        .write_new(artifact.filename(), artifact.bytes())
         .map_err(|e| annotate(e, output, Some(false)))?;
     stage
         .write_new(REPORT, &report)
@@ -424,13 +525,7 @@ pub(super) fn publish_image(
         ),
         output,
     )?;
-    Ok(json!({
-        "version":1,"kind":"HeptaLocalStateAuthorityOfflineNativeImagePublicationV1",
-        "evidenceScope":"offline_artifact_no_live_migration_authority","publicationCommitted":true,
-        "outputPath":output,"imagePath":output.join(IMAGE),"reportPath":output.join(REPORT),
-        "imageSha256":image.report()["imageSha256"],"reportSha256":hash_bytes(&report),
-        "imageByteLength":image.bytes().len(),"reportByteLength":report.len(),
-    }))
+    Ok(artifact.publication_report(output, &report))
 }
 
 #[cfg(test)]

@@ -23,8 +23,11 @@ database, preserving all six original tables' rowids and raw TEXT, adding the
 actual pinned public-key identity and native format, and safely serializing a
 standalone image. See the [offline artifact contract](migration/offline_image/HANDOFF.md).
 It accepts no destination path and leaves the source transaction untouched.
-Durable archive/publication, uncertain live-commit recovery and maintenance
-capabilities proposed below remain unimplemented.
+The offline CLI can now publish either a native image or a verified original-format
+archive into a fresh private bundle after explicitly closing source SQLite.
+Its no-replace publication does not establish live source provenance or authorize
+replacement. The maintenance-bound archive/source CAS, uncertain live-commit
+recovery and maintenance capabilities proposed below remain unimplemented.
 
 ## Concrete source compatibility
 
@@ -139,11 +142,14 @@ Do not silently discard, re-sign, relabel or trust these rows. An unrestricted b
 ## In-place transaction and durable archive
 
 The [offline original-format archive builder](migration/archive/HANDOFF.md)
-now implements only the verified snapshot-to-memory backup prerequisite.
+implements the verified snapshot-to-memory backup prerequisite.
 It preserves original Node format and requires a held READ transaction before
 any final migration WRITE transaction. Its opaque bytes and report have no
-filesystem-publication, source-provenance or maintenance authority. The live
-owning sequence below, including durable archive publication and source CAS,
+filesystem-publication, source-provenance or maintenance authority. The separate
+offline CLI publishes those bytes and its report with fsync and atomic no-replace
+rename only after closing the source connection; the result cannot reconstruct a
+maintenance owner or grant restore permission. The live owning sequence below,
+including binding the archived snapshot to maintained source provenance and CAS,
 is still a design. The [maintenance owner design](migration/MAINTENANCE_OWNER_DESIGN.md)
 details the actual installed systemd service barrier that sequence requires.
 

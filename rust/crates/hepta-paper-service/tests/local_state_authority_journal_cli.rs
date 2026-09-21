@@ -1,6 +1,9 @@
 //! Actual binary/Node fixtures for the explicitly offline journal commands.
 //! Export is inspected as a detached bundle; these tests do not publish over a
 //! source, stop an authority, or manufacture migration/deployment permission.
+#[path = "local_state_authority_journal_cli/legacy_archive.rs"]
+mod legacy_archive;
+
 use ed25519_dalek::{
     SigningKey, VerifyingKey,
     pkcs8::{DecodePublicKey, EncodePublicKey},

@@ -102,6 +102,106 @@ fn genuine_image(root: &Path) -> (OfflineNativeAuthorityImageV1, Value) {
     )
 }
 
+fn genuine_archive(root: &Path) -> (OfflineLegacyAuthorityArchiveV1, Value) {
+    let (_, observation) = genuine_image(root);
+    let daemon = root.join("configuration.json");
+    let online = root.join("online.json");
+    let owner = LegacyAuthorityJournalVerifierV1::load(
+        &daemon,
+        &hash_bytes(&fs::read(&daemon).unwrap()),
+        &online,
+        &hash_bytes(&fs::read(&online).unwrap()),
+    )
+    .unwrap();
+    let db = Connection::open_with_flags(
+        root.join("authority.sqlite"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    db.execute_batch("PRAGMA query_only=ON; BEGIN DEFERRED")
+        .unwrap();
+    db.query_row("SELECT count(*) FROM main.sqlite_schema", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .unwrap();
+    let archive = owner.build_offline_legacy_archive(&db).unwrap();
+    db.execute_batch("ROLLBACK").unwrap();
+    db.close().unwrap();
+    drop(owner);
+    (archive, observation)
+}
+
+#[test]
+fn genuine_legacy_archive_has_distinct_closed_bundle_and_shared_publication_refusals() {
+    let sandbox = Sandbox::new();
+    let source = sandbox.child("source");
+    let parent = sandbox.child("output");
+    let (archive, observation) = genuine_archive(&source);
+    let output = parent.join("bundle");
+    let result = publish_legacy_archive(
+        &output,
+        &archive,
+        &observation,
+        std::slice::from_ref(&source),
+    )
+    .unwrap();
+    assert_eq!(
+        result["kind"],
+        "HeptaLocalStateAuthorityOfflineLegacyArchivePublicationV1"
+    );
+    assert_eq!(result["publicationCommitted"], true);
+    assert_eq!(result["archivePath"], json!(output.join(ARCHIVE)));
+    assert_eq!(fs::read(output.join(ARCHIVE)).unwrap(), archive.bytes());
+    assert!(!output.join(IMAGE).exists());
+    assert_eq!(fs::read_dir(&output).unwrap().count(), 2);
+    let report_bytes = fs::read(output.join(REPORT)).unwrap();
+    assert_eq!(result["archiveSha256"], hash_bytes(archive.bytes()));
+    assert_eq!(result["reportSha256"], hash_bytes(&report_bytes));
+    let report: Value = serde_json::from_slice(&report_bytes).unwrap();
+    assert_eq!(
+        report["kind"],
+        "HeptaLocalStateAuthorityOfflineLegacyArchiveBundleV1"
+    );
+    assert_eq!(report["archive"], *archive.report());
+    assert_eq!(report["sourceNamespaceObservation"], observation);
+    let db = Connection::open_with_flags(output.join(ARCHIVE), OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .unwrap();
+    assert_eq!(
+        db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name='authority_native_identity'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        db.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+    db.close().unwrap();
+    for blocked in [&output, &source, &source.join("fresh"), &sandbox.0] {
+        let failure = publish_legacy_archive(
+            blocked,
+            &archive,
+            &observation,
+            std::slice::from_ref(&source),
+        )
+        .unwrap_err();
+        assert_eq!(failure.details["publicationCommitted"], false);
+        assert_eq!(failure.details["inspectionRequired"], false);
+    }
+    assert_eq!(fs::read(output.join(ARCHIVE)).unwrap(), archive.bytes());
+    assert_eq!(fs::read(output.join(REPORT)).unwrap(), report_bytes);
+    assert_eq!(fs::read_dir(parent).unwrap().count(), 1);
+}
+
 #[test]
 fn genuine_node_image_publishes_fresh_private_bundle_after_source_close() {
     let sandbox = Sandbox::new();

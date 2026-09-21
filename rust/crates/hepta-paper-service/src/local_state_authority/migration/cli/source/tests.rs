@@ -105,12 +105,27 @@ fn assert_no_open_source_handles(root: &Path) {
 }
 
 #[test]
-fn owning_read_closes_every_source_handle_before_returning_an_offline_image() {
-    for export in [false, true] {
+fn owning_read_closes_every_source_handle_before_returning_an_offline_artifact() {
+    for mode in [
+        Mode::Inspect,
+        Mode::ExportNativeImage,
+        Mode::ExportLegacyArchive,
+    ] {
         let fixture = Fixture::node();
         let before = fs::read(fixture.database()).unwrap();
-        let output = read_source(&fixture.options, export).unwrap();
-        assert_eq!(output.image.is_some(), export);
+        let output = read_source(&fixture.options, mode).unwrap();
+        assert!(matches!(
+            (mode, &output.artifact),
+            (Mode::Inspect, None)
+                | (
+                    Mode::ExportNativeImage,
+                    Some(SourceArtifact::NativeImage(_))
+                )
+                | (
+                    Mode::ExportLegacyArchive,
+                    Some(SourceArtifact::LegacyArchive(_))
+                )
+        ));
         assert_eq!(output.report["sourceConnectionClosed"], true);
         assert_eq!(
             output.report["evidenceScope"],
@@ -128,18 +143,24 @@ fn source_and_sidecar_aliases_are_refused_and_failure_closes_sqlite() {
     let fixture = Fixture::node();
     let extra = fixture.root.join("alias.sqlite");
     fs::hard_link(fixture.database(), &extra).unwrap();
-    assert!(read_source(&fixture.options, true).is_err());
+    for mode in [Mode::ExportNativeImage, Mode::ExportLegacyArchive] {
+        assert!(read_source(&fixture.options, mode).is_err());
+    }
     fs::remove_file(extra).unwrap();
     let wal = fixture.root.join("authority.sqlite-wal");
     symlink(fixture.root.join("configuration.json"), &wal).unwrap();
-    assert!(read_source(&fixture.options, true).is_err());
+    for mode in [Mode::ExportNativeImage, Mode::ExportLegacyArchive] {
+        assert!(read_source(&fixture.options, mode).is_err());
+    }
     fs::remove_file(wal).unwrap();
     let writer = Connection::open(fixture.database()).unwrap();
     writer
         .execute("UPDATE authority_metadata SET global_sequence=9", [])
         .unwrap();
     writer.close().unwrap();
-    assert!(read_source(&fixture.options, true).is_err());
+    for mode in [Mode::ExportNativeImage, Mode::ExportLegacyArchive] {
+        assert!(read_source(&fixture.options, mode).is_err());
+    }
     assert_no_open_source_handles(&fixture.root);
     let writer = Connection::open(fixture.database()).unwrap();
     writer.execute_batch("BEGIN EXCLUSIVE; ROLLBACK").unwrap();
@@ -162,7 +183,7 @@ fn canonical_names_and_complete_ancestor_identity_are_required() {
         online_hash: fixture.options.online_hash.clone(),
         output_directory: None,
     };
-    assert!(read_source(&options, false).is_err());
+    assert!(read_source(&options, Mode::Inspect).is_err());
     fs::remove_file(alias).unwrap();
     assert!(!canonical_name(Path::new("/tmp/../source")));
     assert!(!canonical_name(Path::new("/tmp//source")));

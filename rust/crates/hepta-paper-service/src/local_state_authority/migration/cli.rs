@@ -11,7 +11,14 @@ use std::{
 mod publication;
 mod source;
 
-const USAGE: &str = "Usage: hepta-paper-state-authority-journal <inspect|export-native-image> [options]\n\nRequired options:\n  --daemon-configuration PATH\n  --daemon-configuration-sha256 HASH\n  --online-configuration PATH\n  --online-configuration-sha256 HASH\n\nExport also requires:\n  --output-directory PATH       Fresh offline bundle directory.\n\n  --help                        Show this help after validating all arguments.\n\nPaths must be canonical absolute paths. HASH is sha256:<64 lowercase hex digits>.\nThe source database comes only from the pinned daemon configuration. Export\ncreates a separate offline artifact; it does not replace a source journal, stop\nNode, start a daemon, or authorize live migration.\n";
+const USAGE: &str = "Usage: hepta-paper-state-authority-journal <inspect|export-native-image|export-legacy-archive> [options]\n\nRequired options:\n  --daemon-configuration PATH\n  --daemon-configuration-sha256 HASH\n  --online-configuration PATH\n  --online-configuration-sha256 HASH\n\nExport also requires:\n  --output-directory PATH       Fresh offline bundle directory.\n\n  --help                        Show this help after validating all arguments.\n\nPaths must be canonical absolute paths. HASH is sha256:<64 lowercase hex digits>.\nThe source database comes only from the pinned daemon configuration. Export\ncreates a separate offline artifact; it does not replace a source journal, stop\nNode, start a daemon, or authorize live migration.\n";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Mode {
+    Inspect,
+    ExportNativeImage,
+    ExportLegacyArchive,
+}
 
 pub(super) struct Options {
     pub daemon_configuration: PathBuf,
@@ -48,7 +55,7 @@ fn path(value: &str, option: &str) -> Result<PathBuf> {
     Ok(result.to_owned())
 }
 
-fn parse(arguments: &[String]) -> Result<Option<(Options, bool)>> {
+fn parse(arguments: &[String]) -> Result<Option<(Options, Mode)>> {
     let mut command = None;
     let mut help = false;
     let mut values = BTreeMap::new();
@@ -62,8 +69,9 @@ fn parse(arguments: &[String]) -> Result<Option<(Options, bool)>> {
                 return Err(invalid("extra_positional_argument", None));
             }
             command = Some(match token.as_str() {
-                "inspect" => false,
-                "export-native-image" => true,
+                "inspect" => Mode::Inspect,
+                "export-native-image" => Mode::ExportNativeImage,
+                "export-legacy-archive" => Mode::ExportLegacyArchive,
                 _ => return Err(invalid("command_invalid", None)),
             });
             continue;
@@ -115,7 +123,7 @@ fn parse(arguments: &[String]) -> Result<Option<(Options, bool)>> {
         }
         values.insert(key.to_owned(), value.to_owned());
     }
-    if command == Some(false) && values.contains_key("output-directory") {
+    if command == Some(Mode::Inspect) && values.contains_key("output-directory") {
         return Err(invalid(
             "output_only_valid_for_export",
             Some("output-directory"),
@@ -124,7 +132,7 @@ fn parse(arguments: &[String]) -> Result<Option<(Options, bool)>> {
     if help {
         return Ok(None);
     }
-    let export = command.ok_or_else(|| invalid("command_required", None))?;
+    let mode = command.ok_or_else(|| invalid("command_required", None))?;
     let mut required = |key: &str| {
         values
             .remove(key)
@@ -134,7 +142,7 @@ fn parse(arguments: &[String]) -> Result<Option<(Options, bool)>> {
     let daemon_hash = required("daemon-configuration-sha256")?;
     let online_configuration = PathBuf::from(required("online-configuration")?);
     let online_hash = required("online-configuration-sha256")?;
-    let output_directory = if export {
+    let output_directory = if mode != Mode::Inspect {
         Some(PathBuf::from(required("output-directory")?))
     } else {
         None
@@ -147,7 +155,7 @@ fn parse(arguments: &[String]) -> Result<Option<(Options, bool)>> {
             online_hash,
             output_directory,
         },
-        export,
+        mode,
     )))
 }
 
@@ -155,22 +163,39 @@ fn parse(arguments: &[String]) -> Result<Option<(Options, bool)>> {
 /// Errors retain their original coordinator fields, including any uncertain
 /// publication details. This function does not print or hide those failures.
 pub fn run_authority_journal_cli_v1(arguments: &[String]) -> Result<String> {
-    let Some((options, export)) = parse(arguments)? else {
+    let Some((options, mode)) = parse(arguments)? else {
         return Ok(USAGE.to_owned());
     };
-    let observed = source::read_source(&options, export)?;
-    let result = if export {
-        let image = observed
-            .image
-            .as_ref()
-            .ok_or_else(|| error("local_authority_journal_image_missing"))?;
+    let observed = source::read_source(&options, mode)?;
+    let result = if mode != Mode::Inspect {
         let output = options
             .output_directory
             .as_deref()
             .ok_or_else(|| error("local_authority_journal_output_missing"))?;
-        publication::publish_image(output, image, &observed.report, &observed.protected_paths)?
+        match (mode, observed.artifact.as_ref()) {
+            (Mode::ExportNativeImage, Some(source::SourceArtifact::NativeImage(image))) => {
+                publication::publish_image(
+                    output,
+                    image,
+                    &observed.report,
+                    &observed.protected_paths,
+                )?
+            }
+            (Mode::ExportLegacyArchive, Some(source::SourceArtifact::LegacyArchive(archive))) => {
+                publication::publish_legacy_archive(
+                    output,
+                    archive,
+                    &observed.report,
+                    &observed.protected_paths,
+                )?
+            }
+            (Mode::ExportNativeImage, None) => {
+                return Err(error("local_authority_journal_image_missing"));
+            }
+            _ => return Err(error("local_authority_journal_artifact_mismatch")),
+        }
     } else {
-        if observed.image.is_some() {
+        if observed.artifact.is_some() {
             return Err(error("local_authority_journal_unexpected_image"));
         }
         observed.report

@@ -232,10 +232,10 @@ touches no source data and supplies no publisher, durable archive, real
 maintenance barrier or production migration permission.
 
 The [offline journal CLI](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/cli/HANDOFF.md)
-now exposes `inspect` and `export-native-image` with independently pinned daemon
-and online configurations. It owns a read-only main snapshot and explicitly
+now exposes `inspect`, `export-native-image` and `export-legacy-archive` with
+independently pinned daemon and online configurations. It owns a read-only main snapshot and explicitly
 closes SQLite before exporting into a fresh, separate private directory. The
-bundle publisher fsyncs and checks exact image/report bytes, uses atomic
+bundle publisher fsyncs and checks exact artifact/report bytes, uses atomic
 no-replace publication, and preserves committed/unknown failure outcomes.
 Its named source observation is not SQLite descriptor provenance, and the
 exported artifact supplies no live migration or service-retirement authority.
@@ -245,8 +245,11 @@ The same independently pinned owner now builds a
 through SQLite's backup API from an already held READ snapshot. It checks
 bounded, strictly completing backup progress and re-verifies the full copied
 history before serialization. Genuine uncheckpointed WAL snapshots and the
-original Node runtime's reopen are tested. This library API has no durable
-archive publisher, live CAS or migration authority. The
+original Node runtime's reopen are tested. The CLI publishes its opaque archive
+as `legacy-authority.sqlite` with a distinct archive/report contract, retaining
+the same no-replace and committed/unknown failure semantics as native export.
+This separate offline bundle supplies no live source CAS, restore permission
+or migration authority. The
 [maintenance-owner design](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/MAINTENANCE_OWNER_DESIGN.md)
 documents the separately required persistent manager barrier and installation
 binding; it does not implement or activate that barrier.

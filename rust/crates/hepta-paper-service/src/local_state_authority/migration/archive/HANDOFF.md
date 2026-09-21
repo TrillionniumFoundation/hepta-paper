@@ -5,7 +5,10 @@ produces an `OfflineLegacyAuthorityArchiveV1` with read-only `bytes()` and
 `report()` accessors. It has no public constructor, destination-path argument,
 deserializer, filesystem publisher or maintenance capability. Unlike the native
 image builder, this operation retains the original Node schema and version 0.
-The CLI currently exports native images only; this archive is a library API.
+The [offline CLI](../cli/HANDOFF.md) separately exposes `export-legacy-archive`:
+it closes source SQLite before publishing the opaque archive in a fresh private
+bundle as `legacy-authority.sqlite` plus `report.json`. This method itself still
+does not publish files or grant restore/migration permission.
 
 The existing pinned owner must be loaded before source SQLite opens and retained
 until source SQLite closes. This method requires an already established main
@@ -71,7 +74,8 @@ refusal and retained writer exclusion; and 512/16,384-byte page sizes plus an
 oversized freelist in an otherwise valid original journal. Tests reuse the
 existing offline-image fixture helpers in `../offline_image/tests/legacy_archive.rs`.
 
-A durable original-source archive publisher, live expected-hash comparison,
+The offline publisher does not establish live source provenance. A maintenance-bound
+archive/source expected-hash comparison,
 real retained service stop/restart barrier, source installation/key provenance,
 uncertain-commit recovery and native service handoff remain unimplemented.
 An offline archive or a successful original Node reopen is not permission to

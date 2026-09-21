@@ -26,7 +26,8 @@ mod v2;
 pub use v2::{
     ProductionAuthorityInstallationV2, ProductionAuthorityIpcRootV2,
     ProductionDeploymentManifestV2, ProductionPublicFileV2, ProductionServiceRoleV2,
-    ProductionServiceUnitV2, VerifiedProductionDeploymentV2, verify_production_deployment_v2,
+    ProductionServiceUnitV2, RetainedProductionDeploymentV2, VerifiedProductionDeploymentV2,
+    verify_production_deployment_v2,
 };
 
 const MAXIMUM_DEPLOYMENT_SERVICES: usize = 32;

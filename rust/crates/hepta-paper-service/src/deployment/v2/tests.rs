@@ -225,6 +225,148 @@ fn retained_reader_hashes_an_actual_root_owned_system_elf() {
 }
 
 #[test]
+fn retained_directory_pin_uses_no_follow_path_only_cloexec_descriptors() {
+    use nix::fcntl::{FcntlArg, FdFlag, OFlag, fcntl};
+    let fixture = PublicFixture::new();
+    let path = fixture.root.join("unreadable-directory");
+    fs::create_dir(&path).expect("private directory");
+    fs::write(
+        path.join("unread-secret"),
+        b"never loaded by directory observation",
+    )
+    .expect("private sentinel");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).expect("remove leaf access");
+    let pin = RetainedDirectoryIdentityV2::capture(&path).expect("O_PATH needs no leaf read");
+    let flags = fcntl(&pin.file, FcntlArg::F_GETFL).expect("actual descriptor flags");
+    assert_ne!(flags & OFlag::O_PATH.bits(), 0);
+    assert_ne!(
+        fcntl(&pin.file, FcntlArg::F_GETFD).expect("actual descriptor inheritance")
+            & FdFlag::FD_CLOEXEC.bits(),
+        0
+    );
+    pin.assert_current().expect("no contents opened");
+    let mut borrowed = &pin.file;
+    assert_eq!(
+        borrowed
+            .read(&mut [0_u8; 1])
+            .expect_err("O_PATH cannot read")
+            .raw_os_error(),
+        Some(nix::libc::EBADF)
+    );
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("restore test cleanup");
+    assert!(matches!(
+        pin.assert_current(),
+        Err(ProductionDeploymentError::NamespaceInvalid)
+    ));
+    assert_eq!(
+        fs::read(path.join("unread-secret")).expect("unchanged sentinel"),
+        b"never loaded by directory observation"
+    );
+}
+
+#[test]
+fn retained_directory_pin_rejects_leaf_and_intermediate_links_and_wrong_types() {
+    let fixture = PublicFixture::new();
+    let actual = fixture.root.join("actual");
+    fs::create_dir(&actual).expect("actual parent");
+    fs::create_dir(actual.join("child")).expect("actual leaf");
+    let alias = fixture.root.join("alias");
+    symlink(&actual, &alias).expect("real intermediate link");
+    assert!(RetainedDirectoryIdentityV2::capture(&alias).is_err());
+    assert!(RetainedDirectoryIdentityV2::capture(&alias.join("child")).is_err());
+    assert!(RetainedDirectoryIdentityV2::capture(&fixture.root.join("daemon.json")).is_err());
+    assert!(RetainedDirectoryIdentityV2::capture(&fixture.root.join("missing")).is_err());
+    assert!(RetainedDirectoryIdentityV2::capture(Path::new("relative")).is_err());
+}
+
+#[test]
+fn retained_directory_pin_preserves_original_inode_across_namespace_replacement() {
+    let fixture = PublicFixture::new();
+    let path = fixture.root.join("private-root");
+    let moved = fixture.root.join("moved-root");
+    fs::create_dir(&path).expect("original directory");
+    let pin = RetainedDirectoryIdentityV2::capture(&path).expect("actual original descriptor");
+    fs::create_dir(path.join("new-child")).expect("normal writable-root activity");
+    pin.assert_current()
+        .expect("child count and mtime are not root identity");
+    fs::rename(&path, &moved).expect("replace original namespace");
+    fs::create_dir(&path).expect("replacement directory");
+    assert!(matches!(
+        pin.assert_current(),
+        Err(ProductionDeploymentError::NamespaceInvalid)
+    ));
+    assert_eq!(
+        pin.file.metadata().expect("original held inode").ino(),
+        fs::metadata(&moved).expect("actual displaced root").ino()
+    );
+    assert_ne!(
+        pin.file.metadata().expect("original held inode").ino(),
+        fs::metadata(&path).expect("actual replacement root").ino()
+    );
+    fs::remove_dir_all(&moved).expect("remove original name");
+    assert_eq!(
+        pin.file
+            .metadata()
+            .expect("held inode survives unlink")
+            .ino(),
+        pin.metadata.ino()
+    );
+    assert!(pin.assert_current().is_err());
+    assert!(
+        path.is_dir(),
+        "no directory cleanup is performed by the observer"
+    );
+}
+
+#[test]
+fn retained_input_owner_rechecks_every_actual_public_file_after_capture_returns() {
+    for name in [
+        "daemon.json",
+        "online.json",
+        "backup.json",
+        "online-public.json",
+        "backup-public.json",
+    ] {
+        let fixture = PublicFixture::new();
+        // This lower owner contains actual public-input producers. Empty
+        // deployment vectors cannot construct the public complete V2 owner.
+        let inputs = RetainedDeploymentInputsV2 {
+            public: fixture
+                .load()
+                .expect("actual independently pinned public inputs"),
+            public_namespaces: vec![],
+            directories: vec![],
+            executables: vec![],
+        };
+        inputs
+            .assert_current()
+            .expect("owner keeps every original file");
+        let selected = fixture.root.join(name);
+        let original = fs::metadata(&selected).expect("original public inode");
+        let bytes = fs::read(&selected).expect("public bytes only");
+        fs::rename(&selected, fixture.root.join("displaced.json")).expect("replace public name");
+        fs::write(&selected, bytes).expect("same bytes, different inode");
+        assert!(
+            inputs.assert_current().is_err(),
+            "changed retained public input: {name}"
+        );
+        assert!(
+            inputs.public.files().iter().any(|snapshot| {
+                snapshot.path == selected
+                    && snapshot
+                        .file
+                        .metadata()
+                        .is_ok_and(|m| m.ino() == original.ino())
+            }),
+            "the original producer's descriptor is still owned"
+        );
+        assert!(!fixture.installation.private_key_root.exists());
+        assert!(!fixture.installation.private_state_root.exists());
+        assert!(!fixture.installation.ipc_root.path.exists());
+    }
+}
+
+#[test]
 fn manifest_versions_and_role_vocabularies_are_closed() {
     let value = manifest();
     let encoded = serde_json::to_value(&value).expect("manifest JSON");

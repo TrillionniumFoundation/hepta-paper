@@ -108,7 +108,8 @@ pub use deployment::{
 pub use deployment::{
     ProductionAuthorityInstallationV2, ProductionAuthorityIpcRootV2,
     ProductionDeploymentManifestV2, ProductionPublicFileV2, ProductionServiceRoleV2,
-    ProductionServiceUnitV2, VerifiedProductionDeploymentV2, verify_production_deployment_v2,
+    ProductionServiceUnitV2, RetainedProductionDeploymentV2, VerifiedProductionDeploymentV2,
+    verify_production_deployment_v2,
 };
 pub use node_migration::{NodeMigrationError, NodeMigrationReceiptV1, migrate_node_store_v1};
 pub use objects::ObjectStoreV1;

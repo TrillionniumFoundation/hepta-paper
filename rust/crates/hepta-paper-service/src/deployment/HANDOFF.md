@@ -24,6 +24,26 @@ activation constructor must separately retain and recheck all installation
 inputs before and during its own SQLite lifetime. Serialization of a diagnostic
 manifest, report or digest cannot recreate the opaque value or its observation.
 
+`RetainedProductionDeploymentV2::capture` now supplies the static resource
+owner for that later integration. It runs the complete unchanged V2 validation
+and retains the original public-file producers, executable descriptors, directory
+descriptors and ancestor observations. `observation()` borrows the completed
+value; `assert_current()` rechecks those same inputs without reopening regular
+files, opening a socket or consulting a manager. The owner is neither cloneable
+nor deserializable. Cloning its completed observation does not retain its
+resources. The original `verify_production_deployment_v2` delegates to capture,
+returns the same completed observation and drops the owner before returning.
+V2 identity hashing and V1 behavior are unchanged.
+
+Each private/IPC root is held with a Linux `O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC`
+descriptor. Component-by-component `openat` refuses intermediate symlinks.
+This retains the inode without reading or listing the final private directory
+and avoids inode reuse while its identity is held. At most 128 private roots
+plus the IPC root are retained. Revalidation compares held and named device,
+inode, mode, UID and GID, while allowing ordinary child-count/mtime changes
+inside mutable roots. Ancestor observations remain metadata observations.
+These checks do not lock the namespace or form an atomic filesystem snapshot.
+
 ## Roles and principals
 
 The closed role set contains control plane, author/reviewer/formal/repair Codex
@@ -137,6 +157,12 @@ descriptors before opening SQLite and close every SQLite handle before releasing
 them. Static deployment verification must not be called while owning database
 locks as a substitute for that retained integration.
 
+The retained API has the same ordering requirement on capture. A caller may
+recheck the held owner without reopening regular files, but must close every
+SQLite handle before dropping that owner on success and failure. This API does
+not own a caller's SQLite handles and cannot enforce their drop order. A future
+owning activation type must enforce it structurally; it is not yet wired.
+
 ## Qualification and activation integration still required
 
 ELF magic, an expected filename and a matching hash establish a static byte
@@ -171,3 +197,12 @@ A complete positive installation test requires actual independently owned servic
 roots and public files on a suitable isolated host, without weakening production
 ownership checks. External production qualification remains separate even after
 such an installed test passes.
+
+Additional actual-filesystem tests cover path-only close-on-exec descriptors on
+an unreadable directory, leaf/intermediate symlinks and wrong file types,
+ordinary child creation, root mode changes, real root replacement/deletion and
+retention of the original inode. Lower input-owner tests replace each of the
+five real public documents with byte-identical new inodes after capture returns;
+the original descriptors remain held and revalidation refuses every replacement.
+These lower tests do not manufacture a complete verified production deployment
+or claim independently owned installation acceptance.

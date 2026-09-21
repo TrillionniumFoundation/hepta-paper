@@ -18,6 +18,14 @@ would prove only the checked command's ELF format and exact installed bytes.
 They cannot identify the daemon behind its Unix socket or establish Rust
 provenance. A renamed interpreter is also an ELF file.
 
+The static V2 producer now also exposes `RetainedProductionDeploymentV2`:
+complete capture retains the actual public/executable inputs and path-only
+private/IPC directory descriptors; later explicit checks reuse those descriptors
+and named metadata. This supplies a static resource owner, not the live
+installation owner described below. Activation still must capture it before
+SQLite, match the original real peer and manager association, enforce the
+qualified subject and close SQLite before dropping it on every path.
+
 `ProductionDeploymentManifestV1` has exactly eight closed role types and admits
 8–32 service instances. The authority
 daemon is not one of them. A client executable launched by the control plane

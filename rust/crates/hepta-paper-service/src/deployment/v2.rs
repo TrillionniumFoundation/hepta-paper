@@ -1,11 +1,12 @@
 //! Nine-role static installation observation. This never queries a manager,
 //! connects a socket, opens SQLite or reads an authority private key. The opaque
-//! result records this observation only: it retains no descriptors and has no
-//! ongoing-currentness, native build-provenance or activation claim. Invoke before
-//! opening any SQLite connection; retained public/executable FDs close on return.
+//! completed result retains no descriptors. The separate retained owner keeps
+//! the actual public/executable files and directory identities for explicit
+//! revalidation, without native build-provenance or activation authority.
+//! Capture before SQLite; release the owner only after all SQLite handles close.
 use super::*;
 use serde_json::{Value, json};
-use std::{fs::File, path::Component};
+use std::{fs::File, os::fd::AsFd, path::Component};
 mod authority;
 use authority::ObservedAuthorityPublicInputsV2;
 const MAXIMUM_SUPPLEMENTARY_GROUPS: usize = 32;
@@ -200,6 +201,67 @@ impl VerifiedProductionDeploymentV2 {
 pub fn verify_production_deployment_v2(
     manifest: &ProductionDeploymentManifestV2,
 ) -> Result<VerifiedProductionDeploymentV2, ProductionDeploymentError> {
+    let retained = RetainedProductionDeploymentV2::capture(manifest)?;
+    Ok(retained.observation().clone())
+}
+
+/// Owner of the actual bounded static installation inputs. It is neither a
+/// running-service proof nor production authorization and cannot be restored
+/// from a report. Capture before SQLite and close every SQLite handle before
+/// dropping it, including on error paths. Revalidation only observes the time
+/// of that call; it cannot prevent later changes or produce an atomic snapshot.
+pub struct RetainedProductionDeploymentV2 {
+    observation: VerifiedProductionDeploymentV2,
+    inputs: RetainedDeploymentInputsV2,
+}
+
+impl RetainedProductionDeploymentV2 {
+    /// Observe the complete unchanged V2 contract and retain its actual files.
+    /// No private key, state database, socket or manager connection is opened.
+    pub fn capture(
+        manifest: &ProductionDeploymentManifestV2,
+    ) -> Result<Self, ProductionDeploymentError> {
+        retain_production_deployment_v2(manifest)
+    }
+
+    /// Completed static observation; borrowing or cloning it grants no ownership.
+    pub fn observation(&self) -> &VerifiedProductionDeploymentV2 {
+        &self.observation
+    }
+
+    /// Check held file/directory metadata and the original named namespaces.
+    /// This does not reopen regular files or query a service manager.
+    pub fn assert_current(&self) -> Result<(), ProductionDeploymentError> {
+        self.inputs.assert_current()
+    }
+}
+
+struct RetainedDeploymentInputsV2 {
+    public: ObservedAuthorityPublicInputsV2,
+    public_namespaces: Vec<ObservedAncestorsV2>,
+    directories: Vec<ObservedDirectoryV2>,
+    executables: Vec<RetainedExecutableV2>,
+}
+
+impl RetainedDeploymentInputsV2 {
+    fn assert_current(&self) -> Result<(), ProductionDeploymentError> {
+        self.public.assert_current()?;
+        for namespace in &self.public_namespaces {
+            namespace.assert_current()?;
+        }
+        for directory in &self.directories {
+            directory.assert_current()?;
+        }
+        for executable in &self.executables {
+            executable.assert_current()?;
+        }
+        Ok(())
+    }
+}
+
+fn retain_production_deployment_v2(
+    manifest: &ProductionDeploymentManifestV2,
+) -> Result<RetainedProductionDeploymentV2, ProductionDeploymentError> {
     validate_manifest_v2(manifest)?;
     let ipc = &manifest.authority.ipc_root;
     let mut directories = Vec::new();
@@ -246,7 +308,7 @@ pub fn verify_production_deployment_v2(
     reject_overlapping_roots(&roots)?;
     let mut directory_identities = BTreeSet::new();
     for directory in &directories {
-        record_directory_identity_v2(&mut directory_identities, &directory.metadata)?;
+        record_directory_identity_v2(&mut directory_identities, &directory.identity.metadata)?;
     }
     let forbidden_roots = roots.iter().map(|(_, path)| *path).collect::<Vec<_>>();
     let public = ObservedAuthorityPublicInputsV2::load(&manifest.authority, &forbidden_roots)?;
@@ -264,23 +326,23 @@ pub fn verify_production_deployment_v2(
         }
         public_namespaces.push(ObservedAncestorsV2::capture(&file.path, &ipc_groups)?);
     }
-    // Recheck all earlier observations after the final public file was captured.
-    public.assert_current()?;
-    for namespace in &public_namespaces {
-        namespace.assert_current()?;
-    }
-    for directory in &directories {
-        directory.assert_current()?;
-    }
-    for executable in &executables {
-        executable.assert_current()?;
-    }
     let identity_hash = deployment_identity_hash_v2(manifest, &public)?;
-    Ok(VerifiedProductionDeploymentV2 {
-        manifest: manifest.clone(),
-        identity_hash,
-        authority_binding: public.binding().clone(),
-    })
+    let retained = RetainedProductionDeploymentV2 {
+        observation: VerifiedProductionDeploymentV2 {
+            manifest: manifest.clone(),
+            identity_hash,
+            authority_binding: public.binding().clone(),
+        },
+        inputs: RetainedDeploymentInputsV2 {
+            public,
+            public_namespaces,
+            directories,
+            executables,
+        },
+    };
+    // Recheck every earlier observation after the final input and hash.
+    retained.assert_current()?;
+    Ok(retained)
 }
 
 fn deployment_identity_hash_v2(
@@ -616,8 +678,7 @@ impl ObservedAncestorsV2 {
     }
 }
 struct ObservedDirectoryV2 {
-    path: PathBuf,
-    metadata: fs::Metadata,
+    identity: RetainedDirectoryIdentityV2,
     ancestors: ObservedAncestorsV2,
 }
 impl ObservedDirectoryV2 {
@@ -629,7 +690,8 @@ impl ObservedDirectoryV2 {
         readable_groups: &BTreeSet<u32>,
     ) -> Result<Self, ProductionDeploymentError> {
         let ancestors = ObservedAncestorsV2::capture(path, readable_groups)?;
-        let metadata = fs::symlink_metadata(path).map_err(filesystem)?;
+        let identity = RetainedDirectoryIdentityV2::capture(path)?;
+        let metadata = &identity.metadata;
         if !metadata.is_dir()
             || metadata.is_symlink()
             || metadata.nlink() < 2
@@ -640,8 +702,7 @@ impl ObservedDirectoryV2 {
             return Err(ProductionDeploymentError::NamespaceInvalid);
         }
         let result = Self {
-            path: path.to_owned(),
-            metadata,
+            identity,
             ancestors,
         };
         result.assert_current()?;
@@ -649,10 +710,56 @@ impl ObservedDirectoryV2 {
     }
     fn assert_current(&self) -> Result<(), ProductionDeploymentError> {
         self.ancestors.assert_current()?;
-        if !directory_same(
-            &self.metadata,
-            &fs::symlink_metadata(&self.path).map_err(filesystem)?,
-        ) {
+        self.identity.assert_current()
+    }
+}
+
+// O_PATH retains the actual directory without listing its private contents or
+// requiring read access to that final component. Walk each component through
+// the previous held FD; no symlinked intermediate component can be followed.
+struct RetainedDirectoryIdentityV2 {
+    path: PathBuf,
+    file: File,
+    metadata: fs::Metadata,
+}
+impl RetainedDirectoryIdentityV2 {
+    fn capture(path: &Path) -> Result<Self, ProductionDeploymentError> {
+        use nix::{
+            fcntl::{OFlag, open, openat},
+            sys::stat::Mode,
+        };
+        if !strict_path(path) {
+            return Err(ProductionDeploymentError::NamespaceInvalid);
+        }
+        let flags = OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+        let mut file = File::from(
+            open(Path::new("/"), flags, Mode::empty())
+                .map_err(|_| ProductionDeploymentError::NamespaceInvalid)?,
+        );
+        for part in path.components() {
+            if let Component::Normal(name) = part {
+                file = File::from(
+                    openat(file.as_fd(), Path::new(name), flags, Mode::empty())
+                        .map_err(|_| ProductionDeploymentError::NamespaceInvalid)?,
+                );
+            }
+        }
+        let metadata = file.metadata().map_err(filesystem)?;
+        let result = Self {
+            path: path.to_owned(),
+            file,
+            metadata,
+        };
+        result.assert_current()?;
+        Ok(result)
+    }
+    fn assert_current(&self) -> Result<(), ProductionDeploymentError> {
+        if !directory_same(&self.metadata, &self.file.metadata().map_err(filesystem)?)
+            || !directory_same(
+                &self.metadata,
+                &fs::symlink_metadata(&self.path).map_err(filesystem)?,
+            )
+        {
             return Err(ProductionDeploymentError::NamespaceInvalid);
         }
         Ok(())

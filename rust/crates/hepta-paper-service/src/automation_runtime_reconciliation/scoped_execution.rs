@@ -36,7 +36,8 @@ pub struct LocalOfflineReconciliationRequestV1 {
     pub runtime_root: PathBuf,
     pub legacy_root: PathBuf,
     pub writer_fence: WriterFenceV1,
-    pub now: String,
+    /// A fixed test/repair instant; omission uses the live system clock.
+    pub now: Option<String>,
     pub no_progress_seconds: f64,
     pub campaign_id: Option<String>,
     pub release_commit: Option<String>,
@@ -188,7 +189,10 @@ fn schema(connection: &Connection) -> Result<(), Error> {
 pub fn execute_local_offline_automation_runtime_reconciliation_v1(
     request: &LocalOfflineReconciliationRequestV1,
 ) -> Result<Value, Error> {
-    if request.version != 1 || request.writer_fence.writer_id != LOCAL_RECONCILIATION_WRITER_ID_V1 {
+    if request.version != 1
+        || request.writer_fence.writer_id != LOCAL_RECONCILIATION_WRITER_ID_V1
+        || !request.no_progress_seconds.is_finite()
+    {
         return Err(rejected("reconciliation_local_writer_request_invalid"));
     }
     let roots = roots(request)?;
@@ -200,12 +204,16 @@ pub fn execute_local_offline_automation_runtime_reconciliation_v1(
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
         schema(&reader)?;
-        super::plan_on_connection(
-            &reader,
-            &request.now,
-            request.no_progress_seconds,
-            request.campaign_id.as_deref(),
-        )?;
+        if let Some(now) = &request.now {
+            super::plan_on_connection(
+                &reader,
+                now,
+                request.no_progress_seconds,
+                request.campaign_id.as_deref(),
+            )?;
+        } else {
+            super::verify_campaign_scope(&reader, request.campaign_id.as_deref())?;
+        }
     }
     let mut coordinator = DurableCutoverCoordinatorV1::open(&database)
         .map_err(|e| rejected(&format!("reconciliation_cutover_required:{e}")))?;
@@ -254,18 +262,30 @@ pub fn execute_local_offline_automation_runtime_reconciliation_v1(
                         .execute_batch("PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;")?;
                     schema(&connection)?;
                     current()?;
-                    offline_execution::execute_on_admitted_connection(
-                        &mut connection,
-                        &request.now,
-                        request.no_progress_seconds,
-                        request.campaign_id.as_deref(),
-                        request.release_commit.as_deref(),
-                        |connection| {
-                            current()?;
-                            schema(connection)
-                        },
-                        current,
-                    )
+                    let before_apply = |connection: &Connection| {
+                        current()?;
+                        schema(connection)
+                    };
+                    match request.now.as_deref() {
+                        Some(now) => offline_execution::execute_on_admitted_connection(
+                            &mut connection,
+                            now,
+                            request.no_progress_seconds,
+                            request.campaign_id.as_deref(),
+                            request.release_commit.as_deref(),
+                            before_apply,
+                            current,
+                        ),
+                        None => offline_execution::execute_on_admitted_connection_with_clock(
+                            &mut connection,
+                            &mut offline_execution::SystemReconciliationClockV1,
+                            request.no_progress_seconds,
+                            request.campaign_id.as_deref(),
+                            request.release_commit.as_deref(),
+                            before_apply,
+                            current,
+                        ),
+                    }
                 };
                 operation().map_err(|e| e.to_string())
             },
@@ -391,7 +411,7 @@ mod tests {
                 runtime_root: root.join("runtime"),
                 legacy_root: root.join("legacy"),
                 writer_fence: fence,
-                now: NOW.into(),
+                now: Some(NOW.into()),
                 no_progress_seconds: 1800.0,
                 campaign_id: None,
                 release_commit: None,
@@ -513,5 +533,37 @@ mod tests {
         )
         .unwrap();
         assert!(RetainedIdentity::open(&f.db(), false).is_err());
+    }
+
+    #[test]
+    fn omitted_business_time_uses_live_clock_inside_admitted_scope() {
+        let mut f = Fixture::new(true, RECONCILIATION_WRITER_SCOPE_V1);
+        f.request.now = None;
+        let millis = || {
+            i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis(),
+            )
+            .unwrap()
+        };
+        let before = millis();
+        let result =
+            execute_local_offline_automation_runtime_reconciliation_v1(&f.request).unwrap();
+        let after = millis();
+        for instant in [
+            &result["reconciliation"]["reconciledAt"],
+            &result["reconciliation"]["ledgerReceipt"]["createdAt"],
+            &result["reconciliation"]["after"]["plannedAt"],
+        ] {
+            let observed =
+                crate::journal_connector_coverage::qualification::canonical_instant_millis(
+                    instant.as_str().unwrap(),
+                )
+                .unwrap();
+            assert!((before..=after).contains(&observed));
+        }
+        assert_eq!(result["productionActivation"], false);
     }
 }

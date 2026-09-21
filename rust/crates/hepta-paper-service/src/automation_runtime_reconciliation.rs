@@ -197,6 +197,29 @@ fn plan_on_connection(
         return Err(AutomationRuntimeReconciliationError::Input);
     }
     verify_campaign_scope(connection, campaign_id)?;
+    plan_on_connection_at(
+        connection,
+        now,
+        now_millis,
+        no_progress_seconds,
+        campaign_id,
+    )
+}
+
+// Scope is checked by the caller before sampling the clock, as in Node. The
+// cutoff instant is a separate sample from the plan's ISO observation instant.
+fn plan_on_connection_at(
+    connection: &Connection,
+    now: &str,
+    cutoff_now_millis: i64,
+    no_progress_seconds: f64,
+    campaign_id: Option<&str>,
+) -> Result<Value, AutomationRuntimeReconciliationError> {
+    if crate::journal_connector_coverage::qualification::canonical_instant_millis(now).is_none()
+        || !no_progress_seconds.is_finite()
+    {
+        return Err(AutomationRuntimeReconciliationError::Input);
+    }
     // The incumbent uses `Math.max(60, Number(value || 1800))`: an explicit
     // zero therefore selects the 1800-second default rather than the 60-second
     // floor. Preserve that JavaScript truthiness boundary before applying the
@@ -209,7 +232,7 @@ fn plan_on_connection(
     // Node subtracts in binary64 before Date's TimeClip truncates the result
     // toward zero. Rounding the interval first changes fractional-millisecond
     // cutoffs (and therefore the selected rows and reconciliation plan hash).
-    let cutoff = now_millis as f64 - effective_no_progress_seconds * 1000.0;
+    let cutoff = cutoff_now_millis as f64 - effective_no_progress_seconds * 1000.0;
     if !cutoff.is_finite() || cutoff.abs() > 8_640_000_000_000_000.0 {
         return Err(AutomationRuntimeReconciliationError::Input);
     }

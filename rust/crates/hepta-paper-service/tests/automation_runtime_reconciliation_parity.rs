@@ -275,7 +275,7 @@ fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
         runtime_root: directory.join("runtime"),
         legacy_root: directory.join("legacy"),
         writer_fence: fence,
-        now: NOW.into(),
+        now: Some(NOW.into()),
         no_progress_seconds: 1800.0,
         campaign_id: None,
         release_commit: None,

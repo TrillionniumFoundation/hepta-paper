@@ -5,7 +5,11 @@
 //! The sibling scoped execution module provides the admitted local entrypoint.
 //! A raw connection is not such authority.
 //! Tests exercise this business operation on real schema-25 copies only.
-use super::{AutomationRuntimeReconciliationError as Error, plan_on_connection};
+#[cfg(test)]
+use super::plan_on_connection;
+use super::{
+    AutomationRuntimeReconciliationError as Error, plan_on_connection_at, verify_campaign_scope,
+};
 use hepta_legacy_compatibility::production_hash_record_v1;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params_from_iter};
 use serde_json::{Value, json};
@@ -166,12 +170,16 @@ struct PreparedReceipt {
 // Fixed, private, least-privilege issuer. Neither trust flags nor caller-supplied
 // issuer policy hashes are accepted. This matches Node's in-process broker
 // policy, not external or production authorization.
+#[cfg(test)]
 fn prepare_receipt(
     plan: &Value,
     at: &str,
     ledger_at: &str,
     release_commit: Option<&str>,
 ) -> Result<PreparedReceipt> {
+    prepare_receipt_from_payload(receipt_payload(plan, at)?, ledger_at, release_commit)
+}
+fn receipt_payload(plan: &Value, at: &str) -> Result<Record> {
     let mut payload = Record::new()
         .field("version", json!(2))
         .field("kind", json!("AutomationRuntimeReconciliationReceipt"))
@@ -241,7 +249,14 @@ fn prepare_receipt(
         .field("workersStarted", json!(false))
         .field("externalActionPerformed", json!(false));
     let receipt_hash = hash("AutomationRuntimeReconciliationReceipt", &payload.value)?;
-    payload = payload.field("receiptHash", json!(receipt_hash));
+    Ok(payload.field("receiptHash", json!(receipt_hash)))
+}
+fn prepare_receipt_from_payload(
+    payload: Record,
+    ledger_at: &str,
+    release_commit: Option<&str>,
+) -> Result<PreparedReceipt> {
+    let receipt_hash = payload.value["receiptHash"].as_str().ok_or(Error::Row)?;
     let receipt_id = format!("automation-reconciliation:{receipt_hash}");
     let policy = json!({"version":1,"policyId":"automation-reconciler","writerId":"automation-runtime-reconciler","writerKind":"automation-state-reconciler","assurance":"in_process_registered_administrator","allowedKinds":["AutomationRuntimeReconciliationReceipt"],"allowedStreams":["automation-reconciliation"]});
     let policy_hash = hash("ReceiptIssuerPolicy", &policy)?;
@@ -515,9 +530,80 @@ fn apply(tx: &Transaction<'_>, plan: &Value, prepared: &PreparedReceipt, at: &st
     )
 }
 
-/// Complete offline business operation over an already-admitted connection.
-/// This is private: an unscoped connection or a JSON writer descriptor cannot
-/// obtain this writer through the public library or command surface.
+/// Synchronous clock observations only. This private boundary carries no
+/// writer identity, admission, or production authority. Separate methods retain
+/// the incumbent's nowIso()/now() sampling order; no monotonicity is imposed.
+pub(super) trait ReconciliationClockV1 {
+    fn now_iso(&mut self) -> Result<String>;
+    fn now_millis(&mut self) -> Result<i64>;
+}
+
+pub(super) struct SystemReconciliationClockV1;
+impl ReconciliationClockV1 for SystemReconciliationClockV1 {
+    fn now_iso(&mut self) -> Result<String> {
+        iso(self.now_millis()?)
+    }
+    fn now_millis(&mut self) -> Result<i64> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(duration) => i128::try_from(duration.as_millis()).map_err(|_| Error::Input)?,
+            // Match the integral millisecond clock boundary by truncating
+            // sub-millisecond precision toward zero on either side of epoch.
+            Err(error) => {
+                -i128::try_from(error.duration().as_millis()).map_err(|_| Error::Input)?
+            }
+        };
+        let millis = i64::try_from(millis).map_err(|_| Error::Input)?;
+        if !(-8_640_000_000_000_000..=8_640_000_000_000_000).contains(&millis) {
+            return Err(Error::Input);
+        }
+        Ok(millis)
+    }
+}
+fn iso(millis: i64) -> Result<String> {
+    crate::sqlite_mutation_coordinator::clock::iso(millis).map_err(|_| Error::Input)
+}
+struct FixedReconciliationClockV1<'a> {
+    now: &'a str,
+    millis: i64,
+}
+impl<'a> FixedReconciliationClockV1<'a> {
+    fn new(now: &'a str) -> Result<Self> {
+        let millis =
+            crate::journal_connector_coverage::qualification::canonical_instant_millis(now)
+                .ok_or(Error::Input)?;
+        Ok(Self { now, millis })
+    }
+}
+impl ReconciliationClockV1 for FixedReconciliationClockV1<'_> {
+    fn now_iso(&mut self) -> Result<String> {
+        Ok(self.now.to_owned())
+    }
+    fn now_millis(&mut self) -> Result<i64> {
+        Ok(self.millis)
+    }
+}
+fn plan_with_clock(
+    connection: &Connection,
+    clock: &mut dyn ReconciliationClockV1,
+    no_progress_seconds: f64,
+    campaign_id: Option<&str>,
+) -> Result<Value> {
+    // The incumbent resolves campaign scope before either clock observation.
+    verify_campaign_scope(connection, campaign_id)?;
+    let now = clock.now_iso()?;
+    let cutoff_now_millis = clock.now_millis()?;
+    plan_on_connection_at(
+        connection,
+        &now,
+        cutoff_now_millis,
+        no_progress_seconds,
+        campaign_id,
+    )
+}
+
+/// Fixed-clock compatibility wrapper. Admission and authority are supplied by
+/// the retained private foundation scope, never by the timestamp.
 pub(super) fn execute_on_admitted_connection(
     connection: &mut Connection,
     now: &str,
@@ -527,17 +613,68 @@ pub(super) fn execute_on_admitted_connection(
     before_apply: impl FnOnce(&Connection) -> Result<()>,
     before_commit: impl FnOnce() -> Result<()>,
 ) -> Result<Value> {
-    let plan = plan_on_connection(connection, now, no_progress_seconds, campaign_id)?;
-    let prepared = prepare_receipt(&plan, now, now, release_commit)?;
-    execute_prepared(
+    let mut clock = FixedReconciliationClockV1::new(now)?;
+    execute_on_admitted_connection_with_clock(
         connection,
-        &plan,
-        prepared,
-        (now, no_progress_seconds, campaign_id),
+        &mut clock,
+        no_progress_seconds,
+        campaign_id,
+        release_commit,
         before_apply,
         before_commit,
     )
 }
+
+/// Preserve the incumbent's six observations: plan ISO, plan Date, reconcile
+/// ISO, ledger ISO, then (only after COMMIT) the after-plan ISO and Date.
+pub(super) fn execute_on_admitted_connection_with_clock(
+    connection: &mut Connection,
+    clock: &mut dyn ReconciliationClockV1,
+    no_progress_seconds: f64,
+    campaign_id: Option<&str>,
+    release_commit: Option<&str>,
+    before_apply: impl FnOnce(&Connection) -> Result<()>,
+    before_commit: impl FnOnce() -> Result<()>,
+) -> Result<Value> {
+    let plan = plan_with_clock(connection, clock, no_progress_seconds, campaign_id)?;
+    let reconciled_at = clock.now_iso()?;
+    let payload = receipt_payload(&plan, &reconciled_at)?;
+    let ledger_at = clock.now_iso()?;
+    let prepared = prepare_receipt_from_payload(payload, &ledger_at, release_commit)?;
+    commit_prepared(
+        connection,
+        &plan,
+        &prepared,
+        &reconciled_at,
+        before_apply,
+        before_commit,
+    )?;
+    let after = plan_with_clock(connection, clock, no_progress_seconds, campaign_id)?;
+    Ok(completion(prepared, after))
+}
+
+fn commit_prepared(
+    connection: &mut Connection,
+    plan: &Value,
+    prepared: &PreparedReceipt,
+    at: &str,
+    before_apply: impl FnOnce(&Connection) -> Result<()>,
+    before_commit: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    before_apply(&tx)?;
+    apply(&tx, plan, prepared, at)?;
+    before_commit()?;
+    tx.commit()?;
+    Ok(())
+}
+fn completion(prepared: PreparedReceipt, after: Value) -> Value {
+    let mut receipt = prepared.payload.value;
+    receipt["ledgerReceipt"] = prepared.ledger;
+    receipt["after"] = after;
+    receipt
+}
+#[cfg(test)]
 fn execute_prepared(
     connection: &mut Connection,
     plan: &Value,
@@ -547,16 +684,9 @@ fn execute_prepared(
     before_commit: impl FnOnce() -> Result<()>,
 ) -> Result<Value> {
     let (at, no_progress_seconds, campaign_id) = context;
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    before_apply(&tx)?;
-    apply(&tx, plan, &prepared, at)?;
-    before_commit()?;
-    tx.commit()?;
+    commit_prepared(connection, plan, &prepared, at, before_apply, before_commit)?;
     let after = plan_on_connection(connection, at, no_progress_seconds, campaign_id)?;
-    let mut receipt = prepared.payload.value;
-    receipt["ledgerReceipt"] = prepared.ledger;
-    receipt["after"] = after;
-    Ok(receipt)
+    Ok(completion(prepared, after))
 }
 
 #[cfg(test)]

@@ -461,3 +461,250 @@ fn assert_snapshot_eq(actual: Value, expected: Value) {
         }
     }
 }
+
+struct ScriptClock {
+    samples: Vec<Value>,
+    calls: Vec<String>,
+}
+impl ScriptClock {
+    fn new(samples: &Value) -> Self {
+        Self {
+            samples: samples.as_array().unwrap().clone(),
+            calls: Vec::new(),
+        }
+    }
+    fn take(&mut self, kind: &str) -> Result<Value> {
+        let index = self.calls.len();
+        self.calls.push(kind.into());
+        let sample = self
+            .samples
+            .get(index)
+            .ok_or_else(|| Error::Admission("fixture_clock_order_invalid".into()))?;
+        if sample["kind"] != kind {
+            return Err(Error::Admission("fixture_clock_order_invalid".into()));
+        }
+        if let Some(error) = sample["error"].as_str() {
+            return Err(Error::Admission(error.into()));
+        }
+        Ok(sample["value"].clone())
+    }
+}
+impl ReconciliationClockV1 for ScriptClock {
+    fn now_iso(&mut self) -> Result<String> {
+        self.take("nowIso")?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or(Error::Input)
+    }
+    fn now_millis(&mut self) -> Result<i64> {
+        self.take("now")?.as_i64().ok_or(Error::Input)
+    }
+}
+fn clock_samples(times: [&str; 6]) -> Value {
+    json!(times.into_iter().enumerate().map(|(i,time)| if i==1 || i==5 {
+        json!({"kind":"now","value":crate::journal_connector_coverage::qualification::canonical_instant_millis(time).unwrap()})
+    } else { json!({"kind":"nowIso","value":time}) }).collect::<Vec<_>>())
+}
+fn advancing_samples() -> Value {
+    clock_samples([
+        "2026-07-13T08:00:00.000Z",
+        "2026-07-13T08:00:00.100Z",
+        "2026-07-13T08:00:00.200Z",
+        "2026-07-13T08:00:00.300Z",
+        "2026-07-13T09:00:00.000Z",
+        "2026-07-13T09:00:00.100Z",
+    ])
+}
+#[test]
+fn distinct_clock_samples_match_node_receipts_events_cutoffs_and_after_state() {
+    let backwards = clock_samples([
+        "2026-07-13T08:00:00.000Z",
+        "2026-07-13T07:59:59.800Z",
+        "2026-07-13T08:00:00.200Z",
+        "2026-07-13T07:59:59.900Z",
+        "2026-07-13T07:59:59.500Z",
+        "2026-07-13T07:00:00.100Z",
+    ]);
+    let negative = clock_samples([
+        "1969-12-31T23:59:59.999Z",
+        "1969-12-31T23:59:59.998Z",
+        "1970-01-01T00:00:00.002Z",
+        "1969-12-31T23:59:59.997Z",
+        "1970-01-01T00:01:00.000Z",
+        "1970-01-01T00:00:00.000Z",
+    ]);
+    for (samples, seconds, campaign) in [
+        (advancing_samples(), 1800.0, None),
+        (advancing_samples(), 60.0001, Some("campaign-3")),
+        (backwards, 60.0009, None),
+        (negative, 60.0001, None),
+    ] {
+        let fixture = Fixture::new(true);
+        let mut db = fixture.native();
+        let mut clock = ScriptClock::new(&samples);
+        let samples_text = serde_json::to_string(&samples).unwrap();
+        let seconds_text = seconds.to_string();
+        let mut args = vec![
+            "--clock-samples",
+            &samples_text,
+            "--no-progress-seconds",
+            &seconds_text,
+        ];
+        if let Some(campaign) = campaign {
+            args.extend(["--campaign-id", campaign]);
+        }
+        let node = fixture.oracle(&args);
+        assert_eq!(node["ok"], true, "{node}");
+        let receipt = execute_on_admitted_connection_with_clock(
+            &mut db,
+            &mut clock,
+            seconds,
+            campaign,
+            None,
+            |_| Ok(()),
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(json!(clock.calls), node["clockCalls"]);
+        assert_eq!(
+            clock.calls,
+            ["nowIso", "now", "nowIso", "nowIso", "nowIso", "now"]
+        );
+        assert_eq!(receipt, node["receipts"][0]);
+        assert_eq!(receipt["reconciledAt"], samples[2]["value"]);
+        assert_eq!(receipt["ledgerReceipt"]["createdAt"], samples[3]["value"]);
+        assert_eq!(receipt["after"]["plannedAt"], samples[4]["value"]);
+        assert_snapshot_eq(snapshot(&db), canonical_snapshot(&node["snapshot"]));
+        if samples == advancing_samples() && campaign.is_none() {
+            assert_eq!(
+                receipt["after"]["expiredResourceLeases"][0]["lease_id"],
+                "active-lease"
+            );
+            assert_eq!(
+                receipt["after"]["noProgressCampaigns"][0]["campaign_id"],
+                "campaign-1"
+            );
+            assert_eq!(
+                receipt["after"]["noProgressCutoff"],
+                "2026-07-13T08:30:00.100Z"
+            );
+        }
+    }
+}
+#[test]
+fn clock_failure_before_commit_preserves_state_and_after_commit_failure_preserves_commit() {
+    for index in 0..6 {
+        let fixture = Fixture::new(true);
+        let mut db = fixture.native();
+        let before = snapshot(&db);
+        let mut samples = advancing_samples();
+        samples[index].as_object_mut().unwrap().remove("value");
+        samples[index]["error"] = json!("fixture_clock_unavailable");
+        let mut clock = ScriptClock::new(&samples);
+        let result = execute_on_admitted_connection_with_clock(
+            &mut db,
+            &mut clock,
+            1800.0,
+            None,
+            None,
+            |_| Ok(()),
+            || Ok(()),
+        );
+        assert!(
+            matches!(result,Err(Error::Admission(ref code)) if code=="fixture_clock_unavailable")
+        );
+        assert!(db.is_autocommit());
+        let samples_text = serde_json::to_string(&samples).unwrap();
+        let node = fixture.oracle(&["--clock-samples", &samples_text]);
+        assert_eq!(node["ok"], false);
+        assert_eq!(node["error"], "fixture_clock_unavailable");
+        assert_eq!(json!(clock.calls), node["clockCalls"]);
+        assert_eq!(clock.calls.len(), index + 1);
+        assert_snapshot_eq(snapshot(&db), canonical_snapshot(&node["snapshot"]));
+        if index < 4 {
+            assert_eq!(snapshot(&db), before);
+        } else {
+            assert_ne!(snapshot(&db), before);
+            let count: i64 = db
+                .query_row(
+                    "SELECT count(*) FROM receipt_ledger WHERE stream='automation-reconciliation'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1);
+        }
+    }
+}
+#[test]
+fn transaction_failure_does_not_sample_after_clock_and_invalid_scope_never_samples() {
+    let fixture = Fixture::new(true);
+    let mut db = fixture.native();
+    let mut clock = ScriptClock::new(&advancing_samples());
+    let result = execute_on_admitted_connection_with_clock(
+        &mut db,
+        &mut clock,
+        1800.0,
+        Some("absent-campaign"),
+        None,
+        |_| Ok(()),
+        || Ok(()),
+    );
+    assert!(result.is_err());
+    let samples_text = advancing_samples().to_string();
+    let node = fixture.oracle(&[
+        "--clock-samples",
+        &samples_text,
+        "--campaign-id",
+        "absent-campaign",
+    ]);
+    assert_eq!(node["ok"], false);
+    assert!(clock.calls.is_empty());
+    assert_eq!(node["clockCalls"], json!([]));
+    let before = snapshot(&db);
+    let mut clock = ScriptClock::new(&advancing_samples());
+    let result = execute_on_admitted_connection_with_clock(
+        &mut db,
+        &mut clock,
+        1800.0,
+        None,
+        None,
+        |db| {
+            db.execute_batch("CREATE TEMP TRIGGER reconciliation_test_fail BEFORE INSERT ON receipt_ledger BEGIN SELECT RAISE(ABORT,'injected_receipt_failure'); END")?;
+            Ok(())
+        },
+        || Ok(()),
+    );
+    assert!(result.is_err());
+    assert!(db.is_autocommit());
+    let node = fixture.oracle(&[
+        "--clock-samples",
+        &samples_text,
+        "--fault",
+        "receipt-failure",
+    ]);
+    assert_eq!(node["ok"], false);
+    assert_eq!(clock.calls, ["nowIso", "now", "nowIso", "nowIso"]);
+    assert_eq!(json!(clock.calls), node["clockCalls"]);
+    assert_eq!(snapshot(&db), before);
+    assert_snapshot_eq(snapshot(&db), canonical_snapshot(&node["snapshot"]));
+}
+#[test]
+fn system_reconciliation_clock_observes_wall_time_without_granting_authority() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let before = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let mut clock = SystemReconciliationClockV1;
+    let millis = clock.now_millis().unwrap();
+    let text = clock.now_iso().unwrap();
+    let after = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    assert!((before..=after).contains(&millis));
+    let iso_millis =
+        crate::journal_connector_coverage::qualification::canonical_instant_millis(&text).unwrap();
+    assert!((before..=after).contains(&iso_millis));
+}

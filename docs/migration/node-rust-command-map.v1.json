@@ -1640,7 +1640,7 @@
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
         "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs"
       ],
-      "remaining": "Native Rust matches passive plans and now executes the complete incumbent offline schema-25 reconciliation transaction under explicit local cutover admission: node recovery, no-progress pause, terminal settlement, resource deletion, exact event/failure/17-column receipt JSON, strict row preconditions and rollback. The private fixed issuer, actual Node package flock, schema/online-metadata gates and durable writer epoch are connected to --execute-local; actual Node differential, stale-row/collision, process-death and CLI tests cover this path. Production signed writer/epoch/scope binding, online reserve/apply/finalize execution, live-clock/default-root CLI composition, legacy-terminal-active-residue mode, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
+      "remaining": "Native Rust matches passive plans and now executes the complete incumbent offline schema-25 reconciliation transaction under explicit local cutover admission: node recovery, no-progress pause, terminal settlement, resource deletion, exact event/failure/17-column receipt JSON, strict row preconditions and rollback. The private fixed issuer, actual Node package flock, schema/online-metadata gates and durable writer epoch are connected to --execute-local; actual Node differential, stale-row/collision, process-death and CLI tests cover this path. Omitted request.now uses SystemTime with the exact six-stage Node clock observation sequence; advancing/backward/negative-epoch and pre/postcommit clock-failure cases are covered. Production signed writer/epoch/scope binding, online reserve/apply/finalize execution, default-root/complete CLI composition, legacy-terminal-active-residue mode, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-automation-reconcile.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation.rs",
@@ -1754,6 +1754,26 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
           "symbol": "local_execute_cli_consumes_existing_epoch_and_matches_node_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "distinct_clock_samples_match_node_receipts_events_cutoffs_and_after_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "clock_failure_before_commit_preserves_state_and_after_commit_failure_preserves_commit"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "transaction_failure_does_not_sample_after_clock_and_invalid_scope_never_samples"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "system_reconciliation_clock_observes_wall_time_without_granting_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "omitted_business_time_uses_live_clock_inside_admitted_scope"
         }
       ]
     },
@@ -1795,7 +1815,7 @@
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
         "rust/crates/hepta-paper-service/src/node_package_deletion_writer/tests.rs"
       ],
-      "remaining": "Native Rust matches passive plans and now executes the complete incumbent offline schema-25 reconciliation transaction under explicit local cutover admission: node recovery, no-progress pause, terminal settlement, resource deletion, exact event/failure/17-column receipt JSON, strict row preconditions and rollback. The private fixed issuer, actual Node package flock, schema/online-metadata gates and durable writer epoch are connected to --execute-local; actual Node differential, stale-row/collision, process-death and CLI tests cover this path. Production signed writer/epoch/scope binding, online reserve/apply/finalize execution, live-clock/default-root CLI composition, legacy-terminal-active-residue mode, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
+      "remaining": "Native Rust matches passive plans and now executes the complete incumbent offline schema-25 reconciliation transaction under explicit local cutover admission: node recovery, no-progress pause, terminal settlement, resource deletion, exact event/failure/17-column receipt JSON, strict row preconditions and rollback. The private fixed issuer, actual Node package flock, schema/online-metadata gates and durable writer epoch are connected to --execute-local; actual Node differential, stale-row/collision, process-death and CLI tests cover this path. Omitted request.now uses SystemTime with the exact six-stage Node clock observation sequence; advancing/backward/negative-epoch and pre/postcommit clock-failure cases are covered. Production signed writer/epoch/scope binding, online reserve/apply/finalize execution, default-root/complete CLI composition, legacy-terminal-active-residue mode, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs",
         "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
@@ -1889,6 +1909,26 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/automation_runtime_reconciliation_parity.rs",
           "symbol": "local_execute_cli_consumes_existing_epoch_and_matches_node_receipt"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "distinct_clock_samples_match_node_receipts_events_cutoffs_and_after_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "clock_failure_before_commit_preserves_state_and_after_commit_failure_preserves_commit"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "transaction_failure_does_not_sample_after_clock_and_invalid_scope_never_samples"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/offline_execution/tests.rs",
+          "symbol": "system_reconciliation_clock_observes_wall_time_without_granting_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation/scoped_execution.rs",
+          "symbol": "omitted_business_time_uses_live_clock_inside_admitted_scope"
         }
       ]
     },

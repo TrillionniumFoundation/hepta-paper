@@ -15,7 +15,18 @@ const fault=value('--fault');
 if(value('--release-commit')!==null) process.env.HEPTA_RELEASE_COMMIT=value('--release-commit');
 const root=path.dirname(database);
 const store=createDefaultPaperStore({root,runtimeRoot:root,dbPath:database});
-const clock={now:()=>new Date(now),nowIso:()=>now};
+const samples=JSON.parse(value('--clock-samples','null'));
+const clockCalls=[];
+let clockIndex=0;
+const sample=(kind)=>{
+  clockCalls.push(kind);
+  if(!samples) return now;
+  const next=samples[clockIndex++];
+  if(!next || next.kind!==kind) throw new Error('fixture_clock_order_invalid');
+  if(next.error) throw new Error(next.error);
+  return next.value;
+};
+const clock={now:()=>new Date(sample('now')),nowIso:()=>sample('nowIso')};
 const ledger=createSqliteReceiptLedger({store,clock,issuerCapability:issueAutomationReconcilerWriter()});
 const faults={
   'stale-node':"UPDATE campaign_nodes SET status='completed',node_revision=node_revision+1 WHERE node_id='node-3'",
@@ -50,7 +61,7 @@ try {
   }};
   const receipts=[];
   for(let i=0;i<Number(value('--repeat','1'));i++) receipts.push(executeAutomationRuntimeReconciliation({store,clock,receiptLedger,campaignId:value('--campaign-id'),noProgressSeconds:Number(value('--no-progress-seconds','1800'))}));
-  result={ok:true,receipts,snapshot:snapshot()};
-} catch(error) { result={ok:false,error:String(error.message||error),snapshot:snapshot()}; }
+  result={ok:true,receipts,snapshot:snapshot(),clockCalls};
+} catch(error) { result={ok:false,error:String(error.message||error),snapshot:snapshot(),clockCalls}; }
 finally { store.close(); }
 process.stdout.write(`${JSON.stringify(result)}\n`);

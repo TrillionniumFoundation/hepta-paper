@@ -20,8 +20,9 @@ hepta-automation-reconcile --execute-local /absolute/local-request.json
 `--execute-local` is a native extension; it is not an alias for unrestricted Node
 `--execute`. Its closed `LocalOfflineReconciliationRequestV1` document contains
 `version: 1`, `workspaceRoot`, `assetRoot`, `runtimeRoot`, `legacyRoot`,
-`writerFence: { writerId, generation, token }`, `now`, `noProgressSeconds`, and
-optional `campaignId`/`releaseCommit`. The four roots must already exist, be
+`writerFence: { writerId, generation, token }`, `noProgressSeconds`, and
+optional `now`/`campaignId`/`releaseCommit`. Omit `now` to use the real system clock;
+supply it only for an explicit fixed-clock execution. The four roots must already exist, be
 canonical, owned directories without group/other write permission, and be
 pairwise disjoint. The database is always `runtimeRoot/hepta-paper.sqlite` and
 must be an owned, private, single-link regular file. Unknown fields are rejected.
@@ -82,9 +83,14 @@ Node-compatible receipt under `reconciliation`, and reports
 `productionActivation: false` and `nodeRetirementVerified: false`.
 
 Replay is not an upsert. Repeating an identical clean execution at the same fixed
-clock collides with its strict receipt ID. The native local request uses one
-explicit fixed instant; the incumbent live CLI samples its system clock at
-separate stages. Live-clock entrypoint equivalence remains open.
+clock collides with its strict receipt ID. Live execution preserves the six Node
+observations in order: plan ISO time, plan cutoff time, reconciled time, ledger
+creation time, then after-plan ISO and cutoff times after commit. Fixed-clock
+requests retain their deterministic behavior. The clock is synchronous and does
+not grant authority; this business clock adds no monotonicity policy that Node
+does not enforce. A clock failure before commit leaves the transaction untouched;
+a failure during the after-plan observations occurs after durable commit, so an
+error alone never proves that replay is safe.
 
 An error beginning `reconciliation_committed_scope_verification_failed` means the
 business transaction committed before final path/scope validation failed. Inspect
@@ -99,7 +105,9 @@ exercise late event/receipt collisions and stale row fields, kill a child proces
 after all DML before commit, and verify Node/Rust flock exclusion in both
 directions. Admission tests cover the successful writer, stale/rolled-back epochs,
 wrong Canary scope, tampered history, online metadata, root aliases, hardlinks,
-FIFOs and Production rejection. The CLI test compares the complete receipt and
+FIFOs and Production rejection. Advancing, backward and negative-epoch clock
+fixtures compare actual Node observations, hashes, receipt/event text and all
+rows, including each of the six clock failure positions. The CLI test compares the complete receipt and
 proves a later rollback invalidates the serialized request.
 
 From `rust/` with the actual pinned Node executable on `PATH`:
@@ -111,7 +119,7 @@ cargo test --locked -p hepta-paper-service --test automation_runtime_reconciliat
 ```
 
 Remaining source work includes the native production signed subject's binding to
-this exact writer/epoch/operation scope, live-clock/default-root command composition,
+this exact writer/epoch/operation scope, default-root and complete CLI composition,
 legacy-terminal-active-residue maintenance, and the online mutation path. The
 existing cutover preimage hash can recognize Node SQLite bytes; schema format is
 not the reason production is disabled here. Production must not be enabled merely

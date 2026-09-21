@@ -2170,6 +2170,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs",
           "symbol": "parser_rejects_unpaired_evidence_and_relative_roots"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/critical_module_coverage.rs",
+          "symbol": "runtime_root_default_matches_node_coverage_entrypoint"
         }
       ]
     },
@@ -2201,6 +2205,10 @@
         {
           "path": "rust/crates/hepta-readonly-store/tests/node_production_parity.rs",
           "symbol": "all_twenty_five_actual_node_stores_match_production_integrity_hashes_and_remain_immutable"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/store_integrity_cli.rs",
+          "symbol": "implicit_runtime_database_matches_node_entrypoint"
         }
       ]
     },
@@ -2241,6 +2249,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/repository_assets_cli.rs",
           "symbol": "require_externalized_emits_blocked_report_and_preserves_strict_parser"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/repository_assets_cli.rs",
+          "symbol": "workspace_defaults_match_node_entrypoint"
         }
       ]
     },
@@ -2768,6 +2780,22 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
           "symbol": "retirement_status_matches_node_for_missing_and_archive_states"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
+          "symbol": "retirement_status_uses_node_workspace_defaults_when_fields_are_omitted"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
+          "symbol": "retirement_status_cli_uses_node_defaults_without_a_request_file"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
+          "symbol": "retirement_status_preserves_node_lexical_paths_for_symlink_roots"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/retirement_status_parity.rs",
+          "symbol": "retirement_status_reports_node_physical_overlap_and_workspace_blockers"
         }
       ]
     },

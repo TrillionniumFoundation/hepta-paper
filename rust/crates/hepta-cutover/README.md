@@ -227,6 +227,31 @@ The downstream campaign writer still independently checks its signed initial
 writer lease and schema. `production_activation` records that this writer
 handoff was authorized; it is not proof of whole-product compatibility.
 
+`start_production_canary_external_v2` is the owning transfer entry for an
+existing external-v2 production enrollment. Its required expected root,
+enrollment hash, revision and complete `ShadowVerified` state are concurrency
+preconditions; authority still comes from a genuine `VerifiedWriterCutoverV1`
+whose cutover ID, expiry and database preimage match. It observes the actual
+strict, sidecar-free target and retains its descriptor and ancestor identities
+before opening its own journal connection. Under the journal's immediate lock,
+it checks those retained bytes and names, appends the incumbent canary event,
+and rechecks the actual state, storage and signature lifetime before commit.
+Every outcome closes SQLite before dropping the retained regular descriptors,
+so rejecting a target path replaced with a journal-main or SHM alias cannot
+release the journal lock. Callers must have closed any other same-process
+target or journal SQLite handles before invoking this owning entry.
+
+The API accepts no callback, reported preimage or caller clock. It neither
+interprets the signed initial-lease hash's native/HPCW domain nor establishes
+native implementation or deployment qualification; the higher composition
+must supply those independent bindings. It preserves the existing journal
+wire format and Node fence behavior and does not change generic/HPCW
+activation. A COMMIT error requires reopening and inspecting the journal;
+it is not evidence that the transition did not commit. Tests cover genuine
+signatures, peer revision changes, replay refusal, exact-state/root/hash
+mismatches, expiry rollback, real interprocess locks, alias rejection and
+unwinding.
+
 No local-drill method can activate a production enrollment. Production expansion
 and production rollback are intentionally absent until their external authority
 and reverse-schema compatibility contracts are supplied. A schema-changing Rust

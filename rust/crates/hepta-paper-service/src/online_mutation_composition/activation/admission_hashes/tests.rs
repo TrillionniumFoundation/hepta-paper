@@ -7,7 +7,9 @@ use hepta_campaign_writer::{
     verify_writer_cutover_authorization_v1, writer_cutover_signing_bytes_v1,
     writer_database_preimage_hash_v1,
 };
-use hepta_cutover::{DurableCutoverCoordinatorV1, DurableCutoverStorageV2};
+use hepta_cutover::{
+    DurableCutoverCoordinatorV1, DurableCutoverStorageV2, ExternalProductionCanaryTransferRequestV2,
+};
 use rusqlite::Connection;
 use std::{
     fs,
@@ -321,6 +323,14 @@ fn genuine_signed_external_canary_matches_signer_preview_without_a_signature_cyc
         host_identity_hash: digest('5'),
         service_identity_hash: digest('6'),
     };
+    let shadow = coordinator
+        .with_production_shadow_observation_v2(|state, _| Ok(state.clone()))
+        .unwrap();
+    drop(coordinator);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let policy = CampaignWriterPolicyV1::strict(nix::unistd::geteuid().as_raw());
     let preimage = inspect_writer_database_preimage_v1(&database, policy).unwrap();
     let mut authorization = WriterCutoverAuthorizationV1 {
@@ -330,8 +340,8 @@ fn genuine_signed_external_canary_matches_signer_preview_without_a_signature_cyc
         database_preimage_hash: writer_database_preimage_hash_v1(&preimage).unwrap(),
         initial_writer_lease_hash: expected.clone(),
         node_writer_disabled: true,
-        issued_at_unix_ms: 1,
-        expires_at_unix_ms: 100_000,
+        issued_at_unix_ms: now - 1,
+        expires_at_unix_ms: now + 60_000,
         nonce: "native-epoch-test-nonce".into(),
         signer_key_id: "native-epoch-test-key".into(),
         signature_base64: "AA".into(),
@@ -347,22 +357,25 @@ fn genuine_signed_external_canary_matches_signer_preview_without_a_signature_cyc
     let verified = verify_writer_cutover_authorization_v1(
         &authorization,
         &subject,
-        10,
+        now,
         WriterCutoverPolicyV1::default(),
         &trust,
     )
     .unwrap();
-    let actual = coordinator
-        .start_production_canary(
-            3,
-            vec![RECONCILIATION_WRITER_SCOPE_V1.into()],
-            &authorization,
-            &subject,
-            &trust,
-            policy,
-            10,
-        )
-        .unwrap();
+    let actual = DurableCutoverCoordinatorV1::start_production_canary_external_v2(
+        ExternalProductionCanaryTransferRequestV2 {
+            database_path: &database,
+            expected_external_root: &storage,
+            expected_enrollment_hash: enrollment.as_str(),
+            expected_revision: shadow.revision,
+            expected_shadow_state: &shadow,
+            scopes: &preview.canary_scopes,
+            writer_policy: policy,
+        },
+        &verified,
+    )
+    .unwrap();
+    let mut coordinator = DurableCutoverCoordinatorV1::open(&database).unwrap();
     let mut actual_projection = actual.clone();
     actual_projection.activation_receipt_hash = None;
     assert_eq!(actual_projection, preview);

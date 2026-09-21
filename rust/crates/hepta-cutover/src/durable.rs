@@ -25,6 +25,8 @@ mod storage;
 pub use storage::DurableCutoverStorageV2;
 mod observation;
 pub use observation::ExternalWriterStorageObservationV2;
+mod external_transfer;
+pub use external_transfer::ExternalProductionCanaryTransferRequestV2;
 const SCHEMA: &str = "
 CREATE TABLE hepta_cutover_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), state_json TEXT NOT NULL);
 CREATE TABLE hepta_cutover_journal(revision INTEGER PRIMARY KEY, event TEXT NOT NULL,

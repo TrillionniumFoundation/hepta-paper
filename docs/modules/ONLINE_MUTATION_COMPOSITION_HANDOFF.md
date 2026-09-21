@@ -399,10 +399,9 @@ the complete actual resulting state except its separately signed receipt, and
 checks that the Shadow API rejects the activated Canary before its callback.
 
 The existing generic `start_production_canary` still hashes a raw target preimage
-inside its journal transaction. It is not the safe native activation route: a
-separate owning transfer path must capture and retain preimage before opening
-the journal, then verify only held bytes under lock. No current native preview
-or lower-layer signed fixture is reported as closing that remaining transfer gap.
+inside its journal transaction. The separate owning external-v2 transfer now
+captures and retains preimage before opening the journal, then verifies only
+held bytes under lock. The native composition uses this owning route.
 
 
 ## Actual schema-25 business integration scope
@@ -435,3 +434,65 @@ adapter/topology binding is still needed before claiming a fully Node-free
 process tree or exposing the complete native writer. The existing eight-role
 deployment observer alone does not establish that transitive command property.
 Production acceptance and retirement flags remain false.
+
+## Owning signed transfer and subsequent business execution
+
+The private [transfer owner](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/transfer.rs)
+consumes Prepared, the actual native process, complete external qualification,
+genuinely verified cutover signature and one fixed reconciliation request. It
+accepts no caller lease, root, state, SQL callback or diagnostic JSON as a grant.
+Its three phases each close SQLite before releasing any retained raw-file scope:
+
+1. The signing observer returns a private typed copy of actual Shadow state,
+   external root/enrollment, prospective Canary, subject, preimage and epoch.
+   All preview scopes and its journal are gone before transfer starts. The
+   exact independently signed subject, cutover ID, preimage and initial epoch
+   must match, and the existing proofs and signatures must still be current.
+2. The [lower owning transfer](../../rust/crates/hepta-cutover/src/durable/external_transfer.rs)
+   captures real preimage before opening its journal. It binds enrollment and
+   exact full Shadow state, rechecks retained target bytes and storage under
+   the actual transaction, samples its own terminal clock and appends the
+   unchanged cutover wire format. A peer Shadow change rejects the CAS.
+3. Only the returned actual Canary, equal to the expected full state plus the
+   genuine authorization receipt, can supply the writer lease. The consuming
+   execution entry reobserves all evidence and creates fresh scopes; preview
+   tokens are not reused. It then repeats locked native admission before DML.
+
+The cutover and business transactions are separate. Every lower error returns
+an unresolved cutover outcome requiring inspection, does not run business SQL,
+and cannot automatically retry. After confirmed cutover, all later errors say
+cutoverCommitted=true and productionActivationPerformed=true, preserve original
+business committed/unknown details and fatal/deferred flags, and retain the
+complete original business error including its retry classification. The whole
+workflow disables automatic retry. Successful output includes both actual
+cutover state and actual business result; it does not attest Node retirement.
+
+Seven new real lower tests cover genuine Ed25519 activation, unchanged Node/Rust
+fencing, peer revision races, invalid storage/subject/preimage, existing sidecars,
+DELETE/WAL lock retention, terminal expiry rollback and unwind. The cutover
+crate passes 51 tests. Four preview/binding tests, five epoch tests (including
+the real safe signed transfer), and three outcome tests pass; strict service
+Clippy and independent lifecycle review pass. No full production-native fixture
+is fabricated: installed native authority adapters, qualified topology and
+the public writable CLI remain separate required work.
+
+## Retained authority child-command prerequisite
+
+Both pinned process clients expose a crate-private native-command assertion
+against expected command path/hash. The shared [held command checker](../../rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process/native_command.rs)
+uses the original Snapshot descriptor, hashes via positional reads, requires
+ELF and root-owned 0555/0755 installation with safe ancestors, and rechecks
+the actual process configuration and pinned public-key identities. It neither
+opens/clones/closes a regular descriptor nor calls the child RPC. Generic
+script-based transports remain compatible.
+
+ELF is only a necessary condition: Node itself can be an ELF. These methods do
+not establish Rust adapter semantics, map child commands into the eight-role
+deployment, or mint native runtime admission. The expected identity must come
+from a separately reviewed adapter/topology binding before production wiring.
+Six targeted command tests pass, including actual installed ELF identity,
+script rejection without RPC, stale configuration/key pins and independent
+DELETE main/WAL SHM lock probes. The existing online all-actions process parity
+and backup v1/v2 process parity tests each pass using the qualified Node oracle;
+strict service Clippy also passes. The [source-adjacent contract](../../rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process/NATIVE_COMMAND_HANDOFF.md)
+records the exact API and its limits.

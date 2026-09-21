@@ -547,6 +547,8 @@ dependencies = [
 name = "hepta-cutover"
 version = "0.1.0"
 dependencies = [
+ "base64ct",
+ "ed25519-dalek",
  "hepta-campaign-writer",
  "hepta-codex-protocol",
  "hepta-readonly-control",

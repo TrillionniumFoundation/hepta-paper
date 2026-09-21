@@ -58,6 +58,7 @@ mod schema;
 mod signing_preview;
 mod temporal;
 mod transaction;
+mod transfer;
 use schema::{PreparedSchemaInputV1, RetainedSchemaEvidenceV1};
 #[cfg(test)]
 mod tests;

@@ -353,6 +353,17 @@ state under its retained journal lock and derives the same future native epoch
 and closed configuration used at admission. It requires the genuine current
 unit/principal/argv and complete qualification, outputs no authorization, and
 keeps activation/retirement flags false. Its shared projection matches a real
-signed fixture transition. A safe owning signed-transfer entrypoint and the
-complete writable CLI remain separate work; the existing generic transfer's
+signed fixture transition. The private owning signed-transfer entrypoint now
+binds a freshly observed typed subject, uses the external-v2 full-Shadow CAS
+and safe retained preimage transfer, then freshly admits the fixed business
+operation from its actual returned Canary. Separate cutover/business outcomes
+preserve committed or unknown status and cannot automatically retry. The
+complete writable CLI remains separate work; the existing generic transfer's
 raw preimage read is not used as a claimed safe native transfer.
+
+The native authority command prerequisite verifies held executable path/hash,
+ELF bytes, root-owned safe installation, and retained process/public-key pins
+for both online and backup clients. It does not invoke an RPC or change generic
+script support. An ELF can be Node itself: reviewed Rust adapter semantics and
+child topology binding remain necessary before exposing the native writer.
+See the [composition handoff](../../../docs/modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md).

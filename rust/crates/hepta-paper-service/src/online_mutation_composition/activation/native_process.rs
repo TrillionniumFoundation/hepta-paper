@@ -447,6 +447,10 @@ pub(crate) fn native_reconciliation_implementation_hash_v1() -> Sha256Digest {
             include_bytes!("temporal.rs"),
         ),
         (
+            "online_mutation_composition/activation/transfer.rs",
+            include_bytes!("transfer.rs"),
+        ),
+        (
             "online_mutation_composition/activation/signing_preview.rs",
             include_bytes!("signing_preview.rs"),
         ),

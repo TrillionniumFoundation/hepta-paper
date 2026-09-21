@@ -1,4 +1,5 @@
 use super::*;
+mod native_command;
 use nix::fcntl::{FcntlArg, FdFlag, OFlag, fcntl};
 use std::{
     io::{Read, Write},
@@ -102,6 +103,44 @@ impl ProcessMutationAuthorityTransportV1 {
         self.process_configuration.assert_current()?;
         self.authority_configuration.assert_current()?;
         self.command.assert_current()
+    }
+
+    /// Necessary native-command checks against the actual retained executable.
+    /// Expected identity must come from a separately verified, closed adapter
+    /// binding. ELF format alone also admits interpreters such as Node; this
+    /// method grants no adapter provenance, deployment or runtime authority.
+    /// Loading/capturing all inputs must precede an owning SQLite connection;
+    /// this assertion only reads existing descriptors and named metadata.
+    #[allow(dead_code)] // The native-only owning route is wired separately.
+    pub(crate) fn assert_native_process_command_v1(
+        &self,
+        expected_command_path: &Path,
+        expected_command_hash: &hepta_codex_protocol::Sha256Digest,
+    ) -> Result<()> {
+        self.current()?;
+        self.command.assert_native_elf_command_v1(
+            expected_command_path,
+            expected_command_hash,
+            "autonomous_research_online_mutation_authority_native_command_invalid",
+        )?;
+        self.current()
+    }
+}
+
+impl PinnedMutationAuthorityV1<ProcessMutationAuthorityTransportV1> {
+    /// Check all genuine verifier/process pins and the exact retained native
+    /// command without an RPC. This is a necessary file-format/identity check,
+    /// not proof that the command implements a reviewed native authority role.
+    #[allow(dead_code)]
+    pub(crate) fn assert_native_process_command_v1(
+        &self,
+        expected_command_path: &Path,
+        expected_command_hash: &hepta_codex_protocol::Sha256Digest,
+    ) -> Result<()> {
+        self.assert_process_current_v1()?;
+        self.transport
+            .assert_native_process_command_v1(expected_command_path, expected_command_hash)?;
+        self.assert_process_current_v1()
     }
 }
 fn nonblocking(pipe: &impl AsFd) -> bool {

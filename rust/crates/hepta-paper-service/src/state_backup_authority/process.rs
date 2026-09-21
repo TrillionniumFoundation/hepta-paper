@@ -73,6 +73,52 @@ impl ProcessStateBackupAuthorityTransportV1 {
         }
         Ok(())
     }
+
+    /// Necessary retained ELF/path/hash/installation checks only. The caller
+    /// must obtain the expected identity from a genuine reviewed native adapter
+    /// binding; ELF format alone also admits interpreters and grants no role.
+    #[allow(dead_code)] // The native-only owning route is wired separately.
+    pub(crate) fn assert_native_process_command_v1(
+        &self,
+        expected_command_path: &Path,
+        expected_command_hash: &hepta_codex_protocol::Sha256Digest,
+    ) -> Result<()> {
+        self.current()?;
+        self.command.assert_native_elf_command_v1(
+            expected_command_path,
+            expected_command_hash,
+            "autonomous_research_state_backup_authority_native_command_invalid",
+        )?;
+        self.current()
+    }
+}
+
+impl PinnedStateBackupAuthorityV1<ProcessStateBackupAuthorityTransportV1> {
+    /// Check the actual verifier and transport command snapshots without an
+    /// RPC or a new regular-file descriptor. This proves no native adapter
+    /// semantics, role mapping, deployment qualification or runtime activation.
+    #[allow(dead_code)]
+    pub(crate) fn assert_native_process_command_v1(
+        &self,
+        expected_command_path: &Path,
+        expected_command_hash: &hepta_codex_protocol::Sha256Digest,
+    ) -> Result<()> {
+        self.assert_process_current_v1()?;
+        if let Some(online) = &self.online {
+            online.current()?;
+        }
+        self.command.assert_native_elf_command_v1(
+            expected_command_path,
+            expected_command_hash,
+            "autonomous_research_state_backup_authority_native_command_invalid",
+        )?;
+        self.transport
+            .assert_native_process_command_v1(expected_command_path, expected_command_hash)?;
+        if let Some(online) = &self.online {
+            online.current()?;
+        }
+        self.assert_process_current_v1()
+    }
 }
 fn nonblocking(pipe: &impl AsFd) -> bool {
     fcntl(pipe, FcntlArg::F_GETFL).ok().is_some_and(|flags| {

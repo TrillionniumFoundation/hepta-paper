@@ -15,7 +15,20 @@ use hepta_cutover::{
     DurableCutoverCoordinatorV1, DurableCutoverModeV1, DurableCutoverPhaseV1, DurableCutoverStateV1,
 };
 use hepta_qualification_ingest::VerifiedExternalQualificationClosureV1;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Copied observations only: no connection, raw descriptor, proof scope or
+/// deserializable capability crosses the fully closed observation phase.
+pub(super) struct ObservedNativeSigningSubjectV1 {
+    pub(super) shadow: DurableCutoverStateV1,
+    pub(super) prospective_canary: DurableCutoverStateV1,
+    pub(super) external_root: PathBuf,
+    pub(super) enrollment_hash: Sha256Digest,
+    pub(super) subject: WriterCutoverSubjectV1,
+    pub(super) preimage_hash: Sha256Digest,
+    pub(super) epoch_hash: Sha256Digest,
+    report: Value,
+}
 
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 fn rejected() -> crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorError {
@@ -72,6 +85,15 @@ impl PreparedInitialOnlineMutationCompositionV1 {
         native: &RetainedNativeControlProcessV1,
         qualification: &VerifiedExternalQualificationClosureV1,
     ) -> Result<Value> {
+        Ok(self
+            .observe_native_reconciliation_signing_v1(native, qualification)?
+            .report)
+    }
+    pub(super) fn observe_native_reconciliation_signing_v1(
+        &self,
+        native: &RetainedNativeControlProcessV1,
+        qualification: &VerifiedExternalQualificationClosureV1,
+    ) -> Result<ObservedNativeSigningSubjectV1> {
         self.assert_current()?;
         let inventory = self.startup.post_inventory();
         let native_scope = native.retain_for_native_store_transaction_v1(inventory)?;
@@ -154,7 +176,7 @@ impl PreparedInitialOnlineMutationCompositionV1 {
                 self.fence.assert_native_store_transaction_valid_at_v1(&recovery, now)?;
                 qualification.assert_current(u64::try_from(now).map_err(|_| rejected())?)
                     .map_err(|e| error(e.to_string()))?;
-                Ok(json!({"version":1,"kind":"NativeReconciliationSigningDiagnostic",
+                let report = json!({"version":1,"kind":"NativeReconciliationSigningDiagnostic",
                     "status":"independent_native_cutover_signature_required",
                     "subject":subject,"configuration":configuration.body,
                     "databasePreimageHash":preimage_hash,"initialWriterLeaseHash":configuration.epoch_hash,
@@ -163,7 +185,13 @@ impl PreparedInitialOnlineMutationCompositionV1 {
                     "expectedWriterId":expected.writer_id,"expectedToken":expected.token,
                     "expectedScopes":expected.canary_scopes,"externalStorageEnrollmentHashV2":enrollment,
                     "qualificationReceiptHash":qualification.receipt_hash(),"checkedAtMillis":now,
-                    "runtimeReady":false,"productionActivation":false,"productionActivationPerformed":false,"nodeRetirementVerified":false}))
+                    "runtimeReady":false,"productionActivation":false,"productionActivationPerformed":false,"nodeRetirementVerified":false});
+                Ok(ObservedNativeSigningSubjectV1 {
+                    shadow: state.clone(), prospective_canary: expected,
+                    external_root: storage.external_storage_root_v2().to_path_buf(),
+                    enrollment_hash: enrollment, subject, preimage_hash,
+                    epoch_hash: configuration.epoch_hash, report,
+                })
             })();
             let failure = result.as_ref().err().map(|e| e.code.clone());
             outcome = Some(result);

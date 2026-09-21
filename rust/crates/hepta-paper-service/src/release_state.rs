@@ -38,7 +38,21 @@ fn javascript_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        // JSON.parse in the incumbent turns every JSON number into an IEEE
+        // 754 Number before String(value) runs.  serde_json can retain the
+        // original integer/exponent spelling (and arbitrary precision), so
+        // using Number::to_string() here would preserve input text instead
+        // of reproducing JavaScript's rounded Number-to-string boundary.
+        Value::Number(value) => value
+            .as_f64()
+            .map(|number| {
+                if number == 0.0 {
+                    "0".to_owned()
+                } else {
+                    ryu_js::Buffer::new().format(number).to_owned()
+                }
+            })
+            .unwrap_or_else(|| value.to_string()),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
@@ -68,6 +82,33 @@ fn javascript_truthy(value: &Value) -> bool {
         // Arrays and objects are truthy in JavaScript, including empty ones.
         Value::Array(_) | Value::Object(_) => true,
     }
+}
+
+fn javascript_json_number(value: &serde_json::Number) -> Value {
+    // The request has already crossed JSON.parse in the incumbent.  Rebuild
+    // the observable JSON value from the rounded binary64 Number so unsafe
+    // integers and exponent spellings cannot retain serde's source lexeme.
+    let Some(number) = value.as_f64() else {
+        return Value::Null;
+    };
+    if !number.is_finite() {
+        return Value::Null;
+    }
+    if number.fract() == 0.0 {
+        if (0.0..18_446_744_073_709_551_616.0).contains(&number) {
+            return Value::Number(serde_json::Number::from(number as u64));
+        }
+        if (-9_223_372_036_854_775_808.0..0.0).contains(&number) {
+            return Value::Number(serde_json::Number::from(number as i64));
+        }
+    }
+    let formatted = ryu_js::Buffer::new().format(number).to_owned();
+    formatted
+        .parse::<serde_json::Number>()
+        .ok()
+        .or_else(|| serde_json::Number::from_f64(number))
+        .map(Value::Number)
+        .unwrap_or(Value::Null)
 }
 
 fn javascript_strict_equal(left: Option<&Value>, right: Option<&Value>) -> bool {
@@ -386,7 +427,10 @@ pub fn inspect_release_state_v1(input: &Value) -> Result<Value, ReleaseStateErro
     }
     let output_version = package_version
         .filter(|value| javascript_truthy(value))
-        .cloned()
+        .map(|value| match value {
+            Value::Number(number) => javascript_json_number(number),
+            other => other.clone(),
+        })
         .unwrap_or(Value::Null);
     Ok(
         json!({"ok": errors.is_empty(), "kind":"ReleaseStateConsistency", "contractVersion":2, "version": output_version, "state": state, "documentationProfile": profile, "errors": errors}),

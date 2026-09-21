@@ -80,6 +80,13 @@ fn release_state_contract_matches_node_oracle() {
     repeated_tag_snapshots["headTags"] = serde_json::json!(["v0.21.0", "v0.21.0", "v0.21.0"]);
     repeated_tag_snapshots["allTags"] =
         serde_json::json!(["v0.21.0", "v0.21.0", "v0.22.0", "v0.22.0"]);
+    let unsafe_integer_number: Value = serde_json::from_str(
+        r#"{"packageJson":{"version":9007199254740993},"packageLock":{"version":9007199254740993}}"#,
+    )
+    .expect("unsafe integer JSON fixture");
+    let exponent_number: Value =
+        serde_json::from_str(r#"{"packageJson":{"version":1e20},"packageLock":{"version":1e20}}"#)
+            .expect("exponent number JSON fixture");
     let requests = serde_json::json!([
         development,
         finalized,
@@ -92,6 +99,11 @@ fn release_state_contract_matches_node_oracle() {
         repeated_tag_snapshots,
         Value::Null
     ]);
+    let mut requests = requests;
+    requests
+        .as_array_mut()
+        .expect("request array")
+        .extend([unsafe_integer_number, exponent_number]);
     let expected = oracle(&requests);
     for (index, request) in requests.as_array().unwrap().iter().enumerate() {
         let result = match inspect_release_state_v1(request) {

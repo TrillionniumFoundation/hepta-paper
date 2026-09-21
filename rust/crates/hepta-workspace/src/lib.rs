@@ -26,6 +26,37 @@ const MAXIMUM_TREE_ENTRIES: usize = 100_000;
 const MAXIMUM_MUTATION_BYTES: u64 = 1024 * 1024 * 1024;
 static NEXT_ATTEMPT_NONCE: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Clone, Copy)]
+struct WorkspaceLimits {
+    tree_entries: usize,
+    file_bytes: u64,
+}
+
+impl WorkspaceLimits {
+    const PRODUCTION: Self = Self {
+        tree_entries: MAXIMUM_TREE_ENTRIES,
+        file_bytes: MAXIMUM_FILE_BYTES,
+    };
+}
+
+struct TreeEntryBudget {
+    remaining: usize,
+}
+
+impl TreeEntryBudget {
+    fn new(maximum: usize) -> Self {
+        Self { remaining: maximum }
+    }
+
+    fn reserve(&mut self) -> Result<(), WorkspaceError> {
+        if self.remaining == 0 {
+            return Err(WorkspaceError::TreeEntryLimitExceeded);
+        }
+        self.remaining -= 1;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceObjectIdentityV1 {
@@ -117,8 +148,15 @@ impl WorkspaceRootV1 {
     }
 
     pub fn inventory(&self) -> Result<TreeInventoryV1, WorkspaceError> {
+        self.inventory_with_limits(WorkspaceLimits::PRODUCTION)
+    }
+
+    fn inventory_with_limits(
+        &self,
+        limits: WorkspaceLimits,
+    ) -> Result<TreeInventoryV1, WorkspaceError> {
         self.revalidate()?;
-        inventory_tree(&self.canonical_path)
+        inventory_tree(&self.canonical_path, limits)
     }
 
     fn revalidate(&self) -> Result<(), WorkspaceError> {
@@ -419,9 +457,25 @@ pub fn materialize_attempt(
     attempt_id: &str,
     expected_owner_uid: u32,
 ) -> Result<AttemptWorkspaceV1, WorkspaceError> {
+    materialize_attempt_with_limits(
+        source,
+        attempt_parent.as_ref(),
+        attempt_id,
+        expected_owner_uid,
+        WorkspaceLimits::PRODUCTION,
+    )
+}
+
+fn materialize_attempt_with_limits(
+    source: &WorkspaceRootV1,
+    attempt_parent: &Path,
+    attempt_id: &str,
+    expected_owner_uid: u32,
+    limits: WorkspaceLimits,
+) -> Result<AttemptWorkspaceV1, WorkspaceError> {
     validate_identifier(attempt_id)?;
     source.revalidate()?;
-    let parent = inspect_private_attempt_parent(attempt_parent.as_ref(), expected_owner_uid)?;
+    let parent = inspect_private_attempt_parent(attempt_parent, expected_owner_uid)?;
     let sequence = NEXT_ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -436,7 +490,13 @@ pub fn materialize_attempt(
         .map_err(|error| WorkspaceError::Filesystem("attempt_staging", error.kind()))?;
     fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))
         .map_err(|error| WorkspaceError::Filesystem("attempt_staging_mode", error.kind()))?;
-    if let Err(error) = copy_tree(&source.canonical_path, &staging) {
+    let mut entries = TreeEntryBudget::new(limits.tree_entries);
+    if let Err(error) = copy_tree(
+        &source.canonical_path,
+        &staging,
+        &mut entries,
+        limits.file_bytes,
+    ) {
         let _ = fs::remove_dir_all(&staging);
         return Err(error);
     }
@@ -444,7 +504,7 @@ pub fn materialize_attempt(
     publish_attempt_no_replace(&staging, &final_path)?;
     sync_directory(&parent)?;
     let root = WorkspaceRootV1::open(&final_path, expected_owner_uid)?;
-    let initial_inventory = root.inventory()?;
+    let initial_inventory = root.inventory_with_limits(limits)?;
     Ok(AttemptWorkspaceV1 {
         attempt_id: attempt_id.to_owned(),
         canonical_path: final_path,
@@ -504,13 +564,17 @@ pub fn recover_incomplete_attempts(
     Ok(removed)
 }
 
-fn inventory_tree(root: &Path) -> Result<TreeInventoryV1, WorkspaceError> {
+fn inventory_tree(root: &Path, limits: WorkspaceLimits) -> Result<TreeInventoryV1, WorkspaceError> {
     let mut entries = Vec::new();
-    inventory_directory(root, Path::new(""), &mut entries)?;
+    let mut budget = TreeEntryBudget::new(limits.tree_entries);
+    inventory_directory(
+        root,
+        Path::new(""),
+        &mut entries,
+        &mut budget,
+        limits.file_bytes,
+    )?;
     entries.sort();
-    if entries.len() > MAXIMUM_TREE_ENTRIES {
-        return Err(WorkspaceError::TreeEntryLimitExceeded);
-    }
     let total_file_bytes = entries.iter().try_fold(0_u64, |total, entry| {
         total
             .checked_add(entry.byte_count)
@@ -529,17 +593,12 @@ fn inventory_directory(
     root: &Path,
     relative: &Path,
     entries: &mut Vec<TreeEntryV1>,
+    budget: &mut TreeEntryBudget,
+    maximum_file_bytes: u64,
 ) -> Result<(), WorkspaceError> {
     let current = root.join(relative);
-    let mut children = fs::read_dir(&current)
-        .map_err(|error| WorkspaceError::Filesystem("inventory_read_dir", error.kind()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| WorkspaceError::Filesystem("inventory_entry", error.kind()))?;
-    children.sort_by_key(fs::DirEntry::file_name);
+    let children = bounded_children(&current, budget, "inventory_read_dir", "inventory_entry")?;
     for child in children {
-        if entries.len() >= MAXIMUM_TREE_ENTRIES {
-            return Err(WorkspaceError::TreeEntryLimitExceeded);
-        }
         let name = child.file_name();
         let Some(name) = name.to_str() else {
             return Err(WorkspaceError::NonUtf8Path);
@@ -562,10 +621,13 @@ fn inventory_directory(
             return Err(WorkspaceError::SpecialFileForbidden(relative_text));
         };
         let (byte_count, content_hash) = if kind == TreeEntryKindV1::File {
-            if metadata.size() > MAXIMUM_FILE_BYTES {
+            if metadata.size() > maximum_file_bytes {
                 return Err(WorkspaceError::FileByteLimitExceeded(relative_text));
             }
-            (metadata.size(), Some(hash_file(&child.path())?))
+            (
+                metadata.size(),
+                Some(hash_file(&child.path(), maximum_file_bytes)?),
+            )
         } else {
             (0, None)
         };
@@ -580,18 +642,40 @@ fn inventory_directory(
             content_hash,
         });
         if kind == TreeEntryKindV1::Directory {
-            inventory_directory(root, &child_relative, entries)?;
+            inventory_directory(root, &child_relative, entries, budget, maximum_file_bytes)?;
         }
     }
     Ok(())
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), WorkspaceError> {
-    let mut children = fs::read_dir(source)
-        .map_err(|error| WorkspaceError::Filesystem("copy_read_dir", error.kind()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| WorkspaceError::Filesystem("copy_entry", error.kind()))?;
+fn bounded_children(
+    directory: &Path,
+    budget: &mut TreeEntryBudget,
+    directory_error: &'static str,
+    entry_error: &'static str,
+) -> Result<Vec<fs::DirEntry>, WorkspaceError> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| WorkspaceError::Filesystem(directory_error, error.kind()))?;
+    let mut children = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| WorkspaceError::Filesystem(entry_error, error.kind()))?;
+        // Reserve once when discovered, before collecting, copying or hashing.
+        // Pending siblings consume the same budget as recursively found children.
+        // The root itself is never enumerated and does not consume an entry.
+        budget.reserve()?;
+        children.push(entry);
+    }
     children.sort_by_key(fs::DirEntry::file_name);
+    Ok(children)
+}
+
+fn copy_tree(
+    source: &Path,
+    destination: &Path,
+    budget: &mut TreeEntryBudget,
+    maximum_file_bytes: u64,
+) -> Result<(), WorkspaceError> {
+    let children = bounded_children(source, budget, "copy_read_dir", "copy_entry")?;
     for child in children {
         let source_path = child.path();
         let destination_path = destination.join(child.file_name());
@@ -608,10 +692,10 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), WorkspaceError> {
                 fs::Permissions::from_mode(metadata.mode() & 0o7777),
             )
             .map_err(|error| WorkspaceError::Filesystem("copy_directory_mode", error.kind()))?;
-            copy_tree(&source_path, &destination_path)?;
+            copy_tree(&source_path, &destination_path, budget, maximum_file_bytes)?;
             sync_directory(&destination_path)?;
         } else if metadata.is_file() {
-            if metadata.size() > MAXIMUM_FILE_BYTES {
+            if metadata.size() > maximum_file_bytes {
                 return Err(WorkspaceError::FileByteLimitExceeded(path_text(
                     &source_path,
                 )?));
@@ -624,8 +708,12 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), WorkspaceError> {
                 .mode(metadata.mode() & 0o7777)
                 .open(&destination_path)
                 .map_err(|error| WorkspaceError::Filesystem("copy_target", error.kind()))?;
-            std::io::copy(&mut source_file, &mut destination_file)
-                .map_err(|error| WorkspaceError::Filesystem("copy_bytes", error.kind()))?;
+            copy_file_bytes(
+                &mut source_file,
+                &mut destination_file,
+                &source_path,
+                maximum_file_bytes,
+            )?;
             destination_file
                 .sync_all()
                 .map_err(|error| WorkspaceError::Filesystem("copy_sync", error.kind()))?;
@@ -634,6 +722,25 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), WorkspaceError> {
                 &source_path,
             )?));
         }
+    }
+    Ok(())
+}
+
+fn copy_file_bytes(
+    source: &mut impl Read,
+    destination: &mut impl std::io::Write,
+    source_path: &Path,
+    maximum_bytes: u64,
+) -> Result<(), WorkspaceError> {
+    let read_limit = maximum_bytes
+        .checked_add(1)
+        .ok_or(WorkspaceError::NumericOverflow)?;
+    let copied = std::io::copy(&mut source.take(read_limit), destination)
+        .map_err(|error| WorkspaceError::Filesystem("copy_bytes", error.kind()))?;
+    if copied > maximum_bytes {
+        return Err(WorkspaceError::FileByteLimitExceeded(path_text(
+            source_path,
+        )?));
     }
     Ok(())
 }
@@ -721,9 +828,21 @@ fn hash_path(path: &Path) -> Result<Sha256Digest, WorkspaceError> {
     hash_bytes("HeptaCanonicalWorkspacePathV1", path_text(path)?.as_bytes())
 }
 
-fn hash_file(path: &Path) -> Result<Sha256Digest, WorkspaceError> {
+fn hash_file(path: &Path, maximum_bytes: u64) -> Result<Sha256Digest, WorkspaceError> {
     let mut file =
         File::open(path).map_err(|error| WorkspaceError::Filesystem("hash_file", error.kind()))?;
+    hash_file_bytes(&mut file, path, maximum_bytes)
+}
+
+fn hash_file_bytes(
+    file: &mut impl Read,
+    path: &Path,
+    maximum_bytes: u64,
+) -> Result<Sha256Digest, WorkspaceError> {
+    let read_limit = maximum_bytes
+        .checked_add(1)
+        .ok_or(WorkspaceError::NumericOverflow)?;
+    let mut file = file.take(read_limit);
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     let mut total = 0_u64;
@@ -737,7 +856,7 @@ fn hash_file(path: &Path) -> Result<Sha256Digest, WorkspaceError> {
         total = total
             .checked_add(u64::try_from(read).map_err(|_| WorkspaceError::NumericOverflow)?)
             .ok_or(WorkspaceError::NumericOverflow)?;
-        if total > MAXIMUM_FILE_BYTES {
+        if total > maximum_bytes {
             return Err(WorkspaceError::FileByteLimitExceeded(path_text(path)?));
         }
         hasher.update(&buffer[..read]);
@@ -825,6 +944,7 @@ pub enum WorkspaceError {
 #[cfg(test)]
 mod tests {
     use std::{
+        io::{Seek, Write},
         os::unix::fs::{MetadataExt, PermissionsExt, symlink},
         sync::atomic::{AtomicU64, Ordering},
     };
@@ -904,6 +1024,169 @@ mod tests {
                 .expect("prepared result");
         assert_eq!(prepared.attempt_id, "attempt-1");
         assert_eq!(mutation.records.len(), 1);
+    }
+
+    #[test]
+    fn production_entry_budget_accepts_exactly_the_fixed_ceiling() {
+        let mut budget = TreeEntryBudget::new(WorkspaceLimits::PRODUCTION.tree_entries);
+        for _ in 0..MAXIMUM_TREE_ENTRIES {
+            budget.reserve().expect("entry within production ceiling");
+        }
+        for _ in 0..2 {
+            assert_eq!(
+                budget.reserve(),
+                Err(WorkspaceError::TreeEntryLimitExceeded)
+            );
+            assert_eq!(budget.remaining, 0);
+        }
+    }
+
+    #[test]
+    fn exact_tree_budget_counts_files_and_directories_but_not_the_root() {
+        let tree = TempTree::new();
+        let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source root");
+        let limits = WorkspaceLimits {
+            tree_entries: 3,
+            file_bytes: 64,
+        };
+        let before = source
+            .inventory_with_limits(limits)
+            .expect("exact source inventory");
+        assert_eq!(
+            before
+                .entries
+                .iter()
+                .map(|entry| entry.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            ["paper.tex", "src", "src/model.rs"]
+        );
+        // This is the same private producer called by the public API, with a
+        // small private budget. Public callers cannot override the fixed limit.
+        let attempt = materialize_attempt_with_limits(
+            &source,
+            &tree.attempts,
+            "exact-budget",
+            tree.uid,
+            limits,
+        )
+        .expect("exact tree publishes");
+        assert_eq!(attempt.initial_inventory, before);
+        assert_eq!(fs::read_dir(&tree.attempts).expect("attempts").count(), 1);
+        assert_eq!(
+            fs::read(attempt.canonical_path.join("paper.tex")).expect("copy"),
+            b"draft"
+        );
+    }
+
+    #[test]
+    fn tree_budget_rejection_during_enumeration_or_recursion_never_publishes() {
+        // One rejects the second root entry before copying. Two admits both
+        // root entries, then rejects the nested file using the SAME budget.
+        for limit in [1, 2] {
+            let tree = TempTree::new();
+            let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source root");
+            let before = source.inventory().expect("source inventory");
+            let limits = WorkspaceLimits {
+                tree_entries: limit,
+                file_bytes: 64,
+            };
+            assert_eq!(
+                source.inventory_with_limits(limits),
+                Err(WorkspaceError::TreeEntryLimitExceeded)
+            );
+            let failure = materialize_attempt_with_limits(
+                &source,
+                &tree.attempts,
+                "oversize-tree",
+                tree.uid,
+                limits,
+            )
+            .expect_err("copy must reject before publication");
+            assert_eq!(failure, WorkspaceError::TreeEntryLimitExceeded);
+            assert_eq!(
+                fs::symlink_metadata(tree.attempts.join("attempt-oversize-tree"))
+                    .expect_err("final name must never exist")
+                    .kind(),
+                std::io::ErrorKind::NotFound
+            );
+            assert_eq!(
+                fs::read_dir(&tree.attempts)
+                    .expect("clean attempts")
+                    .count(),
+                0
+            );
+            assert_eq!(source.inventory().expect("unchanged source"), before);
+        }
+    }
+
+    #[test]
+    fn file_budget_rejection_cleans_staging_before_publication() {
+        let tree = TempTree::new();
+        let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source root");
+        let before = source.inventory().expect("source inventory");
+        let failure = materialize_attempt_with_limits(
+            &source,
+            &tree.attempts,
+            "oversize-file",
+            tree.uid,
+            WorkspaceLimits {
+                tree_entries: 3,
+                file_bytes: 4,
+            },
+        )
+        .expect_err("five-byte paper exceeds the private four-byte test budget");
+        assert!(matches!(failure, WorkspaceError::FileByteLimitExceeded(_)));
+        assert_eq!(
+            fs::read_dir(&tree.attempts)
+                .expect("clean attempts")
+                .count(),
+            0
+        );
+        assert_eq!(source.inventory().expect("unchanged source"), before);
+    }
+
+    #[test]
+    fn growing_file_copy_and_hash_read_only_the_limit_plus_one_byte() {
+        let tree = TempTree::new();
+        let path = tree.root.join("growing-file");
+        let destination = tree.root.join("bounded-copy");
+        for grow in [false, true] {
+            fs::write(&path, b"abcd").expect("initial file at exact byte boundary");
+            let mut copy_source = File::open(&path).expect("retained copy source");
+            let mut hash_source = File::open(&path).expect("retained hash source");
+            assert_eq!(copy_source.metadata().expect("pre-copy stat").len(), 4);
+            assert_eq!(hash_source.metadata().expect("pre-hash stat").len(), 4);
+            if grow {
+                OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .expect("concurrent writer")
+                    .write_all(b"efghijkl")
+                    .expect("grow after metadata check");
+            }
+            let mut output = File::create(&destination).expect("copy destination");
+            let copy = copy_file_bytes(&mut copy_source, &mut output, &path, 4);
+            let hash = hash_file_bytes(&mut hash_source, &path, 4);
+            if grow {
+                let expected =
+                    WorkspaceError::FileByteLimitExceeded(path_text(&path).expect("path"));
+                assert_eq!(copy, Err(expected.clone()));
+                assert_eq!(hash, Err(expected));
+                assert_eq!(copy_source.stream_position().expect("copy offset"), 5);
+                assert_eq!(hash_source.stream_position().expect("hash offset"), 5);
+                assert_eq!(output.metadata().expect("bounded output").len(), 5);
+                assert_eq!(fs::metadata(&path).expect("larger actual source").len(), 12);
+            } else {
+                copy.expect("exact byte limit copies");
+                assert_eq!(
+                    hash.expect("exact byte limit hashes").as_str(),
+                    format!("sha256:{}", hex::encode(Sha256::digest(b"abcd")))
+                );
+                assert_eq!(copy_source.stream_position().expect("copy offset"), 4);
+                assert_eq!(hash_source.stream_position().expect("hash offset"), 4);
+                assert_eq!(fs::read(&destination).expect("exact output"), b"abcd");
+            }
+        }
     }
 
     #[test]

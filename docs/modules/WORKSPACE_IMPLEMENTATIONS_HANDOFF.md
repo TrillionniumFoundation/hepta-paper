@@ -4,13 +4,21 @@ Two Rust crates export types named `WorkspaceRootV1`, `MutationPolicyV1` and
 `PreparedWorkspaceResultV1`. They have distinct contracts and are not interchangeable.
 Use qualified crate paths when selecting a consumer or discussing evidence.
 
+The current repository has no cross-crate consumer of `hepta-workspace`: its
+materialization API is exercised by its own unit tests. The actual
+[`local_slice` integration fixture](../../rust/crates/hepta-local-vertical/tests/local_slice.rs)
+uses `hepta-workspace-authority`, as declared in its
+[`Cargo.toml`](../../rust/crates/hepta-local-vertical/Cargo.toml). That fixture does
+not validate `hepta-workspace` materialization or wire either API into a complete
+production writer. Keep this distinction when reporting migration progress.
+
 | Boundary | `hepta-workspace` | `hepta-workspace-authority` |
 |---|---|---|
 | Implementation | [`src/lib.rs`](../../rust/crates/hepta-workspace/src/lib.rs) | [`src/lib.rs`](../../rust/crates/hepta-workspace-authority/src/lib.rs), [`bound.rs`](../../rust/crates/hepta-workspace-authority/src/bound.rs) |
 | Root open | Requires an expected owner UID and an absolute canonical root without group/other write bits; retains the root descriptor and object identity. | Accepts `Option<u32>` for expected UID; `None` omits the owner comparison. Still requires a canonical directory without group/other write bits and retains its descriptor. |
 | Resolution/inventory | `resolve_existing` verifies root identity, path containment and link components; `inventory` produces typed `TreeInventoryV1`. | `anchored_path` validates relative syntax/root identity; actual child opening and inventory use descriptor-bound objects. The path string alone is not an opened-child capability. |
-| File bound | 512 MiB per regular file. | 1 GiB per regular file. |
-| Tree bound | Inventory has at most 100,000 entries. The current copy loop has no independent entry counter before publication; a later inventory can reject a published oversized tree. | Both copy and inventory count at most 100,000 entries. Child opens reject cross-device objects and hard-linked regular files. |
+| File bound | 512 MiB per successful regular-file copy/hash; actual stream reads stop after at most one extra byte used to detect growth beyond the limit. | 1 GiB per regular file. |
+| Tree bound | Copy and inventory each reserve from one shared 100,000-entry budget while enumerating, before collecting/sorting or processing each child. Files and directories each count once; the root does not count. Copy rejection precedes publication. | Both copy and inventory count at most 100,000 entries. Child opens reject cross-device objects and hard-linked regular files. |
 | Attempt name | Private staging `.attempt-<id>-<nonce>-<sequence>.creating`, final `attempt-<id>`. | Creates the final `<id>` directory exclusively before copying. |
 | Publication | Linux `renameat2(RENAME_NOREPLACE)` followed by parent sync; no replacement fallback. | No staging rename: a failed copy can leave the exclusively created attempt directory. |
 | Mutation accounting | Typed before/after records and changed after-image file bytes; additional 1 GiB mutation ceiling. | Added/changed/removed path sets and changed after-image bytes; policy supplies path/byte ceilings. |
@@ -57,6 +65,20 @@ unpublished staging tree. No unsupported-kernel fallback performs an ordinary
 overwriting rename. Copy failure attempts to remove its staging tree; later
 sync/publication failures can leave staging for controlled recovery.
 
+Copy and inventory use the same tree-counting rules with a fresh budget for each
+walk. Pending siblings consume budget before recursion, so separate subtrees
+cannot each obtain a new 100,000-entry allowance and directory collection is
+bounded before sorting. Successful trees retain their existing ordering and
+inventory hash contract. An over-limit tree is rejected during copying and the
+staging cleanup runs before any final-name publication.
+
+The regular-file metadata check remains, and both copying and hashing additionally
+limit actual input to `MAXIMUM_FILE_BYTES + 1`. Reading the extra byte returns
+`FileByteLimitExceeded`; a failed copy may have written that one extra byte only
+inside its unpublished staging tree. This handles growth after the initial size
+check without claiming a concurrent filesystem snapshot or an aggregate tree
+byte budget. The separate 1 GiB mutation ceiling is not a materialization quota.
+
 After a successful rename, parent sync, root opening or inventory can still
 fail. The current `WorkspaceError` does not encode a committed/unknown publication
 disposition. An error therefore does not prove that the final name is absent;
@@ -99,3 +121,12 @@ partial-file removal. These source tests do not establish target-host sandbox
 qualification, a live recovery barrier, artifact scientific correctness or
 production writer admission. The filesystem prepared-result and commit suites
 exercise the separate downstream boundaries.
+
+Additional first-crate tests run the complete materialization kernel with private
+small budgets: exact-boundary trees publish, enumeration/recursive overflow leaves
+no final directory, and staging cleanup preserves the source. A lightweight
+counter test exercises the fixed production entry ceiling without creating
+100,000 files. Real files grown after metadata observation test copy/hash stream
+offsets and rejection at the small byte limit plus one; the exact byte boundary
+still copies and hashes unchanged bytes. These tests do not claim a full-scale
+100,000-file or 512 MiB performance run. Public APIs expose no limit override.

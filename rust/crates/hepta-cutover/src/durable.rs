@@ -23,6 +23,8 @@ use thiserror::Error;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 mod storage;
 pub use storage::DurableCutoverStorageV2;
+mod observation;
+pub use observation::ExternalWriterStorageObservationV2;
 const SCHEMA: &str = "
 CREATE TABLE hepta_cutover_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), state_json TEXT NOT NULL);
 CREATE TABLE hepta_cutover_journal(revision INTEGER PRIMARY KEY, event TEXT NOT NULL,

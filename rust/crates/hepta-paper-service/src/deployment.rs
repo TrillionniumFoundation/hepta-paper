@@ -246,14 +246,7 @@ pub fn verify_production_deployment_v1(
     }
     let (control_executable_path, control_executable_hash) =
         control.ok_or(ProductionDeploymentError::ControlPlaneMissing)?;
-    let identity_hash = canonical_hash_v1(&DeploymentIdentityBodyV1 {
-        domain: "HeptaProductionDeploymentV1",
-        manifest,
-        node_runtime_present: false,
-        production_only_native_binaries: true,
-        filesystem_verified: true,
-    })
-    .map_err(|_| ProductionDeploymentError::EncodingInvalid)?;
+    let identity_hash = production_deployment_identity_hash_v1(manifest)?;
     Ok(VerifiedProductionDeploymentV1 {
         repository: manifest.repository.clone(),
         commit: manifest.commit.clone(),
@@ -263,6 +256,22 @@ pub fn verify_production_deployment_v1(
         control_executable_hash,
         service_count: manifest.services.len(),
     })
+}
+
+/// Pure identity encoding shared by the genuine verifier and its retained
+/// transaction evidence. This does not validate files or construct a verified
+/// deployment; the caller must still possess the original opaque proof.
+pub(crate) fn production_deployment_identity_hash_v1(
+    manifest: &ProductionDeploymentManifestV1,
+) -> Result<Sha256Digest, ProductionDeploymentError> {
+    canonical_hash_v1(&DeploymentIdentityBodyV1 {
+        domain: "HeptaProductionDeploymentV1",
+        manifest,
+        node_runtime_present: false,
+        production_only_native_binaries: true,
+        filesystem_verified: true,
+    })
+    .map_err(|_| ProductionDeploymentError::EncodingInvalid)
 }
 
 fn validate_manifest(

@@ -20,6 +20,7 @@ import {createAutonomousResearchOnlineMutationReceiptVerifier}
   from '../../paper-adapters/automation/autonomous-research-online-mutation-authority.mjs';
 import * as schema from '../../paper-domain/automation/autonomous-research-online-schema-transition-contract.mjs';
 import * as online from '../../paper-domain/automation/autonomous-research-online-mutation-contract.mjs';
+import * as recovery from '../../paper-domain/automation/autonomous-research-online-mutation-recovery-contract.mjs';
 import {autonomousResearchOnlineUnresolvedReservationSetHash,verifyAutonomousResearchOnlineUnresolvedReservationList}
   from '../../paper-domain/automation/autonomous-research-online-unresolved-reservation-contract.mjs';
 import {autonomousResearchStateBackupAuthoritySignaturePayload as backupPayload}
@@ -29,6 +30,8 @@ import {productionOracleProfile} from './production-record-hash-v1.mjs';
 import {createExternallyFencedSqliteMutationCoordinator} from '../../paper-adapters/automation/externally-fenced-sqlite-mutation-coordinator.mjs';
 import {AUTONOMOUS_RESEARCH_ONLINE_MUTATION_OPERATION_PLANS} from '../../paper-composition/bootstrap/autonomous-research-online-mutation-operation-plans.mjs';
 import {buildExternallyFencedSqliteMutationFinalizeRequest} from '../../paper-adapters/automation/externally-fenced-sqlite-mutation-recovery.mjs';
+import {createDefaultPaperStore} from '../../paper-adapters/persistence/store-provider.mjs';
+import {createSqliteCampaignStore} from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 
 const REPO=path.resolve(import.meta.dirname,'../..');
 const LEASE_MS=900000;
@@ -45,7 +48,29 @@ const write=(file,value,mode=0o600)=>{
 function checkRoot(root){
   if(!root.startsWith('/tmp/hepta-online-initial-composition-')||fs.realpathSync(root)!==root||!fs.lstatSync(root).isDirectory())throw Error('isolated_fixture_required');
 }
-function fixture(root){
+function provisionNativeBusiness(runtime){
+  const dbPath=path.join(runtime,'hepta-paper.sqlite');fs.unlinkSync(dbPath);
+  const store=createDefaultPaperStore({root:runtime,runtimeRoot:runtime,dbPath});
+  const past=new Date(Date.now()-7200000).toISOString(),clock={now:()=>new Date(past),nowIso:()=>past};
+  const checked=sql=>{const result=store.execute(sql);if(!result.ok)throw Error(result.error||result.stderr);};
+  try{
+    const campaigns=createSqliteCampaignStore({store,clock});
+    for(const [campaignId,policy] of [['standard-campaign',1],['legacy-campaign',0]]){
+      campaigns.createCampaign({campaignId,paperId:`${campaignId}-paper`,terminalSiblingSettlementPolicyVersion:policy,nodes:[
+        {nodeId:`${campaignId}:terminal`,kind:'agent',dependencies:[]},
+        {nodeId:`${campaignId}:expired`,kind:'agent',dependencies:[]},
+        {nodeId:`${campaignId}:queued`,kind:'agent',dependencies:[]},
+      ]});
+      checked(`UPDATE paper_campaigns SET status='failed',stop_reason='historical_failure',revision=7 WHERE campaign_id='${campaignId}';
+        UPDATE campaign_nodes SET status='failed_terminal',failure_class='historical_failure',node_revision=3 WHERE node_id='${campaignId}:terminal';
+        UPDATE campaign_nodes SET status='running',lease_owner='dead-worker',lease_expires_at='${past}',attempt_id='expired-attempt',lease_generation=5,node_revision=9 WHERE node_id='${campaignId}:expired';
+        UPDATE campaign_nodes SET failure_class='保留↔é',node_revision=3 WHERE node_id='${campaignId}:queued';`);
+    }
+    const versions=store.query('SELECT MAX(version) AS version FROM schema_migrations');
+    if(!versions.ok||versions.rows[0].version!==25)throw Error('actual_native_schema_25_required');
+  }finally{store.close();}
+}
+function fixture(root,nativeBusiness=false){
   checkRoot(root);
   const workspace=path.join(root,'workspace');fs.mkdirSync(workspace,{mode:0o700});
   for(const name of ['paper-adapters','paper-application','paper-composition','paper-core','paper-domain','paper-ports','workflow-kernel','store'])
@@ -53,6 +78,7 @@ function fixture(root){
   fs.symlinkSync(path.join(REPO,'node_modules'),path.join(workspace,'node_modules'));
   const generated=databaseFixture({after(){}}),runtime=path.join(root,'runtime');
   fs.renameSync(generated.runtimeRoot,runtime);fs.rmdirSync(generated.parent);
+  if(nativeBusiness)provisionNativeBusiness(runtime);
   // Provision the real source-owned lease table/row before any schema inventory
   // or signatures, replacing the schema fixture's generic required-table stub.
   const residentPath=path.join(runtime,'autonomous-research/supervisor/resident-instance.sqlite');
@@ -102,7 +128,7 @@ function fixture(root){
   const onlineProcess=path.join(root,'online-process.json'),backupProcess=path.join(root,'backup-process.json');
   write(onlineProcess,{version:1,kind:'AutonomousResearchOnlineMutationAuthorityProcessConfiguration',authorityConfigurationPath:onlineConfiguration,authorityConfigurationSha256:hashBytes(fs.readFileSync(onlineConfiguration)),commandPath:broker,commandSha256:hashBytes(fs.readFileSync(broker)),fixedArguments:[],timeoutMs:10000});
   write(backupProcess,{version:2,kind:'AutonomousResearchStateBackupAuthorityProcessConfiguration',authorityId:'backup:initial-composition',keyId:'backup:key:initial-composition',commandPath:broker,commandSha256:hashBytes(fs.readFileSync(broker)),publicKeyPath:backupPublic,publicKeySha256:hashBytes(fs.readFileSync(backupPublic)),fixedArguments:[],timeoutMs:10000,maximumReservationLeaseMs:LEASE_MS,maximumHeadObservationAgeMs:LEASE_MS,onlineMutationAuthorityConfigurationPath:onlineConfiguration,onlineMutationAuthorityConfigurationSha256:hashBytes(fs.readFileSync(onlineConfiguration))});
-  const value={root,runtime,workspace,backupRoot,checkpointRoot,manifest:stateDatabaseManifest,writerManifest:input.writerManifest,now:new Date().toISOString(),onlineConfiguration,onlineProcess,onlineProcessHash:hashBytes(fs.readFileSync(onlineProcess)),backupConfiguration:backupProcess,backupConfigurationHash:hashBytes(fs.readFileSync(backupProcess)),lease:{...lease,generation:lease.leaseGeneration},genesis,audit,inventory};
+  const value={root,runtime,workspace,backupRoot,checkpointRoot,nativeBusiness,manifest:stateDatabaseManifest,writerManifest:input.writerManifest,now:new Date().toISOString(),onlineConfiguration,onlineProcess,onlineProcessHash:hashBytes(fs.readFileSync(onlineProcess)),backupConfiguration:backupProcess,backupConfigurationHash:hashBytes(fs.readFileSync(backupProcess)),lease:{...lease,generation:lease.leaseGeneration},genesis,audit,inventory};
   write(path.join(root,'fixture.json'),value);return value;
 }
 export async function brokerMain(root){
@@ -128,6 +154,10 @@ export async function brokerMain(root){
     const verifier=createAutonomousResearchOnlineMutationReceiptVerifier({configurationPath:f.onlineConfiguration});
     const verification={trust:verifier.trust,verifySignature:verifier.verifySignedReceipt,hashChangesetBase64:value=>hashBytes(Buffer.from(value,'base64'))};
     if(!verifyAutonomousResearchOnlineUnresolvedReservationList({receipt,request:q,now:new Date(q.requestedAt),...verification,verifyStoredReservation:({receipt,request})=>online.verifyAutonomousResearchOnlineMutationReservation({receipt,request,now:new Date(receipt.issuedAt),...verification})}))throw Error('fixture_unresolved_receipt_invalid');
+  }else if(q.kind==='AutonomousResearchOnlineMutationReserveRequest'){
+    receipt=reserveNativeBusiness(root,f,journal,q);
+  }else if(q.kind==='AutonomousResearchOnlineMutationAbortRequest'){
+    receipt=abortNativeBusiness(root,f,journal,q);
   }else if(q.kind==='AutonomousResearchOnlineMutationFinalizeRequest'){
     receipt=finalizePending(root,f,journal,q);
   }else if(q.kind==='AutonomousResearchOnlineMutationCurrentHeadRequest'){
@@ -158,11 +188,37 @@ function readJournal(root){const file=path.join(root,'journal-fixture.json');ret
 function currentHead(f,journal){
   return journal?.entries.length?{globalSequence:journal.entries.at(-1).reservationReceipt.globalSequence,globalHash:journal.globalHash,databaseHeads:journal.databaseHeads}:{globalSequence:f.audit.finalization.globalSequence,globalHash:f.audit.finalization.globalHash,databaseHeads:f.genesis.map(i=>({databaseRole:i.databaseRole,databaseInstanceId:i.databaseInstanceId,sequence:i.databaseSequence,hash:i.databaseHash,schemaHash:i.schemaHash,stateHash:i.stateHash}))};
 }
+function reserveNativeBusiness(root,f,journal,request){
+  if(!f.nativeBusiness||journal?.pending)throw Error('native_fixture_without_pending_required');
+  const ids=['native-store.automation-runtime-reconciler.executeAutomationRuntimeReconciliation.v1','native-store.legacy-terminal-active-residue-settlement.executeLegacyTerminalActiveResidueSettlement.v1'];
+  if(request.databaseRole!=='native-store'||request.writerId!=='writer:native-store:automation-runtime-reconciler:v1'||!ids.includes(request.operationId))throw Error('fixed_native_reconciliation_required');
+  const verifier=createAutonomousResearchOnlineMutationReceiptVerifier({configurationPath:f.onlineConfiguration}),now=new Date();
+  online.assertAutonomousResearchOnlineMutationReserveRequest(request,{trust:verifier.trust,hashChangesetBase64:value=>hashBytes(Buffer.from(value,'base64'))});
+  const before=currentHead(f,journal),head=before.databaseHeads.find(head=>head.databaseInstanceId===request.databaseInstanceId);
+  if(!head||request.globalPreviousSequence!==before.globalSequence||request.globalPreviousHash!==before.globalHash||request.databasePreviousSequence!==head.sequence||request.databasePreviousHash!==head.hash||request.preStateHash!==head.stateHash||request.schemaHash!==head.schemaHash)throw Error('native_fixture_current_head_required');
+  const {requestedAt,requestedLeaseMs,...mirror}=request;
+  const reservation=sign({...mirror,kind:'AutonomousResearchOnlineMutationReservationReceipt',status:'autonomous_research_online_mutation_reserved',authorityId:verifier.trust.authorityId,keyId:verifier.trust.keyId,requestHash:hashRecord(request.kind,request),reservationId:`native:${before.globalSequence+1}:${request.mutationAttemptId}`,globalSequence:before.globalSequence+1,globalHash:hashRecord('InitialCompositionNativeGlobalHead',{previous:before.globalHash,requestHash:hashRecord(request.kind,request)}),databaseSequence:head.sequence+1,databaseHash:hashRecord('InitialCompositionNativeDatabaseHead',{previous:head.hash,requestHash:hashRecord(request.kind,request)}),issuedAt:now.toISOString(),expiresAt:new Date(now.getTime()+requestedLeaseMs).toISOString()});
+  if(!online.verifyAutonomousResearchOnlineMutationReservation({receipt:reservation,request,trust:verifier.trust,now,verifySignature:verifier.verifySignedReceipt,hashChangesetBase64:value=>hashBytes(Buffer.from(value,'base64'))}))throw Error('native_fixture_reservation_invalid');
+  write(path.join(root,'journal-fixture.json'),{...journal,entries:journal?.entries||[],globalHash:before.globalHash,databaseHeads:before.databaseHeads,pending:{reserveRequest:request,reservation,nativeBusiness:true}});
+  return reservation;
+}
+function abortNativeBusiness(root,f,journal,request){
+  const pending=journal?.pending;
+  if(!f.nativeBusiness||!pending?.nativeBusiness)throw Error('native_fixture_pending_required');
+  recovery.assertAutonomousResearchOnlineMutationAbortRequest(request,pending.reservation);
+  const verifier=createAutonomousResearchOnlineMutationReceiptVerifier({configurationPath:f.onlineConfiguration}),now=new Date();
+  const receipt=sign({...request,kind:'AutonomousResearchOnlineMutationAbortReceipt',status:'autonomous_research_online_mutation_aborted',authorityId:verifier.trust.authorityId,keyId:verifier.trust.keyId,requestHash:hashRecord(request.kind,request),abortedAt:now.toISOString()});
+  if(!recovery.verifyAutonomousResearchOnlineMutationAbort({receipt,request,reservation:pending.reservation,trust:verifier.trust,now,verifySignature:verifier.verifySignedReceipt}))throw Error('native_fixture_abort_invalid');
+  const settled={...journal,aborts:[...(journal.aborts||[]),{reserveRequest:pending.reserveRequest,reservationReceipt:pending.reservation,abortRequest:request,abortReceipt:receipt}]};
+  delete settled.pending;write(path.join(root,'journal-fixture.json'),settled);return receipt;
+}
 function finalizePending(root,f,journal,request){
   const hash=hashRecord(request.kind,request);
   const recorded=journal?.entries.find(entry=>entry.reservationReceipt.reservationId===request.reservationId);
   if(recorded){if(hash!==hashRecord(recorded.finalizeRequest.kind,recorded.finalizeRequest))throw Error('fixture_finalize_request_changed');return recorded.finalizationReceipt;}
-  const pending=journal?.pending;if(!pending||hash!==hashRecord(pending.finalizeRequest.kind,pending.finalizeRequest))throw Error('fixture_pending_finalize_request_required');
+  const pending=journal?.pending;
+  const expected=pending?.nativeBusiness?buildExternallyFencedSqliteMutationFinalizeRequest(pending.reservation,request.committedAt):pending?.finalizeRequest;
+  if(!pending||!expected||hash!==hashRecord(expected.kind,expected))throw Error('fixture_pending_finalize_request_required');
   online.assertAutonomousResearchOnlineMutationFinalizeRequest(request,pending.reservation);
   const verifier=createAutonomousResearchOnlineMutationReceiptVerifier({configurationPath:f.onlineConfiguration});
   const now=new Date(),{committedAt,...mirror}=request;
@@ -170,7 +226,7 @@ function finalizePending(root,f,journal,request){
   if(!online.verifyAutonomousResearchOnlineMutationFinalization({receipt,request,reservation:pending.reservation,trust:verifier.trust,now,verifySignature:verifier.verifySignedReceipt}))throw Error('fixture_recovered_finalization_invalid');
   const reservation=pending.reservation;
   const heads=currentHead(f,journal).databaseHeads.map(head=>head.databaseInstanceId===reservation.databaseInstanceId?{...head,sequence:reservation.databaseSequence,hash:reservation.databaseHash,stateHash:reservation.postStateHash}:head);
-  const settled={...journal,lease:pending.lease,entries:[...journal.entries,{reserveRequest:pending.reserveRequest,reservationReceipt:reservation,finalizeRequest:request,finalizationReceipt:receipt}],globalHash:reservation.globalHash,databaseHeads:heads};
+  const settled={...journal,lease:pending.lease??journal.lease,entries:[...journal.entries,{reserveRequest:pending.reserveRequest,reservationReceipt:reservation,finalizeRequest:request,finalizationReceipt:receipt}],globalHash:reservation.globalHash,databaseHeads:heads};
   delete settled.pending;write(path.join(root,'journal-fixture.json'),settled);return receipt;
 }
 function heartbeat(root,input,pendingMode=false){
@@ -234,7 +290,7 @@ function heartbeat(root,input,pendingMode=false){
 if(pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
   try{
     const input=JSON.parse(fs.readFileSync(0,'utf8'));
-    const value=input.mode==='fixture'?fixture(input.root):input.mode==='heartbeat'?heartbeat(input.root,input):input.mode==='pending-heartbeat'?heartbeat(input.root,input,true):(()=>{throw Error('unknown_fixture_operation');})();
+    const value=input.mode==='fixture'?fixture(input.root):input.mode==='native-fixture'?fixture(input.root,true):input.mode==='heartbeat'?heartbeat(input.root,input):input.mode==='pending-heartbeat'?heartbeat(input.root,input,true):(()=>{throw Error('unknown_fixture_operation');})();
     process.stdout.write(JSON.stringify({profile:productionOracleProfile(),ok:true,value}));
   }catch(error){process.stdout.write(JSON.stringify({profile:productionOracleProfile(),ok:false,error:error.message}));}
 }

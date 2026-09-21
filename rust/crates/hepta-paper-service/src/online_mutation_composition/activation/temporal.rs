@@ -12,6 +12,11 @@ impl PreparedInitialOnlineMutationCompositionV1 {
             .assert_activation_binding_valid_at_v1(&self.fence_binding, now)
     }
     pub(super) fn assert_evidence_valid_at(&self, now: i64) -> Result<()> {
+        transaction::NativeTransactionEvidenceV1::from(self).assert_evidence_valid_at(now)
+    }
+}
+impl transaction::NativeTransactionEvidenceV1<'_> {
+    pub(super) fn assert_evidence_valid_at(&self, now: i64) -> Result<()> {
         if now < self.checked_at.get() {
             return Err(fail("clock_invalid"));
         }

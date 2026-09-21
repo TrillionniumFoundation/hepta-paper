@@ -215,6 +215,19 @@ impl NativeStoreTransactionInventoryGuardV1<'_> {
         self.instance
     }
 
+    /// Recheck the original target bytes and exact sidecar set through the
+    /// inventory's held descriptors, without resolving or reopening any file.
+    /// The owning composition uses this after acquiring its external journal
+    /// lock and before opening the target SQLite connection. Unlike the normal
+    /// transaction guard, this rejects legitimate target writes too; it is a
+    /// preimage boundary, not a check to repeat after business DML.
+    pub(crate) fn assert_original_target_current_v1(&self) -> Result<()> {
+        self.assert_during_transaction()?;
+        self.inventory.databases[self.target_index]
+            .1
+            .assert_current()
+    }
+
     /// Bind an in-crate retained evidence check to this exact preconnection
     /// observation. Even an independently observed identical report cannot
     /// substitute for the borrowed origin. This still grants no write authority.

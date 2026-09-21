@@ -175,11 +175,69 @@ this observer; actual independent host/service qualification remains required.
 The observer itself grants no writer, cutover, transaction or retirement authority.
 
 
-The native-process targeted suite passed 5/5 in 109.78 seconds, including four
+The native-process targeted suite passed 5/5 in 118.04 seconds, including four
 actual re-executed process modes. Strict service Clippy lib/tests checks pass.
 Opaque cutover authorization now also exposes read-only currentness and initial
 lease-hash accessors; consumers must still compute the native epoch's separate
 hash domain and compare it with the signed value under the actual cutover lock.
+
+
+## Complete deployment inputs retained for a native-store transaction
+
+`RetainedNativeControlProcessV1::retain_for_native_store_transaction_v1` now
+produces the private `RetainedNativeControlInputsV1`. Its constructor requires
+the genuine original native-process observation and a real database inventory,
+reruns full deployment/process and inventory checks, and opens every needed
+file before the owning SQLite connection exists. A failed pathname can already
+alias SQLite, so constructing this scope after opening even an idle WAL
+connection is forbidden by the owning integration contract.
+
+The scope retains every unique service ELF, every declared writable root and
+its ancestor directory identities, and the actual `/proc/self/cmdline` file.
+Shared broker paths require identical hash/owner/group/mode declarations;
+separate roles, principals and argv remain part of the complete original
+manifest. The original deployment identity uses the same pure canonical hash
+helper as the unchanged full verifier. That helper alone cannot verify files
+or produce deployment evidence.
+
+Transaction checks require the exact original native-process object and the
+guard bound to the same actual preconnection inventory. They rehash retained
+ELF descriptors, check named and held inode/owner/mode identities, and read the
+retained kernel argument file using bounded positional reads. Procfs reports
+zero cmdline length; the check reads actual bytes through EOF within the
+existing argument limit. Kernel executable identity and real/effective/saved
+UID/GID checks remain live. All service executable ancestry receives the same
+safe-ancestry checks as the existing control executable. Writable roots keep
+exact namespace/owner/group/permissions while allowing ordinary child creation
+and its directory timestamp/link-count changes.
+
+No transaction check opens, clones or closes a regular-file descriptor, calls
+the full deployment verifier, or replaces the original opaque subject with a
+JSON report. These scopes and their borrowed original process/inventory must
+outlive SQLite connection close on every result and unwind path. The original
+full currentness method retains its existing behavior for use before connection
+creation. The source-owned reconciliation implementation digest now includes
+this new retention module.
+
+The new targeted suite passes 7/7 in 30.36 seconds, including two subprocess
+helpers actually invoked by the parent cases. It covers all service files,
+conflicting shared ELF declarations, missing/modified/replaced/symlinked or
+hardlinked non-control executables, writable-root and ancestor changes, equal
+inventory reports with distinct origins, and actual kernel argv/executable
+checks. Real ten-database inventories and separate processes prove that DELETE
+and WAL writers remain locked after a service executable is replaced with a
+hardlink to the live database, including rejection paths. The original native-process 5/5 and deployment
+4/4 regressions also pass; strict service Clippy lib/tests succeeds.
+
+These positive file/process fixtures use genuine native ELF files owned by the
+test principal solely through the private lower observation primitives. They do
+not construct `VerifiedProductionDeploymentV1` or a qualified upper scope. A
+complete production positive still requires an actually installed root-owned
+eight-role deployment and the declared current control principal/argv; the
+existing test verifies that user-owned installation cannot mint that proof.
+Other declared service files are not observations of those services' running
+processes. Independent host qualification, admitted operation ownership, signed
+native writer/epoch/scope, and complete CLI activation remain open.
 
 
 ## Transaction observation and locked state prerequisites
@@ -239,12 +297,141 @@ The actual signed owning tests cover initial FINAL and genuine pending
 finalization recovery followed by historical replay, staged native-store DML,
 wrong equal-report guard origin, incorrect pre/post startup binding, byte-identical
 schema/checkpoint replacement, no new RPC, and independent-process SQLite locks.
-These checks leave all activation/retirement flags false. They are prerequisites;
-fixed restricted operation ownership, native signed admission, locked production
-cutover binding, per-action invalidation and the writable CLI remain open.
+These checks leave all activation/retirement flags false. The internal owning
+source path described below now combines these prerequisites; the complete
+writable CLI and full genuine production-installation acceptance remain open.
 
 The retained owning suite passes 3/3 in 454.12 seconds (two complete signed
 composition scenarios and their actually invoked subprocess probe). Source/cache
 retention passes 8/8; inventory guard passes 16/16; recovery retention passes all
 8 cases plus the original 5 activation-binding regressions. These are targeted
 results, not a claim that the old full-service 714-test baseline ran again.
+
+
+## Sealed native reconciliation owner and exact signed subject
+
+The crate-private [owning execution](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/execution.rs)
+consumes the prepared composition and genuine native-process, qualification and
+cutover producers. It opens only the fixed observed native-store database and
+runs either of the two fixed reconciliation operations through the real process
+coordinator. The narrow business bridge accepts no caller SQL, plan registry,
+authority transport or clock. No writable CLI is exposed by this source path.
+
+Full evidence checks, all raw-file retention and actual sidecar-free database
+preimage inspection finish before the owner opens its external cutover journal
+connection. This includes the journal's idle WAL lifetime, not only its locked
+callback. Under the same journal transaction the owner checks the original
+held target bytes again, verifies the genuine qualification/deployment/cutover
+subject and fixes Production + Canary, the exact writer, one scope, generation,
+token, revision, enrollment hash and authorization receipt. LocalDrill, Planned,
+Active, RolledBack, extra scopes and copied readiness flags cannot grant this
+entrypoint. Existing generic cutover APIs keep their original compatibility.
+
+The [native epoch encoding](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/admission_hashes.rs)
+is a pure typed projection shared by signer preview and actual locked state. Its
+5 passing tests include a real independently signed fixture canary transition.
+It excludes authorization/configuration/activation-receipt hashes and expiry to
+avoid circular signatures. The [subject binder](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/admission.rs)
+separately compares the actual authorization receipt and initial writer lease
+hash. Its configuration binds canonical roots, all ten observed instance/schema
+identities, the fixed two plans and writer IDs, original state/writer manifest
+hashes, actual source AST/provenance hashes, native implementation/ELF/full
+deployment/control-unit identities, actual online process and backup authority
+configuration hashes, and the external enrollment plus epoch. Transient active
+receipt nonces, times, cache bytes and content inventory hashes are excluded.
+The independently signed database preimage is still compared to real original
+bytes under the cutover lock; a changed database needs fresh authorization.
+
+Before apply, after apply and after reservation immediately before commit, the
+owner rechecks retained native deployment, source/cache/schema/history/startup,
+finalized/active/recoverability inputs and the callback-local external storage
+observer. A final shared clock sample checks all original receipt deadlines and
+independent qualification/cutover expiry. No boundary reopens a regular file.
+The target connection is declared after all retained scopes and closed first;
+the cutover connection then closes before any retained descriptors can drop.
+This order also applies to early errors and panic unwinding. The composition is
+consumed on every outcome and cannot reuse the old head/preimage for another
+write. Coordinator feedback intentionally invalidates its previous recovery
+proofs after a committed write.
+
+The external storage observer checks before, within and after its callback with
+retained pins and the original SQLite connection. Its writer/Shadow observer suite
+passes 13 cases; the complete cutover crate passes 44 cases. A post-callback failure cannot undo a target commit:
+the owner preserves the actual business result and returns committed=true, while
+rich pending/fatal/retryable business errors retain their complete original
+fields. Three targeted owner-result tests cover these reporting boundaries.
+
+These source and lower-layer results are not full production acceptance. Genuine
+root-owned service installation under its actual principal, all independently
+signed host/runtime packages, complete writable CLI and safe signed-transfer workflow, ongoing admission
+beyond the first exact preimage, and existing v1 cutover migration remain open.
+No test constructor manufactures a genuine production deployment or marks
+acceptedParity, productionActivation or nodeRetirement true.
+
+
+## Signing diagnostic before native transfer
+
+The private [signing preview](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/signing_preview.rs)
+borrows the actual already prepared composition, genuine current native process
+and complete qualified subject. Earlier preparation may have performed startup
+repair, backup observation and cache publication; this new diagnostic itself
+performs retained read-only observation and opens no business SQLite connection.
+All full captures and real preimage inspection precede opening the cutover journal.
+The new external-v2 Shadow observer holds the actual journal lock, permits only
+Production/ShadowVerified with no writer/scope/activation receipt, and returns
+no connection, SQL callback or writer grant.
+
+The preview derives the next checked generation/revision, fixed writer/scope
+and token using the same runtime epoch hash and configuration body as admission.
+Its output contains the exact reviewed subject, configuration body/hash, original
+preimage hash, initial lease hash, expected revisions, qualification receipt and
+observation time. All readiness/activation/retirement result flags remain false.
+The authority supplies its own nonce, issue/expiry times and signature. The
+local Shadow state does not prove that unregistered Node processes have stopped,
+so the diagnostic never fabricates nodeWriterDisabled attestation.
+
+The actual kernel argv, principal and ELF remain mandatory. A separate CLI
+invocation with different argv cannot preview another declared production unit;
+the diagnostic must run in the actual unit, with the same declared invocation
+as the later operation. Two projection/refusal tests pass, and the real signed
+canary test now calls the locked Shadow API and shared preview function, compares
+the complete actual resulting state except its separately signed receipt, and
+checks that the Shadow API rejects the activated Canary before its callback.
+
+The existing generic `start_production_canary` still hashes a raw target preimage
+inside its journal transaction. It is not the safe native activation route: a
+separate owning transfer path must capture and retain preimage before opening
+the journal, then verify only held bytes under lock. No current native preview
+or lower-layer signed fixture is reported as closing that remaining transfer gap.
+
+
+## Actual schema-25 business integration scope
+
+The dedicated `native-fixture` oracle provisions the original Node schema-25
+store and campaign rows before real schema transition/genesis signing, then
+uses the same other nine state databases, resident lease, actual process
+brokers and complete prepared proof chain. The lower composition tests run the
+fixed standard/legacy business bridge with retained evidence at all three
+transaction boundaries. They inspect the actual SQLite changeset, signed
+reservation/finalization or abort, complete rollback table snapshot, marker and
+receipt rows, and an independently observed terminal signed authority head.
+Independent-process probes check that the target lock remains held. Success
+invalidates the original recovery token through actual coordinator feedback;
+rejection consumes the old scope too, including the removed DELETE journal.
+These fixtures intentionally do not construct a production native deployment,
+qualification closure or admitted runtime from test-only fields.
+The final suite passes all four tests (three actual business scenarios and the
+independently invoked lock-probe helper). After closing SQLite and releasing
+the old scopes, the actual pinned process verifier confirms signed terminal
+head sequence 1 for each committed operation and sequence 0 after abort, with
+no unresolved reservation. The original three retained-composition tests also
+pass after the shared evidence-view refactor. Strict service Clippy passes.
+
+The generic online/backup process transports still accept pinned executable
+scripts for compatibility and differential fixtures. The closed native
+configuration binds their process/configuration hashes, but a separate
+native-only proof of both actual child command executables and their reviewed
+adapter/topology binding is still needed before claiming a fully Node-free
+process tree or exposing the complete native writer. The existing eight-role
+deployment observer alone does not establish that transitive command property.
+Production acceptance and retirement flags remain false.

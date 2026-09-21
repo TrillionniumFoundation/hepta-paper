@@ -173,6 +173,34 @@ transaction that the callback has already committed. The focused
 `writer_state_callback` tests cover current peer-updated state, rejection before
 callback entry, and real cross-process writer exclusion for both storage layouts.
 
+External V2 callers can use `with_writer_state_and_external_storage_v2` to receive
+the same locked state plus an opaque callback-local storage observation. Its
+`assert_current()` rechecks the retained root, slot and marker, journal schema
+and exact locked state through the original pins and SQLite connection. It never
+reopens a replacement marker or database file. The canonical root and immutable
+enrollment digest getters are diagnostic bindings, not authorization. This API
+rejects V1 enrollment and leaves the existing callback APIs unchanged. Storage
+is checked before and after the callback; the caller must also check it at each
+required precommit boundary. A later failure cannot undo an already committed
+business transaction, and an application error is preserved. The observation
+owns no file handles and cannot escape the journal lock. The focused
+`external_storage_observation` tests exercise DELETE and existing WAL with real
+cross-process lock probes, marker/database aliases, root and slot replacement,
+postcommit failure, and unwinding. These checks provide no native qualification
+or VFS-level protection against hostile administrative changes.
+
+`with_production_shadow_observation_v2` provides the same retained storage
+observation for a production `ShadowVerified` enrollment whose writer remains
+disabled, with no canary scope or activation receipt and no shadow mismatch.
+It takes no writer lease and writes no journal state. This permits a separate
+signer diagnostic to derive a proposed Canary subject from the actual locked
+state; the observation itself grants no writer permission or production
+qualification. Full filesystem captures must finish before opening the
+coordinator, since its idle WAL connection can also retain SQLite locks. The
+callback and all rejection paths use retained checks, and the coordinator must
+close before those captured files are dropped. Existing activation APIs and
+their independent authorization requirements remain unchanged.
+
 The fence compares writer ID, generation and token. Tokens identify epochs;
 they are not bearer credentials. A Node process remembers the first accepted
 epoch and cannot automatically adopt a rollback epoch. Restarting Node after

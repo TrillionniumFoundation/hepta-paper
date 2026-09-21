@@ -50,8 +50,12 @@ use crate::{
 use serde_json::{Value, json};
 use std::{cell::Cell, fs, path::PathBuf};
 
+mod admission;
+mod admission_hashes;
+mod execution;
 mod native_process;
 mod schema;
+mod signing_preview;
 mod temporal;
 mod transaction;
 use schema::{PreparedSchemaInputV1, RetainedSchemaEvidenceV1};
@@ -85,6 +89,8 @@ pub(crate) struct InitialOnlineMutationCompositionRequestV1 {
 /// coordinator and retained with its origin-bound activation proof.
 pub(crate) struct PreparedInitialOnlineMutationCompositionV1 {
     report: Value,
+    workspace_root: PathBuf,
+    backup_root: PathBuf,
     manifest: ManifestFile,
     initial_inventory: ObservedStateDatabaseInventoryV1,
     startup: VerifiedStartupReconciliationSetV1,
@@ -311,6 +317,8 @@ fn construct(
         "remainingBlockers":[NATIVE_BINDING_REQUIRED,"autonomous_research_online_retained_transaction_scope_required", "autonomous_research_online_cutover_inventory_binding_required"]});
     let result = PreparedInitialOnlineMutationCompositionV1 {
         report,
+        workspace_root: request.workspace_root.clone(),
+        backup_root: request.backup_root.clone(),
         manifest,
         initial_inventory,
         startup,

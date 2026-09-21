@@ -203,3 +203,24 @@ crate and can assert pointer identity against an expected producer. A genuinely
 independent observation with an identical report is refused as a replacement;
 this prevents retained upper evidence from switching origins mid-connection.
 The added origin regression also checks actual independent-process lock retention.
+
+
+## Original target check before opening the native writer
+
+The fixed guard now provides crate-private `assert_original_target_current_v1`.
+It first checks the complete retained transaction namespace, then validates the
+original target bytes and original sidecar presence using the observation's
+already-held descriptors. It never resolves a fresh inventory or opens/closes a
+regular file. This is used after acquiring an external cutover journal lock but
+before opening the native-store writer, to bind a previously measured signed
+preimage. The ordinary transaction guard intentionally permits target DML; this
+separate check does not and must not be used to reject legitimate staged writes.
+
+Three additional real interprocess tests pass: original DELETE target checks
+preserve its lock and reject a newly created rollback sidecar; original DELETE
+and existing-WAL targets are checked while another actual WAL journal is locked,
+then changed target bytes are rejected without releasing that journal lock; a
+single-link target replacement by the actual journal inode is rejected while
+its independent process lock probe remains busy. The owning composition must
+capture every raw file before opening either SQLite connection and keep them
+until both connections close, including idle WAL state and failure/unwind.

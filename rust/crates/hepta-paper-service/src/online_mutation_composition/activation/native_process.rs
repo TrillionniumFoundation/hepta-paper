@@ -19,6 +19,10 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+mod transaction;
+#[allow(unused_imports)]
+pub(crate) use transaction::RetainedNativeControlInputsV1;
+
 const MAX_BINARY_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_ARGUMENT_BYTES: u64 = 512 * 1024;
 
@@ -244,7 +248,7 @@ impl ProcessObservation {
         result.assert_process_identity()?;
         Ok(result)
     }
-    fn assert_process_identity(&self) -> Result<()> {
+    fn assert_kernel_identity(&self) -> Result<()> {
         if std::process::id() != self.pid
             || std::env::current_exe().ok().as_ref() != Some(&self.unit.executable_path)
             || fs::read_link("/proc/self/exe").ok().as_ref() != Some(&self.unit.executable_path)
@@ -276,12 +280,19 @@ impl ProcessObservation {
         {
             return Err(rejected("principal_invalid"));
         }
+        Ok(())
+    }
+    fn assert_process_identity(&self) -> Result<()> {
+        self.assert_kernel_identity()?;
         let file =
             File::open("/proc/self/cmdline").map_err(|_| rejected("arguments_unavailable"))?;
         let mut actual = Vec::new();
         file.take(MAX_ARGUMENT_BYTES + 1)
             .read_to_end(&mut actual)
             .map_err(|_| rejected("arguments_unavailable"))?;
+        self.assert_arguments(&actual)
+    }
+    fn assert_arguments(&self, actual: &[u8]) -> Result<()> {
         let mut expected = self.unit.executable_path.as_os_str().as_bytes().to_vec();
         expected.push(0);
         for argument in &self.unit.arguments {
@@ -406,6 +417,38 @@ pub(crate) fn native_reconciliation_implementation_hash_v1() -> Sha256Digest {
         (
             "online_mutation_composition/activation/native_process.rs",
             include_bytes!("native_process.rs"),
+        ),
+        (
+            "online_mutation_composition/activation/native_process/transaction.rs",
+            include_bytes!("native_process/transaction.rs"),
+        ),
+        (
+            "online_mutation_composition/activation.rs",
+            include_bytes!("../activation.rs"),
+        ),
+        (
+            "online_mutation_composition/activation/admission.rs",
+            include_bytes!("admission.rs"),
+        ),
+        (
+            "online_mutation_composition/activation/admission_hashes.rs",
+            include_bytes!("admission_hashes.rs"),
+        ),
+        (
+            "online_mutation_composition/activation/execution.rs",
+            include_bytes!("execution.rs"),
+        ),
+        (
+            "online_mutation_composition/activation/transaction.rs",
+            include_bytes!("transaction.rs"),
+        ),
+        (
+            "online_mutation_composition/activation/temporal.rs",
+            include_bytes!("temporal.rs"),
+        ),
+        (
+            "online_mutation_composition/activation/signing_preview.rs",
+            include_bytes!("signing_preview.rs"),
         ),
     ];
     let mut hash = Sha256::new();

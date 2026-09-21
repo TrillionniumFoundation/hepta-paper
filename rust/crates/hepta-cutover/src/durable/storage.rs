@@ -205,6 +205,12 @@ fn assert_schema(connection: &Connection) -> Result<(), DurableCutoverError> {
     Ok(())
 }
 impl ExternalStorageV2 {
+    pub(super) fn root_path(&self) -> &Path {
+        &self.root.path
+    }
+    pub(super) fn enrollment_hash(&self) -> &str {
+        &self.marker_hash
+    }
     pub(super) fn assert_current(
         &self,
         target: &Path,
@@ -456,5 +462,13 @@ impl DurableCutoverCoordinatorV1 {
         self.external_storage
             .as_ref()
             .map(|s| s.marker_hash.as_str())
+    }
+
+    /// Canonical root retained from a real external-v2 enrollment. Diagnostic
+    /// only: use the locked observation for transaction currentness checks.
+    pub fn external_storage_root_v2(&self) -> Option<&Path> {
+        self.external_storage
+            .as_ref()
+            .map(ExternalStorageV2::root_path)
     }
 }

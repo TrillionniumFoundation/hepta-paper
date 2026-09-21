@@ -299,13 +299,13 @@ computed SLOs and p-values are not independently qualified observations.
 
 Initial online composition now retains actual pinned process clients, the full
 startup/finalized proof chain, a concrete shared recovery fence and a final common
-expiry check. It is crate-private and cannot execute business mutations or grant
-native activation. Historical schema checkpoint loading verifies original signed
+expiry check. The evidence constructor is crate-private and grants no native activation;
+a separate sealed consuming owner now runs the fixed signed reconciliation path. Historical schema checkpoint loading verifies original signed
 inventory and exact copied bytes. A separate internal history bridge now proves actual registered replay
 and all-table equivalence to the current signed finalized head. The owning
 evidence constructor explicitly retains this historical branch and the actual
 post-startup inventory, including recovered pending finalizations; signed native
-admission and complete writable transaction ownership remain separate. See the repository's
+admission and transaction ownership are checked by that separate consuming owner. See the repository's
 [composition handoff](../../../docs/modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md)
 and [schema readiness handoff](../../../docs/modules/ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md).
 
@@ -316,13 +316,20 @@ ELF hash, nonroot UID/GID and exact argv binding. Its separate source-owned
 reconciliation digest is a prerequisite for signed native admission, not a
 substitute for independent qualification or a writable transaction scope.
 See the composition handoff for the actual-process tests and deployment limits.
+A separate private transaction scope now retains all service ELF descriptors,
+writable-root and ancestor identities, and the kernel argv file before SQLite
+opens. Its checks bind the original native-process object and actual inventory,
+use held hashes/metadata/positional reads, and preserve real DELETE/WAL locks
+when executable paths are replaced by database hardlinks. The full deployment
+verifier remains unchanged; production qualification still requires a genuine
+root-owned installation and the declared current service principal.
 
 
 The private fixed-native-store transaction inventory guard checks all non-target
 bytes and complete namespace membership without reopening target SQLite files.
 It is minted before opening SQLite and retains inventory through connection
 close. The durable cutover callback can now inspect actual state under its held
-lock. Both remain prerequisites for complete signed native write ownership.
+lock, using a borrowed external-v2 observer at each write boundary.
 
 
 Private retained evidence checks now preserve original source/cache, startup,
@@ -332,4 +339,20 @@ metadata only. Recovery holds the same evidence allocation through invalidation,
 so clearing controller evidence cannot close target descriptors prematurely.
 The owning caller must close SQLite before releasing any scope or inventory.
 Actual signed fixtures and separate-process lock checks cover these primitives;
-they do not expose an admitted business writer or grant production activation.
+they grant no production activation. The internal consuming reconciliation owner
+now binds real qualification/deployment, actual signed preimage, closed native
+epoch/configuration and locked Production/Canary state. It completes all raw-file
+preflight before opening either SQLite connection, retains every scope until
+both close, and preserves committed/pending failure details. The writable CLI,
+full genuine production-installation acceptance and subsequent-write admission
+still need completion; no activation or retirement flag has changed.
+
+
+A private signing diagnostic now observes an actual external-v2 Production/Shadow
+state under its retained journal lock and derives the same future native epoch
+and closed configuration used at admission. It requires the genuine current
+unit/principal/argv and complete qualification, outputs no authorization, and
+keeps activation/retirement flags false. Its shared projection matches a real
+signed fixture transition. A safe owning signed-transfer entrypoint and the
+complete writable CLI remain separate work; the existing generic transfer's
+raw preimage read is not used as a claimed safe native transfer.

@@ -573,3 +573,106 @@ fn new_sidecar_cannot_disappear_after_it_has_been_observed() {
     probe_lock(&path, "busy");
     database.execute_batch("ROLLBACK").unwrap();
 }
+
+#[test]
+fn original_target_check_preserves_real_delete_lock_and_rejects_staged_sidecar() {
+    let fixture = Fixture::new();
+    let path = fixture.path("native-store");
+    let inventory = fixture.observe();
+    let guard = inventory.native_store_transaction_guard_v1().unwrap();
+    let database = Connection::open(&path).unwrap();
+    database.execute_batch("BEGIN IMMEDIATE").unwrap();
+    for _ in 0..2 {
+        guard.assert_original_target_current_v1().unwrap();
+        probe_lock(&path, "busy");
+    }
+    database
+        .execute_batch("UPDATE fixture_records SET value='staged';")
+        .unwrap();
+    // The ordinary guard permits business DML; the original-byte boundary must
+    // reject its new rollback journal even before main bytes have been written.
+    guard.assert_during_transaction().unwrap();
+    assert!(guard.assert_original_target_current_v1().is_err());
+    probe_lock(&path, "busy");
+    database.execute_batch("ROLLBACK").unwrap();
+    database.close().unwrap();
+}
+
+struct ExternalJournal(PathBuf);
+impl ExternalJournal {
+    fn new(fixture: &Fixture) -> Self {
+        Self(fixture.root.with_extension("external-journal.sqlite"))
+    }
+    fn connection(&self, wal: bool) -> Connection {
+        let connection = Connection::open(&self.0).unwrap();
+        if wal {
+            connection
+                .execute_batch("PRAGMA journal_mode=WAL;")
+                .unwrap();
+        }
+        connection
+            .execute_batch("CREATE TABLE journal_records(id INTEGER PRIMARY KEY); BEGIN IMMEDIATE;")
+            .unwrap();
+        connection
+    }
+}
+impl Drop for ExternalJournal {
+    fn drop(&mut self) {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let _ = fs::remove_file(sidecar_path(&self.0, suffix));
+        }
+    }
+}
+
+#[test]
+fn original_target_bytes_recheck_preserves_external_wal_lock_before_and_after_change() {
+    for existing_wal in [false, true] {
+        let fixture = Fixture::new();
+        let path = fixture.path("native-store");
+        let holder = existing_wal.then(|| WalHolder::new(&path));
+        let inventory = fixture.observe();
+        let guard = inventory.native_store_transaction_guard_v1().unwrap();
+        // Open the external SQLite journal only AFTER all full observations.
+        // Checks under its held lock may use only original retained descriptors.
+        let journal = ExternalJournal::new(&fixture);
+        let connection = journal.connection(true);
+        guard.assert_original_target_current_v1().unwrap();
+        probe_lock(&journal.0, "busy");
+
+        let changed = Connection::open(&path).unwrap();
+        changed
+            .execute_batch("UPDATE fixture_records SET value='committed-after-preflight';")
+            .unwrap();
+        changed.close().unwrap();
+        guard.assert_during_transaction().unwrap();
+        assert!(guard.assert_original_target_current_v1().is_err());
+        probe_lock(&journal.0, "busy");
+        connection.execute_batch("ROLLBACK").unwrap();
+        connection.close().unwrap();
+        drop(guard);
+        drop(inventory);
+        drop(holder);
+    }
+}
+
+#[test]
+fn original_target_replacement_with_single_link_journal_never_opens_its_locked_inode() {
+    let fixture = Fixture::new();
+    let path = fixture.path("native-store");
+    let original = path.with_extension("original");
+    let inventory = fixture.observe();
+    let guard = inventory.native_store_transaction_guard_v1().unwrap();
+    let journal = ExternalJournal::new(&fixture);
+    let connection = journal.connection(false);
+    probe_lock(&journal.0, "busy");
+    fs::rename(&path, &original).unwrap();
+    fs::rename(&journal.0, &path).unwrap();
+    // A single-link real SQLite file at the target path must be rejected without
+    // opening/closing it, including the error path. The OS lock follows its inode.
+    assert!(guard.assert_original_target_current_v1().is_err());
+    probe_lock(&path, "busy");
+    fs::rename(&path, &journal.0).unwrap();
+    fs::rename(&original, &path).unwrap();
+    connection.execute_batch("ROLLBACK").unwrap();
+    connection.close().unwrap();
+}

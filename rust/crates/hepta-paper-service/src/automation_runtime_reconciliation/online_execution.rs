@@ -22,15 +22,15 @@ const STANDARD: &str =
     "native-store.automation-runtime-reconciler.executeAutomationRuntimeReconciliation.v1";
 const LEGACY: &str = "native-store.legacy-terminal-active-residue-settlement.executeLegacyTerminalActiveResidueSettlement.v1";
 
-pub(super) struct OnlineReconciliationBindingV1 {
-    pub(super) database_instance_id: String,
-    pub(super) schema_contract_id: String,
+pub(crate) struct OnlineReconciliationBindingV1 {
+    pub(crate) database_instance_id: String,
+    pub(crate) schema_contract_id: String,
 }
-pub(super) struct OnlineReconciliationRequestV1 {
-    pub(super) operation: LocalReconciliationOperationV1,
-    pub(super) campaign_id: Option<String>,
-    pub(super) no_progress_seconds: f64,
-    pub(super) release_commit: Option<String>,
+pub(crate) struct OnlineReconciliationRequestV1 {
+    pub(crate) operation: LocalReconciliationOperationV1,
+    pub(crate) campaign_id: Option<String>,
+    pub(crate) no_progress_seconds: f64,
+    pub(crate) release_commit: Option<String>,
 }
 pub(super) fn business_error(
     cause: AutomationRuntimeReconciliationError,

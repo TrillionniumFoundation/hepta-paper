@@ -21,7 +21,34 @@ mod offline_execution;
 mod online_execution;
 mod scoped_execution;
 mod sqlite_number;
+pub(crate) use online_execution::{OnlineReconciliationBindingV1, OnlineReconciliationRequestV1};
 pub use scoped_execution::*;
+
+/// Fixed business bridge for the sealed owning composition. Callers cannot
+/// substitute SQL, a plan registry, an authority transport or a clock here.
+#[allow(dead_code)]
+pub(crate) fn execute_retained_online_reconciliation_v1(
+    connection: &mut Connection,
+    coordinator: &mut crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorV1<
+        crate::sqlite_mutation_coordinator::authority::ProcessMutationAuthorityTransportV1,
+    >,
+    binding: &OnlineReconciliationBindingV1,
+    request: &OnlineReconciliationRequestV1,
+    before_apply: impl FnOnce() -> crate::sqlite_mutation_coordinator::Result<()>,
+    after_apply: impl FnOnce() -> crate::sqlite_mutation_coordinator::Result<()>,
+    before_commit: impl FnOnce() -> crate::sqlite_mutation_coordinator::Result<()>,
+) -> crate::sqlite_mutation_coordinator::Result<Value> {
+    online_execution::execute_with_coordinator(
+        connection,
+        coordinator,
+        binding,
+        request,
+        &mut offline_execution::SystemReconciliationClockV1,
+        before_apply,
+        after_apply,
+        before_commit,
+    )
+}
 
 const MAX_NO_PROGRESS_SECONDS: f64 = 60.0;
 

@@ -697,7 +697,7 @@
     },
     {
       "id": "operator/autonomous-supervisor-health",
-      "rustEntrypoint": "hepta-autonomous-supervisor-health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation]",
+      "rustEntrypoint": "hepta-autonomous-supervisor-health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation] [--external-qualification-config PATH]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [

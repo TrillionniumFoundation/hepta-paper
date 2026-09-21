@@ -13,7 +13,6 @@ use serde_json::{Map, Value, json};
 use std::{fs, os::unix::fs::MetadataExt, path::Path};
 
 const MAX_NO_PROGRESS_SECONDS: f64 = 60.0;
-const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AutomationRuntimeReconciliationError {
@@ -45,9 +44,6 @@ fn canonical_database(path: &Path) -> Result<(), AutomationRuntimeReconciliation
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
         return Err(AutomationRuntimeReconciliationError::Path);
     }
-    if metadata.len() > MAX_FILE_BYTES {
-        return Err(AutomationRuntimeReconciliationError::Path);
-    }
     if fs::canonicalize(path).map_err(|_| AutomationRuntimeReconciliationError::Path)? != path {
         return Err(AutomationRuntimeReconciliationError::Path);
     }
@@ -59,10 +55,15 @@ fn open_database(path: &Path) -> Result<Connection, AutomationRuntimeReconciliat
     let text = path
         .to_str()
         .ok_or(AutomationRuntimeReconciliationError::Path)?;
-    let escaped = text
-        .replace('%', "%25")
-        .replace('?', "%3F")
-        .replace('#', "%23");
+    let mut escaped = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            escaped.push(byte as char);
+        } else {
+            escaped.push('%');
+            escaped.push_str(&format!("{byte:02X}"));
+        }
+    }
     let connection = Connection::open_with_flags(
         format!("file:{escaped}?mode=ro"),
         OpenFlags::SQLITE_OPEN_READ_ONLY

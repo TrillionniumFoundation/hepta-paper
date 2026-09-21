@@ -27,10 +27,75 @@ const EXECUTION_BLOCKER: &str =
 pub enum RetirementStatusError {
     #[error("retirement status request must be an object")]
     RequestInvalid,
-    #[error("retirement status request is missing version")]
-    VersionMissing,
+    #[error("retirement status package version is invalid")]
+    PackageVersionInvalid,
     #[error("retirement status filesystem operation failed")]
     Io(#[from] std::io::Error),
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn environment_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Match `paper-adapters/runtime/workspace-layout.mjs` defaults used by the
+/// incumbent `retire-legacy-archive.mjs` command. Environment overrides are
+/// still resolved from the caller's working directory; source defaults are
+/// resolved beside the checked-in workspace.
+fn default_roots() -> (PathBuf, PathBuf, PathBuf) {
+    let workspace = workspace_root();
+    let parent = workspace.parent().unwrap_or(&workspace);
+    let legacy_parent = parent.file_name().and_then(|name| name.to_str()) == Some("paper_factory");
+    let asset = environment_path("HEPTA_PAPER_ASSET_ROOT").unwrap_or_else(|| {
+        if legacy_parent {
+            parent.to_path_buf()
+        } else {
+            parent.join("hepta-paper-assets")
+        }
+    });
+    let runtime = environment_path("HEPTA_PAPER_RUNTIME_ROOT")
+        .unwrap_or_else(|| parent.join("hepta-paper-runtime/native-runtime"));
+    let legacy = environment_path("PAPER_FACTORY_LEGACY_ROOT").unwrap_or_else(|| {
+        if legacy_parent {
+            parent.to_path_buf()
+        } else {
+            parent.join("paper_factory")
+        }
+    });
+    (asset, runtime, legacy)
+}
+
+fn package_version() -> Result<String, RetirementStatusError> {
+    let package = fs::read_to_string(workspace_root().join("package.json"))?;
+    let value: Value =
+        serde_json::from_str(&package).map_err(|_| RetirementStatusError::PackageVersionInvalid)?;
+    value
+        .get("version")
+        .and_then(Value::as_str)
+        .filter(|version| !version.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or(RetirementStatusError::PackageVersionInvalid)
+}
+
+fn request_path(
+    object: &serde_json::Map<String, Value>,
+    name: &str,
+    default: PathBuf,
+) -> Result<PathBuf, RetirementStatusError> {
+    match object.get(name) {
+        None => Ok(default),
+        Some(Value::String(value)) => Ok(PathBuf::from(value)),
+        Some(_) => Err(RetirementStatusError::RequestInvalid),
+    }
 }
 
 fn absolute(path: &Path) -> PathBuf {
@@ -208,29 +273,15 @@ pub fn inspect_retirement_status_v1(input: &Value) -> Result<Value, RetirementSt
     let object = input
         .as_object()
         .ok_or(RetirementStatusError::RequestInvalid)?;
-    let version = object
-        .get("version")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or(RetirementStatusError::VersionMissing)?;
-    let legacy_root = resolved_path(Path::new(
-        object
-            .get("legacyRoot")
-            .and_then(Value::as_str)
-            .unwrap_or("paper_factory"),
-    ));
-    let runtime_root = resolved_path(Path::new(
-        object
-            .get("runtimeRoot")
-            .and_then(Value::as_str)
-            .unwrap_or("hepta-paper-runtime/native-runtime"),
-    ));
-    let asset_root = resolved_path(Path::new(
-        object
-            .get("assetRoot")
-            .and_then(Value::as_str)
-            .unwrap_or("hepta-paper-assets"),
-    ));
+    let version = match object.get("version") {
+        None => package_version()?,
+        Some(Value::String(value)) => value.to_owned(),
+        Some(_) => return Err(RetirementStatusError::RequestInvalid),
+    };
+    let (default_asset_root, default_runtime_root, default_legacy_root) = default_roots();
+    let legacy_root = resolved_path(&request_path(object, "legacyRoot", default_legacy_root)?);
+    let runtime_root = resolved_path(&request_path(object, "runtimeRoot", default_runtime_root)?);
+    let asset_root = resolved_path(&request_path(object, "assetRoot", default_asset_root)?);
     let roots = [&legacy_root, &runtime_root, &asset_root];
     let physically_decoupled = roots.iter().enumerate().all(|(index, left)| {
         roots[index + 1..]
@@ -258,7 +309,7 @@ pub fn inspect_retirement_status_v1(input: &Value) -> Result<Value, RetirementSt
         .parent()
         .unwrap_or_else(|| Path::new("/"))
         .join("hepta-paper-legacy-reference")
-        .join(version);
+        .join(&version);
     let archive =
         archive_status(&archive_root.join("paper-factory-control-plane-reference.tar.gz"))?;
     if let Some(blocker) = archive.get("blocker").and_then(Value::as_str) {

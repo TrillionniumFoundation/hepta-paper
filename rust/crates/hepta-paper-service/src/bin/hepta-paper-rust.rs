@@ -775,8 +775,12 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("release attestation blocked pending external evidence".into());
             }
         }
-        Some("retirement-status") if args.len() == 2 => {
-            let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
+        Some("retirement-status") if args.len() == 1 || args.len() == 2 => {
+            let input: serde_json::Value = if args.len() == 1 {
+                serde_json::json!({})
+            } else {
+                serde_json::from_slice(&read_bounded(&args[1])?)?
+            };
             println!(
                 "{}",
                 serde_json::to_string(&inspect_retirement_status_v1(&input)?)?
@@ -1820,7 +1824,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | release-trust-gate REQUEST",
                 " | release-state REQUEST",
                 " | release-attest REQUEST",
-                " | retirement-status REQUEST",
+                " | retirement-status [REQUEST]",
                 " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
                 " | research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
                 " | external-authority-intake [--author-config PATH --author-config-hash sha256:...] [--release-attestor-config PATH --release-attestor-config-hash sha256:...] [--require-ready]",

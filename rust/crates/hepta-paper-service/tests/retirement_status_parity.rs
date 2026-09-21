@@ -77,3 +77,27 @@ fn retirement_status_matches_node_for_missing_and_archive_states() {
     assert_eq!(actual, expected["results"][0]["value"]);
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn retirement_status_uses_node_workspace_defaults_when_fields_are_omitted() {
+    let request = serde_json::json!({});
+    let expected = oracle(&serde_json::json!([request.clone()]));
+    let actual = inspect_retirement_status_v1(&request).expect("Rust default report");
+    assert_eq!(actual, expected["results"][0]["value"]);
+}
+
+#[test]
+fn retirement_status_cli_uses_node_defaults_without_a_request_file() {
+    let expected = oracle(&serde_json::json!([{}]));
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("retirement-status")
+        .output()
+        .expect("Rust retirement-status CLI");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let actual: Value = serde_json::from_slice(&output.stdout).expect("Rust report JSON");
+    assert_eq!(actual, expected["results"][0]["value"]);
+}

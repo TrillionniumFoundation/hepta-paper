@@ -2,7 +2,7 @@ import readline from 'node:readline';
 import {
   buildAutonomousResearchOnlineSchemaTransitionFinalizeRequest,
   buildAutonomousResearchOnlineSchemaTransitionObserveRequest,
-} from '/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github/work/latest/paper-adapters/automation/autonomous-research-online-schema-transition-state.mjs';
+} from '../../paper-adapters/automation/autonomous-research-online-schema-transition-state.mjs';
 
 const rl = readline.createInterface({ input: process.stdin });
 for await (const line of rl) {

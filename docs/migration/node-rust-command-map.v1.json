@@ -226,12 +226,14 @@
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs"
+        "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs",
+        "rust/crates/hepta-paper-service/tests/author_identity_intake_parity.rs"
       ],
-      "remaining": "Rust now covers the canonical help payload, missing-input report/hash and fail-closed --require-ready exit, with canonical regular-file/symlink identity checks for configured paths. The configured author envelope/trust-store subject verification and resolved release-attestor v3/KMS hardware bundle identity are deliberately blocked behind an independently reviewed Rust adapter; no external authority, signer process, key material or service state is touched.",
+      "remaining": "Rust now matches the passive Node author-input composition for missing, malformed, expired, bad-signature, and valid v2 configurations: it performs pinned regular-file identity checks, exact v1/v2 shape and configuration-hash verification, subject/policy validation, canonical Ed25519 trust-store and envelope verification, receipt/hash projection, relative path resolution, and fail-closed --require-ready behavior. Release-attestor inspection remains a bounded header path; external-kms v3 backend identity, hardware/KMS authority, live signer challenge, external author binding, independent acceptance, production activation, and Node retirement remain blocked behind external authority and target-host evidence.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
-        "rust/crates/hepta-paper-service/src/external_authority_intake.rs"
+        "rust/crates/hepta-paper-service/src/external_authority_intake.rs",
+        "rust/crates/hepta-paper-service/src/external_authority_intake/author.rs"
       ],
       "testCases": [
         {
@@ -249,6 +251,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/external_authority_intake_parity.rs",
           "symbol": "configured_paths_are_pinned_and_symlinks_are_rejected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/author_identity_intake_parity.rs",
+          "symbol": "author_inputs_match_node_for_valid_expired_bad_signature_and_malformed_cases"
         }
       ]
     },

@@ -109,8 +109,18 @@ fn configured_paths_are_pinned_and_symlinks_are_rejected() -> Result<(), Box<dyn
     );
 
     let report = inspect_external_authority_intake_v1(Some(&file), None, Some(&file), None, NOW)?;
-    assert_eq!(report["author"]["configured"], true);
-    assert_eq!(report["releaseAttestor"]["configured"], true);
+    assert_eq!(report["author"]["configured"], false);
+    assert_eq!(
+        report["author"]["blockers"],
+        serde_json::json!([
+            "autonomous_research_author_identity_configuration_verification_failed"
+        ])
+    );
+    assert_eq!(report["releaseAttestor"]["configured"], false);
+    assert_eq!(
+        report["releaseAttestor"]["blockers"],
+        serde_json::json!(["research_execution_release_attestor_config_invalid"])
+    );
     assert_eq!(
         report["releaseAttestor"]["observedConfigurationFileHash"],
         "sha256:2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8"

@@ -1,22 +1,26 @@
 //! Bounded, read-only external-authority intake surface.
 //!
 //! The incumbent Node command is the first gate before any live provider or
-//! release-attestor action.  Rust deliberately exposes the same passive
-//! command shape while the full external configuration adapters are being
-//! migrated.  Missing inputs are reported exactly; supplied inputs are
-//! fail-closed and never treated as authority until the independently
-//! provisioned author/KMS verifiers are ported.
+//! release-attestor action. Rust exposes the same passive command shape. The
+//! configured author document is verified offline, while the release-attestor
+//! path stops at its bounded configuration header until the external-KMS and
+//! hardware authority adapter is independently qualified. No branch invokes a
+//! provider, signer process, private key, or service-state mutation.
 
 #![forbid(unsafe_code)]
 
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{fs, os::unix::fs::MetadataExt, path::Path};
+use std::{
+    fs,
+    os::unix::fs::MetadataExt,
+    path::{Component, Path, PathBuf},
+};
 use thiserror::Error;
 
-const AUTHOR_PATH_MISSING: &str = "autonomous_research_author_identity_configuration_path_missing";
-const AUTHOR_FILE_INVALID: &str = "autonomous_research_author_identity_configuration_file_invalid";
+mod author;
+
 const RELEASE_PATH_MISSING: &str = "research_execution_release_attestor_config_path_missing";
 const RELEASE_FILE_INVALID: &str =
     "research_execution_release_attestor_config_not_private_regular_file";
@@ -30,25 +34,6 @@ pub enum ExternalAuthorityIntakeError {
     Clock,
     #[error("external authority intake path is not valid UTF-8")]
     Utf8,
-}
-
-fn blocked_author(blocker: &str) -> Value {
-    json!({
-        "status": "production_external_author_identity_input_blocked",
-        "readyForRuntimeBinding": false,
-        "configured": false,
-        "configurationVersion": null,
-        "stablePolicyPinned": false,
-        "configurationPinned": false,
-        "observedConfigurationHash": null,
-        "authoritySubjectHash": null,
-        "authorityEnvelopeHash": null,
-        "authorityVerificationReceiptHash": null,
-        "attestationExpiresAt": null,
-        "cryptographicAuthorityReady": false,
-        "externalActionPerformed": false,
-        "blockers": [blocker]
-    })
 }
 
 fn blocked_release(blocker: &str) -> Value {
@@ -77,22 +62,36 @@ fn blocked_release(blocker: &str) -> Value {
     })
 }
 
+fn resolve_path(path: &Path) -> Option<PathBuf> {
+    let source = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    let mut resolved = PathBuf::new();
+    for component in source.components() {
+        match component {
+            Component::Prefix(_) => return None,
+            Component::RootDir => resolved.push("/"),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if resolved != Path::new("/") && !resolved.pop() {
+                    return None;
+                }
+            }
+            Component::Normal(value) => resolved.push(value),
+        }
+    }
+    resolved.is_absolute().then_some(resolved)
+}
+
 fn read_pinned(path: &Path, maximum_bytes: u64) -> Option<Vec<u8>> {
-    if !path.is_absolute()
-        || path.components().any(|part| {
-            matches!(
-                part,
-                std::path::Component::CurDir | std::path::Component::ParentDir
-            )
-        })
-    {
+    let candidate = resolve_path(path)?;
+    let canonical = fs::canonicalize(&candidate).ok()?;
+    if canonical != candidate {
         return None;
     }
-    let canonical = fs::canonicalize(path).ok()?;
-    if canonical != path {
-        return None;
-    }
-    let before = fs::symlink_metadata(path).ok()?;
+    let before = fs::symlink_metadata(&candidate).ok()?;
     let uid = nix::unistd::Uid::current().as_raw();
     if !before.is_file()
         || before.file_type().is_symlink()
@@ -104,9 +103,9 @@ fn read_pinned(path: &Path, maximum_bytes: u64) -> Option<Vec<u8>> {
     {
         return None;
     }
-    let bytes = fs::read(path).ok()?;
-    let after = fs::metadata(path).ok()?;
-    let path_after = fs::symlink_metadata(path).ok()?;
+    let bytes = fs::read(&candidate).ok()?;
+    let after = fs::metadata(&candidate).ok()?;
+    let path_after = fs::symlink_metadata(&candidate).ok()?;
     (bytes.len() as u64 == before.len()
         && after.dev() == before.dev()
         && after.ino() == before.ino()
@@ -125,47 +124,9 @@ fn bytes_hash(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
-fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>) -> Value {
-    let Some(path) = path else {
-        return blocked_author(AUTHOR_PATH_MISSING);
-    };
-    // This route never follows links or reads private key material.  Full
-    // author-envelope verification remains delegated until its Rust adapter
-    // is independently reviewed.
-    let bytes = match read_pinned(path, 1024 * 1024) {
-        Some(bytes) => bytes,
-        None => return blocked_author(AUTHOR_FILE_INVALID),
-    };
-    let value = serde_json::from_slice::<Value>(&bytes).ok();
-    let observed = value
-        .as_ref()
-        .and_then(|v| v.get("configurationHash"))
-        .and_then(Value::as_str);
-    let mut report = blocked_author(ADAPTER_MISSING);
-    if let Some(object) = report.as_object_mut() {
-        object.insert("configured".into(), Value::Bool(true));
-        object.insert(
-            "configurationVersion".into(),
-            value
-                .as_ref()
-                .and_then(|v| v.get("version"))
-                .cloned()
-                .unwrap_or(Value::Null),
-        );
-        object.insert(
-            "observedConfigurationHash".into(),
-            observed.map_or(Value::Null, |v| Value::String(v.to_owned())),
-        );
-        let blocker = match expected_hash {
-            None => "autonomous_research_author_identity_configuration_pin_required",
-            Some(expected) if Some(expected) == observed => ADAPTER_MISSING,
-            Some(_) => "autonomous_research_author_identity_configuration_pin_mismatch",
-        };
-        object.insert("blockers".into(), json!([blocker]));
-    }
-    report
+fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, now: &str) -> Value {
+    author::inspect_author(path, expected_hash, now)
 }
-
 fn inspect_release(path: Option<&Path>, expected_hash: Option<&str>) -> Value {
     let Some(path) = path else {
         return blocked_release(RELEASE_PATH_MISSING);
@@ -175,6 +136,22 @@ fn inspect_release(path: Option<&Path>, expected_hash: Option<&str>) -> Value {
         None => return blocked_release(RELEASE_FILE_INVALID),
     };
     let value = serde_json::from_slice::<Value>(&bytes).ok();
+    let valid_header = value.as_ref().is_some_and(|value| {
+        value.get("kind")
+            == Some(&Value::String(
+                "ResearchExecutionReleaseAttestorConfiguration".to_owned(),
+            ))
+    });
+    if !valid_header {
+        let mut report = blocked_release("research_execution_release_attestor_config_invalid");
+        if let Some(object) = report.as_object_mut() {
+            object.insert(
+                "observedConfigurationFileHash".into(),
+                Value::String(bytes_hash(&bytes)),
+            );
+        }
+        return report;
+    }
     let mut report = blocked_release(ADAPTER_MISSING);
     if let Some(object) = report.as_object_mut() {
         object.insert("configured".into(), Value::Bool(true));
@@ -226,7 +203,7 @@ pub fn inspect_external_authority_intake_v1(
     if observed_at.is_empty() {
         return Err(ExternalAuthorityIntakeError::Clock);
     }
-    let author = inspect_author(author_path, author_expected_hash);
+    let author = inspect_author(author_path, author_expected_hash, observed_at);
     let release = inspect_release(release_path, release_expected_hash);
     let author_blockers = author
         .get("blockers")

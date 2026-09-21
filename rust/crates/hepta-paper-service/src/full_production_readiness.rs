@@ -22,7 +22,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -331,6 +331,52 @@ fn blocker(blockers: &mut Vec<String>, value: &str) {
     blockers.push(value.to_owned());
 }
 
+/// Match Node's `path.resolve` at the command boundary.  The Node route
+/// accepts relative root values (including relative deployment-environment
+/// values) and resolves them from the process working directory before
+/// passing them into the readiness query.
+fn resolve_path_from_process(path: PathBuf) -> PathBuf {
+    let candidate = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir().map_or(path.clone(), |cwd| cwd.join(path))
+    };
+    let mut resolved = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            Component::RootDir => resolved.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(value) => resolved.push(value),
+            Component::Prefix(value) => resolved.push(value.as_os_str()),
+        }
+    }
+    resolved
+}
+
+/// Defaults corresponding to `defaultPaperAssetRoot()` and
+/// `defaultPaperRuntimeRoot()` from the incumbent workspace-layout module.
+fn default_asset_root(workspace_root: &Path) -> PathBuf {
+    let parent = workspace_root.parent().unwrap_or(workspace_root);
+    if parent
+        .file_name()
+        .is_some_and(|name| name == "paper_factory")
+    {
+        parent.to_path_buf()
+    } else {
+        parent.join("hepta-paper-assets")
+    }
+}
+
+fn default_runtime_root(workspace_root: &Path) -> PathBuf {
+    workspace_root
+        .parent()
+        .unwrap_or(workspace_root)
+        .join("hepta-paper-runtime/native-runtime")
+}
+
 pub fn full_production_readiness_help_json_v1() -> Value {
     serde_json::from_str(FULL_PRODUCTION_READINESS_USAGE)
         .expect("static full production readiness usage JSON")
@@ -377,7 +423,7 @@ fn inspect_with_owner_references(
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
         })
-        .unwrap_or_else(|| workspace_root.to_path_buf());
+        .unwrap_or_else(|| default_asset_root(workspace_root));
     let runtime_root = options
         .runtime_root
         .clone()
@@ -387,8 +433,10 @@ fn inspect_with_owner_references(
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
         })
-        .unwrap_or_else(|| workspace_root.join("runtime"));
-    if !root.is_absolute() || !runtime_root.is_absolute() || !workspace_root.is_absolute() {
+        .unwrap_or_else(|| default_runtime_root(workspace_root));
+    let root = resolve_path_from_process(root);
+    let runtime_root = resolve_path_from_process(runtime_root);
+    if !workspace_root.is_absolute() {
         return Err("full_production_readiness_root_paths_must_be_absolute".to_owned());
     }
     let owner_trust = inspect_reference(
@@ -754,5 +802,36 @@ mod tests {
         );
         assert_eq!(report["deploymentEnvironment"]["filePath"], Value::Null);
         assert_eq!(report["deploymentEnvironment"]["loadedKeys"], json!([]));
+    }
+
+    #[test]
+    fn roots_match_node_path_resolve_and_workspace_layout_defaults() {
+        let workspace = Path::new("/tmp/hepta-production-workspace");
+        let options = FullProductionReadinessOptions {
+            root: Some(PathBuf::from("./relative-assets/../assets")),
+            runtime_root: Some(PathBuf::from("./relative-runtime/../runtime")),
+            ..Default::default()
+        };
+        let cwd = std::env::current_dir().unwrap();
+        let report = inspect_full_production_readiness_v1(&options, workspace).unwrap();
+        assert_eq!(
+            report["root"],
+            cwd.join("assets").to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            report["runtimeRoot"],
+            cwd.join("runtime").to_string_lossy().as_ref()
+        );
+
+        let defaults = inspect_full_production_readiness_v1(
+            &FullProductionReadinessOptions::default(),
+            workspace,
+        )
+        .unwrap();
+        assert_eq!(defaults["root"], "/tmp/hepta-paper-assets");
+        assert_eq!(
+            defaults["runtimeRoot"],
+            "/tmp/hepta-paper-runtime/native-runtime"
+        );
     }
 }

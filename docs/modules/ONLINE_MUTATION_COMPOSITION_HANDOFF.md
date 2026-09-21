@@ -527,3 +527,11 @@ It uses an explicitly test-only Cargo example adapter under a private temporary
 socket; no installed adapter/topology proof or production activation capability
 is manufactured by these tests. Build that helper before running the dedicated
 tests, as documented in their handoff.
+
+The [authority installation design](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/AUTHORITY_INSTALLATION_DESIGN.md)
+records the remaining pre-RPC binding: actual socket-origin continuity, a
+versioned deployment subject including the independent daemon, and real manager
+association. The existing eight-role V1 digest cannot silently acquire another
+service. Actual cross-UID executable inspection on this host is denied; the
+design does not substitute a basename or caller-supplied principal for qualified
+installation evidence. It grants no production capability.

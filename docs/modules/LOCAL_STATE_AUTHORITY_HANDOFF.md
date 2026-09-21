@@ -261,3 +261,17 @@ client's strict raw JSON path preserves these bytes through both socket sides.
 Signatures and stored state still come only from the normal authority handlers;
 the adapter cannot replace receipt fields with unequal request data. Capture
 runs before mutation, and raw copies remain within the existing wire budget.
+
+The concrete `LocalStateAuthoritySocketTransportV1` now implements the untrusted
+mutation-transport trait directly inside Rust. It connects to the actual Unix
+endpoint, retains the original kernel peer pidfd/credentials, and requires the
+same living socket origin before request bytes and throughout each exchange.
+The existing pinned public-key verifier remains responsible for every receipt.
+Transport errors distinguish no bytes sent from a sent request with unknown
+authority outcome; no automatic retry or peer-baseline replacement occurs.
+See the [client transport contract](../../rust/crates/hepta-paper-service/src/local_state_authority_client/HANDOFF.md).
+This establishes process continuity, not Rust provenance, installed unit
+membership or a stop barrier. Full preparation still uses concrete process
+transports; versioned socket backup configuration, owning integration and the
+[qualified installation subject](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/AUTHORITY_INSTALLATION_DESIGN.md)
+remain separate work.

@@ -18,6 +18,61 @@ help or stdin. There is no socket, executable, environment, or runtime override.
 The library's `LocalStateAuthorityClientOptionsV1` permits an explicit Unix socket
 path and smaller limits for embedding and transport tests.
 
+## Direct socket transport and origin lifetime
+
+`LocalStateAuthoritySocketTransportV1::connect(&options)` is a concrete
+in-process `MutationAuthorityTransportV1`. It can be supplied directly to
+`PinnedMutationAuthorityV1::load` together with the genuine independently pinned
+online authority configuration and public key. It executes no command and
+creates no key. The existing generic client APIs, installed client binary, and
+`ProcessMutationAuthorityTransportV1` retain their existing behavior.
+
+Construction connects to the configured Unix socket without sending a request,
+captures its kernel `SO_PEERCRED` and `SO_PEERPIDFD`, and closes that empty probe
+connection while retaining the original creator's close-on-exec pidfd. Every
+RPC uses a new connection for the existing EOF-delimited protocol. It captures
+that socket's own peer pidfd, requires the original PID/UID/GID, and checks both
+pidfds for exit before and after comparing credentials. The original pidfd
+cannot become live again for a recycled PID. There is no `pidfd_open(pid)`
+lookup, pidfd-inode assumption, caller-selected expected UID, `/proc/PID/exe`
+access, regular-file descriptor, or subprocess in this observation. Kernels
+without the actual socket pidfd operation are refused; this route does not
+fall back to numeric PID checks.
+
+The same checks run before each socket write/read attempt and immediately
+before a successful return. A different process rebinding the same pathname
+is refused even if the original process remains alive. An exited creator is
+refused even when its descendant retains the listener or accepted descriptor.
+The transport never silently adopts a new origin. Explicitly creating another
+transport after a restart establishes only another untrusted observation;
+the owning composition must independently rebuild any required evidence.
+
+These are connection-creator credentials, captured by the kernel at
+connect/listen time. They do not identify which thread or descendant processes
+each byte when a still-live creator passes or inherits sockets, detect every
+credential change/exec, measure a Rust executable, qualify a service principal,
+or prove membership in a systemd unit. A Node service with the same valid
+protocol and key remains possible at this layer. Actual daemon installation,
+manager/host qualification, full topology V2 and native admission remain
+separate prerequisites. No proof is accepted as JSON or emitted as a permit.
+
+Transport failures retain the original error code and add
+`details.transport = "local-state-authority-socket-v1"`, exact
+`requestBytesSent`, `requestDelivery`, `authorityOutcome`, and
+`inspectionRequired`. Before any successful write these are `not_sent`,
+`not_invoked`, and false. After even one byte they are `sent`, `unknown`, and
+true: a timeout, truncated/invalid response, lost creator, or untrusted rejection
+cannot establish whether the authority committed. These failures are not
+retryable and never report `committed: false`. The transport performs no
+automatic request retry. Recovery must use the existing journal/receipt
+protocol. Receipt contract and signature verification remain in the pinned
+authority; this concrete transport itself returns an untrusted semantic Value.
+
+The wire implementation shares the original client's private byte-limited,
+strict-JSON, absolute-deadline exchange. Its peer checks add no public callback
+or configurable ready predicate. No new archive/source file is opened or closed
+while a caller holds SQLite locks; only sockets and pidfds are owned here.
+
 ## Bounds and intentional compatibility limits
 
 The default socket deadline is 120 seconds, absolute across nonblocking connect,
@@ -70,3 +125,20 @@ nested nonalphabetical receipt members in fragmented envelopes, check preserved
 CLI output order, and refuse duplicate/invalid requests and responses before any
 untrusted receipt is returned. Full signed schema interoperability is exercised
 separately by the actual Rust authority/business composition fixture.
+
+The direct transport's unit suite covers rejected requests before sending,
+preservation of unknown outcomes after sending, strict output/byte bounds, and
+the absolute deadline despite response progress. Actual independent SQLite
+writer probes remain blocked by the caller's held `BEGIN IMMEDIATE` across
+transport construction, error and destruction in both DELETE and WAL modes,
+and succeed after rollback. `tests/local_state_authority_socket_transport.rs`
+uses the real Rust daemon and provided fixture key with the existing pinned
+verifier, plus separate listener processes for origin exit, inherited sockets,
+and replacement while the original creator stays live. These are protocol and
+authority-journal tests; they do not prove a business SQLite mutation or a
+qualified production installation. All daemon/principal/key tests use isolated
+fixtures and do not contact the installed host authority.
+
+Primary contract references: Linux [Unix socket credentials](https://www.man7.org/linux/man-pages/man7/unix.7.html),
+the kernel's [socket peer pidfd operation](https://raw.githubusercontent.com/torvalds/linux/master/net/core/sock.c),
+and [pidfd poll semantics](https://www.man7.org/linux/man-pages/man2/pidfd_open.2.html).

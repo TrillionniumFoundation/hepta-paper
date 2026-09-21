@@ -22,6 +22,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod peer;
+mod transport;
+pub use transport::LocalStateAuthoritySocketTransportV1;
+
 pub const HEPTA_LOCAL_STATE_AUTHORITY_SOCKET: &str =
     "/run/hepta-paper-state-authority/authority.sock";
 pub const MAXIMUM_MESSAGE_BYTES: usize = 256 * 1024 * 1024;
@@ -136,6 +140,16 @@ pub fn request_local_state_authority_json_v1(
     request: &[u8],
     options: &LocalStateAuthorityClientOptionsV1,
 ) -> Result<Box<RawValue>> {
+    let payload = request_payload(request, options)?;
+    let deadline = Instant::now() + Duration::from_millis(options.timeout_ms);
+    let mut stream = open_socket(options, deadline)?;
+    exchange(&mut stream, &payload, options, deadline, &mut 0, |_| Ok(()))
+}
+
+fn request_payload(
+    request: &[u8],
+    options: &LocalStateAuthorityClientOptionsV1,
+) -> Result<Vec<u8>> {
     configuration(options)?;
     if request.len() > options.maximum_message_bytes {
         return Err(fail("local_state_authority_client_request_too_large"));
@@ -151,14 +165,26 @@ pub fn request_local_state_authority_json_v1(
     if payload.len() > options.maximum_message_bytes {
         return Err(fail("local_state_authority_client_request_too_large"));
     }
-    let deadline = Instant::now() + Duration::from_millis(options.timeout_ms);
-    let mut stream = open_socket(options, deadline)?;
-    let mut sent = 0;
-    while sent < payload.len() {
+    Ok(payload)
+}
+
+// Private wire sharing only. The generic caller supplies a no-op; the concrete
+// socket transport supplies the actual origin-bound kernel observer. No public
+// caller predicate can mint a peer identity or verified authority receipt.
+fn exchange(
+    stream: &mut UnixStream,
+    payload: &[u8],
+    options: &LocalStateAuthorityClientOptionsV1,
+    deadline: Instant,
+    sent: &mut usize,
+    check_peer: impl Fn(&UnixStream) -> Result<()>,
+) -> Result<Box<RawValue>> {
+    while *sent < payload.len() {
         deadline_current(deadline)?;
-        match stream.write(&payload[sent..]) {
+        check_peer(stream)?;
+        match stream.write(&payload[*sent..]) {
             Ok(0) => return Err(fail("local_state_authority_client_connection_failed")),
-            Ok(count) => sent += count,
+            Ok(count) => *sent += count,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => wait_ready(deadline)?,
             Err(_) => return Err(fail("local_state_authority_client_connection_failed")),
@@ -171,6 +197,7 @@ pub fn request_local_state_authority_json_v1(
     let mut buffer = [0_u8; 16 * 1024];
     loop {
         deadline_current(deadline)?;
+        check_peer(stream)?;
         match stream.read(&mut buffer) {
             Ok(0) => break,
             Ok(count) => {

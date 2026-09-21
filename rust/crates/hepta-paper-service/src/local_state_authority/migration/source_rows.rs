@@ -75,6 +75,50 @@ impl JournalRows {
     pub(super) fn logical_hash(&self) -> &str {
         &self.logical_hash
     }
+    /// Copy only the fixed original columns into a caller-owned memory image.
+    /// The sole production caller creates that new connection itself. This is
+    /// private implementation plumbing, never a writable source/journal API.
+    pub(super) fn copy_into(&self, target: &Connection) -> Result<()> {
+        if target.path() != Some("")
+            || target.transaction_state(Some("main"))? != TransactionState::Write
+        {
+            return Err(error(
+                "local_authority_image_private_memory_transaction_required",
+            ));
+        }
+        for (table, rows) in TABLES.iter().zip(&self.tables) {
+            let column_count = table.columns.split(',').count();
+            let parameters = std::iter::repeat_n("?", column_count)
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "INSERT INTO main.{}({}) VALUES({parameters})",
+                table.name, table.columns
+            );
+            let mut statement = target.prepare(&sql)?;
+            for row in rows {
+                if row.len() != column_count {
+                    return Err(error("local_authority_image_row_invalid"));
+                }
+                let values = row
+                    .iter()
+                    .map(|cell| match cell {
+                        Value::Null => Ok(rusqlite::types::Value::Null),
+                        Value::String(text) => Ok(rusqlite::types::Value::Text(text.clone())),
+                        Value::Number(number) => number
+                            .as_i64()
+                            .map(rusqlite::types::Value::Integer)
+                            .ok_or_else(|| error("local_authority_image_row_invalid")),
+                        _ => Err(error("local_authority_image_row_invalid")),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if statement.execute(rusqlite::params_from_iter(values))? != 1 {
+                    return Err(error("local_authority_image_row_copy_failed"));
+                }
+            }
+        }
+        Ok(())
+    }
     pub(super) fn counts(&self) -> Value {
         Value::Object(
             TABLES

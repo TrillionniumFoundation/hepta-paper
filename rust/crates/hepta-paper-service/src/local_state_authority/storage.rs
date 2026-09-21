@@ -404,7 +404,7 @@ pub(super) fn open_database(context: &Context) -> Result<(Connection, DatabaseId
     ))
 }
 
-fn assert_schema(db: &Connection) -> Result<()> {
+pub(super) fn assert_schema(db: &Connection) -> Result<()> {
     type SchemaRow = (String, String, String, Option<String>);
     fn rows(db: &Connection) -> Result<Vec<SchemaRow>> {
         let mut query = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")?;

@@ -222,3 +222,11 @@ no private key and changes no source data. Pending operations, all backup rows a
 histories beyond its explicit resource profile are refused. This observation has
 no service-stop, archive, conversion, publication or migration capability; those
 execution and installation gaps remain open.
+
+The same pinned owner can now produce a
+[detached native SQLite image](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/HANDOFF.md)
+in fresh memory. It preserves every original rowid/TEXT and signed head, changes
+only the native schema/key identity/version, and checks source/post logical
+equality before safe serialization. This method accepts no destination path,
+touches no source data and supplies no publisher, durable archive, real
+maintenance barrier or production migration permission.

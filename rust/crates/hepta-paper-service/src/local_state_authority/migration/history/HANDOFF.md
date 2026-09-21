@@ -129,8 +129,11 @@ cargo test -p hepta-paper-service --lib local_state_authority::migration
 ```
 
 This closes a read-only history-validation prerequisite, within the explicit
-admission limits above. A durable archive, format conversion/publication,
-uncertain-commit recovery, actual old-process stop/restart exclusion and native
-installed-service handoff remain absent. See
+admission limits above. The same owner now has a separate
+[`build_offline_native_image`](../offline_image/HANDOFF.md) method which converts
+that exact verified snapshot into serialized native SQLite bytes in new memory.
+It does not change the `inspect` report or grant publication authority. Durable
+archive/publication, uncertain-commit recovery, actual old-process stop/restart
+exclusion and native installed-service handoff remain absent. See
 [`JOURNAL_MIGRATION_DESIGN.md`](../../JOURNAL_MIGRATION_DESIGN.md). The normal native
 runtime continues refusing populated Node version-0 journals.

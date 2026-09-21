@@ -393,3 +393,10 @@ inputs, reconstructs schema/rebind epochs and all mutation heads, and compares t
 complete terminal SQL state. It does not read private keys, sign or rewrite data.
 Pending/backup/oversized histories are refused; live migration and service handoff
 remain unimplemented.
+
+That pinned owner also exposes
+[`build_offline_native_image`](src/local_state_authority/migration/offline_image/HANDOFF.md),
+which returns a bounded standalone SQLite artifact built in new memory from the
+same verified snapshot. All original rowids/receipt TEXT and heads are retained;
+native format/key identity are added. There is no destination path or source
+write, and the artifact does not provide durable publication or service cutover.

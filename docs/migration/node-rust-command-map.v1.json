@@ -929,6 +929,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs",
           "symbol": "verify_mutation_history_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/history.rs",
+          "symbol": "build_offline_native_image"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image.rs",
+          "symbol": "build_image"
         }
       ],
       "tests": [
@@ -958,9 +966,11 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history/oracle.mjs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/oracle.mjs"
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/oracle.mjs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/oracle.mjs"
       ],
-      "remaining": "Native five-mode CLI composes actual ten-database inspection, signed backup/drill, independent exact-bundle renewal, and pending reconciliation; copied-binary explicit workspace roots, real authority processes, blocked reports and exit classes are exercised. The concrete controller automatically selects authenticated historical snapshots for fixed business, heartbeat and mixed ranges under the complete original registry and compares actual replay with every live effective SQLite row before publishing or minting an epoch; complete original Node normal-controller/drill reports match. Selected failures cannot silently renew a backup. General history requires the full original registry and binds operation/writer/role/schema/provenance and allowed effects; custom non-heartbeat source fallback and reconstruction of callback invocation traces are not claimed. Deliberate stricter v2 authority-verifier requirements, SQLite engine-header byte differences, full activation composition, operational retention and independent target-host/authority acceptance also remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only migration prerequisite now validates the exact original Node six-table/index profile and a bounded complete settled signed history under the same held main transaction. Independently pinned public-key/configuration inputs authenticate deterministic initial genesis, activated pristine rebinds and every finalized mutation or genuine aborted tail; all ten reconstructed heads must equal actual SQL state. It retains original TEXT/rowids in a separately domain-framed logical digest and preserves source bytes and SQLite locks. Pending operations, every backup row, unreconstructible configuration and oversized histories are refused. No private key, source-file provenance claim, service stop, archive conversion/publication, migration capability or production acceptance is supplied.",
+      "remaining": "Native five-mode CLI composes actual ten-database inspection, signed backup/drill, independent exact-bundle renewal, and pending reconciliation; copied-binary explicit workspace roots, real authority processes, blocked reports and exit classes are exercised. The concrete controller automatically selects authenticated historical snapshots for fixed business, heartbeat and mixed ranges under the complete original registry and compares actual replay with every live effective SQLite row before publishing or minting an epoch; complete original Node normal-controller/drill reports match. Selected failures cannot silently renew a backup. General history requires the full original registry and binds operation/writer/role/schema/provenance and allowed effects; custom non-heartbeat source fallback and reconstruction of callback invocation traces are not claimed. Deliberate stricter v2 authority-verifier requirements, SQLite engine-header byte differences, full activation composition, operational retention and independent target-host/authority acceptance also remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only migration prerequisite now validates the exact original Node six-table/index profile and a bounded complete settled signed history under the same held main transaction. Independently pinned public-key/configuration inputs authenticate deterministic initial genesis, activated pristine rebinds and every finalized mutation or genuine aborted tail; all ten reconstructed heads must equal actual SQL state. It retains original TEXT/rowids in a separately domain-framed logical digest and preserves source bytes and SQLite locks. Pending operations, every backup row, unreconstructible configuration and oversized histories are refused. The same pinned owner now builds a bounded standalone native SQLite image entirely in fresh memory from that exact verified snapshot, preserving all six original tables and rowids/TEXT, binding the actual public-key identity and checking pre/post logical equality before safe serialization. Real original Node fixtures reopen through the native runtime and continue after an aborted tail. No private key, source-file provenance claim, destination path, durable archive/publication, service stop, live migration capability or production acceptance is supplied.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/state_backup_authority.rs",
         "rust/crates/hepta-paper-service/src/state_backup_authority/contracts.rs",
@@ -1020,7 +1030,8 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_rows.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/history.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history.rs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs"
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image.rs"
       ],
       "testCases": [
         {
@@ -1398,6 +1409,30 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/history/tests.rs",
           "symbol": "configuration_alias_replacement_cannot_release_a_live_sqlite_writer_lock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "actual_node_images_preserve_every_legacy_sql_value_and_boot_the_real_native_runtime"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "actual_native_reserve_finalize_reuses_the_old_aborted_slot_without_deleting_evidence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "pending_wrong_key_backup_and_tampering_never_yield_an_image_or_change_source"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "internal_report_misbinding_and_native_identity_version_changes_are_rejected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "image_construction_keeps_delete_and_existing_wal_writer_locks_on_success_and_failure"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "committed_rows_still_only_in_wal_are_copied_from_the_new_held_snapshot"
         }
       ]
     },
@@ -2081,6 +2116,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs",
           "symbol": "verify_mutation_history_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/history.rs",
+          "symbol": "build_offline_native_image"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image.rs",
+          "symbol": "build_image"
         }
       ],
       "tests": [
@@ -2133,9 +2176,11 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history/oracle.mjs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/oracle.mjs"
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/oracle.mjs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/oracle.mjs"
       ],
-      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. A sealed initial composition now owns concrete process pins, actual ten-database startup/finalized proofs, the same recoverability fence attached to the coordinator, and a final common expiry boundary; it grants no writes. Authenticated original schema checkpoints now feed a private bridge that merges all ten signed finalized chains, replays the complete registered effects in isolated copies, compares every effective table, and obtains fresh schema observation against the original FINAL and current terminal head; empty and actual heartbeat history pass while unjournaled rowid changes fail. Fresh external cutover-journal v2 storage keeps the adjacent enrollment sentinel and unchanged business inventory, with Node/Rust transaction exclusion. The owning constructor now explicitly retains initial versus historical schema evidence, authenticates the checkpoint before startup RPC, and binds subsequent proofs to actual post-startup inventory after pending-finalization recovery. A separate private observer re-verifies full deployment and retains the actual kernel executable, exact ELF hash/ancestry, nonroot real/effective/saved UID/GID and argv; a source-owned reconciliation digest is distinct from worker identity. This observation does not grant writer authority. A private fixed-native-store inventory guard now checks non-target bytes and complete namespaces without target descriptor opens/closes, and actual durable state is exposed inside the held writer lock. Retained transaction checks now compose actual source/cache descriptors, startup post-inventory, schema/checkpoint/history/replay, active/finalized signatures and the same concrete recovery fence, with exact opaque origin bindings and a final common expiry boundary. Recovery retains the original evidence allocation across failure/feedback and blocks full re-observation through fence clones until the scope ends. Separate-process SQLite-lock fixtures cover staged writes and invalidation. A crate-private consuming owner now binds actual signed qualification/deployment/preimage, closed native configuration/epoch, the exact locked Production/Canary writer/scope and external-v2 enrollment to the two fixed reconciliation operations. Full preflight precedes both SQLite connections; only retained checks run under locks; target and journal close before evidence drops, and committed/pending errors retain original details. Pure epoch, external observer and outcome tests do not constitute a genuine full installed-production owning acceptance. A private actual-Shadow signing diagnostic now derives the same runtime epoch/configuration under a retained lock and emits no authority; a private owning signed-transfer route now fully closes its preview scopes, binds the genuine signature to actual native subject/preimage/initial epoch, uses safe external-v2 full-Shadow CAS, and freshly admits one business operation using only the returned actual Canary lease. Cutover-success/business-failure and lower unknown-COMMIT outcomes preserve their separate truth and prohibit automatic workflow retry. Held online/backup command checks now verify actual ELF path/hash, root-owned installation and configuration/key pins without RPC or regular-file reopen; ELF alone does not prove a Rust adapter. Reviewed native authority adapter implementation/topology, complete writable CLI composition, subsequent-write admission beyond the first exact preimage, existing-v1 storage migration, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only migration prerequisite now validates the exact original Node six-table/index profile and a bounded complete settled signed history under the same held main transaction. Independently pinned public-key/configuration inputs authenticate deterministic initial genesis, activated pristine rebinds and every finalized mutation or genuine aborted tail; all ten reconstructed heads must equal actual SQL state. It retains original TEXT/rowids in a separately domain-framed logical digest and preserves source bytes and SQLite locks. Pending operations, every backup row, unreconstructible configuration and oversized histories are refused. No private key, source-file provenance claim, service stop, archive conversion/publication, migration capability or production acceptance is supplied.",
+      "remaining": "Native Rust executes the complete incumbent standard and legacy-v0 offline schema-25 reconciliation transactions under explicit local cutover admission, with exact event/failure/17-column receipt JSON, shared Node package flock, schema/online-metadata gates, durable writer epoch, strict preconditions and rollback. Passive CLI now resolves the incumbent runtime environment/default location and live clocks, with explicit native workspace relocation and deterministic database/time overrides. Standard six-stage and legacy three-stage business clock observations, unsafe SQLite INTEGER refusal, scalar numeric-text coercion, raw 24:00 fraction validation, paged legacy queued-state hashes and full Node differential/failure/crash tests are implemented. Private online callbacks now execute both actual registered Node plans through the real pinned signed reserve/apply/finalize coordinator, retaining exact changesets, receipt issuer, online-specific stale predicates and rich recovery flags; a source-private post-reservation precommit guard rolls back and aborts on scope loss. These callbacks have no public activation constructor or writable CLI admission. A sealed initial composition now owns concrete process pins, actual ten-database startup/finalized proofs, the same recoverability fence attached to the coordinator, and a final common expiry boundary; it grants no writes. Authenticated original schema checkpoints now feed a private bridge that merges all ten signed finalized chains, replays the complete registered effects in isolated copies, compares every effective table, and obtains fresh schema observation against the original FINAL and current terminal head; empty and actual heartbeat history pass while unjournaled rowid changes fail. Fresh external cutover-journal v2 storage keeps the adjacent enrollment sentinel and unchanged business inventory, with Node/Rust transaction exclusion. The owning constructor now explicitly retains initial versus historical schema evidence, authenticates the checkpoint before startup RPC, and binds subsequent proofs to actual post-startup inventory after pending-finalization recovery. A separate private observer re-verifies full deployment and retains the actual kernel executable, exact ELF hash/ancestry, nonroot real/effective/saved UID/GID and argv; a source-owned reconciliation digest is distinct from worker identity. This observation does not grant writer authority. A private fixed-native-store inventory guard now checks non-target bytes and complete namespaces without target descriptor opens/closes, and actual durable state is exposed inside the held writer lock. Retained transaction checks now compose actual source/cache descriptors, startup post-inventory, schema/checkpoint/history/replay, active/finalized signatures and the same concrete recovery fence, with exact opaque origin bindings and a final common expiry boundary. Recovery retains the original evidence allocation across failure/feedback and blocks full re-observation through fence clones until the scope ends. Separate-process SQLite-lock fixtures cover staged writes and invalidation. A crate-private consuming owner now binds actual signed qualification/deployment/preimage, closed native configuration/epoch, the exact locked Production/Canary writer/scope and external-v2 enrollment to the two fixed reconciliation operations. Full preflight precedes both SQLite connections; only retained checks run under locks; target and journal close before evidence drops, and committed/pending errors retain original details. Pure epoch, external observer and outcome tests do not constitute a genuine full installed-production owning acceptance. A private actual-Shadow signing diagnostic now derives the same runtime epoch/configuration under a retained lock and emits no authority; a private owning signed-transfer route now fully closes its preview scopes, binds the genuine signature to actual native subject/preimage/initial epoch, uses safe external-v2 full-Shadow CAS, and freshly admits one business operation using only the returned actual Canary lease. Cutover-success/business-failure and lower unknown-COMMIT outcomes preserve their separate truth and prohibit automatic workflow retry. Held online/backup command checks now verify actual ELF path/hash, root-owned installation and configuration/key pins without RPC or regular-file reopen; ELF alone does not prove a Rust adapter. Reviewed native authority adapter implementation/topology, complete writable CLI composition, subsequent-write admission beyond the first exact preimage, existing-v1 storage migration, broad V8 legacy/local-time Date.parse compatibility, independent acceptance and production/retirement qualification remain open. Prepared local cached-result commit is a separate narrower primitive. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only migration prerequisite now validates the exact original Node six-table/index profile and a bounded complete settled signed history under the same held main transaction. Independently pinned public-key/configuration inputs authenticate deterministic initial genesis, activated pristine rebinds and every finalized mutation or genuine aborted tail; all ten reconstructed heads must equal actual SQL state. It retains original TEXT/rowids in a separately domain-framed logical digest and preserves source bytes and SQLite locks. Pending operations, every backup row, unreconstructible configuration and oversized histories are refused. The same pinned owner now builds a bounded standalone native SQLite image entirely in fresh memory from that exact verified snapshot, preserving all six original tables and rowids/TEXT, binding the actual public-key identity and checking pre/post logical equality before safe serialization. Real original Node fixtures reopen through the native runtime and continue after an aborted tail. No private key, source-file provenance claim, destination path, durable archive/publication, service stop, live migration capability or production acceptance is supplied.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-automation-reconcile.rs",
         "rust/crates/hepta-paper-service/src/automation_runtime_reconciliation.rs",
@@ -2206,7 +2251,8 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_rows.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/history.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history.rs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs"
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image.rs"
       ],
       "testCases": [
         {
@@ -3228,6 +3274,30 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/history/tests.rs",
           "symbol": "configuration_alias_replacement_cannot_release_a_live_sqlite_writer_lock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "actual_node_images_preserve_every_legacy_sql_value_and_boot_the_real_native_runtime"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "actual_native_reserve_finalize_reuses_the_old_aborted_slot_without_deleting_evidence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "pending_wrong_key_backup_and_tampering_never_yield_an_image_or_change_source"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "internal_report_misbinding_and_native_identity_version_changes_are_rejected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "image_construction_keeps_delete_and_existing_wal_writer_locks_on_success_and_failure"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "committed_rows_still_only_in_wal_are_copied_from_the_new_held_snapshot"
         }
       ]
     },
@@ -4432,6 +4502,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs",
           "symbol": "verify_mutation_history_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/history.rs",
+          "symbol": "build_offline_native_image"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image.rs",
+          "symbol": "build_image"
         }
       ],
       "tests": [
@@ -4464,9 +4542,11 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/tests.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history/oracle.mjs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/oracle.mjs"
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history/oracle.mjs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/oracle.mjs"
       ],
-      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime. A read-only historical checkpoint loader now authenticates the original full signed post-inventory and exact retained database bytes while refusing missing/substituted evidence; a private all-ten-database bridge now verifies retained signed history and actual registered replay against every current table, binds a fresh schema observation to the original FINAL/current head and rejects unrecorded state changes. Owning restart activation, checkpoint capture/publication, missing-history recovery and full v2 service acceptance remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only migration prerequisite now validates the exact original Node six-table/index profile and a bounded complete settled signed history under the same held main transaction. Independently pinned public-key/configuration inputs authenticate deterministic initial genesis, activated pristine rebinds and every finalized mutation or genuine aborted tail; all ten reconstructed heads must equal actual SQL state. It retains original TEXT/rowids in a separately domain-framed logical digest and preserves source bytes and SQLite locks. Pending operations, every backup row, unreconstructible configuration and oversized histories are refused. No private key, source-file provenance claim, service stop, archive conversion/publication, migration capability or production acceptance is supplied.",
+      "remaining": "Native signed readiness, exact audit chain, real ten-database source inventory, pristine state, fixed target projection, signed maintenance reservation, WAL normalization, signed metadata/genesis installation, exclusive commit recovery, already-installed normalization recovery, strict commit-safety margin validation, fresh post-inventory/post-pristine observation and Node-compatible finalize/observe request construction are implemented and differential-tested. V2 observation remains an explicit target-configuration-restart boundary; durable final receipt publication, external fencing/linearizability, complete CLI modes and independent qualification remain open. Reports do not activate a runtime. A read-only historical checkpoint loader now authenticates the original full signed post-inventory and exact retained database bytes while refusing missing/substituted evidence; a private all-ten-database bridge now verifies retained signed history and actual registered replay against every current table, binds a fresh schema observation to the original FINAL/current head and rejects unrecorded state changes. Owning restart activation, checkpoint capture/publication, missing-history recovery and full v2 service acceptance remain open. Native standalone local state-authority client/daemon source now implements the 15-kind Unix protocol, actual supplied-key Ed25519 signatures, exact native journal, mutually exclusive backup/mutation transitions and target-config pristine rebind that fences still-live source instances. Transport bounds concurrent incomplete clients without serializing socket waits; identity-bound publication and restart recovery are explicit. Existing Node authority journals remain refused pending explicit authenticated migration, real old-process restart exclusion and installed principal/adapter/topology qualification. The source support service does not establish production composition or independent command acceptance. A read-only migration prerequisite now validates the exact original Node six-table/index profile and a bounded complete settled signed history under the same held main transaction. Independently pinned public-key/configuration inputs authenticate deterministic initial genesis, activated pristine rebinds and every finalized mutation or genuine aborted tail; all ten reconstructed heads must equal actual SQL state. It retains original TEXT/rowids in a separately domain-framed logical digest and preserves source bytes and SQLite locks. Pending operations, every backup row, unreconstructible configuration and oversized histories are refused. The same pinned owner now builds a bounded standalone native SQLite image entirely in fresh memory from that exact verified snapshot, preserving all six original tables and rowids/TEXT, binding the actual public-key identity and checking pre/post logical equality before safe serialization. Real original Node fixtures reopen through the native runtime and continue after an aborted tail. No private key, source-file provenance claim, destination path, durable archive/publication, service stop, live migration capability or production acceptance is supplied.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
         "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
@@ -4524,7 +4604,8 @@
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/source_rows.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/history.rs",
         "rust/crates/hepta-paper-service/src/local_state_authority/migration/schema_history.rs",
-        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs"
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/mutation_history.rs",
+        "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image.rs"
       ],
       "testCases": [
         {
@@ -4934,6 +5015,30 @@
         {
           "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/history/tests.rs",
           "symbol": "configuration_alias_replacement_cannot_release_a_live_sqlite_writer_lock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "actual_node_images_preserve_every_legacy_sql_value_and_boot_the_real_native_runtime"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "actual_native_reserve_finalize_reuses_the_old_aborted_slot_without_deleting_evidence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "pending_wrong_key_backup_and_tampering_never_yield_an_image_or_change_source"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "internal_report_misbinding_and_native_identity_version_changes_are_rejected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "image_construction_keeps_delete_and_existing_wal_writer_locks_on_success_and_failure"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/tests.rs",
+          "symbol": "committed_rows_still_only_in_wal_are_copied_from_the_new_held_snapshot"
         }
       ]
     },

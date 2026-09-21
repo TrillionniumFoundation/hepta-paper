@@ -1,17 +1,23 @@
 //! Public-key-only observation of one exact legacy SQL snapshot. Neither this
 //! owner nor its serializable report can authorize source mutation or shutdown.
-use super::{mutation_history, schema_history, source_profile, source_rows};
+use super::{mutation_history, offline_image, schema_history, source_profile, source_rows};
 use crate::local_state_authority::storage;
 use crate::sqlite_mutation_coordinator::{
     Result,
     authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1, files::Snapshot},
     error, hash, hash_bytes,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionState};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path};
 
 struct NoTransport;
+struct ObservedSnapshot {
+    rows: source_rows::JournalRows,
+    report: Value,
+    transaction: TransactionState,
+    changes: u64,
+}
 impl MutationAuthorityTransportV1 for NoTransport {
     fn invoke(&mut self, _: &Value) -> Result<Value> {
         Err(error("local_authority_history_transport_unavailable"))
@@ -96,6 +102,34 @@ impl LegacyAuthorityJournalVerifierV1 {
     /// rows and pending operations. Limits are rejection conditions, never
     /// permission to omit historical rows. See the migration history handoff.
     pub fn inspect(&self, database: &Connection) -> Result<Value> {
+        Ok(self.observe_snapshot(database)?.report)
+    }
+    /// Build a detached, serialized native SQLite image in newly allocated
+    /// memory. The original six tables, rowids and TEXT bytes are preserved.
+    /// This performs the same complete pinned history validation as `inspect`.
+    ///
+    /// No source path is opened or written and no destination path is accepted.
+    /// The returned bytes are an offline review artifact, never permission to
+    /// publish them, replace a live journal, stop Node or start a native service.
+    pub fn build_offline_native_image(
+        &self,
+        database: &Connection,
+    ) -> Result<offline_image::OfflineNativeAuthorityImageV1> {
+        let snapshot = self.observe_snapshot(database)?;
+        let image = offline_image::build_image(
+            &snapshot.rows,
+            self.authority.verification_key(),
+            &snapshot.report,
+        )?;
+        self.current()?;
+        if database.total_changes() != snapshot.changes
+            || database.transaction_state(Some("main"))? != snapshot.transaction
+        {
+            return Err(error("local_authority_history_transaction_changed"));
+        }
+        Ok(image)
+    }
+    fn observe_snapshot(&self, database: &Connection) -> Result<ObservedSnapshot> {
         self.current()?;
         let transaction = database.transaction_state(Some("main"))?;
         let changes = database.total_changes();
@@ -138,7 +172,7 @@ impl LegacyAuthorityJournalVerifierV1 {
         {
             return Err(error("local_authority_history_transaction_changed"));
         }
-        Ok(json!({
+        let report = json!({
             "version":1,"kind":"HeptaLocalStateAuthorityLegacyHistoryInspectionV1",
             "evidenceScope":"signed_history_observation_no_migration_authority",
             "historyState":if schema.initialized() {"settled_signed_history"} else {"uninitialized_no_signed_history"},
@@ -150,7 +184,13 @@ impl LegacyAuthorityJournalVerifierV1 {
             "publicKeySha256":hash_bytes(self.authority.verification_key().as_bytes()),
             "rowCounts":rows.counts(),"head":head,
             "schemaHistory":schema.report(),"mutationHistory":mutation_report,
-        }))
+        });
+        Ok(ObservedSnapshot {
+            rows,
+            report,
+            transaction,
+            changes,
+        })
     }
     fn assert_terminal(
         &self,

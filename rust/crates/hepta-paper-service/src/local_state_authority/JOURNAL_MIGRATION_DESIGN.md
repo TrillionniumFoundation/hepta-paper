@@ -1,6 +1,6 @@
 # Explicit Node authority journal migration design
 
-Status: **migration executor design only, 2026-09-21**. Read-only schema and bounded authenticated-history prerequisites are implemented below. No migrator, maintenance capability or deployment approval is implemented by this document. Existing native `LocalStateAuthorityRuntimeV1::open` must continue refusing populated `user_version=0` journals with `local_state_authority_explicit_journal_migration_required`.
+Status: **live migration executor design only, 2026-09-21**. Read-only schema, bounded authenticated history and detached memory-image conversion are implemented below. No live migrator, maintenance capability or deployment approval is implemented by this document. Existing native `LocalStateAuthorityRuntimeV1::open` must continue refusing populated `user_version=0` journals with `local_state_authority_explicit_journal_migration_required`.
 
 The first read-only prerequisite is now implemented in
 [`migration/source_profile.rs`](migration/source_profile.rs), exposed by
@@ -17,7 +17,13 @@ and compared with actual metadata and all ten heads. Its
 [contract and limits](migration/history/HANDOFF.md) explicitly refuse pending
 operations, all backup history, unknown configurations and oversized histories.
 It opens no private key and grants no migration or stopped-service capability.
-Archive, format conversion/publication, uncertainty recovery and maintenance
+The same pinned owner also provides `build_offline_native_image(&Connection)`:
+the already verified SQL snapshot is copied into a fresh memory-only native
+database, preserving all six original tables' rowids and raw TEXT, adding the
+actual pinned public-key identity and native format, and safely serializing a
+standalone image. See the [offline artifact contract](migration/offline_image/HANDOFF.md).
+It accepts no destination path and leaves the source transaction untouched.
+Durable archive/publication, uncertain live-commit recovery and maintenance
 capabilities proposed below remain unimplemented.
 
 ## Concrete source compatibility

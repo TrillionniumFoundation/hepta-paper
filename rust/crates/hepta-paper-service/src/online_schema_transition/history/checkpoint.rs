@@ -272,7 +272,46 @@ pub struct VerifiedSchemaTransitionCheckpointV1 {
     copies: Vec<DatabaseBytes>,
     expected_names: BTreeSet<String>,
 }
+/// Borrowed, authenticated original bytes for an in-crate private replay. These
+/// are never the writable source paths, and cannot construct a current proof.
+pub(crate) struct CheckpointDatabaseBytesV1<'a> {
+    pub(crate) instance: &'a Value,
+    pub(crate) main: &'a [u8],
+    pub(crate) wal: Option<&'a [u8]>,
+}
 impl VerifiedSchemaTransitionCheckpointV1 {
+    pub(crate) fn schema_audit(&self) -> Result<Value> {
+        self.audit.assert_current()?;
+        self.audit.value()
+    }
+    pub(crate) fn database_bytes(
+        &self,
+        instance_id: &str,
+    ) -> Result<CheckpointDatabaseBytesV1<'_>> {
+        let (index, instance) = self.inventory["instances"]
+            .as_array()
+            .ok_or_else(|| fail("inventory_invalid"))?
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row["instanceId"].as_str() == Some(instance_id))
+            .ok_or_else(|| fail("instance_missing"))?;
+        let copy = self
+            .copies
+            .get(index)
+            .ok_or_else(|| fail("instance_missing"))?;
+        self.audit.assert_current()?;
+        self.report
+            .current(self.ancestors.last().ok_or_else(|| fail("files_changed"))?)?;
+        copy.main.current(&self.databases)?;
+        if let Some(wal) = &copy.wal {
+            wal.current(&self.databases)?;
+        }
+        Ok(CheckpointDatabaseBytesV1 {
+            instance,
+            main: &copy.main.bytes,
+            wal: copy.wal.as_ref().map(|wal| wal.bytes.as_slice()),
+        })
+    }
     pub fn historical_inventory(&self) -> &Value {
         &self.inventory
     }

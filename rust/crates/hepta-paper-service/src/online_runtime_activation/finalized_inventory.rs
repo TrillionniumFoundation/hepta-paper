@@ -98,7 +98,7 @@ impl VerifiedFinalizedInventoryV1 {
         // same pinned trust; every head's age and exclusive expiry remain live.
         self.assert_time(authority.trust(), evidence, clock.now_millis()?)
     }
-    fn assert_time(
+    pub(crate) fn assert_time(
         &self,
         trust: &Value,
         evidence: &VerifiedActiveAuthorityEvidenceV1,

@@ -21,8 +21,16 @@ pub struct VerifiedFinalizedHeadInspectionV1 {
     receipt: Value,
     current_head: Value,
     authority_configuration_hash: String,
+    authenticated_entries: Vec<Value>,
+    authenticated_genesis: Value,
 }
 impl VerifiedFinalizedHeadInspectionV1 {
+    pub(crate) fn authenticated_entries(&self) -> &[Value] {
+        &self.authenticated_entries
+    }
+    pub(crate) fn authenticated_genesis(&self) -> &Value {
+        &self.authenticated_genesis
+    }
     pub fn value(&self) -> &Value {
         &self.receipt
     }
@@ -286,6 +294,10 @@ fn manifest_binding(
         "manifest_binding_invalid",
     )
 }
+struct RetainedMarkerChain {
+    value: Value,
+    entries: Vec<Value>,
+}
 fn marker_chain<T: MutationAuthorityTransportV1>(
     db: &Connection,
     meta: &Value,
@@ -294,7 +306,7 @@ fn marker_chain<T: MutationAuthorityTransportV1>(
     manifest: &Value,
     authority: &PinnedMutationAuthorityV1<T>,
     authority_head: &Value,
-) -> Result<Value> {
+) -> Result<RetainedMarkerChain> {
     let rows = storage::rows(
         db,
         "SELECT marker.*,finalized.reservation_id AS finalization_reservation_id,finalized.finalization_receipt_hash,finalized.finalization_receipt_json,finalized.side_effect_permit_hash,finalized.finalized_at,finalized.recorded_at FROM autonomous_research_online_mutation_authority_marker marker LEFT JOIN autonomous_research_online_mutation_finalization_receipt finalized ON finalized.reservation_id=marker.reservation_id ORDER BY marker.database_sequence;",
@@ -312,6 +324,7 @@ fn marker_chain<T: MutationAuthorityTransportV1>(
     let mut previous = json!({"sequence":0,"hash":meta["genesis_database_hash"],"stateHash":meta["genesis_state_hash"]});
     let mut previous_global = -1;
     let mut chain = Vec::new();
+    let mut entries = Vec::new();
     for row in &rows {
         let reserve = storage::parse(&row["reserve_request_json"], "reserve_request_json_invalid")?;
         let reservation =
@@ -361,6 +374,7 @@ fn marker_chain<T: MutationAuthorityTransportV1>(
             .verify_stored_finalization(&finalization, &finalize, &verified)
             .map_err(|_| error(code("finalization_invalid")))?;
         chain.push(json!({"reservationId":reservation["reservationId"],"reservationReceiptHash":row["reservation_receipt_hash"],"finalizationReceiptHash":finalization_hash,"globalSequence":reservation["globalSequence"],"globalHash":reservation["globalHash"],"databaseSequence":reservation["databaseSequence"],"databaseHash":reservation["databaseHash"],"stateHash":reservation["postStateHash"]}));
+        entries.push(json!({"reserveRequest":reserve,"reservationReceipt":reservation,"finalizeRequest":finalize,"finalizationReceipt":finalization}));
         previous = json!({"sequence":reservation["databaseSequence"],"hash":reservation["databaseHash"],"stateHash":reservation["postStateHash"]});
         previous_global = global;
     }
@@ -368,9 +382,10 @@ fn marker_chain<T: MutationAuthorityTransportV1>(
         "AutonomousResearchOnlineFinalizedMarkerChain",
         &json!({"databaseRole":instance["role"],"databaseInstanceId":instance["instanceId"],"genesisGlobalSequence":0,"genesisGlobalHash":meta["genesis_global_hash"],"genesisDatabaseSequence":0,"genesisDatabaseHash":meta["genesis_database_hash"],"genesisStateHash":meta["genesis_state_hash"],"markers":chain}),
     )?;
-    Ok(
-        json!({"markerCount":rows.len(),"finalizationCount":finalization_count,"localHead":previous,"markerChainHash":chain_hash}),
-    )
+    Ok(RetainedMarkerChain {
+        value: json!({"markerCount":rows.len(),"finalizationCount":finalization_count,"localHead":previous,"markerChainHash":chain_hash}),
+        entries,
+    })
 }
 fn nonce() -> Result<String> {
     let mut bytes = [0u8; 16];
@@ -442,7 +457,7 @@ pub fn inspect_online_finalized_database_head_v1<T: MutationAuthorityTransportV1
         .to_owned()
         .clone();
     head["globalSequence"] = current["globalSequence"].clone();
-    let chain = marker_chain(
+    let retained = marker_chain(
         &transaction,
         &meta,
         &schema,
@@ -451,6 +466,7 @@ pub fn inspect_online_finalized_database_head_v1<T: MutationAuthorityTransportV1
         authority,
         &head,
     )?;
+    let chain = &retained.value;
     checked(
         head["schemaHash"] == schema
             && equal(&head["sequence"], &chain["localHead"]["sequence"])
@@ -490,5 +506,7 @@ pub fn inspect_online_finalized_database_head_v1<T: MutationAuthorityTransportV1
         receipt,
         current_head: current.clone(),
         authority_configuration_hash: authority.configuration_hash().to_owned(),
+        authenticated_entries: retained.entries,
+        authenticated_genesis: json!({"databaseRole":instance["role"],"databaseInstanceId":instance["instanceId"],"schemaContractId":instance["schemaContractId"],"schemaHash":schema,"globalSequence":meta["genesis_global_sequence"],"globalHash":meta["genesis_global_hash"],"databaseSequence":meta["genesis_database_sequence"],"databaseHash":meta["genesis_database_hash"],"stateHash":meta["genesis_state_hash"]}),
     })
 }

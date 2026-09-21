@@ -5,8 +5,8 @@ use super::*;
 use crate::{
     online_mutation_composition::BuiltinOnlineMutationPlansV1,
     sqlite_changeset::inspect_sqlite_changeset_effects_v1,
+    sqlite_mutation_coordinator::finalized_history::VerifiedFinalizedMutationChainV1,
     sqlite_mutation_plan::assert_sqlite_mutation_database_surface_v1,
-    state_backup_authority::VerifiedFinalizedJournalEvidenceV1,
 };
 use base64ct::{Base64, Encoding};
 
@@ -20,7 +20,7 @@ impl RegisteredJournalPlansV1 {
     pub(super) fn authenticate(
         manifest: &Value,
         inventory: &ObservedStateDatabaseInventoryV1,
-        range: &VerifiedFinalizedJournalEvidenceV1,
+        range: &VerifiedFinalizedMutationChainV1,
     ) -> Result<Option<Self>> {
         let registry = BuiltinOnlineMutationPlansV1::load()?;
         let manifest_hash =
@@ -103,7 +103,7 @@ impl RegisteredJournalPlansV1 {
         &self,
         database: &Connection,
         instance: &Value,
-        range: &VerifiedFinalizedJournalEvidenceV1,
+        range: &VerifiedFinalizedMutationChainV1,
     ) -> Result<()> {
         let entries = range.value()["entries"].as_array().ok_or_else(rejected)?;
         let mut checked = BTreeSet::new();

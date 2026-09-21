@@ -73,9 +73,12 @@ The existing durable cutover protocol stores
 incumbent closed inventory correctly treats it as unregistered. Initial evidence
 preparation therefore neither creates nor treats that journal as an accepted
 business database. Enrolled runtimes remain blocked by the original inventory
-rules. The future writable composition needs an explicit Node/Rust-compatible
-coordinator-storage contract, with retained enrollment/database identity and
-journal verification; a filename exclusion would not establish this binding.
+rules. The new fresh v2 external coordinator-storage contract preserves the adjacent
+JSON enrollment sentinel and moves only the coordinator journal outside the
+business runtime. It is independently verified by Node and Rust. The future
+writable composition must explicitly bind this selected storage and enrollment;
+a filename exclusion would not establish that binding. Existing adjacent v1
+SQLite journals are not automatically migrated or accepted.
 
 ## Initial composition validation
 
@@ -94,3 +97,11 @@ composition case completed in 324.20 seconds on this host. The two existing
 configured-stage groups also pass, including all 134 operations and 486 statements.
 This remains local prerequisite coverage, not acceptance
 of writable online reconciliation or a production deployment.
+
+
+The historical schema bridge now verifies an original authenticated checkpoint
+through retained signed finalized records and actual private replay to every
+current table. It obtains a fresh schema observation against the original FINAL
+hash and the current terminal head. This remains a separate crate-private proof:
+the initial owning constructor still requires unchanged startup inventory, and
+must explicitly select/retain the historical branch before restart activation.

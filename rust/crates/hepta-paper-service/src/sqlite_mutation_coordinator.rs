@@ -6,6 +6,7 @@ pub mod clock;
 pub mod contracts;
 pub mod execution;
 mod finalized;
+pub(crate) mod finalized_history;
 pub mod recovery;
 pub use execution::{
     RecoverabilityEpochFenceV1, SqliteMutationCoordinatorOptionsV1, SqliteMutationCoordinatorV1,

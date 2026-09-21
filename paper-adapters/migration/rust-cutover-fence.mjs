@@ -21,10 +21,12 @@ function artifactPresent(file) {
  * An absent enrollment is compatible with existing Node deployments. Once either
  * enrollment artifact appears, missing/replaced/corrupt artifacts fail closed.
  */
-export function createRustCutoverFence({ dbPath, busyTimeoutMs = 10_000 } = {}) {
+export function createRustCutoverFence({ dbPath, busyTimeoutMs = 10_000,
+  expectedStorageRoot = null, expectedEnrollmentHash = null } = {}) {
   if (!dbPath) fail('database_path_required');
   const targetPath = path.resolve(dbPath);
-  const journalPath = `${targetPath}.rust-cutover.sqlite`;
+  const legacyJournalPath = `${targetPath}.rust-cutover.sqlite`;
+  let journalPath = legacyJournalPath;
   const markerPath = `${targetPath}.rust-cutover.enrolled.json`;
   const enrollmentAtCreation = artifactPresent(journalPath) || artifactPresent(markerPath);
   let enrolled = enrollmentAtCreation;
@@ -35,11 +37,128 @@ export function createRustCutoverFence({ dbPath, busyTimeoutMs = 10_000 } = {}) 
   let lease = null;
   let depth = 0;
   let closed = false;
+  let external = null;
+
+  function externalObserve(marker, markerBytes) {
+    const keys = ['version', 'kind', 'databasePath', 'databaseIdentity', 'storageRoot',
+      'storageRootIdentity', 'storageSlot', 'storageSlotIdentity', 'journalIdentity', 'markerIdentity'].sort();
+    if (!marker || Object.keys(marker).sort().join(',') !== keys.join(',')
+      || marker.version !== 2 || marker.kind !== 'HeptaDurableCutoverExternalEnrollment'
+      || marker.databasePath !== targetPath
+      || keys.filter((key) => key !== 'version').some((key) => typeof marker[key] !== 'string')) {
+      fail('external_enrollment_invalid');
+    }
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      if (artifactPresent(`${legacyJournalPath}${suffix}`)) fail('mixed_enrollment');
+    }
+    const hash = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const markerHash = hash(markerBytes);
+    if ((expectedStorageRoot !== null && expectedStorageRoot !== marker.storageRoot)
+      || (expectedEnrollmentHash !== null && expectedEnrollmentHash !== markerHash)) {
+      fail('storage_expectation_mismatch');
+    }
+    const parent = path.dirname(targetPath);
+    const contains = (a, b) => a === b || b.startsWith(a.endsWith(path.sep) ? a : `${a}${path.sep}`);
+    if (!path.isAbsolute(marker.storageRoot) || path.resolve(marker.storageRoot) !== marker.storageRoot
+      || contains(parent, marker.storageRoot) || contains(marker.storageRoot, parent)) fail('external_root_invalid');
+    const slot = createHash('sha256').update(JSON.stringify([
+      'HeptaDurableCutoverExternalStorageV2', targetPath, marker.databaseIdentity,
+    ])).digest('hex');
+    if (slot !== marker.storageSlot) fail('external_enrollment_invalid');
+    const slotPath = path.join(marker.storageRoot, slot);
+    const selectedJournal = path.join(slotPath, 'journal.sqlite');
+    const current = (pin) => {
+      if (fs.realpathSync(pin.path) !== pin.path) fail('enrollment_identity_changed');
+      const observed = [fs.lstatSync(pin.path, { bigint: true })];
+      if (pin.fd !== null) observed.push(fs.fstatSync(pin.fd, { bigint: true }));
+      for (const stat of observed) {
+        if (identity(stat) !== identity(pin.initial) || stat.mode !== pin.initial.mode
+          || stat.uid !== BigInt(process.geteuid()) || (stat.mode & 0o022n) !== 0n
+          || (pin.directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1n)) fail('enrollment_identity_changed');
+      }
+    };
+    const pins = [];
+    const pin = (file, directory, mode, sqlite = false) => {
+      if (fs.realpathSync(file) !== file) fail('enrollment_identity_changed');
+      // SQLite retains its database handles. Closing an auxiliary raw fd can
+      // release another same-process connection's POSIX advisory locks.
+      const fd = sqlite ? null : fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK
+        | (directory ? fs.constants.O_DIRECTORY : 0));
+      const observed = { path: file, fd, directory, initial: fd === null ? fs.lstatSync(file, { bigint: true }) : fs.fstatSync(fd, { bigint: true }) };
+      pins.push(observed);
+      try {
+        current(observed);
+        if (mode !== null && (observed.initial.mode & 0o7777n) !== mode) fail('enrollment_identity_changed');
+      } catch (error) { pins.pop(); if (fd !== null) fs.closeSync(fd); throw error; }
+      return observed;
+    };
+    if (!external) {
+      try {
+        const target = pin(targetPath, false, null, true);
+        const root = pin(marker.storageRoot, true, 0o700n);
+        const directory = pin(slotPath, true, 0o700n);
+        const selectedMarker = pin(markerPath, false, 0o600n);
+        const journal = pin(selectedJournal, false, 0o600n, true);
+        if (identity(target.initial) !== marker.databaseIdentity || identity(root.initial) !== marker.storageRootIdentity
+          || identity(directory.initial) !== marker.storageSlotIdentity || identity(journal.initial) !== marker.journalIdentity
+          || identity(selectedMarker.initial) !== marker.markerIdentity
+          || (journalIdentity !== null && journalIdentity !== identity(journal.initial))
+          || (targetIdentity !== null && targetIdentity !== identity(target.initial))
+          || (markerIdentity !== null && markerIdentity !== identity(selectedMarker.initial))) fail('enrollment_identity_changed');
+        external = { pins, marker: selectedMarker, markerHash, journalPath: selectedJournal };
+      } catch (error) {
+        for (const observed of pins) if (observed.fd !== null) fs.closeSync(observed.fd);
+        throw error;
+      }
+    }
+    for (const observed of external.pins) current(observed);
+    const size = fs.fstatSync(external.marker.fd, { bigint: true }).size;
+    if (size > 16_384n) fail('enrollment_marker_invalid');
+    const heldBytes = Buffer.alloc(Number(size));
+    if (fs.readSync(external.marker.fd, heldBytes, 0, heldBytes.length, 0) !== heldBytes.length
+      || hash(heldBytes) !== external.markerHash || markerHash !== external.markerHash
+      || selectedJournal !== external.journalPath) fail('enrollment_identity_changed');
+    current(external.marker);
+    journalPath = selectedJournal;
+    if (!database) {
+      database = new DatabaseSync(journalPath, { readOnly: false });
+      database.exec(`PRAGMA busy_timeout=${Math.min(30_000, Math.max(1, Number(busyTimeoutMs) || 10_000))}; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;`);
+    }
+    for (const observed of external.pins) current(observed);
+    for (const suffix of ['-wal', '-shm', '-journal']) {
+      const sidecar = `${journalPath}${suffix}`;
+      if (artifactPresent(sidecar)) {
+        // Opening then closing SHM here would release this process's POSIX
+        // SQLite locks even while its BEGIN IMMEDIATE transaction is active.
+        const stat = fs.lstatSync(sidecar, { bigint: true });
+        if (fs.realpathSync(sidecar) !== sidecar || !stat.isFile() || stat.nlink !== 1n
+          || stat.uid !== BigInt(process.geteuid()) || (stat.mode & 0o7777n) !== 0o600n) fail('enrollment_identity_changed');
+      }
+    }
+    assertExternalSchema(database);
+    return true;
+  }
 
   function observe() {
     if (closed) fail('fence_closed');
-    if (!enrolled && !artifactPresent(journalPath) && !artifactPresent(markerPath)) return false;
+    if (!enrolled && !artifactPresent(journalPath) && !artifactPresent(markerPath)) {
+      if (expectedStorageRoot !== null || expectedEnrollmentHash !== null) fail('storage_expectation_mismatch');
+      return false;
+    }
     enrolled = true;
+    if (artifactPresent(markerPath)) {
+      let bytes; let candidate;
+      try {
+        const stat = fs.lstatSync(markerPath);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 16_384) fail('enrollment_marker_invalid');
+        bytes = fs.readFileSync(markerPath);
+        candidate = JSON.parse(bytes.toString('utf8'));
+      } catch (error) {
+        const wrapped = new Error('rust_cutover_enrollment_unavailable'); wrapped.cause = error; throw wrapped;
+      }
+      if (candidate.version === 2 || external) return externalObserve(candidate, bytes);
+    }
+    if (expectedStorageRoot !== null || expectedEnrollmentHash !== null) fail('storage_expectation_mismatch');
     let journalStat; let markerStat; let targetStat; let marker;
     try {
       journalStat = fs.lstatSync(journalPath);
@@ -165,7 +284,20 @@ export function createRustCutoverFence({ dbPath, busyTimeoutMs = 10_000 } = {}) 
     close() {
       if (depth) fail('close_during_write');
       if (database) database.close();
+      if (external) for (const pin of external.pins) if (pin.fd !== null) fs.closeSync(pin.fd);
       closed = true;
     },
   });
+}
+
+function assertExternalSchema(database) {
+  const expected = [
+    ['table', 'hepta_cutover_journal', 'hepta_cutover_journal', 'CREATE TABLE hepta_cutover_journal(revision INTEGER PRIMARY KEY, event TEXT NOT NULL,\n  evidence_json TEXT NOT NULL, state_json TEXT NOT NULL, previous_hash TEXT NOT NULL, entry_hash TEXT NOT NULL)'],
+    ['table', 'hepta_cutover_state', 'hepta_cutover_state', 'CREATE TABLE hepta_cutover_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), state_json TEXT NOT NULL)'],
+    ['trigger', 'hepta_cutover_no_journal_delete', 'hepta_cutover_journal', "CREATE TRIGGER hepta_cutover_no_journal_delete BEFORE DELETE ON hepta_cutover_journal\nBEGIN SELECT RAISE(ABORT, 'cutover_journal_append_only'); END"],
+    ['trigger', 'hepta_cutover_no_journal_update', 'hepta_cutover_journal', "CREATE TRIGGER hepta_cutover_no_journal_update BEFORE UPDATE ON hepta_cutover_journal\nBEGIN SELECT RAISE(ABORT, 'cutover_journal_append_only'); END"],
+  ];
+  const rows = database.prepare("SELECT type,name,tbl_name,coalesce(sql,'') AS sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name").all()
+    .map((row) => [row.type, row.name, row.tbl_name, row.sql]);
+  if (JSON.stringify(rows) !== JSON.stringify(expected)) fail('journal_schema_invalid');
 }

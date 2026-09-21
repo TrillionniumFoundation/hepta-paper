@@ -301,7 +301,8 @@ Initial online composition now retains actual pinned process clients, the full
 startup/finalized proof chain, a concrete shared recovery fence and a final common
 expiry check. It is crate-private and cannot execute business mutations or grant
 native activation. Historical schema checkpoint loading verifies original signed
-inventory and exact copied bytes; replay equivalence to current state remains a
-separate prerequisite. See the repository's
+inventory and exact copied bytes. A separate internal history bridge now proves actual registered replay
+and all-table equivalence to the current signed finalized head; owning restart
+activation remains separate. See the repository's
 [composition handoff](../../../docs/modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md)
 and [schema readiness handoff](../../../docs/modules/ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md).

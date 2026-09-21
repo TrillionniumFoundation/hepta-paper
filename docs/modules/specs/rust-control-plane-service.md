@@ -145,6 +145,7 @@ recovery fence shared with the coordinator, and a final common time boundary.
 See [the composition handoff](../ONLINE_MUTATION_COMPOSITION_HANDOFF.md) for
 ordering and remaining native writer/cutover/transaction requirements. Historical
 schema checkpoint loading authenticates the original full inventory and copied
-bytes without claiming current-state equivalence; see
+bytes; a separate internal bridge now proves current-state equivalence by
+actual registered replay and all-table comparison against fresh signed heads. See
 [the schema readiness handoff](../ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md).
 Both are prerequisites and leave production activation and Node retirement false.

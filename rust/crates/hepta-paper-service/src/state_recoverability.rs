@@ -25,6 +25,7 @@ fn clock_now(clock: &mut dyn MutationClockV1) -> Result<(i64, String)> {
 }
 
 mod history;
+pub(crate) use history::{VerifiedCheckpointReplayV1, verify_checkpoint_effective_state_v1};
 
 pub mod cli;
 mod renewal;

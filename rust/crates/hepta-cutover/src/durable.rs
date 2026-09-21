@@ -21,6 +21,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+mod storage;
+pub use storage::DurableCutoverStorageV2;
 const SCHEMA: &str = "
 CREATE TABLE hepta_cutover_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), state_json TEXT NOT NULL);
 CREATE TABLE hepta_cutover_journal(revision INTEGER PRIMARY KEY, event TEXT NOT NULL,
@@ -118,6 +120,7 @@ pub struct DurableCutoverCoordinatorV1 {
     marker_path: PathBuf,
     enrollment: Enrollment,
     connection: Connection,
+    external_storage: Option<storage::ExternalStorageV2>,
 }
 
 impl DurableCutoverCoordinatorV1 {
@@ -198,6 +201,7 @@ impl DurableCutoverCoordinatorV1 {
             marker_path,
             enrollment,
             connection,
+            external_storage: None,
         };
         coordinator.validate_identity()?;
         Ok(coordinator)
@@ -208,9 +212,9 @@ impl DurableCutoverCoordinatorV1 {
     pub fn open(database_path: impl AsRef<Path>) -> Result<Self, DurableCutoverError> {
         let database_path = canonical_file(database_path.as_ref())?;
         let (journal_path, marker_path) = sidecars(&database_path);
-        let bytes = fs::read(&marker_path)?;
-        if bytes.len() > 16_384 {
-            return Err(DurableCutoverError::IdentityChanged);
+        let bytes = storage::read_marker(&marker_path)?;
+        if serde_json::from_slice::<serde_json::Value>(&bytes)?["version"] == 2 {
+            return storage::open_external(database_path, &bytes);
         }
         let enrollment: Enrollment = serde_json::from_slice(&bytes)?;
         let connection = open_connection(&journal_path)?;
@@ -220,6 +224,7 @@ impl DurableCutoverCoordinatorV1 {
             marker_path,
             enrollment,
             connection,
+            external_storage: None,
         };
         coordinator.validate_identity()?;
         coordinator.verify_journal()?;
@@ -279,6 +284,9 @@ impl DurableCutoverCoordinatorV1 {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(storage) = &self.external_storage {
+            storage.assert_current(&self.database_path, &tx)?;
+        }
         let state = load_state(&tx)?;
         if state.writer_fence().as_ref() != Some(lease) {
             return Err(DurableCutoverError::StaleWriter);
@@ -521,6 +529,9 @@ impl DurableCutoverCoordinatorV1 {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(storage) = &self.external_storage {
+            storage.assert_current(&self.database_path, &tx)?;
+        }
         let mut state = load_state(&tx)?;
         if state.revision != expected_revision {
             return Err(DurableCutoverError::RevisionConflict);
@@ -538,6 +549,9 @@ impl DurableCutoverCoordinatorV1 {
     }
 
     fn validate_identity(&self) -> Result<(), DurableCutoverError> {
+        if let Some(storage) = &self.external_storage {
+            return storage.assert_current(&self.database_path, &self.connection);
+        }
         let target = canonical_file(&self.database_path)?;
         let journal = canonical_file(&self.journal_path)?;
         canonical_file(&self.marker_path)?;

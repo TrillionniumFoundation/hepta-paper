@@ -439,8 +439,15 @@ impl PinnedStateBackupAuthorityV1<ProcessStateBackupAuthorityTransportV1> {
 /// not a statement that any SQLite snapshot was restored or is recoverable.
 pub struct VerifiedFinalizedJournalEvidenceV1 {
     range: Value,
+    chain: crate::sqlite_mutation_coordinator::finalized_history::VerifiedFinalizedMutationChainV1,
 }
 impl VerifiedFinalizedJournalEvidenceV1 {
+    pub(crate) fn chain(
+        &self,
+    ) -> &crate::sqlite_mutation_coordinator::finalized_history::VerifiedFinalizedMutationChainV1
+    {
+        &self.chain
+    }
     pub fn value(&self) -> &Value {
         &self.range
     }
@@ -471,75 +478,13 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
                 "autonomous_research_state_backup_restore_journal_binding_invalid",
             ));
         }
-        let mut sequence = number(&receipt["fromGlobalSequence"]).ok_or_else(invalid)?;
-        let mut global_hash = receipt["fromGlobalHash"].clone();
-        let mut heads = std::collections::BTreeMap::<String, Value>::new();
-        for entry in receipt["entries"].as_array().ok_or_else(invalid)? {
-            if !keys(
-                entry,
-                &[
-                    "reserveRequest",
-                    "reservationReceipt",
-                    "finalizeRequest",
-                    "finalizationReceipt",
-                ],
-            ) {
-                return Err(invalid());
-            }
-            let reservation = online
-                .verify_stored_reservation(&entry["reservationReceipt"], &entry["reserveRequest"])
-                .map_err(|_| invalid())?;
-            online
-                .verify_stored_finalization(
-                    &entry["finalizationReceipt"],
-                    &entry["finalizeRequest"],
-                    &reservation,
-                )
-                .map_err(|_| invalid())?;
-            let r = reservation.value();
-            let id = r["databaseInstanceId"].as_str().ok_or_else(invalid)?;
-            let previous=heads.get(id).cloned().unwrap_or_else(||json!({"sequence":r["databasePreviousSequence"],"hash":r["databasePreviousHash"],"stateHash":r["preStateHash"]}));
-            if number(&r["globalPreviousSequence"]) != Some(sequence)
-                || r["globalPreviousHash"] != global_hash
-                || number(&r["globalSequence"]) != sequence.checked_add(1)
-                || !equal(&r["databasePreviousSequence"], &previous["sequence"])
-                || r["databasePreviousHash"] != previous["hash"]
-                || r["preStateHash"] != previous["stateHash"]
-                || number(&r["databaseSequence"])
-                    != number(&previous["sequence"]).and_then(|v| v.checked_add(1))
-            {
-                return Err(invalid());
-            }
-            heads.insert(id.to_owned(),json!({"sequence":r["databaseSequence"],"hash":r["databaseHash"],"stateHash":r["postStateHash"]}));
-            sequence = number(&r["globalSequence"]).ok_or_else(invalid)?;
-            global_hash = r["globalHash"].clone();
-        }
-        for (id, head) in heads {
-            let signed = receipt["databaseHeads"]
-                .as_array()
-                .and_then(|a| a.iter().find(|v| v["databaseInstanceId"] == id))
-                .ok_or_else(|| {
-                    error("autonomous_research_state_backup_restore_journal_database_head_invalid")
-                })?;
-            if ["sequence", "hash", "stateHash"]
-                .iter()
-                .any(|k| !equal(&signed[k], &head[k]))
-            {
-                return Err(error(
-                    "autonomous_research_state_backup_restore_journal_database_head_invalid",
-                ));
-            }
-        }
-        if number(&receipt["toGlobalSequence"]) != Some(sequence)
-            || receipt["toGlobalHash"] != global_hash
-        {
-            return Err(error(
-                "autonomous_research_state_backup_restore_journal_continuity_invalid",
-            ));
-        }
+        let chain = crate::sqlite_mutation_coordinator::finalized_history::verify_backup_chain_v1(
+            range, online,
+        )?;
         self.current()?;
         Ok(VerifiedFinalizedJournalEvidenceV1 {
             range: receipt.clone(),
+            chain,
         })
     }
 }

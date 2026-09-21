@@ -277,7 +277,7 @@ fn prepare_inner<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTranspo
                     | OpenFlags::SQLITE_OPEN_NOFOLLOW
                     | OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?;
-            let h = replay_verified_database_v1(&mut db, entry, &range, &service.online)?;
+            let h = replay_verified_database_v1(&mut db, entry, range.chain(), &service.online)?;
             let mut projected = json!({});
             for key in [
                 "databaseRole",

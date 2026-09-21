@@ -25,7 +25,11 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+mod checkpoint_replay;
 mod equivalence;
+pub(crate) use checkpoint_replay::{
+    VerifiedCheckpointReplayV1, verify_checkpoint_effective_state_v1,
+};
 mod registered;
 mod selection;
 #[cfg(test)]
@@ -353,7 +357,7 @@ fn replay_candidate<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTran
             registered::RegisteredJournalPlansV1::authenticate(
                 &service.options.writer_manifest,
                 &inventory,
-                &range,
+                range.chain(),
             )?
         }
         _ => None,
@@ -424,9 +428,10 @@ fn compare_effective_state<B: StateBackupAuthorityTransportV1, O: MutationAuthor
             )?;
         }
         if let Some(plans) = registered {
-            plans.assert_database_surface(&replay, entry, range)?;
+            plans.assert_database_surface(&replay, entry, range.chain())?;
         }
-        let restored = replay_verified_database_v1(&mut replay, entry, range, &service.online)?;
+        let restored =
+            replay_verified_database_v1(&mut replay, entry, range.chain(), &service.online)?;
         let restored_digest = equivalence::effective_digest(&replay)?;
         inventory
             .with_database_snapshot(text(entry, "instanceId")?, |private| {
@@ -485,7 +490,7 @@ pub(super) fn verify_journal_source_current_state<
     let registered = registered::RegisteredJournalPlansV1::authenticate(
         &service.options.writer_manifest,
         inventory,
-        &range,
+        range.chain(),
     )?;
     compare_effective_state(
         service,

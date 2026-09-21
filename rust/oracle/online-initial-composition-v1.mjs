@@ -26,6 +26,8 @@ import {autonomousResearchStateBackupAuthoritySignaturePayload as backupPayload}
   from '../../paper-adapters/automation/autonomous-research-state-backup-authority.mjs';
 import {hashBytes,hashRecord} from '../../workflow-kernel/record-hash.mjs';
 import {productionOracleProfile} from './production-record-hash-v1.mjs';
+import {createExternallyFencedSqliteMutationCoordinator} from '../../paper-adapters/automation/externally-fenced-sqlite-mutation-coordinator.mjs';
+import {AUTONOMOUS_RESEARCH_ONLINE_MUTATION_OPERATION_PLANS} from '../../paper-composition/bootstrap/autonomous-research-online-mutation-operation-plans.mjs';
 
 const REPO=path.resolve(import.meta.dirname,'../..');
 const LEASE_MS=900000;
@@ -85,12 +87,21 @@ function fixture(root){
   const inventory=resolveAutonomousResearchStateDatabaseInventory({runtimeRoot:runtime,manifest:stateDatabaseManifest});
   validateAutonomousResearchOnlineSchemaTransitionAuditReceipt({receipt:audit,inventory,writerManifest:input.writerManifest,authorityClient:client});
   if(audit.finalization.globalSequence!==0||audit.finalization.globalHash!==genesis[0].globalHash)throw Error('schema_genesis_head_binding_failed');
+  // Retain the exact original report and raw files before any later heartbeat.
+  const checkpointRoot=path.join(root,'checkpoint');fs.mkdirSync(checkpointRoot,{mode:0o700});fs.mkdirSync(path.join(checkpointRoot,'databases'),{mode:0o700});
+  write(path.join(checkpointRoot,'POST_INVENTORY.json'),inventory);
+  inventory.instances.forEach((instance,index)=>{
+    const source=path.join(runtime,instance.sourceRelativePath),target=path.join(checkpointRoot,'databases',`${String(index).padStart(3,'0')}.sqlite`);
+    fs.copyFileSync(source,target,fs.constants.COPYFILE_EXCL);fs.chmodSync(target,0o600);
+    if(instance.walFileIdentity!==null){fs.copyFileSync(`${source}-wal`,`${target}-wal`,fs.constants.COPYFILE_EXCL);fs.chmodSync(`${target}-wal`,0o600);}
+  });
+  if(resolveAutonomousResearchStateDatabaseInventory({runtimeRoot:runtime,manifest:stateDatabaseManifest}).inventoryHash!==inventory.inventoryHash)throw Error('source_changed_during_checkpoint_capture');
   const broker=path.join(root,'authority.mjs');
   write(broker,`#!${process.execPath}\nimport {brokerMain} from ${JSON.stringify(import.meta.url)};\nawait brokerMain(${JSON.stringify(root)});\n`,0o700);
   const onlineProcess=path.join(root,'online-process.json'),backupProcess=path.join(root,'backup-process.json');
   write(onlineProcess,{version:1,kind:'AutonomousResearchOnlineMutationAuthorityProcessConfiguration',authorityConfigurationPath:onlineConfiguration,authorityConfigurationSha256:hashBytes(fs.readFileSync(onlineConfiguration)),commandPath:broker,commandSha256:hashBytes(fs.readFileSync(broker)),fixedArguments:[],timeoutMs:10000});
   write(backupProcess,{version:2,kind:'AutonomousResearchStateBackupAuthorityProcessConfiguration',authorityId:'backup:initial-composition',keyId:'backup:key:initial-composition',commandPath:broker,commandSha256:hashBytes(fs.readFileSync(broker)),publicKeyPath:backupPublic,publicKeySha256:hashBytes(fs.readFileSync(backupPublic)),fixedArguments:[],timeoutMs:10000,maximumReservationLeaseMs:LEASE_MS,maximumHeadObservationAgeMs:LEASE_MS,onlineMutationAuthorityConfigurationPath:onlineConfiguration,onlineMutationAuthorityConfigurationSha256:hashBytes(fs.readFileSync(onlineConfiguration))});
-  const value={root,runtime,workspace,backupRoot,manifest:stateDatabaseManifest,writerManifest:input.writerManifest,now:new Date().toISOString(),onlineConfiguration,onlineProcess,onlineProcessHash:hashBytes(fs.readFileSync(onlineProcess)),backupConfiguration:backupProcess,backupConfigurationHash:hashBytes(fs.readFileSync(backupProcess)),lease:{...lease,generation:lease.leaseGeneration},genesis,audit,inventory};
+  const value={root,runtime,workspace,backupRoot,checkpointRoot,manifest:stateDatabaseManifest,writerManifest:input.writerManifest,now:new Date().toISOString(),onlineConfiguration,onlineProcess,onlineProcessHash:hashBytes(fs.readFileSync(onlineProcess)),backupConfiguration:backupProcess,backupConfigurationHash:hashBytes(fs.readFileSync(backupProcess)),lease:{...lease,generation:lease.leaseGeneration},genesis,audit,inventory};
   write(path.join(root,'fixture.json'),value);return value;
 }
 export async function brokerMain(root){
@@ -100,8 +111,7 @@ export async function brokerMain(root){
   fs.appendFileSync(path.join(root,'calls.jsonl'),`${JSON.stringify(q)}\n`,{mode:0o600});
   const trust=JSON.parse(fs.readFileSync(f.onlineConfiguration,'utf8'));
   const expiresAt=new Date(Date.parse(q.requestedAt)+LEASE_MS).toISOString();
-  const globalSequence=f.audit.finalization.globalSequence,globalHash=f.audit.finalization.globalHash;
-  const databaseHeads=f.genesis.map(i=>({databaseRole:i.databaseRole,databaseInstanceId:i.databaseInstanceId,sequence:i.databaseSequence,hash:i.databaseHash,schemaHash:i.schemaHash,stateHash:i.stateHash}));
+  const journal=readJournal(root),{globalSequence,globalHash,databaseHeads}=currentHead(f,journal);
   const common={version:1,authorityId:trust.authorityId,keyId:trust.keyId,requestHash:hashRecord(q.kind,q)};
   const scope=pick(q,['protocol','scopeId','databaseScopeHash','writerManifestHash']);
   const onlineBase={...common,...scope,globalSequence,globalHash,expiresAt};
@@ -130,12 +140,51 @@ export async function brokerMain(root){
     }else throw Error(`unexpected_fixture_authority_operation:${q.kind}`);
     process.stdout.write(JSON.stringify(sign(receipt,backupKey,backupPayload)));return;
   }
-  process.stdout.write(JSON.stringify(sign(receipt)));
+  let wire=JSON.stringify(sign(receipt));
+  // JSON spelling does not alter the authenticated ECMAScript Number value.
+  // Alternate representations exercise the native retained-chain comparison.
+  if(f.alternateIntegralHeadSpellings&&fs.readFileSync(path.join(root,'calls.jsonl'),'utf8').trim().split('\n').length%2===0)
+    wire=wire.replace(/"(globalSequence|sequence)":(\d+)(?=[,}])/g,'"$1":$2.0');
+  process.stdout.write(wire);
+}
+function readJournal(root){const file=path.join(root,'journal-fixture.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;}
+function currentHead(f,journal){
+  return journal?{globalSequence:journal.entries.at(-1).reservationReceipt.globalSequence,globalHash:journal.globalHash,databaseHeads:journal.databaseHeads}:{globalSequence:f.audit.finalization.globalSequence,globalHash:f.audit.finalization.globalHash,databaseHeads:f.genesis.map(i=>({databaseRole:i.databaseRole,databaseInstanceId:i.databaseInstanceId,sequence:i.databaseSequence,hash:i.databaseHash,schemaHash:i.schemaHash,stateHash:i.stateHash}))};
+}
+function heartbeat(root,input){
+  checkRoot(root);const f=JSON.parse(fs.readFileSync(path.join(root,'fixture.json'),'utf8')),prior=readJournal(root);
+  const raw=JSON.parse(fs.readFileSync(f.onlineConfiguration,'utf8'));
+  const trust={...pick(raw,['authorityId','keyId','scopeId','databaseScopeHash','writerManifestHash','maximumReservationLeaseMs','maximumObservationAgeMs']),version:1,kind:'AutonomousResearchOnlineMutationAuthorityTrust'};
+  const PROTOCOL=online.AUTONOMOUS_RESEARCH_ONLINE_MUTATION_PROTOCOL;
+  const before=currentHead(f,prior),now=input.now||new Date().toISOString(),expiresAt=new Date(Date.parse(now)+LEASE_MS).toISOString();
+  const H=label=>hashRecord('InitialCompositionSignedHeartbeatFixture',{label});
+  const verifySignature=receipt=>crypto.verify(null,Buffer.from(online.autonomousResearchOnlineMutationSignedPayload(receipt)),crypto.createPublicKey(onlineKey),Buffer.from(receipt.signature,'base64'));
+  const shared={trust,verifySignature,hashChangesetBase64:value=>hashBytes(Buffer.from(value,'base64'))};
+  const calls=[],marked=[];let reserveRequest,reservation,finalizeRequest,finalization;
+  const client={protocol:PROTOCOL,trust,
+    observeCurrentHead({request,now,expectedDatabaseInstances}){calls.push(request);const receipt=sign({...pick(trust,['authorityId','keyId','scopeId','databaseScopeHash','writerManifestHash']),version:1,kind:'AutonomousResearchOnlineMutationCurrentHeadReceipt',status:'autonomous_research_online_mutation_current_head_observed',protocol:PROTOCOL,requestHash:hashRecord(request.kind,request),...before,unresolvedReservationCount:0,observedAt:now.toISOString(),expiresAt});if(!online.verifyAutonomousResearchOnlineMutationCurrentHead({receipt,request,now,expectedDatabaseInstances,...shared}))throw Error('fixture_head_invalid');return receipt;},
+    reserveMutation({request,now}){calls.push(request);reserveRequest=request;const {requestedAt,requestedLeaseMs,...mirror}=request;reservation=sign({...mirror,kind:'AutonomousResearchOnlineMutationReservationReceipt',status:'autonomous_research_online_mutation_reserved',authorityId:trust.authorityId,keyId:trust.keyId,requestHash:hashRecord(request.kind,request),reservationId:`heartbeat:${before.globalSequence+1}`,globalSequence:request.globalPreviousSequence+1,globalHash:H(`global:${before.globalSequence+1}`),databaseSequence:request.databasePreviousSequence+1,databaseHash:H(`database:${request.databaseInstanceId}:${request.databasePreviousSequence+1}`),issuedAt:now.toISOString(),expiresAt:new Date(now.getTime()+request.requestedLeaseMs).toISOString()});if(!online.verifyAutonomousResearchOnlineMutationReservation({receipt:reservation,request,now,...shared}))throw Error('fixture_reservation_invalid');return reservation;},
+    verifyStoredReservation({receipt,request}){return online.verifyAutonomousResearchOnlineMutationReservation({receipt,request,now:new Date(receipt.issuedAt),...shared});},
+    finalizeMutation({request,reservation,now}){calls.push(request);finalizeRequest=request;const {committedAt,...mirror}=request;finalization=sign({...mirror,kind:'AutonomousResearchOnlineMutationFinalizationReceipt',status:'autonomous_research_online_mutation_finalized',authorityId:trust.authorityId,keyId:trust.keyId,requestHash:hashRecord(request.kind,request),sideEffectPermitHash:H(`permit:${before.globalSequence+1}`),finalizedAt:now.toISOString()});if(!online.verifyAutonomousResearchOnlineMutationFinalization({receipt:finalization,request,reservation,now,...shared}))throw Error('fixture_finalization_invalid');return finalization;},
+    abortMutation(){throw Error('unexpected_fixture_abort');},resolveMutationAttempt(){throw Error('unexpected_fixture_resolution');},
+  };
+  // This test-only callback records the actual finalize notification; it does
+  // not create an active epoch or bypass an activation validation in production.
+  const fence={markMutationFinalized:value=>marked.push(value),markMutationReconciliationRequired:value=>marked.push({reconciliation:value}),assertCurrent(){throw Error('fixture_has_no_active_epoch');},reconcile(){throw Error('fixture_has_no_active_epoch');}};
+  const coordinator=createExternallyFencedSqliteMutationCoordinator({authorityClient:client,manifest:f.writerManifest,operationPlans:AUTONOMOUS_RESEARCH_ONLINE_MUTATION_OPERATION_PLANS,databaseInstances:before.databaseHeads.map(({databaseRole,databaseInstanceId,schemaHash})=>({databaseRole,databaseInstanceId,schemaHash})),recoverabilityEpochFence:fence,clock:{now:()=>new Date(now)}});
+  const repository=createAutonomousResearchSupervisorInstanceRepository({runtimeRoot:f.runtime,create:true,offlineProvision:false,mutationCoordinator:coordinator,requireExternallyFencedMutations:false});
+  let lease,row;try{lease=repository.heartbeatInstanceLease({lease:prior?.lease||f.lease,cycleReceipt:{autonomousResearchSupervisorCycleReceiptHash:H(`cycle:${before.globalSequence+1}`)},now:new Date(now)});row=repository.assertInstanceLease({lease,now:new Date(now)});}finally{repository.close();}
+  if(!lease||!reservation||!finalization||marked.length!==1)throw Error('actual_signed_heartbeat_required');
+  const databaseHeads=before.databaseHeads.map(head=>head.databaseInstanceId===reservation.databaseInstanceId?{...head,sequence:reservation.databaseSequence,hash:reservation.databaseHash,stateHash:reservation.postStateHash}:head);
+  const journal={lease,entries:[...(prior?.entries||[]),{reserveRequest,reservationReceipt:reservation,finalizeRequest,finalizationReceipt:finalization}],globalHash:reservation.globalHash,databaseHeads};
+  write(path.join(root,'journal-fixture.json'),journal);
+  const inventory=resolveAutonomousResearchStateDatabaseInventory({runtimeRoot:f.runtime,manifest:f.manifest});if(inventory.blockers.length)throw Error('heartbeat_inventory_invalid');
+  return {lease,row,journal,inventory,calls,marked,now};
 }
 if(pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
   try{
     const input=JSON.parse(fs.readFileSync(0,'utf8'));
-    if(input.mode!=='fixture')throw Error('unknown_fixture_operation');
-    process.stdout.write(JSON.stringify({profile:productionOracleProfile(),ok:true,value:fixture(input.root)}));
+    const value=input.mode==='fixture'?fixture(input.root):input.mode==='heartbeat'?heartbeat(input.root,input):(()=>{throw Error('unknown_fixture_operation');})();
+    process.stdout.write(JSON.stringify({profile:productionOracleProfile(),ok:true,value}));
   }catch(error){process.stdout.write(JSON.stringify({profile:productionOracleProfile(),ok:false,error:error.message}));}
 }

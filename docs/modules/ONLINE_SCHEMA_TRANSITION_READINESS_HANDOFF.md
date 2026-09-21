@@ -179,9 +179,10 @@ The separate [schema execution module](ONLINE_SCHEMA_EXECUTION_HANDOFF.md)
 already implements normalization, installation, resume, finalization and
 observation primitives. A complete operator workflow, final durable receipt
 completion/recovery, schema CLI and runtime activation remain open integration
-work. The historical checkpoint loader does not capture missing old snapshots
-and does not yet bridge their authenticated finalized mutation history to current
-business rows. Whole runtime activation must compose actual startup recovery,
+work. The historical checkpoint loader does not capture missing old snapshots.
+The separate private history bridge below proves their signed replay to current
+rows; owning restart activation must still select and retain it after startup recovery.
+Whole runtime activation must compose actual startup recovery,
 finalized-head inspection, active writer coverage/head/challenge/scope evidence,
 recoverability epochs/restore proofs, safe cache publication and final inventory
 checks. External authority service qualification remains a deployment requirement.
@@ -191,3 +192,62 @@ The signed `targetAuthorityConfigurationHash` belongs to the separate
 compared with the public verifier configuration hash. Actual service-side
 configuration activation/restart remains part of the authority implementation
 and deployment qualification; this slice verifies its signed observation.
+
+
+## Checkpoint to current finalized state
+
+The crate-private `history::current::verify_schema_transition_history_v1` now
+consumes the actual historical checkpoint, current inventory, source inspection,
+active evidence and all-ten finalized inspections. This does not construct a
+currentness claim by replacing the old signed `postInventoryHash`.
+
+Finalized inspections retain each already authenticated reserve request,
+reservation, reconstructed finalize request and finalization. Their public
+receipt and hash remain unchanged. An internal `VerifiedFinalizedMutationChainV1`
+merges those records by global sequence, starts every database from the original
+signed schema genesis, rejects omissions/duplicates/gaps/forks and checks the
+terminal global and database heads against the actual signed current heads.
+Empty history must retain the identical signed genesis and full database set.
+The chain has no public or JSON constructor. Original backup range envelopes
+remain unchanged; their verifier delegates only the shared signature/continuity
+loop and retains the real signed range. No placeholder backup ID, snapshot hash
+or empty backup range is invented for schema history.
+
+Private replay materializes original authenticated main/WAL bytes in a fresh
+0700 scratch directory. It validates schema, integrity, empty initial mutation
+journals and exact actual metadata against signed genesis and FINAL. WAL bytes
+are included in normal SQLite reads, never ignored via immutable mode. Nonempty
+history requires the complete fixed original operation registry and allowed
+changeset effects; empty history still binds that registry. The existing replay
+engine applies each business changeset and journal record in a private
+transaction. A complete effective-state digest then compares every current table,
+including SQLite types, duplicate/NULL-primary-key rows, hidden rowid and
+sqlite_sequence. Only the existing authenticated journal-JSON and local
+recorded_at normalizations apply. Neither source database nor checkpoint files
+are opened for writes.
+
+After actual replay equality, the verifier requests a fresh schema observation
+using the original FINAL's `postInventoryHash`. Its head must match the fresh
+active/finalized chain terminal head. Retained checks revalidate all opaque
+inputs, signatures and a final common temporal boundary. The private replay
+proof binds the exact current inventory and cannot be reused after a business
+file change. The report leaves runtimeReady, productionActivation and
+nodeRetirementVerified false.
+
+Full tests use the original schema executor, actual process signatures and a
+real original registered resident heartbeat. They cover empty-history success,
+retained no-RPC verification, hidden rowid mutation without a journal (refused
+before requesting schema observation), and exact one-heartbeat replay across all
+ten databases. Chain tests also cover exact two-heartbeat records, incomplete
+membership, inspection reordering and genuinely signed current-genesis
+substitution. JSON integral decimal spellings retain their original ECMAScript
+Number meaning; strings/booleans are not coerced.
+
+The bridge currently accepts the existing closed ten-instance profile and at
+most 4096 finalized entries. Full owning activation must still select and retain
+this history path after startup recovery, obtain its independent recoverability
+and native-writer admission, and retain a transaction-aware write scope. A
+checkpoint capture/publication operator and migration of existing runtimes that
+lack original bytes are separate requirements; missing history still fails
+closed. A complete v2 service restart acceptance is not claimed by these v1
+fixtures.

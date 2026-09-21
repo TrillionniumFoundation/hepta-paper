@@ -33,6 +33,84 @@ fail closed. An operator must inspect and complete/recreate that initial
 enrollment while the maintenance boundary is still held. The API does not guess
 the authority or target identity from partial initialization.
 
+## Fresh external storage V2
+
+`create_with_storage_v2(..., DurableCutoverStorageV2::ExternalRoot { root })`
+enrolls a previously unenrolled database with its coordinator journal outside the
+business database tree. `AdjacentSidecars` delegates to the incumbent `create`;
+the V1 default layout, final enrollment JSON, journal schema and writer epochs
+remain unchanged. Marker reads reject oversized, nonregular, symlinked or
+hardlinked inputs before opening their bytes.
+
+The external root must already be an absolute canonical directory owned by the
+effective user, with mode `0700`, disjoint from the application database's parent
+directory in both directions. Root and per-database slot directory handles are
+retained. The application database must be a canonical, owned, single-link
+regular file without group/other write permission. Marker and journal files
+must be owned single-link regular files with mode `0600`.
+
+The fixed adjacent `<database>.rust-cutover.enrolled.json` remains mandatory.
+It prevents an older Node writer from interpreting external enrollment as an
+unenrolled database. Its strict V2 wire fields are:
+
+```json
+{
+  "version": 2,
+  "kind": "HeptaDurableCutoverExternalEnrollment",
+  "databasePath": "/runtime/hepta-paper.sqlite",
+  "databaseIdentity": "device:inode",
+  "storageRoot": "/private-coordinators",
+  "storageRootIdentity": "device:inode",
+  "storageSlot": "lowercase-sha256-hex",
+  "storageSlotIdentity": "device:inode",
+  "journalIdentity": "device:inode",
+  "markerIdentity": "device:inode"
+}
+```
+
+`storageSlot` is SHA-256 hex over UTF-8 JSON encoding of
+`["HeptaDurableCutoverExternalStorageV2", databasePath, databaseIdentity]`.
+The only journal path is `<storageRoot>/<storageSlot>/journal.sqlite`; neither
+reader accepts an arbitrary journal path. Identities use exact decimal device
+and inode values, including BigInt filesystem statistics in Node. The marker
+also retains an exact byte hash; it is local coordination evidence, not a
+signature or production authorization.
+
+Rust `open(database)` and Node `createRustCutoverFence({dbPath})` dispatch solely
+from that adjacent marker. Existing V1 clients reject V2 before invoking a
+writer callback. Rust `open_with_expected_external_storage_v2(database, root,
+optional_marker_hash)` and Node's optional `expectedStorageRoot` /
+`expectedEnrollmentHash` only constrain the existing marker selection; they
+never redirect it or fall back to another root. Rust exposes the diagnostic pin
+through `external_storage_enrollment_hash_v2()`.
+
+Creation exclusively reserves the adjacent marker with an unusable
+`HeptaDurableCutoverEnrollmentPending` record before creating the external slot
+or journal. It commits the original journal/state schema, syncs the containing
+directories, then writes and syncs the final marker through the same inode.
+Incomplete, truncated or pending markers always deny writes. Any existing
+marker, deterministic slot, legacy adjacent journal or its WAL/SHM/journal
+remnants rejects fresh enrollment. Mixed layouts also reject subsequent opens
+and writes. A failed enrollment leaves its evidence in place: no API removes,
+migrates, replaces, retries over or guesses the authority of those artifacts.
+Recovery requires operator inspection under the existing stopped/drained
+maintenance boundary. Moving an existing V1 enrollment, especially an active
+production epoch, is a separate unimplemented migration protocol.
+
+V2 checks the exact coordinator schema and retained namespace identities before
+use and again after acquiring the writer/transition lock. SQLite owns all
+database handles. Identity probes must **never open and close raw descriptors
+for the target, coordinator journal, WAL or SHM**: POSIX descriptor close can
+release another connection's process-wide advisory locks. Only directories and
+the JSON marker retain auxiliary descriptors. File namespace observations are
+not a VFS-level atomic defense against hostile administrative renames.
+
+This storage extension leaves the original ten-database inventory and its
+hashes unchanged. It supplies a shared Node/Rust coordination location only;
+native executable provenance, signed writer/epoch/scope admission and the
+transaction-aware online scope are still separate prerequisites for a writable
+native production composition.
+
 ## State and transitions
 
 | Operation | Required state | Writer after operation | Evidence |
@@ -126,7 +204,7 @@ From the repository root, run a disposable end-to-end drill (directory must not 
 ```sh
 cargo run --manifest-path rust/Cargo.toml --offline -p hepta-cutover --example local_cutover_drill -- /tmp/hepta-cutover-demo
 cargo test --manifest-path rust/Cargo.toml --offline -p hepta-cutover
-node --test paper-core/tests/rust-cutover-fence.test.mjs
+node --test paper-core/tests/rust-cutover-fence.test.mjs paper-core/tests/rust-cutover-external-storage.test.mjs
 ```
 
 The example executes real Node and Rust queries, verifies byte parity, creates
@@ -146,3 +224,14 @@ previous durable state on restart, and hold a Node process inside an actual
 native database write while a concurrent Rust handoff waits. Other tests cover
 scope rejection, stale Node/Rust generations, revision conflicts, shadow
 mismatches, missing markers, file substitution and the actual native StorePort.
+
+The external-storage suite uses the qualified Node 22.23.1 / ICU 78.2 / CLDR
+48.0 profile. Its six Rust cases cover fresh/V1 interoperability, exact original
+ten-database inventory equality, refused duplicate/mixed/pending enrollment,
+identity/schema substitution, and actual interprocess writer exclusion. Both
+Node and Rust lock tests open and drop a second observer in the same process
+while the first writer transaction remains active. The Node tests additionally
+exercise the preserved V1 reader fixture, expected root/hash mismatches,
+hardlinked markers, generation changes and callback error unwinding. The V1
+fixture at `rust/oracle/fixtures/rust-cutover-fence-v1.mjs` is the exact previous
+module (SHA-256 `779b14deb75e9b4fbb5cc6121b32b86045118573d7df2ff98f1e88b44201541a`).

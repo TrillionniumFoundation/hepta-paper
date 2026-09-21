@@ -2,7 +2,7 @@
 //! journal-write surface or accept caller JSON as verified journal evidence.
 use super::authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1};
 use super::*;
-use crate::state_backup_authority::VerifiedFinalizedJournalEvidenceV1;
+use crate::sqlite_mutation_coordinator::finalized_history::VerifiedFinalizedMutationChainV1;
 use base64ct::{Base64, Encoding};
 use rusqlite::{Connection, TransactionBehavior, session::ConflictAction};
 use std::io::Cursor;
@@ -90,12 +90,16 @@ fn healthy(db: &Connection, expected: &Value) -> Result<()> {
 pub(crate) fn replay_verified_database_v1<T: MutationAuthorityTransportV1>(
     db: &mut Connection,
     expected: &Value,
-    range: &VerifiedFinalizedJournalEvidenceV1,
+    range: &VerifiedFinalizedMutationChainV1,
     authority: &PinnedMutationAuthorityV1<T>,
 ) -> Result<VerifiedSnapshotDatabaseHeadV1> {
     require(
         db.is_autocommit(),
         "autonomous_research_state_restore_replay_transaction_required",
+    )?;
+    require(
+        range.authority_configuration_hash() == authority.configuration_hash(),
+        "autonomous_research_state_restore_replay_authority_mismatch",
     )?;
     db.pragma_update(None, "foreign_keys", true)?;
     let mut head = checked_snapshot_head_v1(db, expected, authority)?;

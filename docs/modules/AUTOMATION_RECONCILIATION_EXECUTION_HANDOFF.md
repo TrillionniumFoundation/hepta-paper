@@ -21,7 +21,7 @@ hepta-automation-reconcile --execute-local /absolute/local-request.json
 `--execute`. Its closed `LocalOfflineReconciliationRequestV1` document contains
 `version: 1`, `workspaceRoot`, `assetRoot`, `runtimeRoot`, `legacyRoot`,
 `writerFence: { writerId, generation, token }`, `noProgressSeconds`, and
-optional `now`/`campaignId`/`releaseCommit`. Omit `now` to use the real system clock;
+optional `now`/`campaignId`/`releaseCommit` and `operation` (default `standard`). Omit `now` to use the real system clock;
 supply it only for an explicit fixed-clock execution. The four roots must already exist, be
 canonical, owned directories without group/other write permission, and be
 pairwise disjoint. The database is always `runtimeRoot/hepta-paper.sqlite` and
@@ -82,6 +82,12 @@ has kind `LocalOfflineAutomationRuntimeReconciliationExecution`, contains the
 Node-compatible receipt under `reconciliation`, and reports
 `productionActivation: false` and `nodeRetirementVerified: false`.
 
+Both planners reject SQLite INTEGER values outside JavaScript's exact range
+(-9,007,199,254,740,991 through 9,007,199,254,740,991), matching the Node reader's
+rejection before hashing. Otherwise distinct integer CAS values could alias to
+the same binary64 plan/receipt hash. Active, queued and parent integer fields
+are tested at and beyond both boundaries.
+
 Replay is not an upsert. Repeating an identical clean execution at the same fixed
 clock collides with its strict receipt ID. Live execution preserves the six Node
 observations in order: plan ISO time, plan cutoff time, reconciled time, ledger
@@ -96,6 +102,46 @@ An error beginning `reconciliation_committed_scope_verification_failed` means th
 business transaction committed before final path/scope validation failed. Inspect
 the retained database and ledger before retrying. A post-commit diagnostic error
 must not be interpreted as proof of rollback.
+
+## Legacy terminal active residue mode
+
+Use `--legacy-terminal-active-residue --campaign-id ID` with the read-only plan
+command, or set request `operation: "legacy_terminal_active_residue"` for guarded
+local execution. This selects the v0 planner before admission; the standard v1
+campaign gate is not run against a legacy campaign. The implementation is
+`automation_runtime_reconciliation/legacy_terminal_residue.rs`, with the same
+private issuer, package fence, schema checks and durable epoch as standard mode.
+
+A campaign ID is mandatory. Its parent must already be failed, cancelled, stopped
+or completed, and its policy must be missing or exactly JSON integer zero.
+String zero, real zero, null and booleans are rejected. Every remaining active
+node must have an expired lease and must not be integrating/integrated. Any
+resource lease/waiter tied to the campaign or one of its nodes blocks settlement,
+even if expired or attached to another campaign ID. Parents, queued history and
+unrelated campaigns are preserved; eligible active children become skipped.
+
+The preserved queued-state digest streams 512-row keyset pages with Node's exact
+domain prefix, UTF-8 byte-length framing and ordered JSON. It is an observation:
+the incumbent transaction checks queued count, not equality of that digest. A
+same-count queued update may remain visible while settlement commits; the native
+code deliberately does not claim a stronger hash fence. Exact node/parent fields,
+active/queued counts, policy and coordination absence are checked transactionally.
+Event and 17-column receipt insertion remain strict and atomic. The receipt uses
+version 3 with evidence class `legacy_terminal_active_residue_settlement`.
+
+Legacy time sampling follows its own three observations: plan time (also settlement
+time), ledger creation, then after-plan time. Re-executing after the active residue
+is gone rejects `nothing_to_settle` without appending a receipt. Tests cover real
+Node plans, full table and persisted JSON equality, 0/512/2,538 queued rows,
+policy/lease/resource rejection, stale rows, collisions, crash rollback, separate
+clocks, read-only CLI and typed execution selection.
+
+Node's broad V8 `Date.parse` compatibility is not fully ported. Canonical UTC,
+ISO date-only and explicit ISO offsets/fractions are supported; timezone-less
+and unsupported legacy/RFC spellings fail closed. A real Node test with
+`TZ=Asia/Shanghai` proves that the native gate never silently interprets a local
+time as UTC. This input compatibility gap remains open and blocks claiming
+complete parity for the legacy mode.
 
 ## Verification and remaining integration
 
@@ -120,7 +166,7 @@ cargo test --locked -p hepta-paper-service --test automation_runtime_reconciliat
 
 Remaining source work includes the native production signed subject's binding to
 this exact writer/epoch/operation scope, default-root and complete CLI composition,
-legacy-terminal-active-residue maintenance, and the online mutation path. The
+full legacy Date.parse compatibility, and the online mutation path. The
 existing cutover preimage hash can recognize Node SQLite bytes; schema format is
 not the reason production is disabled here. Production must not be enabled merely
 by observing a past coordinator `production_activation` flag. Target-host execution,

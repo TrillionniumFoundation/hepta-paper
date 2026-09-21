@@ -5,7 +5,10 @@
 //! This entrypoint consumes an already-established local cutover epoch. It
 //! never enrolls a database, advances ownership, or accepts JSON trust claims.
 
-use super::{AutomationRuntimeReconciliationError as Error, offline_execution};
+use super::offline_execution::ReconciliationClockV1;
+use super::{
+    AutomationRuntimeReconciliationError as Error, legacy_terminal_residue, offline_execution,
+};
 use crate::node_package_deletion_writer::PackageDeletionWriterGuard;
 use hepta_cutover::{
     DurableCutoverCoordinatorV1, DurableCutoverModeV1, DurableCutoverPhaseV1, WriterFenceV1,
@@ -25,12 +28,23 @@ use std::{
 pub const LOCAL_RECONCILIATION_WRITER_ID_V1: &str = "automation-runtime-reconciler-rust";
 pub const RECONCILIATION_WRITER_SCOPE_V1: &str = "store:automation-reconcile-entrypoint";
 
+/// Select the incumbent business policy before any plan or writable admission.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalReconciliationOperationV1 {
+    #[default]
+    Standard,
+    LegacyTerminalActiveResidue,
+}
+
 /// Explicit deployment roots and a durable epoch, not a writable store handle.
 /// All four roots must already exist and be canonical, separate directories.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalOfflineReconciliationRequestV1 {
     pub version: u16,
+    #[serde(default)]
+    pub operation: LocalReconciliationOperationV1,
     pub workspace_root: PathBuf,
     pub asset_root: PathBuf,
     pub runtime_root: PathBuf,
@@ -204,15 +218,31 @@ pub fn execute_local_offline_automation_runtime_reconciliation_v1(
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
         schema(&reader)?;
-        if let Some(now) = &request.now {
-            super::plan_on_connection(
-                &reader,
-                now,
-                request.no_progress_seconds,
-                request.campaign_id.as_deref(),
-            )?;
-        } else {
-            super::verify_campaign_scope(&reader, request.campaign_id.as_deref())?;
+        match request.operation {
+            LocalReconciliationOperationV1::Standard => {
+                if let Some(now) = &request.now {
+                    super::plan_on_connection(
+                        &reader,
+                        now,
+                        request.no_progress_seconds,
+                        request.campaign_id.as_deref(),
+                    )?;
+                } else {
+                    super::verify_campaign_scope(&reader, request.campaign_id.as_deref())?;
+                }
+            }
+            LocalReconciliationOperationV1::LegacyTerminalActiveResidue => {
+                let campaign = request.campaign_id.as_deref().ok_or_else(|| {
+                    rejected("legacy_terminal_active_residue_campaign_id_required")
+                })?;
+                // The selected planner validates v0 policy and coordination rows;
+                // never run the standard v1 campaign gate for legacy maintenance.
+                if let Some(now) = &request.now {
+                    legacy_terminal_residue::plan_on_connection(&reader, now, campaign)?;
+                } else {
+                    legacy_terminal_residue::verify_campaign_scope(&reader, campaign)?;
+                }
+            }
         }
     }
     let mut coordinator = DurableCutoverCoordinatorV1::open(&database)
@@ -266,6 +296,27 @@ pub fn execute_local_offline_automation_runtime_reconciliation_v1(
                         current()?;
                         schema(connection)
                     };
+                    if matches!(
+                        request.operation,
+                        LocalReconciliationOperationV1::LegacyTerminalActiveResidue
+                    ) {
+                        let campaign = request.campaign_id.as_deref().ok_or_else(|| {
+                            rejected("legacy_terminal_active_residue_campaign_id_required")
+                        })?;
+                        let mut clock = offline_execution::SystemReconciliationClockV1;
+                        let mut now_iso = || match &request.now {
+                            Some(now) => Ok(now.clone()),
+                            None => clock.now_iso(),
+                        };
+                        return legacy_terminal_residue::execute_on_admitted_connection(
+                            &mut connection,
+                            campaign,
+                            request.release_commit.as_deref(),
+                            &mut now_iso,
+                            before_apply,
+                            current,
+                        );
+                    }
                     match request.now.as_deref() {
                         Some(now) => offline_execution::execute_on_admitted_connection(
                             &mut connection,
@@ -311,7 +362,7 @@ pub fn execute_local_offline_automation_runtime_reconciliation_v1(
     Ok(json!({
         "version":1,"kind":"LocalOfflineAutomationRuntimeReconciliationExecution",
         "status":"local_offline_automation_runtime_reconciled",
-        "cutoverId":state.cutover_id,"writerFence":request.writer_fence,
+        "cutoverId":state.cutover_id,"writerFence":request.writer_fence,"operation":request.operation,
         "reconciliation":receipt,"productionActivation":false,"nodeRetirementVerified":false
     }))
 }
@@ -406,6 +457,7 @@ mod tests {
             };
             let request = LocalOfflineReconciliationRequestV1 {
                 version: 1,
+                operation: LocalReconciliationOperationV1::Standard,
                 workspace_root: root.join("workspace"),
                 asset_root: root.join("assets"),
                 runtime_root: root.join("runtime"),
@@ -565,5 +617,61 @@ mod tests {
             assert!((before..=after).contains(&observed));
         }
         assert_eq!(result["productionActivation"], false);
+    }
+
+    #[test]
+    fn legacy_selector_uses_v0_preflight_and_keeps_parent_and_other_campaigns() {
+        let mut f = Fixture::new(true, RECONCILIATION_WRITER_SCOPE_V1);
+        f.request.campaign_id = Some("campaign-6".into());
+        f.rejected_without_database_change("input is invalid");
+        f.request.operation = LocalReconciliationOperationV1::LegacyTerminalActiveResidue;
+        f.request.campaign_id = Some("campaign-3".into());
+        f.rejected_without_database_change("policy_not_v0");
+        f.request.campaign_id = Some("campaign-6".into());
+        let db = Connection::open(f.db()).unwrap();
+        let parents = super::super::rows(
+            &db,
+            "SELECT * FROM paper_campaigns ORDER BY campaign_id",
+            [],
+        )
+        .unwrap();
+        let other_nodes = super::super::rows(
+            &db,
+            "SELECT * FROM campaign_nodes WHERE campaign_id!='campaign-6' ORDER BY node_id",
+            [],
+        )
+        .unwrap();
+        drop(db);
+        let result =
+            execute_local_offline_automation_runtime_reconciliation_v1(&f.request).unwrap();
+        assert_eq!(result["operation"], "legacy_terminal_active_residue");
+        assert_eq!(
+            result["reconciliation"]["status"],
+            "legacy_terminal_active_residue_settled"
+        );
+        assert_eq!(
+            result["reconciliation"]["settledNodeIds"],
+            json!(["node-6"])
+        );
+        assert_eq!(result["reconciliation"]["after"]["nodes"], json!([]));
+        let db = Connection::open(f.db()).unwrap();
+        assert_eq!(
+            super::super::rows(
+                &db,
+                "SELECT * FROM paper_campaigns ORDER BY campaign_id",
+                []
+            )
+            .unwrap(),
+            parents
+        );
+        assert_eq!(
+            super::super::rows(
+                &db,
+                "SELECT * FROM campaign_nodes WHERE campaign_id!='campaign-6' ORDER BY node_id",
+                []
+            )
+            .unwrap(),
+            other_nodes
+        );
     }
 }

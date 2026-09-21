@@ -220,17 +220,16 @@ fn help_is_read_only_and_declares_guarded_local_execution() {
     );
 }
 
-#[test]
-fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
+fn local_execute_cli_case(legacy: bool) {
     use hepta_cutover::{DurableCutoverCoordinatorV1, DurableCutoverModeV1};
     use hepta_paper_service::automation_runtime_reconciliation::{
         LOCAL_RECONCILIATION_WRITER_ID_V1, LocalOfflineReconciliationRequestV1,
-        RECONCILIATION_WRITER_SCOPE_V1,
+        LocalReconciliationOperationV1, RECONCILIATION_WRITER_SCOPE_V1,
     };
     use std::os::unix::fs::PermissionsExt;
     let (directory, original) = database("local-cli");
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
-    let node_plan = run_node(&original, true, None, None);
+    let mut node_plan = run_node(&original, true, None, None);
     for name in ["workspace", "assets", "runtime", "legacy"] {
         fs::create_dir(directory.join(name)).unwrap();
         fs::set_permissions(directory.join(name), fs::Permissions::from_mode(0o700)).unwrap();
@@ -238,7 +237,45 @@ fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
     let native = directory.join("runtime/hepta-paper.sqlite");
     fs::copy(&original, &native).unwrap();
     fs::set_permissions(&native, fs::Permissions::from_mode(0o600)).unwrap();
-    let rust_plan = run_rust(&native, None, None);
+    let mut rust_plan = run_rust(&native, None, None);
+    if legacy {
+        let oracle = Command::new("node")
+            .arg(root().join("rust/oracle/legacy-terminal-active-residue-v1.mjs"))
+            .args([
+                "--database",
+                original.to_str().unwrap(),
+                "--at",
+                NOW,
+                "--campaign-id",
+                "campaign-6",
+            ])
+            .output()
+            .unwrap();
+        assert!(oracle.status.success());
+        let output: Value = serde_json::from_slice(&oracle.stdout).unwrap();
+        assert_eq!(output["ok"], true);
+        node_plan = output["report"].clone();
+        let before = fs::read(&native).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-automation-reconcile"))
+            .args([
+                "--database",
+                native.to_str().unwrap(),
+                "--at",
+                NOW,
+                "--campaign-id",
+                "campaign-6",
+                "--legacy-terminal-active-residue",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        rust_plan = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(fs::read(&native).unwrap(), before);
+    }
     let mut coordinator = DurableCutoverCoordinatorV1::create(
         &native,
         "cli-reconciliation",
@@ -270,6 +307,11 @@ fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
         .unwrap();
     let request = LocalOfflineReconciliationRequestV1 {
         version: 1,
+        operation: if legacy {
+            LocalReconciliationOperationV1::LegacyTerminalActiveResidue
+        } else {
+            LocalReconciliationOperationV1::Standard
+        },
         workspace_root: directory.join("workspace"),
         asset_root: directory.join("assets"),
         runtime_root: directory.join("runtime"),
@@ -277,17 +319,28 @@ fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
         writer_fence: fence,
         now: Some(NOW.into()),
         no_progress_seconds: 1800.0,
-        campaign_id: None,
+        campaign_id: if legacy {
+            Some("campaign-6".into())
+        } else {
+            None
+        },
         release_commit: None,
     };
     let request_path = directory.join("request.json");
     fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
-    let node = Command::new("node")
-        .arg(root().join("rust/oracle/automation-runtime-reconciliation-execute-v1.mjs"))
+    let mut node_command = Command::new("node");
+    node_command
+        .arg(root().join(if legacy {
+            "rust/oracle/legacy-terminal-active-residue-v1.mjs"
+        } else {
+            "rust/oracle/automation-runtime-reconciliation-execute-v1.mjs"
+        }))
         .args(["--database", original.to_str().unwrap(), "--at", NOW])
-        .env_remove("HEPTA_RELEASE_COMMIT")
-        .output()
-        .unwrap();
+        .env_remove("HEPTA_RELEASE_COMMIT");
+    if legacy {
+        node_command.args(["--execute", "--campaign-id", "campaign-6"]);
+    }
+    let node = node_command.output().unwrap();
     assert!(
         node.status.success(),
         "{}",
@@ -305,7 +358,15 @@ fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["reconciliation"], node["receipts"][0]);
+    assert_eq!(
+        report["reconciliation"],
+        if legacy {
+            &node["report"]
+        } else {
+            &node["receipts"][0]
+        }
+        .clone()
+    );
     assert_eq!(report["productionActivation"], false);
     assert_eq!(report["nodeRetirementVerified"], false);
     coordinator.rollback_local(4).unwrap();
@@ -318,6 +379,16 @@ fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
     assert_eq!(fs::read(&native).unwrap(), before);
     drop(coordinator);
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn local_execute_cli_consumes_existing_epoch_and_matches_node_receipt() {
+    local_execute_cli_case(false);
+}
+
+#[test]
+fn legacy_plan_and_admitted_execute_cli_match_actual_node() {
+    local_execute_cli_case(true);
 }
 
 #[test]

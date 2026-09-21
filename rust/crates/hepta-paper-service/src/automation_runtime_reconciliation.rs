@@ -13,6 +13,7 @@ use std::{fs, os::unix::fs::MetadataExt, path::Path};
 
 // Keep the raw transaction private; the public scope composes cutover and
 // package-deletion admission before obtaining its writable connection.
+mod legacy_terminal_residue;
 mod offline_execution;
 mod scoped_execution;
 pub use scoped_execution::*;
@@ -97,7 +98,15 @@ fn row_error() -> rusqlite::Error {
 fn value(value: ValueRef<'_>) -> rusqlite::Result<Value> {
     match value {
         ValueRef::Null => Ok(Value::Null),
-        ValueRef::Integer(value) => Ok(json!(value)),
+        // The incumbent node:sqlite reader rejects INTEGERs outside the exact
+        // binary64 range. Accepting them here could hash distinct SQLite CAS
+        // values to the same JavaScript-number receipt identity.
+        ValueRef::Integer(value)
+            if (-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&value) =>
+        {
+            Ok(json!(value))
+        }
+        ValueRef::Integer(_) => Err(row_error()),
         ValueRef::Real(value) => serde_json::Number::from_f64(value)
             .map(Value::Number)
             .ok_or_else(row_error),
@@ -182,6 +191,19 @@ pub fn inspect_automation_runtime_reconciliation_v1(
     }
     let connection = open_database(database)?;
     plan_on_connection(&connection, now, no_progress_seconds, campaign_id)
+}
+
+/// Inspect the incumbent policy-v0 maintenance plan without acquiring a writer.
+pub fn inspect_legacy_terminal_active_residue_v1(
+    database: &Path,
+    now: &str,
+    campaign_id: &str,
+) -> Result<Value, AutomationRuntimeReconciliationError> {
+    if crate::journal_connector_coverage::qualification::canonical_instant_millis(now).is_none() {
+        return Err(AutomationRuntimeReconciliationError::Input);
+    }
+    let connection = open_database(database)?;
+    legacy_terminal_residue::plan_on_connection(&connection, now, campaign_id)
 }
 
 fn plan_on_connection(

@@ -160,6 +160,19 @@ recovery and checkpoint paths. The complete synchronous callback executes under
 the same coordinator `BEGIN IMMEDIATE` lock used for handoff. The lock order is
 coordinator then application database. Never acquire them in reverse order.
 
+`with_writer_state_v1(&lease, scope, |state| ...)` additionally passes the actual
+durable state loaded under that same held journal lock. `with_writer` delegates
+to it and preserves its previous behavior. All storage, lease, scope and phase
+checks still precede the callback. Native admission can use this callback to
+require Production/Canary, the exact new writer and reconciliation scope, and
+the independently verified authorization hash without checking an unlocked
+snapshot. The base protocol still permits Planned and RolledBack writers;
+receiving or cloning its state does not grant production qualification. An
+error or unwind releases the coordinator lock; it cannot undo an application
+transaction that the callback has already committed. The focused
+`writer_state_callback` tests cover current peer-updated state, rejection before
+callback entry, and real cross-process writer exclusion for both storage layouts.
+
 The fence compares writer ID, generation and token. Tokens identify epochs;
 they are not bearer credentials. A Node process remembers the first accepted
 epoch and cannot automatically adopt a rollback epoch. Restarting Node after

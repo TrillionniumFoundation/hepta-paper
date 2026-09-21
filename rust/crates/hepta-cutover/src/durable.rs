@@ -280,6 +280,24 @@ impl DurableCutoverCoordinatorV1 {
         scope: &str,
         action: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, DurableCutoverError> {
+        self.with_writer_state_v1(lease, scope, |_| action())
+    }
+
+    /// Passes the actual current state loaded under the same IMMEDIATE journal
+    /// lock that remains held throughout the synchronous application callback.
+    /// The lease, scope, phase and storage checks are identical to `with_writer`.
+    ///
+    /// This does not qualify production or authorize a native implementation.
+    /// The incumbent protocol also permits Planned and RolledBack writers;
+    /// a production composition must check its stricter mode, phase, writer,
+    /// scope and signed-authorization binding inside this callback. A copied
+    /// state is a diagnostic snapshot, not an independently verified capability.
+    pub fn with_writer_state_v1<T>(
+        &mut self,
+        lease: &WriterFenceV1,
+        scope: &str,
+        action: impl FnOnce(&DurableCutoverStateV1) -> Result<T, String>,
+    ) -> Result<T, DurableCutoverError> {
         self.validate_identity()?;
         let tx = self
             .connection
@@ -305,7 +323,7 @@ impl DurableCutoverCoordinatorV1 {
         ) {
             return Err(DurableCutoverError::WriterDisabled);
         }
-        let result = action().map_err(DurableCutoverError::Application);
+        let result = action(&state).map_err(DurableCutoverError::Application);
         // Dropping a read-only transaction cannot undo the application commit.
         drop(tx);
         result

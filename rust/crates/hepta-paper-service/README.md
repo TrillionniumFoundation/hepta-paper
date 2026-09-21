@@ -316,3 +316,10 @@ ELF hash, nonroot UID/GID and exact argv binding. Its separate source-owned
 reconciliation digest is a prerequisite for signed native admission, not a
 substitute for independent qualification or a writable transaction scope.
 See the composition handoff for the actual-process tests and deployment limits.
+
+
+The private fixed-native-store transaction inventory guard checks all non-target
+bytes and complete namespace membership without reopening target SQLite files.
+It is minted before opening SQLite and retains inventory through connection
+close. The durable cutover callback can now inspect actual state under its held
+lock. Both remain prerequisites for complete signed native write ownership.

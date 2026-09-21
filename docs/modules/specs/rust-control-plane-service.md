@@ -152,3 +152,12 @@ post-startup inventory, including recovered finalizations, while preserving the
 original pre-startup subject for the startup proof. See
 [the schema readiness handoff](../ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md).
 Both are prerequisites and leave production activation and Node retirement false.
+
+
+The fixed-native-store transaction inventory observer preserves non-target
+content and namespace checks without opening/closing target SQLite descriptors.
+It is constructed before opening the owning connection. Actual durable state is
+now available inside the same held writer lock; the future native admission must
+bind its exact production phase, scope, epoch and signature there. Neither local
+primitive grants production activation or bypasses the remaining retained write
+ownership described in the composition handoff.

@@ -180,3 +180,25 @@ actual re-executed process modes. Strict service Clippy lib/tests checks pass.
 Opaque cutover authorization now also exposes read-only currentness and initial
 lease-hash accessors; consumers must still compute the native epoch's separate
 hash domain and compare it with the signed value under the actual cutover lock.
+
+
+## Transaction observation and locked state prerequisites
+
+A fixed-native-store inventory guard now preserves all non-target byte and
+sidecar checks while permitting target SQLite content changes inside its safe
+namespace. It must be minted before opening the owning SQLite connection and
+retained through connection close. Its checks do not reopen target files or
+release SQLite POSIX locks. See the
+[inventory handoff](STATE_DATABASE_INVENTORY_HANDOFF.md) for the exact scope and
+15 passing tests. This primitive does not yet own a restricted business action,
+its original head/generation or its post-transaction invalidation.
+
+`DurableCutoverCoordinatorV1::with_writer_state_v1` supplies the actual durable
+state loaded under the same IMMEDIATE journal transaction held across its
+callback. The original `with_writer` delegates with unchanged checks/semantics.
+A future native admission callback must require the exact Production/Canary
+state, fixed writer/scope and signed authorization, rather than trusting a prior
+`inspect` report or accepting the incumbent Planned/RolledBack modes. Five new
+callback tests and the original 10 durable plus 6 external-storage cases pass,
+including real interprocess exclusion and same-process observer open/drop.
+The new callback API grants no independent qualification or native admission.

@@ -148,3 +148,51 @@ opening/race target passed **2/2**, and the retained activation-claim parity tar
 passed **4/4**. Isolated strict production Clippy passed; the integrated
 all-target check reported no diagnostics in this slice. The final workspace
 gate is recorded when the fourth-wave checkpoint is assembled.
+
+
+## Fixed native-store transaction observations
+
+The crate-private `native_store_transaction_guard_v1` derives the one
+`native-store` instance from the actual retained inventory. It accepts no
+caller-selected role, skip instance, alternate manifest or JSON readiness claim.
+It first performs full inventory checks and records the complete candidate and
+blocker fingerprint, fixed target identity, all directory identities and owners,
+and existing sidecar identities. The guard borrows the inventory and all original
+file descriptors; dropping the guard cannot close those SQLite descriptors.
+
+Mint the guard **before opening the owning SQLite connection**, including a WAL
+connection that has not yet begun a transaction. Full `assert_current`/`resolve`
+can open and close additional raw main/WAL/SHM descriptors. On POSIX, closing such
+a descriptor can release SQLite's process-wide locks. The inventory must remain
+owned until the transaction finishes and the SQLite connection closes. Full
+observations resume only after that boundary.
+
+`assert_during_transaction` uses retained descriptors and `read_at` for every
+non-target database and its sidecars, named metadata for the target and sidecars,
+and directory-only namespace traversal. It never opens/closes a target database
+or sidecar, invokes SQLite, or resolves a full inventory. All non-target content,
+sidecar membership and complete database candidates/blockers remain unchanged.
+The target may change bytes/length/timestamps, but its inode, device, owner,
+mode, safe regular-file type and single link cannot change. Only exact SQLite
+`-wal`, `-shm` and `-journal` dash siblings are allowed; their owner/device/mode
+must remain safe, and once observed their inode is latched for the transaction.
+Replacement or disappearance is rejected. The external-cutover dot-suffix marker
+is left to its independent concrete binding; this guard never trusts it as
+permission or adds an inventory exemption.
+
+This primitive proves local observations only. Fixed operation/plan and actual
+changeset checks, original head, runtime origin/generation, independent native
+admission and cutover scope must be owned by the upper composition. That owner
+must invalidate on failure/panic/commit, close SQLite before dropping inventory,
+and obtain a complete new observation for another transaction. Reusing this
+guard after sidecar cleanup or as an arbitrary write capability is unsupported.
+
+The targeted suite passes 15 tests (13 scenario tests and two subprocess helper
+entrypoints). DELETE, PERSIST, newly created WAL and already existing WAL cases
+verify a real separate process receives SQLITE_BUSY throughout guard checks and
+guard drop, and acquires the write lock only after commit. Negatives cover
+non-target bytes/retained WAL/new sidecars/path and directory replacement,
+symlinks/hardlinks, extra database membership/blockers, target mode/identity and
+unsafe or replaced/disappearing sidecars. Existing WAL is held by a separate
+process while the guard is minted, avoiding unsafe same-process preflight.
+Strict service Clippy lib/tests checks pass. No native writer is activated.

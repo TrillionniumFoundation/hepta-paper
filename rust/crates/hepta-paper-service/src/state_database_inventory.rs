@@ -6,6 +6,12 @@ pub(crate) mod schema_source;
 mod snapshot;
 #[cfg(test)]
 mod tests;
+// A local observation prerequisite; production transaction ownership is not
+// wired yet. Keep this internal until the owning activation path is complete.
+#[allow(dead_code)]
+mod transaction_guard;
+#[allow(unused_imports)]
+pub(crate) use transaction_guard::NativeStoreTransactionInventoryGuardV1;
 mod tree;
 use crate::sqlite_mutation_coordinator::{
     Result, SqliteMutationCoordinatorError as Error, error, hash, text,

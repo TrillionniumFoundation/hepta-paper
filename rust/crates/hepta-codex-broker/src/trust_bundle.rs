@@ -125,7 +125,19 @@ pub struct VerifiedCapabilityTrustBundleV1 {
     previous_bundle_hash: Option<Sha256Digest>,
     valid_from_unix_ms: u64,
     valid_until_unix_ms: u64,
-    trust_store: CapabilityTrustStoreV1,
+    role_keys: Vec<VerifiedRoleKeyV1>,
+}
+
+// Only constructed after validating the complete bundle and its signature.
+// Keep the signed schedule, including future keys and future revocations, so a
+// later snapshot cannot silently reuse the key set accepted at installation.
+#[derive(Clone, Debug)]
+struct VerifiedRoleKeyV1 {
+    key_id: String,
+    key: VerifyingKey,
+    valid_from_unix_ms: u64,
+    valid_until_unix_ms: u64,
+    revoked_at_unix_ms: Option<u64>,
 }
 
 impl VerifiedCapabilityTrustBundleV1 {
@@ -168,8 +180,23 @@ impl VerifiedCapabilityTrustBundleV1 {
         }
     }
 
-    pub(crate) fn trust_store(&self) -> CapabilityTrustStoreV1 {
-        self.trust_store.clone()
+    fn trust_store_at(&self, now_unix_ms: u64) -> Result<CapabilityTrustStoreV1, TrustBundleError> {
+        let active = self
+            .role_keys
+            .iter()
+            .filter(|item| {
+                now_unix_ms >= item.valid_from_unix_ms
+                    && now_unix_ms < item.valid_until_unix_ms
+                    && item
+                        .revoked_at_unix_ms
+                        .is_none_or(|effective| now_unix_ms < effective)
+            })
+            .map(|item| (item.key_id.clone(), item.key))
+            .collect::<Vec<_>>();
+        if active.is_empty() {
+            return Err(TrustBundleError::NoActiveRoleKey(self.role));
+        }
+        CapabilityTrustStoreV1::new(active).map_err(TrustBundleError::CapabilityTrustStore)
     }
 }
 
@@ -220,7 +247,7 @@ impl CapabilityTrustBundleManagerV1 {
                     && now_unix_ms < bundle.valid_until_unix_ms =>
             {
                 return Ok((
-                    bundle.trust_store(),
+                    bundle.trust_store_at(now_unix_ms)?,
                     bundle.generation,
                     bundle.bundle_hash.clone(),
                 ));
@@ -339,27 +366,21 @@ pub fn verify_capability_trust_bundle(
         .iter()
         .map(|item| (item.key_id.as_str(), item.effective_at_unix_ms))
         .collect::<BTreeMap<_, _>>();
-    let mut active = Vec::new();
+    let mut role_keys = Vec::new();
     for item in &envelope.bundle.keys {
         let key = decode_verifying_key(item)?;
-        if !item.allowed_roles.contains(&role)
-            || now_unix_ms < item.valid_from_unix_ms
-            || now_unix_ms >= item.valid_until_unix_ms
-            || revocations
-                .get(item.key_id.as_str())
-                .is_some_and(|effective| now_unix_ms >= *effective)
-        {
-            continue;
+        if item.allowed_roles.contains(&role) {
+            role_keys.push(VerifiedRoleKeyV1 {
+                key_id: item.key_id.clone(),
+                key,
+                valid_from_unix_ms: item.valid_from_unix_ms,
+                valid_until_unix_ms: item.valid_until_unix_ms,
+                revoked_at_unix_ms: revocations.get(item.key_id.as_str()).copied(),
+            });
         }
-        active.push((item.key_id.clone(), key));
     }
-    if active.is_empty() {
-        return Err(TrustBundleError::NoActiveRoleKey(role));
-    }
-    let trust_store =
-        CapabilityTrustStoreV1::new(active).map_err(TrustBundleError::CapabilityTrustStore)?;
     let bundle_hash = sha256_digest(&signing_bytes)?;
-    Ok(VerifiedCapabilityTrustBundleV1 {
+    let verified = VerifiedCapabilityTrustBundleV1 {
         role,
         generation: envelope.bundle.generation,
         minimum_accepted_generation: envelope.bundle.minimum_accepted_generation,
@@ -367,8 +388,12 @@ pub fn verify_capability_trust_bundle(
         previous_bundle_hash: envelope.bundle.previous_bundle_hash.clone(),
         valid_from_unix_ms: envelope.bundle.valid_from_unix_ms,
         valid_until_unix_ms: envelope.bundle.valid_until_unix_ms,
-        trust_store,
-    })
+        role_keys,
+    };
+    // Preserve the bootstrap/refresh contract: at least one qualified key must
+    // be active now. Future keys remain available to later manager snapshots.
+    let _ = verified.trust_store_at(now_unix_ms)?;
+    Ok(verified)
 }
 
 pub fn trust_bundle_signing_bytes(
@@ -678,7 +703,7 @@ mod tests {
 
     use super::*;
 
-    fn signed_bundle(
+    pub(super) fn signed_bundle(
         generation: u64,
         previous: Option<Sha256Digest>,
         minimum: u64,
@@ -721,7 +746,7 @@ mod tests {
         }
     }
 
-    fn authority(signing_key: &SigningKey) -> CapabilityBundleAuthorityV1 {
+    pub(super) fn authority(signing_key: &SigningKey) -> CapabilityBundleAuthorityV1 {
         CapabilityBundleAuthorityV1::new([(
             "bundle-root-1".to_owned(),
             signing_key.verifying_key(),
@@ -877,3 +902,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "trust_bundle/temporal_tests.rs"]
+mod temporal_tests;

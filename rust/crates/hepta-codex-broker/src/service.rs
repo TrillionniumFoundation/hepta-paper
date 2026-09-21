@@ -51,12 +51,29 @@ pub(crate) fn reserve_authenticated_request(
     now_unix_ms: u64,
     fault: FaultInjectionPointV1,
 ) -> Result<BrokerReservationV1, BrokerStateError> {
+    reserve_authenticated_request_revalidated(admitted, journal, now_unix_ms, fault, |_| {
+        Ok(now_unix_ms)
+    })
+}
+
+pub(crate) fn reserve_authenticated_request_revalidated<E, F>(
+    admitted: AuthenticatedBrokerRequestV1,
+    journal: &mut BrokerJournalStoreV1,
+    now_unix_ms: u64,
+    fault: FaultInjectionPointV1,
+    revalidate: F,
+) -> Result<BrokerReservationV1, E>
+where
+    E: From<BrokerJournalError>,
+    F: FnOnce(&AuthenticatedBrokerRequestV1) -> Result<u64, E>,
+{
     let operation_id = admitted.request().operation_id.clone();
     let request_hash = admitted.request_hash().clone();
     let peer = admitted.peer();
     let signer_key_id = admitted.capability().signer_key_id.clone();
     let capability_nonce = admitted.capability().nonce.clone();
-    let outcome = journal.reserve_operation(&admitted, now_unix_ms, fault)?;
+    let outcome =
+        journal.reserve_operation_revalidated(&admitted, now_unix_ms, fault, revalidate)?;
     Ok(BrokerReservationV1 {
         operation_id,
         request_hash,

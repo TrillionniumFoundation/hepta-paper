@@ -38,6 +38,9 @@ use hepta_codex_protocol::{
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+#[path = "admission_deadline/lock_wait.rs"]
+mod lock_wait;
+
 struct Fixture {
     root: PathBuf,
     uid: u32,

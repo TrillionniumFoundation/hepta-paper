@@ -210,91 +210,55 @@ impl BrokerJournalStoreV1 {
         now_unix_ms: u64,
         fault: FaultInjectionPointV1,
     ) -> Result<ReservationOutcomeV1, BrokerJournalError> {
+        self.reserve_operation_revalidated(admitted, now_unix_ms, fault, |_| Ok(now_unix_ms))
+    }
+
+    /// The server rechecks current authority only after acquiring the write
+    /// transaction, before returning an existing operation or inserting rows.
+    /// The explicit-time public API keeps its original deterministic clock.
+    pub(crate) fn reserve_operation_revalidated<E, F>(
+        &mut self,
+        admitted: &AuthenticatedBrokerRequestV1,
+        initial_now_unix_ms: u64,
+        fault: FaultInjectionPointV1,
+        revalidate: F,
+    ) -> Result<ReservationOutcomeV1, E>
+    where
+        E: From<BrokerJournalError>,
+        F: FnOnce(&AuthenticatedBrokerRequestV1) -> Result<u64, E>,
+    {
+        let now_unix_ms = initial_now_unix_ms;
         if now_unix_ms == 0 {
-            return Err(BrokerJournalError::InvalidRecordedTime);
+            return Err(BrokerJournalError::InvalidRecordedTime.into());
         }
-        validate_authenticated_request(admitted)?;
+        validate_authenticated_request(admitted).map_err(E::from)?;
         if now_unix_ms >= admitted.request.request_capability.expires_at_unix_ms
             || now_unix_ms >= admitted.request.absolute_deadline_unix_ms
         {
-            return Err(BrokerJournalError::AuthenticatedRequestExpired);
+            return Err(BrokerJournalError::AuthenticatedRequestExpired.into());
         }
         let transaction = self
             .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(BrokerJournalError::from)
+            .map_err(E::from)?;
 
-        if let Some(existing) =
-            existing_by_idempotency(&transaction, admitted.request.idempotency_key.as_str())?
+        let now_unix_ms = revalidate(admitted)?;
+        if now_unix_ms == 0 || now_unix_ms < initial_now_unix_ms {
+            return Err(BrokerJournalError::InvalidRecordedTime.into());
+        }
+        if now_unix_ms >= admitted.request.request_capability.expires_at_unix_ms
+            || now_unix_ms >= admitted.request.absolute_deadline_unix_ms
         {
-            if !existing.matches(admitted) {
-                return Err(BrokerJournalError::IdempotencyConflict);
-            }
-            let journal =
-                load_journal_from_connection(&transaction, &admitted.request.operation_id)?;
-            transaction.commit()?;
-            return Ok(ReservationOutcomeV1::Existing(journal));
+            return Err(BrokerJournalError::AuthenticatedRequestExpired.into());
         }
 
-        if operation_exists(&transaction, &admitted.request.operation_id)? {
-            return Err(BrokerJournalError::OperationIdentityConflict);
+        let outcome =
+            reserve_in_transaction(transaction, admitted, now_unix_ms, fault).map_err(E::from)?;
+        if matches!(outcome, ReservationOutcomeV1::Reserved(_)) {
+            inspect_database_envelope(&self.path, self.policy).map_err(E::from)?;
         }
-        if nonce_exists(&transaction, &admitted.capability.nonce)? {
-            return Err(BrokerJournalError::CapabilityNonceReplay);
-        }
-
-        let journal = OperationJournalV1::new(
-            admitted.request.operation_id.clone(),
-            admitted.request_hash.clone(),
-        )?;
-        transaction.execute(
-            "INSERT INTO operations (
-                operation_id, request_hash, idempotency_key, request_payload,
-                peer_pid, peer_uid, peer_gid, signer_key_id, capability_nonce,
-                capability_message_hash, current_state, created_at_unix_ms,
-                updated_at_unix_ms, provider_action_may_have_started,
-                prepared_receipt_hash
-             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, 0, NULL
-             )",
-            params![
-                admitted.request.operation_id,
-                admitted.request_hash.as_str(),
-                admitted.request.idempotency_key.as_str(),
-                admitted.request_payload,
-                i64::from(admitted.peer.pid),
-                i64::from(admitted.peer.uid),
-                i64::from(admitted.peer.gid),
-                admitted.capability.signer_key_id,
-                admitted.capability.nonce,
-                admitted.capability.signing_message_hash.as_str(),
-                state_to_db(OperationState::Reserved),
-                to_i64(now_unix_ms)?,
-            ],
-        )?;
-        if fault == FaultInjectionPointV1::AfterOperationInsert {
-            #[cfg(test)]
-            pause_for_sigkill_test(fault);
-            return Err(BrokerJournalError::InjectedFault(fault));
-        }
-        transaction.execute(
-            "INSERT INTO capability_nonces (
-                nonce, signer_key_id, operation_id, consumed_at_unix_ms
-             ) VALUES (?1, ?2, ?3, ?4)",
-            params![
-                admitted.capability.nonce,
-                admitted.capability.signer_key_id,
-                admitted.request.operation_id,
-                to_i64(now_unix_ms)?,
-            ],
-        )?;
-        if fault == FaultInjectionPointV1::AfterNonceInsert {
-            #[cfg(test)]
-            pause_for_sigkill_test(fault);
-            return Err(BrokerJournalError::InjectedFault(fault));
-        }
-        transaction.commit()?;
-        inspect_database_envelope(&self.path, self.policy)?;
-        Ok(ReservationOutcomeV1::Reserved(journal))
+        Ok(outcome)
     }
 
     /// Appends one validated state transition using compare-and-swap semantics.
@@ -877,6 +841,84 @@ impl BrokerJournalStoreV1 {
                 .query_row("SELECT count(*) FROM operations", [], |row| row.get(0))?;
         from_i64(value)
     }
+}
+
+fn reserve_in_transaction(
+    transaction: Transaction<'_>,
+    admitted: &AuthenticatedBrokerRequestV1,
+    now_unix_ms: u64,
+    fault: FaultInjectionPointV1,
+) -> Result<ReservationOutcomeV1, BrokerJournalError> {
+    if let Some(existing) =
+        existing_by_idempotency(&transaction, admitted.request.idempotency_key.as_str())?
+    {
+        if !existing.matches(admitted) {
+            return Err(BrokerJournalError::IdempotencyConflict);
+        }
+        let journal = load_journal_from_connection(&transaction, &admitted.request.operation_id)?;
+        transaction.commit()?;
+        return Ok(ReservationOutcomeV1::Existing(journal));
+    }
+
+    if operation_exists(&transaction, &admitted.request.operation_id)? {
+        return Err(BrokerJournalError::OperationIdentityConflict);
+    }
+    if nonce_exists(&transaction, &admitted.capability.nonce)? {
+        return Err(BrokerJournalError::CapabilityNonceReplay);
+    }
+
+    let journal = OperationJournalV1::new(
+        admitted.request.operation_id.clone(),
+        admitted.request_hash.clone(),
+    )?;
+    transaction.execute(
+        "INSERT INTO operations (
+            operation_id, request_hash, idempotency_key, request_payload,
+            peer_pid, peer_uid, peer_gid, signer_key_id, capability_nonce,
+            capability_message_hash, current_state, created_at_unix_ms,
+            updated_at_unix_ms, provider_action_may_have_started,
+            prepared_receipt_hash
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, 0, NULL
+         )",
+        params![
+            admitted.request.operation_id,
+            admitted.request_hash.as_str(),
+            admitted.request.idempotency_key.as_str(),
+            admitted.request_payload,
+            i64::from(admitted.peer.pid),
+            i64::from(admitted.peer.uid),
+            i64::from(admitted.peer.gid),
+            admitted.capability.signer_key_id,
+            admitted.capability.nonce,
+            admitted.capability.signing_message_hash.as_str(),
+            state_to_db(OperationState::Reserved),
+            to_i64(now_unix_ms)?,
+        ],
+    )?;
+    if fault == FaultInjectionPointV1::AfterOperationInsert {
+        #[cfg(test)]
+        pause_for_sigkill_test(fault);
+        return Err(BrokerJournalError::InjectedFault(fault));
+    }
+    transaction.execute(
+        "INSERT INTO capability_nonces (
+            nonce, signer_key_id, operation_id, consumed_at_unix_ms
+         ) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            admitted.capability.nonce,
+            admitted.capability.signer_key_id,
+            admitted.request.operation_id,
+            to_i64(now_unix_ms)?,
+        ],
+    )?;
+    if fault == FaultInjectionPointV1::AfterNonceInsert {
+        #[cfg(test)]
+        pause_for_sigkill_test(fault);
+        return Err(BrokerJournalError::InjectedFault(fault));
+    }
+    transaction.commit()?;
+    Ok(ReservationOutcomeV1::Reserved(journal))
 }
 
 fn insert_transition(

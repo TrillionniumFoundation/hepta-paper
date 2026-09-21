@@ -119,12 +119,29 @@ protection against a separately authorized writer changing the database later.
 
 The socket admission reader uses one monotonic elapsed-time budget across the
 complete frame header and body; successful partial reads do not reset it. The
-actual server samples its clock and trust state after the complete frame is read
-and uses that time for capability verification and reservation. Explicit-time
-library APIs retain their caller-supplied-time contract. These checks do not yet
-resample time after SQLite `BEGIN IMMEDIATE` waits; transaction-wait freshness is
-an additional integration requirement. They grant no installed host, runtime,
-provider, process identity or production activation authority.
+actual server samples its clock and trust state after the complete frame is read.
+After SQLite `BEGIN IMMEDIATE` acquires the journal write transaction, it samples
+the clock again, requires no backwards movement relative to that request's first
+sample, checks the current manager state and startup bundle hash, and repeats
+Ed25519 capability/peer/deadline verification with the current trust snapshot.
+This occurs before either returning an existing operation or inserting rows.
+Failure drops the untouched transaction; new rows use the post-lock timestamp.
+Explicit-time library APIs retain their caller-supplied-time contract. These
+observations are not an atomic transaction spanning the trust manager, clock,
+SQLite commit, subsequent dispatcher or external provider.
+
+Verified bundles retain the signature-bound role-key validity and revocation
+schedule, including future keys. Every manager snapshot selects keys at its
+supplied timestamp; a key is absent at its exact valid-until or revocation time,
+and future keys become available only at valid-from. A gap with no active role
+key returns `NoActiveRoleKey`; it does not discard a signed future key. Initial
+verification still requires an active role key. The existing bundle expiry,
+disable, rejected-refresh and chain rules remain in force. Signing bytes, hashes,
+wire versions and public method signatures are unchanged. A returned plain trust
+store is a completed snapshot, not a live authority; callers of explicit-time
+APIs still own current clock/snapshot sampling. This is in-memory enforcement of
+an authenticated schedule, not durable revocation state across restarts or
+proof of host/provider ownership. No installed or production authority is granted.
 
 Focused source regressions replace every one of the 14 actual append-only
 triggers, weaken an actual table constraint, alter a trigger's target table,
@@ -133,6 +150,12 @@ unchanged journal with real persisted history. The read-only refusal tests
 compare the actual source bytes and require no new sidecars or initialization
 marker. Real socket and signed-request tests cover the admission time boundary;
 these local tests remain distinct from independent host/provider qualification.
+The post-lock regressions use a separately owned process holding an actual SQLite
+write transaction, actual Unix requests and signatures, and the system clock;
+expired capabilities, disabled/replaced bundles and scheduled signer expiry or
+revocation cannot create operation/nonce rows after waiting. Deterministic
+signature tests additionally cover exact key boundaries, future activation,
+role separation, retained-schedule immutability and no-active-key gaps.
 
 ## Output schema contract
 

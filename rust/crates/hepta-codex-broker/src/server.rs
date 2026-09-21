@@ -19,9 +19,9 @@ use crate::{
     BrokerResponseV1, BrokerStateError, BrokerTelemetrySnapshotV1, BrokerTelemetryV1,
     CapabilityTrustBundleManagerV1, FaultInjectionPointV1, PeerAuthorizationError, PeerPolicyV1,
     ProcessReconciliationDispositionV1, ReservationOutcomeV1, TrustBundleError,
-    write_response_frame,
+    verify_request_capability, write_response_frame,
 };
-use crate::{admission::read_unix_request, service::reserve_authenticated_request};
+use crate::{admission::read_unix_request, service::reserve_authenticated_request_revalidated};
 
 const HARD_MAXIMUM_WORKERS: usize = 32;
 const HARD_MAXIMUM_QUEUE_CAPACITY: usize = 256;
@@ -403,13 +403,41 @@ fn spawn_worker(
             };
             let reservation = pending
                 .authenticate(&trust_store, now)
-                .map_err(BrokerStateError::Admission)
+                .map_err(|error| ServerReservationError::State(BrokerStateError::Admission(error)))
                 .and_then(|admitted| {
-                    reserve_authenticated_request(
+                    reserve_authenticated_request_revalidated(
                         admitted,
                         &mut journal,
                         now,
                         FaultInjectionPointV1::None,
+                        |admitted| {
+                            let current_now =
+                                clock.now_unix_ms().map_err(ServerReservationError::Clock)?;
+                            if current_now < now {
+                                return Err(ServerReservationError::Clock(
+                                    BrokerServerError::ClockUnavailable,
+                                ));
+                            }
+                            let (current_trust, _, current_bundle_hash) = trust_manager
+                                .snapshot(current_now)
+                                .map_err(|_| ServerReservationError::TrustUnavailable)?;
+                            if current_bundle_hash != startup_bundle_hash {
+                                return Err(ServerReservationError::TrustChanged);
+                            }
+                            verify_request_capability(
+                                admitted.request(),
+                                admitted.peer(),
+                                current_now,
+                                admission_policy.capability,
+                                &current_trust,
+                            )
+                            .map_err(|error| {
+                                ServerReservationError::State(BrokerStateError::Admission(
+                                    crate::AdmissionError::Capability(error),
+                                ))
+                            })?;
+                            Ok(current_now)
+                        },
                     )
                 });
             match reservation {
@@ -464,11 +492,24 @@ fn spawn_worker(
                     }
                 }
                 Err(error) => {
-                    let (code, fatal) = classify_state_error(&error);
+                    let (code, fatal) = match error {
+                        ServerReservationError::State(error) => classify_state_error(&error),
+                        ServerReservationError::TrustChanged => {
+                            (BrokerMachineCodeV1::TrustBundleChanged, true)
+                        }
+                        ServerReservationError::TrustUnavailable => {
+                            (BrokerMachineCodeV1::CapabilityUnavailable, true)
+                        }
+                        ServerReservationError::Clock(error) => return Err(error),
+                    };
                     match code {
                         BrokerMachineCodeV1::AdmissionRejected => telemetry.admission_rejected(),
                         BrokerMachineCodeV1::JournalConflict => telemetry.journal_conflict(),
                         BrokerMachineCodeV1::JournalUnavailable => telemetry.journal_failure(),
+                        BrokerMachineCodeV1::TrustBundleChanged => telemetry.trust_bundle_changed(),
+                        BrokerMachineCodeV1::CapabilityUnavailable => {
+                            telemetry.capability_unavailable()
+                        }
                         _ => {}
                     }
                     if fatal {
@@ -482,6 +523,19 @@ fn spawn_worker(
         }
         Ok(())
     })
+}
+
+enum ServerReservationError {
+    State(BrokerStateError),
+    Clock(BrokerServerError),
+    TrustChanged,
+    TrustUnavailable,
+}
+
+impl From<BrokerJournalError> for ServerReservationError {
+    fn from(error: BrokerJournalError) -> Self {
+        Self::State(BrokerStateError::Journal(error))
+    }
 }
 
 fn classify_state_error(error: &BrokerStateError) -> (BrokerMachineCodeV1, bool) {

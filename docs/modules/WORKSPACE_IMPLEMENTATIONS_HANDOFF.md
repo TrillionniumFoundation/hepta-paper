@@ -65,7 +65,8 @@ unpublished staging tree. No unsupported-kernel fallback performs an ordinary
 overwriting rename. Copy, staging-inventory or staging-sync failure attempts to
 remove only the staging directory whose current metadata still matches its held
 directory descriptor. Failed cleanup or a publication collision can leave staging
-for controlled recovery; this identity check is not a live-writer exclusion lock.
+for controlled recovery. The current materializer also holds the shared parent
+directory lock described below until error cleanup finishes.
 
 Copy and inventory use the same tree-counting rules with a fresh budget for each
 walk. Pending siblings consume budget before recursion, so separate subtrees
@@ -111,11 +112,43 @@ The function signatures remain unchanged. Adding public error variants can
 require changes to external exhaustive `WorkspaceError` matches; it is not
 source compatible with every possible external match expression.
 
-`recover_incomplete_attempts` has no live-writer lease, generation fence or process
-stop barrier. The caller must first exclude concurrent materializers. The name
-pattern and UID checks are not proof that an actively copied staging directory
-is abandoned. It leaves published names alone, but does not select retention
-policy or authorize deletion of completed evidence.
+`materialize_attempt` retains a shared nonblocking `flock` on the actual parent
+directory from before staging creation through publication, validation or error
+cleanup. `recover_incomplete_attempts` retains an exclusive nonblocking lock on
+that same directory before enumeration and deletion. Lock conflicts return
+`AttemptParentBusy` without waiting or changing the tree. Different cooperating
+materializers can run together; changing the parent's link count by creating
+sibling directories does not count as an identity change. The sole lock-owning
+descriptor is close-on-exec, is never duplicated and releases its lock on drop
+or process death. This contract uses the pinned Rust standard library's Linux
+`File::try_lock_shared` / `try_lock` implementation.
+
+Both operations open the canonical owner-only parent with
+`O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` and bind its device/inode, ownership and
+mode. Target-child IO, enumeration, cleanup and no-replace rename resolve through
+the retained `/proc/self/fd/<fd>` parent; parent sync uses that descriptor directly.
+Private staging/final root observers keep this anchor for all their IO and are
+dropped before their parent. No descriptor path escapes in the returned attempt.
+The private `open_attempt_child` constructor currently reuses `WorkspaceRootV1`
+only for inventory, identity comparison and revalidation; its `/proc` IO path
+does not satisfy public `resolve_existing` canonical-path semantics. These
+internal roots must not escape or be used as public root capabilities.
+Canonical caller-path revalidation reports `AttemptParentChanged`; it does not
+prevent a namespace race by itself. Descriptor anchoring prevents a parent
+pathname replacement from redirecting deletion or publication into the
+replacement directory. Rebinding observed before publication prevents the
+rename and attempts cleanup in the original parent. An observed rebind after
+rename uses the existing published-inspection error. Its `final_path` records
+the caller's original name; inspect the displaced parent as well, since that
+name can now refer to another object. Recovery can remove original staging
+before noticing a concurrent parent rebind and returning an error.
+
+Exclusion applies only to cooperating updated binaries using this lock protocol.
+Arbitrary same-UID actors and older materializers can ignore it; callers must
+exclude those writers separately before recovery. The lock is not a workspace
+snapshot, generation fence or external process stop barrier. Name/UID checks
+alone still do not prove abandonment. Recovery leaves published names alone and
+does not choose their retention policy or authorize deleting completed evidence.
 
 In `hepta-workspace-authority`, copy failure can leave a partly populated final
 attempt directory. Exclusive creation then prevents silently retrying the same
@@ -169,3 +202,13 @@ without changing its length or add a non-UTF-8 regular-file name; directory
 identity remains unchanged while published inventory validation rejects them.
 Their final bytes survive both the error and a same-ID retry. These tests do not
 simulate or qualify physical storage durability.
+
+Independent Rust child processes pause inside actual materialization or recovery
+while holding their respective locks. Tests verify shared sibling publication,
+immediate conflicting-operation refusal, unchanged staging on refusal and lock
+release after killing and reaping the holder. Real parent-directory rebinds
+exercise prepublication cleanup, classified postpublication failure and a rebind
+after recovery's last pathname check: only the original anchored staging is
+removed, while replacement staging and published sentinels remain. These tests
+do not establish protection against non-cooperating child-entry replacement or
+mount/namespace adversaries.

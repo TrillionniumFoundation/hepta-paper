@@ -121,6 +121,48 @@ impl WorkspaceRootV1 {
         })
     }
 
+    // Private attempt roots use the retained parent's descriptor for every
+    // operation. They never escape materialization or outlive that parent.
+    // Only inventory/revalidate and identity comparison are used: the public
+    // resolve_existing canonical-path contract does not apply to this anchor.
+    fn open_attempt_child(
+        parent: &RetainedAttemptParent,
+        name: &str,
+        expected_owner_uid: u32,
+    ) -> Result<Self, WorkspaceError> {
+        let path = parent.child(name);
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| WorkspaceError::Filesystem("root_metadata", error.kind()))?;
+        let mode = metadata.mode() & 0o7777;
+        if !metadata.is_dir()
+            || metadata.is_symlink()
+            || metadata.uid() != expected_owner_uid
+            || mode & 0o022 != 0
+        {
+            return Err(WorkspaceError::RootInvalid);
+        }
+        let directory = open_directory(&path, "root_open")?;
+        let opened = directory
+            .metadata()
+            .map_err(|error| WorkspaceError::Filesystem("root_open_metadata", error.kind()))?;
+        if !same_object(&metadata, &opened) {
+            return Err(WorkspaceError::RootChanged);
+        }
+        Ok(Self {
+            identity: WorkspaceObjectIdentityV1 {
+                canonical_path_hash: hash_path(&parent.canonical_path.join(name))?,
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                mode,
+                uid: metadata.uid(),
+                gid: metadata.gid(),
+                link_count: metadata.nlink(),
+            },
+            directory,
+            canonical_path: path,
+        })
+    }
+
     #[must_use]
     pub fn identity(&self) -> &WorkspaceObjectIdentityV1 {
         &self.identity
@@ -496,30 +538,63 @@ fn materialize_attempt_with_publication_check(
     limits: WorkspaceLimits,
     mut publication_check: impl FnMut(AttemptPublicationPhaseV1, &Path) -> Result<(), WorkspaceError>,
 ) -> Result<AttemptWorkspaceV1, WorkspaceError> {
+    materialize_attempt_with_checks(
+        source,
+        attempt_parent,
+        attempt_id,
+        expected_owner_uid,
+        limits,
+        |phase, path| match phase {
+            MaterializationPhase::Published(phase) => publication_check(phase, path),
+            MaterializationPhase::StagingCreated | MaterializationPhase::BeforePublication => {
+                Ok(())
+            }
+        },
+    )
+}
+
+#[derive(Clone, Copy)]
+enum MaterializationPhase {
+    StagingCreated,
+    BeforePublication,
+    Published(AttemptPublicationPhaseV1),
+}
+
+fn materialize_attempt_with_checks(
+    source: &WorkspaceRootV1,
+    attempt_parent: &Path,
+    attempt_id: &str,
+    expected_owner_uid: u32,
+    limits: WorkspaceLimits,
+    mut check: impl FnMut(MaterializationPhase, &Path) -> Result<(), WorkspaceError>,
+) -> Result<AttemptWorkspaceV1, WorkspaceError> {
     validate_identifier(attempt_id)?;
     source.revalidate()?;
-    let parent = inspect_private_attempt_parent(attempt_parent, expected_owner_uid)?;
+    let parent = RetainedAttemptParent::open(
+        attempt_parent,
+        expected_owner_uid,
+        AttemptParentLock::Materialize,
+    )?;
     let sequence = NEXT_ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| WorkspaceError::ClockBeforeEpoch)?
         .as_nanos();
-    let staging = parent.join(format!(".attempt-{attempt_id}-{nonce}-{sequence}.creating"));
-    let final_path = parent.join(format!("attempt-{attempt_id}"));
-    if final_path.exists() {
+    let staging_name = format!(".attempt-{attempt_id}-{nonce}-{sequence}.creating");
+    let final_name = format!("attempt-{attempt_id}");
+    let staging = parent.child(&staging_name);
+    let final_path = parent.canonical_path.join(&final_name);
+    if parent.child(&final_name).exists() {
         return Err(WorkspaceError::AttemptAlreadyExists);
     }
     fs::create_dir(&staging)
         .map_err(|error| WorkspaceError::Filesystem("attempt_staging", error.kind()))?;
-    let staging_directory = OpenOptions::new()
-        .read(true)
-        .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
-        .open(&staging)
-        .map_err(|error| WorkspaceError::Filesystem("attempt_staging_open", error.kind()))?;
+    let staging_directory = open_directory(&staging, "attempt_staging_open")?;
     let prepared = (|| {
         staging_directory
             .set_permissions(fs::Permissions::from_mode(0o700))
             .map_err(|error| WorkspaceError::Filesystem("attempt_staging_mode", error.kind()))?;
+        check(MaterializationPhase::StagingCreated, &staging)?;
         let mut entries = TreeEntryBudget::new(limits.tree_entries);
         copy_tree(
             &source.canonical_path,
@@ -527,7 +602,7 @@ fn materialize_attempt_with_publication_check(
             &mut entries,
             limits.file_bytes,
         )?;
-        let root = WorkspaceRootV1::open(&staging, expected_owner_uid)?;
+        let root = WorkspaceRootV1::open_attempt_child(&parent, &staging_name, expected_owner_uid)?;
         let held = staging_directory.metadata().map_err(|error| {
             WorkspaceError::Filesystem("attempt_staging_metadata", error.kind())
         })?;
@@ -546,6 +621,8 @@ fn materialize_attempt_with_publication_check(
             .sync_all()
             .map_err(|error| WorkspaceError::Filesystem("sync_directory", error.kind()))?;
         root.revalidate()?;
+        check(MaterializationPhase::BeforePublication, &staging)?;
+        parent.revalidate()?;
         Ok((root, inventory))
     })();
     let (staged_root, initial_inventory) = match prepared {
@@ -555,7 +632,9 @@ fn materialize_attempt_with_publication_check(
             return Err(cause);
         }
     };
-    publish_attempt_no_replace(&staging, &final_path)?;
+    // Both names resolve from the still-locked actual parent, even if its
+    // external pathname changes after the diagnostic revalidation above.
+    publish_attempt_no_replace(&staging, &parent.child(&final_name))?;
     let published_error =
         |phase, parent_sync_completed, cause| WorkspaceError::PublishedAttemptRequiresInspection {
             final_path: final_path.clone(),
@@ -564,27 +643,37 @@ fn materialize_attempt_with_publication_check(
             cause: Box::new(cause),
         };
     let sync_phase = AttemptPublicationPhaseV1::ParentDirectorySync;
-    publication_check(sync_phase, &final_path)
-        .and_then(|()| sync_directory(&parent))
+    check(MaterializationPhase::Published(sync_phase), &final_path)
+        .and_then(|()| parent.sync())
         .map_err(|cause| published_error(sync_phase, false, cause))?;
     let open_phase = AttemptPublicationPhaseV1::PublishedRootOpen;
-    let root = publication_check(open_phase, &final_path)
-        .and_then(|()| WorkspaceRootV1::open(&final_path, expected_owner_uid))
+    let root = check(MaterializationPhase::Published(open_phase), &final_path)
+        .and_then(|()| parent.revalidate())
+        .and_then(|()| {
+            WorkspaceRootV1::open_attempt_child(&parent, &final_name, expected_owner_uid)
+        })
         .map_err(|cause| published_error(open_phase, true, cause))?;
     let validation_phase = AttemptPublicationPhaseV1::PublishedRootValidation;
-    publication_check(validation_phase, &final_path)
-        .and_then(|()| validate_published_root(&staged_root, &root))
-        .map_err(|cause| published_error(validation_phase, true, cause))?;
+    check(
+        MaterializationPhase::Published(validation_phase),
+        &final_path,
+    )
+    .and_then(|()| validate_published_root(&staged_root, &root))
+    .map_err(|cause| published_error(validation_phase, true, cause))?;
     let inventory_phase = AttemptPublicationPhaseV1::PublishedInventoryValidation;
-    publication_check(inventory_phase, &final_path)
-        .and_then(|()| {
-            let published_inventory = root.inventory_with_limits(limits)?;
-            if published_inventory != initial_inventory {
-                return Err(WorkspaceError::InventoryChanged);
-            }
-            root.revalidate()
-        })
-        .map_err(|cause| published_error(inventory_phase, true, cause))?;
+    check(
+        MaterializationPhase::Published(inventory_phase),
+        &final_path,
+    )
+    .and_then(|()| {
+        let published_inventory = root.inventory_with_limits(limits)?;
+        if published_inventory != initial_inventory {
+            return Err(WorkspaceError::InventoryChanged);
+        }
+        root.revalidate()?;
+        parent.revalidate()
+    })
+    .map_err(|cause| published_error(inventory_phase, true, cause))?;
     Ok(AttemptWorkspaceV1 {
         attempt_id: attempt_id.to_owned(),
         canonical_path: final_path,
@@ -643,9 +732,21 @@ pub fn recover_incomplete_attempts(
     attempt_parent: impl AsRef<Path>,
     expected_owner_uid: u32,
 ) -> Result<u64, WorkspaceError> {
-    let parent = inspect_private_attempt_parent(attempt_parent.as_ref(), expected_owner_uid)?;
+    recover_incomplete_attempts_with_check(attempt_parent.as_ref(), expected_owner_uid, |_| Ok(()))
+}
+
+fn recover_incomplete_attempts_with_check(
+    attempt_parent: &Path,
+    expected_owner_uid: u32,
+    mut before_removal: impl FnMut(&Path) -> Result<(), WorkspaceError>,
+) -> Result<u64, WorkspaceError> {
+    let parent = RetainedAttemptParent::open(
+        attempt_parent,
+        expected_owner_uid,
+        AttemptParentLock::Recover,
+    )?;
     let mut removed = 0_u64;
-    for entry in fs::read_dir(&parent)
+    for entry in fs::read_dir(parent.descriptor_path())
         .map_err(|error| WorkspaceError::Filesystem("attempt_parent_read", error.kind()))?
     {
         let entry = entry
@@ -655,12 +756,15 @@ pub fn recover_incomplete_attempts(
             return Err(WorkspaceError::NonUtf8Path);
         };
         if name.starts_with(".attempt-") && name.ends_with(".creating") {
-            let metadata = entry
-                .metadata()
+            let metadata = fs::symlink_metadata(entry.path())
                 .map_err(|error| WorkspaceError::Filesystem("attempt_recovery", error.kind()))?;
-            if !metadata.is_dir() || metadata.uid() != expected_owner_uid {
+            if !metadata.is_dir() || metadata.is_symlink() || metadata.uid() != expected_owner_uid {
                 return Err(WorkspaceError::AttemptRecoveryIdentityMismatch);
             }
+            parent.revalidate()?;
+            before_removal(&entry.path())?;
+            // read_dir was opened through the held descriptor, so entry.path()
+            // remains anchored if the caller's parent name is rebound here.
             fs::remove_dir_all(entry.path())
                 .map_err(|error| WorkspaceError::Filesystem("attempt_recovery", error.kind()))?;
             removed = removed
@@ -668,7 +772,8 @@ pub fn recover_incomplete_attempts(
                 .ok_or(WorkspaceError::NumericOverflow)?;
         }
     }
-    sync_directory(&parent)?;
+    parent.sync()?;
+    parent.revalidate()?;
     Ok(removed)
 }
 
@@ -853,28 +958,113 @@ fn copy_file_bytes(
     Ok(())
 }
 
-fn inspect_private_attempt_parent(
-    parent: &Path,
-    expected_owner_uid: u32,
-) -> Result<PathBuf, WorkspaceError> {
-    if !parent.is_absolute() {
-        return Err(WorkspaceError::AttemptParentInvalid);
+#[derive(Clone, Copy)]
+enum AttemptParentLock {
+    Materialize,
+    Recover,
+}
+
+// No descriptor duplication or lock conversion: closing this sole File releases
+// the flock. Children opened via /proc get separate descriptions and no lock.
+struct RetainedAttemptParent {
+    directory: File,
+    canonical_path: PathBuf,
+    initial_metadata: fs::Metadata,
+}
+
+impl RetainedAttemptParent {
+    fn open(
+        parent: &Path,
+        expected_owner_uid: u32,
+        lock: AttemptParentLock,
+    ) -> Result<Self, WorkspaceError> {
+        if !parent.is_absolute() {
+            return Err(WorkspaceError::AttemptParentInvalid);
+        }
+        let canonical = fs::canonicalize(parent)
+            .map_err(|error| WorkspaceError::Filesystem("attempt_parent", error.kind()))?;
+        if canonical != parent {
+            return Err(WorkspaceError::AttemptParentInvalid);
+        }
+        let metadata = fs::symlink_metadata(parent)
+            .map_err(|error| WorkspaceError::Filesystem("attempt_parent", error.kind()))?;
+        if metadata.is_symlink()
+            || !metadata.is_dir()
+            || metadata.uid() != expected_owner_uid
+            || metadata.mode() & 0o7777 != 0o700
+        {
+            return Err(WorkspaceError::AttemptParentInvalid);
+        }
+        let directory = open_directory(parent, "attempt_parent_open")?;
+        let opened = directory
+            .metadata()
+            .map_err(|error| WorkspaceError::Filesystem("attempt_parent_metadata", error.kind()))?;
+        if !same_parent_object(&metadata, &opened) {
+            return Err(WorkspaceError::AttemptParentChanged);
+        }
+        match lock {
+            AttemptParentLock::Materialize => directory.try_lock_shared(),
+            AttemptParentLock::Recover => directory.try_lock(),
+        }
+        .map_err(|error| match error {
+            fs::TryLockError::WouldBlock => WorkspaceError::AttemptParentBusy,
+            fs::TryLockError::Error(error) => {
+                WorkspaceError::Filesystem("attempt_parent_lock", error.kind())
+            }
+        })?;
+        let retained = Self {
+            directory,
+            canonical_path: canonical,
+            initial_metadata: opened,
+        };
+        retained.revalidate()?;
+        Ok(retained)
     }
-    let canonical = fs::canonicalize(parent)
-        .map_err(|error| WorkspaceError::Filesystem("attempt_parent", error.kind()))?;
-    if canonical != parent {
-        return Err(WorkspaceError::AttemptParentInvalid);
+
+    fn descriptor_path(&self) -> PathBuf {
+        PathBuf::from(format!("/proc/self/fd/{}", self.directory.as_raw_fd()))
     }
-    let metadata = fs::symlink_metadata(parent)
-        .map_err(|error| WorkspaceError::Filesystem("attempt_parent", error.kind()))?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_dir()
-        || metadata.uid() != expected_owner_uid
-        || metadata.mode() & 0o7777 != 0o700
-    {
-        return Err(WorkspaceError::AttemptParentInvalid);
+
+    fn child(&self, name: &str) -> PathBuf {
+        self.descriptor_path().join(name)
     }
-    Ok(canonical)
+
+    fn revalidate(&self) -> Result<(), WorkspaceError> {
+        let named = fs::symlink_metadata(&self.canonical_path)
+            .map_err(|_| WorkspaceError::AttemptParentChanged)?;
+        let held = self
+            .directory
+            .metadata()
+            .map_err(|error| WorkspaceError::Filesystem("attempt_parent_metadata", error.kind()))?;
+        if !same_parent_object(&named, &held) || !same_parent_object(&held, &self.initial_metadata)
+        {
+            return Err(WorkspaceError::AttemptParentChanged);
+        }
+        Ok(())
+    }
+
+    fn sync(&self) -> Result<(), WorkspaceError> {
+        self.directory
+            .sync_all()
+            .map_err(|error| WorkspaceError::Filesystem("sync_directory", error.kind()))
+    }
+}
+
+fn open_directory(path: &Path, operation: &'static str) -> Result<File, WorkspaceError> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|error| WorkspaceError::Filesystem(operation, error.kind()))
+}
+
+fn same_parent_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    // Cooperating materializers legitimately change nlink by adding siblings.
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.mode() == right.mode()
+        && left.uid() == right.uid()
+        && left.gid() == right.gid()
 }
 
 fn reject_link_components(root: &Path, relative: &Path) -> Result<(), WorkspaceError> {
@@ -1042,6 +1232,10 @@ pub enum WorkspaceError {
     MutationPolicyRejected,
     #[error("attempt parent must be a canonical owner-only directory")]
     AttemptParentInvalid,
+    #[error("attempt parent is locked by a cooperating materializer or recovery")]
+    AttemptParentBusy,
+    #[error("attempt parent pathname or retained directory identity changed")]
+    AttemptParentChanged,
     #[error("attempt identifier is invalid")]
     AttemptIdInvalid,
     #[error("attempt already exists")]
@@ -1081,8 +1275,11 @@ mod tests {
         os::unix::{
             ffi::OsStringExt,
             fs::{MetadataExt, PermissionsExt, symlink},
+            net::{UnixListener, UnixStream},
         },
+        process::{Child, Command, Stdio},
         sync::atomic::{AtomicU64, Ordering},
+        time::{Duration, Instant},
     };
 
     use super::*;
@@ -1129,6 +1326,354 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    struct LockChild {
+        child: Child,
+        gate: Option<UnixStream>,
+    }
+
+    impl LockChild {
+        fn start(tree: &TempTree, mode: &str) -> Self {
+            let socket = tree.root.join("lock-child.sock");
+            let listener = UnixListener::bind(&socket).expect("child control listener");
+            listener.set_nonblocking(true).expect("nonblocking accept");
+            let child = Command::new("/proc/self/exe")
+                .args([
+                    "--exact",
+                    "tests::attempt_lock_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("HEPTA_WORKSPACE_LOCK_CHILD_ROOT", &tree.root)
+                .env("HEPTA_WORKSPACE_LOCK_CHILD_MODE", mode)
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("independent Rust test process");
+            let mut owner = Self { child, gate: None };
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match listener.accept() {
+                    Ok((mut gate, _)) => {
+                        gate.set_read_timeout(Some(Duration::from_secs(5)))
+                            .expect("ready timeout");
+                        let mut ready = [0];
+                        gate.read_exact(&mut ready)
+                            .expect("child holds real operation lock");
+                        assert_eq!(ready, [1]);
+                        owner.gate = Some(gate);
+                        return owner;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) => panic!("control accept: {error}"),
+                }
+                assert!(owner.child.try_wait().expect("child status").is_none());
+                assert!(Instant::now() < deadline, "bounded child startup");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn kill_and_wait(&mut self) {
+            self.child
+                .kill()
+                .expect("terminate independent lock holder");
+            self.child.wait().expect("reap lock holder");
+            self.gate.take();
+        }
+
+        fn release_and_wait(&mut self) {
+            self.gate
+                .as_mut()
+                .expect("held gate")
+                .write_all(&[1])
+                .expect("release child");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(status) = self.child.try_wait().expect("child status") {
+                    assert!(
+                        status.success(),
+                        "real child operation must finish successfully"
+                    );
+                    self.gate.take();
+                    return;
+                }
+                assert!(Instant::now() < deadline, "bounded child completion");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    impl Drop for LockChild {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    #[test]
+    #[ignore = "child fixture invoked explicitly by independent-process locking tests"]
+    fn attempt_lock_child() {
+        let root =
+            PathBuf::from(std::env::var_os("HEPTA_WORKSPACE_LOCK_CHILD_ROOT").expect("child root"));
+        let mode = std::env::var("HEPTA_WORKSPACE_LOCK_CHILD_MODE").expect("child mode");
+        let parent = root.join("attempts");
+        let uid = fs::metadata(&parent).expect("parent metadata").uid();
+        let wait_at_gate = || {
+            let mut gate = UnixStream::connect(root.join("lock-child.sock")).expect("control");
+            gate.set_read_timeout(Some(Duration::from_secs(15)))
+                .expect("gate timeout");
+            gate.write_all(&[1]).expect("ready");
+            let mut release = [0];
+            gate.read_exact(&mut release).expect("release");
+            Ok(())
+        };
+        match mode.as_str() {
+            "materialize" => {
+                let source = WorkspaceRootV1::open(root.join("source"), uid).expect("source");
+                materialize_attempt_with_checks(
+                    &source,
+                    &parent,
+                    "child",
+                    uid,
+                    WorkspaceLimits::PRODUCTION,
+                    |phase, _| {
+                        if matches!(phase, MaterializationPhase::StagingCreated) {
+                            wait_at_gate()?;
+                        }
+                        Ok(())
+                    },
+                )
+                .expect("child materialization");
+            }
+            "recover" => {
+                recover_incomplete_attempts_with_check(&parent, uid, |_| wait_at_gate())
+                    .expect("child recovery");
+            }
+            _ => panic!("unknown child mode"),
+        }
+    }
+
+    fn published_sentinel(parent: &Path) -> PathBuf {
+        let sentinel = parent.join("attempt-published-sentinel");
+        fs::create_dir(&sentinel).expect("published sentinel");
+        fs::write(sentinel.join("proof"), b"published evidence").expect("sentinel bytes");
+        sentinel
+    }
+
+    fn rebind_attempt_parent(tree: &TempTree) -> PathBuf {
+        let displaced = tree.root.join("displaced-attempts");
+        fs::rename(&tree.attempts, &displaced).expect("rebind actual parent pathname");
+        fs::create_dir(&tree.attempts).expect("replacement parent");
+        fs::set_permissions(&tree.attempts, fs::Permissions::from_mode(0o700))
+            .expect("replacement mode");
+        displaced
+    }
+
+    #[test]
+    fn shared_materializers_block_recovery_and_process_death_releases_the_lock() {
+        for kill in [false, true] {
+            let tree = TempTree::new();
+            let sentinel = published_sentinel(&tree.attempts);
+            let mut child = LockChild::start(&tree, "materialize");
+            let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source");
+            let sibling = materialize_attempt(&source, &tree.attempts, "sibling", tree.uid)
+                .expect("another actual producer may hold a shared lock");
+            let started = Instant::now();
+            assert_eq!(
+                recover_incomplete_attempts(&tree.attempts, tree.uid),
+                Err(WorkspaceError::AttemptParentBusy)
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "recovery must not wait"
+            );
+            assert_eq!(fs::read_dir(&tree.attempts).expect("parent").count(), 3);
+            if kill {
+                child.kill_and_wait();
+            } else {
+                // Its initial parent observation predates sibling creation.
+                // Resumed validation must tolerate the changed link count.
+                child.release_and_wait();
+                assert_eq!(
+                    fs::read(tree.attempts.join("attempt-child/paper.tex"))
+                        .expect("resumed child publication"),
+                    b"draft"
+                );
+            }
+            assert_eq!(
+                recover_incomplete_attempts(&tree.attempts, tree.uid),
+                Ok(u64::from(kill))
+            );
+            assert_eq!(
+                fs::read(sentinel.join("proof")).expect("published retained"),
+                b"published evidence"
+            );
+            assert_eq!(
+                fs::read(sibling.canonical_path.join("paper.tex")).expect("sibling retained"),
+                b"draft"
+            );
+        }
+    }
+
+    #[test]
+    fn exclusive_recovery_blocks_independent_materialization_until_process_death() {
+        let tree = TempTree::new();
+        let staging = tree.attempts.join(".attempt-abandoned-1-1.creating");
+        fs::create_dir(&staging).expect("abandoned staging");
+        fs::write(staging.join("partial"), b"partial evidence").expect("staging bytes");
+        let sentinel = published_sentinel(&tree.attempts);
+        let mut child = LockChild::start(&tree, "recover");
+        let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source");
+        let started = Instant::now();
+        assert_eq!(
+            materialize_attempt(&source, &tree.attempts, "blocked", tree.uid)
+                .expect_err("exclusive recovery blocks a producer"),
+            WorkspaceError::AttemptParentBusy
+        );
+        assert_eq!(
+            recover_incomplete_attempts(&tree.attempts, tree.uid),
+            Err(WorkspaceError::AttemptParentBusy)
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "lock acquisition must not wait"
+        );
+        assert_eq!(fs::read_dir(&tree.attempts).expect("parent").count(), 2);
+        assert_eq!(
+            fs::read(staging.join("partial")).expect("busy preserves staging"),
+            b"partial evidence"
+        );
+        child.kill_and_wait();
+        assert_eq!(recover_incomplete_attempts(&tree.attempts, tree.uid), Ok(1));
+        materialize_attempt(&source, &tree.attempts, "after-recovery", tree.uid)
+            .expect("dead recovery releases its exclusive lock");
+        assert_eq!(
+            fs::read(sentinel.join("proof")).expect("published retained"),
+            b"published evidence"
+        );
+    }
+
+    #[test]
+    fn recovery_after_parent_rebind_deletes_only_from_the_retained_directory() {
+        let tree = TempTree::new();
+        let name = ".attempt-abandoned-1-1.creating";
+        fs::create_dir(tree.attempts.join(name)).expect("original staging");
+        published_sentinel(&tree.attempts);
+        let mut displaced = None;
+        let failure = recover_incomplete_attempts_with_check(&tree.attempts, tree.uid, |_| {
+            let old = rebind_attempt_parent(&tree);
+            fs::create_dir(tree.attempts.join(name)).expect("replacement staging");
+            fs::write(
+                tree.attempts.join(name).join("proof"),
+                b"replacement evidence",
+            )
+            .expect("replacement sentinel");
+            published_sentinel(&tree.attempts);
+            displaced = Some(old);
+            Ok(())
+        })
+        .expect_err("report the observed parent rebind");
+        assert_eq!(failure, WorkspaceError::AttemptParentChanged);
+        let old = displaced.expect("real namespace change");
+        assert!(
+            !old.join(name).exists(),
+            "only original anchored staging was removed"
+        );
+        assert_eq!(
+            fs::read(tree.attempts.join(name).join("proof")).expect("replacement untouched"),
+            b"replacement evidence"
+        );
+        for parent in [&old, &tree.attempts] {
+            assert_eq!(
+                fs::read(parent.join("attempt-published-sentinel/proof"))
+                    .expect("published evidence untouched"),
+                b"published evidence"
+            );
+        }
+    }
+
+    #[test]
+    fn parent_rebind_before_publication_cleans_only_the_original_staging() {
+        let tree = TempTree::new();
+        let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source");
+        let mut displaced = None;
+        let mut staged_name = None;
+        let failure = materialize_attempt_with_checks(
+            &source,
+            &tree.attempts,
+            "rebind-before",
+            tree.uid,
+            WorkspaceLimits::PRODUCTION,
+            |phase, staging| {
+                if matches!(phase, MaterializationPhase::BeforePublication) {
+                    displaced = Some(rebind_attempt_parent(&tree));
+                    let name = staging.file_name().expect("staging leaf").to_owned();
+                    fs::create_dir(tree.attempts.join(&name)).expect("replacement staging");
+                    fs::write(tree.attempts.join(&name).join("proof"), b"replacement")
+                        .expect("replacement bytes");
+                    staged_name = Some(name);
+                }
+                Ok(())
+            },
+        )
+        .expect_err("rebind must prevent publication");
+        assert_eq!(failure, WorkspaceError::AttemptParentChanged);
+        let old = displaced.expect("old parent");
+        let name = staged_name.expect("actual staging name");
+        assert!(!old.join(&name).exists(), "own anchored staging cleaned");
+        assert!(!old.join("attempt-rebind-before").exists());
+        assert!(!tree.attempts.join("attempt-rebind-before").exists());
+        assert_eq!(
+            fs::read(tree.attempts.join(name).join("proof")).expect("replacement not cleaned"),
+            b"replacement"
+        );
+    }
+
+    #[test]
+    fn parent_rebind_after_publication_is_classified_without_redirecting_final_io() {
+        let tree = TempTree::new();
+        let source = WorkspaceRootV1::open(tree.source(), tree.uid).expect("source");
+        let final_path = tree.attempts.join("attempt-rebind-after");
+        let mut displaced = None;
+        let failure = materialize_attempt_with_publication_check(
+            &source,
+            &tree.attempts,
+            "rebind-after",
+            tree.uid,
+            WorkspaceLimits::PRODUCTION,
+            |phase, _| {
+                if phase == AttemptPublicationPhaseV1::ParentDirectorySync {
+                    displaced = Some(rebind_attempt_parent(&tree));
+                    fs::create_dir(&final_path).expect("replacement final");
+                    fs::write(final_path.join("paper.tex"), b"replacement")
+                        .expect("replacement bytes");
+                }
+                Ok(())
+            },
+        )
+        .expect_err("already published rebind needs inspection");
+        assert_eq!(
+            failure,
+            WorkspaceError::PublishedAttemptRequiresInspection {
+                final_path: final_path.clone(),
+                phase: AttemptPublicationPhaseV1::PublishedRootOpen,
+                parent_sync_completed: true,
+                cause: Box::new(WorkspaceError::AttemptParentChanged),
+            }
+        );
+        assert_eq!(
+            fs::read(
+                displaced
+                    .expect("old parent")
+                    .join("attempt-rebind-after/paper.tex")
+            )
+            .expect("actual publication retained"),
+            b"draft"
+        );
+        assert_eq!(
+            fs::read(final_path.join("paper.tex")).expect("replacement not touched"),
+            b"replacement"
+        );
     }
 
     #[test]

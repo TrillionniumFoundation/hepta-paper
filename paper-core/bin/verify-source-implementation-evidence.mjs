@@ -401,7 +401,7 @@ function validateCommand(command, label, testPaths) {
     if (!allowed) fail('node_command_not_allowlisted', label);
   } else if (command.program === 'cargo') {
     const args = command.args;
-    const allowed = args.length === 8
+    const unscoped = args.length === 8
       && args[0] === 'test'
       && args[1] === '--locked'
       && args[2] === '-p'
@@ -409,9 +409,25 @@ function validateCommand(command, label, testPaths) {
       && SAFE_RUST_TEST_PATTERN.test(args[4])
       && args[5] === '--'
       && args[6] === '--exact'
-      && args[7] === '--nocapture'
-      && workdir === 'rust';
-    if (!allowed) fail('cargo_command_not_allowlisted', label);
+      && args[7] === '--nocapture';
+    const scopedTarget = command.expectedTargets.length === 1
+      ? /^rust\/crates\/([^/]+)\/tests\/([^/]+)\.rs$/u.exec(command.expectedTargets[0])
+      : null;
+    const scoped = args.length === 10
+      && args[0] === 'test'
+      && args[1] === '--locked'
+      && args[2] === '-p'
+      && SAFE_PACKAGE_PATTERN.test(args[3])
+      && args[4] === '--test'
+      && SAFE_RUST_TEST_PATTERN.test(args[5])
+      && SAFE_RUST_TEST_PATTERN.test(args[6])
+      && args[7] === '--'
+      && args[8] === '--exact'
+      && args[9] === '--nocapture'
+      && scopedTarget !== null
+      && scopedTarget[1] === args[3]
+      && scopedTarget[2] === args[5];
+    if ((!unscoped && !scoped) || workdir !== 'rust') fail('cargo_command_not_allowlisted', label);
   } else {
     fail('command_program_not_allowlisted', `${label}:${command.program}`);
   }
@@ -584,7 +600,7 @@ function safeExecutionEnvironment() {
 function assertTestExecution(command, bundle, stdout, label) {
   const text = stdout.replace(/\x1b\[[0-9;]*m/gu, '');
   if (command.program === 'cargo') {
-    const selector = command.args[4];
+    const selector = command.args[4] === '--test' ? command.args[6] : command.args[4];
     const resultRows = text.split(/\r?\n/u)
       .filter((line) => line.startsWith(`test ${selector} ... `));
     const summaries = [...text.matchAll(

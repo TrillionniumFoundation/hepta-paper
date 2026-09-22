@@ -256,7 +256,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn run_config_is_restricted_to_local_launch_or_resume() {
         let options = parse_autonomous_research_arguments(&[
             "--paper-id".into(),
@@ -285,6 +284,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn report_never_claims_campaign_or_provider_execution() {
         let options = parse_autonomous_research_arguments(&[
             "--paper-id".into(),

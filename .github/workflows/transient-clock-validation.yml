@@ -1,30 +1,32 @@
-name: transient-owner-binding-validation
+name: transient-renewal-validation
 
 on:
   push:
     branches: [codex/clock-validation-8f8be6d5]
-    paths: [.github/workflows/transient-clock-validation.yml]
+    paths: [.github/workflows/transient-clock-validation.yml, .github/validation/workflow-renewal.patch.gz]
 
 permissions:
   contents: read
 
 concurrency:
-  group: transient-owner-binding-validation
+  group: transient-renewal-validation
   cancel-in-progress: true
 
 env:
-  SOURCE_COMMIT: b4ae09fbbbf2bec9e6b0f86538bd26f097f1bd9e
-  SOURCE_TREE: d435f2345c33aa41f22094812e6d551e92587aab
+  SOURCE_COMMIT: 2fdeabf20b5d0d6cec499ccd1f3314494e424a86
+  SOURCE_TREE: 15f0c442953d19ffc62ac2ae87c1ce80bf879205
+  CANDIDATE_COMMIT: 4b558fcac5c00f5a33dabce06a36bcc0375b2074
+  CANDIDATE_TREE: 0f72e2044640f40747ab502ffee57304c480e9fc
   REVIEW_BASE: 22aecdc703a2cf295ff295c312fa9b56c7d7d428
   PYTHONDONTWRITEBYTECODE: '1'
   RUSTFLAGS: '-Dunsafe-code'
   CARGO_TERM_COLOR: never
 
 jobs:
-  concrete-owner-fix:
+  publish-exact-source:
     if: github.repository == 'TrillionniumFoundation/hepta-paper' && github.ref == 'refs/heads/codex/clock-validation-8f8be6d5'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
     permissions:
       contents: write
     outputs:
@@ -38,182 +40,150 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.1'
-      - name: Bind the unique concrete SQLite owner without weakening the verifier
+      - name: Reconstruct the exact locally tested source without changing product refs
         id: candidate
         shell: bash
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/owner-validation"
+          out="$RUNNER_TEMP/renewal-publication"
           mkdir -p "$out"
-          echo "EVIDENCE_ROOT=$out" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/owner-validation-target" >> "$GITHUB_ENV"
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          git fetch --no-tags origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/validation/workflow-renewal.patch.gz" > "$out/source.patch.gz"
+          printf '%s  %s\n' fc6198aa2ef32e824f8c1acbb0b4b0956bb55fd3da4a765b7147109e781cf804 "$out/source.patch.gz" | sha256sum -c -
+          gzip -dc "$out/source.patch.gz" > "$out/source.patch"
+          printf '%s  %s\n' 2adad9d5a2ad4ccc93d66bf58eb3b567ce23726862a5b53f0c185a5684669831 "$out/source.patch" | sha256sum -c -
+          git apply --check "$out/source.patch"
+          git apply "$out/source.patch"
           python3 - <<'PY'
-          import copy, json, os, pathlib, re, subprocess
-          files = [
-              'docs/system/evidence/repository-source-implementation-v1.json',
-              'docs/system/evidence/rust-functional-source-closure-v1.json',
+          import json, pathlib, subprocess
+          p=pathlib.Path('docs/system/evidence/rust-functional-source-closure-v1.json')
+          d=json.loads(p.read_text()); b=d['bundles']['production-composition-source']
+          b['description'] += ' Explicit local amendment and lease extension also use the same writer with live post-lock/precommit checks against the previous lease; exact replay does not reapply budget or renewal. This is not automatic lease renewal or physical in-flight cancellation.'
+          for path,name in [
+            ('rust/crates/hepta-paper-service/src/workflow/amendment.rs','amend_local_workflow_with_clock_v1'),
+            ('rust/crates/hepta-campaign-writer/src/workflow_amendment.rs','apply_local_workflow_change_with_clock'),
+          ]:
+            assert all(f['path']!=path for f in b['files'])
+            b['files'].append(dict(path=path,role='implementation',gitBlob=subprocess.check_output(['git','hash-object',path],text=True).strip(),mode='100644',language='rust',symbols=[dict(kind='function',name=name)]))
+          names=[
+            'workflow_amendment_revalidates_old_lease_and_preserves_history_on_late_failure',
+            'workflow_live_amendment_replays_without_clock_and_continues_after_old_expiry',
+            'local_cli_uses_live_time_for_explicit_renewal_and_lifecycle',
           ]
-          path = 'rust/crates/hepta-control-plane/src/commit.rs'
-          old = {'kind': 'function', 'name': 'commit_batch_with_clock'}
-          new = {'kind': 'type', 'name': 'SqliteCommitSequencerV1'}
-          text = pathlib.Path(path).read_text()
-          assert len(re.findall(r'^pub struct SqliteCommitSequencerV1\s*\{', text, re.M)) == 1
-          assert 'impl CommitSequencerV1 for SqliteCommitSequencerV1' in text
-          edits = []
-          for name in files:
-              source = pathlib.Path(name).read_text()
-              document = json.loads(source)
-              before = copy.deepcopy(document)
-              for key, bundle in document['bundles'].items():
-                  for entry in bundle['files']:
-                      if entry['path'] != path or old not in entry['symbols']:
-                          continue
-                      assert entry['role'] == 'implementation'
-                      assert entry['gitBlob'] == '7a22d88a87010f180b1e0be2a604d1daeb227b91'
-                      assert entry['symbols'] == [old]
-                      entry['symbols'] = [new]
-                      edits.append({'file': name, 'bundle': key, 'path': path, 'old': old, 'new': new})
-              if document != before:
-                  # Existing exact-file hashes, test selectors, timeouts and all
-                  # status/authority claims are unchanged. Only the ambiguous
-                  # function label is replaced by the existing concrete owner.
-                  restored = copy.deepcopy(document)
-                  for change in edits:
-                      if change['file'] == name:
-                          for entry in restored['bundles'][change['bundle']]['files']:
-                              if entry['path'] == path:
-                                  entry['symbols'] = [old]
-                  assert restored == before
-                  pathlib.Path(name).write_text(json.dumps(document, ensure_ascii=False, separators=(',', ':'))+'\n')
-          assert 1 <= len(edits) <= 2
-          assert any(e['file'] == files[0] and e['bundle'] == 'control-plane-execution-source' for e in edits)
-          (pathlib.Path(os.environ['RUNNER_TEMP'])/'owner-validation/owner-edit.json').write_text(json.dumps(edits, indent=2)+'\n')
-          print(json.dumps(edits, indent=2))
-          subprocess.run(['git', 'add', '--', *files], check=True)
-          changed = subprocess.check_output(['git','diff','--cached','--name-only'], text=True).splitlines()
-          assert set(changed) == {e['file'] for e in edits}
-          assert subprocess.check_output(['git','diff','--name-only'], text=True) == ''
+          path='rust/crates/hepta-paper-service/tests/local_workflow/clock.rs'
+          f=next(f for f in b['files'] if f['path']==path)
+          f['symbols'] += [dict(kind='test',name=n) for n in names]
+          for n in names:
+            b['verificationCommands'].append(dict(program='cargo',args=['test','--locked','-p','hepta-paper-service','--test','local_workflow','clock::'+n,'--','--exact','--nocapture'],workdir='rust',expectedExitCode=0,timeoutSeconds=600,expectedTargets=[path]))
+          for bundle in d['bundles'].values():
+            for f in bundle['files']:
+              f['gitBlob']=subprocess.check_output(['git','hash-object',f['path']],text=True).strip()
+          p.write_text(json.dumps(d,ensure_ascii=False,separators=(',',':'))+'\n')
           PY
-          git diff --cached --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(evidence): bind clock commits to the concrete SQLite sequencer owner' -m 'The sealed trait default and SQLite implementation legitimately share commit_batch_with_clock. Bind their unchanged exact source file to the unique SqliteCommitSequencerV1 owner rather than an ambiguous unqualified method. Preserve all clock test identities, selectors, byte hashes, timeouts and strict uniqueness/cfg checks. No runtime code, acceptance or authority is changed.'
-          test "$(git rev-parse HEAD^)" = "$SOURCE_COMMIT"
+          node docs/tools/generate-node-rust-gap-report.mjs
+          git diff --check
           test ! -e .github/workflows/transient-clock-validation.yml
+          test ! -e .github/validation/workflow-renewal.patch.gz
+          git add -- docs/migration/NODE_RUST_GAP_CLOSURE.md docs/migration/campaign-mode-source-map.v1.json docs/migration/node-rust-command-map.v1.json docs/modules/WORKFLOW_AMENDMENT_HANDOFF.md docs/system/evidence/rust-functional-source-closure-v1.json rust/crates/hepta-campaign-writer/src/workflow_amendment.rs rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs rust/crates/hepta-paper-service/src/workflow.rs rust/crates/hepta-paper-service/src/workflow/amendment.rs rust/crates/hepta-paper-service/tests/local_workflow/clock.rs
+          test "$(git write-tree)" = "$CANDIDATE_TREE"
+          export GIT_AUTHOR_DATE='1790087515 +0000' GIT_COMMITTER_DATE='1790087515 +0000'
+          git -c user.name=ChatGPT -c user.email=chatgpt@users.noreply.github.com commit -m 'fix(workflow): revalidate original lease through explicit renewal commit' -m 'Use the existing workflow/SQLite owner to sample a monotone live clock after acquiring locks and immediately before COMMIT. Never let a staged lease extension authorize its own overdue write; replay keeps original receipts without another renewal or budget increase. Add actual live-clock CLI modes while preserving explicit-time local drill compatibility. Bind owner and regression tests in the existing evidence and command map; do not change production authority, Node parity or activation.'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_COMMIT"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
           git rev-parse HEAD HEAD^{tree} > "$out/candidate.txt"
           git diff "$SOURCE_COMMIT" HEAD --binary > "$out/candidate.patch"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Install pinned Rust and verify canonical source bindings
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(node --version)" = v22.23.1
-          rustup toolchain install 1.98.0 --profile minimal
-          rustup default 1.98.0
           node docs/tools/generate-node-rust-gap-report.mjs --check
           node docs/tools/validate-development-docs.mjs
           node docs/tools/validate-module-documentation.mjs
           python3 -B docs/rust/tools/validate-program-truth.py
-          node --test --test-concurrency=1 paper-core/tests/source-implementation-evidence.test.mjs
-          node paper-core/tests/source-implementation-evidence-hardening.mjs --self-test
-      - name: Run the actual strict source-ownership and test-discovery gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          node_bin="$(realpath "$(command -v node)")"
-          cargo_bin="$(rustup which cargo)"
-          export PATH="$(dirname "$node_bin"):$(dirname "$cargo_bin"):/usr/bin:/bin"
-          node paper-core/tests/source-implementation-evidence-hardening.mjs \
-            --base "$REVIEW_BASE" --target "$(git rev-parse HEAD)" \
-            --receipt "$EVIDENCE_ROOT/hardening.json" \
-            2>&1 | tee "$EVIDENCE_ROOT/hardening.log"
-      - name: Execute unchanged source and functional owner tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          node_bin="$(realpath "$(command -v node)")"
-          cargo_bin="$(rustup which cargo)"
-          export PATH="$(dirname "$node_bin"):$(dirname "$cargo_bin"):/usr/bin:/bin"
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --expected-head "$(git rev-parse HEAD)" --expected-tree "$(git rev-parse HEAD^{tree})" \
-            --execute --receipt "$EVIDENCE_ROOT/source-execution.json" \
-            2>&1 | tee "$EVIDENCE_ROOT/source-execution.log"
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --evidence docs/system/evidence/rust-functional-source-closure-v1.json \
-            --expected-head "$(git rev-parse HEAD)" --expected-tree "$(git rev-parse HEAD^{tree})" \
-            --execute --receipt "$EVIDENCE_ROOT/functional-execution.json" \
-            2>&1 | tee "$EVIDENCE_ROOT/functional-execution.log"
-          git diff --exit-code
-          git diff --cached --exit-code
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-      - name: Publish only the tested temporary result ref
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Publish only the exact temporary source candidate
         shell: bash
         env:
           PUSH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          export GIT_ASKPASS="$RUNNER_TEMP/owner-result-askpass"
+          export GIT_ASKPASS="$RUNNER_TEMP/renewal-askpass"
           trap 'rm -f "$GIT_ASKPASS"' EXIT
           printf '%s\n' '#!/bin/sh' 'case "$1" in *Username*) printf "%s\n" x-access-token;; *) printf "%s\n" "$PUSH_TOKEN";; esac' > "$GIT_ASKPASS"
           chmod 700 "$GIT_ASKPASS"
           export GIT_TERMINAL_PROMPT=0
-          ref="codex/owner-binding-validated-$GITHUB_RUN_ID"
+          ref="codex/renewal-candidate-$GITHUB_RUN_ID"
           git push origin "HEAD:refs/heads/$ref"
-          printf '%s\n' "$ref" > "$EVIDENCE_ROOT/result-ref.txt"
-          printf 'Tested candidate `%s`; full PR checks and independent review remain required.\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$ref" > "$RUNNER_TEMP/renewal-publication/result-ref.txt"
+          printf 'Exact locally tested source published; this job does not grant hosted qualification, merge, production authority or retirement.\n' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: owner-binding-validation-${{ github.run_id }}
-          path: ${{ runner.temp }}/owner-validation
+          name: renewal-publication-${{ github.run_id }}
+          path: ${{ runner.temp }}/renewal-publication
           if-no-files-found: error
           retention-days: 14
 
-  actual-tex-execution:
-    needs: concrete-owner-fix
+  owner-regressions:
+    needs: publish-exact-source
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 70
     permissions:
       contents: read
-    env:
-      CANDIDATE: ${{ needs.concrete-owner-fix.outputs.candidate }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ env.CANDIDATE }}
+          ref: ${{ needs.publish-exact-source.outputs.candidate }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Install the real TeX compiler and pinned Rust
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Install pinned tools and actual source-test prerequisites
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$CANDIDATE"
-          mkdir -p "$RUNNER_TEMP/tex-execution"
-          sudo apt-get update -qq
-          sudo apt-get install --no-install-recommends -y texlive-latex-base
-          rustup toolchain install 1.98.0 --profile minimal
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"
+          test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+          mkdir -p "$RUNNER_TEMP/renewal-validation"
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/renewal-target" >> "$GITHUB_ENV"
+          npm ci --ignore-scripts --no-audit --no-fund
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
           rustup default 1.98.0
-          test -x /usr/bin/pdflatex
-          pdflatex --version > "$RUNNER_TEMP/tex-execution/tool.txt"
-          sha256sum "$(realpath /usr/bin/pdflatex)" > "$RUNNER_TEMP/tex-execution/tool.sha256"
-          git rev-parse HEAD HEAD^{tree} > "$RUNNER_TEMP/tex-execution/source.txt"
-      - name: Explicitly execute the installed-compiler test with no skip acceptance
+          test "$(node --version)" = v22.23.1
+          command -v strip
+          cargo build --manifest-path rust/Cargo.toml --locked --all-features -p hepta-paper-service --example native-authority-fixture-client
+      - name: Run every existing workflow test and both writer renewal regressions
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
-            --test scientific_runtime actual_latex_compilation_produces_pdf_not_a_json_bundle \
-            -- --exact --ignored --nocapture \
-            2>&1 | tee "$RUNNER_TEMP/tex-execution/actual-tex.log"
-          grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/tex-execution/actual-tex.log"
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-campaign-writer workflow_amendment::tests -- --nocapture 2>&1 | tee "$RUNNER_TEMP/renewal-validation/writer.log"
+          grep -Eq 'test result: ok\. 6 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/renewal-validation/writer.log"
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow -- --nocapture 2>&1 | tee "$RUNNER_TEMP/renewal-validation/workflow.log"
+          grep -Eq 'test result: ok\. 42 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/renewal-validation/workflow.log"
+          cargo clippy --manifest-path rust/Cargo.toml --locked -p hepta-paper-service -p hepta-campaign-writer --lib --bins --all-features -- -D warnings -D unsafe-code -D clippy::todo -D clippy::unimplemented -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic 2>&1 | tee "$RUNNER_TEMP/renewal-validation/clippy.log"
+      - name: Execute canonical source and functional evidence with strict ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/renewal-validation"
+          node --test --test-concurrency=1 paper-core/tests/source-implementation-evidence.test.mjs
+          node paper-core/tests/source-implementation-evidence-hardening.mjs --self-test
+          node_bin="$(realpath "$(command -v node)")"
+          cargo_bin="$(rustup which cargo)"
+          export PATH="$(dirname "$node_bin"):$(dirname "$cargo_bin"):/usr/bin:/bin"
+          node paper-core/tests/source-implementation-evidence-hardening.mjs --base "$REVIEW_BASE" --target "$CANDIDATE_COMMIT" --receipt "$out/hardening.json" 2>&1 | tee "$out/hardening.log"
+          node paper-core/bin/verify-source-implementation-evidence.mjs --expected-head "$CANDIDATE_COMMIT" --expected-tree "$CANDIDATE_TREE" --execute --receipt "$out/source-execution.json" 2>&1 | tee "$out/source-execution.log"
+          node paper-core/bin/verify-source-implementation-evidence.mjs --evidence docs/system/evidence/rust-functional-source-closure-v1.json --expected-head "$CANDIDATE_COMMIT" --expected-tree "$CANDIDATE_TREE" --execute --receipt "$out/functional-execution.json" 2>&1 | tee "$out/functional-execution.log"
           git diff --exit-code
           git diff --cached --exit-code
-          printf 'Actual TeX process/PDF source test passed on this disposable hosted runner; not target-host, scientific, submission or Node-retirement acceptance.\n' >> "$GITHUB_STEP_SUMMARY"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git rev-parse HEAD HEAD^{tree} > "$out/source.txt"
+          printf 'Targeted source tests only. Fresh complete PR checks, review and production acceptance remain separate.\n' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: actual-tex-execution-${{ github.run_id }}
-          path: ${{ runner.temp }}/tex-execution
+          name: renewal-validation-${{ github.run_id }}
+          path: ${{ runner.temp }}/renewal-validation
           if-no-files-found: error
           retention-days: 14

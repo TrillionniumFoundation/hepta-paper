@@ -4,9 +4,9 @@ This document records the repository-local source implementation for determinist
 
 ## Canonical implementation
 
-The canonical Rust implementation is `rust/crates/hepta-orchestration-kernel`, re-exported by `hepta-control-plane` as its deterministic orchestration facade. Production callers must not fall back to the legacy Node runtime for any behavior listed here.
+The selected product implementations live directly in `rust/crates/hepta-control-plane`: `source_closure.rs` owns product snapshot/candidate routing, `planner.rs` owns plan selection, `hierarchical_resource.rs` plus `durable_resource.rs` own product resource accounting, `observability.rs` owns product telemetry, and `performance_qualification.rs` owns product performance evaluation. `rust/crates/hepta-orchestration-kernel` is a standalone compatibility/experimental crate. It is not a dependency or re-export of the product control plane and is not a selected product owner.
 
-## Implemented contracts
+## Standalone compatibility contracts
 
 ### Transaction-consistent planning snapshots
 
@@ -30,7 +30,7 @@ The canonical Rust implementation is `rust/crates/hepta-orchestration-kernel`, r
 
 ## Validation and status boundary
 
-The crate and its `hepta-control-plane` facade are subject to the pinned Rust 1.98 workspace format, test, Clippy, rustdoc, supply-chain, exact-head, program-truth, and qualification workflows. Static module status may be promoted only after those exact-head checks succeed on an unchanged candidate.
+The standalone crate remains subject to the pinned Rust 1.98 workspace format, test, Clippy and rustdoc checks, but those tests do not qualify a product owner. Product source evidence and qualification bind the selected `hepta-control-plane` files and `canonical_product_owners` tests directly. Repository tests additionally reject a product Cargo dependency or public re-export of the standalone compatibility crate. Static module status may be promoted only from evidence for the selected product paths on one unchanged candidate.
 
 The implementation does not create any of the following facts:
 

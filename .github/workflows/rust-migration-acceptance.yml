@@ -243,7 +243,6 @@ jobs:
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
-      HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT: ${{ runner.temp }}/hepta-scientific-tool-evidence
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -254,6 +253,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT="$RUNNER_TEMP/hepta-scientific-tool-evidence"
+          printf 'HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT=%s\n' "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT" >> "$GITHUB_ENV"
           mkdir -m 700 -p "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT"
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
           git rev-parse HEAD HEAD^{tree} > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/source.txt"

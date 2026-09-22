@@ -125,6 +125,20 @@ jobs:
         shell: bash
         run: python3 -B docs/rust/tools/test_service_integration_shards.py
 
+      - name: Build native authority test executable
+        if: matrix.lane != 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Selected test targets do not build the standalone example binary.
+          # The real signed-authority/backup tests execute this helper; never
+          # replace it with a stub or skip those tests on a clean runner.
+          command -v strip
+          cargo build --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --example native-authority-fixture-client \
+            2>&1 | tee "$EVIDENCE_ROOT/native-authority-fixture-build.log"
+          test -x rust/target/debug/examples/native-authority-fixture-client
+
       - name: Verify service unit targets and documentation tests
         if: matrix.lane == 'service-unit'
         shell: bash

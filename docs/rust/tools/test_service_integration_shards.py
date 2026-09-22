@@ -54,6 +54,37 @@ class ServiceIntegrationShards(unittest.TestCase):
         with self.assertRaises(ValueError):
             select_targets(fixture(1), 3, 4)
 
+    def test_native_fixture_is_built_before_every_service_test_lane(self):
+        # These suites exec the normal example, not its libtest harness. This
+        # checks the actual workflow prerequisite, not a claim of Rust execution.
+        for name, target in [
+            ("rust-foundation", "Run tests"),
+            ("rust-migration-acceptance", "Verify service unit targets and documentation tests"),
+        ]:
+            source = (ROOT / f".github/workflows/{name}.yml").read_text()
+            steps = re.split(r"(?m)^      - name: ", source)[1:]
+            names = [step.splitlines()[0] for step in steps]
+            self.assertEqual(names.count("Build native authority test executable"), 1)
+            index = names.index("Build native authority test executable")
+            self.assertLess(index, names.index(target))
+            body = steps[index]
+            command = " ".join(body.replace("\\\n", " ").split())
+            self.assertIn("set -euo pipefail", command)
+            self.assertIn("command -v strip", command)
+            self.assertIn(
+                "cargo build --manifest-path rust/Cargo.toml --locked --all-features "
+                "-p hepta-paper-service --example native-authority-fixture-client",
+                command,
+            )
+            self.assertIn("test -x rust/target/debug/examples/native-authority-fixture-client", command)
+            self.assertNotIn("continue-on-error", body)
+            self.assertNotIn("|| true", body)
+            if name == "rust-migration-acceptance":
+                self.assertIn("if: matrix.lane != 'core'", body)
+                self.assertLess(index, names.index("Verify complete service integration partition"))
+            else:
+                self.assertNotIn("        if:", body)
+
     def test_observation_windows_outlive_producers_without_relaxing_acceptance(self):
         required = json.loads((ROOT / "docs/rust/qualification/source-required-checks.v1.json").read_text())
         producers = json.loads((ROOT / "docs/rust/qualification/source-check-producers.v1.json").read_text())

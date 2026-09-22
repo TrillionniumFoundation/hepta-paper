@@ -138,7 +138,13 @@ function sourceEvidenceRecordsAt(root, target) {
     const manifest = readJsonAt(root, target, manifestPath);
     for (const [recordId, record] of Object.entries(manifest.records ?? {})) {
       if (records.has(recordId)) fail('duplicate_source_evidence_record', `${recordId}:${manifestPath}`);
-      records.set(recordId, { ...record, manifestPath });
+      const evidenceFilePaths = [];
+      for (const bundleId of record.bundleIds ?? []) {
+        const bundle = manifest.bundles?.[bundleId];
+        if (!bundle) fail('source_evidence_bundle_missing', `${recordId}:${bundleId}:${manifestPath}`);
+        for (const file of bundle.files ?? []) evidenceFilePaths.push(file.path);
+      }
+      records.set(recordId, { ...record, manifestPath, evidenceFilePaths });
     }
   }
   return records;
@@ -190,6 +196,15 @@ function assertRegistryDelta(base, target, evidenceRecords) {
 
   if (!equal(expectedWork, targetWork)) fail('candidate_registry_drift', WORK_ITEMS);
 
+  const moduleEvidencePaths = new Map();
+  for (const [recordId, record] of evidenceRecords) {
+    const moduleId = targetWork?.items?.[recordId]?.moduleId;
+    if (!moduleId || !promotableModules.has(moduleId)) continue;
+    const paths = moduleEvidencePaths.get(moduleId) ?? new Set();
+    for (const filePath of record.evidenceFilePaths ?? []) paths.add(filePath);
+    moduleEvidencePaths.set(moduleId, paths);
+  }
+
   const stageModules = base.modules;
   const targetModules = target.modules;
   const expectedModules = structuredClone(stageModules);
@@ -199,10 +214,20 @@ function assertRegistryDelta(base, target, evidenceRecords) {
     if (!stageModule || !targetModule) fail('candidate_module_missing', moduleId);
     if (equal(stageModule, targetModule)) continue;
     const expectedModule = structuredClone(stageModule);
-    if (stageModule.state !== 'design_ready' || targetModule.state !== 'source_implemented') {
+    if (stageModule.state === 'design_ready' && targetModule.state === 'source_implemented') {
+      expectedModule.state = 'source_implemented';
+    } else if (stageModule.state === 'source_implemented' && targetModule.state === 'source_implemented') {
+      const boundPaths = moduleEvidencePaths.get(moduleId) ?? new Set();
+      const stagePaths = new Set(stageModule.paths ?? []);
+      for (const selectedPath of targetModule.paths ?? []) {
+        if (!stagePaths.has(selectedPath) && !boundPaths.has(selectedPath)) {
+          fail('candidate_module_implementation_path_unbound', `${moduleId}:${selectedPath}`);
+        }
+      }
+      expectedModule.paths = targetModule.paths;
+    } else {
       fail('candidate_module_transition_invalid', moduleId);
     }
-    expectedModule.state = 'source_implemented';
     if (!equal(expectedModule, targetModule)) fail('candidate_module_scope_drift', moduleId);
     expectedModules.modules[moduleId] = expectedModule;
   }

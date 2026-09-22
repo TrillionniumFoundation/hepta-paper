@@ -67,7 +67,9 @@ pub fn parse_autonomous_research_arguments(
             "--launch-mode" => launch_mode = value(args, &mut index, "launch_mode")?,
             "--paper-id" => paper_id = Some(value(args, &mut index, "paper_id")?),
             "--campaign-id" => campaign_id = Some(value(args, &mut index, "campaign_id")?),
-            "--run-config" => run_config = Some(PathBuf::from(value(args, &mut index, "run_config")?)),
+            "--run-config" => {
+                run_config = Some(PathBuf::from(value(args, &mut index, "run_config")?))
+            }
             "--require-full-ready" if !require_full_ready => {
                 require_full_ready = true;
                 index += 1;

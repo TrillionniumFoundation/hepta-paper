@@ -58,3 +58,45 @@ fn launch_mode_and_identity_are_strict() {
             .contains("autonomous_research_launch_mode_invalid")
     );
 }
+
+
+#[test]
+fn run_config_is_local_only_and_never_enables_production_mode() {
+    let rejected = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .args([
+            "autonomous-research",
+            "--action",
+            "launch",
+            "--paper-id",
+            "paper-1",
+            "--launch-mode",
+            "production-run",
+            "--run-config",
+            "/tmp/nonexistent-run.json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("autonomous_research_run_config_requires_local_launch_or_resume")
+    );
+
+    let prepare = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .args([
+            "autonomous-research",
+            "--action",
+            "prepare",
+            "--paper-id",
+            "paper-1",
+            "--run-config",
+            "/tmp/nonexistent-run.json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(prepare.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&prepare.stderr)
+            .contains("autonomous_research_run_config_requires_local_launch_or_resume")
+    );
+}

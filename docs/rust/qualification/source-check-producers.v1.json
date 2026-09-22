@@ -67,8 +67,8 @@
       "context": "exact-head-source-snapshot",
       "workflowId": 345837755,
       "workflowPath": ".github/workflows/rust-source-snapshot.yml",
-      "workflowGitBlobSha": "a0d814d58e9b73fede8045b6c34527f013a8d7f1",
-      "workflowSha256": "sha256:3562c4c902c1cf586c018beb58467d82339f90df9aef39dfa6482119bba53006"
+      "workflowGitBlobSha": "90998d34ae1f2cdde507b17137c4e8da66c68f6b",
+      "workflowSha256": "sha256:8b3821ae844b68b4f55af079a21eafa51d7282bc24595822aacdaa0137eacbf6"
     },
     {
       "context": "policy-and-sbom",

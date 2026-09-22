@@ -1,6 +1,9 @@
-//! Read-only resident supervisor health, with an inode-pinned private SQLite snapshot.
-//! This module reports liveness and reconciliation evidence; it never probes or
-//! controls a process and cannot manufacture a readiness receipt.
+//! Read-only resident supervisor health, with an inode-pinned effective-WAL
+//! private SQLite snapshot.
+//! The optional full composition consumes actual intake, resident prerequisites
+//! and passive state safety. No returned diagnostic grants dispatch authority.
+//! It never invokes a provider, recovery command or authority RPC; inherited
+//! current-code observation executes read-only Git queries.
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -216,9 +219,9 @@ fn inspect_private(path: &Path) -> Result<Value, String> {
 }
 
 /// Return Node-compatible base/startup/machine-intake readiness from an
-/// inode-pinned private snapshot. Current V1 intake checks have a separate
-/// composition below, including strict receipt diagnostics. Fully autonomous
-/// mode still requires its separate native prerequisite chain.
+/// inode-pinned effective-WAL private snapshot. Current V1 intake checks have a separate
+/// composition below, including strict receipt diagnostics. The full mode below
+/// additionally observes actual native resident prerequisites and state safety.
 pub fn inspect_supervisor_health_v1(runtime_root: &Path, now_millis: i64) -> Result<Value, String> {
     let inspected_at = iso_now(now_millis)?;
     let relative = Path::new(DATABASE_RELATIVE);
@@ -230,7 +233,7 @@ pub fn inspect_supervisor_health_v1(runtime_root: &Path, now_millis: i64) -> Res
             inspected_at,
         ));
     }
-    let instance = match crate::state_database_inventory::with_database_snapshot_path_v1(
+    let instance = match crate::state_database_inventory::with_database_effective_snapshot_path_v1(
         runtime_root,
         relative,
         "resident-instance",
@@ -321,8 +324,8 @@ fn report(instance: Option<Value>, blockers: Vec<String>, inspected_at: String) 
 }
 
 /// Compare the actual builtin V1 intake observation with the resident's recorded
-/// configuration and dataset identity. This is a read-only diagnostic; V2 intake
-/// and fully autonomous prerequisite chains require additional ports.
+/// configuration and dataset identity. This is a read-only diagnostic; intake
+/// V2 and other explicitly unsupported native profiles remain blocked.
 pub fn inspect_supervisor_health_current_intake_v1(
     runtime_root: &Path,
     environment: &std::collections::BTreeMap<String, String>,
@@ -362,28 +365,165 @@ fn inspect_supervisor_health_intake_v1(
     now_millis: i64,
     strict_mode: bool,
 ) -> Result<Value, String> {
-    let mut status = inspect_supervisor_health_v1(runtime_root, now_millis)?;
+    let (status, intake) =
+        observe_status_and_intake(runtime_root, environment, working_directory, now_millis)?;
+    let strict =
+        inspect_optional_strict(runtime_root, environment, &intake, now_millis, strict_mode);
+    Ok(project_completed_observations(
+        status, &intake, None, None, strict,
+    ))
+}
+
+/// Actual inputs for the full original health composition. This type accepts no
+/// caller-generated report, key, authority or readiness override. Repository
+/// selection is explicit for embedders; the incumbent CLI fixes its source tree.
+pub struct FullSupervisorHealthOptionsV1<'a> {
+    pub runtime_root: &'a Path,
+    pub repository_root: &'a Path,
+    pub working_directory: &'a Path,
+    pub environment: &'a std::collections::BTreeMap<String, String>,
+    pub external_qualification_config: Option<&'a Path>,
+    pub now_millis: i64,
+    pub strict_mode: bool,
+}
+
+/// Compose one actual observation per stage in original order. Each function
+/// completes and drops all source/private-SQLite owners before the next starts.
+/// Call before acquiring caller-owned business SQLite or database descriptors;
+/// configured resource aliases can otherwise close process-scoped SQLite locks.
+/// The result is a completed diagnostic, not a live/atomic readiness grant.
+pub fn inspect_supervisor_health_fully_autonomous_v1(
+    options: &FullSupervisorHealthOptionsV1<'_>,
+) -> Result<Value, String> {
+    use crate::{
+        native_workspace::resolve_native_workspace_root_v1,
+        resident_prerequisites::{
+            ResidentPrerequisiteInspectionOptions,
+            inspect_autonomous_research_resident_prerequisites_v1,
+        },
+        state_recoverability::safety_inspection::{
+            StateSafetyInspectionOptionsV1, inspect_autonomous_research_state_safety_v1,
+        },
+    };
+    let runtime_root =
+        resolve_native_workspace_root_v1(options.working_directory, options.runtime_root, None)?;
+    let repository_root =
+        resolve_native_workspace_root_v1(options.working_directory, options.repository_root, None)?;
+    let (status, intake) = observe_status_and_intake(
+        &runtime_root,
+        options.environment,
+        options.working_directory,
+        options.now_millis,
+    )?;
+    let prerequisites = inspect_autonomous_research_resident_prerequisites_v1(
+        &ResidentPrerequisiteInspectionOptions {
+            runtime_root: &runtime_root,
+            repository_root: &repository_root,
+            working_directory: options.working_directory,
+            environment: options.environment,
+            external_qualification_config: options.external_qualification_config,
+            external_action_recovery_config: None,
+            now_millis: options.now_millis,
+        },
+    )
+    .map_err(|error| error.code().to_owned())?;
+    let safety = inspect_autonomous_research_state_safety_v1(&StateSafetyInspectionOptionsV1 {
+        workspace_root: repository_root,
+        runtime_root: runtime_root.clone(),
+        working_directory: options.working_directory.to_owned(),
+        now: options.now_millis,
+        environment: options.environment.clone(),
+    })
+    .unwrap_or_else(|_| unavailable_state_safety());
+    let strict = inspect_optional_strict(
+        &runtime_root,
+        options.environment,
+        &intake,
+        options.now_millis,
+        options.strict_mode,
+    );
+    Ok(project_completed_observations(
+        status,
+        &intake,
+        Some(prerequisites),
+        Some(safety),
+        strict,
+    ))
+}
+
+fn observe_status_and_intake(
+    runtime_root: &Path,
+    environment: &std::collections::BTreeMap<String, String>,
+    working_directory: &Path,
+    now_millis: i64,
+) -> Result<(Value, Value), String> {
+    let status = inspect_supervisor_health_v1(runtime_root, now_millis)?;
     let intake = crate::machine_intake::inspect_machine_intake_status_v1(
         runtime_root,
         environment,
         working_directory,
         now_millis,
     );
+    Ok((status, intake))
+}
+
+fn inspect_optional_strict(
+    runtime_root: &Path,
+    environment: &std::collections::BTreeMap<String, String>,
+    intake: &Value,
+    now_millis: i64,
+    strict_mode: bool,
+) -> Option<Value> {
+    // Previous source/snapshot stages have completed; strict receipt observation
+    // uses the same actual intake value, never a second intake capture.
+    strict_mode.then(|| crate::strict_machine_intake_reconciliation::inspect_strict_machine_intake_reconciliation_v1(
+        runtime_root,
+        environment.get("HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH").map(String::as_str),
+        environment.get("HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_IDEMPOTENCY_KEY").map(String::as_str),
+        intake,
+        now_millis,
+    ))
+}
+
+fn unavailable_state_safety() -> Value {
+    // Exact original CLI catch projection; source producer errors do not become
+    // empty success or invented online/authority status.
+    json!({"version":1,"kind":"AutonomousResearchStateSafetyInspectionUnavailable",
+        "status":"autonomous_research_state_safety_blocked","ready":false,
+        "blockers":["autonomous_research_state_safety_inspection_failed"]})
+}
+
+fn project_completed_observations(
+    mut status: Value,
+    intake: &Value,
+    prerequisites: Option<Value>,
+    safety: Option<Value>,
+    strict: Option<Value>,
+) -> Value {
     let current_dataset = intake["topicProducerDatasetSnapshotHash"].clone();
     let reconciled_dataset = status["instance"]["machineIntakeDatasetSnapshotHash"].clone();
     let current = intake["coldStartAutonomyReady"] == true
         && status["ready"] == true
         && intake["configurationHash"] == status["instance"]["machineIntakeConfigurationHash"]
         && current_dataset == reconciled_dataset;
-    // Both database snapshot consumers have closed their original descriptors
-    // before this separate receipt-file observation begins.
-    let strict = strict_mode.then(|| crate::strict_machine_intake_reconciliation::inspect_strict_machine_intake_reconciliation_v1(
-        runtime_root,
-        environment.get("HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH").map(String::as_str),
-        environment.get("HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_IDEMPOTENCY_KEY").map(String::as_str),
-        &intake,
-        now_millis,
-    ));
+    let prerequisite_current = prerequisites.as_ref().is_some_and(|prerequisites| {
+        prerequisites["ready"] == true
+            && prerequisites["autonomousResearchResidentPrerequisiteIdentityHash"]
+                == status["instance"]["fullyAutonomousPrerequisiteIdentityHash"]
+    });
+    let safety_ready = safety
+        .as_ref()
+        .is_some_and(|safety| safety["ready"] == true);
+    let safety_blockers = safety
+        .as_ref()
+        .and_then(|safety| safety.get("blockers"))
+        .filter(|blockers| !blockers.is_null())
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let fully_ready = current
+        && status["fullyAutonomousPrerequisitesReady"] == true
+        && prerequisite_current
+        && safety_ready;
     let strict_ready = strict
         .as_ref()
         .is_some_and(|status| status["ready"] == true);
@@ -392,14 +532,14 @@ fn inspect_supervisor_health_intake_v1(
         "currentMachineIntakeConfigurationHash":intake["configurationHash"],
         "currentTopicProducerDatasetSnapshotHash":current_dataset,
         "reconciledTopicProducerDatasetSnapshotHash":reconciled_dataset,
-        "residentPrerequisites":null,"residentPrerequisiteIdentityCurrent":false,
-        "autonomousStateSafety":null,"autonomousStateSafetyReady":false,
-        "autonomousStateSafetyBlockers":[],"fullyAutonomousReady":false,
+        "residentPrerequisites":prerequisites,"residentPrerequisiteIdentityCurrent":prerequisite_current,
+        "autonomousStateSafety":safety,"autonomousStateSafetyReady":safety_ready,
+        "autonomousStateSafetyBlockers":safety_blockers,"fullyAutonomousReady":fully_ready,
         "strictMachineIntakeReconciliation":strict,"strictMachineIntakeReconciliationReady":strict_ready,
         "currentMachineIntakeBlockers":intake["blockers"]
     });
     if let (Some(report), Some(fields)) = (status.as_object_mut(), fields.as_object()) {
         report.extend(fields.clone());
     }
-    Ok(status)
+    status
 }

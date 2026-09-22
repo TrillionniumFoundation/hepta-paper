@@ -276,17 +276,6 @@ fn resolve(runtime_root: &Path, manifest: &Value, handoff: bool) -> Result<Resol
         databases: observations,
     })
 }
-/// Inspect one registered path through the same descriptor-pinned private
-/// snapshot used by the inventory. Callers receive no live database handle.
-pub(crate) fn with_database_snapshot_path_v1<R>(
-    runtime_root: &Path,
-    relative: &Path,
-    role: &str,
-    inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
-) -> Result<R> {
-    with_selected_database_snapshot_path_v1(runtime_root, relative, role, false, None, inspect)
-}
-
 /// Inspect effective SQLite state, including an observed committed WAL, through
 /// owned private copies. Original database/sidecar descriptors never enter SQLite.
 pub(crate) fn with_database_effective_snapshot_path_v1<R>(

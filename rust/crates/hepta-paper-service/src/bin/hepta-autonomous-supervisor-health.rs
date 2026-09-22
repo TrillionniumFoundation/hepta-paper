@@ -2,7 +2,8 @@ use hepta_paper_service::{
     machine_intake::MACHINE_INTAKE_ENVIRONMENT_KEYS_V1,
     native_workspace::resolve_native_workspace_root_v1,
     supervisor_health::{
-        inspect_supervisor_health_current_intake_v1, inspect_supervisor_health_strict_intake_v1,
+        FullSupervisorHealthOptionsV1, inspect_supervisor_health_current_intake_v1,
+        inspect_supervisor_health_fully_autonomous_v1, inspect_supervisor_health_strict_intake_v1,
         inspect_supervisor_health_v1,
     },
 };
@@ -64,6 +65,43 @@ fn parse_options(args: &[String]) -> Result<std::collections::BTreeMap<&str, &st
     Ok(options)
 }
 
+fn full_environment() -> Result<std::collections::BTreeMap<String, String>, String> {
+    // The actual V3 command allowlists choose keys dynamically; a fixed intake
+    // list would change command identities. Capture actual UTF-8 inputs without
+    // logging values or mutating global environment. Bounds apply only to this
+    // new full-mode profile; existing modes retain their existing key selection.
+    const MAXIMUM_ENTRIES: usize = 4096;
+    const MAXIMUM_BYTES: usize = 1024 * 1024;
+    let mut result = std::collections::BTreeMap::new();
+    let mut total_bytes = 0usize;
+    for (key, value) in std::env::vars_os() {
+        let key = key.into_string().map_err(|_| {
+            "autonomous_research_supervisor_health_environment_encoding_invalid".to_owned()
+        })?;
+        let value = value.into_string().map_err(|_| {
+            "autonomous_research_supervisor_health_environment_encoding_invalid".to_owned()
+        })?;
+        total_bytes = total_bytes
+            .checked_add(key.len())
+            .and_then(|bytes| bytes.checked_add(value.len()))
+            .and_then(|bytes| bytes.checked_add(2))
+            .ok_or_else(|| {
+                "autonomous_research_supervisor_health_environment_bound_exceeded".to_owned()
+            })?;
+        if total_bytes > MAXIMUM_BYTES || result.len() >= MAXIMUM_ENTRIES {
+            return Err(
+                "autonomous_research_supervisor_health_environment_bound_exceeded".to_owned(),
+            );
+        }
+        if result.insert(key, value).is_some() {
+            return Err(
+                "autonomous_research_supervisor_health_environment_duplicate_key".to_owned(),
+            );
+        }
+    }
+    Ok(result)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let options = match parse_options(&args) {
@@ -79,11 +117,7 @@ fn main() {
     let machine = options.contains_key("require-machine-intake-reconciliation");
     let current_intake = options.contains_key("require-current-machine-intake");
     let strict_intake = options.contains_key("require-strict-machine-intake-reconciliation");
-    // Remaining chains still require their actual native evidence producers.
-    let unsupported_flag = args.iter().find_map(|arg| match arg.as_str() {
-        "--require-fully-autonomous" => Some(arg.as_str()),
-        _ => None,
-    });
+    let fully_autonomous = options.contains_key("require-fully-autonomous");
     if help {
         println!(
             "{{
@@ -95,10 +129,6 @@ fn main() {
             USAGE
         );
         return;
-    }
-    if let Some(flag) = unsupported_flag {
-        eprintln!("unsupported_supervisor_health_mode:{flag}");
-        std::process::exit(1);
     }
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
@@ -132,7 +162,38 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let inspected = if current_intake || strict_intake {
+    let inspected = if fully_autonomous {
+        let environment = match full_environment() {
+            Ok(environment) => environment,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        };
+        // Original Node derives HEPTA_WORKSPACE_ROOT from its installed modules.
+        // This binary's established default is its compile-time source tree;
+        // the lexical resolver is not an installed-source identity verifier.
+        // No unsupported repository flag/environment override is introduced.
+        let compiled_repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let repository = match resolve_native_workspace_root_v1(&cwd, &compiled_repository, None) {
+            Ok(repository) => repository,
+            Err(error) => {
+                eprintln!("health_repository_root_invalid:{error}");
+                std::process::exit(1);
+            }
+        };
+        inspect_supervisor_health_fully_autonomous_v1(&FullSupervisorHealthOptionsV1 {
+            runtime_root: &root,
+            repository_root: &repository,
+            working_directory: &cwd,
+            environment: &environment,
+            external_qualification_config: options
+                .get("external-qualification-config")
+                .map(|value| Path::new(*value)),
+            now_millis: now,
+            strict_mode: strict_intake,
+        })
+    } else if current_intake || strict_intake {
         let mut environment = std::collections::BTreeMap::new();
         for key in MACHINE_INTAKE_ENVIRONMENT_KEYS_V1.into_iter().chain(
             [
@@ -178,7 +239,9 @@ fn main() {
         }
     };
     println!("{output}");
-    let passing = if strict_intake {
+    let passing = if fully_autonomous {
+        report["fullyAutonomousReady"] == true
+    } else if strict_intake {
         report["strictMachineIntakeReconciliationReady"] == true
     } else if current_intake {
         report["currentMachineIntakeReady"] == true

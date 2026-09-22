@@ -164,14 +164,6 @@ fn empty_and_stopped_states_match_node() {
         fs::remove_dir_all(root).unwrap();
     }
 }
-#[test]
-fn remaining_unsupported_advanced_modes_are_explicitly_rejected() {
-    let binary = env!("CARGO_BIN_EXE_hepta-autonomous-supervisor-health");
-    let flag = "--require-fully-autonomous";
-    let output = Command::new(binary).arg(flag).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported_supervisor_health_mode"));
-}
 
 #[test]
 fn strict_cli_parse_errors_match_node_error_class() {

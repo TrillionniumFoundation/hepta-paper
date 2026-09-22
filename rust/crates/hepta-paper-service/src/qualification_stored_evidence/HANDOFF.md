@@ -171,7 +171,4 @@ evidence, not signed acceptance. Exact Node/native success/error comparisons,
 committed WAL visibility and source-preservation results belong to the root's
 executed test report after this module freezes. Unexecuted tests are not results.
 
-Remaining work is actual resident composition and independent full receipt
-signature/role/freshness checks, runtime/code/state binding, the separate recovery
-trust contract, and fully-autonomous health integration. These readers do not
-close those gaps or establish production Node replacement by themselves.
+Actual resident composition now adds its original narrow active-signature/time/code/state/configuration/cost checks and full health consumes that composition. The broader independent qualification envelope, separate recovery trust and production acceptance remain unfinished; these stored readers alone establish none of them.

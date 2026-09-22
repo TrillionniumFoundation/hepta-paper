@@ -174,8 +174,4 @@ Private keys are never written to disk and configured commands are never run.
 Execution results are recorded by the root task after source freeze; this
 handoff does not treat an unexecuted test as passed.
 
-Remaining work includes actual resident-prerequisite consumption, the separately
-versioned recovery trust decision, qualification pointer/per-paper state readers,
-independent process protocol/receipt verification where applicable, installation
-qualification and full autonomous health composition. This completed reader
-alone does not close those gaps or establish Node replacement for those paths.
+Actual resident prerequisites and full health now consume this reader, alongside native pointer/per-paper state readers. Remaining work includes the separately versioned recovery trust decision, independent process protocol/receipt verification where applicable and installation qualification. Source reading alone does not establish independent acceptance or production Node retirement.

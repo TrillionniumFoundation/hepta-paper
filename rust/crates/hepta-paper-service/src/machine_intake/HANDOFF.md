@@ -50,7 +50,7 @@ golden authority scopes, configuration V2, admission V2 and externally supplied
 empirical plugin registries. V2 production requires actual topic profile,
 implementation, dataset and liveness observations plus external genesis/rotation
 authority; these must not be replaced by supplied JSON `ready` fields. Strict
-reconciliation now has a separate [native diagnostic reader](../strict_machine_intake_reconciliation/HANDOFF.md); fully autonomous health remains unsupported.
+reconciliation now has a separate [native diagnostic reader](../strict_machine_intake_reconciliation/HANDOFF.md); [full health](../SUPERVISOR_FULL_HEALTH_HANDOFF.md) now consumes actual intake and the resident/state-safety chain; unsupported V2/plugin/local-golden profiles still block.
 
 ## Files, SQLite and resources
 

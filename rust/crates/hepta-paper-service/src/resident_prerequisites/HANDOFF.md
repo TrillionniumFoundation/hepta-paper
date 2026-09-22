@@ -35,8 +35,8 @@ verify campaign release authority, manuscript/prior-art scope, or the provider
 execution represented by a signed receipt. Source/cryptographic checks and signed
 claims must not be described as independent execution acceptance.
 
-No CLI is enabled. In particular, this implementation does not enable the native health
-`--require-fully-autonomous` mode. The actual V3/recovery-purpose trust and public
+The [full native health composition](../SUPERVISOR_FULL_HEALTH_HANDOFF.md) now
+consumes this actual producer for `--require-fully-autonomous`. The actual V3/recovery-purpose trust and public
 KeyObject/PEM incompatibility remains, so a real configured recovery inspection
 still contributes its actual blocker. No role, version, algorithm, status or key
 representation is relabeled to manufacture recovery readiness.

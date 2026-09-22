@@ -24,7 +24,7 @@ use hepta_paper_service::{
         parse_autonomous_intake_authority_rotation_arguments,
     },
     autonomous_research::{
-        autonomous_research_help_json_v1, execute_autonomous_research_v1,
+        autonomous_research_help_json_v1, execute_autonomous_research_with_cancellation_v1,
         inspect_autonomous_research_v1, parse_autonomous_research_arguments,
     },
     autonomous_research_one_shot_campaign_attempt::{
@@ -1533,7 +1533,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let report = if options.action == "prepare" || options.action == "status" {
                 inspect_autonomous_research_v1(&options)
             } else {
-                execute_autonomous_research_v1(&options)
+                // Install only in this command process, before any worker or
+                // owner is opened. The atomic handlers survive until process exit;
+                // libraries never install handlers or change signal masks.
+                let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+                    signal_hook::flag::register(signal, std::sync::Arc::clone(&cancelled))?;
+                }
+                execute_autonomous_research_with_cancellation_v1(&options, cancelled)
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
             if report["ready"] != serde_json::Value::Bool(true) {

@@ -71,6 +71,7 @@ Current implementation and contract roots:
 - `docs/modules/schemas/planning-state-snapshot-v1.schema.json`
 - `docs/modules/schemas/planning-state-snapshot-currentness-receipt-v1.schema.json`
 - `docs/control-plane/COMPOSITION_ROOT.md`
+- `rust/crates/hepta-control-plane/src/source_closure.rs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -155,15 +156,15 @@ change activation, transfer ownership or widen authority.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
-### Additive Rust orchestration contract
+### Standalone Rust orchestration compatibility contract
 
-[`build_planning_snapshot_v1`](../../../rust/crates/hepta-orchestration-kernel/src/snapshot.rs) is also available through
-`hepta_control_plane::orchestration_kernel`. This Rust function checks caller-supplied revision, barrier, component time and digest consistency. It neither opens a read transaction nor verifies payload bytes or producer identity. Its 256-component and 64 GiB declared-payload limits and distinct snapshot hash are separate from the registered Node snapshot schema. A real read owner and explicit compatibility adapter remain required.
+[`build_planning_snapshot_v1`](../../../rust/crates/hepta-orchestration-kernel/src/snapshot.rs) remains available only from the standalone
+`hepta-orchestration-kernel` crate. It is not re-exported by the product control plane and is not a selected product owner. This function checks caller-supplied revision, barrier, component time and digest consistency. It neither opens a read transaction nor verifies payload bytes or producer identity. Its 256-component and 64 GiB declared-payload limits and distinct snapshot hash are separate from the registered Node snapshot schema. A real read owner and explicit compatibility adapter remain required.
 
 See the [Rust orchestration development handoff](../../../rust/crates/hepta-orchestration-kernel/HANDOFF.md)
 for exact fields/units, bounds, hash domains, failure/recovery behavior and
-implementation selection. The current re-export does not wire this API into
-an existing command. Focused source validation from `rust` is
+implementation selection. This standalone compatibility API is not wired into
+an existing product command. Focused source validation from `rust` is
 `cargo test -p hepta-orchestration-kernel --locked`; those fixtures do not establish
 Node parity, production activation or independent qualification.
 

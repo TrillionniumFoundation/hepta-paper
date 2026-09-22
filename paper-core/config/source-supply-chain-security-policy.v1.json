@@ -56,6 +56,36 @@
       "ruleId": "pem-private-key",
       "lineSha256": "sha256:f376a3ada4bf83721240fe35833b2fd809ddcef73209c15d87316dbfefba06de",
       "reason": "Synthetic unreadable private-key marker fixture used to verify fail-closed loading."
+    },
+    {
+      "path": "rust/crates/hepta-paper-service/src/external_qualification_configuration/trust.rs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:509d38a6d5e298984f1287a20d6fcf6058142a6e9e0144ac2a29eb937b543b78",
+      "reason": "Exact Rust rejection-parser marker or invalid synthetic fixture; reviewed line contains no private-key material. Any byte or path change invalidates this exception."
+    },
+    {
+      "path": "rust/crates/hepta-paper-service/src/external_qualification_configuration/trust.rs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:3f22b8f11f4212bd0886ea9d5c1abaf1595703ae553f40a1c11406497e6436f5",
+      "reason": "Exact Rust rejection-parser marker or invalid synthetic fixture; reviewed line contains no private-key material. Any byte or path change invalidates this exception."
+    },
+    {
+      "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority.rs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:696c6e674ba73f88b19d284f99e4136210b85ea098fbeefb96c614051e51c8d0",
+      "reason": "Exact Rust rejection-parser marker or invalid synthetic fixture; reviewed line contains no private-key material. Any byte or path change invalidates this exception."
+    },
+    {
+      "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority.rs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:cb0359e00507ab7a9e27dca1e2ff3faa17c077df042263c4ec7aa62814ada0dd",
+      "reason": "Exact Rust rejection-parser marker or invalid synthetic fixture; reviewed line contains no private-key material. Any byte or path change invalidates this exception."
+    },
+    {
+      "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:cd8414f73987b99d22e22420833206480d10175f74531d9363ff86f07b166092",
+      "reason": "Exact Rust rejection-parser marker or invalid synthetic fixture; reviewed line contains no private-key material. Any byte or path change invalidates this exception."
     }
   ]
 }

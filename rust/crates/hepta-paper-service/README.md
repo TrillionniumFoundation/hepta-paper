@@ -46,6 +46,26 @@ production/online activation and admission gaps.
 
 | Command | Contract |
 |---|---|
+| `advanced-numerical-plugin REQUEST` | Execute the bounded native linear-algebra, monte-carlo or optimization reference candidate. This is not the signed ten-family plugin runner or independent oracle acceptance. |
+| `autonomous-empirical-plugin-release [OPTIONS]` | Parse template/plan/publish/inspect and inspect bounded public inputs. Publication remains fail-closed; no signer, immutable installation or activation is invoked. |
+| `autonomous-intake-authority-rotation [OPTIONS]` | Inspect the native authority-rotation preflight. Applying rotation remains fail-closed before generation CAS, journal publication or external effects. |
+| `autonomous-research [OPTIONS]` | With explicit `--workflow-file`, local prepare/launch/status/converge/pause/resume/cancel use the existing immutable workflow, SQLite/CAS and dispatch owner; lifecycle mutations bind `--expected-revision`. Without a workflow file it remains diagnostic-only. This is not automatic research planning, live-model authority or full Node parity. See the local workflow handoff. |
+| `autonomous-research-one-shot-campaign-attempt [OPTIONS]` | Inspect bounded plan/preflight/execute/status inputs and report blocked execution; no provider, journal or native writer is opened. |
+| `autonomous-state-partial-root-maintenance [OPTIONS]` | Inspect the bounded partial-root maintenance plan. Execute remains blocked; it does not copy, repair, restore or publish runtime state. |
+| `autonomous-state-provision [OPTIONS]` | Inspect source-bound state-provisioning inputs. Execute remains blocked before constructors, schema handoff and atomic runtime publication. |
+| `autonomous-submission-dispatcher [OPTIONS]` | Inspect the dispatcher input boundary without granting delivery, provider credentials or remote reconciliation authority. |
+| `autonomous-submission-dispatcher-challenge [OPTIONS]` | Inspect the challenge contract; a diagnostic does not execute the incumbent dispatcher or accept a remote outcome. |
+| `autonomous-supervisor [OPTIONS]` | The supported health action observes the native health surface. Other supervisor actions remain unported; health does not launch, stop or authorize a production runtime. |
+| `external-authority-intake [OPTIONS]` | Inspect external-intake inputs and readiness boundaries. The owning external-authority adapter remains unported; no receipt is manufactured into acceptance. |
+| `full-production-readiness [OPTIONS]` | Inspect the bounded native readiness surface and its explicit blockers. It does not activate production or replace missing installed observations. |
+| `release-attest REQUEST` | Inspect release-state and local archive preconditions. Release evidence remains not ready; no signing, release promotion or immutable publication is performed. |
+| `retirement-drill-attest REQUEST` | Inspect retirement-drill prerequisites. This does not run destructive target-host drills, issue independent acceptance or retire Node. |
+| `retirement-matrix [OPTIONS]` | Inspect the bounded retirement matrix and retained source inputs. A local projection does not authorize deletion or writer transfer. |
+| `strict-full-auto-acceptance [OPTIONS]` | Inspect the strict acceptance preflight and retain explicit nonacceptance when owning runtime, provider or external evidence is missing. |
+| `submission-handoff-export [OPTIONS]` | Inspect the submission-handoff export boundary. Complete authenticated export and downstream delivery acceptance remain separate; this route cannot authorize submission. |
+| `verify-architecture [OPTIONS]` | Run native architecture inspection and apply the requested strict result gate. This is repository structure analysis, not execution or business parity. |
+| `verify-critical [OPTIONS]` | Inspect critical-module coverage inputs and gate the projection. It does not execute the incumbent coverage harness or create missing test measurements. |
+| `verify-full [OPTIONS]` | Inspect full-suite verification prerequisites and report blocked execution. It does not run the complete Node or Rust test matrix. |
 | `native-identity` | Print the linked native-worker source identity. |
 | `put STATE FILE` | Insert up to 16 MiB of actual bytes and return their SHA-256. |
 | `run CONFIG` | Decode one closed `ServiceRunV1` JSON document and emit its run receipt. |
@@ -400,3 +420,25 @@ which returns a bounded standalone SQLite artifact built in new memory from the
 same verified snapshot. All original rowids/receipt TEXT and heads are retained;
 native format/key identity are added. There is no destination path or source
 write, and the artifact does not provide durable publication or service cutover.
+
+### Autonomous CLI interruption
+
+The autonomous command now propagates its SIGINT/SIGTERM flag through the same
+workflow, executor and bounded process-group owner. Cancellation observed before
+spawn or a commit boundary denies further work; an active process group is
+terminated and reaped by the existing runtime. Earlier commits and prepared CAS
+bytes are retained. Unprepared started work remains pending across restart, even
+when a later explicit Cancel closes future admission. See the
+[local workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#autonomous-cli-process-interruption)
+for signal/commit races, the distinction from native-kernel preemption or remote
+settlement, and actual binary regressions. This does not activate production.
+
+### Development hash-check cost
+
+The workspace optimizes only the pinned `sha2:0.10.8` dependency in the `dev`
+profile, inherited by `cargo test`. Debug assertions and overflow checks remain
+explicitly enabled. Workspace application code, release settings, executable
+and CAS byte coverage, identity checks, deadlines and test selection are not
+relaxed. This avoids spending most process-workflow feedback time in unoptimized
+hash compression of large debug executables. It is a development-build setting,
+not a production throughput or target-host qualification result.

@@ -475,6 +475,39 @@ fn native_database_inspection_pins_bytes_and_replays_the_historical_input() {
     config.frontier.candidates[0].payload_hash = objects
         .put(&serde_json::to_vec(&good_payload).unwrap())
         .unwrap();
+    // The failed inspection recorded a durable start without a prepared result.
+    // A corrected payload changes the request identity; it cannot reconcile that
+    // earlier attempt or bypass the root-wide restart fence.
+    let attempts = temp.0.join("attempts");
+    let retained: BTreeMap<_, _> = fs::read_dir(&attempts)
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            (entry.file_name(), fs::read(entry.path()).unwrap())
+        })
+        .collect();
+    assert_eq!(retained.len(), 1, "only the unresolved start is durable");
+    assert!(matches!(
+        run_service_v1(config),
+        Err(ServiceError::ControlRequiresInspection { .. })
+    ));
+    let after: BTreeMap<_, _> = fs::read_dir(&attempts)
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            (entry.file_name(), fs::read(entry.path()).unwrap())
+        })
+        .collect();
+    assert_eq!(retained, after, "rejection must preserve recovery evidence");
+
+    // The positive inspection/replay is an independent scenario, not a recovery
+    // ceremony. Keep the failed root and its intent intact throughout the test.
+    let clean = Temp::new();
+    let mut config = configuration(&clean);
+    let objects = ObjectStoreV1::open(&clean.0).unwrap();
+    config.frontier.candidates[0].payload_hash = objects
+        .put(&serde_json::to_vec(&good_payload).unwrap())
+        .unwrap();
     let first =
         run_service_v1(config.clone()).expect("exact pinned production Node DB inspected in Rust");
     fs::remove_file(path).unwrap();

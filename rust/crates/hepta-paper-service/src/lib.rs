@@ -106,7 +106,16 @@ pub use hepta_cutover::{
 };
 use hepta_module_platform::ModuleRegistryArtifactV1;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, os::unix::fs::MetadataExt, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    os::unix::fs::MetadataExt,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use thiserror::Error;
 
 pub use control_error::service_control_inspection_report_v1;
@@ -204,6 +213,38 @@ pub enum ServiceError {
 /// Committed plans can be replayed using their identical snapshot and prepared
 /// objects, while new plans must bind the recovered campaign state/revision.
 pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    let now = config.observed_at_unix_ms;
+    run_service_with_clock_v1(config, &mut || Ok(now))
+}
+
+/// Execute through the same local owner with a live host clock. The clock is
+/// trusted composition, not caller-serialized evidence or an authority grant.
+/// It is sampled again inside the actual SQLite result transaction.
+pub fn run_service_with_clock_v1(
+    config: ServiceRunV1,
+    clock: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
+) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    run_service_with_clock_and_cancellation_v1(config, clock, Arc::new(AtomicBool::new(false)))
+}
+
+/// Interruption shares the existing executor and commit owner. It never refunds
+/// an ambiguous dispatch or substitutes a signal for a remote outcome receipt.
+pub(crate) fn run_service_with_clock_and_cancellation_v1(
+    config: ServiceRunV1,
+    observe: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    let mut checked_clock = || {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
+        }
+        let now = observe()?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
+        }
+        Ok(now)
+    };
+    let clock = &mut checked_clock;
     if config.version != 1
         || config.production_activation
         || config.hard_policy.external_actions_authorized
@@ -266,8 +307,12 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
         CampaignWriterStoreV1::create_local(&db_path, policy)
     }
     .map_err(|_| ServiceError::Persistence)?;
+    let observed_at = clock().map_err(|_| ServiceError::Persistence)?;
+    if observed_at < config.observed_at_unix_ms {
+        return Err(ServiceError::Persistence);
+    }
     let writer = store
-        .acquire_writer(config.writer_lease, config.observed_at_unix_ms)
+        .acquire_writer(config.writer_lease, observed_at)
         .map_err(|_| ServiceError::Persistence)?;
     match store.load_campaign(&config.snapshot.campaign_id) {
         Ok(_) => (),
@@ -279,7 +324,7 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
                     config.snapshot.budget_microusd,
                     config.snapshot.resource_limit.cpu_millis,
                     config.snapshot.resource_limit.gpu_millis,
-                    config.observed_at_unix_ms,
+                    observed_at,
                 )
                 .map_err(|_| ServiceError::Persistence)?;
         }
@@ -293,7 +338,7 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
         config.snapshot.campaign_id.clone(),
         config.initial_state_hash,
         config.verifier_hash.clone(),
-        config.observed_at_unix_ms,
+        observed_at,
     )
     .map_err(|_| ServiceError::Persistence)?;
     // Persistent sequencer independently validates plan replay and current state.
@@ -311,7 +356,8 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
         objects.maximum_object_bytes(),
     )
     .map_err(|_| ServiceError::Artifact)?;
-    let executor = ServiceExecutorV1::new(objects, config.workers)?;
+    let executor =
+        ServiceExecutorV1::new(objects, config.workers)?.with_cancellation(Arc::clone(&cancelled));
     let mut control = ControlPlaneV1::new(
         registry,
         config.hard_policy.registry_policy_hash.clone(),
@@ -325,12 +371,7 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
     )
     .map_err(|_| ServiceError::Control)?;
     control
-        .run(
-            &config.snapshot,
-            &config.frontier,
-            &tenant,
-            config.observed_at_unix_ms,
-        )
+        .run_with_clock(&config.snapshot, &config.frontier, &tenant, clock)
         .map_err(|error| control_error::map_control_run_error(error, control.inspection_required()))
 }
 

@@ -62,6 +62,8 @@ Hard registered module dependencies:
 Current implementation and contract roots:
 
 - `docs/performance`
+- `rust/crates/hepta-control-plane/src/performance_qualification.rs`
+- `rust/crates/hepta-control-plane/src/source_closure.rs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -111,15 +113,15 @@ Capability bindings: `CAP-PERF-QUALIFICATION`. Related work identifiers: `PERF-0
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
-### Additive Rust orchestration contract
+### Standalone Rust orchestration compatibility contract
 
-[`qualify_performance_v1`](../../../rust/crates/hepta-orchestration-kernel/src/performance.rs) is also available through
-`hepta_control_plane::orchestration_kernel`. This pure Rust function computes integer median, nearest-rank p95, throughput and regression from supplied samples. It bounds the complete workload/observation sets before map construction, binds supplied subject digests and keeps productionAuthorityGranted false. It does not run a benchmark, observe binary provenance or consume independent target-host signatures; it is separate from the existing control-plane performance evaluator.
+[`qualify_performance_v1`](../../../rust/crates/hepta-orchestration-kernel/src/performance.rs) remains available only from the standalone
+`hepta-orchestration-kernel` crate. It is not re-exported by the product control plane and is not a selected performance owner. This pure Rust function computes integer median, nearest-rank p95, throughput and regression from supplied samples. It bounds the complete workload/observation sets before map construction, binds supplied subject digests and keeps productionAuthorityGranted false. It does not run a benchmark, observe binary provenance or consume independent target-host signatures; it is separate from the existing control-plane performance evaluator.
 
 See the [Rust orchestration development handoff](../../../rust/crates/hepta-orchestration-kernel/HANDOFF.md)
 for exact fields/units, bounds, hash domains, failure/recovery behavior and
-implementation selection. The current re-export does not wire this API into
-an existing command. Focused source validation from `rust` is
+implementation selection. This standalone compatibility API is not wired into
+an existing product command. Focused source validation from `rust` is
 `cargo test -p hepta-orchestration-kernel --locked`; those fixtures do not establish
 Node parity, production activation or independent qualification.
 

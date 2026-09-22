@@ -176,6 +176,9 @@ compiler evidence and no successful tool-host run is asserted here.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+See the [installed-tool migration lane](../SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane).
+The existing migration decision now also requires a tool-equipped lane running the real TeX test with `--include-ignored` and retaining PDF and manifest bytes. Missing tools or ignored/filtered tests cannot make that lane pass. Full packaging/BibTeX, reproducible toolchain closure and release acceptance remain separate.
+
 ## Rollout and rollback
 
 Current channel is `authoritative`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

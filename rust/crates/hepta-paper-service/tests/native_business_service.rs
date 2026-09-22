@@ -1,3 +1,6 @@
+#[path = "native_business_service/dispatch_recovery.rs"]
+mod dispatch_recovery;
+
 use hepta_campaign_writer::WriterLeaseV1;
 use hepta_control_plane::{
     ControlPlaneSnapshotV1, HardPolicyV1, PlannerPolicyV1, PlanningFrontierV1,

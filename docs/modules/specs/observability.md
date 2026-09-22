@@ -113,15 +113,15 @@ Capability bindings: `CAP-OBS-TELEMETRY`. Related work identifiers: `OBS-001`, `
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
-### Additive Rust orchestration contract
+### Standalone Rust orchestration compatibility contract
 
-[`TelemetryAggregatorV1`](../../../rust/crates/hepta-orchestration-kernel/src/telemetry.rs) is also available through
-`hepta_control_plane::orchestration_kernel`. This Rust accumulator accepts only closed labels/event classes and produces bounded counters and per-bucket latency counts. It does not persist raw events, implement retention or expose the existing control-plane observability journal. Bucket counts are non-cumulative; exporters must explicitly convert semantics. The handoff specifies allowed fields, cardinality, clock/error behavior and hash identity.
+[`TelemetryAggregatorV1`](../../../rust/crates/hepta-orchestration-kernel/src/telemetry.rs) remains available only from the standalone
+`hepta-orchestration-kernel` crate. It is not re-exported by the product control plane and is not a selected telemetry owner. This accumulator accepts only closed labels/event classes and produces bounded counters and per-bucket latency counts. It does not persist raw events, implement retention or expose the existing control-plane observability journal. Bucket counts are non-cumulative; exporters must explicitly convert semantics. The handoff specifies allowed fields, cardinality, clock/error behavior and hash identity.
 
 See the [Rust orchestration development handoff](../../../rust/crates/hepta-orchestration-kernel/HANDOFF.md)
 for exact fields/units, bounds, hash domains, failure/recovery behavior and
-implementation selection. The current re-export does not wire this API into
-an existing command. Focused source validation from `rust` is
+implementation selection. This standalone compatibility API is not wired into
+an existing product command. Focused source validation from `rust` is
 `cargo test -p hepta-orchestration-kernel --locked`; those fixtures do not establish
 Node parity, production activation or independent qualification.
 

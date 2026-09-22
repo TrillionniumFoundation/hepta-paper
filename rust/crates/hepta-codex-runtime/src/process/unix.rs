@@ -41,6 +41,29 @@ pub fn run_bounded_process_with_spawn_hook<F>(
 where
     F: FnOnce(u32) -> Result<(), BoundedProcessError>,
 {
+    run_with_controls(request, limits, on_spawn, None)
+}
+
+/// Run the same bounded process-group owner with a sticky caller interruption.
+/// A pre-observed cancellation prevents spawn; a racing cancellation still
+/// requires the ordinary TERM/KILL, reap and verified group-cleanup boundary.
+pub fn run_bounded_process_with_cancellation(
+    request: &BoundedProcessRequestV1,
+    limits: ProcessLimitsV1,
+    cancelled: &AtomicBool,
+) -> Result<BoundedProcessResultV1, BoundedProcessError> {
+    run_with_controls(request, limits, |_| Ok(()), Some(cancelled))
+}
+
+fn run_with_controls<F>(
+    request: &BoundedProcessRequestV1,
+    limits: ProcessLimitsV1,
+    on_spawn: F,
+    cancelled: Option<&AtomicBool>,
+) -> Result<BoundedProcessResultV1, BoundedProcessError>
+where
+    F: FnOnce(u32) -> Result<(), BoundedProcessError>,
+{
     let limits = limits.validate()?;
     validate_request(request, limits)?;
     let kill_utility = resolve_kill_utility()?;
@@ -62,6 +85,9 @@ where
         command.env(key, value);
     }
 
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return Err(BoundedProcessError::CancelledBeforeSpawn);
+    }
     let started = Instant::now();
     let mut child = command
         .spawn()
@@ -76,14 +102,25 @@ where
         return Err(error);
     }
 
-    let result = supervise_spawned_group(
-        &mut child,
-        process_id,
-        request,
-        limits,
-        &kill_utility,
-        started,
-    );
+    let result = match cancelled {
+        Some(flag) => supervise_spawned_group_with_cancellation(
+            &mut child,
+            process_id,
+            request,
+            limits,
+            &kill_utility,
+            started,
+            flag,
+        ),
+        None => supervise_spawned_group(
+            &mut child,
+            process_id,
+            request,
+            limits,
+            &kill_utility,
+            started,
+        ),
+    };
     if result.is_err() {
         cleanup_after_error(&mut child, &kill_utility, process_id, limits);
     }

@@ -111,7 +111,8 @@ status never repairs missing artifacts. Cancel may stop later dispatch but does
 not erase ambiguity or refund uncertain work.
 
 Pause/cancel are BETWEEN-STEP operations: concurrent commands return busy while an
-advance is running. This API does not promise immediate in-flight cancellation.
+advance is running. The ordinary lifecycle API does not promise immediate in-flight cancellation;
+the autonomous CLI signal path below interrupts its currently supervised process group.
 The core sequencer now rejects paused/cancelled/completed campaigns at begin_run,
 before any new executor dispatch; late SQL rejection alone is insufficient.
 A rejected review cannot be resumed into a passing review by toggling lifecycle.
@@ -244,3 +245,164 @@ lifecycle command; this source tree does not implement in-flight `cancel-node`.
 Pending starts and unclassified attempt residue block semantic recovery and GC;
 they cannot become completed work or permission for an automatic retry. Partial
 local source mappings are not accepted full Node operator semantics.
+
+
+## Autonomous research command composition
+
+The existing `hepta-paper-rust autonomous-research` command now accepts an
+explicit `--workflow-file ABSOLUTE_JSON_PATH` in `local-run` mode. The file is
+a closed `LocalWorkflowV1`, not another plan, ledger or provider authorization.
+`--campaign-id` must match its template; a supplied `--paper-id` must also match
+`autonomous-research:<paper-id>`. Files are bounded to 16 MiB, private, current-UID,
+single-link, canonical and stable across the read. Unknown typed fields fail.
+
+`--action prepare` validates and hashes the definition without opening or
+creating campaign state. `launch` initializes only an absent state root through
+`initialize_local_workflow_v1`, then uses `operate_local_workflow_with_clock_and_cancellation_v1`; an existing
+root must have the exact retained definition and valid owner history. Partial
+initialization and ambiguous dispatch are preserved, never cleaned into success.
+`launch` and `converge` accept `--through-steps N`, an absolute endpoint (default:
+all steps), so response-loss retries cannot append extra steps or charges.
+`status` reads through the same owner without a writer, including after expiry.
+
+`pause`, `resume`, and `cancel` require `--expected-revision N` from the latest
+owner status. Stale revisions and reopening a cancelled campaign fail. This is
+between-step cancellation, not interruption of an already running provider.
+Mutations sample actual system time at entry and through the same workflow and
+service owner. `ControlPlaneV1::run_with_clock` repeats snapshot/lease admission
+before every dependency wave and finalization, and passes the same live
+admission callback to the executor before each individual request handoff within
+a wave. The service retains its existing directory lock for the entire wave;
+a refused later handoff preserves earlier prepared bytes and all reservations.
+The time check alone is not atomic process-start authority or in-flight termination. The existing SQLite sequencer
+passes the host clock into the result transaction: samples after `BEGIN IMMEDIATE`
+and immediately before `COMMIT` reject expiry, backward time and clock failure.
+Lifecycle writes apply the same transaction checks and capture their response
+before commit, with no fallible post-commit reread. A failed final check rolls
+back the whole result batch or lifecycle event; after dispatch the runtime retains
+its inspection guard and charges. Already committed workflow steps and durable
+prepared caches survive a later expiry; an expired restart cannot relaunch work.
+
+The original supplied-time APIs remain deterministic compatibility/library
+entrypoints. They are not live-clock substitutes for the CLI. The clock-only compatibility path does
+not renew leases, kill in-flight workers, provide a continuously running timer,
+prove an independent trusted wall clock, or authorize production. Expiry after
+the final precommit sample or ambiguity in the COMMIT I/O itself is not made
+impossible by a timestamp check.
+Inspection entrypoints cannot mutate even when called directly with forged
+options. Production, golden-bootstrap and full-readiness requests fail before
+state creation. Omitting `--workflow-file` preserves the previous diagnostic.
+
+The report's `ready` means only that this bounded local operation succeeded;
+`readinessScope=local_workflow_operation_only` and `fullResearchReady=false`.
+Scientific acceptance, production activation and Node retirement remain false.
+Process workers are trusted local programs, not a physical sandbox. Their
+provider/external/network outcomes are null (unobserved), never replaced with
+an asserted false based on worker JSON or a network declaration. An execution
+error reports reconciliation required and retains the original recovery inputs.
+No private request content or raw worker diagnostics is printed by this wrapper.
+
+Run from the repository root:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test autonomous_research_route --test durable_service
+```
+
+`tests/local_workflow/autonomous_entrypoint.rs` invokes the actual command and
+reuses the existing workflow fixtures. It checks seven-step durable progress,
+absolute-endpoint retries, shared status with `hepta-local-workflow`, budget
+conservation, stale-revision rejection, pause/resume/terminal cancel, request
+substitution, private/oversize/symlink refusal, actual pinned Rust workers and a
+crashing child that is not relaunched by repeated fresh CLI processes. These
+are local composition tests, not live author/reviewer scientific evaluation,
+independent command acceptance, installed host qualification or Node cutover.
+
+### Exact-source execution evidence
+
+The existing `production-composition-source` bundle in
+`docs/system/evidence/rust-functional-source-closure-v1.json` now binds the
+autonomous CLI adapter, its local entry, the existing workflow owner and all six
+`autonomous_entrypoint::` regression selectors. The existing exact-head and
+prospective-merge jobs execute those tests, including the real Rust child worker
+and crash/no-relaunch case. A zero exit code, discovery-only run, ignored test or
+zero matching tests is not accepted as executed evidence. The verifier requires
+the exact successful libtest selector and nonempty successful test totals; Node
+owner tests likewise require nonempty TAP execution without skips or todos.
+These transcript checks complement exact source/discovery binding; they are not
+independent producer authentication or scientific acceptance. No new workflow,
+scheduler, state owner, migration inventory or production authority is created.
+
+### Live-clock regression execution
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane --lib tests::runtime_clock::
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow clock::
+```
+
+Controlled clocks exercise actual SQLite/CAS/owner paths without sleeps: expiry
+or rollback between dependency waves; expiry after final preparation; a failing
+precommit clock after both result rows were staged; lifecycle rollback; a
+clock-free status read; preservation of a prior workflow commit and prepared
+bytes after the next step expires. The existing autonomous-entrypoint tests run
+the CLI with its real system clock and real Rust children. These are source
+regressions, not full research-role parity or target-host acceptance.
+
+
+The tool-equipped migration lane also exercises the actual autonomous CLI with
+an R scientific program through the existing `hepta-scientific-worker`, durable
+workflow and SQLite/CAS owners. `scientific_workflow` runs with `--include-ignored`:
+separate CLI processes prepare, partially launch, inspect, converge and replay
+without a second scientific execution or budget debit. The named real R result
+feeds the existing manuscript and bundle kernels. See the
+[installed scientific-tool lane](SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane)
+for exact source/tool observations and retained raw outputs. This local program
+case does not implement model-driven research or grant production authority.
+
+## Autonomous CLI process interruption
+
+`hepta-paper-rust autonomous-research` installs SIGINT/SIGTERM handlers only in
+its command process before opening a mutating workflow. The handlers set one
+sticky atomic flag; library calls never install signal handlers or alter signal
+masks. `execute_autonomous_research_with_cancellation_v1` carries that flag
+through the current workflow, service, executor and Codex-runtime process owner.
+The existing fixed-time and live-clock APIs remain compatibility wrappers around
+that same implementation. No second writer, scheduler, result journal or daemon
+is introduced.
+
+A flag observed before dispatch prevents a new start. A running process is
+interrupted through `run_bounded_process_with_cancellation`: the existing
+bounded TERM/KILL escalation, child reaping and process-group cleanup still apply.
+The same token is checked before and after time observations at admission and
+SQLite precommit boundaries. A token is not an atomic check-and-COMMIT protocol:
+a signal racing a completed commit does not erase committed data, and a result
+already durably committed remains discoverable from normal status/replay.
+
+The report adds `interruptionRequested` and sets `cancellationScope` to
+`signal_process_group_and_commit_boundaries`. An interrupted execution returns
+a bounded non-success report and retains the original pending plan, dispatch
+intent and prepared bytes. Complete prepared results can be integrated by a
+subsequent explicit invocation without repeating execution or budget debit.
+Started work without complete prepared output stays ambiguous and cannot be
+restarted automatically. The signal itself does not write a Cancelled lifecycle.
+A later explicit revision-bound `cancel` can close future admission but must
+retain `pendingStep=true` and cannot settle or refund uncertain effects.
+
+This is supervision of declared trusted-local processes, not a hostile-code
+sandbox or proof that a descendant which escaped the group has terminated.
+Native in-process kernels are bounded but not preempted mid-calculation. Worker
+network/provider effects remain unobserved; a dead process is not a remote
+terminal receipt. Automatic renewal, remote cancellation and production authority
+are not supplied.
+
+Executable coverage in `tests/local_workflow/interruption.rs` uses the actual
+Rust autonomous CLI and a small explicitly declared Python worker with its real
+child process. It tests SIGINT and SIGTERM, both process deaths, no second step,
+retained pending execution and no relaunch after CLI restart, revision-bound
+cancellation without clearing residue, pre-dispatch refusal and prepared-result
+replay preserving earlier committed steps. This is not a live model fixture.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --lib
+```

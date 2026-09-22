@@ -157,15 +157,15 @@ Capability bindings: `CAP-RES-ALLOCATE`. Related work identifiers: `RES-001`, `R
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
-### Additive Rust orchestration contract
+### Standalone Rust orchestration compatibility contract
 
-[`ResourceLedgerV1`](../../../rust/crates/hepta-orchestration-kernel/src/resource.rs) is also available through
-`hepta_control_plane::orchestration_kernel`. This in-memory Rust ledger checks hierarchical integer budgets, individual scope generations and prepare/commit/finalize/cancel transitions. Commit time must be within the inclusive creation/expiry interval; expired committed reservations remain charged as ambiguous. It has no durable load/replay or physical CPU/GPU enforcement and is separate from the control-plane durable lease ledger.
+[`ResourceLedgerV1`](../../../rust/crates/hepta-orchestration-kernel/src/resource.rs) remains available only from the standalone
+`hepta-orchestration-kernel` crate. It is not re-exported by the product control plane and is not a selected resource owner. This in-memory Rust ledger checks hierarchical integer budgets, individual scope generations and prepare/commit/finalize/cancel transitions. Commit time must be within the inclusive creation/expiry interval; expired committed reservations remain charged as ambiguous. It has no durable load/replay or physical CPU/GPU enforcement and is separate from the control-plane durable lease ledger.
 
 See the [Rust orchestration development handoff](../../../rust/crates/hepta-orchestration-kernel/HANDOFF.md)
 for exact fields/units, bounds, hash domains, failure/recovery behavior and
-implementation selection. The current re-export does not wire this API into
-an existing command. Focused source validation from `rust` is
+implementation selection. This standalone compatibility API is not wired into
+an existing product command. Focused source validation from `rust` is
 `cargo test -p hepta-orchestration-kernel --locked`; those fixtures do not establish
 Node parity, production activation or independent qualification.
 

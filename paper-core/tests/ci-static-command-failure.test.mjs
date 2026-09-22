@@ -108,3 +108,41 @@ test('every portable CI consumer verifies the current R closure after pinned pub
   }
   assert.equal(consumers, 4);
 });
+
+
+test('migration installs the locked oracle closure before Rust and propagates install/import failures', (t) => {
+  const file = '.github/workflows/rust-migration-acceptance.yml';
+  const name = 'Install and verify locked Node oracle dependencies';
+  const source = fs.readFileSync(path.join(root, file), 'utf8');
+  assert.ok(source.indexOf(`      - name: ${name}`) < source.indexOf('      - name: Install qualified Rust toolchain'));
+  assert.ok(source.includes('sha256sum rust/Cargo.lock package-lock.json workflow-kernel/record-hash.mjs'));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-migration-oracle-'));
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const trace = path.join(temporary, 'trace');
+  fs.writeFileSync(path.join(temporary, 'npm'), '#!/bin/sh\nprintf "npm:%s\\n" "$*" >> "$TRACE"\nexit "$INSTALL_EXIT"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(temporary, 'node'), [
+    '#!/bin/sh',
+    'if [ "$1" = --version ]; then printf "%s\\n" "$NODE_VERSION"; exit 0; fi',
+    'printf "import:%s\\n" "$*" >> "$TRACE"',
+    'exit "$IMPORT_EXIT"', '',
+  ].join('\n'), { mode: 0o755 });
+  for (const [version, install, imported, expectedExit] of [
+    ['v22.23.1', 0, 0, 0], ['v22.23.1', 17, 0, 17],
+    ['v22.23.1', 0, 23, 23], ['v22.16.0', 0, 0, 1],
+  ]) {
+    fs.writeFileSync(trace, '');
+    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', runBlock(file, name)], {
+      cwd: root, encoding: 'utf8', timeout: 5000,
+      env: { PATH: `${temporary}:/usr/bin:/bin`, TRACE: trace, EVIDENCE_ROOT: temporary,
+        NODE_VERSION: version, INSTALL_EXIT: String(install), IMPORT_EXIT: String(imported) },
+    });
+    assert.equal(result.status, expectedExit, result.stderr);
+    const calls = fs.readFileSync(trace, 'utf8').trim().split('\n').filter(Boolean);
+    if (version !== 'v22.23.1') assert.deepEqual(calls, []);
+    else {
+      assert.equal(calls[0], 'npm:ci --ignore-scripts --no-audit --no-fund');
+      assert.equal(calls.length, install ? 1 : 2);
+      if (!install) assert.ok(calls[1].includes('autonomous-research-online-writer-static-discovery.mjs'));
+    }
+  }
+});

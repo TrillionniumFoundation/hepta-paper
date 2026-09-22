@@ -114,15 +114,15 @@ Capability bindings: `CAP-SCH-PLAN`. Related work identifiers: `SCH-001`, `SCH-0
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
-### Additive Rust orchestration contract
+### Standalone Rust orchestration compatibility contract
 
-[`calibrate_predictions_v1`](../../../rust/crates/hepta-orchestration-kernel/src/calibration.rs) is also available through
-`hepta_control_plane::orchestration_kernel`. This additive Rust API computes integer calibration errors from bounded caller-supplied observations. It is distinct from the similarly named optimizer_v2 types and does not promote a planner or authenticate samples. The V1 report hash binds observations and policy ID but not numeric policy thresholds; a qualified integration must bind the complete policy separately with explicit versioning.
+[`calibrate_predictions_v1`](../../../rust/crates/hepta-orchestration-kernel/src/calibration.rs) remains available only from the standalone
+`hepta-orchestration-kernel` crate. It is not re-exported by the product control plane and is not a selected scheduler owner. This compatibility/experimental API computes integer calibration errors from bounded caller-supplied observations. It is distinct from the similarly named optimizer_v2 types and does not promote a planner or authenticate samples. The V1 report hash binds observations and policy ID but not numeric policy thresholds; a qualified integration must bind the complete policy separately with explicit versioning.
 
 See the [Rust orchestration development handoff](../../../rust/crates/hepta-orchestration-kernel/HANDOFF.md)
 for exact fields/units, bounds, hash domains, failure/recovery behavior and
-implementation selection. The current re-export does not wire this API into
-an existing command. Focused source validation from `rust` is
+implementation selection. This standalone compatibility API is not wired into
+an existing product command. Focused source validation from `rust` is
 `cargo test -p hepta-orchestration-kernel --locked`; those fixtures do not establish
 Node parity, production activation or independent qualification.
 

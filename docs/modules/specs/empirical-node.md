@@ -182,6 +182,9 @@ not established by these targets.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+See the [installed-tool migration lane](../SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane).
+The tool-equipped migration job now explicitly runs the R empirical/numerical and failure cases in `scientific_runtime` with `--include-ignored`. It retains actual tool and CAS output evidence; ordinary runs that leave these cases ignored do not establish R execution. This does not complete dataset authority or full experiment orchestration.
+
 ## Rollout and rollback
 
 Current channel is `authoritative`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

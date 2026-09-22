@@ -1,9 +1,10 @@
 # Orchestration kernel development handoff
 
-This crate implements six deterministic Rust library contracts. Its public
-re-export at `hepta_control_plane::orchestration_kernel` is an API path; it does
-not select these implementations for the existing scheduler or replace a Node
-command. The current direct callers are the crate's unit tests and
+This crate implements six deterministic Rust library contracts. It is a
+standalone compatibility/experimental crate and is deliberately **not** re-exported
+through `hepta-control-plane`: none of these APIs is a selected product owner for
+the current scheduler, snapshot, resource, telemetry, performance, or calibration
+paths. The current direct callers are the crate's unit tests and
 [`tests/source_closure.rs`](tests/source_closure.rs). No constructor in this
 crate authenticates a caller, captures a database transaction, runs a workload,
 opens credentials or performs an external action.

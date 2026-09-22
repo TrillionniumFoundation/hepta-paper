@@ -60,8 +60,11 @@ Hard registered module dependencies:
 
 Current implementation and contract roots:
 
-- `rust/crates/hepta-compatibility`
 - `rust/crates/hepta-legacy-compatibility`
+
+The standalone `hepta-compatibility` crate remains only a Rust-draft/reference
+surface for differential verification. It is not selected by this product
+module, and product control/service crates must not depend on it.
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 

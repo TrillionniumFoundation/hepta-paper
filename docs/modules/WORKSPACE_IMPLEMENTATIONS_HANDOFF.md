@@ -4,13 +4,15 @@ Two Rust crates export types named `WorkspaceRootV1`, `MutationPolicyV1` and
 `PreparedWorkspaceResultV1`. They have distinct contracts and are not interchangeable.
 Use qualified crate paths when selecting a consumer or discussing evidence.
 
-The current repository has no cross-crate consumer of `hepta-workspace`: its
-materialization API is exercised by its own unit tests. The actual
+The selected product owner is now `hepta-workspace`. The actual
 [`local_slice` integration fixture](../../rust/crates/hepta-local-vertical/tests/local_slice.rs)
-uses `hepta-workspace-authority`, as declared in its
-[`Cargo.toml`](../../rust/crates/hepta-local-vertical/Cargo.toml). That fixture does
-not validate `hepta-workspace` materialization or wire either API into a complete
-production writer. Keep this distinction when reporting migration progress.
+uses that crate for owner-bound source inventory, staging materialization,
+no-clobber publication, mutation accounting and prepared workspace evidence
+before the existing durable campaign writer consumes the result. The
+`hepta-workspace-authority` crate remains a compatibility/reference implementation
+for its stronger repeated child-file observations; it is not a registered product
+implementation and must not be counted as a second workspace owner. Port useful
+checks into `hepta-workspace` before retiring the compatibility crate.
 
 | Boundary | `hepta-workspace` | `hepta-workspace-authority` |
 |---|---|---|

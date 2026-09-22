@@ -820,9 +820,35 @@ impl CampaignWriterStoreV1 {
         next_state: CampaignStateV1,
         now_unix_ms: u64,
     ) -> Result<CampaignSnapshotV1, CampaignWriterError> {
+        self.set_campaign_state_with_clock(
+            writer,
+            campaign_id,
+            expected_revision,
+            next_state,
+            now_unix_ms,
+            &mut || Ok(now_unix_ms),
+        )
+    }
+
+    /// Revalidates the writer after the transaction lock and before committing
+    /// a lifecycle transition. A failed final check leaves state/events intact.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_campaign_state_with_clock(
+        &mut self,
+        writer: &WriterLeaseV1,
+        campaign_id: &str,
+        expected_revision: u64,
+        next_state: CampaignStateV1,
+        clock_floor: u64,
+        clock: &mut dyn FnMut() -> Result<u64, CampaignWriterError>,
+    ) -> Result<CampaignSnapshotV1, CampaignWriterError> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let now_unix_ms = clock()?;
+        if now_unix_ms < clock_floor {
+            return Err(CampaignWriterError::InvalidWriterLease);
+        }
         assert_writer(&transaction, writer, now_unix_ms)?;
         let current = load_campaign_from(&transaction, campaign_id)?;
         if current.revision != expected_revision {
@@ -854,8 +880,16 @@ impl CampaignWriterStoreV1 {
             &CampaignStateEventV1 { next_state },
             now_unix_ms,
         )?;
+        // Capture the response before COMMIT; no fallible reread after a known
+        // committed transition may turn it into an apparent rollback.
+        let updated = load_campaign_from(&transaction, campaign_id)?;
+        let final_time = clock()?;
+        if final_time < now_unix_ms {
+            return Err(CampaignWriterError::InvalidWriterLease);
+        }
+        assert_writer(&transaction, writer, final_time)?;
         transaction.commit()?;
-        self.load_campaign(campaign_id)
+        Ok(updated)
     }
 
     pub fn load_campaign(

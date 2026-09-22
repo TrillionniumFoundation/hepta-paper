@@ -163,6 +163,19 @@ impl CampaignWriterStoreV1 {
         change_json: &str,
         now: u64,
     ) -> Result<String, CampaignWriterError> {
+        self.apply_local_workflow_change_with_clock(campaign_id, change_json, now, &mut || Ok(now))
+    }
+
+    /// Revalidate the OLD lease after obtaining SQLite's write lock and just
+    /// before COMMIT. A proposed extension is never authority for its own write.
+    /// Exact replay remains a clock-free read of the immutable original receipt.
+    pub fn apply_local_workflow_change_with_clock(
+        &mut self,
+        campaign_id: &str,
+        change_json: &str,
+        clock_floor: u64,
+        clock: &mut dyn FnMut() -> Result<u64, CampaignWriterError>,
+    ) -> Result<String, CampaignWriterError> {
         if change_json.len() > MAX_DOCUMENT * 2 {
             return Err(CampaignWriterError::ControlLogConflict);
         }
@@ -190,6 +203,10 @@ impl CampaignWriterStoreV1 {
         if changes.len() >= MAX_AMENDMENTS {
             return Err(CampaignWriterError::ControlLogConflict);
         }
+        let now = clock()?;
+        if now < clock_floor {
+            return Err(CampaignWriterError::InvalidWriterLease);
+        }
         assert_writer(&tx, &change.previous_lease, now)?;
         if load_writer_lease(&tx)?.as_ref() != Some(&change.previous_lease) {
             return Err(CampaignWriterError::StaleWriterGeneration);
@@ -205,12 +222,12 @@ impl CampaignWriterStoreV1 {
         ) {
             return Err(CampaignWriterError::TerminalCampaignCannotReopen);
         }
-        let clock = from_i64(tx.query_row(
+        let stored_clock = from_i64(tx.query_row(
             "SELECT updated_at_unix_ms FROM campaigns WHERE campaign_id=?1",
             [campaign_id],
             |row| row.get(0),
         )?)?;
-        if now < clock {
+        if now < stored_clock {
             return Err(CampaignWriterError::InvalidWriterLease);
         }
         let count = from_i64(tx.query_row(
@@ -284,6 +301,13 @@ impl CampaignWriterStoreV1 {
         {
             return Err(CampaignWriterError::DatabaseTooLarge);
         }
+        let final_time = clock()?;
+        if final_time < now {
+            return Err(CampaignWriterError::InvalidWriterLease);
+        }
+        // The stored row now holds the proposed expiry. Validate the original
+        // lease too, so an expired lease cannot bootstrap its own renewal.
+        assert_writer(&tx, &record.change.previous_lease, final_time)?;
         tx.commit()?;
         Ok(serialized)
     }
@@ -447,5 +471,93 @@ mod tests {
             );
             assert!(load_changes(&store.connection, "test").unwrap().is_empty());
         }
+    }
+    #[test]
+    fn live_amendment_rejects_old_lease_expiry_and_clock_failure_atomically() {
+        // first=post-lock; second=precommit, after the proposed renewal is staged.
+        // A staged new expiry (200) cannot authorize writing after old expiry (100).
+        for observations in [
+            [Some(100), Some(100)],
+            [Some(2), Some(100)],
+            [Some(2), Some(1)],
+            [Some(2), None],
+            [None, Some(2)],
+        ] {
+            let (_temp, mut store, change) = fixture();
+            let input = serde_json::to_string(&change).unwrap();
+            let before_events: i64 = store
+                .connection
+                .query_row("SELECT count(*) FROM campaign_events", [], |row| row.get(0))
+                .unwrap();
+            let mut times = observations.into_iter();
+            let result =
+                store.apply_local_workflow_change_with_clock("test", &input, 2, &mut || {
+                    times
+                        .next()
+                        .flatten()
+                        .ok_or(CampaignWriterError::InvalidWriterLease)
+                });
+            assert!(matches!(
+                result,
+                Err(CampaignWriterError::InvalidWriterLease)
+            ));
+            let campaign = store.load_campaign("test").unwrap();
+            assert_eq!(campaign.revision, 0);
+            assert_eq!(campaign.budget_remaining_microusd, 100);
+            assert_eq!(
+                load_writer_lease(&store.connection).unwrap().unwrap(),
+                change.previous_lease
+            );
+            assert!(!has_table(&store.connection).unwrap());
+            assert!(load_changes(&store.connection, "test").unwrap().is_empty());
+            let after_events: i64 = store
+                .connection
+                .query_row("SELECT count(*) FROM campaign_events", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(before_events, after_events);
+            store.validate_integrity().unwrap();
+        }
+    }
+
+    #[test]
+    fn live_amendment_clock_floor_and_exact_replay_do_not_renew_twice() {
+        let (_temp, mut store, change) = fixture();
+        let input = serde_json::to_string(&change).unwrap();
+        assert!(matches!(
+            store.apply_local_workflow_change_with_clock("test", &input, 50, &mut || Ok(49),),
+            Err(CampaignWriterError::InvalidWriterLease)
+        ));
+        let mut times = [50, 99].into_iter();
+        let first = store
+            .apply_local_workflow_change_with_clock("test", &input, 50, &mut || {
+                times.next().ok_or(CampaignWriterError::InvalidWriterLease)
+            })
+            .unwrap();
+        assert!(times.next().is_none());
+        let decoded: AppliedLocalWorkflowChangeV1 = serde_json::from_str(&first).unwrap();
+        assert_eq!(decoded.recorded_at_unix_ms, 50);
+        let replay = store
+            .apply_local_workflow_change_with_clock("test", &input, 500, &mut || {
+                Err(CampaignWriterError::InvalidWriterLease)
+            })
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(store.load_campaign("test").unwrap().revision, 1);
+        assert_eq!(
+            store
+                .load_campaign("test")
+                .unwrap()
+                .budget_remaining_microusd,
+            150
+        );
+        assert_eq!(
+            load_writer_lease(&store.connection)
+                .unwrap()
+                .unwrap()
+                .expires_at_unix_ms,
+            200
+        );
+        assert_eq!(load_changes(&store.connection, "test").unwrap().len(), 1);
+        store.validate_integrity().unwrap();
     }
 }

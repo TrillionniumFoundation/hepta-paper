@@ -333,3 +333,38 @@ fn cooperative_cancellation_terminates_an_actual_process_group() {
     assert!(result.process_group_cleanup_verified);
     assert!(result.signal.is_some());
 }
+
+#[test]
+fn public_cancellation_prevents_spawn_when_already_requested() {
+    use std::sync::atomic::AtomicBool;
+    let tree = TempTree::new();
+    let request = shell_request(&tree, "touch unexpected-launch");
+    let result = super::run_bounded_process_with_cancellation(
+        &request,
+        pressure_limits(),
+        &AtomicBool::new(true),
+    );
+    assert_eq!(result, Err(BoundedProcessError::CancelledBeforeSpawn));
+    assert!(!tree.0.join("unexpected-launch").exists());
+}
+
+#[test]
+fn public_cancellation_uses_existing_group_cleanup() {
+    use std::{sync::atomic::AtomicBool, thread, time::Duration};
+    let tree = TempTree::new();
+    let request = shell_request(&tree, "sleep 10 & wait");
+    let cancelled = AtomicBool::new(false);
+    let result = thread::scope(|scope| {
+        scope.spawn(|| {
+            thread::sleep(Duration::from_millis(80));
+            cancelled.store(true, Ordering::Release);
+        });
+        super::run_bounded_process_with_cancellation(&request, pressure_limits(), &cancelled)
+    })
+    .expect("public bounded cancellation");
+    assert_eq!(
+        result.termination_reason,
+        ProcessTerminationReason::Cancelled
+    );
+    assert!(result.process_group_cleanup_verified);
+}

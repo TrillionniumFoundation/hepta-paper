@@ -742,9 +742,10 @@
         "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
         "rust/crates/hepta-paper-service/tests/machine_intake_parity.rs",
         "rust/crates/hepta-paper-service/tests/autonomous_provider_configuration_parity.rs",
-        "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs"
+        "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs",
+        "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs"
       ],
-      "remaining": "Native read-only resident health covers base/startup/machine reconciliation. Current intake supports actual builtin V1 configuration/static files, closure and daily budgets, provider identity, generation-one admissions/counts/leases including committed WAL, and resident identity comparison. Strict mode consumes that actual intake once and verifies the original published nested/outer receipt hashes, expected acceptance/current identity bindings and inspection clock, with real Node publisher/reader and binary differential tests. It intentionally rejects the incumbent falsy-JSON false-ready bug. Both are diagnostics, not cycle-execution or authority proofs. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings, publisher/lifecycle execution and fully-autonomous prerequisite chains remain unported. Process probes and independent production qualification remain external.",
+      "remaining": "Native read-only resident health covers base/startup/machine reconciliation. Current intake supports actual builtin V1 configuration/static files, closure and daily budgets, provider identity, generation-one admissions/counts/leases including committed WAL, and resident identity comparison. Strict mode consumes that actual intake once and verifies the original published nested/outer receipt hashes, expected acceptance/current identity bindings and inspection clock, with real Node publisher/reader and binary differential tests. It intentionally rejects the incumbent falsy-JSON false-ready bug. Both are diagnostics, not cycle-execution or authority proofs. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings, publisher/lifecycle execution and fully-autonomous prerequisite chains remain unported. Process probes and independent production qualification remain external. A separately callable native V3 external qualification configuration owner now observes real command/interpreter/argument/credential/public-trust inputs and produces the original configuration inspection; it is not connected to fully health. Full qualification pointer/state readers, resident receipt/envelope and code/runtime observations, and independently configured recovery-purpose trust still need integration. The incumbent recovery adapter passes incompatible release-attestor metadata and a KeyObject into the distinct recovery capability contract; merely relabeling or converting those fields is not authorized recovery trust.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/supervisor_health.rs",
         "rust/crates/hepta-paper-service/src/state_database_inventory/snapshot.rs",
@@ -758,7 +759,13 @@
         "rust/crates/hepta-paper-service/src/machine_intake/dataset.rs",
         "rust/crates/hepta-paper-service/src/machine_intake/status.rs",
         "rust/crates/hepta-paper-service/src/machine_intake/retry_time.rs",
-        "rust/crates/hepta-paper-service/src/strict_machine_intake_reconciliation.rs"
+        "rust/crates/hepta-paper-service/src/strict_machine_intake_reconciliation.rs",
+        "rust/crates/hepta-paper-service/src/external_qualification_configuration/mod.rs",
+        "rust/crates/hepta-paper-service/src/external_qualification_configuration/files.rs",
+        "rust/crates/hepta-paper-service/src/external_qualification_configuration/command.rs",
+        "rust/crates/hepta-paper-service/src/external_qualification_configuration/trust.rs",
+        "rust/crates/hepta-paper-service/src/external_qualification_configuration/value.rs",
+        "rust/crates/hepta-paper-service/src/external_qualification_configuration/inspection.rs"
       ],
       "testCases": [
         {
@@ -836,6 +843,46 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs",
           "symbol": "actual_strict_health_cli_matches_node_and_preserves_strict_exit_precedence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "actual_complete_inspection_identity_and_path_precedence_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "actual_configuration_command_number_and_shape_matrix_matches"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "actual_signer_trust_order_schedule_and_independence_matrix_matches"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "actual_filtered_environment_and_content_changes_bind_identity"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "actual_argument_interpreter_and_credential_file_refusals_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "actual_config_and_public_key_failures_match_without_executing_commands"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "retained_actual_files_detect_replacement_and_native_rejects_fifo"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "actual_configuration_size_boundary_and_credential_namespace_drift"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "actual_utf16_credential_names_pem_bytes_and_absent_argument_observations"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+          "symbol": "retained_env_interpreter_detects_new_earlier_path_candidate"
         }
       ]
     },

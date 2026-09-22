@@ -28,6 +28,7 @@ pub mod critical_module_coverage;
 mod deployment;
 pub mod deployment_environment;
 pub mod external_authority_intake;
+pub mod external_qualification_configuration;
 pub mod full_production_readiness;
 pub mod full_suite_verification;
 pub mod generic_domain_capability_evidence;

@@ -1530,20 +1530,12 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            let report = if options.action == "prepare" || options.action == "status" {
-                inspect_autonomous_research_v1(&options)
-            } else {
-                // Install only in this command process, before any worker or
-                // owner is opened. The atomic handlers survive until process exit;
-                // libraries never install handlers or change signal masks.
-                let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
-                    signal_hook::flag::register(signal, std::sync::Arc::clone(&cancelled))?;
-                }
-                execute_autonomous_research_with_cancellation_v1(&options, cancelled)
-            };
+            let report = execute_autonomous_research_v1(&options);
+            let operation_succeeded =
+                report["operationSucceeded"] == serde_json::Value::Bool(true);
+            let production_ready = report["ready"] == serde_json::Value::Bool(true);
             println!("{}", serde_json::to_string_pretty(&report)?);
-            if report["ready"] != serde_json::Value::Bool(true) {
+            if !operation_succeeded || (options.require_full_ready && !production_ready) {
                 std::process::exit(2);
             }
         }

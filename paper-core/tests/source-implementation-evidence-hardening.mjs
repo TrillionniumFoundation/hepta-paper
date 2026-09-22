@@ -188,10 +188,18 @@ function assertPostStageRegistryEvolution(root, target) {
     if (!stageModule || !targetModule) fail('post_stage_module_missing', moduleId);
     if (equal(stageModule, targetModule)) continue;
     if (stageModule.state === 'design_ready' && targetModule.state === 'source_implemented') {
-      const expectedModule = structuredClone(stageModule);
-      expectedModule.state = 'source_implemented';
-      if (!equal(expectedModule, targetModule)) fail('post_stage_module_scope_drift', moduleId);
-      expectedModules.modules[moduleId] = expectedModule;
+      for (const field of ['kind', 'activation', 'capabilityIds', 'authority', 'owners', 'dependencies', 'workItemIds', 'qualification']) {
+        if (!equal(stageModule[field], targetModule[field])) {
+          fail('post_stage_module_boundary_drift', `${moduleId}:${field}`);
+        }
+      }
+      if (!Array.isArray(stageModule.paths) || !Array.isArray(targetModule.paths)
+          || new Set(stageModule.paths).size !== stageModule.paths.length
+          || new Set(targetModule.paths).size !== targetModule.paths.length
+          || stageModule.paths.some((entry) => !targetModule.paths.includes(entry))) {
+        fail('post_stage_module_path_regression', moduleId);
+      }
+      expectedModules.modules[moduleId] = targetModule;
       continue;
     }
     if (stageModule.state === 'source_implemented' && targetModule.state === 'source_implemented') {

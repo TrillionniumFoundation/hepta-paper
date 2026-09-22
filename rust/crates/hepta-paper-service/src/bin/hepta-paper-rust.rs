@@ -1530,13 +1530,12 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            let report = if options.action == "prepare" || options.action == "status" {
-                inspect_autonomous_research_v1(&options)
-            } else {
-                execute_autonomous_research_v1(&options)
-            };
+            let report = execute_autonomous_research_v1(&options);
+            let operation_succeeded =
+                report["operationSucceeded"] == serde_json::Value::Bool(true);
+            let production_ready = report["ready"] == serde_json::Value::Bool(true);
             println!("{}", serde_json::to_string_pretty(&report)?);
-            if report["ready"] != serde_json::Value::Bool(true) {
+            if !operation_succeeded || (options.require_full_ready && !production_ready) {
                 std::process::exit(2);
             }
         }

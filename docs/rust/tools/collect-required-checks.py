@@ -186,12 +186,37 @@ def fetch_jobs_for_attempt(
             f"{api}/repos/{repository}/actions/runs/{run_id}", token
         )
     except GitHubApiError as error:
-        if error.status == 403:
+        if error.status != 403:
+            raise
+        head_sha = run.get("head_sha")
+        if not isinstance(head_sha, str) or not GIT_SHA.fullmatch(head_sha):
             fail(
-                "github_api_permission_denied:actions_run_read:"
+                "workflow_run_head_sha_invalid_during_jobs_fallback:"
                 f"run={run_id}:attempt={attempt}"
             )
-        raise
+        try:
+            live_runs, _ = fetch_pages(
+                f"{api}/repos/{repository}/actions/runs"
+                f"?head_sha={head_sha}&event=pull_request",
+                "workflow_runs",
+                token,
+            )
+        except GitHubApiError as list_error:
+            if list_error.status == 403:
+                fail(
+                    "github_api_permission_denied:actions_run_list_read:"
+                    f"run={run_id}:attempt={attempt}"
+                )
+            raise
+        matching_live_runs = [
+            candidate for candidate in live_runs if candidate.get("id") == run_id
+        ]
+        if len(matching_live_runs) != 1:
+            fail(
+                "workflow_run_missing_or_duplicate_during_jobs_fallback:"
+                f"run={run_id}:count={len(matching_live_runs)}"
+            )
+        live_run = matching_live_runs[0]
 
     live_id, live_attempt = run_key(live_run)
     if live_id != run_id or live_attempt != attempt:

@@ -2680,18 +2680,48 @@
         {
           "path": "rust/crates/hepta-paper-service/src/workflow.rs",
           "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_with_clock_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/lib.rs",
+          "symbol": "run_service_with_clock_v1"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/runtime.rs",
+          "symbol": "run_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/commit.rs",
+          "symbol": "commit_batch_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "append_control_batch_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+          "symbol": "set_campaign_state_with_clock"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/autonomous_research_route.rs",
-        "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"
+        "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+        "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
       ],
-      "remaining": "Without --workflow-file the original fail-closed diagnostic remains. The explicit --workflow-file local-run path now composes the existing immutable LocalWorkflowV1, SQLite campaign writer, durable dispatch/recovery, CAS byte verification and commit replay without a second scheduler or result store. Prepare validates without creating state; launch initializes an absent root or retries the exact existing owner; converge uses an absolute step endpoint; status is read-only; pause/resume/cancel require the observed campaign revision. Actual CLI tests cover seven-step execution, real Rust child workers, restart/idempotent replay, stale revisions, changed definitions, terminal cancellation, and a crashing child not relaunched across CLI restarts. Process external/network outcomes remain unobserved rather than fabricated false. This bounded path does not implement automatic planning, live author/reviewer models, in-flight termination, lease renewal, all incumbent arguments, independently accepted command parity, production activation, writer transfer or Node retirement.",
+      "remaining": "Without --workflow-file the original fail-closed diagnostic remains. The explicit --workflow-file local-run path now composes the existing immutable LocalWorkflowV1, SQLite campaign writer, durable dispatch/recovery, CAS byte verification and commit replay without a second scheduler or result store. Prepare validates without creating state; launch initializes an absent root or retries the exact existing owner; converge uses an absolute step endpoint; status is read-only; pause/resume/cancel require the observed campaign revision. Actual CLI tests cover seven-step execution, real Rust child workers, restart/idempotent replay, stale revisions, changed definitions, terminal cancellation, and a crashing child not relaunched across CLI restarts. Process external/network outcomes remain unobserved rather than fabricated false. The CLI now supplies a freshly sampled system clock through the existing workflow, service, sequencer and SQLite writer. Clock rollback, unavailable time or lease expiry stops subsequent waves; clock and lease are rechecked after acquiring the actual SQLite write transaction and immediately before COMMIT. Controlled-clock regressions cover whole-batch/lifecycle rollback, retained prepared outputs, preserved prior commits and refusal to relaunch after expiry. This does not renew a lease, terminate an in-flight process or attest independent host time. This bounded path does not implement automatic planning, live author/reviewer models, in-flight termination, lease renewal, all incumbent arguments, independently accepted command parity, production activation, writer transfer or Node retirement.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/autonomous_research.rs",
         "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
-        "rust/crates/hepta-paper-service/src/workflow.rs"
+        "rust/crates/hepta-paper-service/src/workflow.rs",
+        "rust/crates/hepta-paper-service/src/lib.rs",
+        "rust/crates/hepta-control-plane/src/runtime.rs",
+        "rust/crates/hepta-control-plane/src/commit.rs",
+        "rust/crates/hepta-campaign-writer/src/control.rs",
+        "rust/crates/hepta-campaign-writer/src/lib.rs"
       ],
       "testCases": [
         {
@@ -2725,6 +2755,18 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
           "symbol": "autonomous_worker_crash_is_not_reexecuted_after_cli_restart"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "symbol": "workflow_clock_expires_after_real_preparation_without_a_commit_or_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "symbol": "workflow_samples_clock_between_steps_and_preserves_prior_commit"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "symbol": "readonly_workflow_does_not_need_a_clock_and_live_success_preserves_all_steps"
         }
       ]
     },

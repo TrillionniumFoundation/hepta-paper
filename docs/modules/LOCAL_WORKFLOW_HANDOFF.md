@@ -257,7 +257,7 @@ single-link, canonical and stable across the read. Unknown typed fields fail.
 
 `--action prepare` validates and hashes the definition without opening or
 creating campaign state. `launch` initializes only an absent state root through
-`initialize_local_workflow_v1`, then uses `operate_local_workflow_v1`; an existing
+`initialize_local_workflow_v1`, then uses `operate_local_workflow_with_clock_v1`; an existing
 root must have the exact retained definition and valid owner history. Partial
 initialization and ambiguous dispatch are preserved, never cleaned into success.
 `launch` and `converge` accept `--through-steps N`, an absolute endpoint (default:
@@ -267,10 +267,23 @@ all steps), so response-loss retries cannot append extra steps or charges.
 `pause`, `resume`, and `cancel` require `--expected-revision N` from the latest
 owner status. Stale revisions and reopening a cancelled campaign fail. This is
 between-step cancellation, not interruption of an already running provider.
-Mutations sample actual system time at command entry and refuse the supplied
-frozen writer lease before its initial time or after expiry. The underlying
-batch retains its explicit clock semantics; this wrapper does not provide
-continuous lease revalidation, renewal or a production timer supervisor.
+Mutations sample actual system time at entry and through the same workflow and
+service owner. `ControlPlaneV1::run_with_clock` repeats snapshot/lease admission
+before every dependency wave and finalization. The existing SQLite sequencer
+passes the host clock into the result transaction: samples after `BEGIN IMMEDIATE`
+and immediately before `COMMIT` reject expiry, backward time and clock failure.
+Lifecycle writes apply the same transaction checks and capture their response
+before commit, with no fallible post-commit reread. A failed final check rolls
+back the whole result batch or lifecycle event; after dispatch the runtime retains
+its inspection guard and charges. Already committed workflow steps and durable
+prepared caches survive a later expiry; an expired restart cannot relaunch work.
+
+The original supplied-time APIs remain deterministic compatibility/library
+entrypoints. They are not live-clock substitutes for the CLI. This change does
+not renew leases, kill in-flight workers, provide a continuously running timer,
+prove an independent trusted wall clock, or authorize production. Expiry after
+the final precommit sample or ambiguity in the COMMIT I/O itself is not made
+impossible by a timestamp check.
 Inspection entrypoints cannot mutate even when called directly with forged
 options. Production, golden-bootstrap and full-readiness requests fail before
 state creation. Omitting `--workflow-file` preserves the previous diagnostic.
@@ -314,3 +327,18 @@ owner tests likewise require nonempty TAP execution without skips or todos.
 These transcript checks complement exact source/discovery binding; they are not
 independent producer authentication or scientific acceptance. No new workflow,
 scheduler, state owner, migration inventory or production authority is created.
+
+### Live-clock regression execution
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane --lib tests::runtime_clock::
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow clock::
+```
+
+Controlled clocks exercise actual SQLite/CAS/owner paths without sleeps: expiry
+or rollback between dependency waves; expiry after final preparation; a failing
+precommit clock after both result rows were staged; lifecycle rollback; a
+clock-free status read; preservation of a prior workflow commit and prepared
+bytes after the next step expires. The existing autonomous-entrypoint tests run
+the CLI with its real system clock and real Rust children. These are source
+regressions, not full research-role parity or target-host acceptance.

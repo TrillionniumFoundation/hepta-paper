@@ -204,6 +204,17 @@ pub enum ServiceError {
 /// Committed plans can be replayed using their identical snapshot and prepared
 /// objects, while new plans must bind the recovered campaign state/revision.
 pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    let now = config.observed_at_unix_ms;
+    run_service_with_clock_v1(config, &mut || Ok(now))
+}
+
+/// Execute through the same local owner with a live host clock. The clock is
+/// trusted composition, not caller-serialized evidence or an authority grant.
+/// It is sampled again inside the actual SQLite result transaction.
+pub fn run_service_with_clock_v1(
+    config: ServiceRunV1,
+    clock: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
+) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
     if config.version != 1
         || config.production_activation
         || config.hard_policy.external_actions_authorized
@@ -266,8 +277,12 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
         CampaignWriterStoreV1::create_local(&db_path, policy)
     }
     .map_err(|_| ServiceError::Persistence)?;
+    let observed_at = clock().map_err(|_| ServiceError::Persistence)?;
+    if observed_at < config.observed_at_unix_ms {
+        return Err(ServiceError::Persistence);
+    }
     let writer = store
-        .acquire_writer(config.writer_lease, config.observed_at_unix_ms)
+        .acquire_writer(config.writer_lease, observed_at)
         .map_err(|_| ServiceError::Persistence)?;
     match store.load_campaign(&config.snapshot.campaign_id) {
         Ok(_) => (),
@@ -279,7 +294,7 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
                     config.snapshot.budget_microusd,
                     config.snapshot.resource_limit.cpu_millis,
                     config.snapshot.resource_limit.gpu_millis,
-                    config.observed_at_unix_ms,
+                    observed_at,
                 )
                 .map_err(|_| ServiceError::Persistence)?;
         }
@@ -293,7 +308,7 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
         config.snapshot.campaign_id.clone(),
         config.initial_state_hash,
         config.verifier_hash.clone(),
-        config.observed_at_unix_ms,
+        observed_at,
     )
     .map_err(|_| ServiceError::Persistence)?;
     // Persistent sequencer independently validates plan replay and current state.
@@ -325,12 +340,7 @@ pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, 
     )
     .map_err(|_| ServiceError::Control)?;
     control
-        .run(
-            &config.snapshot,
-            &config.frontier,
-            &tenant,
-            config.observed_at_unix_ms,
-        )
+        .run_with_clock(&config.snapshot, &config.frontier, &tenant, clock)
         .map_err(|error| control_error::map_control_run_error(error, control.inspection_required()))
 }
 

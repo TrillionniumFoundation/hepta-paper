@@ -175,6 +175,20 @@ where
         tenant_id: &str,
         now_unix_ms: u64,
     ) -> Result<ControlPlaneRunReceiptV1, ControlPlaneError> {
+        self.run_with_clock(snapshot, frontier, tenant_id, &mut || Ok(now_unix_ms))
+    }
+
+    /// Runs with an owning host clock, resampled before each dependency wave
+    /// and at the durable commit boundary. Rollback or loss of the clock is a
+    /// failure, never frozen-time continuation. Once dispatch starts, the same
+    /// inspection/resource-retention rules as `run` apply.
+    pub fn run_with_clock(
+        &mut self,
+        snapshot: &ControlPlaneSnapshotV1,
+        frontier: &PlanningFrontierV1,
+        tenant_id: &str,
+        observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    ) -> Result<ControlPlaneRunReceiptV1, ControlPlaneError> {
         if self.inspection_required.is_some() {
             return Err(ControlPlaneError::RunRequiresInspection);
         }
@@ -186,7 +200,12 @@ where
             return Err(ControlPlaneError::SnapshotInvalid);
         }
         frontier.validate(snapshot, &self.registry, &self.hard_policy)?;
-        self.sequencer.begin_run(snapshot, now_unix_ms)?;
+        let mut clock = RunClockV1 {
+            snapshot,
+            observe,
+            last: 0,
+        };
+        clock.revalidate(&mut self.sequencer)?;
         let snapshot_hash = snapshot.snapshot_hash()?;
         let plan = select_plan_v1(snapshot, frontier, &self.hard_policy, &self.planner_policy)?;
         let waves = dependency_waves(frontier, &plan)?;
@@ -227,6 +246,7 @@ where
             plan.plan_hash.clone(),
         )?;
 
+        let now_unix_ms = clock.revalidate(&mut self.sequencer)?;
         let (requests, reservation_ids) = self.reserve_selected(
             snapshot,
             &snapshot_hash,
@@ -248,6 +268,7 @@ where
             &waves,
             &requests,
             pending_inspection,
+            &mut clock,
         ) {
             Ok(value) => value,
             Err(error) => return Err(self.fail_run(error, &reservation_ids)),
@@ -255,7 +276,14 @@ where
         if let Some(inspection) = &mut self.inspection_required {
             inspection.phase = ControlPlaneRunFailurePhaseV1::Finalization;
         }
-        match self.finalize_atomic(&snapshot_hash, &plan, &requests, verified, event_start) {
+        match self.finalize_atomic(
+            &snapshot_hash,
+            &plan,
+            &requests,
+            verified,
+            event_start,
+            &mut clock,
+        ) {
             Ok(receipt) => {
                 self.inspection_required = None;
                 Ok(receipt)
@@ -357,6 +385,7 @@ where
         waves: &[Vec<&ActionCandidateV1>],
         requests: &[ExecutionRequestV1],
         pending_inspection: ControlPlaneRunInspectionV1,
+        clock: &mut RunClockV1<'_>,
     ) -> Result<VerifiedRunV1, ControlPlaneError> {
         let mut pending_inspection = Some(pending_inspection);
         let requests_by_candidate = requests
@@ -380,6 +409,7 @@ where
                         .ok_or(ControlPlaneError::ExecutionInvalid)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            clock.revalidate(&mut self.sequencer)?;
             // Arm the guard before handing control to an unsealed executor.
             // The same record covers every later wave and finalization step.
             if let Some(inspection) = pending_inspection.take() {
@@ -448,6 +478,7 @@ where
         requests: &[ExecutionRequestV1],
         verified_run: VerifiedRunV1,
         event_start: usize,
+        clock: &mut RunClockV1<'_>,
     ) -> Result<ControlPlaneRunReceiptV1, ControlPlaneError> {
         if requests.len() != verified_run.verified.len() {
             return Err(ControlPlaneError::CommitInvalid);
@@ -540,7 +571,10 @@ where
         // All validation, allocation, event construction and hashing above is
         // fallible. The durable sequencer is committed exactly once, last. Its
         // sealed contract guarantees the preview receipts and batch atomicity.
-        let committed = self.sequencer.commit_batch(&commit_requests)?;
+        clock.revalidate(&mut self.sequencer)?;
+        let committed = self
+            .sequencer
+            .commit_batch_with_clock(&commit_requests, &mut || clock.sample())?;
         debug_assert_eq!(committed, receipt.commit_receipts);
         self.allocator = staged_allocator;
         self.events = staged_events;
@@ -600,6 +634,32 @@ where
             reservation_id,
             subject_hash,
         ))
+    }
+}
+
+struct RunClockV1<'a> {
+    snapshot: &'a ControlPlaneSnapshotV1,
+    observe: &'a mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    last: u64,
+}
+
+impl RunClockV1<'_> {
+    fn sample(&mut self) -> Result<u64, ControlPlaneError> {
+        let now = (self.observe)()?;
+        if now < self.last {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        self.last = now;
+        Ok(now)
+    }
+
+    fn revalidate<C: CommitSequencerV1>(
+        &mut self,
+        sequencer: &mut C,
+    ) -> Result<u64, ControlPlaneError> {
+        let now = self.sample()?;
+        sequencer.begin_run(self.snapshot, now)?;
+        Ok(now)
     }
 }
 

@@ -5,15 +5,16 @@
 //! workers are trusted local code, not a security sandbox or live-model grant.
 
 use crate::{
-    NativeJobV1, ObjectStoreV1, ServiceError, ServiceRunV1, WorkerBindingV1, run_service_v1,
+    NativeJobV1, ObjectStoreV1, ServiceError, ServiceRunV1, WorkerBindingV1,
+    run_service_with_clock_v1,
 };
 use hepta_campaign_writer::{
     CampaignSnapshotV1, CampaignStateV1, CampaignWriterPolicyV1, CampaignWriterStoreV1,
 };
 use hepta_codex_protocol::Sha256Digest;
 use hepta_control_plane::{
-    CommitReceiptV1, PlanningFrontierV1, SqliteCommitSequencerV1, canonical_hash_v1,
-    replay_control_log_v1, select_plan_v1,
+    CommitReceiptV1, ControlPlaneError, PlanningFrontierV1, SqliteCommitSequencerV1,
+    canonical_hash_v1, replay_control_log_v1, select_plan_v1,
 };
 use hepta_module_platform::{
     ActionCandidateV1, ModuleRegistryArtifactV1, PreparedResultV1, QualificationTierV1,
@@ -808,7 +809,7 @@ fn set_state(
     owner: u32,
     expected: u64,
     next: CampaignStateV1,
-    now: u64,
+    clock: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
 ) -> Result<(), WorkflowError> {
     let t = &definition.template;
     let mut store = CampaignWriterStoreV1::open_local(
@@ -816,11 +817,21 @@ fn set_state(
         CampaignWriterPolicyV1::strict(owner),
     )
     .map_err(|_| WorkflowError::History)?;
+    let now = clock().map_err(|_| WorkflowError::Conflict)?;
     let writer = store
         .acquire_writer(t.writer_lease.clone(), now)
         .map_err(|_| WorkflowError::Conflict)?;
     store
-        .set_campaign_state(&writer, &t.snapshot.campaign_id, expected, next, now)
+        .set_campaign_state_with_clock(
+            &writer,
+            &t.snapshot.campaign_id,
+            expected,
+            next,
+            now,
+            &mut || {
+                clock().map_err(|_| hepta_campaign_writer::CampaignWriterError::InvalidWriterLease)
+            },
+        )
         .map_err(|_| WorkflowError::Conflict)?;
     Ok(())
 }
@@ -833,6 +844,18 @@ pub fn operate_local_workflow_v1(
     expected_definition: &Sha256Digest,
     action: WorkflowActionV1,
     now: u64,
+) -> Result<WorkflowProgressV1, WorkflowError> {
+    operate_local_workflow_with_clock_v1(root, expected_definition, action, &mut || Ok(now))
+}
+
+/// Operates the same workflow with a host clock across every step and SQL
+/// commit. Status remains clock-free. A late failure preserves already committed
+/// steps and prepared caches; it never grants a new lease or permits relaunch.
+pub fn operate_local_workflow_with_clock_v1(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    action: WorkflowActionV1,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
 ) -> Result<WorkflowProgressV1, WorkflowError> {
     let owner = private_root(root)?;
     let _guard = lock(root, owner)?;
@@ -853,11 +876,17 @@ pub fn operate_local_workflow_v1(
     if &hash(&definition)? != expected_definition {
         return Err(WorkflowError::Definition);
     }
-    if !matches!(action, WorkflowActionV1::Status)
-        && (now < observed.clock_floor
-            || now >= definition.template.writer_lease.expires_at_unix_ms)
-    {
-        return Err(WorkflowError::Conflict);
+    let mut last = observed.clock_floor;
+    let mut clock = || {
+        let now = observe()?;
+        if now < last || now >= definition.template.writer_lease.expires_at_unix_ms {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        last = now;
+        Ok(now)
+    };
+    if !matches!(action, WorkflowActionV1::Status) {
+        clock().map_err(|_| WorkflowError::Conflict)?;
     }
     match action {
         WorkflowActionV1::Status => (),
@@ -876,6 +905,7 @@ pub fn operate_local_workflow_v1(
                 if observed.campaign.state != CampaignStateV1::Running {
                     return Err(WorkflowError::Conflict);
                 }
+                let now = clock().map_err(|_| WorkflowError::Conflict)?;
                 let index = observed.results.len();
                 let path = plan_path(root, index);
                 let job = payload(&definition, index, &observed.results, &objects)?;
@@ -910,7 +940,7 @@ pub fn operate_local_workflow_v1(
                     write_record(&path, &bytes(&config)?)?;
                 }
                 config.observed_at_unix_ms = now;
-                run_service_v1(config)?;
+                run_service_with_clock_v1(config, &mut clock)?;
                 observed = history(&original, owner, &objects)?;
                 if observed.results.len() != index + 1 {
                     return Err(WorkflowError::History);
@@ -931,7 +961,7 @@ pub fn operate_local_workflow_v1(
                     owner,
                     observed.campaign.revision,
                     CampaignStateV1::Completed,
-                    now,
+                    &mut clock,
                 )?;
             }
         }
@@ -962,7 +992,7 @@ pub fn operate_local_workflow_v1(
                 {
                     return Err(WorkflowError::Reconciliation);
                 }
-                set_state(&definition, owner, expected_revision, next, now)?;
+                set_state(&definition, owner, expected_revision, next, &mut clock)?;
             }
         }
     }

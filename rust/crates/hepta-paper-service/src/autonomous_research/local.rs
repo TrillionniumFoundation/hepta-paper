@@ -5,7 +5,7 @@ use super::AutonomousResearchOptions;
 use crate::WorkerBindingV1;
 use crate::workflow::{
     LocalWorkflowV1, WorkflowActionV1, WorkflowError, initialize_local_workflow_v1,
-    operate_local_workflow_v1,
+    operate_local_workflow_v1, operate_local_workflow_with_clock_v1,
 };
 use hepta_control_plane::canonical_hash_v1;
 use nix::fcntl::OFlag;
@@ -227,7 +227,9 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
                 report["externalActionMayHaveStarted"] = json!(true);
             }
         }
-        let progress = operate_local_workflow_v1(root, &digest, action, observed_at)?;
+        let progress = operate_local_workflow_with_clock_v1(root, &digest, action, &mut || {
+            now().map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+        })?;
         report["workflow"] = serde_json::to_value(progress).map_err(|_| WorkflowError::History)?;
         report["status"] = json!("local_workflow_operation_completed");
         Ok(())

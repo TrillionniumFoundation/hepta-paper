@@ -1,3 +1,6 @@
+#[path = "local_workflow/clock.rs"]
+mod clock;
+
 #[path = "local_workflow/autonomous_entrypoint.rs"]
 mod autonomous_entrypoint;
 

@@ -132,12 +132,19 @@ test('V3 derivation and post-producer regeneration are permanently wired', () =>
 });
 
 
-test('candidate-controlled RC workflows have no promotion or ref authority', () => {
+test('retired RC mutation workflows stay absent and current source audits stay read-only', () => {
   for (const relative of [
     '.github/workflows/admit-rust-replacement-rc.yml',
     '.github/workflows/sync-rust-rc-pr-subject.yml',
+  ]) assert.equal(fs.existsSync(path.join(root, relative)), false, `${relative}: retired workflow returned`);
+
+  for (const relative of [
+    '.github/workflows/source-promotion-sync.yml',
+    '.github/workflows/branch-convergence-inventory.yml',
   ]) {
     const workflow = read(relative);
+    assert.match(workflow, /contents: read/u);
+    assert.match(workflow, /persist-credentials: false/u);
     for (const forbidden of [
       'pull-requests: write',
       'contents: write',
@@ -149,8 +156,7 @@ test('candidate-controlled RC workflows have no promotion or ref authority', () 
       'markPullRequestReadyForReview',
     ]) assert.equal(workflow.includes(forbidden), false, `${relative}: ${forbidden}`);
   }
-  const admission = read('.github/workflows/admit-rust-replacement-rc.yml');
-  assert.match(admission, /persist-credentials: false/u);
-  const subjectAudit = read('.github/workflows/sync-rust-rc-pr-subject.yml');
-  assert.match(subjectAudit, /mutation authority: `none`/u);
+  const promotionAudit = read('.github/workflows/source-promotion-sync.yml');
+  assert.match(promotionAudit, /report\['write'\] is False/u);
+  assert.match(promotionAudit, /report\['promotionCount'\] == 0/u);
 });

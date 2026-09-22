@@ -54,7 +54,14 @@ test('partial command mappings bind both concrete Rust sources and tests', () =>
   const partial = report.commandMappings.commands.filter((row) => row.scope === 'partial_local_source');
   assert.equal(partial.length, report.commandMappings.mappedCommands);
   assert.ok(partial.every((row) => row.rustEntrypoint && row.rustSources.length > 0 && row.tests.length > 0));
-  assert.ok(report.commandMappings.commands.filter((row) => row.scope === 'unmapped').some((row) => row.id === 'verify/full'));
+  const full = report.commandMappings.commands.find((row) => row.id === 'verify/full');
+  assert.equal(full.scope, 'partial_local_source');
+  assert.equal(full.compatibilityDecision, 'candidate');
+  assert.ok(full.callChain.some((row) => row.symbol === 'inspect_full_suite_verification_v1'));
+  assert.ok(full.testCases.some((row) => row.symbol === 'require_parity_reports_inventory_without_running_node_or_npm'));
+  assert.match(full.remaining, /never executes Node or npm/u);
+  assert.match(full.remaining, /cannot independently accept full-suite parity/u);
+  assert.equal(report.fullReplacementEstablished, false);
 });
 
 test('command source inventory rejects removed, empty, duplicated or falsely scoped bindings', () => {

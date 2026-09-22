@@ -46,6 +46,26 @@ production/online activation and admission gaps.
 
 | Command | Contract |
 |---|---|
+| `advanced-numerical-plugin REQUEST` | Execute the bounded native linear-algebra, monte-carlo or optimization reference candidate. This is not the signed ten-family plugin runner or independent oracle acceptance. |
+| `autonomous-empirical-plugin-release [OPTIONS]` | Parse template/plan/publish/inspect and inspect bounded public inputs. Publication remains fail-closed; no signer, immutable installation or activation is invoked. |
+| `autonomous-intake-authority-rotation [OPTIONS]` | Inspect the native authority-rotation preflight. Applying rotation remains fail-closed before generation CAS, journal publication or external effects. |
+| `autonomous-research [OPTIONS]` | Parse prepare/launch/status/resume/converge and emit a blocked diagnostic. This route still does not persist a campaign or execute a provider; use of the name execute is not a completed research workflow. |
+| `autonomous-research-one-shot-campaign-attempt [OPTIONS]` | Inspect bounded plan/preflight/execute/status inputs and report blocked execution; no provider, journal or native writer is opened. |
+| `autonomous-state-partial-root-maintenance [OPTIONS]` | Inspect the bounded partial-root maintenance plan. Execute remains blocked; it does not copy, repair, restore or publish runtime state. |
+| `autonomous-state-provision [OPTIONS]` | Inspect source-bound state-provisioning inputs. Execute remains blocked before constructors, schema handoff and atomic runtime publication. |
+| `autonomous-submission-dispatcher [OPTIONS]` | Inspect the dispatcher input boundary without granting delivery, provider credentials or remote reconciliation authority. |
+| `autonomous-submission-dispatcher-challenge [OPTIONS]` | Inspect the challenge contract; a diagnostic does not execute the incumbent dispatcher or accept a remote outcome. |
+| `autonomous-supervisor [OPTIONS]` | The supported health action observes the native health surface. Other supervisor actions remain unported; health does not launch, stop or authorize a production runtime. |
+| `external-authority-intake [OPTIONS]` | Inspect external-intake inputs and readiness boundaries. The owning external-authority adapter remains unported; no receipt is manufactured into acceptance. |
+| `full-production-readiness [OPTIONS]` | Inspect the bounded native readiness surface and its explicit blockers. It does not activate production or replace missing installed observations. |
+| `release-attest REQUEST` | Inspect release-state and local archive preconditions. Release evidence remains not ready; no signing, release promotion or immutable publication is performed. |
+| `retirement-drill-attest REQUEST` | Inspect retirement-drill prerequisites. This does not run destructive target-host drills, issue independent acceptance or retire Node. |
+| `retirement-matrix [OPTIONS]` | Inspect the bounded retirement matrix and retained source inputs. A local projection does not authorize deletion or writer transfer. |
+| `strict-full-auto-acceptance [OPTIONS]` | Inspect the strict acceptance preflight and retain explicit nonacceptance when owning runtime, provider or external evidence is missing. |
+| `submission-handoff-export [OPTIONS]` | Inspect the submission-handoff export boundary. Complete authenticated export and downstream delivery acceptance remain separate; this route cannot authorize submission. |
+| `verify-architecture [OPTIONS]` | Run native architecture inspection and apply the requested strict result gate. This is repository structure analysis, not execution or business parity. |
+| `verify-critical [OPTIONS]` | Inspect critical-module coverage inputs and gate the projection. It does not execute the incumbent coverage harness or create missing test measurements. |
+| `verify-full [OPTIONS]` | Inspect full-suite verification prerequisites and report blocked execution. It does not run the complete Node or Rust test matrix. |
 | `native-identity` | Print the linked native-worker source identity. |
 | `put STATE FILE` | Insert up to 16 MiB of actual bytes and return their SHA-256. |
 | `run CONFIG` | Decode one closed `ServiceRunV1` JSON document and emit its run receipt. |

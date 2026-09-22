@@ -11,10 +11,8 @@ fn records(temp: &Temp) -> BTreeSet<String> {
 #[test]
 fn changed_plan_cannot_escape_an_unprepared_start_after_owner_reopen() {
     let temp = Temp::new();
-    let failed = configuration_for_job(
-        &temp,
-        NativeBusinessJobV1::BuildPackage { entries: vec![] },
-    );
+    let failed =
+        configuration_for_job(&temp, NativeBusinessJobV1::BuildPackage { entries: vec![] });
     assert!(run_service_v1(failed).is_err());
     let before = records(&temp);
     assert_eq!(before.len(), 1);

@@ -103,6 +103,14 @@ test('every required qualification producer always reports on pull requests', ()
   const workflowPaths = new Set(manifest.producers.map((producer) => producer.workflowPath));
   assert.ok(workflowPaths.size > 0);
 
+  const rustBranch = 'codex/full-rust-replacement-progress-20260916';
+  const rustPushProducers = new Set([
+    'ci', 'exact-head-source-validation', 'rust-foundation',
+    'rust-plan-v3-external-contracts', 'rust-program-truth',
+    'rust-qualification-artifacts', 'rust-source-snapshot',
+    'rust-supply-chain', 'workflow-lint',
+  ].map((name) => `.github/workflows/${name}.yml`));
+
   for (const workflowPath of [...workflowPaths].sort()) {
     const workflow = read(workflowPath);
     const triggerBlock = yamlChildBlock(workflow, 0, 'on');
@@ -111,11 +119,16 @@ test('every required qualification producer always reports on pull requests', ()
     assert.equal(pullRequestBlock, '  pull_request:', `${workflowPath}: required producer pull_request trigger must always report`);
 
     const pushBlock = yamlChildBlock(triggerBlock, 2, 'push');
+    if (rustPushProducers.has(workflowPath)) {
+      assert.ok(pushBlock, `${workflowPath}: maintained Rust producer lacks push trigger`);
+    }
     if (pushBlock) {
+      const expected = workflowPath === '.github/workflows/rust-source-snapshot.yml'
+        ? [rustBranch]
+        : ['main', ...(rustPushProducers.has(workflowPath) ? [rustBranch] : [])];
       assert.deepEqual(
-        pushBranches(pushBlock),
-        ['main'],
-        `${workflowPath}: required producer push trigger must be main-only`,
+        pushBranches(pushBlock), expected,
+        `${workflowPath}: push must target exactly its maintained source branches`,
       );
       assert.doesNotMatch(pushBlock, /codex\/\*\*|branches-ignore|paths|paths-ignore/mu);
     }

@@ -253,6 +253,26 @@ class PlanV4QualificationTests(unittest.TestCase):
         self.assertEqual(access["runId"], run_id)
         self.assertEqual(access["runAttempt"], attempt)
 
+    def test_only_live_run_mutation_is_retryable_collection_instability(self) -> None:
+        self.assertTrue(
+            COLLECT.retryable_live_collection_error(
+                ValueError(
+                    "workflow_run_mutated_during_jobs_fallback:"
+                    "run=123:fields=status,conclusion,updated_at"
+                )
+            )
+        )
+        self.assertFalse(
+            COLLECT.retryable_live_collection_error(
+                ValueError("github_api_permission_denied:actions_jobs_read:run=123:attempt=1")
+            )
+        )
+        self.assertFalse(
+            COLLECT.retryable_live_collection_error(
+                ValueError("required_job_missing_or_duplicate:context:count=0")
+            )
+        )
+
     def test_live_run_permission_denied_revalidates_from_run_listing(self) -> None:
         run = copy.deepcopy(self.fixture.workflow_runs[0])
         run_id, attempt = COLLECT.run_key(run)

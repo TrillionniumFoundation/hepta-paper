@@ -43,6 +43,10 @@ def fail(message: str) -> None:
     raise ValueError(message)
 
 
+def retryable_live_collection_error(error: ValueError) -> bool:
+    return str(error).startswith("workflow_run_mutated_during_jobs_fallback:")
+
+
 def canonical_bytes(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -621,48 +625,74 @@ def main() -> int:
                 run=run,
                 token=args.token,
             )
+            try:
+                jobs, access = fetch_jobs_for_attempt(
+                    api=api,
+                    repository=args.repository,
+                    run=run,
+                    token=args.token,
+                )
+            except ValueError as unstable:
+                if not retryable_live_collection_error(unstable):
+                    raise
+                if time.monotonic() >= deadline:
+                    fail(f"required_check_collection_unstable_timeout:{unstable}")
+                print(
+                    json.dumps(
+                        {
+                            "status": "retrying_inconsistent_live_run_snapshot",
+                            "detail": str(unstable),
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+                time.sleep(poll_seconds)
+                break
             jobs_by_attempt[(run_id, attempt)] = jobs
             job_pages[f"{run_id}-{attempt}"] = access
+        else:
+            write_raw(args.raw_output_dir, "workflow-runs.json", workflow_pages)
+            write_raw(args.raw_output_dir, "check-runs.json", check_pages)
+            write_raw(args.raw_output_dir, "jobs.json", job_pages)
+            try:
+                snapshot = select_snapshot(
+                    required=required,
+                    producers=producers,
+                    contexts=contexts,
+                    by_context=by_context,
+                    workflow_runs=workflow_runs,
+                    jobs_by_attempt=jobs_by_attempt,
+                    check_runs=check_runs,
+                    repository=args.repository,
+                    commit=args.commit,
+                    tree=args.tree,
+                    head_branch=args.head_branch,
+                    base_ref=args.base_ref,
+                    pull_request=args.pull_request,
+                    required_path=args.required_checks,
+                    producer_path=args.producer_manifest,
+                )
+            except RuntimeError as pending:
+                if time.monotonic() >= deadline:
+                    fail(f"required_check_matrix_timeout:{pending}")
+                print(json.dumps({"status": "waiting_for_authenticated_producer_runs", "detail": str(pending)}, sort_keys=True), flush=True)
+                time.sleep(poll_seconds)
+                continue
+            evidence_schema = json.loads(args.evidence_schema.read_text(encoding="utf-8"))
+            validate_schema(snapshot, evidence_schema)
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            print(json.dumps({
+                "status": "producer_authenticated_required_check_matrix_complete",
+                "commit": args.commit,
+                "tree": args.tree,
+                "contexts": len(contexts),
+                "snapshotIdentity": snapshot["snapshotIdentity"],
+            }, sort_keys=True))
+            return 0
+        continue
 
-        write_raw(args.raw_output_dir, "workflow-runs.json", workflow_pages)
-        write_raw(args.raw_output_dir, "check-runs.json", check_pages)
-        write_raw(args.raw_output_dir, "jobs.json", job_pages)
-        try:
-            snapshot = select_snapshot(
-                required=required,
-                producers=producers,
-                contexts=contexts,
-                by_context=by_context,
-                workflow_runs=workflow_runs,
-                jobs_by_attempt=jobs_by_attempt,
-                check_runs=check_runs,
-                repository=args.repository,
-                commit=args.commit,
-                tree=args.tree,
-                head_branch=args.head_branch,
-                base_ref=args.base_ref,
-                pull_request=args.pull_request,
-                required_path=args.required_checks,
-                producer_path=args.producer_manifest,
-            )
-        except RuntimeError as pending:
-            if time.monotonic() >= deadline:
-                fail(f"required_check_matrix_timeout:{pending}")
-            print(json.dumps({"status": "waiting_for_authenticated_producer_runs", "detail": str(pending)}, sort_keys=True), flush=True)
-            time.sleep(poll_seconds)
-            continue
-        evidence_schema = json.loads(args.evidence_schema.read_text(encoding="utf-8"))
-        validate_schema(snapshot, evidence_schema)
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(json.dumps({
-            "status": "producer_authenticated_required_check_matrix_complete",
-            "commit": args.commit,
-            "tree": args.tree,
-            "contexts": len(contexts),
-            "snapshotIdentity": snapshot["snapshotIdentity"],
-        }, sort_keys=True))
-        return 0
 
 
 if __name__ == "__main__":

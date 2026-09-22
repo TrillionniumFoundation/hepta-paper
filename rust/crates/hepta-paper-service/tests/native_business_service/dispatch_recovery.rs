@@ -211,3 +211,123 @@ fn self_hashed_evidence_requires_one_typed_matching_request_identity() {
         assert_eq!(records(&temp), before);
     }
 }
+
+fn same_wave_configuration(temp: &Temp) -> ServiceRunV1 {
+    let mut config = build_configuration(temp);
+    let mut second = config.frontier.candidates[0].clone();
+    second.candidate_id = "native-build-2".into();
+    second.decision_group = "native-build-second".into();
+    config.frontier.candidates.push(second);
+    config.planner_policy.maximum_exact_candidates = 2;
+    config.planner_policy.maximum_selected_candidates = 2;
+    config
+}
+
+fn committed_progress(temp: &Temp) -> (u64, usize) {
+    use hepta_campaign_writer::{CampaignWriterPolicyV1, CampaignWriterStoreV1};
+    use std::os::unix::fs::MetadataExt;
+
+    let (campaign, log, _) = CampaignWriterStoreV1::read_local_control_snapshot(
+        temp.0.join("campaign.sqlite"),
+        CampaignWriterPolicyV1::strict(fs::metadata(&temp.0).unwrap().uid()),
+        "campaign-native-business",
+    )
+    .unwrap();
+    (campaign.budget_remaining_microusd, log.entries.len())
+}
+
+#[test]
+fn same_wave_expiry_rollback_or_missing_clock_prevents_second_native_start() {
+    use hepta_control_plane::{ControlPlaneError, ControlPlaneRunFailurePhaseV1};
+    use hepta_paper_service::{ServiceError, run_service_with_clock_v1};
+
+    for next_clock in [
+        Ok(100_000),
+        Ok(500),
+        Err(ControlPlaneError::PersistenceInvalid),
+    ] {
+        let temp = Temp::new();
+        let config = same_wave_configuration(&temp);
+        let mut clock = || {
+            if records(&temp)
+                .iter()
+                .any(|name| name.ends_with(".prepared"))
+            {
+                next_clock
+            } else {
+                Ok(1_001)
+            }
+        };
+        let error = run_service_with_clock_v1(config.clone(), &mut clock).unwrap_err();
+        let ServiceError::ControlRequiresInspection { inspection } = error else {
+            panic!("real admitted execution must retain the inspection diagnostic");
+        };
+        let inspection = inspection.unwrap();
+        assert_eq!(inspection.phase(), ControlPlaneRunFailurePhaseV1::Execution);
+        assert_eq!(
+            inspection.cause(),
+            Some(ControlPlaneError::PersistenceInvalid)
+        );
+        assert_eq!(inspection.reservation_ids().len(), 2);
+        let before = records(&temp);
+        assert_eq!(
+            before
+                .iter()
+                .filter(|name| name.ends_with(".started"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            before
+                .iter()
+                .filter(|name| name.ends_with(".prepared"))
+                .count(),
+            1
+        );
+        let (_, prepared) = prepared_record(&temp);
+        let objects = ObjectStoreV1::open(&temp.0).unwrap();
+        for hash in &prepared.artifact_hashes {
+            assert!(!objects.read(hash).unwrap().is_empty());
+        }
+        assert!(!objects.read(&prepared.evidence_hash).unwrap().is_empty());
+        assert_eq!(committed_progress(&temp), (100, 0));
+        // The expired/missing/rolled-back observer cannot dispatch on reopen.
+        assert!(run_service_with_clock_v1(config, &mut clock).is_err());
+        assert_eq!(records(&temp), before);
+        assert_eq!(committed_progress(&temp), (100, 0));
+    }
+}
+
+#[test]
+fn same_wave_live_admission_preserves_atomic_commit_and_exact_replay() {
+    use hepta_paper_service::run_service_with_clock_v1;
+
+    let temp = Temp::new();
+    let config = same_wave_configuration(&temp);
+    let first = run_service_with_clock_v1(config.clone(), &mut || Ok(1_001)).unwrap();
+    assert_eq!(first.commit_receipts.len(), 2);
+    assert!(
+        first
+            .commit_receipts
+            .iter()
+            .all(|receipt| receipt.newly_committed)
+    );
+    assert_eq!(first.resource_report.reservation_count, 0);
+    let before = records(&temp);
+    assert_eq!(before.len(), 4);
+    assert_eq!(committed_progress(&temp), (98, 2));
+    let replay = run_service_with_clock_v1(config, &mut || Ok(1_002)).unwrap();
+    assert_eq!(replay.commit_receipts.len(), 2);
+    assert!(
+        replay
+            .commit_receipts
+            .iter()
+            .all(|receipt| !receipt.newly_committed)
+    );
+    assert_eq!(records(&temp), before);
+    assert_eq!(committed_progress(&temp), (98, 2));
+    for (original, repeated) in first.commit_receipts.iter().zip(replay.commit_receipts) {
+        assert_eq!(original.result_hash, repeated.result_hash);
+        assert_eq!(original.sequence, repeated.sequence);
+    }
+}

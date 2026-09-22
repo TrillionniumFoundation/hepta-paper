@@ -269,7 +269,11 @@ owner status. Stale revisions and reopening a cancelled campaign fail. This is
 between-step cancellation, not interruption of an already running provider.
 Mutations sample actual system time at entry and through the same workflow and
 service owner. `ControlPlaneV1::run_with_clock` repeats snapshot/lease admission
-before every dependency wave and finalization. The existing SQLite sequencer
+before every dependency wave and finalization, and passes the same live
+admission callback to the executor before each individual request handoff within
+a wave. The service retains its existing directory lock for the entire wave;
+a refused later handoff preserves earlier prepared bytes and all reservations.
+This is not atomic process-start authority or in-flight termination. The existing SQLite sequencer
 passes the host clock into the result transaction: samples after `BEGIN IMMEDIATE`
 and immediately before `COMMIT` reject expiry, backward time and clock failure.
 Lifecycle writes apply the same transaction checks and capture their response

@@ -1,13 +1,9 @@
 name: dispatch-admission-source-transfer
-
 on:
   push:
-    branches:
-      - codex/dispatch-admission-transfer-20260923
-
+    branches: [codex/dispatch-admission-transfer-20260923]
 permissions:
   contents: read
-
 jobs:
   transfer:
     runs-on: ubuntu-24.04
@@ -19,43 +15,64 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
-      - name: Verify original source bundle and publish only a temporary source ref
+      - name: Reconstruct only the exact checksum-bound source payload
         shell: bash
-        env:
-          EXPECTED_REPOSITORY: TrillionniumFoundation/hepta-paper
         run: |
           set -euo pipefail
-          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_REPOSITORY" = TrillionniumFoundation/hepta-paper
           test "$GITHUB_REF" = refs/heads/codex/dispatch-admission-transfer-20260923
-          parent=8a4c484b34d0fb80e3d68d7a3aa9cd5ee001e3fe
-          source=1f208a1c56d875ad856c5201b31427cddff6ada8
-          tree=38415b7e27d5172e5381b629bbe062a84bb16f33
-          bundle="$RUNNER_TEMP/dispatch-admission.bundle"
-          cat .github/source-transfer/dispatch-admission/part{0,1,2,3} | base64 --decode > "$bundle"
-          printf 'dc8493c6cacf81623244f308203e7c908d847863b87d6c6a7b0830cdc8fb0865  %s\n' "$bundle" | sha256sum -c -
-          git cat-file -e "$parent^{commit}"
+          mkdir -p "$RUNNER_TEMP/source-transfer-report"
+          cp .github/source-transfer/scientific/part* "$RUNNER_TEMP/source-transfer-report/"
+          python3 - <<'PY'
+          import base64, hashlib, os
+          from pathlib import Path
+          expected = ['29154a172dfadc5e2fda6e144f5463f7f4583354', '6eb45cbb5f6832d2f28da56648b0f60d72ebed57', '8c153c69c23780e0f1b5e188e1895080b12c1e11', 'e795ec9fd66afa1e44bbcf7af591e3b175924ea9', 'bdd99ad0d8d57f14b5cc3f7fbeccec24eaf99809']
+          parts = []
+          for i, digest in enumerate(expected):
+              text = Path(f'.github/source-transfer/scientific/part{i}').read_text()
+              # Repair transcription in the temporary transport only; the
+              # original chunk, bundle, commit and tree hashes must all match.
+              if i == 1:
+                  text = text.replace('PJ6v/x3', 'PJ6v3/x3')
+              if i == 3:
+                  text = text.replace('Je7zBej59+Y1', 'Je7zBej59+9Y1').replace('JQaCK7wLq1', 'JQaCK77wLq1')
+              data = text.encode('ascii')
+              actual = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
+              print(i, len(data), actual, flush=True)
+              if actual != digest:
+                  raise SystemExit(f'original chunk mismatch: {i}')
+              parts.append(text)
+          data = base64.b64decode(''.join(parts), validate=True)
+          if hashlib.sha256(data).hexdigest() != '4c6c0082cafe1129f328c66cad569b4ead49542dce64b168680452dc5643f8d8':
+              raise SystemExit('original bundle mismatch')
+          Path(os.environ['RUNNER_TEMP'], 'scientific-tools.bundle').write_bytes(data)
+          PY
+      - name: Verify source identities and publish temporary ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          parent=1f208a1c56d875ad856c5201b31427cddff6ada8
+          source=45065ffb7925090ff105238622cfd4a6eb243125
+          tree=8476f13a06e768ea37778c5b29441bc26b45f1d3
+          bundle="$RUNNER_TEMP/scientific-tools.bundle"
           git bundle verify "$bundle"
           git fetch "$bundle" HEAD
           test "$(git rev-parse FETCH_HEAD)" = "$source"
           test "$(git rev-parse "$source^{tree}")" = "$tree"
           test "$(git show -s --format=%P "$source")" = "$parent"
           git diff --check "$parent" "$source"
-          test "$(git diff --name-only "$parent" "$source" | wc -l)" -eq 12
-          if git ls-tree -r --name-only "$source" | grep -E '^\.github/(source-transfer/dispatch-admission/|workflows/dispatch-admission-source-transfer.yml$)'; then
-            echo 'Temporary transport must not enter product source' >&2
+          test "$(git diff --name-only "$parent" "$source" | wc -l)" -eq 11
+          if git ls-tree -r --name-only "$source" | grep -E '^\.github/(source-transfer/|workflows/(dispatch-admission-source-transfer|development-input-export).yml$)'; then
             exit 1
           fi
-          observed=$(git ls-remote origin refs/heads/codex/rust-convergence-recovery-fix-20260922 | cut -f1)
-          test "$observed" = "$parent"
-          git push origin "$source:refs/heads/codex/dispatch-admission-upload-1f208a1c"
-          test "$(git ls-remote origin refs/heads/codex/dispatch-admission-upload-1f208a1c | cut -f1)" = "$source"
-          mkdir -p "$RUNNER_TEMP/source-transfer-report"
+          test "$(git ls-remote origin refs/heads/codex/rust-convergence-recovery-fix-20260922 | cut -f1)" = "$parent"
+          git push origin "$source:refs/heads/codex/scientific-tools-upload-45065ffb"
+          test "$(git ls-remote origin refs/heads/codex/scientific-tools-upload-45065ffb | cut -f1)" = "$source"
           printf 'source=%s\ntree=%s\nparent=%s\nqualification=not_asserted\nproduct_ref_changed=false\n' "$source" "$tree" "$parent" > "$RUNNER_TEMP/source-transfer-report/source.txt"
-          git show --stat "$source" > "$RUNNER_TEMP/source-transfer-report/change.txt"
-      - name: Retain byte-transfer evidence, not qualification
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
-          name: dispatch-admission-source-transfer
+          name: scientific-source-transfer
           path: ${{ runner.temp }}/source-transfer-report
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7

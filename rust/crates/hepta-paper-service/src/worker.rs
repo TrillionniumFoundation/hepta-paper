@@ -306,6 +306,16 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
         &mut self,
         requests: &[ExecutionRequestV1],
     ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
+        // Compatibility/direct calls have no supplied live admission observer.
+        // The real control-plane path calls execute_batch_with_admission.
+        self.execute_batch_with_admission(requests, &mut || Ok(()))
+    }
+
+    fn execute_batch_with_admission(
+        &mut self,
+        requests: &[ExecutionRequestV1],
+        revalidate_admission: &mut dyn FnMut() -> Result<(), ControlPlaneError>,
+    ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
         // Exact reservations remain held for the whole dependency wave. Bounded
         // sequential dispatch is conservative; parallel workers require host admission.
         let guard = recovery::DispatchGuardV1::acquire(&self.objects)
@@ -316,6 +326,10 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
                 guard
                     .validate()
                     .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+                // This is after recovery validation and before handing this
+                // particular request to the worker. The preceding worker can
+                // advance time, so a wave-wide check cannot replace this one.
+                revalidate_admission()?;
                 let result = self
                     .execute_one(request)
                     .map_err(|_| ControlPlaneError::ExecutionInvalid)?;

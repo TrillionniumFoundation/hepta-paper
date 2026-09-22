@@ -5,7 +5,7 @@ executor, the sealed prepared-result verifier and the sealed commit sequencer.
 Its successful V1 receipt fields, serialization order and receipt hash input are
 unchanged. `ControlPlaneV1::new` and `run` retain their signatures.
 
-Before the first call to `ModuleExecutorV1::execute_batch`, ordinary validation
+Before the first call to `ModuleExecutorV1::execute_batch_with_admission`, ordinary validation
 and admission errors retain their original error. If admission reserved only a
 prefix of the selected plan, those reservations are released before returning.
 There has been no executor call through this runtime at that boundary.
@@ -122,3 +122,45 @@ cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --tes
 
 These source tests do not establish complete autonomous-research orchestration,
 installed principal isolation, target-host qualification or Node retirement.
+
+## Per-request admission inside one dependency wave
+
+`ControlPlaneV1::run_with_clock` passes a live admission callback through
+`ModuleExecutorV1::execute_batch_with_admission`. It borrows the same run clock
+and SQLite commit sequencer as the surrounding wave, and rechecks the current
+lease and campaign before each request handoff. A check at wave entry alone
+cannot cover later sequential workers after an earlier worker has consumed the
+remaining lease interval.
+
+The default adapter invokes legacy executors with singleton batches, in order,
+and rejects an incomplete singleton result before invoking the next request.
+Batch-aware implementations may override it and preserve concurrency; they must
+invoke the callback at every actual handoff, not precheck the whole queue and
+later launch work under an old check. The unsealed executor is trusted to honor
+this interface. Existing pure test doubles preserve their wave-level recording
+and malformed-result fixtures; they launch no deferred or external work.
+
+`ServiceExecutorV1` keeps its existing attempts-directory lock across the entire
+wave. After validating that retained guard, it calls the callback before each
+`execute_one`, including an exact prepared-result replay. Callback errors retain
+the original control error and stop later requests. Completed local prepared
+bytes remain in the same CAS/attempt records. The runtime retains all selected
+reservations and its existing inspection guard; there is no refund, second
+writer, new durable ledger, implicit renewal or fabricated terminal observation.
+
+This boundary is immediately before request handoff, not an atomic kernel
+check-and-spawn or a continuously valid permit. I/O inside `execute_one` can
+still advance time before a process starts. Already running processes are not
+interrupted by this callback. Physical cancellation, installed-process authority
+and final resource reconciliation remain separate work. Direct compatibility
+calls to `execute_batch` still supply no live observer; the real control-plane
+path always uses the admission-aware method.
+
+The existing `tests/runtime_clock.rs` target adds a sequential legacy executor
+regression for same-wave success, expiry, rollback and unavailable time, plus a
+wrong-singleton-count regression. The service's existing
+`tests/native_business_service/dispatch_recovery.rs` target adds actual local
+SQLite/CAS cases requiring only one durable start after a denied second handoff,
+retained prepared bytes, unchanged expired retry and successful two-request
+commit/replay. These are executable regression requirements, not a declaration
+that a particular source or target host has already passed them.

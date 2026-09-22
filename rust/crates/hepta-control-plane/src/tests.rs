@@ -332,6 +332,19 @@ impl ModuleExecutorV1 for RecordingExecutorV1 {
         );
         requests.iter().map(prepared_result).collect()
     }
+
+    fn execute_batch_with_admission(
+        &mut self,
+        requests: &[ExecutionRequestV1],
+        revalidate_admission: &mut dyn FnMut() -> Result<(), ControlPlaneError>,
+    ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
+        // Pure fixture, with no process/I/O or deferred work. Preserve original
+        // whole-wave observations and adversarial result-cardinality tests.
+        for _ in requests {
+            revalidate_admission()?;
+        }
+        self.execute_batch(requests)
+    }
 }
 
 fn prepared_result(request: &ExecutionRequestV1) -> Result<PreparedResultV1, ControlPlaneError> {

@@ -29,6 +29,37 @@ pub trait ModuleExecutorV1 {
         &mut self,
         requests: &[ExecutionRequestV1],
     ) -> Result<Vec<PreparedResultV1>, ControlPlaneError>;
+
+    /// Executes a batch with fresh admission before each request is handed off.
+    ///
+    /// The callback is owned by the control plane and checks its existing live
+    /// clock and writer lease. A successful check is not a transferable permit.
+    /// Implementations overriding this method must invoke it at every request
+    /// handoff and stop launching new work on the first error. Already started
+    /// work still requires the existing reconciliation and resource accounting.
+    ///
+    /// The compatibility default submits singleton batches in input order, so
+    /// a legacy sequential executor cannot launch a later request on an earlier
+    /// check. Parallel executors may override this method without losing their
+    /// concurrency, but must revalidate each actual handoff, not precheck all
+    /// requests and later launch them using stale observations. This callback
+    /// does not provide physical cancellation or an atomic check-and-spawn.
+    fn execute_batch_with_admission(
+        &mut self,
+        requests: &[ExecutionRequestV1],
+        revalidate_admission: &mut dyn FnMut() -> Result<(), ControlPlaneError>,
+    ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
+        let mut prepared = Vec::with_capacity(requests.len());
+        for request in requests {
+            revalidate_admission()?;
+            let result = self.execute_batch(std::slice::from_ref(request))?;
+            if result.len() != 1 {
+                return Err(ControlPlaneError::ExecutionInvalid);
+            }
+            prepared.extend(result);
+        }
+        Ok(prepared)
+    }
 }
 
 pub(crate) mod sealed {

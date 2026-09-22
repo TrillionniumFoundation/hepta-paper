@@ -415,7 +415,16 @@ where
             if let Some(inspection) = pending_inspection.take() {
                 self.inspection_required = Some(inspection);
             }
-            let prepared = self.executor.execute_batch(&wave_requests)?;
+            // Wave admission is insufficient for a sequential executor: an
+            // earlier request may outlive the lease before the next handoff.
+            // Borrow the original sequencer; do not issue a copied permit or
+            // create a second clock/lease owner for the executor.
+            let sequencer = &mut self.sequencer;
+            let prepared = self
+                .executor
+                .execute_batch_with_admission(&wave_requests, &mut || {
+                    clock.revalidate(sequencer).map(|_| ())
+                })?;
             if prepared.len() != wave_requests.len() {
                 return Err(ControlPlaneError::ExecutionInvalid);
             }

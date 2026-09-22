@@ -102,12 +102,15 @@ writer transfer, or retirement. The [full replacement acceptance contract](FULL_
 requires command/mode and capability-specific evidence before those transitions.
 
 The generated [Node/Rust command compatibility map](node-rust-command-map.v1.json)
-keeps all registered command routes bound to either a reviewed Rust candidate or
-an explicit unmapped decision. Its `partial_local_source` rows are source
-call-chain candidates only; they do not grant parity, production activation or
-Node retirement. The map is checked by `docs/tools/audit-node-rust-coverage.mjs`
-and validates the declared Rust function and executable-test symbols. Source
-symbol existence is not call-graph verification or evidence that tests passed.
+is the **single migration ledger**. It keeps every registered command route and,
+where a command has a multi-action surface, its reviewed argument-mode rows
+bound to either a Rust candidate or an explicit unmapped decision. No second
+campaign/command migration matrix is authoritative. Its `partial_local_source`
+rows are source call-chain candidates only; they do not grant parity, production
+activation or Node retirement. The map is checked by
+`docs/tools/audit-node-rust-coverage.mjs`, which verifies live command/action
+inventory coverage plus the declared Rust function and executable-test symbols.
+Source symbol existence is not call-graph verification or evidence that tests passed.
 The [command gap closure ledger](NODE_RUST_GAP_CLOSURE.md) retains every route,
 including partial candidates, with its Node entrypoint, remaining implementation
 work and required acceptance evidence;

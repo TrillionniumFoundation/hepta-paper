@@ -63,7 +63,7 @@ Hard registered module dependencies:
 Current implementation and contract roots:
 
 - `rust/crates/hepta-workspace`
-- `rust/crates/hepta-workspace-authority`
+- `docs/modules/WORKSPACE_IMPLEMENTATIONS_HANDOFF.md`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 
@@ -109,7 +109,7 @@ Startup validates exact source/binary or image, configuration, principal, paths,
 
 ## Verification and evidence
 
-Capability bindings: `CAP-WS-AUTHORITY`. Related work identifiers: `MIG-003`, `GAP-HOST-002`. Implementation/contract roots: `rust/crates/hepta-workspace`, `rust/crates/hepta-workspace-authority`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
+Capability bindings: `CAP-WS-AUTHORITY`. Related work identifiers: `MIG-003`, `GAP-HOST-002`. Implementation/contract roots: `rust/crates/hepta-workspace`, `docs/modules/WORKSPACE_IMPLEMENTATIONS_HANDOFF.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 

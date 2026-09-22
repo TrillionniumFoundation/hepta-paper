@@ -867,7 +867,7 @@ dependencies = [
  "hepta-campaign-writer",
  "hepta-legacy-compatibility",
  "hepta-readonly-control",
- "hepta-workspace-authority",
+ "hepta-workspace",
  "serde_json",
 ]
 

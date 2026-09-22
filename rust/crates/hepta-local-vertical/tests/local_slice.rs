@@ -18,9 +18,9 @@ use hepta_campaign_writer::{
 };
 use hepta_legacy_compatibility::hash_legacy_record_v1;
 use hepta_readonly_control::inspect_read_only_store;
-use hepta_workspace_authority::{
-    MutationPolicyV1, WorkspaceRootV1, compare_inventories_v1, materialize_attempt_v1,
-    prepare_workspace_result_v1,
+use hepta_workspace::{
+    MutationManifestV1, MutationPolicyV1, PreparedWorkspaceResultV1, WorkspaceRootV1,
+    materialize_attempt,
 };
 use serde_json::json;
 
@@ -113,39 +113,39 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
         .expect("paper mode");
     fs::write(source.join("paper/main.tex"), b"draft-v1\n").expect("draft");
 
-    let source_root = WorkspaceRootV1::open(&source, None).expect("source root");
+    let workspace_uid = fs::metadata(&source).expect("source metadata").uid();
+    let source_root = WorkspaceRootV1::open(&source, workspace_uid).expect("source root");
     let before = source_root.inventory().expect("before inventory");
-    let attempt = materialize_attempt_v1(&source_root, &attempts, "attempt-1").expect("attempt");
-    fs::write(attempt.join("paper/main.tex"), b"draft-v2\n").expect("author mutation");
-    let attempt_root = WorkspaceRootV1::open(&attempt, None).expect("attempt root");
+    let attempt =
+        materialize_attempt(&source_root, &attempts, "attempt-1", workspace_uid).expect("attempt");
+    fs::write(attempt.canonical_path.join("paper/main.tex"), b"draft-v2\n")
+        .expect("author mutation");
+    let attempt_root = attempt.open_root(workspace_uid).expect("attempt root");
     let after = attempt_root.inventory().expect("after inventory");
-    let mutation = compare_inventories_v1(&before, &after).expect("mutation");
+    let mutation = MutationManifestV1::between(&before, &after).expect("mutation");
     let policy = MutationPolicyV1 {
-        allowed_prefixes: vec!["paper".to_owned()],
-        allowed_extensions: BTreeSet::from(["tex".to_owned()]),
-        maximum_changed_paths: 2,
-        maximum_changed_bytes: 4096,
-        allow_deletion: false,
+        version: 1,
         read_only: false,
+        allowed_path_prefixes: vec!["paper".to_owned()],
+        allowed_extensions: BTreeSet::from(["tex".to_owned()]),
+        maximum_changed_entries: 2,
+        maximum_changed_file_bytes: 4096,
     };
     let workspace_result =
-        prepare_workspace_result_v1("attempt-1", &before, &after, &mutation, &policy)
+        PreparedWorkspaceResultV1::new(&attempt, &attempt_root, &after, &mutation, &policy)
             .expect("workspace prepared result");
     let receipt = json!({
         "attemptId": &workspace_result.attempt_id,
-        "beforeHash": &workspace_result.before_hash,
-        "afterHash": &workspace_result.after_hash,
-        "mutationHash": &workspace_result.mutation_hash,
+        "beforeHash": &workspace_result.before_inventory_hash,
+        "afterHash": &workspace_result.after_inventory_hash,
+        "mutationHash": &workspace_result.mutation_manifest_hash,
     });
     let legacy_prepared_hash = hash_legacy_record_v1(&receipt).expect("prepared receipt hash");
     let prepared_hash = legacy_prepared_hash
         .as_str()
         .parse()
         .expect("typed prepared receipt hash");
-    let integrated_hash = workspace_result
-        .after_hash
-        .parse()
-        .expect("typed integrated workspace hash");
+    let integrated_hash = workspace_result.after_inventory_hash.clone();
 
     let database = runtime.join("campaign.sqlite");
     let uid = fs::metadata(&runtime).expect("runtime metadata").uid();
@@ -231,16 +231,9 @@ fn one_paper_fake_author_reviewer_path_recovers_without_duplicate_integration() 
     let reviewer_before = attempt_root.inventory().expect("reviewer before");
     let reviewer_after = attempt_root.inventory().expect("reviewer after");
     let reviewer_mutation =
-        compare_inventories_v1(&reviewer_before, &reviewer_after).expect("reviewer diff");
-    let reviewer_policy = MutationPolicyV1 {
-        allowed_prefixes: vec!["paper".to_owned()],
-        allowed_extensions: BTreeSet::new(),
-        maximum_changed_paths: 0,
-        maximum_changed_bytes: 0,
-        allow_deletion: false,
-        read_only: true,
-    };
-    hepta_workspace_authority::validate_mutation_v1(&reviewer_mutation, &reviewer_policy)
+        MutationManifestV1::between(&reviewer_before, &reviewer_after).expect("reviewer diff");
+    MutationPolicyV1::reviewer_read_only()
+        .validate_manifest(&reviewer_mutation)
         .expect("reviewer remained read-only");
 
     let snapshot = inspect_read_only_store(&database).expect("read-only campaign projection");

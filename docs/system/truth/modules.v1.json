@@ -386,7 +386,6 @@
       "activation": "disabled",
       "paths": [
         "rust/crates/hepta-workspace",
-        "rust/crates/hepta-workspace-authority",
         "docs/modules/WORKSPACE_IMPLEMENTATIONS_HANDOFF.md"
       ],
       "capabilityIds": [

@@ -7,7 +7,9 @@
 
 use super::{ObjectStoreV1, PreparedResultStatusV1, PreparedResultV1, ServiceError};
 use crate::state_access::private_root;
+use hepta_codex_protocol::Sha256Digest;
 use nix::fcntl::{Flock, FlockArg, OFlag};
+use serde::Deserialize;
 use std::{
     collections::BTreeSet,
     fs::{self, File, Metadata, OpenOptions},
@@ -19,6 +21,15 @@ use std::{
 const MAX_RECORDS: usize = 4096;
 const MAX_RECORD_BYTES: u64 = 1_048_576;
 const MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
+
+// Evidence producers have different detail fields. Parse only this shared
+// service-owned binding; duplicate version/requestHash fields still fail.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EvidenceRequestBindingV1 {
+    version: u16,
+    request_hash: Sha256Digest,
+}
 
 pub(super) struct DispatchGuardV1 {
     file: Flock<File>,
@@ -140,6 +151,23 @@ impl DispatchGuardV1 {
                     || result.external_action_may_have_started
                     || result.artifact_hashes.is_empty()
                     || result.artifact_hashes.len() > 256
+                {
+                    return Err(ServiceError::Execution);
+                }
+                // A donor .prepared file cannot settle another request's start.
+                // Read and hash the actual service-owned evidence object instead
+                // of treating matching filenames as proof of completed work.
+                let evidence_bytes = objects.read(&result.evidence_hash)?;
+                total_bytes = total_bytes
+                    .checked_add(evidence_bytes.len())
+                    .ok_or(ServiceError::Execution)?;
+                if total_bytes > MAX_TOTAL_BYTES {
+                    return Err(ServiceError::Execution);
+                }
+                let evidence: EvidenceRequestBindingV1 =
+                    serde_json::from_slice(&evidence_bytes).map_err(|_| ServiceError::Execution)?;
+                if evidence.version != 1
+                    || evidence.request_hash.as_str().strip_prefix("sha256:") != Some(identity)
                 {
                     return Err(ServiceError::Execution);
                 }

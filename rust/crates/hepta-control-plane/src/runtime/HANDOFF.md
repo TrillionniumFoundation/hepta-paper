@@ -78,12 +78,22 @@ uses the existing state-access guard, which the object store retains.
 
 Admission refuses unknown filenames, non-private/symlink/hard-linked records,
 changed bytes/identities, malformed prepared records, mismatching start identities,
-and either an unmatched start or an orphan prepared record. Reads are bounded
-to 4096 records, 1 MiB per record and 16 MiB aggregate; capacity exhaustion is a
-refusal, not truncation or permission to delete history. Completed prepared
-records still pass the existing exact-request, result and actual CAS-byte
-verification before replay or commit. Pairing alone does not authenticate a
-prepared result or prove scientific validity. The linked native implementation
+and either an unmatched start or an orphan prepared record. Every paired prepared
+record must also reference a readable, content-hash-verified service evidence
+object with exactly one typed `version: 1` and `requestHash` equal to the start
+identity. An unrelated prepared result, including one copied with all its valid
+CAS bytes, cannot settle another attempt. Missing/corrupt evidence and duplicate
+identity fields refuse admission even when supplied hashes are recomputed.
+Producer-specific detail fields remain accepted; this shared binding is not an
+independent scientific verifier or a cryptographic producer attestation.
+
+Reads are bounded to 4096 records, 1 MiB per record and 16 MiB aggregate including
+captured evidence bytes. Each CAS read retains the existing 16 MiB per-object
+bound; the aggregate is checked immediately after capture, so peak capture may
+include one final bounded object before refusal. Capacity exhaustion is a refusal,
+not truncation or permission to delete history. Artifact payload bytes and full
+result semantics still pass the existing exact-request/CAS verifier when consumed
+for replay or commit; admission does not rescan all historical artifact payloads. The linked native implementation
 digest includes the recovery source, so an older native configuration must be
 explicitly rebound rather than silently reinterpreted.
 
@@ -100,7 +110,10 @@ for inspection rather than removing the start to force another execution.
 The additional real SQLite/CAS service regressions live in
 `hepta-paper-service/tests/native_business_service/dispatch_recovery.rs`. They
 cover a failed start followed by a changed-plan/new-owner attempt, an independent
-held directory lock, orphan/corrupt records and unknown residue. Existing tests
+held directory lock, orphan/corrupt records, unknown residue, unrelated copied
+prepared results, missing/corrupt evidence, and self-rehashed invalid/duplicate
+request bindings. The different-campaign test retains an intact-evidence positive
+control, so denial is not merely an unrelated configuration error. Existing tests
 retain the positive native build, exact replay and pre-intent capability denial.
 
 ```sh

@@ -763,9 +763,10 @@
         "rust/crates/hepta-paper-service/tests/supervisor_health_wal_parity.rs",
         "rust/crates/hepta-paper-service/tests/topic_producer_profile_parity.rs",
         "rust/crates/hepta-paper-service/tests/topic_producer_generation_parity.rs",
-        "rust/crates/hepta-paper-service/tests/topic_producer_canary_parity.rs"
+        "rust/crates/hepta-paper-service/tests/topic_producer_canary_parity.rs",
+        "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs"
       ],
-      "remaining": "Native health now composes base/startup/machine/current/strict/full modes from actual sources. Full mode observes one intake, actual resident prerequisites and passive state safety; optional strict mode shares the intake but full readiness determines exit. Base health uses a private effective committed-WAL snapshot and does not recreate source SHM. Full environment capture is bounded UTF-8 and source repository selection uses the compiled build tree; relocated installation identity remains unfinished. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings and publisher/resident execution remain unported. Resident checks are the original narrower signature/time/code/state/configuration/cost contract, not independent full qualification acceptance. Actual V3/recovery trust and KeyObject incompatibilities remain honestly blocked, and no diagnostic grants dispatch/recovery authority. Strict falsy-JSON false-ready behavior is intentionally rejected. Actual CLI, bounded owned fixtures, source preservation, real synthetic signatures and WAL regressions establish local source behavior only; independent principals, production qualification, activation and Node retirement remain external and false. A separately callable native topic-producer profile loader now observes actual profile/dataset/original implementation sources and validates builtin contract/policy identities with retained bounded owners. It is not wired to V2 health: producer status, capability/generation/admission and genesis/rotation authority remain open. ICU Unicode/LF ordering is preserved; original backslash alias reads and nonstring optional mount hash transports receive explicit native profile refusals. The observed JS digest is an incumbent diagnostic binding, not accepted Rust execution identity. Separately callable native recorded generation/capability and canary journal/row contracts now reconstruct the original builtin materialized intake, planned hashes, both canary windows, full capability equality, failure accounting and ordered raw action bindings. They perform no SQLite or provider I/O and are not yet actual health call-chain entries. Fabricated recorded canary fixtures establish only pure contract behavior; actual topic status, V2 admission/authority, provider execution and installation remain open. Canonical date/finite JSON profiles remain explicit compatibility limits.",
+      "remaining": "Native health now composes base/startup/machine/current/strict/full modes from actual sources. Full mode observes one intake, actual resident prerequisites and passive state safety; optional strict mode shares the intake but full readiness determines exit. Base health uses a private effective committed-WAL snapshot and does not recreate source SHM. Full environment capture is bounded UTF-8 and source repository selection uses the compiled build tree; relocated installation identity remains unfinished. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings and publisher/resident execution remain unported. Resident checks are the original narrower signature/time/code/state/configuration/cost contract, not independent full qualification acceptance. Actual V3/recovery trust and KeyObject incompatibilities remain honestly blocked, and no diagnostic grants dispatch/recovery authority. Strict falsy-JSON false-ready behavior is intentionally rejected. Actual CLI, bounded owned fixtures, source preservation, real synthetic signatures and WAL regressions establish local source behavior only; independent principals, production qualification, activation and Node retirement remain external and false. A separately callable native topic-producer profile loader now observes actual profile/dataset/original implementation sources and validates builtin contract/policy identities with retained bounded owners. It is not wired to V2 health: V2 admission and genesis/rotation authority remain open. ICU Unicode/LF ordering is preserved; original backslash alias reads and nonstring optional mount hash transports receive explicit native profile refusals. The observed JS digest is an incumbent diagnostic binding, not accepted Rust execution identity. Separately callable native recorded generation/capability and canary journal/row contracts now reconstruct the original builtin materialized intake, planned hashes, both canary windows, full capability equality, failure accounting and ordered raw action bindings. They perform no SQLite or provider I/O and are not yet actual health call-chain entries. Fabricated recorded canary fixtures establish only pure contract behavior; V2 admission/authority, provider execution and installation remain open. Canonical date/finite JSON profiles remain explicit compatibility limits. Separately callable actual topic status now observes real profile/dataset/implementation inputs, releases their file owners, reads a private effective SQLite/WAL snapshot, validates all history and rebuilds the newest non-NULL capability. Eleven actual-source groups exercise full original diagnostics and explicit finite profile refusals, including real original lease renewal held in WAL and crash/missing-SHM preservation. This composition remains unwired to owning V2 health and proves no provider execution or live authority.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/supervisor_health.rs",
         "rust/crates/hepta-paper-service/src/state_database_inventory/snapshot.rs",
@@ -812,7 +813,10 @@
         "rust/crates/hepta-paper-service/src/topic_producer_generation/value.rs",
         "rust/crates/hepta-paper-service/src/topic_producer_canary/generation.rs",
         "rust/crates/hepta-paper-service/src/topic_producer_canary/mod.rs",
-        "rust/crates/hepta-paper-service/src/topic_producer_canary/value.rs"
+        "rust/crates/hepta-paper-service/src/topic_producer_canary/value.rs",
+        "rust/crates/hepta-paper-service/src/topic_producer_status/mod.rs",
+        "rust/crates/hepta-paper-service/src/topic_producer_status/sqlite.rs",
+        "rust/crates/hepta-paper-service/src/topic_producer_status/status.rs"
       ],
       "testCases": [
         {
@@ -1218,6 +1222,50 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/topic_producer_generation_parity.rs",
           "symbol": "original_numeric_spelling_is_normalized_in_complete_builder_projections"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "actual_offline_lifecycle_and_absent_lease_preserve_standalone_readiness"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "metadata_bindings_high_watermark_and_exact_clock_boundaries_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "daily_limits_utc_epoch_rate_and_retry_boundaries_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "all_history_is_checked_and_sequence_gaps_are_allowed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "full_capability_expiry_binding_rebuild_and_newest_nonnull_selection_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "actual_dataset_drift_precedes_database_diagnostics_and_leaf_checks_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "old_schema_requires_upgrade_and_nonordinary_schema_has_explicit_native_refusal"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "nullable_cells_utf8_json_and_schema_bounds_refuse_without_silent_nulls"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "original_positive_date_spellings_and_engine_json_errors_are_separate_profiles"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "actual_original_renewal_held_in_wal_is_read_without_source_mutation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/topic_producer_status_parity.rs",
+          "symbol": "crashed_original_renewal_without_source_shm_uses_private_effective_snapshot"
         }
       ]
     },

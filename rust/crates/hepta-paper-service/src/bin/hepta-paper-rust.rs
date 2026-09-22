@@ -24,8 +24,9 @@ use hepta_paper_service::{
         parse_autonomous_intake_authority_rotation_arguments,
     },
     autonomous_research::{
-        autonomous_research_help_json_v1, execute_autonomous_research_v1,
-        inspect_autonomous_research_v1, parse_autonomous_research_arguments,
+        autonomous_research_help_json_v1, execute_autonomous_research_service_v1,
+        execute_autonomous_research_v1, inspect_autonomous_research_v1,
+        parse_autonomous_research_arguments,
     },
     autonomous_research_one_shot_campaign_attempt::{
         autonomous_research_one_shot_campaign_attempt_help_json_v1,
@@ -1530,12 +1531,19 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            let report = if options.action == "prepare" || options.action == "status" {
+            let report = if let Some(config_path) = options.run_config.as_ref() {
+                let config: ServiceRunV1 =
+                    serde_json::from_slice(&read_bounded(config_path)?)?;
+                execute_autonomous_research_service_v1(&options, config)?
+            } else if options.action == "prepare" || options.action == "status" {
                 inspect_autonomous_research_v1(&options)
             } else {
                 execute_autonomous_research_v1(&options)
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
+            if report["localRunCompleted"] == serde_json::Value::Bool(true) {
+                return Ok(());
+            }
             if report["ready"] != serde_json::Value::Bool(true) {
                 std::process::exit(2);
             }

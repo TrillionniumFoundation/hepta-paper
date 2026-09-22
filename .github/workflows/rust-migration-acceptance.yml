@@ -2,6 +2,9 @@ name: rust-migration-acceptance
 
 on:
   pull_request:
+  push:
+    branches:
+      - codex/full-rust-replacement-progress-20260916
   workflow_dispatch:
 
 permissions:
@@ -46,6 +49,18 @@ jobs:
         with:
           node-version: '22.23.1'
 
+      - name: Install and verify locked Node oracle dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.1"
+          npm ci --ignore-scripts --no-audit --no-fund \
+            2>&1 | tee "$EVIDENCE_ROOT/node-oracle-install.log"
+          # Import the actual dependency closure before compiling Rust; otherwise
+          # missing espree/eslint-scope fails much later inside differential tests.
+          node --input-type=module -e \
+            'await import("./paper-adapters/automation/autonomous-research-online-writer-static-discovery.mjs")'
+
       - name: Install qualified Rust toolchain
         shell: bash
         run: |
@@ -61,7 +76,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
           test "$(node --version)" = "v22.23.1"
           git rev-parse HEAD HEAD^{tree} > "$EVIDENCE_ROOT/source.txt"
-          sha256sum rust/Cargo.lock workflow-kernel/record-hash.mjs \
+          sha256sum rust/Cargo.lock package-lock.json workflow-kernel/record-hash.mjs \
             > "$EVIDENCE_ROOT/source-inputs.sha256"
           node --input-type=module -e 'console.log(JSON.stringify({ node: process.version, versions: process.versions, collator: new Intl.Collator().resolvedOptions() }, null, 2))' \
             > "$EVIDENCE_ROOT/node-runtime.json"

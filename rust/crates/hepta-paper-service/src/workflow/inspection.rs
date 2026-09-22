@@ -240,3 +240,26 @@ pub fn list_local_workflows_v1(
         atomic_across_workflows: false,
     })
 }
+
+/// Capture the current local definition from the existing immutable root and
+/// integrity-checked amendment history. This is a read model, not a writer
+/// capability. A later mutation MUST recheck the caller's expected definition
+/// hash under the same workflow owner's lock; it cannot trust this earlier read.
+/// Kept crate-private because definitions contain private writer material.
+pub(crate) fn read_current_local_workflow_v1(
+    root: &Path,
+) -> Result<LocalWorkflowV1, WorkflowError> {
+    let owner = private_root(root)?;
+    let _guard = lock(root, owner)?;
+    let original: LocalWorkflowV1 =
+        serde_json::from_slice(&read_record(&root.join("workflow.json"), owner)?)
+            .map_err(|_| WorkflowError::Definition)?;
+    original.validate()?;
+    if original.template.state_directory != root {
+        return Err(WorkflowError::Definition);
+    }
+    private_root(&root.join("objects"))?;
+    private_root(&root.join("attempts"))?;
+    let objects = ObjectStoreV1::open(root)?;
+    Ok(history(&original, owner, &objects)?.active_definition)
+}

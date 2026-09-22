@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+use hepta_codex_protocol::Sha256Digest;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::PathBuf};
 
@@ -17,6 +18,7 @@ pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
   "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
   "defaultLaunchMode": "local-run",
   "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--through-steps N] [--expected-revision N]",
+  "persistedWorkflowUsage": "--campaign-id ID --workflow-root ABSOLUTE_STATE --definition-hash SHA256 --action launch|status|converge|pause|resume|cancel|amend [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
   "safety": {
     "operatorApprovalClaimed": false,
     "selfSignedExternalTrustClaimed": false,
@@ -25,7 +27,7 @@ pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
     "naturalLanguageToLeanEquivalenceMachineProven": false,
     "automaticBudgetExpansionEnabled": false
   },
-  "rustBoundary": "explicit local workflow reuses the existing durable owner; without --workflow-file this remains diagnostic-only; no production, live-model or submission authority"
+  "rustBoundary": "explicit local workflow reuses the existing durable owner; without an explicit workflow file or persisted reference this remains diagnostic-only; no production, live-model or submission authority"
 }"#;
 
 #[derive(Clone, Debug)]
@@ -35,6 +37,9 @@ pub struct AutonomousResearchOptions {
     pub paper_id: Option<String>,
     pub campaign_id: Option<String>,
     pub workflow_file: Option<PathBuf>,
+    pub workflow_root: Option<PathBuf>,
+    pub definition_hash: Option<Sha256Digest>,
+    pub amendment_file: Option<PathBuf>,
     pub through_steps: Option<usize>,
     pub expected_revision: Option<u64>,
     pub require_full_ready: bool,
@@ -60,6 +65,9 @@ pub fn parse_autonomous_research_arguments(
     let mut require_full_ready = false;
     let mut help = false;
     let mut workflow_file = None;
+    let mut workflow_root = None;
+    let mut definition_hash = None;
+    let mut amendment_file = None;
     let mut through_steps = None;
     let mut expected_revision = None;
     let mut seen = BTreeSet::new();
@@ -79,6 +87,19 @@ pub fn parse_autonomous_research_arguments(
             "--campaign-id" => campaign_id = Some(value(args, &mut index, "campaign_id")?),
             "--workflow-file" => {
                 workflow_file = Some(PathBuf::from(value(args, &mut index, "workflow_file")?))
+            }
+            "--workflow-root" => {
+                workflow_root = Some(PathBuf::from(value(args, &mut index, "workflow_root")?))
+            }
+            "--definition-hash" => {
+                definition_hash = Some(
+                    value(args, &mut index, "definition_hash")?
+                        .parse::<Sha256Digest>()
+                        .map_err(|_| "invalid_autonomous_research_definition_hash".to_owned())?,
+                )
+            }
+            "--amendment-file" => {
+                amendment_file = Some(PathBuf::from(value(args, &mut index, "amendment_file")?))
             }
             "--through-steps" => {
                 through_steps = Some(
@@ -108,6 +129,9 @@ pub fn parse_autonomous_research_arguments(
             paper_id,
             campaign_id,
             workflow_file,
+            workflow_root,
+            definition_hash,
+            amendment_file,
             through_steps,
             expected_revision,
             require_full_ready,
@@ -116,7 +140,7 @@ pub fn parse_autonomous_research_arguments(
     }
     if !matches!(
         action.as_str(),
-        "prepare" | "launch" | "status" | "resume" | "converge" | "pause" | "cancel"
+        "prepare" | "launch" | "status" | "resume" | "converge" | "pause" | "cancel" | "amend"
     ) {
         return Err(format!(
             "autonomous_research_campaign_action_invalid:{action}"
@@ -130,7 +154,20 @@ pub fn parse_autonomous_research_arguments(
             "autonomous_research_launch_mode_invalid:{launch_mode}"
         ));
     }
+    if workflow_root.is_some() != definition_hash.is_some()
+        || (workflow_root.is_some() && workflow_file.is_some())
+        || (workflow_root.is_some() && action == "prepare")
+        || (action == "amend"
+            && (workflow_root.is_none()
+                || amendment_file.is_none()
+                || through_steps.is_some()
+                || expected_revision.is_some()))
+        || (action != "amend" && amendment_file.is_some())
+    {
+        return Err("autonomous_research_local_reference_or_amendment_invalid".to_owned());
+    }
     if workflow_file.is_none()
+        && workflow_root.is_none()
         && (through_steps.is_some()
             || expected_revision.is_some()
             || matches!(action.as_str(), "pause" | "cancel"))
@@ -148,6 +185,9 @@ pub fn parse_autonomous_research_arguments(
         paper_id,
         campaign_id,
         workflow_file,
+        workflow_root,
+        definition_hash,
+        amendment_file,
         through_steps,
         expected_revision,
         require_full_ready,
@@ -162,6 +202,7 @@ pub fn autonomous_research_help_json_v1() -> Value {
           "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
           "defaultLaunchMode": "local-run",
     "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--through-steps N] [--expected-revision N]",
+          "persistedWorkflowUsage": "--campaign-id ID --workflow-root ABSOLUTE_STATE --definition-hash SHA256 --action launch|status|converge|pause|resume|cancel|amend [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
           "safety": {
               "operatorApprovalClaimed": false,
               "selfSignedExternalTrustClaimed": false,
@@ -170,12 +211,16 @@ pub fn autonomous_research_help_json_v1() -> Value {
               "naturalLanguageToLeanEquivalenceMachineProven": false,
               "automaticBudgetExpansionEnabled": false
           },
-          "rustBoundary": "explicit local workflow reuses the existing durable owner; without --workflow-file this remains diagnostic-only; no production, live-model or submission authority"
+          "rustBoundary": "explicit local workflow reuses the existing durable owner; without an explicit workflow file or persisted reference this remains diagnostic-only; no production, live-model or submission authority"
       })
 }
 
 pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Value {
-    if options.workflow_file.is_some() {
+    if options.workflow_file.is_some()
+        || options.workflow_root.is_some()
+        || options.definition_hash.is_some()
+        || options.amendment_file.is_some()
+    {
         return local::run(options, false);
     }
     let campaign_id = options.campaign_id.clone().or_else(|| {
@@ -214,7 +259,11 @@ pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Va
 }
 
 pub fn execute_autonomous_research_v1(options: &AutonomousResearchOptions) -> Value {
-    if options.workflow_file.is_some() {
+    if options.workflow_file.is_some()
+        || options.workflow_root.is_some()
+        || options.definition_hash.is_some()
+        || options.amendment_file.is_some()
+    {
         return local::run(options, true);
     }
     inspect_autonomous_research_v1(options)

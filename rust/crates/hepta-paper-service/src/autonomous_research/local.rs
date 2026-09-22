@@ -4,8 +4,9 @@
 use super::AutonomousResearchOptions;
 use crate::WorkerBindingV1;
 use crate::workflow::{
-    LocalWorkflowV1, WorkflowActionV1, WorkflowError, initialize_local_workflow_v1,
-    operate_local_workflow_v1, operate_local_workflow_with_clock_v1,
+    LocalWorkflowV1, WorkflowActionV1, WorkflowAmendmentV1, WorkflowError,
+    amend_local_workflow_with_clock_v1, initialize_local_workflow_v1, operate_local_workflow_v1,
+    operate_local_workflow_with_clock_v1, read_current_local_workflow_v1,
 };
 use hepta_control_plane::canonical_hash_v1;
 use nix::fcntl::OFlag;
@@ -33,7 +34,7 @@ fn same_file(a: &Metadata, b: &Metadata) -> bool {
         && a.ctime_nsec() == b.ctime_nsec()
 }
 
-fn definition(path: &Path) -> Result<LocalWorkflowV1, WorkflowError> {
+fn read_private_request<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, WorkflowError> {
     if !path.is_absolute() || fs::canonicalize(path).ok().as_deref() != Some(path) {
         return Err(WorkflowError::Filesystem);
     }
@@ -143,17 +144,68 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
         {
             return Err(WorkflowError::Definition);
         }
-        let path = options
-            .workflow_file
-            .as_deref()
-            .ok_or(WorkflowError::Definition)?;
-        let definition = definition(path)?;
+        // Direct callers must satisfy the same closed mode grammar as the CLI.
+        let persisted = options.workflow_root.is_some();
+        if persisted != options.definition_hash.is_some()
+            || (persisted && options.workflow_file.is_some())
+            || (persisted && options.action == "prepare")
+            || (options.action == "amend"
+                && (!persisted
+                    || options.amendment_file.is_none()
+                    || options.through_steps.is_some()
+                    || options.expected_revision.is_some()))
+            || (options.action != "amend" && options.amendment_file.is_some())
+        {
+            return Err(WorkflowError::Definition);
+        }
+        let definition: LocalWorkflowV1 = if let Some(root) = &options.workflow_root {
+            // Recover the real current definition rather than asking the caller
+            // to reconstruct private writer/lease fields from an amendment receipt.
+            read_current_local_workflow_v1(root)?
+        } else {
+            read_private_request(
+                options
+                    .workflow_file
+                    .as_deref()
+                    .ok_or(WorkflowError::Definition)?,
+            )?
+        };
         definition.validate()?;
         if definition.template.snapshot.campaign_id != expected {
             return Err(WorkflowError::Definition);
         }
-        let digest = canonical_hash_v1(&definition).map_err(|_| WorkflowError::Definition)?;
+        let current_digest =
+            canonical_hash_v1(&definition).map_err(|_| WorkflowError::Definition)?;
+        let digest = options
+            .definition_hash
+            .clone()
+            .unwrap_or(current_digest.clone());
         let root = &definition.template.state_directory;
+        if options.action == "amend" {
+            let amendment: WorkflowAmendmentV1 = read_private_request(
+                options
+                    .amendment_file
+                    .as_deref()
+                    .ok_or(WorkflowError::Definition)?,
+            )?;
+            // Do not pre-reject an old hash or expired original lease here:
+            // the existing owner authenticates exact replay first, without a
+            // new budget debit, renewed expiry, or clock observation. New writes
+            // still require the CURRENT hash/revision and live previous lease.
+            let receipt =
+                amend_local_workflow_with_clock_v1(root, &digest, amendment, &mut || {
+                    now().map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+                })?;
+            report["definitionHash"] = json!(receipt.definition_hash);
+            report["amendment"] =
+                serde_json::to_value(receipt).map_err(|_| WorkflowError::History)?;
+            report["campaignPersisted"] = json!(true);
+            report["status"] = json!("local_workflow_operation_completed");
+            return Ok(());
+        }
+        if digest != current_digest {
+            return Err(WorkflowError::Definition);
+        }
         let through_steps = options.through_steps.unwrap_or(definition.steps.len());
         let lifecycle = matches!(options.action.as_str(), "pause" | "resume" | "cancel");
         if (read_only && (options.through_steps.is_some() || options.expected_revision.is_some()))

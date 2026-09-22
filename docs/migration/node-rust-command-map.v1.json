@@ -2649,7 +2649,7 @@
     },
     {
       "id": "operator/autonomous-research",
-      "rustEntrypoint": "hepta-paper-rust autonomous-research --campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--through-steps N] [--expected-revision N]",
+      "rustEntrypoint": "hepta-paper-rust autonomous-research --campaign-id ID (--workflow-file ABSOLUTE_JSON | --workflow-root ABSOLUTE_STATE --definition-hash SHA256) --action prepare|launch|status|converge|pause|resume|cancel|amend [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -2712,6 +2712,18 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
           "symbol": "set_campaign_state_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "read_current_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
+          "symbol": "amend_local_workflow_with_clock_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
+          "symbol": "apply_local_workflow_change_with_clock"
         }
       ],
       "tests": [
@@ -2719,9 +2731,10 @@
         "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
         "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
         "rust/crates/hepta-paper-service/tests/native_business_service/dispatch_recovery.rs",
-        "rust/crates/hepta-paper-service/tests/scientific_workflow.rs"
+        "rust/crates/hepta-paper-service/tests/scientific_workflow.rs",
+        "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"
       ],
-      "remaining": "Without --workflow-file the original fail-closed diagnostic remains. The explicit --workflow-file local-run path now composes the existing immutable LocalWorkflowV1, SQLite campaign writer, durable dispatch/recovery, CAS byte verification and commit replay without a second scheduler or result store. Prepare validates without creating state; launch initializes an absent root or retries the exact existing owner; converge uses an absolute step endpoint; status is read-only; pause/resume/cancel require the observed campaign revision. Actual CLI tests cover seven-step execution, real Rust child workers, restart/idempotent replay, stale revisions, changed definitions, terminal cancellation, and a crashing child not relaunched across CLI restarts. Process external/network outcomes remain unobserved rather than fabricated false. The CLI now supplies a freshly sampled system clock through the existing workflow, service, sequencer and SQLite writer. Clock rollback, unavailable time or lease expiry stops later individual request handoffs within the same wave as well as subsequent waves; clock and lease are rechecked after acquiring the actual SQLite write transaction and immediately before COMMIT. Controlled-clock regressions cover whole-batch/lifecycle rollback, retained prepared outputs, preserved prior commits and refusal to relaunch after expiry. This does not renew a lease, terminate an in-flight process or attest independent host time. This bounded path does not implement automatic planning, live author/reviewer models, in-flight termination, lease renewal, all incumbent arguments, independently accepted command parity, production activation, writer transfer or Node retirement. Per-request admission uses the original live clock and sequencer under the existing service dispatch lock; it is not an atomic check-and-spawn or physical in-flight cancellation mechanism. The required tool-equipped migration lane now exercises the actual autonomous CLI with a real R program: prepare without state, partial launch, independent-process status/continuation, named result into manuscript/bundle, and exact replay without another execution or charge. This is explicit-program local workflow evidence, not model-driven autonomous research or accepted full-role parity; ordinary ignored-test runs cannot establish this installed-tool result.",
+      "remaining": "Without --workflow-file or an explicit persisted --workflow-root/--definition-hash reference the original fail-closed diagnostic remains. The explicit --workflow-file local-run path now composes the existing immutable LocalWorkflowV1, SQLite campaign writer, durable dispatch/recovery, CAS byte verification and commit replay without a second scheduler or result store. Prepare validates without creating state; launch initializes an absent root or retries the exact existing owner; converge uses an absolute step endpoint; status is read-only; pause/resume/cancel require the observed campaign revision. Actual CLI tests cover seven-step execution, real Rust child workers, restart/idempotent replay, stale revisions, changed definitions, terminal cancellation, and a crashing child not relaunched across CLI restarts. Process external/network outcomes remain unobserved rather than fabricated false. The CLI now supplies a freshly sampled system clock through the existing workflow, service, sequencer and SQLite writer. Clock rollback, unavailable time or lease expiry stops later individual request handoffs within the same wave as well as subsequent waves; clock and lease are rechecked after acquiring the actual SQLite write transaction and immediately before COMMIT. Controlled-clock regressions cover whole-batch/lifecycle rollback, retained prepared outputs, preserved prior commits and refusal to relaunch after expiry. Live dispatch checks do not themselves renew a lease, terminate an in-flight process or attest independent host time. This bounded path does not implement automatic planning, live author/reviewer models, in-flight termination, automatic lease renewal, all incumbent arguments, independently accepted command parity, production activation, writer transfer or Node retirement. Per-request admission uses the original live clock and sequencer under the existing service dispatch lock; it is not an atomic check-and-spawn or physical in-flight cancellation mechanism. The required tool-equipped migration lane now exercises the actual autonomous CLI with a real R program: prepare without state, partial launch, independent-process status/continuation, named result into manuscript/bundle, and exact replay without another execution or charge. This is explicit-program local workflow evidence, not model-driven autonomous research or accepted full-role parity; ordinary ignored-test runs cannot establish this installed-tool result. The actual autonomous CLI now accepts an explicit persisted root plus expected current definition hash for continuation and lifecycle, and an amend action with a bounded private WorkflowAmendmentV1 file. A crate-private read through the existing immutable definition, SQLite amendment history and CAS recovers the current definition without exposing or requiring a copy of private writer fields. Mutating consumers still recheck the explicit expected hash under the existing owner lock. Explicit renewal/budget changes use the original live-lease transaction; exact request replay returns the immutable original receipt even after later progress or terminal completion, without another write or dispatch. CLI regressions cover post-amendment continuation, an expired original file with valid renewed owner state, stale hash, foreign campaign, request substitution, terminal refusal and unsafe input. This is not an automatic heartbeat or complete incumbent autonomous research parity.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/autonomous_research.rs",
@@ -2733,7 +2746,10 @@
         "rust/crates/hepta-campaign-writer/src/control.rs",
         "rust/crates/hepta-campaign-writer/src/lib.rs",
         "rust/crates/hepta-control-plane/src/execution.rs",
-        "rust/crates/hepta-paper-service/src/worker.rs"
+        "rust/crates/hepta-paper-service/src/worker.rs",
+        "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+        "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
+        "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs"
       ],
       "testCases": [
         {
@@ -2791,6 +2807,26 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/scientific_workflow.rs",
           "symbol": "actual_r_autonomous_cli_reopens_the_same_workflow_without_reexecution"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_amendment_private_request_bounds_and_aliases_do_not_mutate"
         }
       ]
     },

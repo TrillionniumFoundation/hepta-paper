@@ -152,6 +152,53 @@ A crash after amendment COMMIT leaves an exactly replayable receipt; subsequent
 advance runs only remaining work. A process with arbitrary same-UID SQLite/file
 write access remains in the trusted computing base.
 
+## Autonomous product caller with persisted references
+
+After initial `--workflow-file` launch, the same autonomous entrypoint can operate
+on the existing owner without reconstructing an amended private definition:
+
+```sh
+hepta-paper-rust autonomous-research --campaign-id CAMPAIGN --workflow-root STATE --definition-hash CURRENT_HASH --action status
+hepta-paper-rust autonomous-research --campaign-id CAMPAIGN --workflow-root STATE --definition-hash CURRENT_HASH --action amend --amendment-file REQUEST
+hepta-paper-rust autonomous-research --campaign-id CAMPAIGN --workflow-root STATE --definition-hash NEW_HASH --action converge
+```
+
+`STATE` and `REQUEST` are absolute canonical paths. The request is the existing
+closed `WorkflowAmendmentV1`, not a second amendment protocol; its regular file
+must be caller-owned, private, single-link, no-follow, stable and at most 16 MiB.
+The CLI never prints private definitions, writer tokens or untrusted diagnostics.
+File and persisted-reference modes are mutually exclusive. Prepare still requires
+an explicit definition file. Amend requires its own request and forbids separate
+`--through-steps`/`--expected-revision`; the revision is bound inside that request.
+Persisted pause/resume/cancel retain `--expected-revision`. Full-readiness,
+production-run and golden-bootstrap remain refused.
+
+The crate-private `read_current_local_workflow_v1` captures the active definition
+from the original immutable definition, exact SQLite amendment/result history
+and actual CAS bytes under the existing cooperative workflow lock. This read is
+not a capability. Subsequent operations revalidate the caller's **explicit** hash
+under their original owner lock; a concurrent amendment cannot silently retarget
+an invocation. The template's original on-disk lease may be expired while the
+current replayed owner lease is valid. No second writer, scheduler, journal or
+public private-definition export is added.
+
+`amend` calls `amend_local_workflow_with_clock_v1` directly with a live clock.
+New operations require the current hash/revision and the still-valid previous
+lease. Exact old-request replay is checked by the owner before live admission,
+including after later progress or completion, and returns the original receipt
+without another budget addition, lease extension or worker launch. The caller
+uses the returned `definitionHash` for future operations. This is explicit
+renewal, not automatic heartbeat, independent time attestation, physical
+in-flight cancellation or complete model-driven research.
+
+Five actual-binary regressions in
+`tests/local_workflow/autonomous_amendment.rs` cover positive continuation after
+renewal, immutable definition bytes, lost-response replay, old-expiry/current-lease
+separation, stale/foreign/substituted requests, terminal refusal, direct inspection
+non-mutation and private-file/alias/byte limits. Their exact selectors are bound
+in the existing functional-source evidence and 57-route command map. Local
+execution does not promote an external or production qualification state.
+
 ## Verification
 
 ```sh

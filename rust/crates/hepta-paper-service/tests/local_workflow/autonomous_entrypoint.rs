@@ -3,7 +3,7 @@ use super::*;
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn request(temp: &Temp, mut def: LocalWorkflowV1) -> PathBuf {
+pub(super) fn request(temp: &Temp, mut def: LocalWorkflowV1) -> PathBuf {
     let now = u64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -20,7 +20,7 @@ fn request(temp: &Temp, mut def: LocalWorkflowV1) -> PathBuf {
     path
 }
 
-fn invoke(path: &Path, action: &str, extra: &[&str]) -> std::process::Output {
+pub(super) fn invoke(path: &Path, action: &str, extra: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
         .args([
             "autonomous-research",
@@ -35,7 +35,7 @@ fn invoke(path: &Path, action: &str, extra: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-fn success(output: std::process::Output) -> Value {
+pub(super) fn success(output: std::process::Output) -> Value {
     assert!(
         output.status.success(),
         "stdout={} stderr={}",

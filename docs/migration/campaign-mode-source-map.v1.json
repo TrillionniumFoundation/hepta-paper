@@ -44,7 +44,7 @@
     {
       "nodeAction": "status",
       "scope": "partial_local_source",
-      "rustCommand": "hepta-local-workflow status STATE HASH",
+      "rustCommand": "hepta-local-workflow status STATE HASH; hepta-paper-rust autonomous-research --campaign-id ID --workflow-root STATE --definition-hash HASH --action status",
       "callChain": [
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
@@ -57,15 +57,31 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/control.rs",
           "symbol": "read_local_workflow_snapshot"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "read_current_local_workflow_v1"
         }
       ],
       "tests": [
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "status_is_read_only_and_corrupt_or_missing_artifacts_are_not_repaired"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"
         }
       ],
-      "remaining": "One known local workflow only; not Node production-store status or a global listing."
+      "remaining": "One known local workflow only; not Node production-store status or a global listing. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority."
     },
     {
       "nodeAction": "events",
@@ -134,7 +150,7 @@
     {
       "nodeAction": "pause",
       "scope": "partial_local_source",
-      "rustCommand": "hepta-local-workflow pause STATE HASH REVISION NOW",
+      "rustCommand": "hepta-local-workflow pause STATE HASH REVISION NOW; hepta-paper-rust autonomous-research --campaign-id ID --workflow-root STATE --definition-hash HASH --action pause --expected-revision REVISION",
       "callChain": [
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
@@ -151,20 +167,36 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
           "symbol": "set_campaign_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "read_current_local_workflow_v1"
         }
       ],
       "tests": [
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "pause_resume_and_absolute_progress_retry_preserve_commits"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"
         }
       ],
-      "remaining": "Cooperative between-step lifecycle only; no in-flight pause or provider cancellation."
+      "remaining": "Cooperative between-step lifecycle only; no in-flight pause or provider cancellation. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority."
     },
     {
       "nodeAction": "resume",
       "scope": "partial_local_source",
-      "rustCommand": "hepta-local-workflow resume STATE HASH REVISION [NOW]; amend STATE HASH REQUEST [NOW]",
+      "rustCommand": "hepta-local-workflow resume STATE HASH REVISION [NOW]; amend STATE HASH REQUEST [NOW]; hepta-paper-rust autonomous-research --campaign-id ID --workflow-root STATE --definition-hash HASH --action resume --expected-revision REVISION",
       "callChain": [
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
@@ -189,6 +221,14 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
           "symbol": "set_campaign_state_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "read_current_local_workflow_v1"
         }
       ],
       "tests": [
@@ -199,14 +239,22 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
           "symbol": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"
         }
       ],
-      "remaining": "Explicit local budget addition/renewal and resume. Node operational-stop and live-provider semantics are not equivalent. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority."
+      "remaining": "Explicit local budget addition/renewal and resume. Node operational-stop and live-provider semantics are not equivalent. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority."
     },
     {
       "nodeAction": "extend",
       "scope": "partial_local_source",
-      "rustCommand": "hepta-local-workflow amend STATE HASH REQUEST [NOW]",
+      "rustCommand": "hepta-local-workflow amend STATE HASH REQUEST [NOW]; hepta-paper-rust autonomous-research --campaign-id ID --workflow-root STATE --definition-hash HASH --action amend --amendment-file REQUEST",
       "callChain": [
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
@@ -219,6 +267,14 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
           "symbol": "apply_local_workflow_change_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "read_current_local_workflow_v1"
         }
       ],
       "tests": [
@@ -229,14 +285,22 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
           "symbol": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"
         }
       ],
-      "remaining": "Append before terminal completion. A rejected native structural review can receive an explicitly supplied same-rubric repair suffix, not an autonomous model round. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority."
+      "remaining": "Append before terminal completion. A rejected native structural review can receive an explicitly supplied same-rubric repair suffix, not an autonomous model round. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority."
     },
     {
       "nodeAction": "cancel",
       "scope": "partial_local_source",
-      "rustCommand": "hepta-local-workflow cancel STATE HASH REVISION NOW",
+      "rustCommand": "hepta-local-workflow cancel STATE HASH REVISION NOW; hepta-paper-rust autonomous-research --campaign-id ID --workflow-root STATE --definition-hash HASH --action cancel --expected-revision REVISION",
       "callChain": [
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
@@ -253,15 +317,31 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
           "symbol": "set_campaign_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "read_current_local_workflow_v1"
         }
       ],
       "tests": [
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "cancel_is_terminal_and_stale_or_rollback_commands_do_not_dispatch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"
         }
       ],
-      "remaining": "Terminal local cancellation between steps; no immediate child kill or remote reconciliation."
+      "remaining": "Terminal local cancellation between steps; no immediate child kill or remote reconciliation. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority."
     },
     {
       "nodeAction": "cancel-node",
@@ -332,7 +412,7 @@
     {
       "nodeAction": "work",
       "scope": "partial_local_source",
-      "rustCommand": "hepta-local-workflow advance STATE HASH ABSOLUTE_THROUGH NOW",
+      "rustCommand": "hepta-local-workflow advance STATE HASH ABSOLUTE_THROUGH NOW; hepta-paper-rust autonomous-research --campaign-id ID --workflow-root STATE --definition-hash HASH --action converge [--through-steps ABSOLUTE_THROUGH]",
       "callChain": [
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
@@ -361,15 +441,31 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/control.rs",
           "symbol": "append_control_batch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "read_current_local_workflow_v1"
         }
       ],
       "tests": [
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "actual_artifacts_flow_through_all_seven_documented_steps"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"
         }
       ],
-      "remaining": "Only the selected local/shadow native or trusted process chain. No real model/experimental research or external delivery claim."
+      "remaining": "Only the selected local/shadow native or trusted process chain. No real model/experimental research or external delivery claim. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority."
     },
     {
       "nodeAction": "gc",

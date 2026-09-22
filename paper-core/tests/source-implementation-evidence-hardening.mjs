@@ -208,13 +208,14 @@ function assertRegistryDelta(base, target, evidenceRecords) {
   const stageModules = base.modules;
   const targetModules = target.modules;
   const expectedModules = structuredClone(stageModules);
-  for (const moduleId of promotableModules) {
+  for (const moduleId of Object.keys(targetModules?.modules ?? {})) {
     const stageModule = stageModules?.modules?.[moduleId];
     const targetModule = targetModules?.modules?.[moduleId];
     if (!stageModule || !targetModule) fail('candidate_module_missing', moduleId);
     if (equal(stageModule, targetModule)) continue;
     const expectedModule = structuredClone(stageModule);
     if (stageModule.state === 'design_ready' && targetModule.state === 'source_implemented') {
+      if (!promotableModules.has(moduleId)) fail('candidate_module_transition_without_source_evidence', moduleId);
       expectedModule.state = 'source_implemented';
     } else if (stageModule.state === 'source_implemented' && targetModule.state === 'source_implemented') {
       const boundPaths = moduleEvidencePaths.get(moduleId) ?? new Set();
@@ -224,6 +225,8 @@ function assertRegistryDelta(base, target, evidenceRecords) {
           fail('candidate_module_implementation_path_unbound', `${moduleId}:${selectedPath}`);
         }
       }
+      // Removing an unselected implementation path is convergence, not promotion.
+      // Every newly selected path above remains source-evidence bound.
       expectedModule.paths = targetModule.paths;
     } else {
       fail('candidate_module_transition_invalid', moduleId);

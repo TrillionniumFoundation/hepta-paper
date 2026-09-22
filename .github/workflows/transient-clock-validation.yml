@@ -40,6 +40,9 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/clock-validation"
           cp .github/clock-payload.xz "$RUNNER_TEMP/clock-validation/payload.xz"
+          if [ -f .github/clock-refinement.patch ]; then
+            cp .github/clock-refinement.patch "$RUNNER_TEMP/clock-validation/refinement.patch"
+          fi
           git checkout --detach "$BASE_COMMIT"
           test "$(git rev-parse HEAD^{tree})" = "$BASE_TREE"
           python3 - <<'PY'
@@ -81,6 +84,9 @@ jobs:
           test "$(git write-tree)" = 95fb6d7a2da62c56badb7e12dea303519be66ce1
           git diff --cached --name-only > "$RUNNER_TEMP/clock-validation/approved-paths.txt"
           test "$(wc -l < "$RUNNER_TEMP/clock-validation/approved-paths.txt")" = 16
+          if [ -f "$RUNNER_TEMP/clock-validation/refinement.patch" ]; then
+            git apply --index --whitespace=error-all "$RUNNER_TEMP/clock-validation/refinement.patch"
+          fi
           git diff --cached --check
       - name: Install pinned dependencies and format actual Rust source
         shell: bash
@@ -101,7 +107,8 @@ jobs:
                       entry['gitBlob'] = subprocess.check_output(['git','hash-object','--',entry['path']],text=True).strip()
               path.write_text(json.dumps(document,ensure_ascii=False,separators=(',',':'))+'\n')
           PY
-          git add rust docs/system/evidence
+          node docs/tools/generate-node-rust-gap-report.mjs
+          git add rust docs/system/evidence docs/migration
           git diff --cached --name-only > "$RUNNER_TEMP/clock-validation/final-paths.txt"
           cmp "$RUNNER_TEMP/clock-validation/approved-paths.txt" "$RUNNER_TEMP/clock-validation/final-paths.txt"
           git diff --cached --check

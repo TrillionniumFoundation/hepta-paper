@@ -261,9 +261,7 @@ fn read_definition(path: &Path) -> Result<LocalWorkflowV1, &'static str> {
     let metadata = file
         .metadata()
         .map_err(|_| "workflow_definition_metadata_failed")?;
-    if !metadata.is_file()
-        || metadata.nlink() != 1
-        || metadata.len() > MAX_DEFINITION_BYTES as u64
+    if !metadata.is_file() || metadata.nlink() != 1 || metadata.len() > MAX_DEFINITION_BYTES as u64
     {
         return Err("workflow_definition_identity_rejected");
     }
@@ -338,14 +336,7 @@ fn execute_local(options: &AutonomousResearchOptions) -> Result<Value, &'static 
         }
         let hash =
             initialize_local_workflow_v1(definition).map_err(|_| "workflow_initialize_failed")?;
-        let root = options
-            .workflow_state
-            .as_deref()
-            .or_else(|| {
-                // The persisted owner root is captured by the definition itself;
-                // callers may additionally supply it and it is checked by status.
-                None
-            });
+        let root = options.workflow_state.as_deref();
         let definition = read_definition(definition_path)?;
         let state = &definition.template.state_directory;
         if let Some(requested) = root

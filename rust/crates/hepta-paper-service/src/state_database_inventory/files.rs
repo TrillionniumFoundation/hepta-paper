@@ -235,6 +235,7 @@ fn observe(
     name: &std::ffi::OsStr,
     role: &str,
     budget: &mut Budget,
+    required_uid: Option<u32>,
 ) -> Result<Option<FileObservation>> {
     parent.assert_current()?;
     let path = parent.path.join(name);
@@ -251,6 +252,10 @@ fn observe(
             && (role == "submission-handoff" || named.mode() & 0o020 == 0),
         "autonomous_research_state_database_file_unsafe",
     )?;
+    ensure(
+        required_uid.is_none_or(|uid| named.uid() == uid),
+        "autonomous_research_state_database_source_uid_invalid",
+    )?;
     budget.add(named.len())?;
     let file = File::from(
         openat(
@@ -261,8 +266,13 @@ fn observe(
         )
         .map_err(|_| changed())?,
     );
+    let held = file.metadata().map_err(|_| changed())?;
     ensure(
-        identity(&file.metadata().map_err(|_| changed())?) == identity(&named),
+        required_uid.is_none_or(|uid| held.uid() == uid),
+        "autonomous_research_state_database_source_uid_invalid",
+    )?;
+    ensure(
+        identity(&held) == identity(&named),
         "autonomous_research_state_database_changed_during_snapshot",
     )?;
     let mut result = FileObservation {
@@ -281,12 +291,14 @@ pub(super) struct DatabaseObservation {
     pub wal: Option<FileObservation>,
     pub shm: Option<FileObservation>,
     journal: Option<FileObservation>,
+    required_source_uid: Option<u32>,
 }
 impl DatabaseObservation {
     pub fn assert_source_namespace_current(&self) -> Result<()> {
         for parent in &self.parents {
             parent.assert_current()?;
         }
+        self.assert_source_uid()?;
         self.source.assert_namespace_current()
     }
     pub fn observe(
@@ -295,9 +307,18 @@ impl DatabaseObservation {
         role: &str,
         budget: &mut Budget,
     ) -> Result<Self> {
+        Self::observe_with_source_uid(root, relative, role, budget, None)
+    }
+    pub fn observe_with_source_uid(
+        root: &Directory,
+        relative: &Path,
+        role: &str,
+        budget: &mut Budget,
+        required_source_uid: Option<u32>,
+    ) -> Result<Self> {
         let (parents, name) = parent(root, relative)?;
         let directory = parents.last().unwrap_or(root);
-        let source = observe(directory, &name, role, budget)?
+        let source = observe(directory, &name, role, budget, required_source_uid)?
             .ok_or_else(|| error("autonomous_research_state_database_file_unsafe"))?;
         let name = name.to_str().ok_or_else(changed)?;
         let wal = observe(
@@ -305,18 +326,21 @@ impl DatabaseObservation {
             std::ffi::OsStr::new(&format!("{name}-wal")),
             role,
             budget,
+            None,
         )?;
         let shm = observe(
             directory,
             std::ffi::OsStr::new(&format!("{name}-shm")),
             role,
             budget,
+            None,
         )?;
         let journal = observe(
             directory,
             std::ffi::OsStr::new(&format!("{name}-journal")),
             role,
             budget,
+            None,
         )?;
         if let Some(journal) = &journal {
             let mut header = [0u8; 8];
@@ -338,6 +362,7 @@ impl DatabaseObservation {
             wal,
             shm,
             journal,
+            required_source_uid,
         };
         result.assert_current()?;
         Ok(result)
@@ -346,6 +371,7 @@ impl DatabaseObservation {
         for parent in &self.parents {
             parent.assert_current()?;
         }
+        self.assert_source_uid()?;
         self.source.assert_current()?;
         for (suffix, file) in [
             ("-wal", &self.wal),
@@ -361,6 +387,17 @@ impl DatabaseObservation {
                     "autonomous_research_state_database_changed_during_snapshot",
                 )?;
             }
+        }
+        self.assert_source_uid()
+    }
+    fn assert_source_uid(&self) -> Result<()> {
+        if let Some(uid) = self.required_source_uid {
+            let named = std::fs::symlink_metadata(&self.source.path).map_err(|_| changed())?;
+            let held = self.source.file.metadata().map_err(|_| changed())?;
+            ensure(
+                named.uid() == uid && held.uid() == uid,
+                "autonomous_research_state_database_source_uid_invalid",
+            )?;
         }
         Ok(())
     }

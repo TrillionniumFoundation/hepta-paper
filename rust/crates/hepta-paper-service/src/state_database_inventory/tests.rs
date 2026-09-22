@@ -613,3 +613,76 @@ fn pending_projection_reads_private_sqlite_and_live_open_requires_actual_instanc
     );
     assert!(observed.assert_current().is_err());
 }
+
+#[test]
+fn current_uid_snapshot_policy_checks_real_source_before_callback_and_preserves_bytes() {
+    let fixture = Fixture::new();
+    let source = fixture.path("native-store");
+    let relative = source.strip_prefix(&fixture.root).unwrap();
+    let before = source_bytes(&fixture.root);
+    let uid = nix::unistd::getuid().as_raw();
+    assert_eq!(fs::metadata(&source).unwrap().uid(), uid);
+    let value = with_database_current_uid_effective_snapshot_path_v1(
+        &fixture.root,
+        relative,
+        "native-store",
+        |path| {
+            assert_ne!(path, source);
+            let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|error| error.to_string())?;
+            db.query_row(
+                "SELECT value FROM fixture_records WHERE id='record'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|error| error.to_string())
+        },
+    )
+    .unwrap();
+    assert_eq!(value, "before");
+    let called = std::cell::Cell::new(false);
+    // Inject only the required UID in the private helper. No ownership changes,
+    // root privileges or other users' files are needed for this refusal test.
+    let failure = with_selected_database_snapshot_path_v1(
+        &fixture.root,
+        relative,
+        "native-store",
+        true,
+        Some(uid.wrapping_add(1)),
+        |_| {
+            called.set(true);
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert!(
+        failure
+            .to_string()
+            .contains("autonomous_research_state_database_source_uid_invalid")
+    );
+    assert!(
+        !called.get(),
+        "wrong source UID must fail before any SQLite callback"
+    );
+    assert_eq!(source_bytes(&fixture.root), before);
+}
+
+#[test]
+fn current_uid_snapshot_profile_still_rechecks_source_after_the_callback() {
+    let fixture = Fixture::new();
+    let source = fixture.path("native-store");
+    let relative = source.strip_prefix(&fixture.root).unwrap();
+    let result = with_database_current_uid_effective_snapshot_path_v1(
+        &fixture.root,
+        relative,
+        "native-store",
+        |_| {
+            // Simulate external namespace drift after a successful read, only
+            // inside the owned fixture; no real ownership mutation is claimed.
+            fs::rename(&source, source.with_extension("previous"))
+                .map_err(|error| error.to_string())?;
+            Ok("callback would otherwise succeed")
+        },
+    );
+    assert!(result.is_err());
+}

@@ -60,6 +60,7 @@ pub(crate) mod personal_self_hosted_source;
 pub mod portal_target_qualification;
 pub mod pristine_runtime_state;
 mod production;
+pub mod qualification_stored_evidence;
 pub mod release_attest;
 pub mod release_integrity_key;
 pub mod release_state;

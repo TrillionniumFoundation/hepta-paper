@@ -743,9 +743,10 @@
         "rust/crates/hepta-paper-service/tests/machine_intake_parity.rs",
         "rust/crates/hepta-paper-service/tests/autonomous_provider_configuration_parity.rs",
         "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs",
-        "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs"
+        "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
+        "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs"
       ],
-      "remaining": "Native read-only resident health covers base/startup/machine reconciliation. Current intake supports actual builtin V1 configuration/static files, closure and daily budgets, provider identity, generation-one admissions/counts/leases including committed WAL, and resident identity comparison. Strict mode consumes that actual intake once and verifies the original published nested/outer receipt hashes, expected acceptance/current identity bindings and inspection clock, with real Node publisher/reader and binary differential tests. It intentionally rejects the incumbent falsy-JSON false-ready bug. Both are diagnostics, not cycle-execution or authority proofs. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings, publisher/lifecycle execution and fully-autonomous prerequisite chains remain unported. Process probes and independent production qualification remain external. A separately callable native V3 external qualification configuration owner now observes real command/interpreter/argument/credential/public-trust inputs and produces the original configuration inspection; it is not connected to fully health. Full qualification pointer/state readers, resident receipt/envelope and code/runtime observations, and independently configured recovery-purpose trust still need integration. The incumbent recovery adapter passes incompatible release-attestor metadata and a KeyObject into the distinct recovery capability contract; merely relabeling or converting those fields is not authorized recovery trust.",
+      "remaining": "Native read-only resident health covers base/startup/machine reconciliation. Current intake supports actual builtin V1 configuration/static files, closure and daily budgets, provider identity, generation-one admissions/counts/leases including committed WAL, and resident identity comparison. Strict mode consumes that actual intake once and verifies the original published nested/outer receipt hashes, expected acceptance/current identity bindings and inspection clock, with real Node publisher/reader and binary differential tests. It intentionally rejects the incumbent falsy-JSON false-ready bug. Both are diagnostics, not cycle-execution or authority proofs. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings, publisher/lifecycle execution and fully-autonomous prerequisite chains remain unported. Process probes and independent production qualification remain external. A separately callable native V3 external qualification configuration owner now observes real command/interpreter/argument/credential/public-trust inputs and produces the original configuration inspection; it is not connected to fully health. Separately callable native full qualification pointer/state readers now consume the original actual SQLite/WAL and byte-bound mirror, preserving stored V4/V5 recovery semantics and hashes; successful data reads do not establish signed/current acceptance. The resident receipt/envelope and code/runtime observations, integration of these prerequisite readers, and independently configured recovery-purpose trust remain unfinished. The incumbent recovery adapter passes incompatible release-attestor metadata and a KeyObject into the distinct recovery capability contract; merely relabeling or converting those fields is not authorized recovery trust.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/supervisor_health.rs",
         "rust/crates/hepta-paper-service/src/state_database_inventory/snapshot.rs",
@@ -765,7 +766,13 @@
         "rust/crates/hepta-paper-service/src/external_qualification_configuration/command.rs",
         "rust/crates/hepta-paper-service/src/external_qualification_configuration/trust.rs",
         "rust/crates/hepta-paper-service/src/external_qualification_configuration/value.rs",
-        "rust/crates/hepta-paper-service/src/external_qualification_configuration/inspection.rs"
+        "rust/crates/hepta-paper-service/src/external_qualification_configuration/inspection.rs",
+        "rust/crates/hepta-paper-service/src/qualification_stored_evidence/mod.rs",
+        "rust/crates/hepta-paper-service/src/qualification_stored_evidence/pointer.rs",
+        "rust/crates/hepta-paper-service/src/qualification_stored_evidence/state.rs",
+        "rust/crates/hepta-paper-service/src/qualification_stored_evidence/files.rs",
+        "rust/crates/hepta-paper-service/src/qualification_stored_evidence/json.rs",
+        "rust/crates/hepta-paper-service/src/qualification_stored_evidence/sqlite.rs"
       ],
       "testCases": [
         {
@@ -883,6 +890,58 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
           "symbol": "retained_env_interpreter_detects_new_earlier_path_candidate"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_missing_readers_create_no_files_and_do_not_use_legacy_json"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_builder_cas_publisher_and_readers_match_without_acceptance_claim"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "effective_state_and_pointer_wal_match_separate_process_original_reader"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_state_v4_and_v5_recovery_and_all_nonverified_statuses_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_invalid_next_attempt_timestamp_is_preserved_as_stored_data"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_state_hash_scope_and_generation_fences_reject_drift"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_state_structure_counter_cost_time_and_evidence_rejections_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_state_semantic_number_spelling_and_string_coercion_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_state_malformed_and_oversized_cells_are_refused"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_pointer_binds_raw_mirror_and_definition_key_order"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_pointer_accepts_bound_alternate_serialization_without_new_freshness_gate"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "original_pointer_publication_and_plugin_bindings_reject_drift"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+          "symbol": "native_readers_refuse_actual_symlinks_modes_views_and_invalid_scope"
         }
       ]
     },

@@ -284,7 +284,7 @@ pub(crate) fn with_database_snapshot_path_v1<R>(
     role: &str,
     inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
 ) -> Result<R> {
-    with_selected_database_snapshot_path_v1(runtime_root, relative, role, false, inspect)
+    with_selected_database_snapshot_path_v1(runtime_root, relative, role, false, None, inspect)
 }
 
 /// Inspect effective SQLite state, including an observed committed WAL, through
@@ -295,7 +295,27 @@ pub(crate) fn with_database_effective_snapshot_path_v1<R>(
     role: &str,
     inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
 ) -> Result<R> {
-    with_selected_database_snapshot_path_v1(runtime_root, relative, role, true, inspect)
+    with_selected_database_snapshot_path_v1(runtime_root, relative, role, true, None, inspect)
+}
+
+/// Effective private snapshot whose actual main source must belong to the real
+/// process UID. The main file is checked before hashing/copying and rechecked
+/// through the original owner before and after SQLite. Existing snapshot callers
+/// keep their original owner policy; sidecars keep the existing bounded policy.
+pub(crate) fn with_database_current_uid_effective_snapshot_path_v1<R>(
+    runtime_root: &Path,
+    relative: &Path,
+    role: &str,
+    inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
+) -> Result<R> {
+    with_selected_database_snapshot_path_v1(
+        runtime_root,
+        relative,
+        role,
+        true,
+        Some(nix::unistd::getuid().as_raw()),
+        inspect,
+    )
 }
 
 fn with_selected_database_snapshot_path_v1<R>(
@@ -303,12 +323,19 @@ fn with_selected_database_snapshot_path_v1<R>(
     relative: &Path,
     role: &str,
     include_sidecars: bool,
+    required_source_uid: Option<u32>,
     inspect: impl FnOnce(&Path) -> std::result::Result<R, String>,
 ) -> Result<R> {
     let (_, ancestors) = files::open_root(runtime_root)?;
     let root = ancestors.last().ok_or_else(files::changed)?;
     let mut budget = files::Budget::default();
-    let observation = files::DatabaseObservation::observe(root, relative, role, &mut budget)?;
+    let observation = files::DatabaseObservation::observe_with_source_uid(
+        root,
+        relative,
+        role,
+        &mut budget,
+        required_source_uid,
+    )?;
     let result = if include_sidecars {
         snapshot::with_snapshot(&observation, |path| inspect(path).map_err(error))?
     } else {

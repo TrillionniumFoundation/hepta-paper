@@ -53,3 +53,12 @@ all = { level = "deny", priority = -1 }
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+# Development and test owners still hash every actual executable/artifact byte.
+# Optimize only the pinned SHA implementation rather than bypassing identity
+# checks or dropping debug/overflow assertions. The test profile inherits dev;
+# workspace code and the production release profile keep their existing settings.
+[profile.dev.package."sha2:0.10.8"]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true

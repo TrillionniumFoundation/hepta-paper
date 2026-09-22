@@ -432,3 +432,13 @@ when a later explicit Cancel closes future admission. See the
 [local workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#autonomous-cli-process-interruption)
 for signal/commit races, the distinction from native-kernel preemption or remote
 settlement, and actual binary regressions. This does not activate production.
+
+### Development hash-check cost
+
+The workspace optimizes only the pinned `sha2:0.10.8` dependency in the `dev`
+profile, inherited by `cargo test`. Debug assertions and overflow checks remain
+explicitly enabled. Workspace application code, release settings, executable
+and CAS byte coverage, identity checks, deadlines and test selection are not
+relaxed. This avoids spending most process-workflow feedback time in unoptimized
+hash compression of large debug executables. It is a development-build setting,
+not a production throughput or target-host qualification result.

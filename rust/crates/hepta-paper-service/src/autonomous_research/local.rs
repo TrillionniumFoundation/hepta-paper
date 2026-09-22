@@ -4,8 +4,9 @@
 use super::AutonomousResearchOptions;
 use crate::WorkerBindingV1;
 use crate::workflow::{
-    LocalWorkflowV1, WorkflowActionV1, WorkflowError, initialize_local_workflow_v1,
-    operate_local_workflow_v1, operate_local_workflow_with_clock_v1,
+    LocalWorkflowV1, WorkflowActionV1, WorkflowAmendmentV1, WorkflowError,
+    amend_local_workflow_with_clock_v1, initialize_local_workflow_v1, operate_local_workflow_v1,
+    operate_local_workflow_with_clock_v1,
 };
 use hepta_control_plane::canonical_hash_v1;
 use nix::fcntl::OFlag;
@@ -33,7 +34,7 @@ fn same_file(a: &Metadata, b: &Metadata) -> bool {
         && a.ctime_nsec() == b.ctime_nsec()
 }
 
-fn definition(path: &Path) -> Result<LocalWorkflowV1, WorkflowError> {
+fn private_request<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, WorkflowError> {
     if !path.is_absolute() || fs::canonicalize(path).ok().as_deref() != Some(path) {
         return Err(WorkflowError::Filesystem);
     }
@@ -133,6 +134,7 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
         return report;
     }
     let mut execution_invoked = false;
+    let mut amendment_invoked = false;
     let result = (|| -> Result<(), WorkflowError> {
         let expected = campaign
             .as_deref()
@@ -147,13 +149,45 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
             .workflow_file
             .as_deref()
             .ok_or(WorkflowError::Definition)?;
-        let definition = definition(path)?;
+        let definition: LocalWorkflowV1 = private_request(path)?;
         definition.validate()?;
         if definition.template.snapshot.campaign_id != expected {
             return Err(WorkflowError::Definition);
         }
         let digest = canonical_hash_v1(&definition).map_err(|_| WorkflowError::Definition)?;
         let root = &definition.template.state_directory;
+        if options.action == "amend" {
+            if options.through_steps.is_some() || options.expected_revision.is_some() {
+                return Err(WorkflowError::Definition);
+            }
+            let request: WorkflowAmendmentV1 = private_request(
+                options
+                    .amendment_file
+                    .as_deref()
+                    .ok_or(WorkflowError::Definition)?,
+            )?;
+            // Do not inspect against the current definition or reject the old
+            // lease here. The existing owner authenticates the complete history,
+            // then returns an exact saved receipt before sampling a live clock.
+            // A lost-response retry must work after later amendments or expiry,
+            // without using that historical receipt to grant another renewal.
+            amendment_invoked = true;
+            let applied = amend_local_workflow_with_clock_v1(root, &digest, request, &mut || {
+                now().map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+            })?;
+            report["definitionHash"] = json!(applied.definition_hash);
+            report["previousDefinitionHash"] = json!(applied.previous_definition_hash);
+            report["campaignPersisted"] = json!(true);
+            report["amendment"] =
+                serde_json::to_value(applied).map_err(|_| WorkflowError::History)?;
+            // No fallible post-commit status read. This is the immutable operation
+            // receipt, not a claim about the latest definition/revision after it.
+            report["status"] = json!("local_workflow_amendment_committed_or_replayed");
+            return Ok(());
+        }
+        if options.amendment_file.is_some() {
+            return Err(WorkflowError::Definition);
+        }
         let through_steps = options.through_steps.unwrap_or(definition.steps.len());
         let lifecycle = matches!(options.action.as_str(), "pause" | "resume" | "cancel");
         if (read_only && (options.through_steps.is_some() || options.expected_revision.is_some()))
@@ -238,7 +272,7 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
         Ok(()) => report["ready"] = json!(true),
         Err(error) => {
             report["error"] = json!(error_code(&error));
-            report["reconciliationRequired"] = json!(execution_invoked);
+            report["reconciliationRequired"] = json!(execution_invoked || amendment_invoked);
         }
     }
     report

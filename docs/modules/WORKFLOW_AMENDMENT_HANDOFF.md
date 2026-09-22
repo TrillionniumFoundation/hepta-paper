@@ -20,6 +20,8 @@ amend_local_workflow_v1(root, expected_definition_hash, request, now_unix_ms)
   -> WorkflowAmendmentReceiptV1
 
 hepta-local-workflow amend STATE CURRENT_DEFINITION_HASH REQUEST.json [NOW_MS]
+hepta-paper-rust autonomous-research --campaign-id ID --workflow-file ORIGINAL_JSON \
+  --action amend --amendment-file REQUEST_JSON
 hepta-local-workflow status STATE NEW_DEFINITION_HASH
 hepta-local-workflow advance STATE NEW_DEFINITION_HASH ABSOLUTE_THROUGH_STEPS [NOW_MS]
 ```
@@ -39,7 +41,14 @@ lease, revision and event together. Exact replay remains clock-free and returns
 the original receipt without renewing again. These are system-time observations,
 not independent time attestation, automatic renewal or in-flight cancellation.
 
-The command uses bounded regular-file JSON input and prints a bounded receipt.
+The local-workflow command uses bounded regular-file JSON input and prints a bounded receipt.
+The autonomous command adds the existing private/current-UID/single-link/stable
+16 MiB request boundary and embeds the same receipt in its bounded operation
+report. Its `expectedRevision` is supplied only by the amendment, not a second
+CLI revision argument. See [autonomous command input and retry behavior](LOCAL_WORKFLOW_HANDOFF.md#explicit-amendments-through-the-same-autonomous-command).
+A saved receipt remains replayable under the original request even after expiry
+or later changes; it is not a current-state/lease claim. Subsequent operations
+require a separate explicit definition matching the returned new definition hash.
 The receipt contains request/old-definition/new-definition hashes, original
 application revision/time and committed prefix length. It never prints the full
 private definition, manuscript, process configuration or writer token. Errors use
@@ -164,7 +173,11 @@ replay, event-bound receipt corruption, stale/expired/terminal/pending denial,
 prefix preservation, old-expiry continuation after explicit renewal, same-rubric
 repair, repeated rejection, no rejected-manuscript packaging, redacted CLI and
 actual SIGKILL after amendment COMMIT. Live-clock cases additionally test old-lease expiry after staged renewal, rollback/clock failure, exact clock-free replay, continuation beyond the old expiry, and actual CLI renewal/advance/pause/resume/cancel without a supplied time. Existing workflow and workspace suites stay
-required on the exact new source head.
+required on the exact new source head. The autonomous-entrypoint tests additionally
+execute renewal/retry/continuation, old-expiry and terminal receipt replay without
+new mutation, hostile input refusal, and a same-policy structural repair through
+fresh `hepta-paper-rust` processes. No synthetic reviewer or second writer is
+substituted for the existing bounded structural path.
 
 ## Migration and remaining acceptance
 

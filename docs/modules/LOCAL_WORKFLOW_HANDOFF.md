@@ -280,7 +280,7 @@ prepared caches survive a later expiry; an expired restart cannot relaunch work.
 
 The original supplied-time APIs remain deterministic compatibility/library
 entrypoints. They are not live-clock substitutes for the CLI. This change does
-not renew leases, kill in-flight workers, provide a continuously running timer,
+not automatically renew leases, kill in-flight workers, provide a continuously running timer,
 prove an independent trusted wall clock, or authorize production. Expiry after
 the final precommit sample or ambiguity in the COMMIT I/O itself is not made
 impossible by a timestamp check.
@@ -342,3 +342,51 @@ clock-free status read; preservation of a prior workflow commit and prepared
 bytes after the next step expires. The existing autonomous-entrypoint tests run
 the CLI with its real system clock and real Rust children. These are source
 regressions, not full research-role parity or target-host acceptance.
+
+
+### Explicit amendments through the same autonomous command
+
+```sh
+hepta-paper-rust autonomous-research --campaign-id CAMPAIGN_ID \
+  --workflow-file /absolute/private/original-workflow.json \
+  --action amend --amendment-file /absolute/private/amendment.json
+```
+
+The amendment is the existing closed `WorkflowAmendmentV1` documented in
+[the amendment handoff](WORKFLOW_AMENDMENT_HANDOFF.md). It supplies `operationId`
+and `expectedRevision`; `--expected-revision` and `--through-steps` are refused
+for this action. `--amendment-file` is refused on other actions. Both input files
+must pass the same 16 MiB, private/current-UID, canonical, no-follow, single-link,
+stable-identity read. The command never initializes a missing workflow or starts
+a worker for an amendment. Inspect cannot mutate, even with direct API options.
+
+The caller selects explicit budget/lease/step changes. No automatic budget
+expansion, timer or second scheduler/writer is created. New operations use the
+existing workflow lock and SQLite amendment transaction, including revalidation
+of the **previous** lease after the write lock and immediately before COMMIT.
+The return embeds the bounded immutable amendment receipt; it does not perform a
+fallible post-commit status query or expose private workflow JSON or lease tokens.
+
+Keep the original input definition and amendment for response-loss retries.
+The owner validates retained history before recognizing the exact request and
+returns the saved receipt even after later amendments, completion or expiry.
+The wrapper deliberately does not reject that replay using the old lease or a
+current-definition preflight. A changed request or a new operation must pass
+current-definition/revision/live-lease admission. A replayed receipt is historical
+operation evidence, not a new lease grant or a claim about current campaign state.
+
+For subsequent status/advance/lifecycle operations, supply a separate complete
+`LocalWorkflowV1` whose hash equals the receipt's `definitionHash`: preserve the
+original template and committed prefix, apply the explicit steps/budget/lease
+change and update the frontier's snapshot hash. The original internal
+`workflow.json` remains unchanged; the existing SQLite history owns amendments.
+The command never rewrites operator input files or reconstructs private definitions
+into a public report. A repair replaces only the uncommitted suffix and retains
+the rejected evidence until a fresh bound author and the same review policy pass.
+
+The four `autonomous_entrypoint::autonomous_amendment_*` / `autonomous_repair_*`
+regressions execute fresh real CLI processes, not a replacement owner. They cover
+renewal and immutable retry, continuing under the new definition, expired replay
+versus forbidden new renewal, terminal replay, unsafe inputs, no duplicate budget
+or dispatch, and supplied-text repair without relaxing the original review rule.
+These are structural local-workflow capabilities, not live-model/scientific parity.

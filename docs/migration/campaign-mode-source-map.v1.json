@@ -189,6 +189,14 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
           "symbol": "set_campaign_state_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+          "symbol": "execute_autonomous_research_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
         }
       ],
       "tests": [
@@ -199,9 +207,17 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
           "symbol": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_amendment_renews_once_and_continues_through_the_same_writer"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_amendment_replays_expired_original_subject_without_reviving_it"
         }
       ],
-      "remaining": "Explicit local budget addition/renewal and resume. Node operational-stop and live-provider semantics are not equivalent. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority."
+      "remaining": "Explicit local budget addition/renewal and resume. Node operational-stop and live-provider semantics are not equivalent. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority. The same explicit amendment owner is also reachable through hepta-paper-rust autonomous-research --workflow-file ORIGINAL_JSON --action amend --amendment-file REQUEST_JSON. Exact retry preserves its original receipt after later changes/expiry; continuation needs the explicitly updated definition. This does not add automatic renewal or change the Node mode parity claim."
     },
     {
       "nodeAction": "extend",
@@ -219,6 +235,14 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
           "symbol": "apply_local_workflow_change_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+          "symbol": "execute_autonomous_research_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
         }
       ],
       "tests": [
@@ -229,9 +253,25 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
           "symbol": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_amendment_renews_once_and_continues_through_the_same_writer"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_amendment_replays_expired_original_subject_without_reviving_it"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_amendment_rejects_unsafe_requests_and_never_initializes_or_dispatches"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_repair_keeps_rejection_until_a_fresh_same_policy_review"
         }
       ],
-      "remaining": "Append before terminal completion. A rejected native structural review can receive an explicitly supplied same-rubric repair suffix, not an autonomous model round. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority."
+      "remaining": "Append before terminal completion. A rejected native structural review can receive an explicitly supplied same-rubric repair suffix, not an autonomous model round. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority. The same explicit amendment owner is also reachable through hepta-paper-rust autonomous-research --workflow-file ORIGINAL_JSON --action amend --amendment-file REQUEST_JSON. Exact retry preserves its original receipt after later changes/expiry; continuation needs the explicitly updated definition. This does not add automatic renewal or change the Node mode parity claim."
     },
     {
       "nodeAction": "cancel",

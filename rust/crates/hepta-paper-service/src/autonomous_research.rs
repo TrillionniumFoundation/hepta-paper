@@ -16,7 +16,7 @@ pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
   "kind": "AutonomousResearchCampaignUsage",
   "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
   "defaultLaunchMode": "local-run",
-  "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--through-steps N] [--expected-revision N]",
+  "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel|amend [--through-steps N] [--expected-revision N] [--amendment-file ABSOLUTE_JSON]",
   "safety": {
     "operatorApprovalClaimed": false,
     "selfSignedExternalTrustClaimed": false,
@@ -35,6 +35,7 @@ pub struct AutonomousResearchOptions {
     pub paper_id: Option<String>,
     pub campaign_id: Option<String>,
     pub workflow_file: Option<PathBuf>,
+    pub amendment_file: Option<PathBuf>,
     pub through_steps: Option<usize>,
     pub expected_revision: Option<u64>,
     pub require_full_ready: bool,
@@ -60,6 +61,7 @@ pub fn parse_autonomous_research_arguments(
     let mut require_full_ready = false;
     let mut help = false;
     let mut workflow_file = None;
+    let mut amendment_file = None;
     let mut through_steps = None;
     let mut expected_revision = None;
     let mut seen = BTreeSet::new();
@@ -79,6 +81,9 @@ pub fn parse_autonomous_research_arguments(
             "--campaign-id" => campaign_id = Some(value(args, &mut index, "campaign_id")?),
             "--workflow-file" => {
                 workflow_file = Some(PathBuf::from(value(args, &mut index, "workflow_file")?))
+            }
+            "--amendment-file" => {
+                amendment_file = Some(PathBuf::from(value(args, &mut index, "amendment_file")?))
             }
             "--through-steps" => {
                 through_steps = Some(
@@ -108,6 +113,7 @@ pub fn parse_autonomous_research_arguments(
             paper_id,
             campaign_id,
             workflow_file,
+            amendment_file,
             through_steps,
             expected_revision,
             require_full_ready,
@@ -116,7 +122,7 @@ pub fn parse_autonomous_research_arguments(
     }
     if !matches!(
         action.as_str(),
-        "prepare" | "launch" | "status" | "resume" | "converge" | "pause" | "cancel"
+        "prepare" | "launch" | "status" | "resume" | "converge" | "pause" | "cancel" | "amend"
     ) {
         return Err(format!(
             "autonomous_research_campaign_action_invalid:{action}"
@@ -131,11 +137,19 @@ pub fn parse_autonomous_research_arguments(
         ));
     }
     if workflow_file.is_none()
-        && (through_steps.is_some()
+        && (amendment_file.is_some()
+            || through_steps.is_some()
             || expected_revision.is_some()
-            || matches!(action.as_str(), "pause" | "cancel"))
+            || matches!(action.as_str(), "pause" | "cancel" | "amend"))
     {
         return Err("autonomous_research_workflow_file_required".to_owned());
+    }
+    if (action == "amend") != amendment_file.is_some()
+        || (action == "amend" && (through_steps.is_some() || expected_revision.is_some()))
+    {
+        // Revision, budget, lease and repair intent have a single source: the
+        // closed WorkflowAmendmentV1 request. Never ignore a supplied request.
+        return Err("autonomous_research_amendment_arguments_invalid".to_owned());
     }
     if paper_id.as_deref().unwrap_or("").trim().is_empty()
         && campaign_id.as_deref().unwrap_or("").trim().is_empty()
@@ -148,6 +162,7 @@ pub fn parse_autonomous_research_arguments(
         paper_id,
         campaign_id,
         workflow_file,
+        amendment_file,
         through_steps,
         expected_revision,
         require_full_ready,
@@ -161,7 +176,7 @@ pub fn autonomous_research_help_json_v1() -> Value {
           "kind": "AutonomousResearchCampaignUsage",
           "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
           "defaultLaunchMode": "local-run",
-    "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--through-steps N] [--expected-revision N]",
+    "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel|amend [--through-steps N] [--expected-revision N] [--amendment-file ABSOLUTE_JSON]",
           "safety": {
               "operatorApprovalClaimed": false,
               "selfSignedExternalTrustClaimed": false,

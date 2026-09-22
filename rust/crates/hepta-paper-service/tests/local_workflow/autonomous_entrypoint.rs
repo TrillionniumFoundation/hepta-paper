@@ -1,5 +1,6 @@
 //! Actual autonomous-research CLI tests using the existing workflow fixtures/owner.
 use super::*;
+use hepta_control_plane::canonical_hash_v1;
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -296,4 +297,303 @@ fn autonomous_worker_crash_is_not_reexecuted_after_cli_restart() {
     let observed = success(invoke(&path, "status", &[]));
     assert_eq!(observed["workflow"]["committedSteps"], 0);
     assert_eq!(observed["workflow"]["pendingStep"], true);
+}
+
+fn private_json<T: serde::Serialize>(temp: &Temp, name: &str, value: &T) -> PathBuf {
+    let path = temp.0.join(name);
+    fs::write(&path, serde_json::to_vec(value).unwrap()).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    path
+}
+
+fn amended_input(
+    temp: &Temp,
+    original: &Path,
+    request: &WorkflowAmendmentV1,
+    receipt: &WorkflowAmendmentReceiptV1,
+) -> PathBuf {
+    let mut next: LocalWorkflowV1 = serde_json::from_slice(&fs::read(original).unwrap()).unwrap();
+    if request.repair_rejected_review {
+        next.steps
+            .truncate(usize::try_from(receipt.committed_steps).unwrap());
+    }
+    next.steps.extend(request.steps.clone());
+    next.template.snapshot.budget_microusd += request.additional_budget_microusd;
+    next.template.frontier.snapshot_hash = next.template.snapshot.snapshot_hash().unwrap();
+    next.template.writer_lease.expires_at_unix_ms = request.lease_expires_at_unix_ms;
+    next.validate().unwrap();
+    assert_eq!(canonical_hash_v1(&next).unwrap(), receipt.definition_hash);
+    private_json(temp, "amended-autonomous-workflow.json", &next)
+}
+
+#[test]
+fn autonomous_amendment_renews_once_and_continues_through_the_same_writer() {
+    let temp = Temp::new();
+    let path = request(&temp, definition(&temp));
+    let before = success(invoke(&path, "launch", &["--through-steps", "3"]));
+    let definition: LocalWorkflowV1 = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut change = amendment(before["workflow"]["campaignRevision"].as_u64().unwrap());
+    change.lease_expires_at_unix_ms = definition.template.writer_lease.expires_at_unix_ms + 300_000;
+    let change_path = private_json(&temp, "renewal.json", &change);
+    let original_bytes = fs::read(temp.state().join("workflow.json")).unwrap();
+    let attempts = attempt_count(&temp);
+    let applied = success(invoke(
+        &path,
+        "amend",
+        &["--amendment-file", change_path.to_str().unwrap()],
+    ));
+    let receipt: WorkflowAmendmentReceiptV1 =
+        serde_json::from_value(applied["amendment"].clone()).unwrap();
+    assert_eq!(receipt.committed_steps, 3);
+    assert_eq!(receipt.applied_revision, change.expected_revision + 1);
+    assert!(receipt.recorded_at_unix_ms >= definition.template.observed_at_unix_ms);
+    assert_eq!(applied["previousDefinitionHash"], before["definitionHash"]);
+    assert_eq!(
+        applied,
+        success(invoke(
+            &path,
+            "amend",
+            &["--amendment-file", change_path.to_str().unwrap()]
+        ))
+    );
+    assert_eq!(attempt_count(&temp), attempts);
+    let progress = status(&temp, &receipt.definition_hash);
+    assert_eq!(progress.amendment_count, 1);
+    assert_eq!(progress.budget_remaining_microusd, 147);
+    assert_eq!(
+        serde_json::to_value(&progress.artifacts_by_step).unwrap(),
+        before["workflow"]["artifactsByStep"]
+    );
+    let serialized = serde_json::to_string(&applied).unwrap();
+    assert!(!serialized.contains("writerLease"));
+    assert!(!serialized.contains("jobTemplate"));
+    assert_eq!(applied["providerExecutionPerformed"], false);
+    assert_eq!(applied["networkActionPerformed"], false);
+    let current = amended_input(&temp, &path, &change, &receipt);
+    assert!(!invoke(&path, "converge", &[]).status.success());
+    let done = success(invoke(&current, "converge", &[]));
+    assert_eq!(done["workflow"]["committedSteps"], 7);
+    assert_eq!(done["workflow"]["budgetRemainingMicrousd"], 143);
+    assert_eq!(done["workflow"]["amendmentCount"], 1);
+    assert_eq!(
+        fs::read(temp.state().join("workflow.json")).unwrap(),
+        original_bytes
+    );
+    let attempts = attempt_count(&temp);
+    // A lost-response retry still returns only the original operation receipt,
+    // even after completion; it must not attempt status with the old definition.
+    assert_eq!(
+        applied,
+        success(invoke(
+            &path,
+            "amend",
+            &["--amendment-file", change_path.to_str().unwrap()]
+        ))
+    );
+    assert_eq!(attempt_count(&temp), attempts);
+    change.additional_budget_microusd += 1;
+    private_json(&temp, "renewal.json", &change);
+    assert!(
+        !invoke(
+            &path,
+            "amend",
+            &["--amendment-file", change_path.to_str().unwrap()]
+        )
+        .status
+        .success()
+    );
+    let progress = status(&temp, &receipt.definition_hash);
+    assert_eq!(progress.amendment_count, 1);
+    assert_eq!(progress.budget_remaining_microusd, 143);
+}
+
+#[test]
+fn autonomous_amendment_replays_expired_original_subject_without_reviving_it() {
+    let (temp, hash) = fixture();
+    let path = private_json(&temp, "historical-workflow.json", &definition(&temp));
+    let mut change = amendment(status(&temp, &hash).campaign_revision);
+    let applied = amend_local_workflow_v1(&temp.state(), &hash, change.clone(), 1200).unwrap();
+    let change_path = private_json(&temp, "historical-amendment.json", &change);
+    let response = success(invoke(
+        &path,
+        "amend",
+        &["--amendment-file", change_path.to_str().unwrap()],
+    ));
+    assert_eq!(
+        response["amendment"],
+        serde_json::to_value(&applied).unwrap()
+    );
+    let current = amended_input(&temp, &path, &change, &applied);
+    change.operation_id = "new-expired-renewal".into();
+    change.expected_revision = applied.applied_revision;
+    private_json(&temp, "historical-amendment.json", &change);
+    assert!(
+        !invoke(
+            &current,
+            "amend",
+            &["--amendment-file", change_path.to_str().unwrap()]
+        )
+        .status
+        .success()
+    );
+    let progress = status(&temp, &applied.definition_hash);
+    assert_eq!(progress.amendment_count, 1);
+    assert_eq!(progress.budget_remaining_microusd, 150);
+    assert_eq!(attempt_count(&temp), 0);
+}
+
+#[test]
+fn autonomous_amendment_rejects_unsafe_requests_and_never_initializes_or_dispatches() {
+    let temp = Temp::new();
+    let path = request(&temp, definition(&temp));
+    let def: LocalWorkflowV1 = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut change = amendment(0);
+    change.lease_expires_at_unix_ms = def.template.writer_lease.expires_at_unix_ms + 300_000;
+    let change_path = private_json(&temp, "amendment.json", &change);
+    let args = ["--amendment-file", change_path.to_str().unwrap()];
+    assert!(!invoke(&path, "amend", &args).status.success());
+    assert!(!temp.state().exists());
+    let options = autonomous_research::parse_autonomous_research_arguments(&[
+        "--campaign-id".into(),
+        "campaign-service".into(),
+        "--workflow-file".into(),
+        path.to_str().unwrap().into(),
+        "--action".into(),
+        "amend".into(),
+        "--amendment-file".into(),
+        change_path.to_str().unwrap().into(),
+    ])
+    .unwrap();
+    assert_eq!(
+        autonomous_research::inspect_autonomous_research_v1(&options)["ready"],
+        false
+    );
+    assert!(!temp.state().exists());
+    let before = success(invoke(&path, "launch", &["--through-steps", "1"]));
+    change.expected_revision = before["workflow"]["campaignRevision"].as_u64().unwrap();
+    private_json(&temp, "amendment.json", &change);
+    let attempts = attempt_count(&temp);
+    assert!(!invoke(&path, "amend", &[]).status.success());
+    for extra in [
+        vec!["--through-steps", "2"],
+        vec!["--expected-revision", "1"],
+        vec!["--require-full-ready"],
+        vec!["--launch-mode", "production-run"],
+    ] {
+        let mut supplied = args.to_vec();
+        supplied.extend(extra);
+        assert!(!invoke(&path, "amend", &supplied).status.success());
+    }
+    for action in ["prepare", "launch", "status"] {
+        assert!(!invoke(&path, action, &args).status.success());
+    }
+    let mut wrong = options.clone();
+    wrong.campaign_id = Some("foreign-campaign".into());
+    assert_eq!(
+        autonomous_research::execute_autonomous_research_v1(&wrong)["ready"],
+        false
+    );
+    let alias = temp.0.join("amendment-alias.json");
+    std::os::unix::fs::symlink(&change_path, &alias).unwrap();
+    assert!(
+        !invoke(
+            &path,
+            "amend",
+            &["--amendment-file", alias.to_str().unwrap()]
+        )
+        .status
+        .success()
+    );
+    fs::set_permissions(&change_path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!invoke(&path, "amend", &args).status.success());
+    fs::set_permissions(&change_path, fs::Permissions::from_mode(0o600)).unwrap();
+    let mut malformed = serde_json::to_value(&change).unwrap();
+    malformed["untrustedSecret"] = json!("DO-NOT-ECHO-AMENDMENT-CONTENT");
+    private_json(&temp, "amendment.json", &malformed);
+    let rejected = invoke(&path, "amend", &args);
+    assert!(!rejected.status.success());
+    assert!(!String::from_utf8_lossy(&rejected.stdout).contains("DO-NOT-ECHO-AMENDMENT-CONTENT"));
+    assert!(!String::from_utf8_lossy(&rejected.stderr).contains("DO-NOT-ECHO-AMENDMENT-CONTENT"));
+    fs::write(&change_path, vec![b' '; 16 * 1024 * 1024 + 1]).unwrap();
+    assert!(!invoke(&path, "amend", &args).status.success());
+    assert_eq!(attempt_count(&temp), attempts);
+    let hash = before["definitionHash"].as_str().unwrap().parse().unwrap();
+    let progress = status(&temp, &hash);
+    assert_eq!(progress.amendment_count, 0);
+    assert_eq!(progress.budget_remaining_microusd, 99);
+}
+
+#[test]
+fn autonomous_repair_keeps_rejection_until_a_fresh_same_policy_review() {
+    let temp = Temp::new();
+    let mut def = definition(&temp);
+    def.steps[3].job_template["job"]["title"] = json!("FORBIDDEN");
+    def.steps[4].job_template["job"]["policy"]["forbiddenMarkers"] = json!(["FORBIDDEN"]);
+    let path = request(&temp, def);
+    assert!(!invoke(&path, "launch", &[]).status.success());
+    let observed = success(invoke(&path, "status", &[]));
+    let before = status(
+        &temp,
+        &observed["definitionHash"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+    );
+    assert_eq!(before.committed_steps, 5);
+    assert!(before.gate_rejected);
+    let old: LocalWorkflowV1 = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut change = repair_request(before.campaign_revision);
+    change.lease_expires_at_unix_ms = old.template.writer_lease.expires_at_unix_ms + 300_000;
+    let mut weakened = change.clone();
+    weakened.steps[1].job_template["job"]["policy"]["forbiddenMarkers"] = json!([]);
+    let change_path = private_json(&temp, "repair.json", &weakened);
+    assert!(
+        !invoke(
+            &path,
+            "amend",
+            &["--amendment-file", change_path.to_str().unwrap()]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        status(&temp, &canonical_hash_v1(&old).unwrap()).amendment_count,
+        0
+    );
+    private_json(&temp, "repair.json", &change);
+    let amended = success(invoke(
+        &path,
+        "amend",
+        &["--amendment-file", change_path.to_str().unwrap()],
+    ));
+    let applied: WorkflowAmendmentReceiptV1 =
+        serde_json::from_value(amended["amendment"].clone()).unwrap();
+    let current = amended_input(&temp, &path, &change, &applied);
+    let author = success(invoke(&current, "converge", &["--through-steps", "6"]));
+    assert_eq!(author["workflow"]["gateRejected"], true);
+    assert!(author["workflow"]["artifactsByStep"].get("build").is_none());
+    let done = success(invoke(&current, "converge", &[]));
+    assert_eq!(done["workflow"]["committedSteps"], 9);
+    assert_eq!(done["workflow"]["gateRejected"], false);
+    assert_eq!(done["workflow"]["budgetRemainingMicrousd"], 141);
+    assert_eq!(done["scientificAcceptance"], false);
+    for (id, values) in before.artifacts_by_step {
+        assert_eq!(
+            done["workflow"]["artifactsByStep"][id],
+            serde_json::to_value(values).unwrap()
+        );
+    }
+    assert_ne!(
+        done["workflow"]["artifactsByStep"]["author"],
+        done["workflow"]["artifactsByStep"]["author-revised"]
+    );
+    assert_eq!(
+        amended,
+        success(invoke(
+            &path,
+            "amend",
+            &["--amendment-file", change_path.to_str().unwrap()]
+        ))
+    );
 }

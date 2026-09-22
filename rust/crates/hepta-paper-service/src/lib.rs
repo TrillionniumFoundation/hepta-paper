@@ -348,3 +348,5 @@ pub mod state_backup_authority;
 
 pub mod online_writer_static;
 pub mod workspace_status;
+
+pub mod topic_producer_profile;

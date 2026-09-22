@@ -424,3 +424,5 @@ from `rust`; the re-export alone does not switch existing consumers.
 **Boundary and recovery:** Drain and freeze the incumbent before unique-writer transfer. After a Rust commit, restoring a stale Node backup is not rollback; preserve the new history and require a qualified recovery design.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-cutover`.
+
+**Topic-producer source prerequisite:** The [native profile loader](../../rust/crates/hepta-paper-service/src/topic_producer_profile/HANDOFF.md) adds actual canonical builtin profile, dataset-content and original implementation-file observations with retained bounded owners. It is separately callable and must drop source descriptors before business SQLite. V2 intake remains blocked until actual producer status, capability/generation/admission and genesis/rotation authority are connected; this source diagnostic does not claim producer execution or independent acceptance.

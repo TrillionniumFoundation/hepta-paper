@@ -70,7 +70,7 @@ uses the existing `state_database_inventory` source/sidecar observation and
 post-read identity checks. The intake reader uses the effective-state snapshot,
 including the actual observed WAL and an owned private SHM inode; only those
 private files enter SQLite. It does not recover or mutate live WAL/journal state.
-The pre-existing resident health reader retains its separate main-file semantics.
+The resident health reader also consumes effective committed WAL through its private snapshot; it does not create or repair source SHM.
 
 Database status supports legacy generation-one authority with no producer,
 genesis or rotation evidence. It verifies metadata, migration-required columns,
@@ -124,3 +124,7 @@ all 1,112,064 Unicode scalars with actual Node and separately exercise composing
 sequences. The intake, resident health and actual CLI tests cover the supported
 positive path and refusal cases. See the enclosing validation manifest for the
 exact executed test commands and results; this handoff is not a test receipt.
+
+## Topic-producer profile prerequisite
+
+The separately callable [actual profile loader](../topic_producer_profile/HANDOFF.md) now validates original canonical builtin profiles, actual mounted file/directory content, original implementation source bytes and expected identities, retaining bounded source owners for reobservation. It does not yet change this intake consumer: V2 producer status/capability, generation/admission and actual genesis/rotation authority remain required. The owner must be dropped before business SQLite. Positive source observations do not grant producer authority, and plugin/local-golden/native path and transport limits remain explicit.

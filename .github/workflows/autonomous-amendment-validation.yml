@@ -1,0 +1,143 @@
+name: autonomous-amendment-validation
+
+on:
+  push:
+    branches: [codex/clock-validation-8f8be6d5]
+    paths:
+      - .github/workflows/autonomous-amendment-validation.yml
+      - .ci-transfer/autonomous-amendment/**
+
+permissions:
+  contents: read
+
+env:
+  BASE: 8a4c484b34d0fb80e3d68d7a3aa9cd5ee001e3fe
+  CANDIDATE: 5bebb5fde1a44a6a664b9f9955876b88959f9e00
+  EXPECTED_TREE: e2d90afb500928c0f695163a9286679a0d2af9e9
+  CARGO_TERM_COLOR: never
+  RUSTFLAGS: -Dunsafe-code
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Reconstruct exact tested source, excluding transport files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hepta-amendment-source
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,pathlib,subprocess
+          root=pathlib.Path('.ci-transfer/autonomous-amendment')
+          names=['00','01','02','03','04','05a','05b','05c','05d','06']
+          assert sorted(p.name for p in root.iterdir()) == sorted(names)
+          packed=base64.b64decode(b''.join((root/n).read_bytes() for n in names),validate=True)
+          assert hashlib.sha256(packed).hexdigest() == 'a18831c0efd6b1bd6510044294bf9403cd1038e9c3097e362ff060e12c3c8ba6'
+          payload=json.loads(gzip.decompress(packed))
+          assert set(payload)=={'patch','generator','commit'}
+          destination=pathlib.Path('/tmp/hepta-amendment-payload')
+          destination.mkdir()
+          for key,value in payload.items():
+              (destination/key).write_text(value,encoding='utf-8')
+          PY
+          git checkout --detach "$BASE"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git apply --check /tmp/hepta-amendment-payload/patch
+          git apply /tmp/hepta-amendment-payload/patch
+          python3 /tmp/hepta-amendment-payload/generator
+          node docs/tools/generate-node-rust-gap-report.mjs
+          git add -u
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+          test "$(git hash-object -t commit -w --stdin < /tmp/hepta-amendment-payload/commit)" = "$CANDIDATE"
+          git checkout --detach "$CANDIDATE"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git rev-parse HEAD HEAD^{tree} > /tmp/hepta-amendment-source/identity.txt
+          git diff --stat "$BASE" "$CANDIDATE" > /tmp/hepta-amendment-source/diff-stat.txt
+      - name: Check frozen source and existing inventories
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          node docs/tools/validate-development-docs.mjs | tee /tmp/hepta-amendment-source/development-docs.log
+          node docs/tools/validate-module-documentation.mjs | tee /tmp/hepta-amendment-source/module-docs.log
+          python3 docs/rust/tools/validate-program-truth.py | tee /tmp/hepta-amendment-source/program-truth.log
+          node docs/tools/generate-node-rust-gap-report.mjs --check
+          node --test paper-core/tests/node-rust-coverage-audit.test.mjs paper-core/tests/node-rust-gap-report.test.mjs paper-core/tests/source-implementation-evidence.test.mjs | tee /tmp/hepta-amendment-source/node-tests.log
+          node paper-core/bin/verify-source-implementation-evidence.mjs --expected-head "$CANDIDATE" --expected-tree "$EXPECTED_TREE" --receipt /tmp/hepta-amendment-source/repository-static.json
+          node paper-core/bin/verify-source-implementation-evidence.mjs --evidence docs/system/evidence/rust-functional-source-closure-v1.json --expected-head "$CANDIDATE" --expected-tree "$EXPECTED_TREE" --receipt /tmp/hepta-amendment-source/functional-static.json
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Publish exact object to existing staging ref without changing product branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref=refs/heads/codex/renewal-candidate-35741395233
+          current="$(git ls-remote --heads origin "$ref" | cut -f1)"
+          test "$current" = "$BASE" || test "$current" = "$CANDIDATE"
+          git merge-base --is-ancestor "$BASE" "$CANDIDATE"
+          test "$(git rev-parse "$CANDIDATE^{tree}")" = "$EXPECTED_TREE"
+          header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=$header" push origin "$CANDIDATE:$ref"
+          test "$(git ls-remote --heads origin "$ref" | cut -f1)" = "$CANDIDATE"
+          printf '%s\n' 'Static source checks are not execution qualification or independent review.' > /tmp/hepta-amendment-source/scope.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: autonomous-amendment-source-${{ github.run_id }}
+          path: /tmp/hepta-amendment-source
+          if-no-files-found: error
+          retention-days: 14
+
+  execution:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 5bebb5fde1a44a6a664b9f9955876b88959f9e00
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Install pinned tools and record subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hepta-amendment-execution
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          npm ci --ignore-scripts --no-audit --no-fund
+          git rev-parse HEAD HEAD^{tree} > /tmp/hepta-amendment-execution/identity.txt
+          rustc --version --verbose > /tmp/hepta-amendment-execution/rustc.txt
+          node --version > /tmp/hepta-amendment-execution/node.txt
+          sha256sum rust/Cargo.lock package-lock.json > /tmp/hepta-amendment-execution/locks.txt
+      - name: Execute actual command and durable owner regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow --test autonomous_research_route --test durable_service 2>&1 | tee /tmp/hepta-amendment-execution/tests.log
+          cargo clippy --manifest-path rust/Cargo.toml --locked -p hepta-paper-service -p hepta-campaign-writer --lib --bins --all-features -- -D warnings -D unsafe-code -D clippy::todo -D clippy::unimplemented -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic 2>&1 | tee /tmp/hepta-amendment-execution/clippy.log
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          printf '%s\n' 'Frozen source execution only; no independent review, model parity, target-host or production activation claim.' > /tmp/hepta-amendment-execution/scope.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: autonomous-amendment-execution-${{ github.run_id }}
+          path: /tmp/hepta-amendment-execution
+          if-no-files-found: error
+          retention-days: 14

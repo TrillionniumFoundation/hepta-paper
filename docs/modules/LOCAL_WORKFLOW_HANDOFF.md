@@ -244,3 +244,58 @@ lifecycle command; this source tree does not implement in-flight `cancel-node`.
 Pending starts and unclassified attempt residue block semantic recovery and GC;
 they cannot become completed work or permission for an automatic retry. Partial
 local source mappings are not accepted full Node operator semantics.
+
+
+## Autonomous research command composition
+
+The existing `hepta-paper-rust autonomous-research` command now accepts an
+explicit `--workflow-file ABSOLUTE_JSON_PATH` in `local-run` mode. The file is
+a closed `LocalWorkflowV1`, not another plan, ledger or provider authorization.
+`--campaign-id` must match its template; a supplied `--paper-id` must also match
+`autonomous-research:<paper-id>`. Files are bounded to 16 MiB, private, current-UID,
+single-link, canonical and stable across the read. Unknown typed fields fail.
+
+`--action prepare` validates and hashes the definition without opening or
+creating campaign state. `launch` initializes only an absent state root through
+`initialize_local_workflow_v1`, then uses `operate_local_workflow_v1`; an existing
+root must have the exact retained definition and valid owner history. Partial
+initialization and ambiguous dispatch are preserved, never cleaned into success.
+`launch` and `converge` accept `--through-steps N`, an absolute endpoint (default:
+all steps), so response-loss retries cannot append extra steps or charges.
+`status` reads through the same owner without a writer, including after expiry.
+
+`pause`, `resume`, and `cancel` require `--expected-revision N` from the latest
+owner status. Stale revisions and reopening a cancelled campaign fail. This is
+between-step cancellation, not interruption of an already running provider.
+Mutations sample actual system time at command entry and refuse the supplied
+frozen writer lease before its initial time or after expiry. The underlying
+batch retains its explicit clock semantics; this wrapper does not provide
+continuous lease revalidation, renewal or a production timer supervisor.
+Inspection entrypoints cannot mutate even when called directly with forged
+options. Production, golden-bootstrap and full-readiness requests fail before
+state creation. Omitting `--workflow-file` preserves the previous diagnostic.
+
+The report's `ready` means only that this bounded local operation succeeded;
+`readinessScope=local_workflow_operation_only` and `fullResearchReady=false`.
+Scientific acceptance, production activation and Node retirement remain false.
+Process workers are trusted local programs, not a physical sandbox. Their
+provider/external/network outcomes are null (unobserved), never replaced with
+an asserted false based on worker JSON or a network declaration. An execution
+error reports reconciliation required and retains the original recovery inputs.
+No private request content or raw worker diagnostics is printed by this wrapper.
+
+Run from the repository root:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test autonomous_research_route --test durable_service
+```
+
+`tests/local_workflow/autonomous_entrypoint.rs` invokes the actual command and
+reuses the existing workflow fixtures. It checks seven-step durable progress,
+absolute-endpoint retries, shared status with `hepta-local-workflow`, budget
+conservation, stale-revision rejection, pause/resume/terminal cancel, request
+substitution, private/oversize/symlink refusal, actual pinned Rust workers and a
+crashing child that is not relaunched by repeated fresh CLI processes. These
+are local composition tests, not live author/reviewer scientific evaluation,
+independent command acceptance, installed host qualification or Node cutover.

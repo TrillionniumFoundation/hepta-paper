@@ -2,11 +2,11 @@
 //! No additional scheduler, writer, dispatch journal or credential authority.
 
 use super::AutonomousResearchOptions;
+use crate::WorkerBindingV1;
 use crate::workflow::{
     LocalWorkflowV1, WorkflowActionV1, WorkflowError, initialize_local_workflow_v1,
     operate_local_workflow_v1,
 };
-use crate::WorkerBindingV1;
 use hepta_control_plane::canonical_hash_v1;
 use nix::fcntl::OFlag;
 use serde_json::{Value, json};
@@ -93,7 +93,10 @@ fn error_code(error: &WorkflowError) -> &'static str {
 /// Inspect never acquires a writer or initializes state, even with forged options.
 pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> Value {
     let campaign = options.campaign_id.clone().or_else(|| {
-        options.paper_id.as_ref().map(|id| format!("autonomous-research:{id}"))
+        options
+            .paper_id
+            .as_ref()
+            .map(|id| format!("autonomous-research:{id}"))
     });
     let mut report = json!({
         "version": 1,
@@ -131,14 +134,19 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
     }
     let mut execution_invoked = false;
     let result = (|| -> Result<(), WorkflowError> {
-        let expected = campaign.as_deref().filter(|id| !id.is_empty())
+        let expected = campaign
+            .as_deref()
+            .filter(|id| !id.is_empty())
             .ok_or(WorkflowError::Definition)?;
-        if let Some(paper) = &options.paper_id {
-            if expected != format!("autonomous-research:{paper}") {
-                return Err(WorkflowError::Definition);
-            }
+        if let Some(paper) = &options.paper_id
+            && expected != format!("autonomous-research:{paper}")
+        {
+            return Err(WorkflowError::Definition);
         }
-        let path = options.workflow_file.as_deref().ok_or(WorkflowError::Definition)?;
+        let path = options
+            .workflow_file
+            .as_deref()
+            .ok_or(WorkflowError::Definition)?;
         let definition = definition(path)?;
         definition.validate()?;
         if definition.template.snapshot.campaign_id != expected {
@@ -149,7 +157,8 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
         let through_steps = options.through_steps.unwrap_or(definition.steps.len());
         let lifecycle = matches!(options.action.as_str(), "pause" | "resume" | "cancel");
         if (read_only && (options.through_steps.is_some() || options.expected_revision.is_some()))
-            || (lifecycle && (options.through_steps.is_some() || options.expected_revision.is_none()))
+            || (lifecycle
+                && (options.through_steps.is_some() || options.expected_revision.is_none()))
             || (!lifecycle && options.expected_revision.is_some())
             || through_steps == 0
             || through_steps > definition.steps.len()
@@ -178,8 +187,9 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
             return Ok(());
         }
         let observed_at = if read_only { 0 } else { now()? };
-        if !read_only && (observed_at < definition.template.observed_at_unix_ms
-            || observed_at >= definition.template.writer_lease.expires_at_unix_ms)
+        if !read_only
+            && (observed_at < definition.template.observed_at_unix_ms
+                || observed_at >= definition.template.writer_lease.expires_at_unix_ms)
         {
             return Err(WorkflowError::Conflict);
         }
@@ -203,7 +213,12 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
         report["campaignPersisted"] = json!(true);
         if matches!(action, WorkflowActionV1::Advance { .. }) {
             execution_invoked = true;
-            if definition.template.workers.values().any(|binding| matches!(binding, WorkerBindingV1::Process { .. })) {
+            if definition
+                .template
+                .workers
+                .values()
+                .any(|binding| matches!(binding, WorkerBindingV1::Process { .. }))
+            {
                 // Declared network policy and a worker's JSON are not physical
                 // isolation or independent observation of arbitrary local code.
                 report["providerExecutionPerformed"] = Value::Null;

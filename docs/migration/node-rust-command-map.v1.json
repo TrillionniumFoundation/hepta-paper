@@ -2649,7 +2649,7 @@
     },
     {
       "id": "operator/autonomous-research",
-      "rustEntrypoint": "hepta-paper-rust autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--campaign-id ID] [--launch-mode local-run|production-run|golden-bootstrap] [--require-full-ready]",
+      "rustEntrypoint": "hepta-paper-rust autonomous-research --campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--through-steps N] [--expected-revision N]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -2668,15 +2668,30 @@
         {
           "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
           "symbol": "execute_autonomous_research_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "initialize_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/autonomous_research_route.rs"
+        "rust/crates/hepta-paper-service/tests/autonomous_research_route.rs",
+        "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"
       ],
-      "remaining": "Rust now owns strict action/launch-mode/identity parsing, canonical usage metadata and a fail-closed diagnostic report that never persists campaign state, executes a provider, performs network/external action, or claims research readiness. Full Node parity still requires durable campaign/DAG persistence, bounded worker/provider execution, budgets and leases, dataset and formal review composition, qualification renewal, resume/recovery semantics, all incumbent options/environment modes and independent acceptance.",
+      "remaining": "Without --workflow-file the original fail-closed diagnostic remains. The explicit --workflow-file local-run path now composes the existing immutable LocalWorkflowV1, SQLite campaign writer, durable dispatch/recovery, CAS byte verification and commit replay without a second scheduler or result store. Prepare validates without creating state; launch initializes an absent root or retries the exact existing owner; converge uses an absolute step endpoint; status is read-only; pause/resume/cancel require the observed campaign revision. Actual CLI tests cover seven-step execution, real Rust child workers, restart/idempotent replay, stale revisions, changed definitions, terminal cancellation, and a crashing child not relaunched across CLI restarts. Process external/network outcomes remain unobserved rather than fabricated false. This bounded path does not implement automatic planning, live author/reviewer models, in-flight termination, lease renewal, all incumbent arguments, independently accepted command parity, production activation, writer transfer or Node retirement.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
-        "rust/crates/hepta-paper-service/src/autonomous_research.rs"
+        "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+        "rust/crates/hepta-paper-service/src/workflow.rs"
       ],
       "testCases": [
         {
@@ -2686,6 +2701,30 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_research_route.rs",
           "symbol": "launch_mode_and_identity_are_strict"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_prepare_launch_replay_and_converge_use_the_existing_owner"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_pause_resume_cancel_are_revision_bound_and_terminal"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_rejects_changed_definition_and_foreign_campaign_without_dispatch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_local_authority_and_request_bounds_fail_before_state_creation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_executes_real_rust_workers_without_claiming_external_observation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "symbol": "autonomous_worker_crash_is_not_reexecuted_after_cli_restart"
         }
       ]
     },

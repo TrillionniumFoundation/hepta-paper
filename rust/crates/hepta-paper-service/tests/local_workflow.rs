@@ -1,3 +1,6 @@
+#[path = "local_workflow/autonomous_entrypoint.rs"]
+mod autonomous_entrypoint;
+
 #[path = "local_workflow/inspection.rs"]
 mod inspection;
 

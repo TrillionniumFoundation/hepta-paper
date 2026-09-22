@@ -1,0 +1,51 @@
+name: rust-development-inputs
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/rust-development-inputs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retain-offline-build-inputs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Capture public locked development inputs without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          cargo +1.98.0 fetch --manifest-path rust/Cargo.toml --locked
+          npm ci --ignore-scripts --no-audit --no-fund
+          root="$RUNNER_TEMP/offline-build-inputs"
+          mkdir -p "$root"
+          git rev-parse HEAD > "$root/commit.txt"
+          git rev-parse HEAD^{tree} > "$root/tree.txt"
+          rustc +1.98.0 --version --verbose > "$root/rustc.txt"
+          node --version > "$root/node.txt"
+          # Explicit public-input directories only: never archive HOME, Cargo
+          # credentials/config, Git configuration, runner state or environment.
+          tar -C "$HOME/.rustup/toolchains/1.98.0-x86_64-unknown-linux-gnu" -czf "$root/toolchain.tar.gz" .
+          tar -C "$HOME/.cargo" -czf "$root/registry.tar.gz" registry
+          tar -C "$(dirname "$(dirname "$(command -v node)")")" -czf "$root/node.tar.gz" .
+          tar -czf "$root/node_modules.tar.gz" node_modules
+          cp rust/Cargo.lock package-lock.json "$root/"
+          (cd "$root" && sha256sum *.tar.gz *.txt Cargo.lock package-lock.json > SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: offline-build-inputs-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/offline-build-inputs
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

@@ -67,6 +67,7 @@ pub mod release_integrity_key;
 pub mod release_state;
 pub mod release_trust_gate;
 pub mod repository_assets;
+pub mod resident_prerequisites;
 pub mod retirement_matrix;
 pub mod retirement_reference;
 pub mod retirement_status;

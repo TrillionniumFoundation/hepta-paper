@@ -346,3 +346,14 @@ clock-free status read; preservation of a prior workflow commit and prepared
 bytes after the next step expires. The existing autonomous-entrypoint tests run
 the CLI with its real system clock and real Rust children. These are source
 regressions, not full research-role parity or target-host acceptance.
+
+
+The tool-equipped migration lane also exercises the actual autonomous CLI with
+an R scientific program through the existing `hepta-scientific-worker`, durable
+workflow and SQLite/CAS owners. `scientific_workflow` runs with `--include-ignored`:
+separate CLI processes prepare, partially launch, inspect, converge and replay
+without a second scientific execution or budget debit. The named real R result
+feeds the existing manuscript and bundle kernels. See the
+[installed scientific-tool lane](SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane)
+for exact source/tool observations and retained raw outputs. This local program
+case does not implement model-driven research or grant production authority.

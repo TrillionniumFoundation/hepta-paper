@@ -177,6 +177,9 @@ runtime/dependency subject and representative successful and rejected proofs.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+See the [installed-tool migration lane](../SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane).
+The tool-equipped migration lane explicitly executes the Lean integration case with `--include-ignored`: a valid supplied proof produces a retained `.olean`, while an invalid proof fails. The actual pinned executable and source are recorded. This does not establish general proof search, an axiom audit or natural-language equivalence.
+
 ## Rollout and rollback
 
 Current channel is `authoritative`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

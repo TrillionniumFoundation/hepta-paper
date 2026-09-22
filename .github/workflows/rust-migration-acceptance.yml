@@ -236,9 +236,87 @@ jobs:
           retention-days: 90
           compression-level: 0
 
+  scientific-tools:
+    name: Real R Lean and TeX execution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+      HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT: ${{ runner.temp }}/hepta-scientific-tool-evidence
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install real scientific tools and the pinned Rust compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -m 700 -p "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git rev-parse HEAD HEAD^{tree} > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/source.txt"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends r-base-core texlive-latex-base
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz \
+            -o "$RUNNER_TEMP/elan.tar.gz"
+          printf 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  %s\n' "$RUNNER_TEMP/elan.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/elan.tar.gz" -C "$RUNNER_TEMP" elan-init
+          "$RUNNER_TEMP/elan-init" -y --default-toolchain "$ELAN_TOOLCHAIN"
+          lean_executable=$("$HOME/.elan/bin/elan" which lean)
+          test -x "$lean_executable"
+          "$lean_executable" --version | tee "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/lean-version.txt"
+          grep -F 'version 4.30.0' "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/lean-version.txt"
+          printf 'HEPTA_TEST_LEAN_EXECUTABLE=%s\n' "$lean_executable" >> "$GITHUB_ENV"
+          /usr/bin/Rscript --version > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/r-version.txt" 2>&1
+          /usr/bin/pdflatex --version > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/tex-version.txt"
+          dpkg-query -W r-base-core texlive-latex-base > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/installed-packages.txt"
+          rustc --version --verbose > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/rustc.txt"
+          sha256sum "$lean_executable" "$(readlink -f /usr/bin/Rscript)" "$(readlink -f /usr/bin/pdflatex)" rust/Cargo.lock \
+            > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/tool-inputs.sha256"
+      - name: Execute every real scientific tool case explicitly
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/scientific-runtime.log"
+          # Run the whole target, including installed-tool cases. No separate
+          # handwritten test-name list or success from an empty filter.
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --test scientific_runtime \
+            -- --include-ignored --nocapture 2>&1 | tee "$log"
+          grep -E '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' "$log"
+          for runtime in r-empirical r-numerical lean latex; do
+            test -s "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/$runtime/artifact-0.bin"
+            test -s "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/$runtime/artifact-1.bin"
+          done
+          log="$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/scientific-workflow.log"
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --test scientific_workflow \
+            -- --include-ignored --nocapture 2>&1 | tee "$log"
+          grep -E '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' "$log"
+          test -s "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/r-autonomous-workflow/command-report.json"
+          test -s "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/r-autonomous-workflow/replay-report.json"
+          sha256sum --check "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/tool-inputs.sha256"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Retain actual outputs and exact tool-source observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scientific-tool-execution-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/hepta-scientific-tool-evidence
+          if-no-files-found: error
+          retention-days: 90
+
   migration:
     name: Node parity and disposable Rust migration
-    needs: migration-shards
+    needs: [migration-shards, scientific-tools]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -246,4 +324,8 @@ jobs:
       - name: Require every migration partition to succeed
         env:
           MIGRATION_RESULT: ${{ needs.migration-shards.result }}
-        run: test "$MIGRATION_RESULT" = success
+          SCIENTIFIC_RESULT: ${{ needs.scientific-tools.result }}
+        run: |
+          set -euo pipefail
+          test "$MIGRATION_RESULT" = success
+          test "$SCIENTIFIC_RESULT" = success

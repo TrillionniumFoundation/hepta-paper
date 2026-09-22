@@ -1501,7 +1501,6 @@ fn assert_inspection_schema<T: serde::Serialize>(schema: &str, value: &T) {
     );
 }
 
-
 #[test]
 fn autonomous_research_cli_uses_durable_workflow_and_recovers_across_processes() {
     let temp = Temp::new();

@@ -1532,8 +1532,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             let report = if let Some(config_path) = options.run_config.as_ref() {
-                let config: ServiceRunV1 =
-                    serde_json::from_slice(&read_bounded(config_path)?)?;
+                let config: ServiceRunV1 = serde_json::from_slice(&read_bounded(config_path)?)?;
                 execute_autonomous_research_service_v1(&options, config)?
             } else if options.action == "prepare" || options.action == "status" {
                 inspect_autonomous_research_v1(&options)

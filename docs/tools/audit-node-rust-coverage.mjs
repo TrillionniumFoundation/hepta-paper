@@ -93,41 +93,59 @@ export function buildCoverageInventory(routes, catalog, globalCapabilities, modu
   };
 }
 
-export function auditCampaignModeMappings() {
-  const relative = 'docs/migration/campaign-mode-source-map.v1.json';
-  const map = JSON.parse(fs.readFileSync(path.join(ROOT, relative), 'utf8'));
-  if (map.schemaVersion !== 1 || map.kind !== 'NodeCampaignModeSourceMapV1'
-      || map.scope !== 'source_call_chain_not_parity_acceptance'
-      || map.acceptedParity !== false || map.productionActivation !== false || map.nodeRetirement !== false) {
-    throw new Error('invalid campaign mode mapping scope');
+function validateCommandArgumentModes(row) {
+  if (row.id !== 'operator/campaign') {
+    if (row.argumentModes !== undefined) throw new Error(`unexpected command argument-mode ledger: ${row.id}`);
+    return [];
   }
-  const entry = fs.readFileSync(path.join(ROOT, map.nodeEntrypoint), 'utf8');
+  if (!Array.isArray(row.argumentModes) || row.argumentModes.length === 0) {
+    throw new Error('operator/campaign argument modes required in canonical command map');
+  }
+  const nodeEntrypoint = 'paper-core/bin/paper-campaign.mjs';
+  const entry = fs.readFileSync(path.join(ROOT, nodeEntrypoint), 'utf8');
   const match = /--action <name>\s+([^'\n]+)/.exec(entry);
   if (!match) throw new Error('campaign action inventory changed');
   const actions = match[1].split('|').sort(compare);
-  if (JSON.stringify(map.modes.map((row) => row.nodeAction).sort(compare)) !== JSON.stringify(actions)) {
-    throw new Error('campaign action mapping missing, duplicated or drifted');
+  const mapped = row.argumentModes.map((mode) => mode.nodeAction).sort(compare);
+  if (JSON.stringify(mapped) !== JSON.stringify(actions)
+      || new Set(mapped).size !== mapped.length) {
+    throw new Error('canonical command map campaign modes missing, duplicated or drifted');
   }
-  const sources = new Set([relative, map.nodeEntrypoint,
-    'docs/modules/examples/local-inspection-requests.v1.json',
-    'docs/modules/schemas/local-workflow-inspection-request-v1.schema.json',
-    'docs/modules/schemas/local-workflow-inspection-response-v1.schema.json',
-    'docs/modules/schemas/local-workflow-list-request-v1.schema.json',
-  ]);
-  for (const row of map.modes) {
-    if (!['partial_local_source', 'unmapped'].includes(row.scope) || !row.remaining) throw new Error('invalid mapping');
-    if (row.scope === 'partial_local_source' && (!row.rustCommand || !row.callChain.length || !row.tests.length)) throw new Error('missing source mapping');
-    if (row.scope === 'unmapped' && (row.rustCommand !== null || row.callChain.length || row.tests.length)) throw new Error('unmapped row claims implementation');
-    for (const reference of [...row.callChain, ...row.tests]) {
-      readSource(reference.path);
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(reference.symbol)
-          || !fs.readFileSync(path.join(ROOT, reference.path), 'utf8').includes(`fn ${reference.symbol}(`)) {
-        throw new Error('mapped source symbol missing');
+  const sources = new Set([nodeEntrypoint]);
+  for (const mode of row.argumentModes) {
+    if (!mode || typeof mode !== 'object' || Array.isArray(mode)
+        || !['partial_local_source', 'unmapped'].includes(mode.scope)
+        || typeof mode.remaining !== 'string' || mode.remaining.length < 20
+        || !Array.isArray(mode.callChain) || !Array.isArray(mode.tests)) {
+      throw new Error(`invalid operator/campaign argument mode: ${String(mode?.nodeAction)}`);
+    }
+    if (mode.scope === 'partial_local_source'
+        && (typeof mode.rustCommand !== 'string' || !mode.rustCommand
+          || mode.callChain.length === 0 || mode.tests.length === 0)) {
+      throw new Error(`campaign mode missing Rust source mapping: ${mode.nodeAction}`);
+    }
+    if (mode.scope === 'unmapped'
+        && (mode.rustCommand !== null || mode.callChain.length !== 0 || mode.tests.length !== 0)) {
+      throw new Error(`unmapped campaign mode claims Rust source: ${mode.nodeAction}`);
+    }
+    for (const reference of [...mode.callChain, ...mode.tests]) {
+      if (!reference || typeof reference !== 'object' || Array.isArray(reference)
+          || Object.keys(reference).sort().join(',') !== 'path,symbol'
+          || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(reference.symbol)) {
+        throw new Error(`invalid campaign mode source binding: ${mode.nodeAction}`);
       }
-      sources.add(reference.path);
+      const source = readSource(reference.path);
+      const text = fs.readFileSync(path.join(ROOT, reference.path), 'utf8');
+      const isTest = mode.tests.includes(reference);
+      const prefix = isTest ? '#\\[test\\]\\s*' : '^\\s*(?:pub(?:\\([^\\r\\n)]*\\))?\\s+)?';
+      const declaration = new RegExp(`${prefix}(?:async\\s+)?fn\\s+${reference.symbol}\\s*(?:<[^\\r\\n]*>)?\\s*\\(`, 'm');
+      if (!declaration.test(text)) {
+        throw new Error(`mapped campaign mode symbol missing: ${reference.path}:${reference.symbol}`);
+      }
+      sources.add(source.path);
     }
   }
-  return { ...map, sourceBindings: [...sources].sort(compare).map(readSource) };
+  return [...sources].sort(compare);
 }
 
 // This map is deliberately separate from acceptance.  It records only reviewed
@@ -148,7 +166,9 @@ export function auditNodeRustCommandMap(routes, suppliedMap = null) {
       || new Set(actual).size !== actual.length) {
     throw new Error('Node/Rust command map is missing, duplicated or drifted');
   }
+  const argumentModeSources = new Set();
   for (const row of map.commands) {
+    for (const source of validateCommandArgumentModes(row)) argumentModeSources.add(source);
     if (!['partial_local_source', 'unmapped'].includes(row.scope)
         || !['candidate', 'unmapped'].includes(row.compatibilityDecision)
         || typeof row.remaining !== 'string' || row.remaining.length < 20
@@ -205,7 +225,8 @@ export function auditNodeRustCommandMap(routes, suppliedMap = null) {
     sourceSymbolsValidated: true,
     callGraphVerified: false,
     testsExecutedByThisValidator: false,
-    sourceBindings: [relative, ...map.commands.flatMap((row) => [...row.tests, ...row.rustSources])]
+    sourceBindings: [relative, ...argumentModeSources,
+      ...map.commands.flatMap((row) => [...row.tests, ...row.rustSources])]
       .filter((value, index, values) => values.indexOf(value) === index)
       .sort(compare).map(readSource),
   };
@@ -234,9 +255,7 @@ export function auditCurrentCoverage() {
     sources.add(row.rustCandidate.executableExample);
     sources.add(row.rustCandidate.testTarget);
   }
-  report.campaignModeMappings = auditCampaignModeMappings();
   report.commandMappings = auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES);
-  for (const binding of report.campaignModeMappings.sourceBindings) sources.add(binding.path);
   for (const binding of report.commandMappings.sourceBindings) sources.add(binding.path);
   report.sourceBindings = [...sources].sort(compare).map(readSource);
   report.inventorySha256 = sha256(JSON.stringify(report));

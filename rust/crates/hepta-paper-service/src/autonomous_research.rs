@@ -6,12 +6,14 @@
 
 #![forbid(unsafe_code)]
 
+use crate::{ServiceError, ServiceRunV1, run_service_v1};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
   "version": 4,
   "kind": "AutonomousResearchCampaignUsage",
-  "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
+  "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID [--campaign-id ID] [--run-config PATH]",
   "defaultLaunchMode": "local-run",
   "safety": {
     "operatorApprovalClaimed": false,
@@ -21,7 +23,7 @@ pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
     "naturalLanguageToLeanEquivalenceMachineProven": false,
     "automaticBudgetExpansionEnabled": false
   },
-  "rustBoundary": "strict argument parsing and fail-closed diagnostic only; no campaign persistence, provider execution, external qualification, or submission"
+  "rustBoundary": "prepare/status remain diagnostic; local-run launch/resume may execute one supplied ServiceRunV1 through the durable Rust control plane; production/provider/external/submission authority remains unavailable"
 }"#;
 
 #[derive(Clone, Debug)]
@@ -30,6 +32,7 @@ pub struct AutonomousResearchOptions {
     pub launch_mode: String,
     pub paper_id: Option<String>,
     pub campaign_id: Option<String>,
+    pub run_config: Option<PathBuf>,
     pub require_full_ready: bool,
     pub help: bool,
 }
@@ -50,6 +53,7 @@ pub fn parse_autonomous_research_arguments(
     let mut launch_mode = "local-run".to_owned();
     let mut paper_id = None;
     let mut campaign_id = None;
+    let mut run_config = None;
     let mut require_full_ready = false;
     let mut help = false;
     let mut index = 0;
@@ -63,6 +67,7 @@ pub fn parse_autonomous_research_arguments(
             "--launch-mode" => launch_mode = value(args, &mut index, "launch_mode")?,
             "--paper-id" => paper_id = Some(value(args, &mut index, "paper_id")?),
             "--campaign-id" => campaign_id = Some(value(args, &mut index, "campaign_id")?),
+            "--run-config" => run_config = Some(PathBuf::from(value(args, &mut index, "run_config")?)),
             "--require-full-ready" if !require_full_ready => {
                 require_full_ready = true;
                 index += 1;
@@ -76,6 +81,7 @@ pub fn parse_autonomous_research_arguments(
             launch_mode,
             paper_id,
             campaign_id,
+            run_config,
             require_full_ready,
             help,
         });
@@ -101,11 +107,17 @@ pub fn parse_autonomous_research_arguments(
     {
         return Err("autonomous_research_paper_or_campaign_id_required".to_owned());
     }
+    if run_config.is_some()
+        && (!matches!(action.as_str(), "launch" | "resume") || launch_mode != "local-run")
+    {
+        return Err("autonomous_research_run_config_requires_local_launch_or_resume".to_owned());
+    }
     Ok(AutonomousResearchOptions {
         action,
         launch_mode,
         paper_id,
         campaign_id,
+        run_config,
         require_full_ready,
         help,
     })
@@ -115,7 +127,7 @@ pub fn autonomous_research_help_json_v1() -> Value {
     json!({
         "version": 4,
         "kind": "AutonomousResearchCampaignUsage",
-        "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
+        "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID [--campaign-id ID] [--run-config PATH]",
         "defaultLaunchMode": "local-run",
         "safety": {
             "operatorApprovalClaimed": false,
@@ -125,7 +137,7 @@ pub fn autonomous_research_help_json_v1() -> Value {
             "naturalLanguageToLeanEquivalenceMachineProven": false,
             "automaticBudgetExpansionEnabled": false
         },
-        "rustBoundary": "strict argument parsing and fail-closed diagnostic only; no campaign persistence, provider execution, external qualification, or submission"
+        "rustBoundary": "prepare/status remain diagnostic; local-run launch/resume may execute one supplied ServiceRunV1 through the durable Rust control plane; production/provider/external/submission authority remains unavailable"
     })
 }
 
@@ -154,6 +166,7 @@ pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Va
         "launchMode": options.launch_mode,
         "paperId": options.paper_id,
         "campaignId": campaign_id,
+        "serviceRunConfigProvided": options.run_config.is_some(),
         "ready": false,
         "campaignPersisted": false,
         "providerExecutionPerformed": false,
@@ -167,6 +180,58 @@ pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Va
 
 pub fn execute_autonomous_research_v1(options: &AutonomousResearchOptions) -> Value {
     inspect_autonomous_research_v1(options)
+}
+
+pub fn execute_autonomous_research_service_v1(
+    options: &AutonomousResearchOptions,
+    config: ServiceRunV1,
+) -> Result<Value, ServiceError> {
+    if options.run_config.is_none()
+        || options.launch_mode != "local-run"
+        || !matches!(options.action.as_str(), "launch" | "resume")
+    {
+        return Err(ServiceError::Configuration);
+    }
+    let expected_campaign_id = options.campaign_id.clone().or_else(|| {
+        options
+            .paper_id
+            .as_ref()
+            .map(|id| format!("autonomous-research:{id}"))
+    });
+    if expected_campaign_id.as_deref() != Some(config.snapshot.campaign_id.as_str()) {
+        return Err(ServiceError::Configuration);
+    }
+    let receipt = run_service_v1(config)?;
+    let newly_committed = receipt
+        .commit_receipts
+        .iter()
+        .filter(|row| row.newly_committed)
+        .count();
+    Ok(json!({
+        "version": 1,
+        "kind": "AutonomousResearchCampaignReport",
+        "status": "autonomous_research_local_run_completed",
+        "action": options.action,
+        "launchMode": options.launch_mode,
+        "paperId": options.paper_id,
+        "campaignId": expected_campaign_id,
+        "ready": false,
+        "localRunCompleted": true,
+        "campaignPersisted": true,
+        "providerExecutionPerformed": false,
+        "externalActionPerformed": false,
+        "networkActionPerformed": false,
+        "productionActivation": false,
+        "durableCommitCount": receipt.commit_receipts.len(),
+        "newlyCommittedCount": newly_committed,
+        "controlPlaneReceipt": receipt,
+        "blockers": [
+            "rust_autonomous_research_provider_execution_not_ported",
+            "rust_autonomous_research_external_qualification_not_ported"
+        ],
+        "requireFullReady": options.require_full_ready,
+        "rustBoundary": "durable_local_service_run"
+    }))
 }
 
 #[cfg(test)]
@@ -191,6 +256,35 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn run_config_is_restricted_to_local_launch_or_resume() {
+        let options = parse_autonomous_research_arguments(&[
+            "--paper-id".into(),
+            "paper-1".into(),
+            "--action".into(),
+            "launch".into(),
+            "--run-config".into(),
+            "/tmp/run.json".into(),
+        ])
+        .unwrap();
+        assert_eq!(options.run_config, Some(PathBuf::from("/tmp/run.json")));
+
+        let rejected = parse_autonomous_research_arguments(&[
+            "--paper-id".into(),
+            "paper-1".into(),
+            "--action".into(),
+            "launch".into(),
+            "--launch-mode".into(),
+            "production-run".into(),
+            "--run-config".into(),
+            "/tmp/run.json".into(),
+        ]);
+        assert_eq!(
+            rejected.unwrap_err(),
+            "autonomous_research_run_config_requires_local_launch_or_resume"
+        );
+    }
+
     fn report_never_claims_campaign_or_provider_execution() {
         let options = parse_autonomous_research_arguments(&[
             "--paper-id".into(),

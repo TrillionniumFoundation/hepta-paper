@@ -271,13 +271,23 @@ fn completed_finalization_with_failed_acknowledgement_replays_as_charged() {
         reopened.active_charges().expect("still charged")[0].state,
         DurableResourceLeaseStateV1::Uncertain
     );
+    // A concurrent fork can inherit this open file description until exec closes
+    // its CLOEXEC descriptor. Keep a duplicate alive to reproduce that window
+    // deterministically: dropping the journal owner must release its own lock.
+    let inherited_description = reopened.file.try_clone().expect("inherited description");
+    assert!(
+        DurableResourceLeaseLedgerV1::open(&path).is_err(),
+        "the live owner still excludes other owners"
+    );
     drop(reopened);
+    let replacement = DurableResourceLeaseLedgerV1::open(&path).expect("second replay");
     assert_eq!(
-        DurableResourceLeaseLedgerV1::open(&path)
-            .expect("second replay")
-            .active_charges()
-            .expect("still charged")[0]
-            .state,
+        replacement.active_charges().expect("still charged")[0].state,
         DurableResourceLeaseStateV1::Uncertain
+    );
+    drop(inherited_description);
+    assert!(
+        DurableResourceLeaseLedgerV1::open(&path).is_err(),
+        "closing a stale description must not release the replacement's lock"
     );
 }

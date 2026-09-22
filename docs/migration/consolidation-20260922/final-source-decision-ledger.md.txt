@@ -1,0 +1,62 @@
+# 最终源码处置台账
+
+记录时间：2026-09-22T04:48:40.547340+00:00。源码审阅基线 `fa52364166e5fb308ae9795e11e2556de9f82f38`；当前工作树基线 `104999b51a36ca3bbf2d09658cae64577d13c084`。
+
+本台账汇总已存在的精确源码审阅、移植 manifest 与 HANDOFF。没有运行 Cargo、修改仓库或 Git refs。`acceptedParity`、`productionActivation`、`nodeRetirement` 均为 false；源码整合不等于独立验收。
+
+## 历史与当前实现的区别
+
+169 个 Rust-bearing 分叉按 root 选择将全部成为 Rust 整合提交的祖先，其中 45 个含基线之外的 Rust-changing commits，124 个只在 Rust tree 之外继续变更。`--independent` 选出的 88 个 parent 包含当前提交和两个 detached startup tip。另 9 个无 Rust tree 分叉仅保留 bundle／archive。此处记录待实施的 parent 计划，不声明合并已经完成。
+
+最终树由当前安全 owner 与显式兼容移植组成；历史成为祖先不代表旧运输工作流、旧 receipt 或授权声明被采用。
+
+## 覆盖数量
+
+| 范围 | 数量 | 处置 |
+| --- | ---: | --- |
+| broker/runtime/protocol 精确变体 | 51 | 保留当前，明确更严格实现取代旧实现 |
+| remaining 精确变体 | 50 | 当前实现或显式版本化移植 |
+| 七份旧审阅的精确变体 | 37 | 除 calibration 显式移植外，保留历史且不注册旧运行路径 |
+| hierarchical runtime wrapper | 1 | 历史归档，不恢复错误后释放 unknown-outcome 费用路径 |
+| 已在基线历史中的其他变体 | 101 | 保留历史，不从可达性推导语义等价 |
+| 运输包纯计算模块 | 3 | 显式严格输入命名空间 |
+| detached startup tips | 2 | 当前一致或后继实现取代 |
+
+## 已实现的兼容移植
+
+| 家族 | 旧 blob | 当前路径 |
+| --- | --- | --- |
+| hierarchy-prepared | `6ba19d317d64418c812abed6af0bf976b3e99825` | `rust/crates/hepta-control-plane/src/legacy_hierarchy/prepared_v1.rs` |
+| hierarchy-accounting | `cd77c6c2f42fc5e64620f9752bdf4e23c61b3dfd` | `rust/crates/hepta-control-plane/src/legacy_hierarchy/accounting_v1.rs` |
+| planning-calibration | `67b74b797bdfcbef4732b76e2a2b0c1f88088440` | `rust/crates/hepta-control-plane/src/legacy_planning/calibration.rs` |
+| predictor-selection | `fb918ca567885cd749b0a486becfdfb6c09b671e` | `rust/crates/hepta-control-plane/src/legacy_planning/model_selection.rs` |
+| predictor-selection-format-variant | `2b53107163a443427e075c01115f72c739ab10c1` | `rust/crates/hepta-control-plane/src/legacy_planning/model_selection.rs` |
+| observability-ledger | `09072e726f8acb752098683ba0ae3f8c1ccb6524` | `rust/crates/hepta-control-plane/src/legacy_planning/observability.rs` |
+| module-calibration-and-planner-comparison | `258c92497c27750587e2c457d91a5639e0d37879` | `rust/crates/hepta-orchestration-kernel/src/legacy_calibration_v1.rs` |
+| submission-manifest-function | `1a4fa1fd97929e5a7ed4a8723cce39e4bbd96c50` | `rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/manifest.rs`<br>`rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs` |
+| submission-manifest-dispatcher | `ed2b28a216e2f9e80077cbaea8ee39b6086ee00c` | `rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/manifest.rs`<br>`rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs`<br>`rust/crates/hepta-paper-service/src/native_business.rs` |
+| submission-manifest-types | `0138d47e4da2b6a5991fb37b2605c0beac522190` | `rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/manifest.rs`<br>`rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs`<br>`rust/crates/hepta-paper-service/src/native_business/types.rs` |
+| submission-intent-function | `9e5c9e3483cd9c67f5e85bc974f6f8e9278cff3b` | `rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/intent.rs`<br>`rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs` |
+| submission-intent-dispatcher | `475a03176cd8d13e69ab16804c3989bc05df8c14` | `rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/intent.rs`<br>`rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs`<br>`rust/crates/hepta-paper-service/src/native_business.rs` |
+| submission-intent-types | `c76afca629555e6bc68097761121477a4ff9d767` | `rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/intent.rs`<br>`rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs`<br>`rust/crates/hepta-paper-service/src/native_business/types.rs` |
+| diagnostic-frozen_observation_compat_v1 | `2da20018c57dca72db106966f832be5384c921db` | `rust/crates/hepta-legacy-compatibility/src/frozen_observation_compat_v1.rs` |
+| diagnostic-logical_store_compat_v1 | `c9b9d7686a4c3ca46011ebd785690f4233ca04ac` | `rust/crates/hepta-readonly-store/src/logical_store_compat_v1.rs` |
+| diagnostic-workspace_wire_compat_v1 | `137f658cc403e76a417dd2e9eac33425de2bbfcd` | `rust/crates/hepta-workspace/src/workspace_wire_compat_v1.rs` |
+| payload-campaign_policy | `c5550ae7cea14ea24cb07ddf47b4424b521ba4f3` | `rust/crates/hepta-paper-service/src/native_parity_bounded_v1/campaign_policy.rs` |
+| payload-campaign_slo | `c23f0ba5bae54f94b39201b3b387102ca5734441` | `rust/crates/hepta-paper-service/src/native_parity_bounded_v1/campaign_slo.rs` |
+| payload-inference | `fc771a7927f258449a6a0e6ee5cc393b6fa361e8` | `rust/crates/hepta-paper-service/src/native_parity_bounded_v1/inference.rs` |
+
+兼容 submission 保留两种 prepared-data wire；hierarchy 是两种内存账本；planning／calibration／observability 只处理 supplied data；3 个诊断模块没有文件／SQLite／Node 执行；3 个 bounded 模块不改现有 Node-parity 路由。所有限制见 JSON 引用并哈希绑定的 HANDOFF。
+
+## 两个 detached startup tip
+
+- `3ec5fdf8f568842ce499c7b91c6a6bb33b7b721a`：8 个文件逐项比较，3 个一致、5 个由当前更严格实现取代；保留祖先历史，不回退当前事务保护、retained inventory、safety-margin 或 WAL/owner 检查。
+- `5a874512313bb99da3a0f9157c4da2303f364054`：8 个文件逐项比较，3 个一致、5 个由当前更严格实现取代；保留祖先历史，不回退当前事务保护、retained inventory、safety-margin 或 WAL/owner 检查。
+
+## 使用方式与证据边界
+
+JSON 的 `sourceDecisions` 对 240 个 `(oldPath, oldGitBlob)` 唯一键逐条给出处置；`branchHistoryDecisions` 保留 178 个旧分叉对应的 source decision ID；`payloadDecisions` 和 `detachedStartupDecisions` 单独记录附加来源。每条关联 `evidenceFiles` 中的具体原始文件 SHA-256。`observedCurrentFiles` 绑定本次读取的工作树字节，最终提交／格式化／验证仍须 root 再绑定。
+
+旧审阅中当时发现的问题不自动当作当前仍存在的问题；后续真实修复及测试由各自证据说明。没有把旧测试源码存在、历史可达、人工 source review 或兼容 fixture 当作独立 parity acceptance。
+
+JSON SHA-256：`8359bab01c326d559c281b16b4c5a17d3bdca1fdc9b9cf2c12a301687a0250e1`。

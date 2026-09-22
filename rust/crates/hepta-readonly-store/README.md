@@ -83,3 +83,6 @@ versions, stale metadata, dropped indexes/triggers, added columns/tables,
 foreign-key violations, active sidecars, byte preservation, logical data changes,
 and unsafe integer rejection. A Node runtime with `node:sqlite` is required; use
 `HEPTA_NODE_BINARY` to select it explicitly.
+
+Earlier Rust diagnostic wire contracts are retained in an explicit compatibility
+namespace; see [COMPATIBILITY.md](COMPATIBILITY.md) for provenance and limits.

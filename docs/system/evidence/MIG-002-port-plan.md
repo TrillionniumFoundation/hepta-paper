@@ -19,9 +19,17 @@ rust/crates/hepta-module-platform/src/lib.rs
   787641e8adf4999e279c6f0202ae5aa5c39fbf64
 ```
 
-The source branch `85a7b3364f3bcfbe452c10bac836654189202599` is not merged and its global truth/document files are not copied, because GitHub reports that branch as diverged from approved #116 (`ahead_by=9`, `behind_by=4`, merge base `3ad568f...`).
+At the original #116/#119 content-replay decision, source tip
+`85a7b3364f3bcfbe452c10bac836654189202599` was not history-merged and its global
+truth/document files were not copied: the recorded GitHub comparison was
+`ahead_by=9`, `behind_by=4`, merge base `3ad568f...` relative to approved #116.
 
-Only the reviewed Rust content objects above are replayed onto the current #119 descendant. Current #116 documentation, issue bindings, private replay subject, R-source route and technical-companion closure remain authoritative.
+That replay retained only the reviewed Rust content objects above on the #119
+descendant, with the then-current #116 documentation, issue bindings, private
+replay subject, R-source route and technical-companion closure unchanged. The
+later [branch consolidation record](../../migration/BRANCH_CONSOLIDATION.md)
+separately records source-history and branch-name disposition. It does not
+rewrite this original replay subject or transfer its qualification evidence.
 
 ## Authority ceiling
 

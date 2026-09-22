@@ -11,6 +11,9 @@ mod production;
 pub use node_adapter::*;
 pub use production::*;
 
+/// Additive diagnostic compatibility for a preserved earlier Rust wire format.
+pub mod frozen_observation_compat_v1;
+
 use std::{collections::BTreeMap, str::FromStr};
 
 use serde_json::Value;

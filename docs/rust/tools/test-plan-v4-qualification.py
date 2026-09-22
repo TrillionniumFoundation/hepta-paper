@@ -28,8 +28,9 @@ EFFECTIVE_SCHEMA = ROOT / "docs/rust/qualification/effective-status-v1.schema.js
 COMMIT = "a" * 40
 TREE = "b" * 40
 PR = 42
-HEAD_BRANCH = "codex/rust-plan-v4-rc1-20260831"
-BASE_REF = "codex/rust-plan-v3-final-product-20260830"
+# Synthetic subjects follow the current branch policy; historical receipts are unchanged.
+HEAD_BRANCH = "codex/full-rust-replacement-progress-20260916"
+BASE_REF = "main"
 
 
 def load_module(name: str, path: Path):

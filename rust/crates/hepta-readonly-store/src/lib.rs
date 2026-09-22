@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+/// Additive diagnostic compatibility for a preserved earlier Rust wire format.
+pub mod logical_store_compat_v1;
+
 use std::{
     fs::{self, File},
     io::Read,

@@ -80,6 +80,16 @@ with otherwise valid Identity records and require the actual validator to reject
 
 ## Branch convergence and local maintenance evidence
 
+The two persistent branch trees are `main` for the original Node implementation
+and `codex/full-rust-replacement-progress-20260916` for the Rust rewrite. Source
+consolidation preserves the Node `main` subject
+`7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2`. The
+[branch consolidation record](migration/BRANCH_CONSOLIDATION.md) binds
+retired branch tips, source dispositions and archived objects to the retained
+Rust candidate. Keep the pre-cleanup inventory alongside the post-cleanup
+inventory: deleting a branch name does not resolve its old semantic differences
+or transfer its reviews, CI, deployment authority or Node-retirement evidence.
+
 The supplemental `branch-convergence-inventory` workflow fetches every public
 head and runs `docs/tools/audit-branch-convergence.py` on the exact candidate.
 `docs/tools/bind-branch-observation.py` checks remote-head stability before/after

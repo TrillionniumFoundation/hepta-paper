@@ -16,6 +16,8 @@ mod events;
 mod execution;
 mod execution_filesystem;
 mod hierarchical_resource;
+pub mod legacy_hierarchy;
+pub mod legacy_planning;
 mod model;
 mod model_selection;
 mod observability;

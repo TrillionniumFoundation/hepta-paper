@@ -1,0 +1,9 @@
+# 旧 LegacyArchiveProjectionV1 路径复核
+
+候选 d266a415；对照 rust-function-gap-closure-20260911 和 rust-source-gap-full-closure-20260911，两个 archive.rs 文件字节相同，精确 SHA 见同名 JSON。只读检查，未运行旧分支测试。
+
+旧文件新增 JSON projection 包装：从 ReadOnlyStoreV1 获取整个 schema-25 typed snapshot，建立表索引/行数、计算外层 hash，encode/decode 后查询 table，并可比对 supplied VerifiedLegacyNodeFreezeV1。旧 lib.rs 只有 mod/re-export；对两个 ref 全部 Rust 源码搜索该类型，除 archive.rs 自身外没有实际调用。三个旧单元测试用合成一表快照和固定内层 hash；它们没有读取真实 Node 数据库，也没有验证实际归档服务、发布、重启或独立冻结资格。不能据此声称旧分支已经实现了完整历史服务而当前丢失。
+
+当前 hepta-readonly-store/src/lib.rs:101 的 logical_snapshot 仍实际读取全部用户表与 schema、验证 source unchanged；:134 的 node_logical_snapshot 另外保留 Node 原始 logical hash surface。hepta-cutover/src/retirement.rs:144 的 verify_legacy_node_freeze_v1 实际打开 ReadOnlyStoreV1 并调用 logical_snapshot。旧 archive wrapper 并不是这些当前实际路径的唯一实现。
+
+当前没有这个额外的 JSON table-index 包装接口，不应把类型名称对应夸大为完全接口等价。是否需要独立 JSON archive 服务要依据实际历史读取消费者；完整持久归档发布、263文件私有历史重放及独立冻结/退休资格仍未由此比较证明。未盲目合入旧 wrapper，也未把它计为闭合任何生产 gap。

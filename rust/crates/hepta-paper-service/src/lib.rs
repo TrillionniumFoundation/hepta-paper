@@ -356,3 +356,6 @@ pub mod topic_producer_generation;
 pub mod topic_producer_canary;
 
 pub mod topic_producer_status;
+
+/// Preserved bounded computational contracts; current command routes are unchanged.
+pub mod native_parity_bounded_v1;

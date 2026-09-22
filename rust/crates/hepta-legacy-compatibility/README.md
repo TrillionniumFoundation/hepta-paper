@@ -128,3 +128,6 @@ Database callers must independently preserve source SQLite type semantics.
 For example, Node SQLite rejects unsafe 64-bit integer retrieval by default;
 this JSON adapter's deliberate JSON.parse binary64 coercion does not authorize
 rounding an unsafe SQLite integer or certify database-schema equivalence.
+
+Earlier Rust diagnostic wire contracts are retained in an explicit compatibility
+namespace; see [COMPATIBILITY.md](COMPATIBILITY.md) for provenance and limits.

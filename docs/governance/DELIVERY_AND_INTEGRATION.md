@@ -28,14 +28,23 @@ state, objective, qualification, or shared-runtime effect.
 
 ## 3. Branch and stacking rules
 
-- One product release-candidate branch is the only convergence surface.
-- Module branches target the current product/RC subject or an explicitly named
-  stacked integration branch.
+- Keep two persistent branch trees: original Node `main` and Rust rewrite
+  `codex/full-rust-replacement-progress-20260916`. The Rust branch is the sole
+  source-convergence surface; consolidation does not merge Rust into Node `main`.
+- Temporary module or stacked branches target the current Rust candidate or an
+  explicitly named dependency. Converge their reviewed changes, retain exact
+  source dispositions and remove temporary names after integration.
 - A stacked PR states its exact dependency chain and cannot inherit predecessor
   evidence after either head or base moves.
-- Temporary generator, self-mutating workflow, probe, or transport branches are
-  never product ancestry.
+- Temporary generator, self-mutating workflow, probe, or transport trees are
+  preserved as audit objects rather than adopted as product implementations.
 - Final integration uses an expected-head guard and no administrator bypass.
+
+The [branch consolidation record](../migration/BRANCH_CONSOLIDATION.md)
+records the retained Node baseline, archived source objects and source decisions.
+Preserve the deletion-time ref set and disposition evidence even when a later
+inventory contains only the two surviving names. Source-history integration does
+not grant independent parity, qualification, production activation or retirement.
 
 ## 4. Commit and PR sizing
 

@@ -119,7 +119,22 @@ fn bounded_corpus_matches_the_production_node_oracle() {
         String::from_utf8_lossy(&output.stderr)
     );
     let oracle: Value = serde_json::from_slice(&output.stdout).expect("oracle response");
-    assert_eq!(oracle["profile"]["node"], "v22.23.1");
+    hepta_legacy_compatibility::qualify_production_node_profile_v1(&oracle["profile"])
+        .expect("qualified Node/ICU/CLDR and incumbent canonicalization source");
+    assert_eq!(
+        oracle["sources"][NODE_SOURCE],
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(include_bytes!(
+            "../../../../paper-domain/automation/campaign-state-policy.mjs"
+        ))),
+        "exact incumbent source binding"
+    );
+    assert_eq!(
+        oracle["sources"][NODE_RESOURCE_SOURCE],
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(include_bytes!(
+            "../../../../paper-domain/automation/campaign-mode-resource-budget.mjs"
+        ))),
+        "exact incumbent source binding"
+    );
     for (index, request) in requests
         .as_array()
         .expect("corpus array")

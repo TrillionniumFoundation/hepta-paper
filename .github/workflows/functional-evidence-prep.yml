@@ -1,12 +1,12 @@
 name: functional-evidence-prep
+# Explicit historical regression replay on the selected exact dispatch commit.
 on:
-  push:
-    branches: [codex/rust-functional-evidence-prep-20260912]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   prepare:
-    if: github.repository == 'TrillionniumFoundation/hepta-paper' && github.ref == 'refs/heads/codex/rust-functional-evidence-prep-20260912'
+    if: github.repository == 'TrillionniumFoundation/hepta-paper'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:

@@ -10,6 +10,7 @@ mod build;
 mod empirical;
 mod formal;
 pub mod inference;
+pub mod legacy_submission_v1;
 mod numerical;
 mod reviewer;
 mod submission;
@@ -52,6 +53,9 @@ pub fn native_business_implementation_hash_v1() -> String {
             include_bytes!("native_business/numerical.rs"),
             include_bytes!("native_business/build.rs"),
             include_bytes!("native_business/submission.rs"),
+            include_bytes!("native_business/legacy_submission_v1/mod.rs"),
+            include_bytes!("native_business/legacy_submission_v1/manifest.rs"),
+            include_bytes!("native_business/legacy_submission_v1/intent.rs"),
             include_bytes!("bin/hepta-native-business.rs"),
         ],
     )
@@ -100,6 +104,30 @@ pub fn execute_native_business_v1(
             tolerance,
         } => numerical_linear_solve(matrix, rhs, tolerance)?,
         NativeBusinessJobV1::BuildPackage { entries } => build_package(entries)?,
+        NativeBusinessJobV1::LegacySubmissionManifestV1 {
+            venue,
+            manuscript_sha256,
+            artifacts,
+            metadata,
+        } => legacy_submission_v1::prepare_legacy_submission_manifest_v1(
+            venue,
+            manuscript_sha256,
+            artifacts,
+            metadata,
+        )?,
+        NativeBusinessJobV1::LegacySubmissionIntentV1 {
+            venue,
+            manuscript_hash,
+            supplementary_hashes,
+            metadata,
+            idempotency_key,
+        } => legacy_submission_v1::prepare_legacy_submission_intent_v1(
+            venue,
+            manuscript_hash,
+            supplementary_hashes,
+            metadata,
+            idempotency_key,
+        )?,
         NativeBusinessJobV1::PrepareSubmission {
             venue_id,
             manuscript_artifact,

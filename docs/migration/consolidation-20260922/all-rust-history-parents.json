@@ -1,0 +1,771 @@
+{
+  "rustBearingDivergentBranchCount": 169,
+  "parents": [
+    "104999b51a36ca3bbf2d09658cae64577d13c084",
+    "1216ee9e2ceb744cd44c494a232ee8237b2b5642",
+    "588d687eaea42c20148e5a3c18cf77e5e8e501a7",
+    "e34769003082edd6a28c86187335adb748b5c455",
+    "4c8c3b59b460d0c2199b543a3187bfc168f7321f",
+    "c826ba672d374924c6bf97094b50a0213890db77",
+    "beca69a1a6dd9a43524849f76481ce0b15a4e851",
+    "a25b45152ee8f4fcb2d29a1dcd9e6a6c4588e377",
+    "d48f7083c20f069c2f89f2fb3dae062aa5ce35e2",
+    "cfee04281ed7220bb318338220baec96b95e9a5e",
+    "a574f7162b9c7b4bbd16e5af46430b061e121d4f",
+    "51e02d3b7be896d2b3214f971d68c91099ac670c",
+    "41378582f4d0c2733794fbb68b157d342c1c88d2",
+    "b51c8f9bba70c20473717ce6c357465e516ddd77",
+    "a5937a0f72b2f99cd04d0b8aca6f50b79ff30869",
+    "061502f3b063ad47b91dd39632a0246dbcf22c71",
+    "aae63dac79f665ec462baf81aecd2670a62e2008",
+    "07a868fe411601e12c7ded0fa6728f94784cc3d9",
+    "a334c258faa6bd5476177b0f4af3801f6726c4f2",
+    "c00ed132ec7e68e9ea9a44acfa790727dbb506a8",
+    "57913d7011eb4858c7c015380369fef78ae7d927",
+    "f753b12cb34a191b4ece78d7929e2256a51b78ca",
+    "5cbdf313336fb0ad560c26712d9b3b1b73902a9d",
+    "c02dd68d3e93e2861de6743bdad81ac29beef72e",
+    "6dbfe3522bfbc7a9a376f4c2d0c252758b5ee6a0",
+    "4e3d1297eafa000b5bd146da5dce0502c99134f9",
+    "9e7031d019b41beaae99312149652d58b110e93d",
+    "0b44f4775ff92c96b9fb101b2a4c01115ab0c9f9",
+    "d90fad92a85cfc9e2ba6eb581fa89baf77fe25f5",
+    "42c59a2a09605475ecceb9ed8a341a394d75de2e",
+    "694761e923306e0f6e6a3e6d652852614992f946",
+    "9c2145d376821a6750c8fba842dd23b1b0dab9c9",
+    "0f6a547371bc2f62f946f9eecb79fae3f54567d2",
+    "7d0ba9b589fd5cff98f7c52f7d06568f9b01e959",
+    "fec98dd53c946c9fb9a5e223e26712353c9f4b14",
+    "529d8386d154fe83b040df79a4de72ca5b973521",
+    "821de183c107118a85bb0eee389a67d0a9c54fd3",
+    "9dc5c09d4139fe4c2eeef7398c67331f28267a29",
+    "6bd83a40089011e654f13b4670116ed5ee36d173",
+    "37f119019be825c0c3bf7cc76047d744e8a0075e",
+    "d982c3aecf3cebfdcf07e58b9b5cdac937edf653",
+    "b21f5031dbc939f57fb2ce1d1db0b0fdf142417c",
+    "553a811471f0dd2f1285614d391d0ed1aae07fba",
+    "0fd03695bf3a746e06931c1f524f9cd765f31b13",
+    "96dd828840eaa61a18c28ed6f85c8befdb68ee52",
+    "c8587ccfdf714ee2018e575578129bda296c0e45",
+    "20170858536b50f4f5eac313c344b3d60589a842",
+    "fab2458e98c4021baf194ae86155f95e3c3c9b3f",
+    "5ef08664b327f53226b537af8ebbb28a14b48365",
+    "9a412fbcbaba6c8b40e451e574f078f6d97e40bc",
+    "a956160b6abd451f6773e78c907b5f919b25c5c2",
+    "5231edd1844ab8389488fc275ea6b6e6aa970199",
+    "859d0c382e2176342e17afd797957b0450d5fc68",
+    "409b2077029162f1ba718b7590d3e597688d1a69",
+    "50ed91a400a471d3c3ada069ec32592deb82213d",
+    "85a7b3364f3bcfbe452c10bac836654189202599",
+    "f0d9aec9a494a2db2b15f004da8656a2a879d73d",
+    "ca6d7c410ca130608c885f8a3556f904ba54cc0e",
+    "33b7f40125c17e09297fcae65f11e226f7c28838",
+    "aaa607fe992eb0fb58e2390bca00c5cae8228688",
+    "601efc57a14189d2158dcbc4636beebd67d75a75",
+    "0a756157b98151b3268d8aaa95b9de53e9e28508",
+    "a8676c82dbe09ed1fec44234b46d465641741ef0",
+    "1d0463db280df635e1aeb54d42e95f624be02614",
+    "b14174e8695b2c35b2d778d9c3dee144fdd4e1df",
+    "45e2861524d850a0b05bebc0c3de3ce0a5cf256b",
+    "0c1a01a2401ab3315faa9a318040eb01cd14ec73",
+    "b5067fede1e9deb75d485125ed7b60fcaa882064",
+    "f7e85b2c735f3e8634437772bcfdeb776221d3ca",
+    "6f7ad6c5e647372dd5e00f9a2e0fa71528e65771",
+    "d093ceb3857e17bfec906b8b5b6240abef89fd36",
+    "17b2eaa41ff09e75d1a2c02ac75f369711c776d9",
+    "16f5013adfdb9e47c6424057dca617052eed0f1d",
+    "36ecba07a630b82997a5605d60d4bccf00a1cdab",
+    "e4b8b74eb7f6b4369fc62954a245b3e325daf820",
+    "05a2777cd19d726ebc87b9c01c69322078e51f50",
+    "b3651866a2f54082f0fdf5f34400d751c05d93cc",
+    "895823e6868c63253c915a2d28ec43a913d8e684",
+    "2c7d3471c3a4ee45ac34d6bbeb534401897aeb7e",
+    "4ace9b5dff377a8f5afa2d24a27af22c70d6e923",
+    "66f4b30fb5311890ea16509f0106f4927790ea10",
+    "7a19844165ab426c80a38b85a5fdfecd588567a3",
+    "f80aa8218ad876e24c88ef0f72060f75e573c0c5",
+    "7065bf30925c1c29de2015b30a8a03c287775ad2",
+    "d8fe720d52db2a468e5778af2c9b8ebbcbfdb657",
+    "2bde797d324f5b6e278da9102f91c1efd3ee9276",
+    "3ec5fdf8f568842ce499c7b91c6a6bb33b7b721a",
+    "5a874512313bb99da3a0f9157c4da2303f364054"
+  ],
+  "branchTips": [
+    {
+      "ref": "refs/remotes/origin/codex/admin-apply-global-source-closure-20260910",
+      "commit": "1216ee9e2ceb744cd44c494a232ee8237b2b5642"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/apply-preexec-gap-closure-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-global-optimizer-20260906",
+      "commit": "588d687eaea42c20148e5a3c18cf77e5e8e501a7"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-global-optimizer-v1-20260906",
+      "commit": "12f7626c7103510422da55104544025ffeaf44d4"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-plan-selector-20260906",
+      "commit": "e34769003082edd6a28c86187335adb748b5c455"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-plan-selector-source-20260906",
+      "commit": "4c8c3b59b460d0c2199b543a3187bfc168f7321f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-plan-selector-source-v2-20260906",
+      "commit": "e68d9f9e7734e4ad4678d09ebcd678986eb0e9b3"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-plan-selector-source-v3-20260906",
+      "commit": "c826ba672d374924c6bf97094b50a0213890db77"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-plan-selector-source-v4-20260906",
+      "commit": "1341ecc1373f7fd1c571dda5eb2bddcb5621958a"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-plan-verifier-v1-20260906",
+      "commit": "d2543f86191cf20f5fe86b1d8e8e03fe48e124f3"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-planning-pipeline-20260906",
+      "commit": "beca69a1a6dd9a43524849f76481ce0b15a4e851"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-planning-pipeline-v2-20260906",
+      "commit": "a25b45152ee8f4fcb2d29a1dcd9e6a6c4588e377"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-planning-pipeline-v3-20260906",
+      "commit": "b39f59342c930b56883c6ed6566321b426484bfe"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/bounded-planning-pipeline-v4-20260906",
+      "commit": "1aa5e3a7520bad14517378221af97219e8aa5c78"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/campaign-child-settlement-20260905",
+      "commit": "d48f7083c20f069c2f89f2fb3dae062aa5ce35e2"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/campaign-envelope-engine-integration-20260905",
+      "commit": "03e835e4776c2e420139efc5d317350954811711"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/campaign-resource-envelope-integration-20260905",
+      "commit": "cfee04281ed7220bb318338220baec96b95e9a5e"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-batch-collector-20260906",
+      "commit": "a574f7162b9c7b4bbd16e5af46430b061e121d4f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-batch-collector-core-20260906",
+      "commit": "51e02d3b7be896d2b3214f971d68c91099ac670c"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-batch-final-20260906",
+      "commit": "d125175b55205362ae009ee6e1fd3a7ad6495e74"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-disposition-bytes-v1-20260906",
+      "commit": "dc2bad2b9a3b06876f719d1efaa1a6ae6a19582f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-disposition-collector-v1-20260906",
+      "commit": "41378582f4d0c2733794fbb68b157d342c1c88d2"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-disposition-linear-20260906",
+      "commit": "dc2bad2b9a3b06876f719d1efaa1a6ae6a19582f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-optimization-model-v1-20260906",
+      "commit": "b51c8f9bba70c20473717ce6c357465e516ddd77"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-producer-collection-20260906",
+      "commit": "75b6215dc01ee9ebc76b3ff4d70b78b2da36af1b"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-canonical-v1-20260906",
+      "commit": "a5937a0f72b2f99cd04d0b8aca6f50b79ff30869"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-core-20260906",
+      "commit": "232297bd37d19d8c427ae6185db7407196ccacd8"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-source-20260905",
+      "commit": "ef98bfb9be60141a77d83ce226d134058e04b463"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-source-20260906",
+      "commit": "ebb991e73e6969fdc4573959b174c2ba42f4ea74"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-source-20260906-final",
+      "commit": "d3b829cfcc2e0a12729da474447d5dd33901d155"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-source-v2-20260906",
+      "commit": "fb0baf9e57e5f6ac275620006e0593981be5e10a"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-v1-20260906",
+      "commit": "061502f3b063ad47b91dd39632a0246dbcf22c71"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-v1-clean-20260906",
+      "commit": "aae63dac79f665ec462baf81aecd2670a62e2008"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-v1-exact-20260906",
+      "commit": "07a868fe411601e12c7ded0fa6728f94784cc3d9"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/candidate-router-v1-final-20260906",
+      "commit": "a334c258faa6bd5476177b0f4af3801f6726c4f2"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-campaign-plus-g0-20260905",
+      "commit": "026962cea527c19bffc1b5c1e85e5dda17978882"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v10-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v11-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v12-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v13-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v14-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v2-20260907",
+      "commit": "15768b3c5e89f27e4a1c9010f295f8a9683074cf"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v3-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v4-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v5-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v6-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v7-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v8-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-exact-v9-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-final-20260907",
+      "commit": "c00ed132ec7e68e9ea9a44acfa790727dbb506a8"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-final2-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-final3-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-final4-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-provider-merge-20260907",
+      "commit": "81b87625ef0b6fb72c83b8b9091c9db11b5e32ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/canonical-planning-stack-v2-20260906",
+      "commit": "57913d7011eb4858c7c015380369fef78ae7d927"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/codeql-diagnostic-c89938b-20260909",
+      "commit": "f753b12cb34a191b4ece78d7929e2256a51b78ca"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/codeql-diagnostic-d92b551-20260909",
+      "commit": "5cbdf313336fb0ad560c26712d9b3b1b73902a9d"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/collected-bounded-planning-pipeline-20260906",
+      "commit": "7005154563158952b89b683e21390dcdc7d2fa72"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/control-plane-snapshot-builder-20260905",
+      "commit": "c02dd68d3e93e2861de6743bdad81ac29beef72e"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/control-snapshot-builder-20260906",
+      "commit": "0015a7d2bff3a83722c40a77a21f12627f1a2ab8"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/control-snapshot-builder-v1-20260906",
+      "commit": "7ef0707170753f88e2e6a83d59bd77d53a87b466"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/current-source-export-20260829-v2",
+      "commit": "6dbfe3522bfbc7a9a376f4c2d0c252758b5ee6a0"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/durable-gate-push-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/execution-command-candidate-20260906",
+      "commit": "4e3d1297eafa000b5bd146da5dce0502c99134f9"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/finite-plan-certificate-20260906",
+      "commit": "4e3d1297eafa000b5bd146da5dce0502c99134f9"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/finite-plan-optimizer-20260906",
+      "commit": "f7e20ca897e2dee5872447d002174315285c12ae"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/global-plan-g2-g6-vertical-20260901",
+      "commit": "9e7031d019b41beaae99312149652d58b110e93d"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/global-plan-v1.1-g5-source-closure-20260910",
+      "commit": "0b44f4775ff92c96b9fb101b2a4c01115ab0c9f9"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/global-plan-v1.1-internal-source-closure-20260911",
+      "commit": "d90fad92a85cfc9e2ba6eb581fa89baf77fe25f5"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/global-plan-v1.1-repository-source-closure-20260910",
+      "commit": "42c59a2a09605475ecceb9ed8a341a394d75de2e"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/global-plan-v1.1-source-closure-20260910",
+      "commit": "694761e923306e0f6e6a3e6d652852614992f946"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/helper-authority-patch-assembly-20260831",
+      "commit": "9c2145d376821a6750c8fba842dd23b1b0dab9c9"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/hepta-paper-convergence-runner-20260831",
+      "commit": "0f6a547371bc2f62f946f9eecb79fae3f54567d2"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/hepta-paper-hardening-helper-20260830",
+      "commit": "7d0ba9b589fd5cff98f7c52f7d06568f9b01e959"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/independent-plan-verifier-20260906",
+      "commit": "fec98dd53c946c9fb9a5e223e26712353c9f4b14"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/independent-plan-verifier-v2-20260906",
+      "commit": "529d8386d154fe83b040df79a4de72ca5b973521"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/independent-plan-verifier-v3-20260906",
+      "commit": "094ca9349e435b6bae9f0aacf8e8f5cca3492eee"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/legacy-matrix-reference-publication-20260830",
+      "commit": "bb96e14615a4433563258ca41657a9df2c1547a4"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/legacy-matrix-reference-trusted-workflow-20260830",
+      "commit": "821de183c107118a85bb0eee389a67d0a9c54fd3"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/local-source-bootstrap-20260828",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/local-source-export-20260829",
+      "commit": "9dc5c09d4139fe4c2eeef7398c67331f28267a29"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/plan-v4-atomic-transport-20260831",
+      "commit": "6bd83a40089011e654f13b4670116ed5ee36d173"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-provider-convergence-20260907",
+      "commit": "ee5d56a807daad7a41c3c9f91fa6e1d83b03c971"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-snapshot-builder-20260906",
+      "commit": "2acafc88c7f1331c880355e2354842d3f8842693"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-snapshot-canonical-v1-20260906",
+      "commit": "dc2bad2b9a3b06876f719d1efaa1a6ae6a19582f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-snapshot-linear-20260906",
+      "commit": "fdf45ec4ba51b2005e92b1839b3f0b4bce9f00fd"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-snapshot-schema-conformance-20260906",
+      "commit": "524d760cb71394133d2613a7913fe51177f64892"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-snapshot-session-20260906",
+      "commit": "37f119019be825c0c3bf7cc76047d744e8a0075e"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-snapshot-session-v2-20260906",
+      "commit": "9941b90af79a3dd85af73d39ad323270e5697bf7"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-snapshot-v1-exact-20260906",
+      "commit": "dc2bad2b9a3b06876f719d1efaa1a6ae6a19582f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/planning-snapshot-v1-final-20260906",
+      "commit": "dc2bad2b9a3b06876f719d1efaa1a6ae6a19582f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/pr49-hardening-staging-20260902",
+      "commit": "d982c3aecf3cebfdcf07e58b9b5cdac937edf653"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/provider-external-acceptance-kit-20260907",
+      "commit": "b21f5031dbc939f57fb2ce1d1db0b0fdf142417c"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/provider-external-acceptance-kit-v1-20260907",
+      "commit": "553a811471f0dd2f1285614d391d0ed1aae07fba"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/provider-external-acceptance-kit-v2-20260907",
+      "commit": "0fd03695bf3a746e06931c1f524f9cd765f31b13"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/qualification-raw-completeness-20260905",
+      "commit": "96dd828840eaa61a18c28ed6f85c8befdb68ee52"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/qualification-subject-v3-g0-20260901",
+      "commit": "c8587ccfdf714ee2018e575578129bda296c0e45"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/r-source-route-evidence-20260907",
+      "commit": "20170858536b50f4f5eac313c344b3d60589a842"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-all-gap-closure-20260830",
+      "commit": "2bc107d241c353812b50401fbf99029333b4dbc1"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-all-gap-closure-v2-20260830",
+      "commit": "fab2458e98c4021baf194ae86155f95e3c3c9b3f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-broker-foundation-20260828",
+      "commit": "5c63022ebdc75495c26b3119e9bd322b6da7787f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-broker-protocol-journal-20260828",
+      "commit": "5ef08664b327f53226b537af8ebbb28a14b48365"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-broker-service-20260828",
+      "commit": "80223a2531de32ceeeab7d5d4e6c9b36a605716f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-broker-state-20260828",
+      "commit": "9a412fbcbaba6c8b40e451e574f078f6d97e40bc"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-broker-state-complete-20260828",
+      "commit": "a9ba785925b08d7aeba1d5ffb92a7a9c86c8815f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-delivery-development-20260913",
+      "commit": "a956160b6abd451f6773e78c907b5f919b25c5c2"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-final-gap-closure-20260830",
+      "commit": "5231edd1844ab8389488fc275ea6b6e6aa970199"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-foundation-20260828",
+      "commit": "7c0ee455429c43cd0e453e1177343635110c0cf4"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-full-replacement-rc-20260908",
+      "commit": "92c05e823bbfe98b303f2c6936e64fe8a9e45cd0"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-full-replacement-source-closure-20260911",
+      "commit": "7e90486ead5803f9b3f893781bb550dd63bfd219"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-full-replacement-source-closure-v2-20260911",
+      "commit": "859d0c382e2176342e17afd797957b0450d5fc68"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-function-gap-closure-20260911",
+      "commit": "409b2077029162f1ba718b7590d3e597688d1a69"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-gap-closure-helper-20260831",
+      "commit": "50ed91a400a471d3c3ada069ec32592deb82213d"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-gap-closure-staging-20260909",
+      "commit": "92c05e823bbfe98b303f2c6936e64fe8a9e45cd0"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-node-legacy-adapter-20260909",
+      "commit": "85a7b3364f3bcfbe452c10bac836654189202599"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-runtime-gap-closure-20260829",
+      "commit": "99ba670190d90248eda9b9c3ae98c67924f363dd"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-runtime-gap-closure-20260829-check",
+      "commit": "99ba670190d90248eda9b9c3ae98c67924f363dd"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v3-authority-closure-helper-20260831",
+      "commit": "f0d9aec9a494a2db2b15f004da8656a2a879d73d"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v3-authority-gap-closure-20260831",
+      "commit": "30c7f89264b1e76367f5f0c3d3a028c3486c431a"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v3-deep-audit-20260830",
+      "commit": "ca6d7c410ca130608c885f8a3556f904ba54cc0e"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v3-gap-closure-20260830",
+      "commit": "33b7f40125c17e09297fcae65f11e226f7c28838"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v3-main-integration-20260830",
+      "commit": "aaa607fe992eb0fb58e2390bca00c5cae8228688"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v3-persistence-finalize-20260830",
+      "commit": "601efc57a14189d2158dcbc4636beebd67d75a75"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v3-qualification-hardening-20260830",
+      "commit": "0a756157b98151b3268d8aaa95b9de53e9e28508"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v4-gap-closure-20260909",
+      "commit": "a7bc58a0cf10f54a0372caa5ba8b5d3cf54f6037"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v4-gap-closure-20260909-pr",
+      "commit": "6401bcb9e0cdd434848eee2778e370f516c1c0b2"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v4-gap-closure-20260909-pr-final",
+      "commit": "a8676c82dbe09ed1fec44234b46d465641741ef0"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v4-gap-closure-20260909-review",
+      "commit": "3e123d33517600c01d78ed56eab6c51a3321c6c4"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v4-gap-closure-20260909-review-final",
+      "commit": "67574971bc5acc291349f1e0f0b8181b6a099508"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v4-rc1-20260831",
+      "commit": "1d0463db280df635e1aeb54d42e95f624be02614"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v4.1-final2-20260909",
+      "commit": "92c05e823bbfe98b303f2c6936e64fe8a9e45cd0"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-plan-v4.1-rc2-20260909",
+      "commit": "b14174e8695b2c35b2d778d9c3dee144fdd4e1df"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-source-gap-full-closure-20260911",
+      "commit": "45e2861524d850a0b05bebc0c3de3ce0a5cf256b"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/rust-workspace-mutation-20260829",
+      "commit": "80223a2531de32ceeeab7d5d4e6c9b36a605716f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/session-collected-planning-pipeline-20260906",
+      "commit": "0c1a01a2401ab3315faa9a318040eb01cd14ec73"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/snapshot-builder-core-20260906",
+      "commit": "b5067fede1e9deb75d485125ed7b60fcaa882064"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/snapshot-builder-final-20260906",
+      "commit": "f7e85b2c735f3e8634437772bcfdeb776221d3ca"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/snapshot-builder-source-20260906",
+      "commit": "21807428ef44a2c0ada282e2cd1782a224ac150f"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/snapshot-builder-source-v2-20260906",
+      "commit": "1899d768cac5fca8588fae67a15edfd83729e2ff"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/snapshot-builder-v1-20260906",
+      "commit": "6f7ad6c5e647372dd5e00f9a2e0fa71528e65771"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-audit-export-20260911",
+      "commit": "d093ceb3857e17bfec906b8b5b6240abef89fd36"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-active-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-actual-20260829",
+      "commit": "17b2eaa41ff09e75d1a2c02ac75f369711c776d9"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-artifact-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-final-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-final-trigger-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-one-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-run-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-trigger-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-trigger-v2-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/source-export-recovery-workflow-20260829",
+      "commit": "12b04a17e3657d07d9dadddbb905d38a6ef96f06"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/technical-provider-sandbox-20260906",
+      "commit": "16f5013adfdb9e47c6424057dca617052eed0f1d"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/tmp-dispatch-probe-20260831",
+      "commit": "cb55f7cef36195d16e8f0fc80cb841e6541b14c2"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/tmp-pr40-ci-converged-20260831-r3",
+      "commit": "36ecba07a630b82997a5605d60d4bccf00a1cdab"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/tmp-pr40-convergence-base-20260831-v2",
+      "commit": "e4b8b74eb7f6b4369fc62954a245b3e325daf820"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/tmp-pr40-convergence-bootstrap-20260831",
+      "commit": "05a2777cd19d726ebc87b9c01c69322078e51f50"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/tmp-pr40-convergence-trigger-20260831-v2",
+      "commit": "b3651866a2f54082f0fdf5f34400d751c05d93cc"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/tool-schema-probe-20260909",
+      "commit": "895823e6868c63253c915a2d28ec43a913d8e684"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/verified-planning-cycle-v1-20260906",
+      "commit": "57bb07cfed6e0dc77bb835a5585081a93d8193cd"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/workspace-source-export-20260829",
+      "commit": "2c7d3471c3a4ee45ac34d6bbeb534401897aeb7e"
+    },
+    {
+      "ref": "refs/remotes/origin/ops/plan-v4-source-closure-publisher-20260909",
+      "commit": "4ace9b5dff377a8f5afa2d24a27af22c70d6e923"
+    },
+    {
+      "ref": "refs/remotes/origin/ops/pr52-remediation-diagnostics-20260904-v2",
+      "commit": "66f4b30fb5311890ea16509f0106f4927790ea10"
+    },
+    {
+      "ref": "refs/remotes/origin/ops/pr53-wave3-assembly-20260905",
+      "commit": "7a19844165ab426c80a38b85a5fdfecd588567a3"
+    },
+    {
+      "ref": "refs/remotes/origin/ops/pr53-wave3-continuation-assembly-20260905",
+      "commit": "f80aa8218ad876e24c88ef0f72060f75e573c0c5"
+    },
+    {
+      "ref": "refs/remotes/origin/ops/pr53-wave3-diagnostics-20260905",
+      "commit": "7065bf30925c1c29de2015b30a8a03c287775ad2"
+    },
+    {
+      "ref": "refs/remotes/origin/ops/pr53-wave3-public-cas-recovery-20260905",
+      "commit": "d8fe720d52db2a468e5778af2c9b8ebbcbfdb657"
+    },
+    {
+      "ref": "refs/remotes/origin/ops/pr53-wave3-tracer-prerequisite-20260905",
+      "commit": "2bde797d324f5b6e278da9102f91c1efd3ee9276"
+    }
+  ]
+}

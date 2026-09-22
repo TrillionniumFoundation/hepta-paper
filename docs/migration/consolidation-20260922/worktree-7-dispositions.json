@@ -1,0 +1,58 @@
+[
+  {
+    "path": "docs/modules/ONLINE_STARTUP_RECONCILIATION_SET_HANDOFF.md",
+    "identical": false,
+    "historicalMatches": [
+      {
+        "commit": "b6362d1e0b4b9d6182aaed6cef022741a595f5c1",
+        "ancestorOfCurrent": true
+      }
+    ]
+  },
+  {
+    "path": "docs/modules/README.md",
+    "identical": false,
+    "historicalMatches": [
+      {
+        "commit": "b6362d1e0b4b9d6182aaed6cef022741a595f5c1",
+        "ancestorOfCurrent": true
+      }
+    ]
+  },
+  {
+    "path": "docs/rust/DOCUMENTATION_INDEX.md",
+    "identical": false,
+    "historicalMatches": [
+      {
+        "commit": "b6362d1e0b4b9d6182aaed6cef022741a595f5c1",
+        "ancestorOfCurrent": true
+      }
+    ]
+  },
+  {
+    "path": "rust/crates/hepta-paper-service/src/online_runtime_activation.rs",
+    "identical": true
+  },
+  {
+    "path": "rust/crates/hepta-paper-service/src/online_runtime_activation/startup_inventory.rs",
+    "identical": false,
+    "historicalMatches": [
+      {
+        "commit": "b6362d1e0b4b9d6182aaed6cef022741a595f5c1",
+        "ancestorOfCurrent": true
+      }
+    ]
+  },
+  {
+    "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/startup.rs",
+    "identical": true
+  },
+  {
+    "path": "rust/crates/hepta-paper-service/tests/online_runtime_startup_set_parity.rs",
+    "identical": true
+  },
+  {
+    "path": "rust/oracle/online-runtime-startup-set-v1.mjs",
+    "identical": true
+  }
+]

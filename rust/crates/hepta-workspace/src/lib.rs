@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+/// Additive diagnostic compatibility for a preserved earlier Rust wire format.
+pub mod workspace_wire_compat_v1;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},

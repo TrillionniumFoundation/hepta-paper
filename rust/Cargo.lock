@@ -846,12 +846,14 @@ dependencies = [
 name = "hepta-legacy-compatibility"
 version = "0.1.0"
 dependencies = [
+ "hepta-codex-protocol",
  "hex",
  "icu_collator",
  "icu_locale",
  "icu_provider",
  "icu_provider_blob",
  "ryu-js",
+ "serde",
  "serde_json",
  "sha2 0.10.8",
  "thiserror",

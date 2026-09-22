@@ -6,10 +6,17 @@ This handoff is bound to the source-baseline candidate commit
 for evidence that cannot be produced by a local source checkout. It does not
 mark a route implemented, accepted, activated or retired.
 
-## Current source and branch evidence
+## Source-baseline branch evidence and current consolidation policy
 
 The source-baseline branch was equal locally and remotely when captured. The
-full-history branch inventory for that baseline is:
+following full-history inventory is the historical `161d54f...` baseline, not a
+live branch count. The current two-tree policy retains original Node `main` and
+`codex/full-rust-replacement-progress-20260916`; the
+[branch consolidation record](BRANCH_CONSOLIDATION.md) supplies the
+pre-cleanup decisions, source archive and separate post-cleanup ref observation.
+Removing names does not replace those decisions with a new zero-gap claim.
+
+The historical baseline inventory is:
 
 ```text
 candidateCommit=161d54f603152c95411beb7fc9a7ab79919ffe8d
@@ -29,9 +36,10 @@ python3 docs/tools/audit-branch-convergence.py --candidate HEAD
 ```
 
 Every divergent branch needs an owner, a disposition (`absorb`, `supersede`,
-`retain_reference` or `reject`), the complete two-tree change list and an
-independent review-evidence digest. A digest-shaped value is not review
- evidence. Until that plan exists, no branch is treated as absorbed.
+`retain_reference` or `reject`), the complete two-tree change list and review
+evidence. Preserve those records after branch-name deletion. A digest-shaped
+value is not independent review evidence; local source consolidation cannot
+self-grant the external acceptance required by this handoff.
 
 ## Current Rust migration state
 
@@ -74,8 +82,9 @@ local behavior parity but do not create external acceptance.
 
 An external collector must return one immutable packet containing:
 
-1. Candidate commit and tree, branch-audit hash, remote ref snapshot and the
-   branch disposition-plan hash.
+1. Candidate commit and tree, branch-audit hash, current remote ref snapshot,
+   pre-cleanup ref/archive bindings and the historical branch disposition-plan
+   hash from the consolidation record.
 2. Target host identity, pinned compiler/runtime/container images and exact
    workspace cleanliness/provenance.
 3. Authority identities, key IDs, roles, credential custody and revocation

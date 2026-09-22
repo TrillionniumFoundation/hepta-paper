@@ -430,3 +430,18 @@ from `rust`; the re-export alone does not switch existing consumers.
 **Recorded topic contracts:** [Generation and complete capability reconstruction](../../rust/crates/hepta-paper-service/src/topic_producer_generation/HANDOFF.md) and [canary journal/failure accounting plus generation-row parsing](../../rust/crates/hepta-paper-service/src/topic_producer_canary/HANDOFF.md) supply pure data prerequisites for the separately callable actual topic status reader. Full capability reconstruction is stronger than envelope hashing; the original generation row parser retains its deliberately narrower recorded-binding checks. Fabricated recorded canary claims prove local contract behavior only. These functions perform no provider execution, reservation, lease or admission, and are not yet actual health call-chain entries.
 
 **Actual topic status:** The [source-owning status composition](../../rust/crates/hepta-paper-service/src/topic_producer_status/HANDOFF.md) reads the real profile and private effective SQLite/WAL state, validates all historical rows and fully rebuilds the latest non-NULL capability. It releases profile file owners before SQLite, preserves original metadata liveness and budget semantics, and never grants a provider action. Eleven actual-source groups cover full original reports, bounded compatibility refusals and original committed-WAL/missing-SHM preservation. V2 health integration, owning configuration/admission and runtime authority remain open.
+
+**Consolidated legacy contracts:** Earlier Rust branches expose several distinct
+wire formats. [Predictor calibration/selection and retained telemetry](../../rust/crates/hepta-control-plane/src/legacy_planning/HANDOFF.md),
+[hierarchical supplied-data ledgers](../../rust/crates/hepta-control-plane/src/legacy_hierarchy/HANDOFF.md),
+[module calibration and planner comparison](../../rust/crates/hepta-orchestration-kernel/LEGACY_CALIBRATION.md),
+[prepared submission packages](../../rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/HANDOFF.md),
+and [strict bounded computational contracts](../../rust/crates/hepta-paper-service/src/native_parity_bounded_v1/HANDOFF.md)
+are named compatibility surfaces alongside the current contracts. The
+[frozen observation](../../rust/crates/hepta-legacy-compatibility/COMPATIBILITY.md),
+[logical-store projection](../../rust/crates/hepta-readonly-store/COMPATIBILITY.md)
+and [workspace wire projection](../../rust/crates/hepta-workspace/COMPATIBILITY.md)
+adapters preserve recorded data without reinstating obsolete I/O or authority
+paths. Exact provenance, tests and restrictions are documented at each link;
+[branch consolidation](../migration/BRANCH_CONSOLIDATION.md) changes source
+organization and does not grant production activation or independent parity.

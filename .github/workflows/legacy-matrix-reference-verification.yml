@@ -6,7 +6,7 @@ on:
       candidate_ref:
         description: Exact commit, tag, or branch to qualify with the 263-file reference
         required: true
-        default: codex/rust-plan-v3-final-product-20260830
+        default: codex/full-rust-replacement-progress-20260916
         type: string
 
 permissions:

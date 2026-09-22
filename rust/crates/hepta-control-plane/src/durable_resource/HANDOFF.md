@@ -12,6 +12,11 @@ Reading is bounded by 256 MiB plus one detection byte, independently of the
 initial metadata length. These checks do not pin every ancestor or exclude
 uncooperating same-UID writers, hard-link aliases or replacement of the path.
 The lock protects cooperating users of the same inode, not the entire namespace.
+Dropping the ledger owner explicitly unlocks its private open file description.
+Closing only its descriptor would leave a lock alive while a concurrent fork
+retains an inherited descriptor before exec, despite `O_CLOEXEC`. An abrupt
+process death releases the lock only after every inherited description closes;
+this code does not establish process-tree cleanup or physical resource release.
 
 All complete events, their sequence/hash chain and lease transitions are
 validated before an incomplete trailing fragment is removed. Corrupt complete
@@ -66,5 +71,9 @@ injecting an error; a separate read-only descriptor causes a real write error.
 They prove that all subsequent calls refuse without changing bytes, the lock
 remains held, and reopening distinguishes complete from torn events. A complete
 finalization followed by a failed acknowledgement remains charged across replay
-and expiry. These injected acknowledgement failures are not a target-filesystem
-fsync fault campaign or a process-crash durability qualification.
+and expiry. A retained duplicate descriptor deterministically models inheritance
+across the owner-drop/reopen boundary: the old owner excludes competing opens,
+its drop permits replay, and closing the stale duplicate cannot release the
+replacement owner's independent lock. These injected acknowledgement failures
+are not a target-filesystem fsync fault campaign or a process-crash durability
+qualification.

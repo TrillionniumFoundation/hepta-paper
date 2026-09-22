@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 pub mod calibration;
+pub mod legacy_calibration_v1;
 pub mod performance;
 pub mod resource;
 pub mod router;

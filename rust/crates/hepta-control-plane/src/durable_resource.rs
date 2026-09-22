@@ -177,8 +177,9 @@ struct ResourceLedgerEventV1 {
 ///
 /// Each complete JSONL event is self-hashed and globally hash chained. A process crash can leave
 /// an incomplete trailing line; reopening truncates only that trailing fragment after all earlier
-/// complete events have been validated. `File::try_lock` provides process-scoped exclusivity and
-/// is released automatically on process death.
+/// complete events have been validated. `File::try_lock` excludes cooperating owners of the
+/// same inode. Dropping this owner explicitly unlocks its open file description, including
+/// while a concurrent fork temporarily retains an inherited descriptor before exec.
 pub struct DurableResourceLeaseLedgerV1 {
     path: PathBuf,
     file: File,
@@ -186,6 +187,15 @@ pub struct DurableResourceLeaseLedgerV1 {
     next_sequence: u64,
     previous_event_hash: Option<Sha256Digest>,
     inspection_required: bool,
+}
+
+impl Drop for DurableResourceLeaseLedgerV1 {
+    fn drop(&mut self) {
+        // Closing our descriptor alone can leave the lock held by a descriptor
+        // inherited during another thread's fork-before-exec window. The file
+        // is private to this owner, so release the lock at the owner boundary.
+        let _ = self.file.unlock();
+    }
 }
 
 impl DurableResourceLeaseLedgerV1 {

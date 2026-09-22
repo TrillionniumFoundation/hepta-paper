@@ -497,7 +497,7 @@ def main() -> int:
             fail(f"revalidation workflow does not observe producer: {workflow_name}")
 
     candidate = obj(truth.get("qualificationCandidate"), "qualificationCandidate")
-    if candidate.get("branch") != "codex/rust-plan-v4-rc1-20260831" or candidate.get("binding") != "exact_head_workflow_evidence":
+    if candidate.get("branch") != "codex/full-rust-replacement-progress-20260916" or candidate.get("binding") != "exact_head_workflow_evidence":
         fail("qualification candidate drift")
     if "commit" in candidate or "tree" in candidate or candidate.get("productionAuthority") is not False:
         fail("qualification candidate is self-staling or activating")

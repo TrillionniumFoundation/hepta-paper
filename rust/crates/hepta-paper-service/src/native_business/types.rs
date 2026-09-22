@@ -109,6 +109,21 @@ pub enum NativeBusinessJobV1 {
     BuildPackage {
         entries: Vec<BuildEntryV1>,
     },
+    /// Historical manifest contract, preserved without submission authority.
+    LegacySubmissionManifestV1 {
+        venue: String,
+        manuscript_sha256: String,
+        artifacts: Vec<super::legacy_submission_v1::SubmissionArtifactV1>,
+        metadata: Vec<super::legacy_submission_v1::SubmissionMetadataV1>,
+    },
+    /// Historical digest/idempotency intent, preserved without submission authority.
+    LegacySubmissionIntentV1 {
+        venue: String,
+        manuscript_hash: hepta_codex_protocol::Sha256Digest,
+        supplementary_hashes: Vec<hepta_codex_protocol::Sha256Digest>,
+        metadata: std::collections::BTreeMap<String, String>,
+        idempotency_key: String,
+    },
     /// Prepare a deterministic submission package without external-effect authority.
     PrepareSubmission {
         venue_id: String,
@@ -137,7 +152,9 @@ impl NativeBusinessJobV1 {
             Self::EmpiricalAggregate { .. } | Self::EmpiricalInference { .. } => "CAP-EMPIRICAL",
             Self::NumericalLinearSolve { .. } => "CAP-NUMERICAL",
             Self::BuildPackage { .. } => "CAP-BUILD",
-            Self::PrepareSubmission { .. } => "CAP-SUBMIT",
+            Self::PrepareSubmission { .. }
+            | Self::LegacySubmissionManifestV1 { .. }
+            | Self::LegacySubmissionIntentV1 { .. } => "CAP-SUBMIT",
         }
     }
 }

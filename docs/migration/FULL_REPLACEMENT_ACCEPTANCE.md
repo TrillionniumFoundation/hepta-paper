@@ -9,10 +9,17 @@ and independently verified evidence remain authoritative in their scopes.
 
 ## Priority 1: one reviewed source subject
 
-Retain one integration branch/PR for the accepted product candidate. Development
-may advance it with ordinary commits; each new head invalidates prior head/tree
-qualification. Never force-push main, bypass protection, automatically merge all
-branches, or close an unresolved branch merely because its name contains final.
+Retain `codex/full-rust-replacement-progress-20260916` as the Rust source
+integration branch and preserve original Node `main` separately. Development may
+advance the Rust candidate with ordinary commits; each new head invalidates
+prior head/tree qualification. Never force-push main, bypass protection, or treat
+a branch name or a history merge as proof that its source differences are closed.
+
+The [branch consolidation record](BRANCH_CONSOLIDATION.md) preserves the
+pre-cleanup branch identities, reviewed source dispositions and archived objects.
+Capture the surviving ref set separately. A two-branch inventory, including a
+zero unresolved count after deleting names, does not discharge historical source
+dispositions or change command parity, deployment and Node-retirement gates.
 
 On a clean full-history checkout of the candidate, capture every fetched public
 branch's tip and compare its EXACT tree with the candidate:

@@ -22,10 +22,18 @@ env:
   LC_ALL: C.UTF-8
 
 jobs:
-  migration:
-    name: Node parity and disposable Rust migration
+  migration-shards:
+    name: Rust migration (${{ matrix.lane }})
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        lane: [core, service-unit, integration-0, integration-1, integration-2, integration-3]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # The old serial job cancelled successful tests at 30 minutes. Keep every
+    # suite, but isolate the heavy service library and partition all integration
+    # targets from Cargo metadata. No target list is maintained by hand.
+    timeout-minutes: 60
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -86,6 +94,7 @@ jobs:
           # target-host credentials, production database, or activation is used.
 
       - name: Compare native hashes against actual production Node functions
+        if: matrix.lane == 'core'
         shell: bash
         run: |
           set -euo pipefail
@@ -94,6 +103,7 @@ jobs:
             2>&1 | tee "$EVIDENCE_ROOT/production-hash-parity.log"
 
       - name: Verify actual Node migration databases and immutable Rust readers
+        if: matrix.lane == 'core'
         shell: bash
         run: |
           set -euo pipefail
@@ -102,15 +112,44 @@ jobs:
             2>&1 | tee "$EVIDENCE_ROOT/node-database-parity.log"
 
       - name: Verify durable control service recovery and writer ownership
+        if: matrix.lane == 'core'
         shell: bash
         run: |
           set -euo pipefail
           cargo test --manifest-path rust/Cargo.toml --locked --all-features \
             -p hepta-campaign-writer -p hepta-control-plane \
-            -p hepta-paper-service -p hepta-cutover \
+            -p hepta-cutover \
             2>&1 | tee "$EVIDENCE_ROOT/durable-migration.log"
 
+      - name: Verify shard planning regressions
+        shell: bash
+        run: python3 -B docs/rust/tools/test_service_integration_shards.py
+
+      - name: Verify service unit targets and documentation tests
+        if: matrix.lane == 'service-unit'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --lib --bins --examples \
+            2>&1 | tee "$EVIDENCE_ROOT/service-unit.log"
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --doc \
+            2>&1 | tee "$EVIDENCE_ROOT/service-doc.log"
+
+      - name: Verify complete service integration partition
+        if: startsWith(matrix.lane, 'integration-')
+        shell: bash
+        env:
+          MIGRATION_LANE: ${{ matrix.lane }}
+        run: |
+          set -euo pipefail
+          python3 -B docs/rust/tools/run_service_integration_shard.py \
+            --index "${MIGRATION_LANE#integration-}" --count 4 \
+            2>&1 | tee "$EVIDENCE_ROOT/service-integration.log"
+
       - name: Verify Node fencing through actual SQLite store adapters
+        if: matrix.lane == 'core'
         shell: bash
         run: |
           set -euo pipefail
@@ -122,6 +161,7 @@ jobs:
             2>&1 | tee "$EVIDENCE_ROOT/node-store-fencing.log"
 
       - name: Run disposable shadow canary recovery and rollback drill
+        if: matrix.lane == 'core'
         shell: bash
         run: |
           set -euo pipefail
@@ -140,6 +180,7 @@ jobs:
           ' "$EVIDENCE_ROOT/local-cutover-drill.json"
 
       - name: Run disposable native service and durable replay drill
+        if: matrix.lane == 'core'
         shell: bash
         run: |
           set -euo pipefail
@@ -175,8 +216,20 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: rust-migration-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+          name: rust-migration-acceptance-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.lane }}
           path: ${{ runner.temp }}/hepta-rust-migration-evidence
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
+
+  migration:
+    name: Node parity and disposable Rust migration
+    needs: migration-shards
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every migration partition to succeed
+        env:
+          MIGRATION_RESULT: ${{ needs.migration-shards.result }}
+        run: test "$MIGRATION_RESULT" = success

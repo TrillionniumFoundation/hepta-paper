@@ -29,7 +29,9 @@ test('every registered module has a concrete implementation handoff', () => {
 });
 
 function cliCommands(source) {
-  const commands = [...source.matchAll(/^\\s*Some\\("([a-z][a-z-]*)"\\)(?:\\s+if[^\\n]*)?\\s*=>\\s*\\{/gm)].map((row) => row[1]);
+  const guarded = [...source.matchAll(/Some\\("([a-z][a-z-]*)"\\)\\s+if/g)].map((row) => row[1]);
+  const direct = [...source.matchAll(/^\\s*Some\\("([a-z][a-z-]*)"\\)\\s*=>/gm)].map((row) => row[1]);
+  const commands = [...guarded, ...direct];
   assert.ok(commands.length > 0, 'CLI extraction must not silently become empty');
   assert.equal(new Set(commands).size, commands.length, 'unexpected duplicate CLI arm');
   return commands.sort();

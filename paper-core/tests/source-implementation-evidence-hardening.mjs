@@ -336,9 +336,30 @@ function assertRustSymbolOwnership(root, entry) {
   }
 }
 
+function parseCargoTestBinding(command) {
+  const args = command.args ?? [];
+  if (args[0] !== 'test') fail('cargo_command_not_test');
+  const packageIndex = args.indexOf('-p');
+  if (packageIndex < 0 || !args[packageIndex + 1]) fail('cargo_package_selector_missing');
+  const separatorIndex = args.indexOf('--');
+  const commandEnd = separatorIndex < 0 ? args.length : separatorIndex;
+  const testTargetIndex = args.indexOf('--test');
+  let selectorIndex = packageIndex + 2;
+  const discoveryPrefix = ['test', '--locked', '-p', args[packageIndex + 1]];
+  if (testTargetIndex >= 0 && testTargetIndex < commandEnd) {
+    const target = args[testTargetIndex + 1];
+    if (!target || testTargetIndex + 2 >= commandEnd) fail('cargo_integration_test_selector_missing');
+    discoveryPrefix.push('--test', target);
+    selectorIndex = testTargetIndex + 2;
+  }
+  const selector = args[selectorIndex];
+  if (!selector || selector.startsWith('-') || selectorIndex >= commandEnd) fail('cargo_test_selector_missing');
+  return { selector, discoveryPrefix };
+}
+
 function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   if (command.program !== 'cargo') return;
-  const selector = command.args[4];
+  const { selector, discoveryPrefix } = parseCargoTestBinding(command);
   const targetEntries = bundle.files.filter((entry) => command.expectedTargets.includes(entry.path) && entry.role === 'test');
   if (targetEntries.length !== command.expectedTargets.length || targetEntries.length < 1) fail('cargo_target_cardinality', bundleId);
   const symbolName = selector.split('::').at(-1);
@@ -355,7 +376,7 @@ function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   const matches = [...source.matchAll(rustSymbolRegex(symbol))];
   if (matches.length !== 1) fail('cargo_declared_test_not_unique_live', `${entry.path}:${symbol.name}:${matches.length}`);
 
-  const discoveryArgs = ['test', '--locked', '-p', command.args[3], selector, '--', '--exact', '--list'];
+  const discoveryArgs = [...discoveryPrefix, selector, '--', '--exact', '--list'];
   const stdout = run(runtime.cargo.path, discoveryArgs, { cwd: path.join(root, 'rust'), timeout: command.timeoutSeconds * 1000 });
   const discovered = stdout.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.endsWith(': test'));
   if (discovered.length !== 1 || discovered[0] !== `${selector}: test`) {
@@ -422,6 +443,18 @@ function selfTest() {
   const unrelated = structuredClone(base);
   unrelated.work.items['OTHER-001'] = structuredClone(base.work.items['TEST-001']);
   assert.throws(() => assertRegistryDelta(base, unrelated, records), /candidate_registry_drift/u);
+  assert.deepEqual(
+    parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', 'module::case', '--', '--exact'] }),
+    { selector: 'module::case', discoveryPrefix: ['test', '--locked', '-p', 'crate-a'] },
+  );
+  assert.deepEqual(
+    parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', 'case_a', '--', '--exact'] }),
+    { selector: 'case_a', discoveryPrefix: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a'] },
+  );
+  assert.throws(
+    () => parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', '--', '--exact'] }),
+    /cargo_integration_test_selector_missing/u,
+  );
   process.stdout.write('source-evidence hardening self-test: ok\n');
 }
 

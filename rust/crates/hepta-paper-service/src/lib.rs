@@ -79,6 +79,7 @@ pub mod state_recoverability;
 pub mod state_safety;
 pub mod store_status;
 pub mod strict_full_auto_acceptance;
+pub mod strict_machine_intake_reconciliation;
 pub mod submission_handoff_export;
 pub mod supervisor_health;
 mod worker;

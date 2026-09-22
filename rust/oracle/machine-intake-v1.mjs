@@ -6,6 +6,7 @@ import {
   requireAutonomousResearchProviderConfiguration,
 } from '../../paper-composition/automation/autonomous-research-provider-configuration.mjs';
 import {runMachineIntakeFixture} from './machine-intake-fixture-v1.mjs';
+import {runStrictIntakeFixture} from './strict-machine-intake-fixture-v1.mjs';
 import {productionOracleProfile} from './production-record-hash-v1.mjs';
 
 function captured(operation) {
@@ -13,6 +14,7 @@ function captured(operation) {
   catch (error) { return {ok: false, error: error.message}; }
 }
 function run(input) {
+  if (input.action === 'strict') return runStrictIntakeFixture(input);
   if (input.action === 'intake') return runMachineIntakeFixture(input);
   if (input.action === 'providers') return input.cases.map(candidate => {
     const resolved = captured(() => resolveAutonomousResearchProviderConfiguration(candidate));

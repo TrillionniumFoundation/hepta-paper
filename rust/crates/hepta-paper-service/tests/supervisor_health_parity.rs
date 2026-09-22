@@ -167,16 +167,10 @@ fn empty_and_stopped_states_match_node() {
 #[test]
 fn remaining_unsupported_advanced_modes_are_explicitly_rejected() {
     let binary = env!("CARGO_BIN_EXE_hepta-autonomous-supervisor-health");
-    for flag in [
-        "--require-strict-machine-intake-reconciliation",
-        "--require-fully-autonomous",
-    ] {
-        let output = Command::new(binary).arg(flag).output().unwrap();
-        assert_eq!(output.status.code(), Some(1));
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("unsupported_supervisor_health_mode")
-        );
-    }
+    let flag = "--require-fully-autonomous";
+    let output = Command::new(binary).arg(flag).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported_supervisor_health_mode"));
 }
 
 #[test]
@@ -306,7 +300,6 @@ fn strict_cli_help_accepts_inline_option_like_values_without_runtime_access() {
         vec![
             "--require-current-machine-intake",
             "--require-fully-autonomous",
-            "--require-strict-machine-intake-reconciliation",
             "--help",
         ],
     ] {

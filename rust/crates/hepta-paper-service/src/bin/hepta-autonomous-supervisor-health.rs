@@ -2,7 +2,8 @@ use hepta_paper_service::{
     machine_intake::MACHINE_INTAKE_ENVIRONMENT_KEYS_V1,
     native_workspace::resolve_native_workspace_root_v1,
     supervisor_health::{
-        inspect_supervisor_health_current_intake_v1, inspect_supervisor_health_v1,
+        inspect_supervisor_health_current_intake_v1, inspect_supervisor_health_strict_intake_v1,
+        inspect_supervisor_health_v1,
     },
 };
 use std::path::{Path, PathBuf};
@@ -77,11 +78,10 @@ fn main() {
     let startup = options.contains_key("require-startup-reconciliation");
     let machine = options.contains_key("require-machine-intake-reconciliation");
     let current_intake = options.contains_key("require-current-machine-intake");
+    let strict_intake = options.contains_key("require-strict-machine-intake-reconciliation");
     // Remaining chains still require their actual native evidence producers.
     let unsupported_flag = args.iter().find_map(|arg| match arg.as_str() {
-        "--require-strict-machine-intake-reconciliation" | "--require-fully-autonomous" => {
-            Some(arg.as_str())
-        }
+        "--require-fully-autonomous" => Some(arg.as_str()),
         _ => None,
     });
     if help {
@@ -132,9 +132,16 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let inspected = if current_intake {
+    let inspected = if current_intake || strict_intake {
         let mut environment = std::collections::BTreeMap::new();
-        for key in MACHINE_INTAKE_ENVIRONMENT_KEYS_V1 {
+        for key in MACHINE_INTAKE_ENVIRONMENT_KEYS_V1.into_iter().chain(
+            [
+                "HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH",
+                "HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_IDEMPOTENCY_KEY",
+            ]
+            .into_iter()
+            .filter(|_| strict_intake),
+        ) {
             match std::env::var(key) {
                 Ok(value) => {
                     environment.insert(key.to_owned(), value);
@@ -148,7 +155,11 @@ fn main() {
                 }
             }
         }
-        inspect_supervisor_health_current_intake_v1(&root, &environment, &cwd, now)
+        if strict_intake {
+            inspect_supervisor_health_strict_intake_v1(&root, &environment, &cwd, now)
+        } else {
+            inspect_supervisor_health_current_intake_v1(&root, &environment, &cwd, now)
+        }
     } else {
         inspect_supervisor_health_v1(&root, now)
     };
@@ -167,7 +178,9 @@ fn main() {
         }
     };
     println!("{output}");
-    let passing = if current_intake {
+    let passing = if strict_intake {
+        report["strictMachineIntakeReconciliationReady"] == true
+    } else if current_intake {
         report["currentMachineIntakeReady"] == true
     } else if machine {
         report["ready"] == true

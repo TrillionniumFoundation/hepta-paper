@@ -705,7 +705,7 @@
     },
     {
       "id": "operator/autonomous-supervisor-health",
-      "rustEntrypoint": "hepta-autonomous-supervisor-health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation|--require-current-machine-intake] [--external-qualification-config PATH]",
+      "rustEntrypoint": "hepta-autonomous-supervisor-health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation|--require-current-machine-intake|--require-strict-machine-intake-reconciliation] [--external-qualification-config PATH]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -728,14 +728,23 @@
         {
           "path": "rust/crates/hepta-paper-service/src/machine_intake/mod.rs",
           "symbol": "inspect_machine_intake_status_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/supervisor_health.rs",
+          "symbol": "inspect_supervisor_health_strict_intake_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/strict_machine_intake_reconciliation.rs",
+          "symbol": "inspect_strict_machine_intake_reconciliation_v1"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/supervisor_health_parity.rs",
         "rust/crates/hepta-paper-service/tests/machine_intake_parity.rs",
-        "rust/crates/hepta-paper-service/tests/autonomous_provider_configuration_parity.rs"
+        "rust/crates/hepta-paper-service/tests/autonomous_provider_configuration_parity.rs",
+        "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs"
       ],
-      "remaining": "Native read-only resident health covers base/startup/machine reconciliation; current-machine-intake supports actual builtin V1 configuration, static intake, template closure/daily budgets, provider identity, generation-one SQLite admissions/counts/leases (including committed WAL) and resident identity comparison. Original Node builder/repository and CLI differential tests cover the supported paths. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings, strict reconciliation and fully-autonomous prerequisite chains remain unported. Process probes and independent production qualification remain external.",
+      "remaining": "Native read-only resident health covers base/startup/machine reconciliation. Current intake supports actual builtin V1 configuration/static files, closure and daily budgets, provider identity, generation-one admissions/counts/leases including committed WAL, and resident identity comparison. Strict mode consumes that actual intake once and verifies the original published nested/outer receipt hashes, expected acceptance/current identity bindings and inspection clock, with real Node publisher/reader and binary differential tests. It intentionally rejects the incumbent falsy-JSON false-ready bug. Both are diagnostics, not cycle-execution or authority proofs. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings, publisher/lifecycle execution and fully-autonomous prerequisite chains remain unported. Process probes and independent production qualification remain external.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/supervisor_health.rs",
         "rust/crates/hepta-paper-service/src/state_database_inventory/snapshot.rs",
@@ -748,7 +757,8 @@
         "rust/crates/hepta-paper-service/src/machine_intake/contract.rs",
         "rust/crates/hepta-paper-service/src/machine_intake/dataset.rs",
         "rust/crates/hepta-paper-service/src/machine_intake/status.rs",
-        "rust/crates/hepta-paper-service/src/machine_intake/retry_time.rs"
+        "rust/crates/hepta-paper-service/src/machine_intake/retry_time.rs",
+        "rust/crates/hepta-paper-service/src/strict_machine_intake_reconciliation.rs"
       ],
       "testCases": [
         {
@@ -810,6 +820,22 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/machine_intake_parity.rs",
           "symbol": "original_persisted_retry_time_spellings_match_without_rewriting_or_resorting_rows"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs",
+          "symbol": "actual_original_publisher_hashes_and_binding_failures_match_native_with_unchanged_source"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs",
+          "symbol": "parsed_falsy_json_is_refused_instead_of_preserving_original_false_readiness"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs",
+          "symbol": "original_inspection_clock_limits_do_not_invent_receipt_age_or_future_requirements"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs",
+          "symbol": "actual_strict_health_cli_matches_node_and_preserves_strict_exit_precedence"
         }
       ]
     },

@@ -3,7 +3,7 @@ name: rust-qualification-artifacts
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, codex/full-rust-replacement-progress-20260916]
   workflow_dispatch:
 
 permissions:

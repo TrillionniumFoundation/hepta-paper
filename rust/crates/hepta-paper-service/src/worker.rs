@@ -27,6 +27,9 @@ use std::{
     path::PathBuf,
 };
 
+#[path = "worker_recovery.rs"]
+mod recovery;
+
 /// Explicit backend: native Rust or a pinned process, never a silent fallback.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -305,11 +308,21 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
     ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
         // Exact reservations remain held for the whole dependency wave. Bounded
         // sequential dispatch is conservative; parallel workers require host admission.
+        let guard = recovery::DispatchGuardV1::acquire(&self.objects)
+            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
         requests
             .iter()
             .map(|request| {
-                self.execute_one(request)
-                    .map_err(|_| ControlPlaneError::ExecutionInvalid)
+                guard
+                    .validate()
+                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+                let result = self
+                    .execute_one(request)
+                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+                guard
+                    .validate()
+                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+                Ok(result)
             })
             .collect()
     }
@@ -406,6 +419,7 @@ fn run_process(
 pub fn native_implementation_hash_v1() -> Result<Sha256Digest, ServiceError> {
     let mut h = Sha256::new();
     h.update(include_bytes!("worker.rs"));
+    h.update(include_bytes!("worker_recovery.rs"));
     h.update(include_bytes!("objects.rs"));
     h.update(native_business_implementation_hash_v1().as_bytes());
     format!("sha256:{}", hex::encode(h.finalize()))

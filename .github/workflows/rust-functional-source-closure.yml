@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - codex/full-rust-replacement-progress-20260916
 
 permissions:
   contents: read

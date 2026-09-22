@@ -63,3 +63,49 @@ Run from `rust`:
 ```sh
 cargo test -p hepta-control-plane --lib --locked
 ```
+
+
+## Existing service executor restart fence
+
+`hepta-paper-service::ServiceExecutorV1` now checks its existing durable
+`attempts/*.started` and `attempts/*.prepared` records before every dispatch
+batch, under a nonblocking exclusive flock on the existing attempts directory.
+It retains that descriptor for the entire dependency wave. All participating
+service instances use this same boundary: another plan, campaign or newly
+constructed owner cannot bypass an unmatched start left by an earlier owner.
+No second journal, recovery cursor or lock file is introduced. Maintenance still
+uses the existing state-access guard, which the object store retains.
+
+Admission refuses unknown filenames, non-private/symlink/hard-linked records,
+changed bytes/identities, malformed prepared records, mismatching start identities,
+and either an unmatched start or an orphan prepared record. Reads are bounded
+to 4096 records, 1 MiB per record and 16 MiB aggregate; capacity exhaustion is a
+refusal, not truncation or permission to delete history. Completed prepared
+records still pass the existing exact-request, result and actual CAS-byte
+verification before replay or commit. Pairing alone does not authenticate a
+prepared result or prove scientific validity. The linked native implementation
+digest includes the recovery source, so an older native configuration must be
+explicitly rebound rather than silently reinterpreted.
+
+This is a cooperative local service fence, not a replacement for the generic
+control-plane inspection guard or a production terminal observer. Old binaries
+and direct writers must be drained before enrollment. It never kills a worker,
+refunds uncertain resource consumption, deletes an intent, manufactures a
+terminal result or grants a writer/cutover capability. Existing prepared-only
+reconciliation can integrate a genuinely verified prepared result; a start
+without such a result remains blocked pending an independently observed terminal
+outcome and an owning reconciliation implementation. Keep the retained state
+for inspection rather than removing the start to force another execution.
+
+The additional real SQLite/CAS service regressions live in
+`hepta-paper-service/tests/native_business_service/dispatch_recovery.rs`. They
+cover a failed start followed by a changed-plan/new-owner attempt, an independent
+held directory lock, orphan/corrupt records and unknown residue. Existing tests
+retain the positive native build, exact replay and pre-intent capability denial.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test native_business_service
+```
+
+These source tests do not establish complete autonomous-research orchestration,
+installed principal isolation, target-host qualification or Node retirement.

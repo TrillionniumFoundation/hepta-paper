@@ -130,23 +130,28 @@ Adapters are temporary and have retirement work items.
 
 ## 6. Duplicate crate resolution
 
-Before production composition, adjacent Rust responsibilities receive one
-canonical decision, including:
+Adjacent Rust responsibilities now have explicit product-owner decisions:
 
-```text
-hepta-workspace vs hepta-workspace-authority
-hepta-readonly-store vs hepta-readonly-control
-hepta-compatibility vs hepta-legacy-compatibility
-```
+- `hepta-workspace` is the selected durable workspace product owner.
+  `hepta-workspace-authority` remains a standalone compatibility/reference
+  implementation and is absent from the registered product module and product
+  crate dependency graph.
+- `hepta-readonly-control` owns schema/format validation while
+  `hepta-readonly-store` owns physical immutable SQLite inspection and depends
+  on that control contract. This is a layered capability split, not competing
+  read owners.
+- `hepta-legacy-compatibility` owns production Node byte/JSON compatibility.
+  `hepta-compatibility` remains a Rust-draft/reference CLI surface and is not
+  selected by the compatibility product module or product control/service
+  crates.
+- `hepta-orchestration-kernel` remains a standalone compatibility/experimental
+  crate. Snapshot, candidate routing, scheduling/resource, observability and
+  performance product ownership is selected in `hepta-control-plane`; the
+  standalone crate is not re-exported by the product control plane.
 
-Allowed outcomes:
-
-- one public facade over private implementation crates;
-- explicit legacy-only verifier;
-- merge and retire;
-- distinct capability split documented by ADR.
-
-“Both remain available and callers choose” is not acceptable.
+The architecture gate enforces these selections. Compatibility crates may remain
+buildable for differential testing, but “both remain available and callers
+choose” is not an allowed product composition.
 
 ## 7. Data migration
 

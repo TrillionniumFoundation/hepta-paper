@@ -70,11 +70,11 @@ The [native business examples](NATIVE_BUSINESS_HANDOFF.md), [local workflow](LOC
 
 **Focused validation:** `node --test paper-core/tests/candidate-router.test.mjs`.
 
-**Additive orchestration API:** [`route_candidate_v1`](../../rust/crates/hepta-orchestration-kernel/src/router.rs).
+**Standalone compatibility API:** [`route_candidate_v1`](../../rust/crates/hepta-orchestration-kernel/src/router.rs).
 The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
 schema, limits, recovery and integration boundary. This additive Rust API filters, Pareto-reduces and scores a bounded five-axis integer tuple. The Node frontier collector retains contextual candidate semantics and deliberately avoids context-free Pareto deletion. They have different inputs, hashes and responsibilities; selecting the Rust API requires a reviewed mapping and currentness/hard-policy integration, not a type-name substitution.
 Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
-from `rust`; the re-export alone does not switch existing consumers.
+from `rust`; this standalone crate is not re-exported or selected by the product control plane.
 
 
 ## module.snapshot-builder
@@ -87,11 +87,11 @@ from `rust`; the re-export alone does not switch existing consumers.
 
 **Focused validation:** `node --test paper-core/tests/planning-snapshot-schema-conformance.test.mjs`.
 
-**Additive orchestration API:** [`build_planning_snapshot_v1`](../../rust/crates/hepta-orchestration-kernel/src/snapshot.rs).
+**Standalone compatibility API:** [`build_planning_snapshot_v1`](../../rust/crates/hepta-orchestration-kernel/src/snapshot.rs).
 The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
 schema, limits, recovery and integration boundary. This Rust function checks caller-supplied revision, barrier, component time and digest consistency. It neither opens a read transaction nor verifies payload bytes or producer identity. Its 256-component and 64 GiB declared-payload limits and distinct snapshot hash are separate from the registered Node snapshot schema. A real read owner and explicit compatibility adapter remain required.
 Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
-from `rust`; the re-export alone does not switch existing consumers.
+from `rust`; this standalone crate is not re-exported or selected by the product control plane.
 
 
 ## module.policy-engine
@@ -114,11 +114,11 @@ from `rust`; the re-export alone does not switch existing consumers.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
 
-**Additive orchestration API:** [`calibrate_predictions_v1`](../../rust/crates/hepta-orchestration-kernel/src/calibration.rs).
+**Standalone compatibility API:** [`calibrate_predictions_v1`](../../rust/crates/hepta-orchestration-kernel/src/calibration.rs).
 The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
 schema, limits, recovery and integration boundary. This additive Rust API computes integer calibration errors from bounded caller-supplied observations. It is distinct from the similarly named optimizer_v2 types and does not promote a planner or authenticate samples. The V1 report hash binds observations and policy ID but not numeric policy thresholds; a qualified integration must bind the complete policy separately with explicit versioning.
 Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
-from `rust`; the re-export alone does not switch existing consumers.
+from `rust`; this standalone crate is not re-exported or selected by the product control plane.
 
 
 ## module.resource-allocator
@@ -131,11 +131,11 @@ from `rust`; the re-export alone does not switch existing consumers.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
 
-**Additive orchestration API:** [`ResourceLedgerV1`](../../rust/crates/hepta-orchestration-kernel/src/resource.rs).
+**Standalone compatibility API:** [`ResourceLedgerV1`](../../rust/crates/hepta-orchestration-kernel/src/resource.rs).
 The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
 schema, limits, recovery and integration boundary. This in-memory Rust ledger checks hierarchical integer budgets, individual scope generations and prepare/commit/finalize/cancel transitions. Commit time must be within the inclusive creation/expiry interval; expired committed reservations remain charged as ambiguous. It has no durable load/replay or physical CPU/GPU enforcement and is separate from the control-plane durable lease ledger.
 Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
-from `rust`; the re-export alone does not switch existing consumers.
+from `rust`; this standalone crate is not re-exported or selected by the product control plane.
 
 
 ## module.node-control-plane
@@ -381,11 +381,11 @@ durable service. It does not establish data provenance or independent replicatio
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
 
-**Additive orchestration API:** [`TelemetryAggregatorV1`](../../rust/crates/hepta-orchestration-kernel/src/telemetry.rs).
+**Standalone compatibility API:** [`TelemetryAggregatorV1`](../../rust/crates/hepta-orchestration-kernel/src/telemetry.rs).
 The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
 schema, limits, recovery and integration boundary. This Rust accumulator accepts only closed labels/event classes and produces bounded counters and per-bucket latency counts. It does not persist raw events, implement retention or expose the existing control-plane observability journal. Bucket counts are non-cumulative; exporters must explicitly convert semantics. The handoff specifies allowed fields, cardinality, clock/error behavior and hash identity.
 Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
-from `rust`; the re-export alone does not switch existing consumers.
+from `rust`; this standalone crate is not re-exported or selected by the product control plane.
 
 
 ## module.performance-qualification
@@ -398,11 +398,11 @@ from `rust`; the re-export alone does not switch existing consumers.
 
 **Focused validation:** `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane`.
 
-**Additive orchestration API:** [`qualify_performance_v1`](../../rust/crates/hepta-orchestration-kernel/src/performance.rs).
+**Standalone compatibility API:** [`qualify_performance_v1`](../../rust/crates/hepta-orchestration-kernel/src/performance.rs).
 The [detailed Rust contract](../../rust/crates/hepta-orchestration-kernel/HANDOFF.md) documents its separate
 schema, limits, recovery and integration boundary. This pure Rust function computes integer median, nearest-rank p95, throughput and regression from supplied samples. It bounds the complete workload/observation sets before map construction, binds supplied subject digests and keeps productionAuthorityGranted false. It does not run a benchmark, observe binary provenance or consume independent target-host signatures; it is separate from the existing control-plane performance evaluator.
 Focused source validation: `cargo test -p hepta-orchestration-kernel --locked`
-from `rust`; the re-export alone does not switch existing consumers.
+from `rust`; this standalone crate is not re-exported or selected by the product control plane.
 
 
 ## module.compatibility-kernel

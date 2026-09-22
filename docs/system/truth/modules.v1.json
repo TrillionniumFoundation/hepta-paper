@@ -463,7 +463,6 @@
       "state": "source_implemented",
       "activation": "disabled",
       "paths": [
-        "rust/crates/hepta-compatibility",
         "rust/crates/hepta-legacy-compatibility"
       ],
       "capabilityIds": [

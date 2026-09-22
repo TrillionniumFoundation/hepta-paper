@@ -2649,7 +2649,7 @@
     },
     {
       "id": "operator/autonomous-research",
-      "rustEntrypoint": "hepta-paper-rust autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--campaign-id ID] [--launch-mode local-run|production-run|golden-bootstrap] [--require-full-ready]",
+      "rustEntrypoint": "hepta-paper-rust autonomous-research --action prepare|launch|status|resume|cancel|converge --paper-id ID [--campaign-id ID] [--launch-mode local-run|production-run|golden-bootstrap] [--workflow-definition PATH] [--workflow-state PATH --definition-hash sha256:... --through-steps N --expected-revision N --now-unix-ms N] [--require-full-ready]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -2663,20 +2663,26 @@
         },
         {
           "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
-          "symbol": "inspect_autonomous_research_v1"
+          "symbol": "execute_autonomous_research_v1"
         },
         {
-          "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
-          "symbol": "execute_autonomous_research_v1"
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "initialize_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_v1"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/autonomous_research_route.rs"
+        "rust/crates/hepta-paper-service/tests/autonomous_research_route.rs",
+        "rust/crates/hepta-paper-service/tests/local_workflow.rs"
       ],
-      "remaining": "Rust now owns strict action/launch-mode/identity parsing, canonical usage metadata and a fail-closed diagnostic report that never persists campaign state, executes a provider, performs network/external action, or claims research readiness. Full Node parity still requires durable campaign/DAG persistence, bounded worker/provider execution, budgets and leases, dataset and formal review composition, qualification renewal, resume/recovery semantics, all incumbent options/environment modes and independent acceptance.",
+      "remaining": "Rust now routes local/shadow autonomous research through the existing durable LocalWorkflowV1 owner: prepare creates the SQLite/CAS campaign, launch/converge advance bounded steps through ServiceExecutorV1 and the commit sequencer, status reconstructs durable progress in a fresh process, and resume/cancel use revision-fenced lifecycle transitions. Production-run remains fail-closed. Full Node parity still requires native construction of the complete research DAG from operator inputs, qualified live model/provider workers, dataset/formal/review policy composition, external qualification renewal, the remaining incumbent option/environment modes, target-host acceptance, shadow/canary evidence and final Node authority retirement.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
-        "rust/crates/hepta-paper-service/src/autonomous_research.rs"
+        "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+        "rust/crates/hepta-paper-service/src/workflow.rs"
       ],
       "testCases": [
         {
@@ -2686,6 +2692,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_research_route.rs",
           "symbol": "launch_mode_and_identity_are_strict"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "autonomous_research_cli_uses_durable_workflow_and_recovers_across_processes"
         }
       ]
     },

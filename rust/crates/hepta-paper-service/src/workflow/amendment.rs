@@ -239,6 +239,18 @@ pub fn amend_local_workflow_v1(
     request: WorkflowAmendmentV1,
     now: u64,
 ) -> Result<WorkflowAmendmentReceiptV1, WorkflowError> {
+    amend_local_workflow_with_clock_v1(root, expected_definition, request, &mut || Ok(now))
+}
+
+/// Live-clock amendment through the same workflow lock and SQLite owner.
+/// New writes must remain inside the previous lease throughout the transaction;
+/// exact replay needs no clock and can never renew or reapply a budget delta.
+pub fn amend_local_workflow_with_clock_v1(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    request: WorkflowAmendmentV1,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+) -> Result<WorkflowAmendmentReceiptV1, WorkflowError> {
     if request.version != 1 || !identifier(&request.operation_id) || request.steps.len() > MAX_STEPS
     {
         return Err(WorkflowError::Definition);
@@ -269,6 +281,17 @@ pub fn amend_local_workflow_v1(
         return Ok(receipt(record));
     }
     let active = &observed.active_definition;
+    let mut last = observed.clock_floor;
+    let mut clock = || {
+        let now = observe()
+            .map_err(|_| hepta_campaign_writer::CampaignWriterError::InvalidWriterLease)?;
+        if now < last || now >= active.template.writer_lease.expires_at_unix_ms {
+            return Err(hepta_campaign_writer::CampaignWriterError::InvalidWriterLease);
+        }
+        last = now;
+        Ok(now)
+    };
+    let now = clock().map_err(|_| WorkflowError::Conflict)?;
     if hash(active)? != *expected_definition
         || request.expected_revision != observed.campaign.revision
         || matches!(
@@ -343,7 +366,7 @@ pub fn amend_local_workflow_v1(
     .map_err(|_| WorkflowError::History)?;
     let encoded = serde_json::to_string(&change).map_err(|_| WorkflowError::Definition)?;
     let applied = store
-        .apply_local_workflow_change(&proposal.campaign_id, &encoded, now)
+        .apply_local_workflow_change_with_clock(&proposal.campaign_id, &encoded, now, &mut clock)
         .map_err(|_| WorkflowError::Conflict)?;
     let applied: AppliedLocalWorkflowChangeV1 =
         serde_json::from_str(&applied).map_err(|_| WorkflowError::History)?;

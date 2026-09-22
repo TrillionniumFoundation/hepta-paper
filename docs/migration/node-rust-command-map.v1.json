@@ -5656,20 +5656,43 @@
         {
           "path": "rust/crates/hepta-paper-service/src/workflow.rs",
           "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
+          "symbol": "amend_local_workflow_with_clock_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
+          "symbol": "apply_local_workflow_change_with_clock"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/local_workflow.rs"
+        "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+        "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
       ],
-      "remaining": "Campaign inspection and lifecycle are local bounded primitives; full Node campaign command/effect parity is unimplemented.",
+      "remaining": "Campaign inspection and lifecycle are local bounded primitives; full Node campaign command/effect parity is unimplemented. Existing local CLI mutation modes now use live system-clock admission when NOW is omitted; explicit NOW remains a deterministic drill. Amendment rechecks the previous lease after the SQLite lock and before COMMIT, preserves atomic rollback, and returns clock-free exact replay. This is explicit renewal, not automatic lease renewal or physical worker cancellation.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
-        "rust/crates/hepta-paper-service/src/workflow.rs"
+        "rust/crates/hepta-paper-service/src/workflow.rs",
+        "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
+        "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs"
       ],
       "testCases": [
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "local_read_commands_execute_actual_binary_and_reject_wrong_query"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "symbol": "workflow_amendment_revalidates_old_lease_and_preserves_history_on_late_failure"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "symbol": "workflow_live_amendment_replays_without_clock_and_continues_after_old_expiry"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "symbol": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
         }
       ]
     },

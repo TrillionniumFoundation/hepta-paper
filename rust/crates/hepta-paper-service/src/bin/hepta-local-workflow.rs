@@ -1,10 +1,13 @@
 //! Explicit local-only workflow command surface; never a production launcher.
+use hepta_control_plane::ControlPlaneError;
 use hepta_paper_service::workflow::{
     LocalWorkflowV1, WorkflowActionV1, WorkflowAmendmentV1, WorkflowInspectionRequestV1,
-    WorkflowListRequestV1, amend_local_workflow_v1, initialize_local_workflow_v1,
-    inspect_local_workflow_v1, list_local_workflows_v1, operate_local_workflow_v1,
+    WorkflowListRequestV1, amend_local_workflow_v1, amend_local_workflow_with_clock_v1,
+    initialize_local_workflow_v1, inspect_local_workflow_v1, list_local_workflows_v1,
+    operate_local_workflow_v1, operate_local_workflow_with_clock_v1,
 };
 use nix::fcntl::OFlag;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, fs::OpenOptions, io::Read, os::unix::fs::OpenOptionsExt, path::Path};
 
 fn read_request<T: serde::de::DeserializeOwned>(
@@ -23,6 +26,13 @@ fn read_request<T: serde::de::DeserializeOwned>(
         return Err("request exceeds bound".into());
     }
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+fn observe_now() -> Result<u64, ControlPlaneError> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+    u64::try_from(elapsed.as_millis()).map_err(|_| ControlPlaneError::PersistenceInvalid)
 }
 
 fn execute() -> Result<(), Box<dyn std::error::Error>> {
@@ -53,7 +63,7 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if args.len() < 3 {
-        return Err("usage: init DEFINITION | status STATE HASH | advance STATE HASH THROUGH NOW | pause|resume|cancel STATE HASH REVISION NOW | amend STATE HASH REQUEST NOW | list REQUEST | events STATE HASH REQUEST | logs STATE HASH OFFSET LIMIT | slo STATE HASH".into());
+        return Err("usage: init DEFINITION | status STATE HASH | advance STATE HASH THROUGH [NOW] | pause|resume|cancel STATE HASH REVISION [NOW] | amend STATE HASH REQUEST [NOW] | list REQUEST | events STATE HASH REQUEST | logs STATE HASH OFFSET LIMIT | slo STATE HASH".into());
     }
     let definition_hash = args[2].parse()?;
     let inspection = match args[0].as_str() {
@@ -82,7 +92,7 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    if args[0] == "amend" && args.len() == 5 {
+    if args[0] == "amend" && matches!(args.len(), 4 | 5) {
         let file = OpenOptions::new()
             .read(true)
             .custom_flags((OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK).bits())
@@ -96,13 +106,51 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
             return Err("request exceeds bound".into());
         }
         let request: WorkflowAmendmentV1 = serde_json::from_slice(&bytes)?;
-        let receipt = amend_local_workflow_v1(
-            Path::new(&args[1]),
-            &definition_hash,
-            request,
-            args[4].parse()?,
-        )?;
+        let receipt = if args.len() == 5 {
+            // Explicit time remains the deterministic local-drill compatibility API.
+            amend_local_workflow_v1(
+                Path::new(&args[1]),
+                &definition_hash,
+                request,
+                args[4].parse()?,
+            )?
+        } else {
+            amend_local_workflow_with_clock_v1(
+                Path::new(&args[1]),
+                &definition_hash,
+                request,
+                &mut observe_now,
+            )?
+        };
         println!("{}", serde_json::to_string(&receipt)?);
+        return Ok(());
+    }
+
+    if args.len() == 4 {
+        let action = match args[0].as_str() {
+            "advance" => WorkflowActionV1::Advance {
+                through_steps: args[3].parse()?,
+            },
+            "pause" => WorkflowActionV1::Pause {
+                expected_revision: args[3].parse()?,
+            },
+            "resume" => WorkflowActionV1::Resume {
+                expected_revision: args[3].parse()?,
+            },
+            "cancel" => WorkflowActionV1::Cancel {
+                expected_revision: args[3].parse()?,
+            },
+            _ => return Err("unsupported live local workflow command".into()),
+        };
+        println!(
+            "{}",
+            serde_json::to_string(&operate_local_workflow_with_clock_v1(
+                Path::new(&args[1]),
+                &definition_hash,
+                action,
+                &mut observe_now,
+            )?)?
+        );
         return Ok(());
     }
 

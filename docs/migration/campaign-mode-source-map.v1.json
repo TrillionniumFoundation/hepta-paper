@@ -164,7 +164,7 @@
     {
       "nodeAction": "resume",
       "scope": "partial_local_source",
-      "rustCommand": "hepta-local-workflow resume STATE HASH REVISION NOW; amend STATE HASH REQUEST NOW",
+      "rustCommand": "hepta-local-workflow resume STATE HASH REVISION [NOW]; amend STATE HASH REQUEST [NOW]",
       "callChain": [
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
@@ -172,15 +172,15 @@
         },
         {
           "path": "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
-          "symbol": "amend_local_workflow_v1"
+          "symbol": "amend_local_workflow_with_clock_v1"
         },
         {
           "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
-          "symbol": "apply_local_workflow_change"
+          "symbol": "apply_local_workflow_change_with_clock"
         },
         {
           "path": "rust/crates/hepta-paper-service/src/workflow.rs",
-          "symbol": "operate_local_workflow_v1"
+          "symbol": "operate_local_workflow_with_clock_v1"
         },
         {
           "path": "rust/crates/hepta-paper-service/src/workflow.rs",
@@ -188,21 +188,25 @@
         },
         {
           "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
-          "symbol": "set_campaign_state"
+          "symbol": "set_campaign_state_with_clock"
         }
       ],
       "tests": [
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "budget_and_lease_amendment_replay_is_exact_and_history_survives_old_expiry"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "symbol": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
         }
       ],
-      "remaining": "Explicit local budget addition/renewal and resume. Node operational-stop and live-provider semantics are not equivalent."
+      "remaining": "Explicit local budget addition/renewal and resume. Node operational-stop and live-provider semantics are not equivalent. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority."
     },
     {
       "nodeAction": "extend",
       "scope": "partial_local_source",
-      "rustCommand": "hepta-local-workflow amend STATE HASH REQUEST NOW",
+      "rustCommand": "hepta-local-workflow amend STATE HASH REQUEST [NOW]",
       "callChain": [
         {
           "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
@@ -210,20 +214,24 @@
         },
         {
           "path": "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
-          "symbol": "amend_local_workflow_v1"
+          "symbol": "amend_local_workflow_with_clock_v1"
         },
         {
           "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
-          "symbol": "apply_local_workflow_change"
+          "symbol": "apply_local_workflow_change_with_clock"
         }
       ],
       "tests": [
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "appended_step_executes_once_without_replaying_committed_prefix"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "symbol": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
         }
       ],
-      "remaining": "Append before terminal completion. A rejected native structural review can receive an explicitly supplied same-rubric repair suffix, not an autonomous model round."
+      "remaining": "Append before terminal completion. A rejected native structural review can receive an explicitly supplied same-rubric repair suffix, not an autonomous model round. Omitted NOW uses the host clock at owner/SQL boundaries; explicit NOW is local-drill compatibility, not current authority."
     },
     {
       "nodeAction": "cancel",

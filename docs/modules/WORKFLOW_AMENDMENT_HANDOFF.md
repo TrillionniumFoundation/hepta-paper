@@ -19,10 +19,25 @@ remain separate implementation and evaluation requirements.
 amend_local_workflow_v1(root, expected_definition_hash, request, now_unix_ms)
   -> WorkflowAmendmentReceiptV1
 
-hepta-local-workflow amend STATE CURRENT_DEFINITION_HASH REQUEST.json NOW_MS
+hepta-local-workflow amend STATE CURRENT_DEFINITION_HASH REQUEST.json [NOW_MS]
 hepta-local-workflow status STATE NEW_DEFINITION_HASH
-hepta-local-workflow advance STATE NEW_DEFINITION_HASH ABSOLUTE_THROUGH_STEPS NOW_MS
+hepta-local-workflow advance STATE NEW_DEFINITION_HASH ABSOLUTE_THROUGH_STEPS [NOW_MS]
 ```
+
+Without the optional `NOW_MS`, amendment, advance and revision-bound
+pause/resume/cancel sample the real system clock through the existing owners.
+Explicit `NOW_MS` preserves the deterministic local-drill interface only; it
+must not be confused with live lease admission. Read-only status needs no clock.
+
+`amend_local_workflow_with_clock_v1(root, expected_definition_hash, request, clock)`
+shares the same workflow lock, immutable definition, history and SQLite owner.
+New amendments sample after history validation, again after `BEGIN IMMEDIATE`,
+and immediately before `COMMIT`. The final check uses the **previous** lease,
+not the newly staged expiry, so a renewal cannot authorize its own late write.
+Expiry, clock rollback or observation failure rolls back the definition, budget,
+lease, revision and event together. Exact replay remains clock-free and returns
+the original receipt without renewing again. These are system-time observations,
+not independent time attestation, automatic renewal or in-flight cancellation.
 
 The command uses bounded regular-file JSON input and prints a bounded receipt.
 The receipt contains request/old-definition/new-definition hashes, original
@@ -148,7 +163,7 @@ Tests cover budget/lease/definition atomicity, event-insert rollback, response-l
 replay, event-bound receipt corruption, stale/expired/terminal/pending denial,
 prefix preservation, old-expiry continuation after explicit renewal, same-rubric
 repair, repeated rejection, no rejected-manuscript packaging, redacted CLI and
-actual SIGKILL after amendment COMMIT. Existing workflow and workspace suites stay
+actual SIGKILL after amendment COMMIT. Live-clock cases additionally test old-lease expiry after staged renewal, rollback/clock failure, exact clock-free replay, continuation beyond the old expiry, and actual CLI renewal/advance/pause/resume/cancel without a supplied time. Existing workflow and workspace suites stay
 required on the exact new source head.
 
 ## Migration and remaining acceptance

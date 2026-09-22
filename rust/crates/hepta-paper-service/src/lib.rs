@@ -350,3 +350,7 @@ pub mod online_writer_static;
 pub mod workspace_status;
 
 pub mod topic_producer_profile;
+
+pub mod topic_producer_generation;
+
+pub mod topic_producer_canary;

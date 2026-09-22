@@ -185,3 +185,8 @@ impl TopicProducerProfileError {
         }
     }
 }
+
+/// Crate-internal pure builtin contract check; no filesystem observation.
+pub(crate) fn verify_serialized_profile(value: &Value) -> Result<()> {
+    contract::verify(value)
+}

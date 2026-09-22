@@ -159,3 +159,7 @@ cargo test -p hepta-paper-service --lib topic_producer_profile --locked
 ```
 
 The oracle imports the actual original builder, strict dataset manifest and loader. It does not import the existing topic-producer fixture that installs authority resolution hooks. Per-commit validation archives record executed outcomes, selected source hashes and any amendments; this specification alone is not a passing test receipt or production acceptance.
+
+## Separately callable recorded generation contracts
+
+The sibling [generation/capability module](../topic_producer_generation/HANDOFF.md) now reuses this module's builtin serialized contract through a crate-private pure entry. It reconstructs recorded generation data without claiming this loader's actual source observation. The sibling [canary journal parser](../topic_producer_canary/HANDOFF.md) supplies the remaining recorded row-accounting predicates. Actual producer SQLite status and V2 health composition remain open; the loader itself does not execute generation, canaries or mutations.

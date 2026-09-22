@@ -1,4 +1,4 @@
-name: transient-development-environment
+name: transient-owner-binding-validation
 
 on:
   push:
@@ -9,67 +9,211 @@ permissions:
   contents: read
 
 concurrency:
-  group: transient-development-environment
+  group: transient-owner-binding-validation
   cancel-in-progress: true
 
 env:
   SOURCE_COMMIT: b4ae09fbbbf2bec9e6b0f86538bd26f097f1bd9e
   SOURCE_TREE: d435f2345c33aa41f22094812e6d551e92587aab
+  REVIEW_BASE: 22aecdc703a2cf295ff295c312fa9b56c7d7d428
+  PYTHONDONTWRITEBYTECODE: '1'
+  RUSTFLAGS: '-Dunsafe-code'
+  CARGO_TERM_COLOR: never
 
 jobs:
-  public-build-inputs:
+  concrete-owner-fix:
     if: github.repository == 'TrillionniumFoundation/hepta-paper' && github.ref == 'refs/heads/codex/clock-validation-8f8be6d5'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    outputs:
+      candidate: ${{ steps.candidate.outputs.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ env.SOURCE_COMMIT }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.1'
-      - name: Fetch the exact public build inputs
+      - name: Bind the unique concrete SQLite owner without weakening the verifier
+        id: candidate
         shell: bash
         run: |
           set -euo pipefail
+          out="$RUNNER_TEMP/owner-validation"
+          mkdir -p "$out"
+          echo "EVIDENCE_ROOT=$out" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/owner-validation-target" >> "$GITHUB_ENV"
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
-          test "$(node --version)" = v22.23.1
-          npm ci --ignore-scripts --no-audit --no-fund
-          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
-          rustup default 1.98.0
-          cargo fetch --manifest-path rust/Cargo.toml --locked
-          cargo metadata --manifest-path rust/Cargo.toml --locked --offline --format-version 1 --no-deps > "$RUNNER_TEMP/cargo-metadata.json"
-      - name: Export only compiler files and public dependency caches
+          python3 - <<'PY'
+          import copy, json, os, pathlib, re, subprocess
+          files = [
+              'docs/system/evidence/repository-source-implementation-v1.json',
+              'docs/system/evidence/rust-functional-source-closure-v1.json',
+          ]
+          path = 'rust/crates/hepta-control-plane/src/commit.rs'
+          old = {'kind': 'function', 'name': 'commit_batch_with_clock'}
+          new = {'kind': 'type', 'name': 'SqliteCommitSequencerV1'}
+          text = pathlib.Path(path).read_text()
+          assert len(re.findall(r'^pub struct SqliteCommitSequencerV1\s*\{', text, re.M)) == 1
+          assert 'impl CommitSequencerV1 for SqliteCommitSequencerV1' in text
+          edits = []
+          for name in files:
+              source = pathlib.Path(name).read_text()
+              document = json.loads(source)
+              before = copy.deepcopy(document)
+              for key, bundle in document['bundles'].items():
+                  for entry in bundle['files']:
+                      if entry['path'] != path or old not in entry['symbols']:
+                          continue
+                      assert entry['role'] == 'implementation'
+                      assert entry['gitBlob'] == '7a22d88a87010f180b1e0be2a604d1daeb227b91'
+                      assert entry['symbols'] == [old]
+                      entry['symbols'] = [new]
+                      edits.append({'file': name, 'bundle': key, 'path': path, 'old': old, 'new': new})
+              if document != before:
+                  # Existing exact-file hashes, test selectors, timeouts and all
+                  # status/authority claims are unchanged. Only the ambiguous
+                  # function label is replaced by the existing concrete owner.
+                  restored = copy.deepcopy(document)
+                  for change in edits:
+                      if change['file'] == name:
+                          for entry in restored['bundles'][change['bundle']]['files']:
+                              if entry['path'] == path:
+                                  entry['symbols'] = [old]
+                  assert restored == before
+                  pathlib.Path(name).write_text(json.dumps(document, ensure_ascii=False, separators=(',', ':'))+'\n')
+          assert 1 <= len(edits) <= 2
+          assert any(e['file'] == files[0] and e['bundle'] == 'control-plane-execution-source' for e in edits)
+          (pathlib.Path(os.environ['RUNNER_TEMP'])/'owner-validation/owner-edit.json').write_text(json.dumps(edits, indent=2)+'\n')
+          print(json.dumps(edits, indent=2))
+          subprocess.run(['git', 'add', '--', *files], check=True)
+          changed = subprocess.check_output(['git','diff','--cached','--name-only'], text=True).splitlines()
+          assert set(changed) == {e['file'] for e in edits}
+          assert subprocess.check_output(['git','diff','--name-only'], text=True) == ''
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(evidence): bind clock commits to the concrete SQLite sequencer owner' -m 'The sealed trait default and SQLite implementation legitimately share commit_batch_with_clock. Bind their unchanged exact source file to the unique SqliteCommitSequencerV1 owner rather than an ambiguous unqualified method. Preserve all clock test identities, selectors, byte hashes, timeouts and strict uniqueness/cfg checks. No runtime code, acceptance or authority is changed.'
+          test "$(git rev-parse HEAD^)" = "$SOURCE_COMMIT"
+          test ! -e .github/workflows/transient-clock-validation.yml
+          git rev-parse HEAD HEAD^{tree} > "$out/candidate.txt"
+          git diff "$SOURCE_COMMIT" HEAD --binary > "$out/candidate.patch"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Install pinned Rust and verify canonical source bindings
         shell: bash
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/public-development-inputs"
-          mkdir -p "$out"
-          toolchain="$(dirname "$(dirname "$(rustup which rustc)")")"
-          # No home directory, Git metadata, authentication config, environment
-          # dump, key, credential, production state or runtime authority is exported.
-          tar -czf "$out/rust-toolchain.tar.gz" -C "$toolchain" bin lib libexec
-          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-          tar --exclude=registry/index/github.com-* -czf "$out/cargo-registry.tar.gz" -C "$cargo_home" registry
-          tar -czf "$out/node-modules.tar.gz" node_modules
-          gzip -c "$(command -v node)" > "$out/node.gz"
-          cp "$RUNNER_TEMP/cargo-metadata.json" "$out/cargo-metadata.json"
-          git rev-parse HEAD HEAD^{tree} > "$out/source.txt"
-          sha256sum rust/Cargo.lock package-lock.json > "$out/source-locks.sha256"
-          rustc --version --verbose > "$out/rustc.txt"
-          cargo --version --verbose > "$out/cargo.txt"
-          node --version > "$out/node.txt"
+          test "$(node --version)" = v22.23.1
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          node docs/tools/generate-node-rust-gap-report.mjs --check
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 -B docs/rust/tools/validate-program-truth.py
+          node --test --test-concurrency=1 paper-core/tests/source-implementation-evidence.test.mjs
+          node paper-core/tests/source-implementation-evidence-hardening.mjs --self-test
+      - name: Run the actual strict source-ownership and test-discovery gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_bin="$(realpath "$(command -v node)")"
+          cargo_bin="$(rustup which cargo)"
+          export PATH="$(dirname "$node_bin"):$(dirname "$cargo_bin"):/usr/bin:/bin"
+          node paper-core/tests/source-implementation-evidence-hardening.mjs \
+            --base "$REVIEW_BASE" --target "$(git rev-parse HEAD)" \
+            --receipt "$EVIDENCE_ROOT/hardening.json" \
+            2>&1 | tee "$EVIDENCE_ROOT/hardening.log"
+      - name: Execute unchanged source and functional owner tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_bin="$(realpath "$(command -v node)")"
+          cargo_bin="$(rustup which cargo)"
+          export PATH="$(dirname "$node_bin"):$(dirname "$cargo_bin"):/usr/bin:/bin"
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --expected-head "$(git rev-parse HEAD)" --expected-tree "$(git rev-parse HEAD^{tree})" \
+            --execute --receipt "$EVIDENCE_ROOT/source-execution.json" \
+            2>&1 | tee "$EVIDENCE_ROOT/source-execution.log"
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --evidence docs/system/evidence/rust-functional-source-closure-v1.json \
+            --expected-head "$(git rev-parse HEAD)" --expected-tree "$(git rev-parse HEAD^{tree})" \
+            --execute --receipt "$EVIDENCE_ROOT/functional-execution.json" \
+            2>&1 | tee "$EVIDENCE_ROOT/functional-execution.log"
           git diff --exit-code
           git diff --cached --exit-code
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          (cd "$out" && sha256sum ./* > SHA256SUMS)
+      - name: Publish only the tested temporary result ref
+        shell: bash
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export GIT_ASKPASS="$RUNNER_TEMP/owner-result-askpass"
+          trap 'rm -f "$GIT_ASKPASS"' EXIT
+          printf '%s\n' '#!/bin/sh' 'case "$1" in *Username*) printf "%s\n" x-access-token;; *) printf "%s\n" "$PUSH_TOKEN";; esac' > "$GIT_ASKPASS"
+          chmod 700 "$GIT_ASKPASS"
+          export GIT_TERMINAL_PROMPT=0
+          ref="codex/owner-binding-validated-$GITHUB_RUN_ID"
+          git push origin "HEAD:refs/heads/$ref"
+          printf '%s\n' "$ref" > "$EVIDENCE_ROOT/result-ref.txt"
+          printf 'Tested candidate `%s`; full PR checks and independent review remain required.\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
-          name: public-development-inputs-${{ github.run_id }}
-          path: ${{ runner.temp }}/public-development-inputs
+          name: owner-binding-validation-${{ github.run_id }}
+          path: ${{ runner.temp }}/owner-validation
           if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
+          retention-days: 14
+
+  actual-tex-execution:
+    needs: concrete-owner-fix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      CANDIDATE: ${{ needs.concrete-owner-fix.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.CANDIDATE }}
+          persist-credentials: false
+      - name: Install the real TeX compiler and pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          mkdir -p "$RUNNER_TEMP/tex-execution"
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y texlive-latex-base
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          test -x /usr/bin/pdflatex
+          pdflatex --version > "$RUNNER_TEMP/tex-execution/tool.txt"
+          sha256sum "$(realpath /usr/bin/pdflatex)" > "$RUNNER_TEMP/tex-execution/tool.sha256"
+          git rev-parse HEAD HEAD^{tree} > "$RUNNER_TEMP/tex-execution/source.txt"
+      - name: Explicitly execute the installed-compiler test with no skip acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+            --test scientific_runtime actual_latex_compilation_produces_pdf_not_a_json_bundle \
+            -- --exact --ignored --nocapture \
+            2>&1 | tee "$RUNNER_TEMP/tex-execution/actual-tex.log"
+          grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/tex-execution/actual-tex.log"
+          git diff --exit-code
+          git diff --cached --exit-code
+          printf 'Actual TeX process/PDF source test passed on this disposable hosted runner; not target-host, scientific, submission or Node-retirement acceptance.\n' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: actual-tex-execution-${{ github.run_id }}
+          path: ${{ runner.temp }}/tex-execution
+          if-no-files-found: error
+          retention-days: 14

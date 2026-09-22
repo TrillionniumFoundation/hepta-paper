@@ -41,7 +41,8 @@ pub use process::{
     DurableGateError, DurableGatePolicyV1, GateAuthorityModeV1, GateEnvelopeIdentityV1,
     GateExecutableIdentityV1, GateProcessObservationV1, PreExecGateIdentityV1, ProcessLimitsV1,
     ProcessTerminationReason, ReleasedPreExecGateV1, observe_preexec_gate_process,
-    run_bounded_process, run_bounded_process_with_spawn_hook, spawn_blocked_preexec_gate,
+    run_bounded_process, run_bounded_process_with_cancellation,
+    run_bounded_process_with_spawn_hook, spawn_blocked_preexec_gate,
     terminate_journaled_preexec_gate,
 };
 pub use qualification::{

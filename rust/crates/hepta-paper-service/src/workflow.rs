@@ -6,7 +6,7 @@
 
 use crate::{
     NativeJobV1, ObjectStoreV1, ServiceError, ServiceRunV1, WorkerBindingV1,
-    run_service_with_clock_v1,
+    run_service_with_clock_and_cancellation_v1,
 };
 use hepta_campaign_writer::{
     CampaignSnapshotV1, CampaignStateV1, CampaignWriterPolicyV1, CampaignWriterStoreV1,
@@ -30,6 +30,10 @@ use std::{
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use thiserror::Error;
 
@@ -861,6 +865,25 @@ pub fn operate_local_workflow_with_clock_v1(
     action: WorkflowActionV1,
     observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
 ) -> Result<WorkflowProgressV1, WorkflowError> {
+    operate_local_workflow_with_clock_and_cancellation_v1(
+        root,
+        expected_definition,
+        action,
+        observe,
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+/// Sticky process interruption is observed at each dispatch/commit boundary and
+/// by the existing process-group supervisor. Persisted ambiguous attempts remain
+/// blocked after restart; interruption is not a terminal campaign transition.
+pub fn operate_local_workflow_with_clock_and_cancellation_v1(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    action: WorkflowActionV1,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<WorkflowProgressV1, WorkflowError> {
     let owner = private_root(root)?;
     let _guard = lock(root, owner)?;
     let definition: LocalWorkflowV1 =
@@ -882,8 +905,14 @@ pub fn operate_local_workflow_with_clock_v1(
     }
     let mut last = observed.clock_floor;
     let mut clock = || {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
         let now = observe()?;
-        if now < last || now >= definition.template.writer_lease.expires_at_unix_ms {
+        if cancelled.load(Ordering::Acquire)
+            || now < last
+            || now >= definition.template.writer_lease.expires_at_unix_ms
+        {
             return Err(ControlPlaneError::PersistenceInvalid);
         }
         last = now;
@@ -944,7 +973,11 @@ pub fn operate_local_workflow_with_clock_v1(
                     write_record(&path, &bytes(&config)?)?;
                 }
                 config.observed_at_unix_ms = now;
-                run_service_with_clock_v1(config, &mut clock)?;
+                run_service_with_clock_and_cancellation_v1(
+                    config,
+                    &mut clock,
+                    Arc::clone(&cancelled),
+                )?;
                 observed = history(&original, owner, &objects)?;
                 if observed.results.len() != index + 1 {
                     return Err(WorkflowError::History);

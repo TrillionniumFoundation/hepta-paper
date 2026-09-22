@@ -8,7 +8,11 @@
 
 use hepta_codex_protocol::Sha256Digest;
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 mod local;
 
@@ -221,7 +225,7 @@ pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Va
         || options.definition_hash.is_some()
         || options.amendment_file.is_some()
     {
-        return local::run(options, false);
+        return local::run(options, false, &Arc::new(AtomicBool::new(false)));
     }
     let campaign_id = options.campaign_id.clone().or_else(|| {
         options
@@ -259,12 +263,21 @@ pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Va
 }
 
 pub fn execute_autonomous_research_v1(options: &AutonomousResearchOptions) -> Value {
+    execute_autonomous_research_with_cancellation_v1(options, Arc::new(AtomicBool::new(false)))
+}
+
+/// The command's signal token is not serialized and cannot confer authority.
+/// Existing non-signal callers retain the same owner and explicit lifecycle API.
+pub fn execute_autonomous_research_with_cancellation_v1(
+    options: &AutonomousResearchOptions,
+    cancelled: Arc<AtomicBool>,
+) -> Value {
     if options.workflow_file.is_some()
         || options.workflow_root.is_some()
         || options.definition_hash.is_some()
         || options.amendment_file.is_some()
     {
-        return local::run(options, true);
+        return local::run(options, true, &cancelled);
     }
     inspect_autonomous_research_v1(options)
 }

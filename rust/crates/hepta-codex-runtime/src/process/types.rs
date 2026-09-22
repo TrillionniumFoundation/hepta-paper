@@ -114,6 +114,8 @@ pub struct BoundedProcessResultV1 {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum BoundedProcessError {
+    #[error("process cancellation requested before spawn")]
+    CancelledBeforeSpawn,
     #[error("bounded process limits are invalid")]
     InvalidLimits,
     #[error("executable and working directory must be absolute")]

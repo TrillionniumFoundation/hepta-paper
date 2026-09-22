@@ -339,9 +339,25 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
           "symbol": "autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "cancellation_before_dispatch_creates_no_attempt_and_status_stays_read_only"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "cancellation_after_preparation_preserves_commits_and_replays_without_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "sigint_stops_real_worker_group_and_blocks_ambiguous_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch"
         }
       ],
-      "remaining": "Terminal local cancellation between steps; no immediate child kill or remote reconciliation. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority."
+      "remaining": "Terminal local cancellation between steps; no immediate child kill or remote reconciliation. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority. SIGINT/SIGTERM of an active autonomous CLI is now a separate interruption path through the same process-group owner and commit boundaries. Explicit Cancel remains revision-bound; interrupted unprepared work stays pending and cannot be relaunched, settled or refunded merely by cancelling the campaign. Native-kernel preemption, escaped-process containment and remote-effect reconciliation are not established."
     },
     {
       "nodeAction": "cancel-node",
@@ -449,6 +465,26 @@
         {
           "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
           "symbol": "read_current_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+          "symbol": "execute_autonomous_research_with_cancellation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_with_clock_and_cancellation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/lib.rs",
+          "symbol": "run_service_with_clock_and_cancellation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/worker.rs",
+          "symbol": "run_process"
+        },
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+          "symbol": "run_bounded_process_with_cancellation"
         }
       ],
       "tests": [
@@ -463,9 +499,25 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
           "symbol": "autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "cancellation_before_dispatch_creates_no_attempt_and_status_stays_read_only"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "cancellation_after_preparation_preserves_commits_and_replays_without_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "sigint_stops_real_worker_group_and_blocks_ambiguous_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch"
         }
       ],
-      "remaining": "Only the selected local/shadow native or trusted process chain. No real model/experimental research or external delivery claim. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority."
+      "remaining": "Only the selected local/shadow native or trusted process chain. No real model/experimental research or external delivery claim. The autonomous persisted-reference caller reuses this owner with an explicit expected current definition hash; it does not copy private definitions, silently accept a new hash, renew automatically or grant production authority. SIGINT/SIGTERM of an active autonomous CLI is now a separate interruption path through the same process-group owner and commit boundaries. Explicit Cancel remains revision-bound; interrupted unprepared work stays pending and cannot be relaunched, settled or refunded merely by cancelling the campaign. Native-kernel preemption, escaped-process containment and remote-effect reconciliation are not established."
     },
     {
       "nodeAction": "gc",

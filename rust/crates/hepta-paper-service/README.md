@@ -420,3 +420,15 @@ which returns a bounded standalone SQLite artifact built in new memory from the
 same verified snapshot. All original rowids/receipt TEXT and heads are retained;
 native format/key identity are added. There is no destination path or source
 write, and the artifact does not provide durable publication or service cutover.
+
+### Autonomous CLI interruption
+
+The autonomous command now propagates its SIGINT/SIGTERM flag through the same
+workflow, executor and bounded process-group owner. Cancellation observed before
+spawn or a commit boundary denies further work; an active process group is
+terminated and reaped by the existing runtime. Earlier commits and prepared CAS
+bytes are retained. Unprepared started work remains pending across restart, even
+when a later explicit Cancel closes future admission. See the
+[local workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#autonomous-cli-process-interruption)
+for signal/commit races, the distinction from native-kernel preemption or remote
+settlement, and actual binary regressions. This does not activate production.

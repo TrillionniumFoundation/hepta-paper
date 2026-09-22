@@ -111,7 +111,8 @@ status never repairs missing artifacts. Cancel may stop later dispatch but does
 not erase ambiguity or refund uncertain work.
 
 Pause/cancel are BETWEEN-STEP operations: concurrent commands return busy while an
-advance is running. This API does not promise immediate in-flight cancellation.
+advance is running. The ordinary lifecycle API does not promise immediate in-flight cancellation;
+the autonomous CLI signal path below interrupts its currently supervised process group.
 The core sequencer now rejects paused/cancelled/completed campaigns at begin_run,
 before any new executor dispatch; late SQL rejection alone is insufficient.
 A rejected review cannot be resumed into a passing review by toggling lifecycle.
@@ -257,7 +258,7 @@ single-link, canonical and stable across the read. Unknown typed fields fail.
 
 `--action prepare` validates and hashes the definition without opening or
 creating campaign state. `launch` initializes only an absent state root through
-`initialize_local_workflow_v1`, then uses `operate_local_workflow_with_clock_v1`; an existing
+`initialize_local_workflow_v1`, then uses `operate_local_workflow_with_clock_and_cancellation_v1`; an existing
 root must have the exact retained definition and valid owner history. Partial
 initialization and ambiguous dispatch are preserved, never cleaned into success.
 `launch` and `converge` accept `--through-steps N`, an absolute endpoint (default:
@@ -273,7 +274,7 @@ before every dependency wave and finalization, and passes the same live
 admission callback to the executor before each individual request handoff within
 a wave. The service retains its existing directory lock for the entire wave;
 a refused later handoff preserves earlier prepared bytes and all reservations.
-This is not atomic process-start authority or in-flight termination. The existing SQLite sequencer
+The time check alone is not atomic process-start authority or in-flight termination. The existing SQLite sequencer
 passes the host clock into the result transaction: samples after `BEGIN IMMEDIATE`
 and immediately before `COMMIT` reject expiry, backward time and clock failure.
 Lifecycle writes apply the same transaction checks and capture their response
@@ -283,7 +284,7 @@ its inspection guard and charges. Already committed workflow steps and durable
 prepared caches survive a later expiry; an expired restart cannot relaunch work.
 
 The original supplied-time APIs remain deterministic compatibility/library
-entrypoints. They are not live-clock substitutes for the CLI. This change does
+entrypoints. They are not live-clock substitutes for the CLI. The clock-only compatibility path does
 not renew leases, kill in-flight workers, provide a continuously running timer,
 prove an independent trusted wall clock, or authorize production. Expiry after
 the final precommit sample or ambiguity in the COMMIT I/O itself is not made
@@ -357,3 +358,51 @@ feeds the existing manuscript and bundle kernels. See the
 [installed scientific-tool lane](SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane)
 for exact source/tool observations and retained raw outputs. This local program
 case does not implement model-driven research or grant production authority.
+
+## Autonomous CLI process interruption
+
+`hepta-paper-rust autonomous-research` installs SIGINT/SIGTERM handlers only in
+its command process before opening a mutating workflow. The handlers set one
+sticky atomic flag; library calls never install signal handlers or alter signal
+masks. `execute_autonomous_research_with_cancellation_v1` carries that flag
+through the current workflow, service, executor and Codex-runtime process owner.
+The existing fixed-time and live-clock APIs remain compatibility wrappers around
+that same implementation. No second writer, scheduler, result journal or daemon
+is introduced.
+
+A flag observed before dispatch prevents a new start. A running process is
+interrupted through `run_bounded_process_with_cancellation`: the existing
+bounded TERM/KILL escalation, child reaping and process-group cleanup still apply.
+The same token is checked before and after time observations at admission and
+SQLite precommit boundaries. A token is not an atomic check-and-COMMIT protocol:
+a signal racing a completed commit does not erase committed data, and a result
+already durably committed remains discoverable from normal status/replay.
+
+The report adds `interruptionRequested` and sets `cancellationScope` to
+`signal_process_group_and_commit_boundaries`. An interrupted execution returns
+a bounded non-success report and retains the original pending plan, dispatch
+intent and prepared bytes. Complete prepared results can be integrated by a
+subsequent explicit invocation without repeating execution or budget debit.
+Started work without complete prepared output stays ambiguous and cannot be
+restarted automatically. The signal itself does not write a Cancelled lifecycle.
+A later explicit revision-bound `cancel` can close future admission but must
+retain `pendingStep=true` and cannot settle or refund uncertain effects.
+
+This is supervision of declared trusted-local processes, not a hostile-code
+sandbox or proof that a descendant which escaped the group has terminated.
+Native in-process kernels are bounded but not preempted mid-calculation. Worker
+network/provider effects remain unobserved; a dead process is not a remote
+terminal receipt. Automatic renewal, remote cancellation and production authority
+are not supplied.
+
+Executable coverage in `tests/local_workflow/interruption.rs` uses the actual
+Rust autonomous CLI and a small explicitly declared Python worker with its real
+child process. It tests SIGINT and SIGTERM, both process deaths, no second step,
+retained pending execution and no relaunch after CLI restart, revision-bound
+cancellation without clearing residue, pre-dispatch refusal and prepared-result
+replay preserving earlier committed steps. This is not a live model fixture.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --lib
+```

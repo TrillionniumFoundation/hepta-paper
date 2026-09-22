@@ -6,7 +6,7 @@ use crate::WorkerBindingV1;
 use crate::workflow::{
     LocalWorkflowV1, WorkflowActionV1, WorkflowAmendmentV1, WorkflowError,
     amend_local_workflow_with_clock_v1, initialize_local_workflow_v1, operate_local_workflow_v1,
-    operate_local_workflow_with_clock_v1, read_current_local_workflow_v1,
+    operate_local_workflow_with_clock_and_cancellation_v1, read_current_local_workflow_v1,
 };
 use hepta_control_plane::canonical_hash_v1;
 use nix::fcntl::OFlag;
@@ -16,6 +16,10 @@ use std::{
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -92,7 +96,11 @@ fn error_code(error: &WorkflowError) -> &'static str {
 
 /// `allow_mutation` is supplied only by the two existing command entry functions.
 /// Inspect never acquires a writer or initializes state, even with forged options.
-pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> Value {
+pub(super) fn run(
+    options: &AutonomousResearchOptions,
+    allow_mutation: bool,
+    cancelled: &Arc<AtomicBool>,
+) -> Value {
     let campaign = options.campaign_id.clone().or_else(|| {
         options
             .paper_id
@@ -119,7 +127,8 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
         "networkIsolationEnforced": false,
         "externalActionMayHaveStarted": false,
         "reconciliationRequired": false,
-        "cancellationScope": "between_steps",
+        "cancellationScope": "signal_process_group_and_commit_boundaries",
+        "interruptionRequested": false,
         "rustBoundary": "existing_local_workflow_owner"
     });
     // Validate direct API inputs as well as parser-created options. Full research
@@ -134,6 +143,12 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
         return report;
     }
     let mut execution_invoked = false;
+    let observe = || {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(WorkflowError::Conflict);
+        }
+        now()
+    };
     let result = (|| -> Result<(), WorkflowError> {
         let expected = campaign
             .as_deref()
@@ -194,7 +209,8 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
             // still require the CURRENT hash/revision and live previous lease.
             let receipt =
                 amend_local_workflow_with_clock_v1(root, &digest, amendment, &mut || {
-                    now().map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+                    observe()
+                        .map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
                 })?;
             report["definitionHash"] = json!(receipt.definition_hash);
             report["amendment"] =
@@ -238,7 +254,7 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
             report["status"] = json!("local_workflow_definition_validated");
             return Ok(());
         }
-        let observed_at = if read_only { 0 } else { now()? };
+        let observed_at = if read_only { 0 } else { observe()? };
         if !read_only
             && (observed_at < definition.template.observed_at_unix_ms
                 || observed_at >= definition.template.writer_lease.expires_at_unix_ms)
@@ -279,9 +295,15 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
                 report["externalActionMayHaveStarted"] = json!(true);
             }
         }
-        let progress = operate_local_workflow_with_clock_v1(root, &digest, action, &mut || {
-            now().map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
-        })?;
+        let progress = operate_local_workflow_with_clock_and_cancellation_v1(
+            root,
+            &digest,
+            action,
+            &mut || {
+                observe().map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+            },
+            Arc::clone(cancelled),
+        )?;
         report["workflow"] = serde_json::to_value(progress).map_err(|_| WorkflowError::History)?;
         report["status"] = json!("local_workflow_operation_completed");
         Ok(())
@@ -293,5 +315,9 @@ pub(super) fn run(options: &AutonomousResearchOptions, allow_mutation: bool) -> 
             report["reconciliationRequired"] = json!(execution_invoked);
         }
     }
+    report["interruptionRequested"] = json!(cancelled.load(Ordering::Acquire));
+    // A late signal can race a real COMMIT. Do not rewrite a successful durable
+    // observation into a claim that no work committed. Failed invocations retain
+    // their existing bounded error and reconciliation disposition.
     report
 }

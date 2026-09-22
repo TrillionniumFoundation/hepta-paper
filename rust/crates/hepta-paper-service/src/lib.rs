@@ -106,7 +106,16 @@ pub use hepta_cutover::{
 };
 use hepta_module_platform::ModuleRegistryArtifactV1;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, os::unix::fs::MetadataExt, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    os::unix::fs::MetadataExt,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use thiserror::Error;
 
 pub use control_error::service_control_inspection_report_v1;
@@ -215,6 +224,27 @@ pub fn run_service_with_clock_v1(
     config: ServiceRunV1,
     clock: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
 ) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    run_service_with_clock_and_cancellation_v1(config, clock, Arc::new(AtomicBool::new(false)))
+}
+
+/// Interruption shares the existing executor and commit owner. It never refunds
+/// an ambiguous dispatch or substitutes a signal for a remote outcome receipt.
+pub(crate) fn run_service_with_clock_and_cancellation_v1(
+    config: ServiceRunV1,
+    observe: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    let mut checked_clock = || {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
+        }
+        let now = observe()?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
+        }
+        Ok(now)
+    };
+    let clock = &mut checked_clock;
     if config.version != 1
         || config.production_activation
         || config.hard_policy.external_actions_authorized
@@ -326,7 +356,8 @@ pub fn run_service_with_clock_v1(
         objects.maximum_object_bytes(),
     )
     .map_err(|_| ServiceError::Artifact)?;
-    let executor = ServiceExecutorV1::new(objects, config.workers)?;
+    let executor =
+        ServiceExecutorV1::new(objects, config.workers)?.with_cancellation(Arc::clone(&cancelled));
     let mut control = ControlPlaneV1::new(
         registry,
         config.hard_policy.registry_policy_hash.clone(),

@@ -9,7 +9,7 @@ use base64ct::{Base64, Encoding};
 use hepta_codex_protocol::Sha256Digest;
 use hepta_codex_runtime::{
     BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1, ProcessTerminationReason,
-    run_bounded_process,
+    run_bounded_process_with_cancellation,
 };
 use hepta_control_plane::{
     ControlPlaneError, ExecutionRequestV1, ModuleExecutorV1, canonical_hash_v1,
@@ -25,6 +25,10 @@ use std::{
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 #[path = "worker_recovery.rs"]
@@ -106,6 +110,7 @@ pub struct WorkerResponseV1 {
 pub struct ServiceExecutorV1 {
     objects: ObjectStoreV1,
     workers: BTreeMap<String, WorkerBindingV1>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl ServiceExecutorV1 {
@@ -117,10 +122,22 @@ impl ServiceExecutorV1 {
         if workers.len() > 256 {
             return Err(ServiceError::Configuration);
         }
-        Ok(Self { objects, workers })
+        Ok(Self {
+            objects,
+            workers,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    pub(crate) fn with_cancellation(mut self, cancelled: Arc<AtomicBool>) -> Self {
+        self.cancelled = cancelled;
+        self
     }
 
     fn execute_one(&self, request: &ExecutionRequestV1) -> Result<PreparedResultV1, ServiceError> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(ServiceError::Execution);
+        }
         let binding = self
             .workers
             .get(&request.candidate.module_id)
@@ -246,7 +263,7 @@ impl ServiceExecutorV1 {
                 )
             }
             (WorkerBindingV1::Process { .. }, NativeJobV1::Process { input }) => {
-                let response = run_process(binding, request, input)?;
+                let response = run_process(binding, request, input, &self.cancelled)?;
                 if response.version != 1
                     || response.artifacts.is_empty()
                     || response.artifacts.len() > 256
@@ -346,6 +363,7 @@ fn run_process(
     binding: &WorkerBindingV1,
     request: &ExecutionRequestV1,
     input: Value,
+    cancelled: &AtomicBool,
 ) -> Result<WorkerResponseV1, ServiceError> {
     let WorkerBindingV1::Process {
         executable,
@@ -402,7 +420,7 @@ fn run_process(
         maximum_tail_bytes: 1_048_576,
         ..ProcessLimitsV1::default()
     };
-    let result = run_bounded_process(
+    let result = run_bounded_process_with_cancellation(
         &BoundedProcessRequestV1 {
             executable: executable.clone(),
             arguments: arguments.iter().map(OsString::from).collect(),
@@ -411,6 +429,7 @@ fn run_process(
             stdin: Some(stdin),
         },
         limits,
+        cancelled,
     )
     .map_err(|_| ServiceError::Execution)?;
     if result.termination_reason != ProcessTerminationReason::Exited

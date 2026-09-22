@@ -1,3 +1,6 @@
+#[path = "local_workflow/interruption.rs"]
+mod interruption;
+
 #[path = "local_workflow/clock.rs"]
 mod clock;
 

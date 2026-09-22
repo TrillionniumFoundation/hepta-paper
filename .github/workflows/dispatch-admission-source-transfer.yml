@@ -1,0 +1,61 @@
+name: dispatch-admission-source-transfer
+
+on:
+  push:
+    branches:
+      - codex/dispatch-admission-transfer-20260923
+
+permissions:
+  contents: read
+
+jobs:
+  transfer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify original source bundle and publish only a temporary source ref
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: TrillionniumFoundation/hepta-paper
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_REF" = refs/heads/codex/dispatch-admission-transfer-20260923
+          parent=8a4c484b34d0fb80e3d68d7a3aa9cd5ee001e3fe
+          source=1f208a1c56d875ad856c5201b31427cddff6ada8
+          tree=38415b7e27d5172e5381b629bbe062a84bb16f33
+          bundle="$RUNNER_TEMP/dispatch-admission.bundle"
+          cat .github/source-transfer/dispatch-admission/part{0,1,2,3} | base64 --decode > "$bundle"
+          printf 'dc8493c6cacf81623244f308203e7c908d847863b87d6c6a7b0830cdc8fb0865  %s\n' "$bundle" | sha256sum -c -
+          git cat-file -e "$parent^{commit}"
+          git bundle verify "$bundle"
+          git fetch "$bundle" HEAD
+          test "$(git rev-parse FETCH_HEAD)" = "$source"
+          test "$(git rev-parse "$source^{tree}")" = "$tree"
+          test "$(git show -s --format=%P "$source")" = "$parent"
+          git diff --check "$parent" "$source"
+          test "$(git diff --name-only "$parent" "$source" | wc -l)" -eq 12
+          if git ls-tree -r --name-only "$source" | grep -E '^\.github/(source-transfer/dispatch-admission/|workflows/dispatch-admission-source-transfer.yml$)'; then
+            echo 'Temporary transport must not enter product source' >&2
+            exit 1
+          fi
+          observed=$(git ls-remote origin refs/heads/codex/rust-convergence-recovery-fix-20260922 | cut -f1)
+          test "$observed" = "$parent"
+          git push origin "$source:refs/heads/codex/dispatch-admission-upload-1f208a1c"
+          test "$(git ls-remote origin refs/heads/codex/dispatch-admission-upload-1f208a1c | cut -f1)" = "$source"
+          mkdir -p "$RUNNER_TEMP/source-transfer-report"
+          printf 'source=%s\ntree=%s\nparent=%s\nqualification=not_asserted\nproduct_ref_changed=false\n' "$source" "$tree" "$parent" > "$RUNNER_TEMP/source-transfer-report/source.txt"
+          git show --stat "$source" > "$RUNNER_TEMP/source-transfer-report/change.txt"
+      - name: Retain byte-transfer evidence, not qualification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dispatch-admission-source-transfer
+          path: ${{ runner.temp }}/source-transfer-report
+          if-no-files-found: error
+          retention-days: 14

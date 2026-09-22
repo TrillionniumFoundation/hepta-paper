@@ -101,22 +101,24 @@ test('completion mode rejects an inventory without independent acceptance', () =
   assert.equal(JSON.parse(result.stdout).fullReplacementEstablished, false);
 });
 
-test('all declared campaign action modes retain source mapping or explicit gaps', () => {
-  const modes = report.campaignModeMappings;
-  assert.equal(modes.acceptedParity, false);
-  assert.equal(modes.productionActivation, false);
-  assert.equal(modes.nodeRetirement, false);
-  assert.equal(modes.modes.length, 15);
-  assert.equal(modes.modes.filter((row) => row.scope === 'partial_local_source').length, 14);
-  assert.equal(new Set(modes.modes.map((row) => row.nodeAction)).size, modes.modes.length);
+test('canonical command ledger owns every campaign action mode and explicit gap', () => {
+  const campaign = report.commandMappings.commands.find((row) => row.id === 'operator/campaign');
+  assert.ok(campaign);
+  const modes = campaign.argumentModes;
+  assert.equal(report.commandMappings.acceptedParity, false);
+  assert.equal(report.commandMappings.productionActivation, false);
+  assert.equal(report.commandMappings.nodeRetirement, false);
+  assert.equal(modes.length, 15);
+  assert.equal(modes.filter((row) => row.scope === 'partial_local_source').length, 14);
+  assert.equal(new Set(modes.map((row) => row.nodeAction)).size, modes.length);
   for (const action of ['gc', 'retention-recovery-readiness', 'provision-retention-recovery']) {
-    const row = modes.modes.find((entry) => entry.nodeAction === action);
+    const row = modes.find((entry) => entry.nodeAction === action);
     assert.equal(row.scope, 'partial_local_source');
     assert.ok(row.callChain.length > 0 && row.tests.length > 0);
     assert.ok(row.remaining.length > 80);
   }
-  assert.equal(modes.modes.filter((row) => row.scope === 'unmapped').length, 1);
-  assert.equal(modes.modes.find((row) => row.nodeAction === 'cancel-node').scope, 'unmapped');
-  assert.ok(modes.modes.find((row) => row.nodeAction === 'resume').remaining.includes('not equivalent'));
+  assert.equal(modes.filter((row) => row.scope === 'unmapped').length, 1);
+  assert.equal(modes.find((row) => row.nodeAction === 'cancel-node').scope, 'unmapped');
+  assert.ok(modes.find((row) => row.nodeAction === 'resume').remaining.includes('not equivalent'));
   assert.equal(report.acceptedParityRows, 0);
 });

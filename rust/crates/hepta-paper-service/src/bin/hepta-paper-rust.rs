@@ -1531,8 +1531,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             let report = execute_autonomous_research_v1(&options);
-            let operation_succeeded =
-                report["operationSucceeded"] == serde_json::Value::Bool(true);
+            let operation_succeeded = report["operationSucceeded"] == serde_json::Value::Bool(true);
             let production_ready = report["ready"] == serde_json::Value::Bool(true);
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !operation_succeeded || (options.require_full_ready && !production_ready) {

@@ -1,0 +1,59 @@
+name: public-development-inputs
+
+on:
+  push:
+    branches: [codex/clock-validation-8f8be6d5]
+    paths: [.github/workflows/public-development-inputs.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  inputs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_HOME: /tmp/hepta-public-cargo-home
+      RUSTUP_HOME: /tmp/hepta-public-rustup-home
+      SOURCE_SHA: 8a4c484b34d0fb80e3d68d7a3aa9cd5ee001e3fe
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 8a4c484b34d0fb80e3d68d7a3aa9cd5ee001e3fe
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Capture only pinned public dependencies and tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(node --version)" = v22.23.1
+          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" /tmp/hepta-public-inputs
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          export PATH="$RUSTUP_HOME/toolchains/1.98.0-x86_64-unknown-linux-gnu/bin:$PATH"
+          cargo fetch --manifest-path rust/Cargo.toml --locked
+          npm ci --ignore-scripts --no-audit --no-fund
+          git rev-parse HEAD HEAD^{tree} > /tmp/hepta-public-inputs/source.txt
+          sha256sum rust/Cargo.lock package-lock.json > /tmp/hepta-public-inputs/source-locks.sha256
+          rustc --version --verbose > /tmp/hepta-public-inputs/rustc.txt
+          cargo --version --verbose > /tmp/hepta-public-inputs/cargo.txt
+          node --version > /tmp/hepta-public-inputs/node.txt
+          # Exact directories from fresh, credential-free homes; never archive
+          # general runner homes, environment, private keys or checkout credentials.
+          tar -C "$RUSTUP_HOME/toolchains" -czf /tmp/hepta-public-inputs/rust-toolchain.tar.gz 1.98.0-x86_64-unknown-linux-gnu
+          tar -C "$CARGO_HOME" -czf /tmp/hepta-public-inputs/cargo-registry.tar.gz registry
+          tar -C "$(dirname "$(command -v node)")" -czf /tmp/hepta-public-inputs/node-binary.tar.gz node
+          tar -czf /tmp/hepta-public-inputs/node-dependencies.tar.gz node_modules
+          git diff --exit-code
+          git diff --cached --exit-code
+          (cd /tmp/hepta-public-inputs && sha256sum *.tar.gz source.txt source-locks.sha256 rustc.txt cargo.txt node.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: public-development-inputs-${{ github.run_id }}
+          path: /tmp/hepta-public-inputs
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

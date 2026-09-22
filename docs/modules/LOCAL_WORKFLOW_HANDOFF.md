@@ -299,3 +299,18 @@ substitution, private/oversize/symlink refusal, actual pinned Rust workers and a
 crashing child that is not relaunched by repeated fresh CLI processes. These
 are local composition tests, not live author/reviewer scientific evaluation,
 independent command acceptance, installed host qualification or Node cutover.
+
+### Exact-source execution evidence
+
+The existing `production-composition-source` bundle in
+`docs/system/evidence/rust-functional-source-closure-v1.json` now binds the
+autonomous CLI adapter, its local entry, the existing workflow owner and all six
+`autonomous_entrypoint::` regression selectors. The existing exact-head and
+prospective-merge jobs execute those tests, including the real Rust child worker
+and crash/no-relaunch case. A zero exit code, discovery-only run, ignored test or
+zero matching tests is not accepted as executed evidence. The verifier requires
+the exact successful libtest selector and nonempty successful test totals; Node
+owner tests likewise require nonempty TAP execution without skips or todos.
+These transcript checks complement exact source/discovery binding; they are not
+independent producer authentication or scientific acceptance. No new workflow,
+scheduler, state owner, migration inventory or production authority is created.

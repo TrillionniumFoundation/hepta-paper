@@ -2,6 +2,9 @@ name: rust-source-snapshot
 
 on:
   pull_request:
+  push:
+    branches:
+      - codex/full-rust-replacement-progress-20260916
   workflow_dispatch:
 
 permissions:
@@ -17,7 +20,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Package deterministic exact-head source snapshot
@@ -38,9 +41,15 @@ jobs:
                 -czf "$snapshot_root/source.tar.gz"
           printf '%s\n' "$EXPECTED_HEAD_SHA" > "$snapshot_root/commit.txt"
           git rev-parse HEAD^{tree} > "$snapshot_root/tree.txt"
+          # Preserve the exact Git objects, not a newly synthesized local commit.
+          # Only history reachable from this public source head is included.
+          # Submodule gitlinks remain pinned; this is not a runtime-state backup.
+          git bundle create "$snapshot_root/source.bundle" HEAD
+          git bundle verify "$snapshot_root/source.bundle"
+          test "$(git bundle list-heads "$snapshot_root/source.bundle" HEAD | cut -d ' ' -f 1)" = "$EXPECTED_HEAD_SHA"
           (
             cd "$snapshot_root"
-            sha256sum source.tar.gz commit.txt tree.txt > SHA256SUMS
+            sha256sum source.tar.gz source.bundle commit.txt tree.txt > SHA256SUMS
           )
           git diff --exit-code
           git diff --cached --exit-code

@@ -69,6 +69,26 @@ production/online activation and admission gaps.
 | `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input, including omitted tag snapshots and deduplicated duplicate/newer-tag diagnostics; composite release verification remains separate. |
 | `retirement-status REQUEST` | Inspect the read-only legacy archive retirement status for explicit roots and version; destructive identity-bound execution remains disabled. |
 | `runtime-r-source-cas REPOSITORY_ROOT [--action status\|acquire] [--seed DIRECTORY]` | Verify the R lock closure, source-CAS manifest, indexes and archive hashes. `--action acquire --seed DIRECTORY` performs bounded offline acquisition (256 MiB per archive) with the host `tar` DESCRIPTION identity check, exact hashes, private staging and no-replace publication; network/CRAN acquisition remains unavailable. |
+| `advanced-numerical-plugin REQUEST` | Run the bounded native reference-candidate numerical families and emit an explicitly unqualified result; this is not the signed production plugin runner. |
+| `autonomous-empirical-plugin-release [options]` | Inspect bounded empirical-plugin release template/plan/publish/inspect inputs; signing, immutable installation, activation and external authority remain fail-closed. |
+| `autonomous-intake-authority-rotation [options]` | Build the bounded native authority-rotation plan/apply preflight. Generation CAS, quarantine, journal publication and production mutation remain open. |
+| `autonomous-research [options]` | Strict autonomous-research action/identity surface. The current source remains fail-closed until its durable workflow owner is composed. |
+| `autonomous-research-one-shot-campaign-attempt [options]` | Inspect the bounded one-shot campaign attempt plan/preflight/execute/status boundary without silently opening provider, network or writer authority. |
+| `autonomous-state-partial-root-maintenance [options]` | Inspect the production-shaped partial-root maintenance plan; execute remains fail-closed before rescue mutation, repair or restore authority. |
+| `autonomous-state-provision [options]` | Inspect the ten-role native state-provision plan; execute remains fail-closed before constructor publication, atomic handoff or external authority. |
+| `autonomous-submission-dispatcher [options]` | Inspect the native submission dispatcher boundary and keep live portal/provider mutation behind independent authority and reconciliation. |
+| `autonomous-submission-dispatcher-challenge [options]` | Inspect one bounded dispatcher challenge/authority subject without granting portal authority. |
+| `autonomous-supervisor [options]` | Inspect the bounded autonomous-supervisor health/control surface; source checks do not establish installed service ownership. |
+| `external-authority-intake [options]` | Inspect configured external-authority evidence inputs and currentness without reading private signing material or granting authority. |
+| `full-production-readiness [options]` | Project the complete readiness boundary and remain fail-closed while any required source, host or external evidence is absent. |
+| `release-attest REQUEST` | Inspect a bounded release-attestation request. Missing external release/KMS/WORM evidence remains a hard denial. |
+| `retirement-drill-attest REQUEST` | Inspect a legacy deletion-drill attestation; physical deletion and technical release remain blocked without required independent evidence. |
+| `retirement-matrix --workspace-root PATH --runtime-root PATH` | Inspect the current retirement matrix over explicit roots and fail closed on missing source/owner evidence. |
+| `strict-full-auto-acceptance [options]` | Evaluate the strict full-automation acceptance projection; this route cannot manufacture the external evidence it requires. |
+| `submission-handoff-export [options]` | Build the bounded submission-handoff export from already qualified inputs without performing a portal mutation. |
+| `verify-architecture ROOT [--json] [--strict]` | Run strict architecture-conformance inspection for the supplied root and fail closed when the source graph is not ready. |
+| `verify-critical [options]` | Run bounded critical-module coverage inspection; coverage evidence does not authorize production activation. |
+| `verify-full [options]` | Run the full-suite verification inventory/acceptance boundary; incomplete evidence exits blocked rather than being promoted. |
 
 Separate native binaries inspect operational proof, owner acceptance, nested
 runtime qualification and journal connector coverage. Their inputs, signature

@@ -393,11 +393,18 @@ fn closed_manifest_rejects_duplicate_names_size_drift_and_extra_artifacts() {
 }
 #[test]
 fn cli_hash_setup_uses_exact_documented_job_and_never_runs_a_program() {
-    let path = fs::canonicalize(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../docs/modules/examples/scientific-python-job.v1.json"),
+    // The runtime correctly rejects group/world-writable job files. Git worktree
+    // permissions depend on the checkout host's umask, so exercise the CLI from
+    // an explicit private copy instead of weakening the runtime identity gate.
+    let temp = Temp::new();
+    let path = temp.0.join("scientific-python-job.v1.json");
+    fs::write(
+        &path,
+        include_bytes!("../../../../docs/modules/examples/scientific-python-job.v1.json"),
     )
     .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let path = fs::canonicalize(path).unwrap();
     let binary = env!("CARGO_BIN_EXE_hepta-scientific-worker");
     let out = std::process::Command::new(binary)
         .args(["job-hash", path.to_str().unwrap()])

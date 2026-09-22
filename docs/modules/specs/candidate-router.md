@@ -64,6 +64,7 @@ Current implementation and contract roots:
 - `docs/modules/MODULE_PROTOCOL.md`
 - `docs/control-plane/COMPOSITION_ROOT.md`
 - `paper-application/orchestration/candidate-router.mjs`
+- `rust/crates/hepta-control-plane/src/source_closure.rs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 

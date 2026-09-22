@@ -62,6 +62,8 @@ Hard registered module dependencies:
 Current implementation and contract roots:
 
 - `docs/performance`
+- `rust/crates/hepta-control-plane/src/performance_qualification.rs`
+- `rust/crates/hepta-control-plane/src/source_closure.rs`
 
 Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
 

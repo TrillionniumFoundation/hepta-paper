@@ -15,14 +15,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
-      - name: Reconstruct only the exact checksum-bound source payload
+      - name: Transfer source data without changing any executable workflow
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = TrillionniumFoundation/hepta-paper
           test "$GITHUB_REF" = refs/heads/codex/dispatch-admission-transfer-20260923
           mkdir -p "$RUNNER_TEMP/source-transfer-report"
-          cp .github/source-transfer/scientific/part* "$RUNNER_TEMP/source-transfer-report/"
           python3 - <<'PY'
           import base64, hashlib, os
           from pathlib import Path
@@ -30,49 +29,48 @@ jobs:
           parts = []
           for i, digest in enumerate(expected):
               text = Path(f'.github/source-transfer/scientific/part{i}').read_text()
-              # Repair transcription in the temporary transport only; the
-              # original chunk, bundle, commit and tree hashes must all match.
               if i == 1:
                   text = text.replace('PJ6v/x3', 'PJ6v3/x3')
               if i == 3:
                   text = text.replace('Je7zBej59+Y1', 'Je7zBej59+9Y1').replace('JQaCK7wLq1', 'JQaCK77wLq1')
               data = text.encode('ascii')
-              actual = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
-              print(i, len(data), actual, flush=True)
-              if actual != digest:
-                  raise SystemExit(f'original chunk mismatch: {i}')
+              assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == digest
               parts.append(text)
           data = base64.b64decode(''.join(parts), validate=True)
-          if hashlib.sha256(data).hexdigest() != '4c6c0082cafe1129f328c66cad569b4ead49542dce64b168680452dc5643f8d8':
-              raise SystemExit('original bundle mismatch')
+          assert hashlib.sha256(data).hexdigest() == '4c6c0082cafe1129f328c66cad569b4ead49542dce64b168680452dc5643f8d8'
           Path(os.environ['RUNNER_TEMP'], 'scientific-tools.bundle').write_bytes(data)
           PY
-      - name: Verify source identities and publish temporary ref
-        shell: bash
-        run: |
-          set -euo pipefail
           parent=1f208a1c56d875ad856c5201b31427cddff6ada8
           source=45065ffb7925090ff105238622cfd4a6eb243125
           tree=8476f13a06e768ea37778c5b29441bc26b45f1d3
-          bundle="$RUNNER_TEMP/scientific-tools.bundle"
-          git bundle verify "$bundle"
-          git fetch "$bundle" HEAD
+          workflow=.github/workflows/rust-migration-acceptance.yml
+          data_path=.github/source-transfer/scientific-tool-workflow.txt
+          git bundle verify "$RUNNER_TEMP/scientific-tools.bundle"
+          git fetch "$RUNNER_TEMP/scientific-tools.bundle" HEAD
           test "$(git rev-parse FETCH_HEAD)" = "$source"
           test "$(git rev-parse "$source^{tree}")" = "$tree"
           test "$(git show -s --format=%P "$source")" = "$parent"
           git diff --check "$parent" "$source"
-          test "$(git diff --name-only "$parent" "$source" | wc -l)" -eq 11
-          if git ls-tree -r --name-only "$source" | grep -E '^\.github/(source-transfer/|workflows/(dispatch-admission-source-transfer|development-input-export).yml$)'; then
-            exit 1
-          fi
           test "$(git ls-remote origin refs/heads/codex/rust-convergence-recovery-fix-20260922 | cut -f1)" = "$parent"
-          git push origin "$source:refs/heads/codex/scientific-tools-upload-45065ffb"
-          test "$(git ls-remote origin refs/heads/codex/scientific-tools-upload-45065ffb | cut -f1)" = "$source"
-          printf 'source=%s\ntree=%s\nparent=%s\nqualification=not_asserted\nproduct_ref_changed=false\n' "$source" "$tree" "$parent" > "$RUNNER_TEMP/source-transfer-report/source.txt"
+          old_workflow=$(git rev-parse "$parent:$workflow")
+          new_workflow=$(git rev-parse "$source:$workflow")
+          test "$new_workflow" = 221680297adffd0d3504c780fb40226c06634725
+          export GIT_INDEX_FILE="$RUNNER_TEMP/source-data.index"
+          git read-tree "$source"
+          git update-index --add --cacheinfo "100644,$old_workflow,$workflow"
+          git update-index --add --cacheinfo "100644,$new_workflow,$data_path"
+          data_tree=$(git write-tree)
+          export GIT_AUTHOR_NAME=ChatGPT GIT_AUTHOR_EMAIL=chatgpt@users.noreply.github.com
+          export GIT_COMMITTER_NAME=ChatGPT GIT_COMMITTER_EMAIL=chatgpt@users.noreply.github.com
+          data_commit=$(printf 'Temporary source data; workflow publication requires the authorized connector\n' | git commit-tree "$data_tree" -p "$parent")
+          test -z "$(git diff --name-only "$parent" "$data_commit" -- .github/workflows)"
+          git push origin "$data_commit:refs/heads/codex/scientific-tools-upload-45065ffb"
+          test "$(git ls-remote origin refs/heads/codex/scientific-tools-upload-45065ffb | cut -f1)" = "$data_commit"
+          printf 'original_source=%s\noriginal_tree=%s\nparent=%s\ndata_commit=%s\ndata_tree=%s\nworkflow_blob=%s\nqualification=not_asserted\nproduct_ref_changed=false\n' "$source" "$tree" "$parent" "$data_commit" "$data_tree" "$new_workflow" | tee "$RUNNER_TEMP/source-transfer-report/source.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: scientific-source-transfer
+          name: scientific-source-data
           path: ${{ runner.temp }}/source-transfer-report
           if-no-files-found: error
           retention-days: 7

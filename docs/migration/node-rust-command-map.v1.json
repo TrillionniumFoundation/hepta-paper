@@ -655,6 +655,128 @@
           "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
           "symbol": "preflight_authority_diagnostics_match_actual_node_verifiers"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-portal-target-qualification --action status [incumbent flags]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-portal-target-qualification.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/portal_target_qualification/cli.rs",
+              "symbol": "portal_target_qualification_cli_at_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+              "symbol": "inspect_portal_target_qualification_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+              "symbol": "four_mode_readonly_contracts_match_signed_node_corpus"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+              "symbol": "strict_cli_flags_environment_bindings_and_exit_gates_match_node"
+            }
+          ],
+          "remaining": "Status has a real Rust CLI and Node differential coverage; independent signed target packages and command acceptance remain external."
+        },
+        {
+          "nodeAction": "preflight",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-portal-target-qualification --action preflight [incumbent flags]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-portal-target-qualification.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/portal_target_qualification/cli.rs",
+              "symbol": "portal_target_qualification_cli_at_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+              "symbol": "preflight_portal_target_qualification_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+              "symbol": "preflight_pins_bindings_missing_inputs_and_expiration_match_node"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+              "symbol": "preflight_authority_diagnostics_match_actual_node_verifiers"
+            }
+          ],
+          "remaining": "Preflight has a real read-only Rust caller and Node differential coverage; target-host authority and final portal effects remain external."
+        },
+        {
+          "nodeAction": "import-plan",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-portal-target-qualification --action import-plan [incumbent flags]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-portal-target-qualification.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/portal_target_qualification/cli.rs",
+              "symbol": "portal_target_qualification_cli_at_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+              "symbol": "plan_portal_target_qualification_import_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+              "symbol": "initial_and_successor_atomic_import_match_node_bytes_and_receipts"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+              "symbol": "strict_cli_flags_environment_bindings_and_exit_gates_match_node"
+            }
+          ],
+          "remaining": "Import-plan is implemented and differentially tested; independently accepted registry authority is still required."
+        },
+        {
+          "nodeAction": "import-execute",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-portal-target-qualification --action import-execute [incumbent flags]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-portal-target-qualification.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/portal_target_qualification/cli.rs",
+              "symbol": "portal_target_qualification_cli_at_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/portal_target_qualification.rs",
+              "symbol": "execute_portal_target_qualification_import_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+              "symbol": "initial_and_successor_atomic_import_match_node_bytes_and_receipts"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/portal_target_qualification_parity.rs",
+              "symbol": "failed_and_concurrent_imports_never_clobber_registry_or_other_files"
+            }
+          ],
+          "remaining": "Import-execute performs the bounded local atomic registry write; production portal authority and independent acceptance remain external."
+        }
       ]
     },
     {
@@ -700,6 +822,60 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
           "symbol": "cli_status_and_converge_are_explicit_and_fail_closed"
+        }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust generic-domain-capability-evidence --action status --runtime-root ABSOLUTE_PATH",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/generic_domain_capability_evidence.rs",
+              "symbol": "inspect_generic_domain_capability_evidence_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
+              "symbol": "missing_and_loaded_inspections_match_node_shape_and_hash"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
+              "symbol": "cli_status_and_converge_are_explicit_and_fail_closed"
+            }
+          ],
+          "remaining": "Status has a real bounded Rust inspector and Node-shape/hash comparison; it does not grant semantic or production authority."
+        },
+        {
+          "nodeAction": "converge",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust generic-domain-capability-evidence --action converge --runtime-root ABSOLUTE_PATH",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/generic_domain_capability_evidence.rs",
+              "symbol": "converge_generic_domain_capability_evidence_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
+              "symbol": "converge_is_always_fail_closed_and_never_changes_the_explicit_file"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/generic_domain_capability_evidence_parity.rs",
+              "symbol": "cli_status_and_converge_are_explicit_and_fail_closed"
+            }
+          ],
+          "remaining": "Converge is intentionally fail-closed in Rust; publication, external replay, review and target-host authority remain unimplemented."
         }
       ]
     },
@@ -1371,6 +1547,60 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_intake_authority_rotation_route.rs",
           "symbol": "apply_requires_double_confirmation_and_stays_fail_closed"
+        }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "plan",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-intake-authority-rotation --action plan --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_intake_authority_rotation.rs",
+              "symbol": "parse_autonomous_intake_authority_rotation_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_intake_authority_rotation.rs",
+              "symbol": "inspect_autonomous_intake_authority_rotation_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_intake_authority_rotation_route.rs",
+              "symbol": "plan_is_bounded_and_reports_target_hashes_without_authority"
+            }
+          ],
+          "remaining": "Plan has a bounded Rust preflight and stable source binding; no authority mutation is performed."
+        },
+        {
+          "nodeAction": "apply",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-intake-authority-rotation --action apply --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_intake_authority_rotation.rs",
+              "symbol": "parse_autonomous_intake_authority_rotation_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_intake_authority_rotation.rs",
+              "symbol": "execute_autonomous_intake_authority_rotation_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_intake_authority_rotation_route.rs",
+              "symbol": "apply_requires_double_confirmation_and_stays_fail_closed"
+            }
+          ],
+          "remaining": "Apply has a real Rust caller but remains fail-closed before authority mutation; generation CAS, quarantine and journal publication are open."
         }
       ]
     },
@@ -2385,6 +2615,158 @@
           "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/manager/kernel_identity/tests.rs",
           "symbol": "independent_original_peer_status_is_bound_to_its_pidfd_and_refuses_exit"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-state-backup --action status [--root PATH] [--runtime-root PATH] [--authority-config PATH] [--online-authority-process-config PATH] [--authority-socket-config PATH --authority-socket-config-sha256 sha256:HASH] [--bundle PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-state-backup.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/cli.rs",
+              "symbol": "state_backup_cli_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/cli.rs",
+              "symbol": "action_report"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/state_backup_cli_parity.rs",
+              "symbol": "real_native_binary_uses_canonical_workspace_manifest_and_original_exit_classes"
+            }
+          ],
+          "remaining": "Status is a real Rust CLI observation path; installed topology and target-host qualification remain separate."
+        },
+        {
+          "nodeAction": "backup",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-state-backup --action backup [--root PATH] [--runtime-root PATH] [--authority-config PATH] [--online-authority-process-config PATH] [--authority-socket-config PATH --authority-socket-config-sha256 sha256:HASH] [--bundle PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-state-backup.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/cli.rs",
+              "symbol": "state_backup_cli_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/service.rs",
+              "symbol": "backup"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
+              "symbol": "native_ten_database_backup_and_fresh_snapshot_drill_match_node"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/state_backup_socket_cli.rs",
+              "symbol": "actual_socket_cli_runs_all_write_modes_and_preserves_a_committed_lost_reply"
+            }
+          ],
+          "remaining": "Backup traverses the real ten-database Rust owner and socket path; independent installed-service acceptance remains open."
+        },
+        {
+          "nodeAction": "restore-drill",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-state-backup --action restore-drill [--root PATH] [--runtime-root PATH] [--authority-config PATH] [--online-authority-process-config PATH] [--authority-socket-config PATH --authority-socket-config-sha256 sha256:HASH] [--bundle PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-state-backup.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/cli.rs",
+              "symbol": "state_backup_cli_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/backup_replay.rs",
+              "symbol": "replay_verified_database_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
+              "symbol": "native_ten_database_backup_and_fresh_snapshot_drill_match_node"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/state_recoverability_parity.rs",
+              "symbol": "real_changeset_replay_matches_node_and_rejects_signed_system_writes_and_conflicts"
+            }
+          ],
+          "remaining": "Restore-drill replays verified database state without claiming production restore authority; target-host destructive qualification remains open."
+        },
+        {
+          "nodeAction": "renew",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-state-backup --action renew [--root PATH] [--runtime-root PATH] [--authority-config PATH] [--online-authority-process-config PATH] [--authority-socket-config PATH --authority-socket-config-sha256 sha256:HASH] [--bundle PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-state-backup.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/cli.rs",
+              "symbol": "state_backup_cli_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/renewal.rs",
+              "symbol": "renew"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/state_backup_cli_parity.rs",
+              "symbol": "renew_never_invokes_online_authority_and_reconciliation_really_visits_ten_databases"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/local_state_authority/tests.rs",
+              "symbol": "schema_expiry_renewal_and_tampered_storage_do_not_publish_false_receipts"
+            }
+          ],
+          "remaining": "Renew uses the native authority owner and signed state; installed key custody and production acceptance remain external."
+        },
+        {
+          "nodeAction": "reconcile-and-renew",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-state-backup --action reconcile-and-renew [--root PATH] [--runtime-root PATH] [--authority-config PATH] [--online-authority-process-config PATH] [--authority-socket-config PATH --authority-socket-config-sha256 sha256:HASH] [--bundle PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-state-backup.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/cli.rs",
+              "symbol": "state_backup_cli_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/controller.rs",
+              "symbol": "reconcile_with_validity"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/state_recoverability/renewal.rs",
+              "symbol": "renew"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/state_backup_cli_parity.rs",
+              "symbol": "failed_reconciliation_reports_actual_initial_scope_and_completed_database_work"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/state_recoverability_automatic_parity.rs",
+              "symbol": "automatic_reconciliation_reuses_old_snapshot_for_running_and_fresh_controller"
+            }
+          ],
+          "remaining": "Reconcile-and-renew has durable Rust reconciliation semantics; independently qualified deployment/manager binding remains open."
+        }
       ]
     },
     {
@@ -2543,6 +2925,124 @@
           "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
           "symbol": "publication_private_reader_refuses_actual_view_oversize_and_unsafe_sidecars"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-runtime-image-reproducibility --action status [--config PATH] [--receipt PATH] [--runtime-root PATH] [--root PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-runtime-image-reproducibility.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/workflow.rs",
+              "symbol": "runtime_image_reproducibility_report_v2"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/publication.rs",
+              "symbol": "read_runtime_image_reproducibility_publication_v2"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+              "symbol": "offline_sqlite_authority_readonly_status_and_crash_recovery_are_real"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+              "symbol": "cli_missing_configuration_is_readonly_blocked_and_flag_errors_match_node"
+            }
+          ],
+          "remaining": "Status is a real read-only Rust authority observation; it does not create a reproducibility qualification."
+        },
+        {
+          "nodeAction": "request",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-runtime-image-reproducibility --action request [--config PATH] [--receipt PATH] [--runtime-root PATH] [--root PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-runtime-image-reproducibility.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/contract.rs",
+              "symbol": "build_runtime_image_reproducibility_request_v2"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/process.rs",
+              "symbol": "invoke_with_directory"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+              "symbol": "request_scope_context_crypto_and_configuration_match_real_node_algorithms"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+              "symbol": "full_cli_request_verify_publish_status_with_dynamic_signed_scope_and_real_test_processes"
+            }
+          ],
+          "remaining": "Request has a real bounded Rust process path and Node algorithm comparison; external runner authority remains separately qualified."
+        },
+        {
+          "nodeAction": "verify",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-runtime-image-reproducibility --action verify [--config PATH] [--receipt PATH] [--runtime-root PATH] [--root PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-runtime-image-reproducibility.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/contract.rs",
+              "symbol": "verify_runtime_image_reproducibility_response_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+              "symbol": "signed_invalid_oci_proof_and_signature_mutations_match_node_rejections"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+              "symbol": "full_cli_request_verify_publish_status_with_dynamic_signed_scope_and_real_test_processes"
+            }
+          ],
+          "remaining": "Verify recomputes signed response constraints in Rust; it does not self-issue production runtime authority."
+        },
+        {
+          "nodeAction": "publish",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-runtime-image-reproducibility --action publish [--config PATH] [--receipt PATH] [--runtime-root PATH] [--root PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-runtime-image-reproducibility.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/publication.rs",
+              "symbol": "publish_runtime_image_reproducibility_offline_v2"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/publication.rs",
+              "symbol": "read_runtime_image_reproducibility_publication_v2"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+              "symbol": "invalid_publish_has_no_writes_and_duplicate_json_is_rejected"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+              "symbol": "publication_cas_rejects_previously_valid_older_receipt_without_mutation"
+            }
+          ],
+          "remaining": "Publish has a guarded local Rust persistence path; independent external authority and target-host acceptance remain required."
+        }
       ]
     },
     {
@@ -2582,6 +3082,52 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_seed.rs",
           "symbol": "seed_acquisition_checks_description_and_publishes_exactly_once"
+        }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust runtime-r-source-cas REPOSITORY_ROOT [--action status] [--seed DIRECTORY]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
+              "symbol": "inspect_runtime_source_cas_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_parity.rs",
+              "symbol": "source_cas_verifier_matches_node_for_verified_and_tampered_archives"
+            }
+          ],
+          "remaining": "Status verifies the Rust source-CAS contract against Node behavior; no acquisition or production authority is implied."
+        },
+        {
+          "nodeAction": "acquire",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust runtime-r-source-cas REPOSITORY_ROOT [--action acquire] [--seed DIRECTORY]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
+              "symbol": "acquire_runtime_source_cas_from_seed_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/runtime_r_source_cas_seed.rs",
+              "symbol": "seed_acquisition_checks_description_and_publishes_exactly_once"
+            }
+          ],
+          "remaining": "Acquire publishes a bounded local seed CAS exactly once; external provenance and production runtime qualification remain separate."
         }
       ]
     },
@@ -2854,6 +3400,231 @@
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
           "symbol": "sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "prepare",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research --campaign-id ID (--workflow-file ABSOLUTE_JSON | --workflow-root ABSOLUTE_STATE --definition-hash SHA256) --action prepare [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+              "symbol": "parse_autonomous_research_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+              "symbol": "execute_autonomous_research_with_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+              "symbol": "run"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+              "symbol": "initialize_local_workflow_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_research_route.rs",
+              "symbol": "help_and_prepare_are_truthful_fail_closed_reports"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+              "symbol": "autonomous_prepare_launch_replay_and_converge_use_the_existing_owner"
+            }
+          ],
+          "remaining": "Prepare creates/validates only the explicit local workflow subject; automatic research planning and production authority remain open."
+        },
+        {
+          "nodeAction": "launch",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research --campaign-id ID (--workflow-file ABSOLUTE_JSON | --workflow-root ABSOLUTE_STATE --definition-hash SHA256) --action launch [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+              "symbol": "execute_autonomous_research_with_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+              "symbol": "run"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+              "symbol": "operate_local_workflow_with_clock_and_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/lib.rs",
+              "symbol": "run_service_with_clock_and_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/worker.rs",
+              "symbol": "run_process"
+            },
+            {
+              "path": "rust/crates/hepta-control-plane/src/commit.rs",
+              "symbol": "commit_batch_with_clock"
+            },
+            {
+              "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+              "symbol": "append_control_batch_with_clock"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+              "symbol": "autonomous_prepare_launch_replay_and_converge_use_the_existing_owner"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+              "symbol": "autonomous_executes_real_rust_workers_without_claiming_external_observation"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+              "symbol": "autonomous_worker_crash_is_not_reexecuted_after_cli_restart"
+            }
+          ],
+          "remaining": "Launch traverses the durable SQLite/CAS/executor/commit owners with restart fencing; live model research and external-effect reconciliation remain open."
+        },
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research --campaign-id ID (--workflow-file ABSOLUTE_JSON | --workflow-root ABSOLUTE_STATE --definition-hash SHA256) --action status [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+              "symbol": "execute_autonomous_research_with_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+              "symbol": "run"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+              "symbol": "read_current_local_workflow_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+              "symbol": "readonly_workflow_does_not_need_a_clock_and_live_success_preserves_all_steps"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+              "symbol": "autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"
+            }
+          ],
+          "remaining": "Status reads the persisted Rust workflow without mutation; it is not a substitute for Node production-store global status."
+        },
+        {
+          "nodeAction": "resume",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research --campaign-id ID (--workflow-file ABSOLUTE_JSON | --workflow-root ABSOLUTE_STATE --definition-hash SHA256) --action resume [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+              "symbol": "execute_autonomous_research_with_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+              "symbol": "run"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+              "symbol": "operate_local_workflow_v1"
+            },
+            {
+              "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+              "symbol": "set_campaign_state_with_clock"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+              "symbol": "autonomous_pause_resume_cancel_are_revision_bound_and_terminal"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+              "symbol": "autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"
+            }
+          ],
+          "remaining": "Resume is revision- and lease-bound in the existing durable owner; remote/provider ambiguity still blocks blind continuation."
+        },
+        {
+          "nodeAction": "converge",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research --campaign-id ID (--workflow-file ABSOLUTE_JSON | --workflow-root ABSOLUTE_STATE --definition-hash SHA256) --action converge [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+              "symbol": "execute_autonomous_research_with_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+              "symbol": "run"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+              "symbol": "operate_local_workflow_with_clock_and_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/lib.rs",
+              "symbol": "run_service_with_clock_and_cancellation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/worker.rs",
+              "symbol": "run_process"
+            },
+            {
+              "path": "rust/crates/hepta-control-plane/src/commit.rs",
+              "symbol": "commit_batch_with_clock"
+            },
+            {
+              "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+              "symbol": "append_control_batch_with_clock"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+              "symbol": "autonomous_prepare_launch_replay_and_converge_use_the_existing_owner"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/scientific_workflow.rs",
+              "symbol": "actual_r_autonomous_cli_reopens_the_same_workflow_without_reexecution"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+              "symbol": "sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch"
+            }
+          ],
+          "remaining": "Converge executes the explicit local workflow through durable owners; autonomous model planning, provider settlement and full Node workflow semantics remain open."
+        }
+      ],
+      "rustExtensionModes": [
+        "pause",
+        "cancel",
+        "amend"
       ]
     },
     {
@@ -2895,6 +3666,112 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_research_one_shot_campaign_attempt.rs",
           "symbol": "preflight_hashes_only_stable_single_link_input_and_execute_has_no_effects"
+        }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "plan",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research-one-shot-campaign-attempt --action plan [--dataset-mount-file PATH|--attempt-id ID] [--root PATH --runtime-root PATH --control-root PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "parse_autonomous_research_one_shot_campaign_attempt_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "inspect_autonomous_research_one_shot_campaign_attempt_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "strict_actions_fixed_campaign_and_status_fail_closed_without_dataset_reads"
+            }
+          ],
+          "remaining": "Plan has a strict Rust caller but remains non-authorizing."
+        },
+        {
+          "nodeAction": "preflight",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research-one-shot-campaign-attempt --action preflight [--dataset-mount-file PATH|--attempt-id ID] [--root PATH --runtime-root PATH --control-root PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "parse_autonomous_research_one_shot_campaign_attempt_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "inspect_autonomous_research_one_shot_campaign_attempt_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "preflight_hashes_only_stable_single_link_input_and_execute_has_no_effects"
+            }
+          ],
+          "remaining": "Preflight hashes bounded stable input without journal/provider effects; signed dataset authority is still missing."
+        },
+        {
+          "nodeAction": "execute",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research-one-shot-campaign-attempt --action execute [--dataset-mount-file PATH|--attempt-id ID] [--root PATH --runtime-root PATH --control-root PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "parse_autonomous_research_one_shot_campaign_attempt_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "execute_autonomous_research_one_shot_campaign_attempt_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "preflight_hashes_only_stable_single_link_input_and_execute_has_no_effects"
+            }
+          ],
+          "remaining": "Execute is an intentional fail-closed Rust caller and does not yet perform the incumbent campaign/provider operation."
+        },
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-research-one-shot-campaign-attempt --action status [--dataset-mount-file PATH|--attempt-id ID] [--root PATH --runtime-root PATH --control-root PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "parse_autonomous_research_one_shot_campaign_attempt_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "inspect_autonomous_research_one_shot_campaign_attempt_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_research_one_shot_campaign_attempt.rs",
+              "symbol": "strict_actions_fixed_campaign_and_status_fail_closed_without_dataset_reads"
+            }
+          ],
+          "remaining": "Status is a bounded Rust report, not production campaign journal inspection."
         }
       ]
     },
@@ -2942,6 +3819,68 @@
           "path": "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs",
           "symbol": "production_root_and_symlink_inputs_are_rejected"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "plan",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust local-golden-dataset-provision --action plan [options]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/local_golden_dataset.rs",
+              "symbol": "parse_local_golden_dataset_provisioning_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/local_golden_dataset.rs",
+              "symbol": "inspect_local_golden_dataset_provisioning_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs",
+              "symbol": "plan_is_source_bound_and_execute_fails_closed_without_writes"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs",
+              "symbol": "production_root_and_symlink_inputs_are_rejected"
+            }
+          ],
+          "remaining": "Plan has a source-bound Rust preflight; all-family normalization and independent dataset authority remain open."
+        },
+        {
+          "nodeAction": "execute",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust local-golden-dataset-provision --action execute [options]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/local_golden_dataset.rs",
+              "symbol": "parse_local_golden_dataset_provisioning_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/local_golden_dataset.rs",
+              "symbol": "execute_local_golden_dataset_provisioning_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs",
+              "symbol": "parser_help_and_execute_boundaries_match_node_contract"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_golden_dataset_provision.rs",
+              "symbol": "plan_is_source_bound_and_execute_fails_closed_without_writes"
+            }
+          ],
+          "remaining": "Execute is deliberately fail-closed before signing/publication; durable authority publication remains unimplemented."
+        }
       ]
     },
     {
@@ -2983,6 +3922,218 @@
           "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
           "symbol": "require_accepted_remains_fail_closed_without_live_authority"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "plan",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust strict-full-auto-acceptance --action plan --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "parse_strict_full_auto_acceptance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "inspect_strict_full_auto_acceptance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "help_is_structured_and_read_only"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "require_accepted_remains_fail_closed_without_live_authority"
+            }
+          ],
+          "remaining": "Rust parses and reports plan but remains fail-closed before the incumbent live adoption/execution semantics; external authority and target-host acceptance remain open."
+        },
+        {
+          "nodeAction": "inspect-runtime-adoption-candidate",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust strict-full-auto-acceptance --action inspect-runtime-adoption-candidate --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "parse_strict_full_auto_acceptance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "inspect_strict_full_auto_acceptance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "help_is_structured_and_read_only"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "require_accepted_remains_fail_closed_without_live_authority"
+            }
+          ],
+          "remaining": "Rust parses and reports inspect-runtime-adoption-candidate but remains fail-closed before the incumbent live adoption/execution semantics; external authority and target-host acceptance remain open."
+        },
+        {
+          "nodeAction": "adoption-status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust strict-full-auto-acceptance --action adoption-status --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "parse_strict_full_auto_acceptance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "inspect_strict_full_auto_acceptance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "help_is_structured_and_read_only"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "require_accepted_remains_fail_closed_without_live_authority"
+            }
+          ],
+          "remaining": "Rust parses and reports adoption-status but remains fail-closed before the incumbent live adoption/execution semantics; external authority and target-host acceptance remain open."
+        },
+        {
+          "nodeAction": "adopt-runtime",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust strict-full-auto-acceptance --action adopt-runtime --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "parse_strict_full_auto_acceptance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "inspect_strict_full_auto_acceptance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "help_is_structured_and_read_only"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "require_accepted_remains_fail_closed_without_live_authority"
+            }
+          ],
+          "remaining": "Rust parses and reports adopt-runtime but remains fail-closed before the incumbent live adoption/execution semantics; external authority and target-host acceptance remain open."
+        },
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust strict-full-auto-acceptance --action status --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "parse_strict_full_auto_acceptance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "inspect_strict_full_auto_acceptance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "help_is_structured_and_read_only"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "require_accepted_remains_fail_closed_without_live_authority"
+            }
+          ],
+          "remaining": "Rust parses and reports status but remains fail-closed before the incumbent live adoption/execution semantics; external authority and target-host acceptance remain open."
+        },
+        {
+          "nodeAction": "execute",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust strict-full-auto-acceptance --action execute --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "parse_strict_full_auto_acceptance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "inspect_strict_full_auto_acceptance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "help_is_structured_and_read_only"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "require_accepted_remains_fail_closed_without_live_authority"
+            }
+          ],
+          "remaining": "Rust parses and reports execute but remains fail-closed before the incumbent live adoption/execution semantics; external authority and target-host acceptance remain open."
+        },
+        {
+          "nodeAction": "converge",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust strict-full-auto-acceptance --action converge --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "parse_strict_full_auto_acceptance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/strict_full_auto_acceptance.rs",
+              "symbol": "inspect_strict_full_auto_acceptance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "help_is_structured_and_read_only"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/strict_full_auto_acceptance_route.rs",
+              "symbol": "require_accepted_remains_fail_closed_without_live_authority"
+            }
+          ],
+          "remaining": "Rust parses and reports converge but remains fail-closed before the incumbent live adoption/execution semantics; external authority and target-host acceptance remain open."
+        }
       ]
     },
     {
@@ -3021,6 +4172,112 @@
           "path": "rust/crates/hepta-paper-service/tests/autonomous_empirical_plugin_release_route.rs",
           "symbol": "publish_preflight_never_loads_key_or_writes_install_root"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "template",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-empirical-plugin-release --action template [--template ABSOLUTE_PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config ABSOLUTE_PATH] [--install-root ABSOLUTE_PATH] [--activation ABSOLUTE_PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+              "symbol": "parse_autonomous_empirical_plugin_release_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+              "symbol": "inspect_autonomous_empirical_plugin_release_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_empirical_plugin_release_route.rs",
+              "symbol": "help_is_structured_and_declares_no_external_action"
+            }
+          ],
+          "remaining": "Rust has a bounded template caller, but signing, immutable installation, activation publication and independent external authority remain unimplemented."
+        },
+        {
+          "nodeAction": "plan",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-empirical-plugin-release --action plan [--template ABSOLUTE_PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config ABSOLUTE_PATH] [--install-root ABSOLUTE_PATH] [--activation ABSOLUTE_PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+              "symbol": "parse_autonomous_empirical_plugin_release_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+              "symbol": "inspect_autonomous_empirical_plugin_release_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_empirical_plugin_release_route.rs",
+              "symbol": "help_is_structured_and_declares_no_external_action"
+            }
+          ],
+          "remaining": "Rust has a bounded plan caller, but signing, immutable installation, activation publication and independent external authority remain unimplemented."
+        },
+        {
+          "nodeAction": "publish",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-empirical-plugin-release --action publish [--template ABSOLUTE_PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config ABSOLUTE_PATH] [--install-root ABSOLUTE_PATH] [--activation ABSOLUTE_PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+              "symbol": "parse_autonomous_empirical_plugin_release_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+              "symbol": "inspect_autonomous_empirical_plugin_release_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_empirical_plugin_release_route.rs",
+              "symbol": "publish_preflight_never_loads_key_or_writes_install_root"
+            }
+          ],
+          "remaining": "Rust has a bounded publish caller, but signing, immutable installation, activation publication and independent external authority remain unimplemented."
+        },
+        {
+          "nodeAction": "inspect",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-empirical-plugin-release --action inspect [--template ABSOLUTE_PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config ABSOLUTE_PATH] [--install-root ABSOLUTE_PATH] [--activation ABSOLUTE_PATH]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+              "symbol": "parse_autonomous_empirical_plugin_release_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_empirical_plugin_release.rs",
+              "symbol": "inspect_autonomous_empirical_plugin_release_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_empirical_plugin_release_route.rs",
+              "symbol": "help_is_structured_and_declares_no_external_action"
+            }
+          ],
+          "remaining": "Rust has a bounded inspect caller, but signing, immutable installation, activation publication and independent external authority remain unimplemented."
+        }
       ]
     },
     {
@@ -3054,6 +4311,42 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
           "symbol": "cli_rejects_request_hash_tampering_and_unsupported_families"
+        }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "status",
+          "scope": "unmapped",
+          "rustCommand": null,
+          "callChain": [],
+          "tests": [],
+          "remaining": "The incumbent Node status mode has no Rust status caller; a native calculation request must not be counted as status parity."
+        },
+        {
+          "nodeAction": "run",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust advanced-numerical-plugin REQUEST",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/advanced_numerical.rs",
+              "symbol": "execute_advanced_numerical_plugin_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
+              "symbol": "cli_executes_bounded_candidate_and_reports_unqualified_boundary"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
+              "symbol": "cli_rejects_request_hash_tampering_and_unsupported_families"
+            }
+          ],
+          "remaining": "Run executes only the bounded native reference-candidate families; signed bundle, sandbox, ten-family coverage and independent oracle qualification remain open."
         }
       ]
     },
@@ -3126,6 +4419,52 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher_challenge.rs",
           "symbol": "status_is_fail_closed_on_missing_exchange_and_parent_symlink"
+        }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-submission-dispatcher-challenge --action status --plan-hash sha256:... --idempotency-key sha256:... --portal-id ID --portal-configuration-hash sha256:... --portal-descriptor-hash sha256:... [--runtime-root PATH] [--help]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "parse_dispatcher_challenge_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_submission_dispatcher_challenge.rs",
+              "symbol": "inspect_autonomous_submission_dispatcher_challenge_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher_challenge.rs",
+              "symbol": "status_is_fail_closed_on_missing_exchange_and_parent_symlink"
+            }
+          ],
+          "remaining": "Status has a bounded Rust challenge observer; dispatcher/portal authority remains external."
+        },
+        {
+          "nodeAction": "publish",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-submission-dispatcher-challenge --action publish --plan-hash sha256:... --idempotency-key sha256:... --portal-id ID --portal-configuration-hash sha256:... --portal-descriptor-hash sha256:... [--runtime-root PATH] [--help]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "parse_dispatcher_challenge_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_submission_dispatcher_challenge.rs",
+              "symbol": "inspect_autonomous_submission_dispatcher_challenge_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_submission_dispatcher_challenge.rs",
+              "symbol": "help_is_the_same_usage_object_as_node"
+            }
+          ],
+          "remaining": "Rust accepts the publish mode only to fail closed; actual Node publication, signed cycle envelope and submission effects are unimplemented."
         }
       ]
     },
@@ -6610,6 +7949,64 @@
           "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
           "symbol": "plan_is_source_bound_and_execute_is_fail_closed"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "plan",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-state-provision --action plan [options]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+              "symbol": "parse_autonomous_state_provisioning_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+              "symbol": "inspect_autonomous_state_provisioning_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "plan_is_source_bound_and_execute_is_fail_closed"
+            }
+          ],
+          "remaining": "Plan binds the current Rust provisioning inputs without writing runtime state; full constructor composition remains open."
+        },
+        {
+          "nodeAction": "execute",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-state-provision --action execute [options]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+              "symbol": "parse_autonomous_state_provisioning_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+              "symbol": "execute_autonomous_state_provisioning_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "parser_rejects_execute_without_confirmation_or_plan"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "plan_is_source_bound_and_execute_is_fail_closed"
+            }
+          ],
+          "remaining": "Execute is currently fail-closed before repository construction/publication; the Node mutation path is not yet replaced."
+        }
       ]
     },
     {
@@ -6652,6 +8049,64 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
           "symbol": "invalid_or_incomplete_sqlite_observation_fails_closed_without_mutation"
+        }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "plan",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-state-partial-root-maintenance --action plan [options]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+              "symbol": "parse_autonomous_state_partial_root_maintenance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+              "symbol": "inspect_autonomous_state_partial_root_maintenance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
+              "symbol": "invalid_or_incomplete_sqlite_observation_fails_closed_without_mutation"
+            }
+          ],
+          "remaining": "Plan performs the bounded Rust partial-root preflight; production repair authority remains absent."
+        },
+        {
+          "nodeAction": "execute",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust autonomous-state-partial-root-maintenance --action execute [options]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+              "symbol": "parse_autonomous_state_partial_root_maintenance_arguments"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+              "symbol": "execute_autonomous_state_partial_root_maintenance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
+              "symbol": "parser_requires_double_gated_execute"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
+              "symbol": "invalid_or_incomplete_sqlite_observation_fails_closed_without_mutation"
+            }
+          ],
+          "remaining": "Execute validates the plan but remains fail-closed before rescue copy, repair, publication and crash recovery."
         }
       ]
     },
@@ -7613,6 +9068,92 @@
           "path": "rust/crates/hepta-paper-service/src/local_state_authority_client/manager/kernel_identity/tests.rs",
           "symbol": "independent_original_peer_status_is_bound_to_its_pidfd_and_refuses_exit"
         }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "plan",
+          "scope": "partial_local_source",
+          "rustCommand": "Rust library: build_schema_transition_plan_v1(...)",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_transition.rs",
+              "symbol": "inspect_online_schema_transition_readiness_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_transition/audit.rs",
+              "symbol": "verify_audit"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/pristine_runtime_state.rs",
+              "symbol": "inspect_pristine_database_state_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_execution/plan.rs",
+              "symbol": "build_schema_transition_plan_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance.rs",
+              "symbol": "reserve_schema_maintenance_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/online_schema_transition_parity.rs",
+              "symbol": "actual_ten_database_signed_schema_readiness_matches_node_and_retains_current_evidence"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/schema_source_projection_parity.rs",
+              "symbol": "actual_ten_database_initial_and_pristine_rebind_plans_match_node"
+            }
+          ],
+          "remaining": "Plan has real Rust readiness and plan-building source, but no unified product CLI equivalent to the incumbent Node command."
+        },
+        {
+          "nodeAction": "execute",
+          "scope": "partial_local_source",
+          "rustCommand": "Rust library: normalize/install/finalize schema transition",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization.rs",
+              "symbol": "normalize_schema_maintenance_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization.rs",
+              "symbol": "resume_schema_normalization_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/installation.rs",
+              "symbol": "install_schema_maintenance_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/installation.rs",
+              "symbol": "resume_schema_installation_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/finalization.rs",
+              "symbol": "finalize_schema_transition_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/online_schema_execution/maintenance/normalization/finalization.rs",
+              "symbol": "observe_schema_transition_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/schema_normalization_parity.rs",
+              "symbol": "actual_process_crash_after_checkpoint_and_before_publication_resumes_signed_bytes"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/schema_installation_parity.rs",
+              "symbol": "actual_ten_database_genesis_installation_matches_full_node_records"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/online_finalized_inventory_parity.rs",
+              "symbol": "actual_ten_database_heads_match_original_node_and_retain_current_proof_without_rpc_or_source_writes"
+            }
+          ],
+          "remaining": "Execute has real Rust normalization/install/finalization components and crash tests, but owning restart activation, publication and one product-equivalent CLI remain open."
+        }
       ]
     },
     {
@@ -7976,6 +9517,10 @@
           "path": "rust/crates/hepta-paper-service/tests/submission_handoff_export.rs",
           "symbol": "export_action_is_never_reported_as_completed"
         }
+      ],
+      "rustExtensionModes": [
+        "inspect",
+        "export"
       ]
     },
     {
@@ -8291,6 +9836,72 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
           "symbol": "final_pair_snapshot_rejects_private_mutation_while_public_is_read"
+        }
+      ],
+      "argumentModes": [
+        {
+          "nodeAction": "status",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-release-integrity-key --action status [--runtime-root PATH] [--execute]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-release-integrity-key.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/release_integrity_key.rs",
+              "symbol": "release_integrity_key_cli_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/release_integrity_key.rs",
+              "symbol": "inspect_local_release_integrity_key_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+              "symbol": "status_and_cli_arguments_are_readonly_and_match_node"
+            }
+          ],
+          "remaining": "Status has read-only Rust/Node interoperability coverage; it grants no release authority."
+        },
+        {
+          "nodeAction": "provision",
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-release-integrity-key --action provision [--runtime-root PATH] [--execute]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-release-integrity-key.rs",
+              "symbol": "main"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/release_integrity_key.rs",
+              "symbol": "release_integrity_key_cli_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/release_integrity_key.rs",
+              "symbol": "provision_local_release_integrity_key_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/release_integrity_key/storage.rs",
+              "symbol": "publish"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+              "symbol": "native_provision_and_node_provision_interoperate_without_rotation"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+              "symbol": "publication_failures_roll_back_only_owned_files_and_never_overwrite"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/release_integrity_key_parity.rs",
+              "symbol": "abrupt_crash_leaves_partial_or_multilink_pair_blocked_and_lock_intact"
+            }
+          ],
+          "remaining": "Provision implements create-once local Ed25519 material with crash/no-clobber controls; independent KMS/HSM custody remains external."
         }
       ]
     },

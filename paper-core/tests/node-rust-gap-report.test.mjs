@@ -17,6 +17,8 @@ test('gap ledger retains every real route and remaining partial-source gap', () 
     assert.ok(row.includes(mapping.remaining.replaceAll('|', '\\|').replaceAll('\n', ' ')));
   }
   assert.ok(content.includes(`- Partial source candidates: **${report.commandMappings.mappedCommands}**`));
+  assert.ok(content.includes('- Source of truth: `docs/migration/node-rust-command-map.v1.json` + live command registry'));
+  assert.ok(!content.includes('- Inventory binding:'));
   assert.ok(content.includes('- Independently accepted parity rows: **0**'));
   assert.ok(content.includes(`- Open command gaps: **${report.commands.length}**`));
 });

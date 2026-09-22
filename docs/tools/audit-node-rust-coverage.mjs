@@ -93,59 +93,94 @@ export function buildCoverageInventory(routes, catalog, globalCapabilities, modu
   };
 }
 
-function validateCommandArgumentModes(row) {
-  if (row.id !== 'operator/campaign') {
-    if (row.argumentModes !== undefined) throw new Error(`unexpected command argument-mode ledger: ${row.id}`);
-    return [];
+function actionModesFromNodeRoute(route) {
+  if (!route || !Array.isArray(route.nodeArgv)) return { source: null, modes: [] };
+  const fixedIndex = route.nodeArgv.indexOf('--action');
+  if (fixedIndex >= 0 && typeof route.nodeArgv[fixedIndex + 1] === 'string') {
+    return { source: null, modes: [] };
   }
-  if (!Array.isArray(row.argumentModes) || row.argumentModes.length === 0) {
-    throw new Error('operator/campaign argument modes required in canonical command map');
+  if (!route.forwardedArgumentSchema?.valueFlags?.includes('action')) {
+    return { source: null, modes: [] };
   }
-  const nodeEntrypoint = 'paper-core/bin/paper-campaign.mjs';
-  const entry = fs.readFileSync(path.join(ROOT, nodeEntrypoint), 'utf8');
-  const match = /--action <name>\s+([^'\n]+)/.exec(entry);
-  if (!match) throw new Error('campaign action inventory changed');
-  const actions = match[1].split('|').sort(compare);
-  const mapped = row.argumentModes.map((mode) => mode.nodeAction).sort(compare);
-  if (JSON.stringify(mapped) !== JSON.stringify(actions)
-      || new Set(mapped).size !== mapped.length) {
-    throw new Error('canonical command map campaign modes missing, duplicated or drifted');
+  const source = route.nodeArgv.find((value) => typeof value === 'string' && value.endsWith('.mjs'));
+  if (!source) throw new Error(`dynamic action route missing Node source: ${route.group}/${route.name}`);
+  const text = fs.readFileSync(path.join(ROOT, source), 'utf8');
+  const modes = new Set();
+  for (const match of text.matchAll(/--action(?:\\s+<[^>\\n]+>)?\\s+([a-z][a-z0-9-]*(?:\\|[a-z][a-z0-9-]+)+)/g)) {
+    for (const value of match[1].split('|')) modes.add(value);
   }
-  const sources = new Set([nodeEntrypoint]);
-  for (const mode of row.argumentModes) {
+  for (const match of text.matchAll(/--action\\s+([a-z][a-z0-9-]+)/g)) modes.add(match[1]);
+  for (const match of text.matchAll(/\\[\\s*((?:(?:'|")[a-z][a-z0-9-]*(?:'|")\\s*,?\\s*){2,})\\]\\.includes\\(action\\)/g)) {
+    for (const value of match[1].matchAll(/(?:'|")([a-z][a-z0-9-]*)(?:'|")/g)) modes.add(value[1]);
+  }
+  if (modes.size === 0) throw new Error(`dynamic Node action modes not discoverable: ${source}`);
+  return { source, modes: [...modes].sort(compare) };
+}
+
+function actionModesFromRustEntrypoint(row) {
+  if (typeof row.rustEntrypoint !== 'string') return [];
+  const match = /--action\\s+([a-z][a-z0-9-]*(?:\\|[a-z][a-z0-9-]+)+)/.exec(row.rustEntrypoint);
+  return match ? match[1].split('|').sort(compare) : [];
+}
+
+function validateCommandArgumentModes(row, route) {
+  const node = actionModesFromNodeRoute(route);
+  const expected = node.modes;
+  const declared = Array.isArray(row.argumentModes)
+    ? row.argumentModes.map((mode) => mode?.nodeAction).sort(compare)
+    : [];
+  if (JSON.stringify(declared) !== JSON.stringify(expected)
+      || new Set(declared).size !== declared.length) {
+    throw new Error(`canonical command map action modes missing, duplicated or drifted: ${row.id}`);
+  }
+
+  const topSources = new Set(row.callChain.map((reference) => `${reference.path}:${reference.symbol}`));
+  const topTests = new Set(row.testCases.map((reference) => `${reference.path}:${reference.symbol}`));
+  for (const mode of row.argumentModes || []) {
     if (!mode || typeof mode !== 'object' || Array.isArray(mode)
         || !['partial_local_source', 'unmapped'].includes(mode.scope)
         || typeof mode.remaining !== 'string' || mode.remaining.length < 20
         || !Array.isArray(mode.callChain) || !Array.isArray(mode.tests)) {
-      throw new Error(`invalid operator/campaign argument mode: ${String(mode?.nodeAction)}`);
+      throw new Error(`invalid command argument mode: ${row.id}:${String(mode?.nodeAction)}`);
     }
     if (mode.scope === 'partial_local_source'
         && (typeof mode.rustCommand !== 'string' || !mode.rustCommand
           || mode.callChain.length === 0 || mode.tests.length === 0)) {
-      throw new Error(`campaign mode missing Rust source mapping: ${mode.nodeAction}`);
+      throw new Error(`argument mode missing Rust source mapping: ${row.id}:${mode.nodeAction}`);
     }
     if (mode.scope === 'unmapped'
         && (mode.rustCommand !== null || mode.callChain.length !== 0 || mode.tests.length !== 0)) {
-      throw new Error(`unmapped campaign mode claims Rust source: ${mode.nodeAction}`);
+      throw new Error(`unmapped argument mode claims Rust source: ${row.id}:${mode.nodeAction}`);
     }
-    for (const reference of [...mode.callChain, ...mode.tests]) {
-      if (!reference || typeof reference !== 'object' || Array.isArray(reference)
-          || Object.keys(reference).sort().join(',') !== 'path,symbol'
-          || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(reference.symbol)) {
-        throw new Error(`invalid campaign mode source binding: ${mode.nodeAction}`);
+    for (const [references, allowed, kind] of [
+      [mode.callChain, topSources, 'source'], [mode.tests, topTests, 'test'],
+    ]) {
+      const seen = new Set();
+      for (const reference of references) {
+        if (!reference || typeof reference !== 'object' || Array.isArray(reference)
+            || Object.keys(reference).sort().join(',') !== 'path,symbol'
+            || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(reference.symbol)) {
+          throw new Error(`invalid argument-mode ${kind} binding: ${row.id}:${mode.nodeAction}`);
+        }
+        const identity = `${reference.path}:${reference.symbol}`;
+        if (!allowed.has(identity) || seen.has(identity)) {
+          throw new Error(`unbound or duplicate argument-mode ${kind}: ${row.id}:${mode.nodeAction}:${identity}`);
+        }
+        seen.add(identity);
       }
-      const source = readSource(reference.path);
-      const text = fs.readFileSync(path.join(ROOT, reference.path), 'utf8');
-      const isTest = mode.tests.includes(reference);
-      const prefix = isTest ? '#\\[test\\]\\s*' : '^\\s*(?:pub(?:\\([^\\r\\n)]*\\))?\\s+)?';
-      const declaration = new RegExp(`${prefix}(?:async\\s+)?fn\\s+${reference.symbol}\\s*(?:<[^\\r\\n]*>)?\\s*\\(`, 'm');
-      if (!declaration.test(text)) {
-        throw new Error(`mapped campaign mode symbol missing: ${reference.path}:${reference.symbol}`);
-      }
-      sources.add(source.path);
     }
   }
-  return [...sources].sort(compare);
+
+  const nodeSet = new Set(expected);
+  const expectedExtensions = actionModesFromRustEntrypoint(row)
+    .filter((mode) => !nodeSet.has(mode)).sort(compare);
+  const declaredExtensions = Array.isArray(row.rustExtensionModes)
+    ? [...row.rustExtensionModes].sort(compare) : [];
+  if (JSON.stringify(declaredExtensions) !== JSON.stringify(expectedExtensions)
+      || new Set(declaredExtensions).size !== declaredExtensions.length) {
+    throw new Error(`Rust-only action modes are not explicitly classified: ${row.id}`);
+  }
+  return node.source ? [node.source] : [];
 }
 
 // This map is deliberately separate from acceptance.  It records only reviewed
@@ -167,8 +202,9 @@ export function auditNodeRustCommandMap(routes, suppliedMap = null) {
     throw new Error('Node/Rust command map is missing, duplicated or drifted');
   }
   const argumentModeSources = new Set();
+  const routesById = new Map(routes.map((route) => [`${route.group}/${route.name}`, route]));
   for (const row of map.commands) {
-    for (const source of validateCommandArgumentModes(row)) argumentModeSources.add(source);
+    for (const source of validateCommandArgumentModes(row, routesById.get(row.id))) argumentModeSources.add(source);
     if (!['partial_local_source', 'unmapped'].includes(row.scope)
         || !['candidate', 'unmapped'].includes(row.compatibilityDecision)
         || typeof row.remaining !== 'string' || row.remaining.length < 20

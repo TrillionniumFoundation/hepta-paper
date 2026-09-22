@@ -744,9 +744,10 @@
         "rust/crates/hepta-paper-service/tests/autonomous_provider_configuration_parity.rs",
         "rust/crates/hepta-paper-service/tests/strict_machine_intake_parity.rs",
         "rust/crates/hepta-paper-service/tests/external_qualification_configuration_parity.rs",
-        "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs"
+        "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
+        "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs"
       ],
-      "remaining": "Native read-only resident health covers base/startup/machine reconciliation. Current intake supports actual builtin V1 configuration/static files, closure and daily budgets, provider identity, generation-one admissions/counts/leases including committed WAL, and resident identity comparison. Strict mode consumes that actual intake once and verifies the original published nested/outer receipt hashes, expected acceptance/current identity bindings and inspection clock, with real Node publisher/reader and binary differential tests. It intentionally rejects the incumbent falsy-JSON false-ready bug. Both are diagnostics, not cycle-execution or authority proofs. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings, publisher/lifecycle execution and fully-autonomous prerequisite chains remain unported. Process probes and independent production qualification remain external. A separately callable native V3 external qualification configuration owner now observes real command/interpreter/argument/credential/public-trust inputs and produces the original configuration inspection; it is not connected to fully health. Separately callable native full qualification pointer/state readers now consume the original actual SQLite/WAL and byte-bound mirror, preserving stored V4/V5 recovery semantics and hashes; successful data reads do not establish signed/current acceptance. The resident receipt/envelope and code/runtime observations, integration of these prerequisite readers, and independently configured recovery-purpose trust remain unfinished. The incumbent recovery adapter passes incompatible release-attestor metadata and a KeyObject into the distinct recovery capability contract; merely relabeling or converting those fields is not authorized recovery trust.",
+      "remaining": "Native read-only resident health covers base/startup/machine reconciliation. Current intake supports actual builtin V1 configuration/static files, closure and daily budgets, provider identity, generation-one admissions/counts/leases including committed WAL, and resident identity comparison. Strict mode consumes that actual intake once and verifies the original published nested/outer receipt hashes, expected acceptance/current identity bindings and inspection clock, with real Node publisher/reader and binary differential tests. It intentionally rejects the incumbent falsy-JSON false-ready bug. Both are diagnostics, not cycle-execution or authority proofs. V2 configuration/admission/producer authority, external plugin registries, local-golden dataset scope, broader legacy Date.parse spellings, publisher/lifecycle execution and fully-autonomous prerequisite chains remain unported. Process probes and independent production qualification remain external. A separately callable native V3 external qualification configuration owner now observes real command/interpreter/argument/credential/public-trust inputs and produces the original configuration inspection; it is not connected to fully health. Separately callable native full qualification pointer/state readers now consume the original actual SQLite/WAL and byte-bound mirror, preserving stored V4/V5 recovery semantics and hashes; successful data reads do not establish signed/current acceptance. The resident receipt/envelope and code/runtime observations, integration of these prerequisite readers, and independently configured recovery-purpose trust remain unfinished. The incumbent recovery adapter passes incompatible release-attestor metadata and a KeyObject into the distinct recovery capability contract; merely relabeling or converting those fields is not authorized recovery trust. A separately callable native recovery configuration inspector now derives complete original diagnostics from the actual private recovery file and referenced V3 owner, preserving recorded capability identity and the original trust/KeyObject contract refusal. Actual Node and genuine ephemeral-signature fixtures are synthetic local evidence only. It does not execute recovery, create independent recovery-purpose trust, or wire fully health; bounded native IO/path/JSON error profiles are explicit.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/supervisor_health.rs",
         "rust/crates/hepta-paper-service/src/state_database_inventory/snapshot.rs",
@@ -772,7 +773,11 @@
         "rust/crates/hepta-paper-service/src/qualification_stored_evidence/state.rs",
         "rust/crates/hepta-paper-service/src/qualification_stored_evidence/files.rs",
         "rust/crates/hepta-paper-service/src/qualification_stored_evidence/json.rs",
-        "rust/crates/hepta-paper-service/src/qualification_stored_evidence/sqlite.rs"
+        "rust/crates/hepta-paper-service/src/qualification_stored_evidence/sqlite.rs",
+        "rust/crates/hepta-paper-service/src/external_action_recovery_configuration/mod.rs",
+        "rust/crates/hepta-paper-service/src/external_action_recovery_configuration/files.rs",
+        "rust/crates/hepta-paper-service/src/external_action_recovery_configuration/value.rs",
+        "rust/crates/hepta-paper-service/src/external_action_recovery_configuration/capability.rs"
       ],
       "testCases": [
         {
@@ -942,6 +947,46 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/qualification_stored_evidence_parity.rs",
           "symbol": "native_readers_refuse_actual_symlinks_modes_views_and_invalid_scope"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "genuine_original_v3_identity_preserves_actual_recovery_trust_conflict"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "selection_precedence_missing_empty_relative_and_whitespace_paths_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "exact_outer_configuration_shape_and_hash_matrix_matches"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "loaded_unverified_receipts_preserve_truthy_recorded_hash_without_invented_rehash"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "action_hash_coercion_is_preserved_but_process_hash_binding_stays_strict"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "referenced_v3_actual_credential_environment_and_command_drift_invalidate_binding"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "source_mode_hardlink_symlink_fifo_and_ancestor_alias_refuse_without_execution"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "exact_file_size_and_parse_boundaries_are_bounded_and_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "clock_boundaries_and_original_short_circuit_order_match"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/external_action_recovery_configuration_parity.rs",
+          "symbol": "native_bounded_error_profiles_remain_explicit_and_fail_closed"
         }
       ]
     },

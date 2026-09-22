@@ -806,7 +806,6 @@ dependencies = [
  "hepta-campaign-writer",
  "hepta-codex-protocol",
  "hepta-module-platform",
- "hepta-orchestration-kernel",
  "hex",
  "nix",
  "serde",

@@ -193,15 +193,15 @@ The module documentation validator additionally proves one-to-one registry/spec/
 
 The actual JavaScript source path is `paper-application/orchestration/candidate-router.mjs` in the registry, manifest and implementation roots above. The static state is `source_implemented`; this registration describes existing source and confers no currentness or activation authority.
 
-### Additive Rust orchestration contract
+### Standalone Rust orchestration compatibility contract
 
-[`route_candidate_v1`](../../../rust/crates/hepta-orchestration-kernel/src/router.rs) is also available through
-`hepta_control_plane::orchestration_kernel`. This additive Rust API filters, Pareto-reduces and scores a bounded five-axis integer tuple. The Node frontier collector retains contextual candidate semantics and deliberately avoids context-free Pareto deletion. They have different inputs, hashes and responsibilities; selecting the Rust API requires a reviewed mapping and currentness/hard-policy integration, not a type-name substitution.
+[`route_candidate_v1`](../../../rust/crates/hepta-orchestration-kernel/src/router.rs) remains available only from the standalone
+`hepta-orchestration-kernel` crate. It is not re-exported by the product control plane and is not a selected product owner. This compatibility/experimental API filters, Pareto-reduces and scores a bounded five-axis integer tuple. The Node frontier collector retains contextual candidate semantics and deliberately avoids context-free Pareto deletion. They have different inputs, hashes and responsibilities; selecting the Rust API requires a reviewed mapping and currentness/hard-policy integration, not a type-name substitution.
 
 See the [Rust orchestration development handoff](../../../rust/crates/hepta-orchestration-kernel/HANDOFF.md)
 for exact fields/units, bounds, hash domains, failure/recovery behavior and
-implementation selection. The current re-export does not wire this API into
-an existing command. Focused source validation from `rust` is
+implementation selection. This standalone compatibility API is not wired into
+an existing product command. Focused source validation from `rust` is
 `cargo test -p hepta-orchestration-kernel --locked`; those fixtures do not establish
 Node parity, production activation or independent qualification.
 

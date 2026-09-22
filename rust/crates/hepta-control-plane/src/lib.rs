@@ -44,7 +44,6 @@ pub use execution::{
     PreparedResultVerifierV1, VerifiedPreparedResultV1,
 };
 pub use execution_filesystem::FilesystemPreparedResultVerifierV1;
-pub use hepta_orchestration_kernel as orchestration_kernel;
 pub use hierarchical_resource::{
     HierarchicalAdmissionOutcomeV1, HierarchicalAdmissionRequestV1,
     HierarchicalResourceAllocatorV1, HierarchicalResourceReservationV1,

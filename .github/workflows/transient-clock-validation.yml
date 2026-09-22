@@ -1,0 +1,188 @@
+name: transient-clock-validation
+
+on:
+  push:
+    branches: [codex/clock-validation-8f8be6d5]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transient-clock-validation
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  BASE_COMMIT: 8f8be6d5092d8102edb0f1b3466ef0fcd33a9f8b
+  BASE_TREE: 8d9384b1eaa605e26a762460df8c827d712e6963
+  PAYLOAD_SHA256: ff3b6747d3162019c585d5e28f1c57dc3ce7d5f942d9b45dc25b3f24cb83df23
+  RUSTFLAGS: '-Dunsafe-code'
+  RUST_BACKTRACE: '1'
+
+jobs:
+  isolated-source-validation:
+    if: github.repository == 'TrillionniumFoundation/hepta-paper' && github.ref == 'refs/heads/codex/clock-validation-8f8be6d5'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Materialize the exact reviewed source patch on its unchanged base
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/clock-validation"
+          cp .github/clock-payload.xz "$RUNNER_TEMP/clock-validation/payload.xz"
+          git checkout --detach "$BASE_COMMIT"
+          test "$(git rev-parse HEAD^{tree})" = "$BASE_TREE"
+          python3 - <<'PY'
+          import hashlib, json, lzma, os, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'clock-validation'
+          decoder = lzma.LZMADecompressor(memlimit=128*1024*1024)
+          packed = (out/'payload.xz').read_bytes()
+          assert len(packed) < 1024*1024
+          raw = decoder.decompress(packed, max_length=1024*1024)
+          assert decoder.eof and not decoder.unused_data
+          assert hashlib.sha256(raw).hexdigest() == os.environ['PAYLOAD_SHA256']
+          value = json.loads(raw)
+          assert set(value) == {'patch','bundles','commandUpdate'}
+          subprocess.run(['git','apply','--index','--whitespace=error-all'], input=value['patch'].encode(), check=True)
+          expected = {
+              'docs/system/evidence/repository-source-implementation-v1.json': 'control-plane-execution-source',
+              'docs/system/evidence/rust-functional-source-closure-v1.json': 'production-composition-source',
+          }
+          assert set(value['bundles']) == set(expected)
+          for name, change in value['bundles'].items():
+              assert change['key'] == expected[name]
+              document = json.loads((root/name).read_text())
+              assert change['key'] in document['bundles']
+              document['bundles'][change['key']] = change['value']
+              (root/name).write_text(json.dumps(document, ensure_ascii=False, separators=(',',':'))+'\n')
+          name = root/'docs/migration/node-rust-command-map.v1.json'
+          document = json.loads(name.read_text())
+          change = value['commandUpdate']
+          assert change['id'] == 'operator/autonomous-research'
+          assert change['scope'] == 'partial_local_source' and change['compatibilityDecision'] == 'candidate'
+          indexes = [i for i,r in enumerate(document['commands']) if r['id'] == change['id']]
+          assert len(indexes) == 1
+          document['commands'][indexes[0]] = change
+          name.write_text(json.dumps(document, ensure_ascii=False, indent=2)+'\n')
+          PY
+          node docs/tools/generate-node-rust-gap-report.mjs
+          git add docs/migration docs/system/evidence
+          test "$(git write-tree)" = 95fb6d7a2da62c56badb7e12dea303519be66ce1
+          git diff --cached --name-only > "$RUNNER_TEMP/clock-validation/approved-paths.txt"
+          test "$(wc -l < "$RUNNER_TEMP/clock-validation/approved-paths.txt")" = 16
+          git diff --cached --check
+      - name: Install pinned dependencies and format actual Rust source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = v22.23.1
+          npm ci --ignore-scripts --no-audit --no-fund
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.0
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          for name in ['repository-source-implementation-v1.json', 'rust-functional-source-closure-v1.json']:
+              path = pathlib.Path('docs/system/evidence')/name
+              document = json.loads(path.read_text())
+              for bundle in document['bundles'].values():
+                  for entry in bundle['files']:
+                      entry['gitBlob'] = subprocess.check_output(['git','hash-object','--',entry['path']],text=True).strip()
+              path.write_text(json.dumps(document,ensure_ascii=False,separators=(',',':'))+'\n')
+          PY
+          git add rust docs/system/evidence
+          git diff --cached --name-only > "$RUNNER_TEMP/clock-validation/final-paths.txt"
+          cmp "$RUNNER_TEMP/clock-validation/approved-paths.txt" "$RUNNER_TEMP/clock-validation/final-paths.txt"
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(runtime): revalidate live writer leases at dispatch and SQLite commit boundaries' -m 'Reuse the existing workflow, service, sequencer and SQLite writer. Keep fixed-clock APIs for deterministic callers, while the autonomous CLI samples system time at each guarded boundary. Add whole-batch, lifecycle, cross-wave and prepared-recovery regressions; update the existing command map and source evidence only. No production authority, lease renewal or in-flight termination is claimed.'
+          test "$(git rev-parse HEAD^)" = "$BASE_COMMIT"
+          test ! -e .github/workflows/transient-clock-validation.yml
+          test ! -e .github/clock-payload.xz
+          git rev-parse HEAD HEAD^{tree} > "$RUNNER_TEMP/clock-validation/candidate.txt"
+          git diff "$BASE_COMMIT" HEAD --binary > "$RUNNER_TEMP/clock-validation/candidate.patch"
+          git bundle create "$RUNNER_TEMP/clock-validation/candidate.bundle" HEAD "^$BASE_COMMIT"
+      - name: Validate current source bindings and canonical documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          node docs/tools/generate-node-rust-gap-report.mjs --check
+          node docs/tools/validate-development-docs.mjs
+          node docs/tools/validate-module-documentation.mjs
+          python3 docs/rust/tools/validate-program-truth.py
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --expected-head "$(git rev-parse HEAD)" \
+            --receipt "$RUNNER_TEMP/clock-validation/source-binding.json"
+          node paper-core/bin/verify-source-implementation-evidence.mjs \
+            --evidence docs/system/evidence/rust-functional-source-closure-v1.json \
+            --expected-head "$(git rev-parse HEAD)" \
+            --receipt "$RUNNER_TEMP/clock-validation/functional-binding.json"
+      - name: Execute six transaction and dispatch clock regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane \
+            --lib tests::runtime_clock:: -- --nocapture \
+            2>&1 | tee "$RUNNER_TEMP/clock-validation/control-clock.log"
+          grep -Eq 'test result: ok\. 6 passed; 0 failed' "$RUNNER_TEMP/clock-validation/control-clock.log"
+      - name: Execute three real workflow clock and recovery regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+            --test local_workflow clock:: -- --nocapture \
+            2>&1 | tee "$RUNNER_TEMP/clock-validation/workflow-clock.log"
+          grep -Eq 'test result: ok\. 3 passed; 0 failed' "$RUNNER_TEMP/clock-validation/workflow-clock.log"
+      - name: Recheck all six actual autonomous CLI product tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+            --test local_workflow autonomous_entrypoint:: -- --nocapture \
+            2>&1 | tee "$RUNNER_TEMP/clock-validation/autonomous-cli.log"
+          grep -Eq 'test result: ok\. 6 passed; 0 failed' "$RUNNER_TEMP/clock-validation/autonomous-cli.log"
+      - name: Strict Clippy and unchanged-source verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --manifest-path rust/Cargo.toml --locked --all-features --all-targets \
+            -p hepta-campaign-writer -p hepta-control-plane -p hepta-paper-service -- -D warnings \
+            2>&1 | tee "$RUNNER_TEMP/clock-validation/clippy.log"
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Publish only the validated temporary result ref
+        shell: bash
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export GIT_ASKPASS="$RUNNER_TEMP/clock-git-askpass"
+          trap 'rm -f "$GIT_ASKPASS"' EXIT
+          printf '%s\n' '#!/bin/sh' 'case "$1" in *Username*) printf "%s\n" x-access-token;; *) printf "%s\n" "$PUSH_TOKEN";; esac' > "$GIT_ASKPASS"
+          chmod 700 "$GIT_ASKPASS"
+          export GIT_TERMINAL_PROMPT=0
+          result_ref="codex/clock-validated-$GITHUB_RUN_ID"
+          git push origin "HEAD:refs/heads/$result_ref"
+          printf '%s\n' "$result_ref" > "$RUNNER_TEMP/clock-validation/result-ref.txt"
+          printf 'Validated source candidate: `%s` on `%s`. Targeted tests only; full PR qualification and all production acceptance remain separate.\n' "$(git rev-parse HEAD)" "$result_ref" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: clock-validation-${{ github.run_id }}
+          path: ${{ runner.temp }}/clock-validation
+          if-no-files-found: error
+          retention-days: 14

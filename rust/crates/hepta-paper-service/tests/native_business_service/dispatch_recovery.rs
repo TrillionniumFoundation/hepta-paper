@@ -80,8 +80,10 @@ fn unknown_attempt_record_blocks_execution_instead_of_being_ignored() {
 #[test]
 fn donor_prepared_record_cannot_settle_another_requests_unknown_start() {
     let target = Temp::new();
-    let failed =
-        configuration_for_job(&target, NativeBusinessJobV1::BuildPackage { entries: vec![] });
+    let failed = configuration_for_job(
+        &target,
+        NativeBusinessJobV1::BuildPackage { entries: vec![] },
+    );
     assert!(run_service_v1(failed).is_err());
     let start = records(&target).into_iter().next().unwrap();
     assert!(start.ends_with(".started"));

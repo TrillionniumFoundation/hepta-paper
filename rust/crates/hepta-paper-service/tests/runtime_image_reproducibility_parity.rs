@@ -696,3 +696,309 @@ fn cli_missing_configuration_is_readonly_blocked_and_flag_errors_match_node() {
         );
     }
 }
+
+#[allow(dead_code)]
+mod machine_intake_support;
+struct PublicationFixture {
+    fixture: Fixture,
+    receipt: PathBuf,
+}
+impl PublicationFixture {
+    fn new() -> Self {
+        // This new fixture path uses bounded process/output ownership from its
+        // first Node call; the legacy tests retain their existing stdin API.
+        let mut command = Command::new("node");
+        command
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../oracle/runtime-image-reproducibility-v2.mjs"),
+            )
+            .arg(json!({"operation":"fixture","scenario":"valid"}).to_string())
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").expect("qualified Node"))
+            .env("LANG", "en_US.UTF-8");
+        let output = machine_intake_support::run(&mut command);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let data: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(data["oracleRuntime"], "v22.23.1");
+        let root = PathBuf::from(data["root"].as_str().unwrap());
+        let keys = data["publicKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key.as_str().unwrap().to_owned())
+            .collect();
+        let fixture = Fixture { data, root, keys };
+        fs::write(
+            fixture.root.join(".owned-runtime-publication-fixture"),
+            "owned synthetic runtime publication fixture\n",
+        )
+        .unwrap();
+        let selected = [
+            "request",
+            "inputs",
+            "configuration",
+            "profilePolicies",
+            "publicKeys",
+            "receipt",
+        ]
+        .into_iter()
+        .map(|key| (key.to_owned(), fixture.data[key].clone()))
+        .collect::<serde_json::Map<_, _>>();
+        fs::write(
+            fixture.root.join("publication-fixture.json"),
+            serde_json::to_vec(&selected).unwrap(),
+        )
+        .unwrap();
+        fs::set_permissions(
+            fixture.root.join("publication-fixture.json"),
+            fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        let receipt = fixture.root.join("owned-publication.json");
+        let result = Self { fixture, receipt };
+        assert_eq!(result.action(json!({"action":"setup"}))["ok"], true);
+        result
+    }
+    fn command(&self, mut input: Value) -> Command {
+        input["root"] = json!(self.fixture.root);
+        let mut command = Command::new("node");
+        command
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../oracle/runtime-publication-read-v1.mjs"),
+            )
+            .arg(input.to_string())
+            .current_dir(&self.fixture.root)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").expect("qualified Node"))
+            .env("LANG", "en_US.UTF-8");
+        command
+    }
+    fn action(&self, input: Value) -> Value {
+        let output = machine_intake_support::run(&mut self.command(input));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        publication_value(&output.stdout)
+    }
+    fn database(&self) -> PathBuf {
+        PathBuf::from(format!("{}.publication.sqlite", self.receipt.display()))
+    }
+    fn compare(&self, expected: &Value, now: Option<&str>) {
+        let before = publication_snapshot(&self.fixture.root);
+        let mut context = self.fixture.context();
+        if let Some(now) = now {
+            context.now = now;
+        }
+        let actual = read_runtime_image_reproducibility_publication_v2(&self.receipt, &context);
+        match actual {
+            Ok(value) => {
+                assert_eq!(expected["ok"], true, "{expected}");
+                assert_eq!(json!(value), expected["value"]);
+            }
+            Err(_) => assert_eq!(expected["ok"], false, "{expected}"),
+        }
+        assert_eq!(
+            publication_snapshot(&self.fixture.root),
+            before,
+            "source bytes/identity unchanged"
+        );
+    }
+}
+fn publication_snapshot(root: &Path) -> Vec<Value> {
+    fn visit(path: &Path, result: &mut Vec<Value>) {
+        let metadata = fs::symlink_metadata(path).unwrap();
+        let content = if metadata.is_file() {
+            json!(hex::encode(sha2::Sha256::digest(fs::read(path).unwrap())))
+        } else if metadata.is_symlink() {
+            json!(fs::read_link(path).unwrap())
+        } else {
+            Value::Null
+        };
+        result.push(json!({"path":path,"dev":metadata.dev(),"ino":metadata.ino(),"mode":metadata.mode(),"uid":metadata.uid(),"gid":metadata.gid(),"nlink":metadata.nlink(),"length":metadata.len(),"mtime":metadata.mtime(),"mtimeNsec":metadata.mtime_nsec(),"ctime":metadata.ctime(),"ctimeNsec":metadata.ctime_nsec(),"content":content}));
+        if metadata.is_dir() {
+            let mut children = fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            children.sort();
+            for child in children {
+                visit(&child, result);
+            }
+        }
+    }
+    use sha2::Digest;
+    let mut result = Vec::new();
+    visit(root, &mut result);
+    result
+}
+fn publication_value(output: &[u8]) -> Value {
+    let output: Value = serde_json::from_slice(output).unwrap();
+    hepta_legacy_compatibility::qualify_production_node_profile_v1(&output["profile"]).unwrap();
+    output["value"].clone()
+}
+struct PublicationWalKeeper(std::process::Child);
+impl PublicationWalKeeper {
+    fn new(fixture: &PublicationFixture) -> Self {
+        use std::io::{BufRead, BufReader, Read};
+        let mut child = Self(
+            fixture
+                .command(json!({"action":"hold-wal"}))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let stdout = child.0.stdout.take().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            BufReader::new(stdout.take(2 * 1024 * 1024 + 1))
+                .read_until(b'\n', &mut output)
+                .unwrap();
+            let _ = sender.send(output);
+        });
+        let output = receiver
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("bounded WAL keeper");
+        reader.join().unwrap();
+        assert!(output.len() <= 2 * 1024 * 1024);
+        assert_eq!(publication_value(&output)["held"], true);
+        child
+    }
+}
+impl Drop for PublicationWalKeeper {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+#[test]
+fn publication_private_reader_matches_original_publisher_reader_and_signature_inspection() {
+    let fixture = PublicationFixture::new();
+    let expected = fixture.action(json!({"action":"read"}));
+    assert_eq!(expected["value"]["inspection"]["ready"], true);
+    fixture.compare(&expected, None);
+    let expired = "2026-07-17T08:00:45.000Z";
+    let expected = fixture.action(json!({"action":"read","now":expired}));
+    assert_eq!(expected["value"]["inspection"]["ready"], false);
+    fixture.compare(&expected, Some(expired));
+}
+#[test]
+fn publication_private_reader_sees_committed_wal_without_touching_source_sidecars() {
+    let fixture = PublicationFixture::new();
+    let _keeper = PublicationWalKeeper::new(&fixture);
+    let cold = fixture.fixture.root.join("owned-main-copy.sqlite");
+    fs::copy(fixture.database(), &cold).unwrap();
+    {
+        let connection =
+            rusqlite::Connection::open_with_flags(cold, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT publication_generation FROM runtime_image_reproducibility_receipt",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+    }
+    let expected = fixture.action(json!({"action":"read"}));
+    assert_eq!(expected["value"]["publicationGeneration"], 2);
+    fixture.compare(&expected, None);
+}
+#[test]
+fn publication_private_reader_consumes_crashed_wal_without_creating_source_shm() {
+    let fixture = PublicationFixture::new();
+    let keeper = PublicationWalKeeper::new(&fixture);
+    let expected = fixture.action(json!({"action":"read"}));
+    assert_eq!(expected["value"]["publicationGeneration"], 2);
+    drop(keeper);
+    let shm = PathBuf::from(format!("{}-shm", fixture.database().display()));
+    fs::remove_file(&shm).unwrap();
+    let wal = PathBuf::from(format!("{}-wal", fixture.database().display()));
+    assert!(fs::metadata(wal).unwrap().len() > 32);
+    // Expected data was obtained while the separate writer held the WAL. Do not
+    // open original SQLite after removing SHM: that could itself recreate SHM.
+    fixture.compare(&expected, None);
+    assert!(!shm.exists());
+}
+#[test]
+fn publication_private_reader_preserves_missing_authority_and_row_before_mirror_precedence() {
+    let fixture = PublicationFixture::new();
+    let expected =
+        fixture.action(json!({"action":"mutate","scenario":"no-authority","removeMirror":true}));
+    assert_eq!(expected["value"], Value::Null);
+    fixture.compare(&expected, None);
+    let fixture = PublicationFixture::new();
+    let expected =
+        fixture.action(json!({"action":"mutate","scenario":"bad-row","removeMirror":true}));
+    assert_eq!(
+        expected["error"],
+        "runtime_reproducibility_receipt_authority_state_invalid"
+    );
+    fixture.compare(&expected, None);
+    assert!(
+        read_runtime_image_reproducibility_publication_v2(
+            &fixture.receipt,
+            &fixture.fixture.context()
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("authority_state_invalid")
+    );
+}
+#[test]
+fn publication_private_reader_refuses_actual_view_oversize_and_unsafe_sidecars() {
+    for (scenario, code) in [
+        ("view", "runtime_reproducibility_receipt_schema_unsupported"),
+        (
+            "oversize",
+            "runtime_reproducibility_receipt_authority_state_invalid",
+        ),
+    ] {
+        let fixture = PublicationFixture::new();
+        let _expected = fixture.action(json!({"action":"mutate","scenario":scenario}));
+        let before = publication_snapshot(&fixture.fixture.root);
+        assert_eq!(
+            read_runtime_image_reproducibility_publication_v2(
+                &fixture.receipt,
+                &fixture.fixture.context()
+            )
+            .unwrap_err()
+            .to_string(),
+            code,
+            "{scenario}"
+        );
+        assert_eq!(publication_snapshot(&fixture.fixture.root), before);
+    }
+    for mode in [0o622, 0o666] {
+        let fixture = PublicationFixture::new();
+        let keeper = PublicationWalKeeper::new(&fixture);
+        drop(keeper);
+        let wal = PathBuf::from(format!("{}-wal", fixture.database().display()));
+        fs::set_permissions(&wal, fs::Permissions::from_mode(mode)).unwrap();
+        let before = publication_snapshot(&fixture.fixture.root);
+        assert_eq!(
+            read_runtime_image_reproducibility_publication_v2(
+                &fixture.receipt,
+                &fixture.fixture.context()
+            )
+            .unwrap_err()
+            .to_string(),
+            "runtime_reproducibility_receipt_file_invalid"
+        );
+        assert_eq!(publication_snapshot(&fixture.fixture.root), before);
+    }
+}

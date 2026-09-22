@@ -2100,12 +2100,20 @@
         {
           "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/publication.rs",
           "symbol": "publish_runtime_image_reproducibility_offline_v2"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/publication.rs",
+          "symbol": "read_runtime_image_reproducibility_publication_v2"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/state_database_inventory.rs",
+          "symbol": "with_database_effective_snapshot_path_v1"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs"
       ],
-      "remaining": "Rust implements native status/request/verify/offline-publish, recomputed builtin/dynamic signed plugin scopes, source/input closure, two pinned verifier processes, actual Ed25519 OCI attestations, SQLite monotonic CAS and recoverable derived mirror. Online fenced publication and its activated coordinator/epoch/mirror-permit lifecycle remain unwired; real R source-CAS and two independently qualified rebuild services/evidence remain external. Resource/encoding/filesystem bounds and independent command acceptance remain unqualified. Synthetic signed proofs do not prove real image rebuilds. Native online publication and latest-finalization adapters are now tested as library components, but the real verified activation constructor and CLI integration remain absent.",
+      "remaining": "Rust implements native status/request/verify/offline-publish, recomputed builtin/dynamic signed plugin scopes, source/input closure, two pinned verifier processes, actual Ed25519 OCI attestations, SQLite monotonic CAS and recoverable derived mirror. Online fenced publication and its activated coordinator/epoch/mirror-permit lifecycle remain unwired; real R source-CAS and two independently qualified rebuild services/evidence remain external. Resource/encoding/filesystem bounds and independent command acceptance remain unqualified. Synthetic signed proofs do not prove real image rebuilds. Native online publication and latest-finalization adapters are now tested as library components, but the real verified activation constructor and CLI integration remain absent. Status-only publication reads now capture actual mirror bytes before private effective-WAL SQLite inspection, retain effective-UID source/sidecar metadata via O_PATH pins and preserve original authority/signature/context results. Source SHM is not created or repaired. Schema/row/cell/VM bounds are explicit native restrictions; the caller must still run before business SQLite. This does not change writer/online-reconciliation lifetimes or close resident composition and independent acceptance gaps.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-runtime-image-reproducibility.rs",
         "rust/crates/hepta-paper-service/src/runtime_image_reproducibility.rs",
@@ -2121,7 +2129,10 @@
         "rust/oracle/runtime-image-isolated-verifier-v1.mjs",
         "rust/oracle/runtime-image-reproducibility-v2.mjs",
         "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/online_publication.rs",
-        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/finalized.rs"
+        "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/finalized.rs",
+        "rust/crates/hepta-paper-service/src/runtime_image_reproducibility/publication_read.rs",
+        "rust/oracle/runtime-publication-read-v1.mjs",
+        "rust/crates/hepta-paper-service/src/state_database_inventory.rs"
       ],
       "testCases": [
         {
@@ -2187,6 +2198,26 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
           "symbol": "cli_missing_configuration_is_readonly_blocked_and_flag_errors_match_node"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "publication_private_reader_matches_original_publisher_reader_and_signature_inspection"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "publication_private_reader_sees_committed_wal_without_touching_source_sidecars"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "publication_private_reader_consumes_crashed_wal_without_creating_source_shm"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "publication_private_reader_preserves_missing_authority_and_row_before_mirror_precedence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/runtime_image_reproducibility_parity.rs",
+          "symbol": "publication_private_reader_refuses_actual_view_oversize_and_unsafe_sidecars"
         }
       ]
     },

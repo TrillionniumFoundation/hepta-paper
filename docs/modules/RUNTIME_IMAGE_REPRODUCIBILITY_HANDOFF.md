@@ -134,6 +134,20 @@ claim cross-resource atomic publication and never fabricates a fenced write or
 mirror permit. An owner-privileged process that bypasses this publication protocol
 can still change filesystem objects; observed drift is rejected.
 
+The status-only `read_runtime_image_reproducibility_publication_v2` now reads
+an effective private SQLite/WAL snapshot, as specified in the
+[publication read contract](../../rust/crates/hepta-paper-service/src/runtime_image_reproducibility/PUBLICATION_READ_HANDOFF.md).
+It captures the bounded mirror and closes its regular descriptor before private
+SQLite opens. O_PATH source/sidecar pins preserve the existing effective-UID,
+mode, inode and metadata policy through the read. SQLite only sees owned copies;
+a missing source SHM is not created. Ordinary schema, row/cell and VM bounds are
+checked before the existing authority parser and signature/context verification.
+Missing authority still precedes deferred mirror errors. A completed observation
+is neither an atomic multi-file snapshot nor retained authorization. Call this
+reader before any caller-owned business SQLite connection or regular database
+handle exists. This status change does not alter offline/online mutation or
+online reconciliation ownership and does not grant their activation authority.
+
 The online adapter uses the shared native coordinator's actual SQLite Session
 changeset, reservation, fenced commit and signed finalization. Its fixed writer
 statements and computed writer-plan hash match the original adapter. It never

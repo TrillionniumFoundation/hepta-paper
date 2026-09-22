@@ -13,6 +13,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+#[path = "publication_read.rs"]
+mod publication_read;
+
 const TABLE: &str = "runtime_image_reproducibility_receipt";
 const MAX: u64 = 32 * 1024 * 1024;
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -209,48 +212,18 @@ pub(super) fn schema(db: &Connection) -> Result<()> {
     db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF; CREATE TABLE IF NOT EXISTS runtime_image_reproducibility_receipt(singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),receipt_json TEXT NOT NULL,receipt_content_hash TEXT NOT NULL,receipt_hash TEXT NOT NULL,issued_at TEXT NOT NULL,expires_at TEXT NOT NULL,publication_generation INTEGER NOT NULL CHECK(publication_generation>=1),updated_at TEXT NOT NULL) STRICT;")?;
     Ok(())
 }
-/// Read the authoritative row and compare its derived mirror without repairing
-/// anything. The supplied live context rechecks signatures and every drift edge.
+/// Read the authoritative row through an owned effective-WAL snapshot and
+/// compare its source mirror without repairing or opening source files in SQLite.
+/// The supplied context rechecks signatures and drift bindings. Call before any
+/// caller-owned business SQLite connection: observing source bytes can close
+/// regular descriptors and therefore release process-scoped POSIX locks.
 pub fn read_runtime_image_reproducibility_publication_v2(
     receipt_path: &Path,
     context: &ReceiptVerificationContext<'_>,
 ) -> Result<Option<Value>> {
-    let candidate = PathBuf::from(format!("{}.publication.sqlite", receipt_path.display()));
-    ensure(
-        receipt_path.is_absolute(),
-        "runtime_reproducibility_receipt_path_invalid",
-    )?;
-    if !candidate.try_exists()? {
-        return Ok(None);
-    }
-    let db_path = paths(receipt_path)?;
-    let parent = private_parent(receipt_path, false)?;
-    let held = open_leaf(&parent, &db_path, OFlag::O_RDONLY)?;
-    verify_database(&db_path, &parent, &held)?;
-    let db = Connection::open_with_flags(
-        &db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )?;
-    verify_database(&db_path, &parent, &held)?;
-    db.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;")?;
-    let Some(a) = authority(&db)? else {
-        verify_database(&db_path, &parent, &held)?;
-        return Ok(None);
-    };
-    let mirror = read(receipt_path, MAX)
-        .map_err(|_| Error("runtime_reproducibility_receipt_mirror_drift".into()))?;
-    ensure(
-        mirror == a.bytes && parse(&mirror)? == a.receipt,
-        "runtime_reproducibility_receipt_mirror_drift",
-    )?;
-    let inspection = verify_runtime_image_reproducibility_receipt_v2(&a.receipt, context)?;
-    verify_database(&db_path, &parent, &held)?;
-    Ok(Some(
-        json!({"receipt":a.receipt,"inspection":inspection,"receiptContentHash":a.content_hash,"publicationGeneration":a.generation}),
-    ))
+    publication_read::read_publication(receipt_path, context)
 }
+
 fn optional_leaf(parent: &File, path: &Path) -> Result<Option<File>> {
     match openat(
         parent.as_fd(),

@@ -14,7 +14,7 @@ import {immutableAuthoritySigningPayload} from '../../workflow-kernel/runtime/im
 import {currentCodeProvenance} from '../../paper-adapters/runtime/code-provenance.mjs';
 import {hashRecord} from '../../workflow-kernel/record-hash.mjs';
 const H=value=>`sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
-const input=JSON.parse(fs.readFileSync(0,'utf8'));
+const input=JSON.parse(process.argv[2] ?? fs.readFileSync(0,'utf8'));
 function fixtureNodeDirectory(root){
  if(!root.startsWith(path.join(os.tmpdir(),'hepta-runtime-image-rust-')))throw new Error('isolated_fixture_required');
  const directory=path.join(root,'private-toolchain');fs.mkdirSync(directory,{mode:0o700});

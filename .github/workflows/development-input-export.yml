@@ -1,0 +1,47 @@
+name: development-input-export
+on:
+  push:
+    branches: [codex/dispatch-admission-upload-1f208a1c]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 1f208a1c56d875ad856c5201b31427cddff6ada8
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+      - name: Export only public pinned development inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 1f208a1c56d875ad856c5201b31427cddff6ada8
+          test "$(node --version)" = v22.23.1
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          output="$RUNNER_TEMP/public-development-inputs"
+          mkdir -p "$output"
+          cargo vendor --manifest-path rust/Cargo.toml --locked --versioned-dirs "$RUNNER_TEMP/vendor" > "$output/vendor-config.toml"
+          npm ci --ignore-scripts --no-audit --no-fund
+          tar -czf "$output/rust-1.98.0.tar.gz" -C "$HOME/.rustup/toolchains/1.98.0-x86_64-unknown-linux-gnu" .
+          tar -czf "$output/vendor.tar.gz" -C "$RUNNER_TEMP" vendor
+          tar -czf "$output/node-modules.tar.gz" node_modules
+          cp "$(command -v node)" "$output/node-22.23.1"
+          python3 -m pip download --only-binary=:all: --no-deps libclang==18.1.1 -d "$output"
+          cp rust/Cargo.lock package-lock.json "$output/"
+          rustc --version --verbose > "$output/rustc.txt"
+          node --version > "$output/node.txt"
+          (cd "$output"; sha256sum * > SHA256SUMS)
+          git diff --exit-code
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: public-development-inputs-1f208a1c
+          path: ${{ runner.temp }}/public-development-inputs
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

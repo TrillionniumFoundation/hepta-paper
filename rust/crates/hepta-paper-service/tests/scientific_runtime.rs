@@ -305,6 +305,7 @@ fn actual_latex_compilation_produces_pdf_not_a_json_bundle() {
     assert!(out.artifacts[1].starts_with(b"%PDF-"));
     let manifest: Value = serde_json::from_slice(&out.artifacts[0]).unwrap();
     assert_eq!(manifest["passes"].as_array().unwrap().len(), 2);
+    retain_installed_output("latex", &out);
 }
 
 #[test]
@@ -416,4 +417,202 @@ fn cli_hash_setup_uses_exact_documented_job_and_never_runs_a_program() {
         String::from_utf8(out.stdout).unwrap().trim(),
         hash(&fs::read(&path).unwrap()).as_str()
     );
+}
+
+// Optional artifact retention is for the tool-equipped test runner, not a
+// production export API. Each known fixture writes a fresh directory once.
+fn retain_installed_output(name: &str, output: &ScientificPreparedV1) {
+    if let Some(root) = std::env::var_os("HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT") {
+        let root = PathBuf::from(root);
+        assert!(root.is_absolute());
+        let destination = root.join(name);
+        fs::create_dir(&destination).unwrap();
+        for (index, bytes) in output.artifacts.iter().enumerate() {
+            fs::write(destination.join(format!("artifact-{index}.bin")), bytes).unwrap();
+        }
+    }
+}
+
+fn installed_profile(
+    temp: &Temp,
+    job: &ScientificJobV1,
+    runtime: ScientificRuntimeKindV1,
+    executable: &Path,
+) -> ScientificRuntimeProfileV1 {
+    let mut p = profile(temp, job);
+    p.runtime = runtime;
+    p.executable =
+        fs::canonicalize(executable).expect("the selected real scientific tool is required");
+    p.executable_hash = hash(&fs::read(&p.executable).unwrap());
+    p.timeout_ms = 30_000;
+    p
+}
+
+#[test]
+#[ignore = "requires installed Rscript; the tool-equipped migration job executes this explicitly"]
+fn actual_r_empirical_and_numerical_programs_produce_verified_outputs() {
+    for (runtime, script, expected) in [
+        (
+            ScientificRuntimeKindV1::REmpirical,
+            "x <- scan('observations.txt', quiet=TRUE)\nwriteLines(sprintf('{\"count\":%d,\"mean\":%.17g,\"variance\":%.17g}', length(x), mean(x), var(x)), 'result.json')\n",
+            serde_json::json!({"count": 4, "mean": 5.0, "variance": 20.0 / 3.0}),
+        ),
+        (
+            ScientificRuntimeKindV1::RNumerical,
+            "a <- matrix(c(3,2,1,2), nrow=2, byrow=TRUE)\nb <- c(5,5)\nx <- solve(a,b)\nwriteLines(sprintf('{\"x0\":%.17g,\"x1\":%.17g,\"residual\":%.17g}', x[1], x[2], max(abs(a %*% x-b))), 'result.json')\n",
+            serde_json::json!({"x0": 0.0, "x1": 2.5, "residual": 0.0}),
+        ),
+    ] {
+        let temp = Temp::new();
+        let job = ScientificJobV1 {
+            version: 1,
+            files: BTreeMap::from([
+                ("main.R".into(), format!("Sys.umask('0077')\n{script}")),
+                ("observations.txt".into(), "2 4 6 8\n".into()),
+            ]),
+            outputs: vec![ScientificOutputV1 {
+                path: "result.json".into(),
+                format: ScientificOutputFormatV1::Json,
+            }],
+        };
+        let p = installed_profile(&temp, &job, runtime, Path::new("/usr/bin/Rscript"));
+        let output = execute_scientific_job_v1(&p, job.clone(), runtime.capability()).unwrap();
+        retain_installed_output(
+            if runtime == ScientificRuntimeKindV1::REmpirical {
+                "r-empirical"
+            } else {
+                "r-numerical"
+            },
+            &output,
+        );
+        assert_eq!(output.artifacts.len(), 2);
+        let value: Value = serde_json::from_slice(&output.artifacts[1]).unwrap();
+        for (key, expected_value) in expected.as_object().unwrap() {
+            assert!(
+                (value[key].as_f64().unwrap() - expected_value.as_f64().unwrap()).abs() < 1e-12
+            );
+        }
+        let manifest: ScientificExecutionManifestV1 =
+            serde_json::from_slice(&output.artifacts[0]).unwrap();
+        assert_eq!(manifest.runtime, runtime);
+        assert_eq!(manifest.job_hash, scientific_job_hash_v1(&job).unwrap());
+        assert_eq!(manifest.executable_hash, p.executable_hash);
+        assert_eq!(manifest.outputs[0].sha256, hash(&output.artifacts[1]));
+        assert_eq!(manifest.outputs[0].bytes, output.artifacts[1].len());
+        assert_eq!(manifest.passes.len(), 1);
+        assert_eq!(manifest.passes[0].exit_code, 0);
+        assert!(manifest.passes[0].process_group_cleanup_verified);
+        assert!(!manifest.scientific_acceptance);
+        assert!(!manifest.production_qualified);
+        // Resolve actual retained CAS bytes, rather than trusting a declared hash.
+        let objects = hepta_paper_service::ObjectStoreV1::open(&temp.0.join("store")).unwrap();
+        let hashes: Vec<_> = output
+            .artifacts
+            .iter()
+            .map(|b| objects.put(b).unwrap())
+            .collect();
+        assert_eq!(
+            resolve_scientific_output_v1(&objects, &hashes, "result.json", runtime.capability())
+                .unwrap(),
+            hash(&output.artifacts[1]),
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires installed Rscript; the tool-equipped migration job executes this explicitly"]
+fn actual_r_failure_cannot_publish_an_existing_output_as_success() {
+    let temp = Temp::new();
+    let job = ScientificJobV1 {
+        version: 1,
+        files: BTreeMap::from([(
+            "main.R".into(),
+            "Sys.umask('0077')\nwriteLines('{}', 'result.json')\nstop('test program failed')\n"
+                .into(),
+        )]),
+        outputs: vec![ScientificOutputV1 {
+            path: "result.json".into(),
+            format: ScientificOutputFormatV1::Json,
+        }],
+    };
+    let p = installed_profile(
+        &temp,
+        &job,
+        ScientificRuntimeKindV1::REmpirical,
+        Path::new("/usr/bin/Rscript"),
+    );
+    assert!(matches!(
+        execute_scientific_job_v1(&p, job, "CAP-EMPIRICAL"),
+        Err(ScientificRuntimeError::Execution)
+    ));
+    assert_eq!(temp.children(), 1);
+    let work = fs::read_dir(&temp.0)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert_eq!(fs::read(work.join("result.json")).unwrap(), b"{}\n");
+}
+
+#[test]
+#[ignore = "requires installed pinned Lean; the tool-equipped migration job executes this explicitly"]
+fn actual_lean_compiles_a_proof_and_rejects_an_invalid_proof() {
+    // The workflow supplies `elan which lean`, not the mutable elan proxy.
+    let executable = PathBuf::from(
+        std::env::var_os("HEPTA_TEST_LEAN_EXECUTABLE")
+            .expect("an actual pinned Lean executable is required"),
+    );
+    let proof = "theorem hepta_modus_ponens (P Q : Prop) (hp : P) (hpq : P → Q) : Q := hpq hp\n";
+    let job = ScientificJobV1 {
+        version: 1,
+        files: BTreeMap::from([("main.lean".into(), proof.into())]),
+        outputs: vec![ScientificOutputV1 {
+            path: "proof.olean".into(),
+            format: ScientificOutputFormatV1::Bytes,
+        }],
+    };
+    let temp = Temp::new();
+    let p = installed_profile(&temp, &job, ScientificRuntimeKindV1::Lean, &executable);
+    let output = execute_scientific_job_v1(&p, job.clone(), "CAP-FORMAL").unwrap();
+    retain_installed_output("lean", &output);
+    assert_eq!(output.artifacts.len(), 2);
+    assert!(!output.artifacts[1].is_empty());
+    let manifest: ScientificExecutionManifestV1 =
+        serde_json::from_slice(&output.artifacts[0]).unwrap();
+    assert_eq!(manifest.runtime, ScientificRuntimeKindV1::Lean);
+    assert_eq!(manifest.job_hash, scientific_job_hash_v1(&job).unwrap());
+    assert_eq!(manifest.executable_hash, p.executable_hash);
+    assert_eq!(manifest.input_hashes["main.lean"], hash(proof.as_bytes()));
+    assert_eq!(manifest.outputs[0].path, "proof.olean");
+    assert_eq!(manifest.outputs[0].sha256, hash(&output.artifacts[1]));
+    assert!(!manifest.scientific_acceptance);
+    assert!(!manifest.production_qualified);
+    let objects = hepta_paper_service::ObjectStoreV1::open(&temp.0.join("store")).unwrap();
+    let hashes: Vec<_> = output
+        .artifacts
+        .iter()
+        .map(|b| objects.put(b).unwrap())
+        .collect();
+    assert_eq!(
+        resolve_scientific_output_v1(&objects, &hashes, "proof.olean", "CAP-FORMAL").unwrap(),
+        hash(&output.artifacts[1])
+    );
+    let bad_temp = Temp::new();
+    let mut invalid = job;
+    invalid.files.insert(
+        "main.lean".into(),
+        "theorem impossible : False := by trivial\n".into(),
+    );
+    let bad_profile = installed_profile(
+        &bad_temp,
+        &invalid,
+        ScientificRuntimeKindV1::Lean,
+        &executable,
+    );
+    assert!(matches!(
+        execute_scientific_job_v1(&bad_profile, invalid, "CAP-FORMAL"),
+        Err(ScientificRuntimeError::Execution)
+    ));
+    assert_eq!(bad_temp.children(), 1);
 }

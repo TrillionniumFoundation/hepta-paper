@@ -182,6 +182,9 @@ not verify signed bundles or claim independent oracle/replay qualification.
 
 The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
+See the [installed-tool migration lane](../SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane).
+The existing migration workflow now requires a tool-equipped lane running the real R numerical and empirical cases with `--include-ignored`; it verifies actual result and CAS bytes. This does not qualify the remaining advanced plugin families, physical GPU admission or independent numerical oracles.
+
 ## Rollout and rollback
 
 Current channel is `authoritative`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

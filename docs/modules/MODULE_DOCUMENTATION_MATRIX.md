@@ -43,4 +43,4 @@ Validate with:
 node docs/tools/validate-module-documentation.mjs
 ```
 
-The validator fails on missing/orphan specifications or manifests, registry drift, missing required headings, placeholder language, missing implementation roots, and absent authority-specific safety contracts.
+The validator fails on missing/orphan specifications or manifests, registry drift, missing required headings, placeholder language, missing implementation roots, and inconsistent typed authority/effect contracts. Equivalent prose wording is not a failure; actual safety is established by the owning runtime and its tests.

@@ -1,0 +1,332 @@
+name: rust-migration-acceptance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/full-rust-replacement-progress-20260916
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-migration-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  RUSTFLAGS: '-Dunsafe-code'
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  migration-shards:
+    name: Rust migration (${{ matrix.lane }})
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        lane: [core, service-unit, integration-0, integration-1, integration-2, integration-3]
+    runs-on: ubuntu-24.04
+    # The old serial job cancelled successful tests at 30 minutes. Keep every
+    # suite, but isolate the heavy service library and partition all integration
+    # targets from Cargo metadata. No target list is maintained by hand.
+    timeout-minutes: 60
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Prepare disposable migration evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration_evidence_root="$RUNNER_TEMP/hepta-rust-migration-evidence"
+          mkdir -p "$migration_evidence_root"
+          printf 'EVIDENCE_ROOT=%s\n' "$migration_evidence_root" >> "$GITHUB_ENV"
+
+      - name: Check out exact candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install qualified production Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Install and verify locked Node oracle dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.1"
+          npm ci --ignore-scripts --no-audit --no-fund \
+            2>&1 | tee "$EVIDENCE_ROOT/node-oracle-install.log"
+          # Import the actual dependency closure before compiling Rust; otherwise
+          # missing espree/eslint-scope fails much later inside differential tests.
+          node --input-type=module -e \
+            'await import("./paper-adapters/automation/autonomous-research-online-writer-static-discovery.mjs")'
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+
+      - name: Record exact source and runtime identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          test "$(node --version)" = "v22.23.1"
+          git rev-parse HEAD HEAD^{tree} > "$EVIDENCE_ROOT/source.txt"
+          sha256sum rust/Cargo.lock package-lock.json workflow-kernel/record-hash.mjs \
+            > "$EVIDENCE_ROOT/source-inputs.sha256"
+          node --input-type=module -e 'console.log(JSON.stringify({ node: process.version, versions: process.versions, collator: new Intl.Collator().resolvedOptions() }, null, 2))' \
+            > "$EVIDENCE_ROOT/node-runtime.json"
+          rustc --version --verbose > "$EVIDENCE_ROOT/rustc.txt"
+          cargo --version --verbose > "$EVIDENCE_ROOT/cargo.txt"
+          # All subjects are disposable test data. No secrets, live provider,
+          # target-host credentials, production database, or activation is used.
+
+      - name: Compare native hashes against actual production Node functions
+        if: matrix.lane == 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-legacy-compatibility -p hepta-compatibility \
+            2>&1 | tee "$EVIDENCE_ROOT/production-hash-parity.log"
+
+      - name: Verify actual Node migration databases and immutable Rust readers
+        if: matrix.lane == 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-readonly-control -p hepta-readonly-store \
+            2>&1 | tee "$EVIDENCE_ROOT/node-database-parity.log"
+
+      - name: Verify durable control service recovery and writer ownership
+        if: matrix.lane == 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-campaign-writer -p hepta-control-plane \
+            -p hepta-cutover \
+            2>&1 | tee "$EVIDENCE_ROOT/durable-migration.log"
+
+      - name: Verify shard planning regressions
+        shell: bash
+        run: python3 -B docs/rust/tools/test_service_integration_shards.py
+
+      - name: Build native authority test executable
+        if: matrix.lane != 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Selected test targets do not build the standalone example binary.
+          # The real signed-authority/backup tests execute this helper; never
+          # replace it with a stub or skip those tests on a clean runner.
+          command -v strip
+          cargo build --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --example native-authority-fixture-client \
+            2>&1 | tee "$EVIDENCE_ROOT/native-authority-fixture-build.log"
+          test -x rust/target/debug/examples/native-authority-fixture-client
+
+      - name: Verify service unit targets and documentation tests
+        if: matrix.lane == 'service-unit'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --lib --bins --examples \
+            2>&1 | tee "$EVIDENCE_ROOT/service-unit.log"
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --doc \
+            2>&1 | tee "$EVIDENCE_ROOT/service-doc.log"
+
+      - name: Verify complete service integration partition
+        if: startsWith(matrix.lane, 'integration-')
+        shell: bash
+        env:
+          MIGRATION_LANE: ${{ matrix.lane }}
+        run: |
+          set -euo pipefail
+          python3 -B docs/rust/tools/run_service_integration_shard.py \
+            --index "${MIGRATION_LANE#integration-}" --count 4 \
+            2>&1 | tee "$EVIDENCE_ROOT/service-integration.log"
+
+      - name: Verify Node fencing through actual SQLite store adapters
+        if: matrix.lane == 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test paper-core/tests/rust-cutover-fence.test.mjs \
+            paper-core/tests/sqlite-transaction-control-boundary.test.mjs \
+            paper-core/tests/sqlite-online-mutation-authority-boundary.test.mjs \
+            paper-core/tests/sqlite-store-failure-contract.test.mjs \
+            paper-core/tests/typed-persistence-ports.test.mjs \
+            2>&1 | tee "$EVIDENCE_ROOT/node-store-fencing.log"
+
+      - name: Run disposable shadow canary recovery and rollback drill
+        if: matrix.lane == 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path rust/Cargo.toml --locked \
+            -p hepta-cutover --example local_cutover_drill -- \
+            "$RUNNER_TEMP/hepta-rust-local-cutover-drill" \
+            > "$EVIDENCE_ROOT/local-cutover-drill.json"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            assert.equal(report.status, "local_cutover_drill_passed");
+            assert.equal(report.productionActivation, false);
+            assert.equal(report.shadow.equal, true);
+            assert.equal(report.preservedRecords.length, 2);
+          ' "$EVIDENCE_ROOT/local-cutover-drill.json"
+
+      - name: Run disposable native service and durable replay drill
+        if: matrix.lane == 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path rust/Cargo.toml --locked \
+            -p hepta-paper-service --example local_service_drill -- \
+            "$RUNNER_TEMP/hepta-rust-local-service-drill" \
+            > "$EVIDENCE_ROOT/service-drill.json"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            assert.equal(report.status, "local_service_drill_passed");
+            assert.equal(report.productionActivation, false);
+            assert.equal(report.first.commitReceipts.length, 1);
+            assert.equal(report.replay.commitReceipts.length, 1);
+            assert.equal(report.first.commitReceipts[0].newlyCommitted, true);
+            assert.equal(report.replay.commitReceipts[0].newlyCommitted, false);
+            assert.equal(report.first.commitReceipts[0].committedStateHash,
+              report.replay.commitReceipts[0].committedStateHash);
+          ' "$EVIDENCE_ROOT/service-drill.json"
+
+      - name: Verify source remained unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum --check "$EVIDENCE_ROOT/source-inputs.sha256"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Upload migration acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-migration-acceptance-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.lane }}
+          path: ${{ runner.temp }}/hepta-rust-migration-evidence
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  scientific-tools:
+    name: Real R Lean and TeX execution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install real scientific tools and the pinned Rust compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT="$RUNNER_TEMP/hepta-scientific-tool-evidence"
+          printf 'HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT=%s\n' "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT" >> "$GITHUB_ENV"
+          mkdir -m 700 -p "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git rev-parse HEAD HEAD^{tree} > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/source.txt"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends r-base-core texlive-latex-base
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz \
+            -o "$RUNNER_TEMP/elan.tar.gz"
+          printf 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  %s\n' "$RUNNER_TEMP/elan.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/elan.tar.gz" -C "$RUNNER_TEMP" elan-init
+          "$RUNNER_TEMP/elan-init" -y --default-toolchain "$ELAN_TOOLCHAIN"
+          lean_executable=$("$HOME/.elan/bin/elan" which lean)
+          test -x "$lean_executable"
+          "$lean_executable" --version | tee "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/lean-version.txt"
+          grep -F 'version 4.30.0' "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/lean-version.txt"
+          printf 'HEPTA_TEST_LEAN_EXECUTABLE=%s\n' "$lean_executable" >> "$GITHUB_ENV"
+          /usr/bin/Rscript --version > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/r-version.txt" 2>&1
+          /usr/bin/pdflatex --version > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/tex-version.txt"
+          dpkg-query -W r-base-core texlive-latex-base > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/installed-packages.txt"
+          rustc --version --verbose > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/rustc.txt"
+          sha256sum "$lean_executable" "$(readlink -f /usr/bin/Rscript)" "$(readlink -f /usr/bin/pdflatex)" rust/Cargo.lock \
+            > "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/tool-inputs.sha256"
+      - name: Execute every real scientific tool case explicitly
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/scientific-runtime.log"
+          # Run the whole target, including installed-tool cases. No separate
+          # handwritten test-name list or success from an empty filter.
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --test scientific_runtime \
+            -- --include-ignored --nocapture 2>&1 | tee "$log"
+          grep -E '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' "$log"
+          for runtime in r-empirical r-numerical lean latex; do
+            test -s "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/$runtime/artifact-0.bin"
+            test -s "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/$runtime/artifact-1.bin"
+          done
+          log="$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/scientific-workflow.log"
+          cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --test scientific_workflow \
+            -- --include-ignored --nocapture 2>&1 | tee "$log"
+          grep -E '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' "$log"
+          test -s "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/r-autonomous-workflow/command-report.json"
+          test -s "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/r-autonomous-workflow/replay-report.json"
+          sha256sum --check "$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/tool-inputs.sha256"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Retain actual outputs and exact tool-source observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scientific-tool-execution-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/hepta-scientific-tool-evidence
+          if-no-files-found: error
+          retention-days: 90
+
+  migration:
+    name: Node parity and disposable Rust migration
+    needs: [migration-shards, scientific-tools]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every migration partition to succeed
+        env:
+          MIGRATION_RESULT: ${{ needs.migration-shards.result }}
+          SCIENTIFIC_RESULT: ${{ needs.scientific-tools.result }}
+        run: |
+          set -euo pipefail
+          test "$MIGRATION_RESULT" = success
+          test "$SCIENTIFIC_RESULT" = success

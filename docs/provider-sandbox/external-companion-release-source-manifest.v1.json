@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "kind": "ProviderExternalCompanionReleaseSourceManifestV1",
+  "status": "source_kit_ready_external_acceptance_required",
+  "protocolVersion": "provider-technical-sandbox-v1",
+  "expectedExternalRepository": "TrillionniumFoundation/hepta-paper-provider-sandbox",
+  "expectedEntrypoint": "provider-sandbox.mjs",
+  "repositoryProtocolArtifacts": [
+    {
+      "path": "docs/provider-sandbox/TECHNICAL_SANDBOX_COMPANION.md",
+      "gitBlobSha": "87a47cad3a5a3e8704e45f529edb7cd9452bc237",
+      "role": "protocol_documentation"
+    },
+    {
+      "path": "docs/provider-sandbox/schemas/provider-technical-sandbox-request-v1.schema.json",
+      "gitBlobSha": "e2ecd5471b1f0a5c952ebc61e9850da76e7489c4",
+      "role": "request_schema"
+    },
+    {
+      "path": "docs/provider-sandbox/schemas/provider-technical-sandbox-response-v1.schema.json",
+      "gitBlobSha": "44f9b680a0906ac8eb7d63502461569c2b28c1ce",
+      "role": "response_schema"
+    },
+    {
+      "path": "paper-core/operational/provider-sandbox-external.operational.mjs",
+      "gitBlobSha": "4bc05ac96378d053438dd8c353ef62664aaa3ce7",
+      "role": "external_operational_runner"
+    },
+    {
+      "path": "provider-sandbox/provider-sandbox.mjs",
+      "gitBlobSha": "3e7fa29a0a8a085c2683c6c86c3428acd5457f03",
+      "role": "portable_reference_implementation"
+    }
+  ],
+  "externalSubjectRequiredFields": [
+    "accountId",
+    "commit",
+    "entrypointSha256",
+    "packageLockSha256",
+    "provider",
+    "releaseAssetSha256",
+    "releaseTag",
+    "repository",
+    "runtimeDigest",
+    "tree"
+  ],
+  "requiredEvidenceClasses": [
+    "credential_free_conformance",
+    "independent_review",
+    "provider_owner_acceptance",
+    "revocation_recovery",
+    "source_release_manifest",
+    "target_host_sandbox"
+  ],
+  "authority": {
+    "externalAuthorityClaimed": false,
+    "productionAuthorized": false,
+    "providerCredentialGranted": false,
+    "releaseAuthorized": false,
+    "submissionAuthorized": false
+  }
+}

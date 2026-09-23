@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/protected-main-ruleset-evidence-v1.schema.json",
+  "title": "Protected Main Ruleset Evidence V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageId",
+    "repository",
+    "repositoryId",
+    "targetRef",
+    "sourceCommit",
+    "sourceTree",
+    "ruleset",
+    "rulesetExportSha256",
+    "requiredChecks",
+    "pullRequestPolicy",
+    "referencePolicy",
+    "denialTests",
+    "administratorAuthorityDomain",
+    "reviewerAuthorityDomain",
+    "authoritySeparationSha256",
+    "reviewerKeyId",
+    "issuedAt",
+    "expiresAt",
+    "decision",
+    "signatureBase64"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "packageId": {
+      "const": "EXT-GOV-MAIN-001"
+    },
+    "repository": {
+      "const": "TrillionniumFoundation/hepta-paper"
+    },
+    "repositoryId": {
+      "const": 1349108143
+    },
+    "targetRef": {
+      "const": "refs/heads/main"
+    },
+    "sourceCommit": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "sourceTree": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "ruleset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "enforcement",
+        "bypassActors"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "enforcement": {
+          "const": "active"
+        },
+        "bypassActors": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "rulesetExportSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "requiredChecks": {
+      "type": "array",
+      "minItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._()/-]{0,255}$"
+      }
+    },
+    "pullRequestPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiredApprovingReviewCount",
+        "requireCodeOwnerReview",
+        "dismissStaleReviews",
+        "requireLastPushApproval",
+        "requireConversationResolution"
+      ],
+      "properties": {
+        "requiredApprovingReviewCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "requireCodeOwnerReview": {
+          "const": true
+        },
+        "dismissStaleReviews": {
+          "const": true
+        },
+        "requireLastPushApproval": {
+          "const": true
+        },
+        "requireConversationResolution": {
+          "const": true
+        }
+      }
+    },
+    "referencePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blockForcePush",
+        "blockDeletion",
+        "requirePullRequest",
+        "signedCommitMode",
+        "historyMode"
+      ],
+      "properties": {
+        "blockForcePush": {
+          "const": true
+        },
+        "blockDeletion": {
+          "const": true
+        },
+        "requirePullRequest": {
+          "const": true
+        },
+        "signedCommitMode": {
+          "enum": [
+            "required",
+            "verified-github-merge"
+          ]
+        },
+        "historyMode": {
+          "enum": [
+            "linear",
+            "documented-merge-only"
+          ]
+        }
+      }
+    },
+    "denialTests": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "result",
+          "evidenceSha256",
+          "observedAt"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "direct_push",
+              "stale_approval",
+              "missing_check",
+              "failed_check",
+              "force_push",
+              "branch_deletion",
+              "administrator_bypass"
+            ]
+          },
+          "result": {
+            "const": "denied"
+          },
+          "evidenceSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "observedAt": {
+            "$ref": "#/$defs/timestamp"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "direct_push"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "stale_approval"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "missing_check"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "failed_check"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "force_push"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "branch_deletion"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "administrator_bypass"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "administratorAuthorityDomain": {
+      "$ref": "#/$defs/id"
+    },
+    "reviewerAuthorityDomain": {
+      "$ref": "#/$defs/id"
+    },
+    "authoritySeparationSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "reviewerKeyId": {
+      "$ref": "#/$defs/id"
+    },
+    "issuedAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "expiresAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "decision": {
+      "const": "approved"
+    },
+    "signatureBase64": {
+      "$ref": "#/$defs/signature"
+    }
+  },
+  "$defs": {
+    "gitHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 512
+    }
+  }
+}

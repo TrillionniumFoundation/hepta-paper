@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "kind": "PersonalSelfHostedProductionProfile",
+  "profileId": "personal-self-hosted-v1",
+  "scope": {
+    "operatorCardinality": "single-user",
+    "distributionMode": "private-local-only",
+    "commercialDistribution": false,
+    "externalActions": false
+  },
+  "notApplicableControls": [
+    {
+      "controlId": "hardware-kms-hsm",
+      "reason": "no-distributed-release-signing-key-is-used"
+    },
+    {
+      "controlId": "independent-external-authority-roles",
+      "reason": "no-external-authority-or-multi-operator-release-claim"
+    },
+    {
+      "controlId": "kubernetes-release-digest",
+      "reason": "no-kubernetes-deployment"
+    },
+    {
+      "controlId": "local-author-review-session-separation",
+      "reason": "single-operator-no-review-workflow"
+    },
+    {
+      "controlId": "oci-registry-attestation",
+      "reason": "no-oci-registry-distribution"
+    },
+    {
+      "controlId": "offhost-worm-custody",
+      "reason": "private-single-host-scope-with-local-backup-contract"
+    },
+    {
+      "controlId": "venue-portal-live-submission",
+      "reason": "no-external-submission-or-publishing-action"
+    }
+  ],
+  "requiredLocalControls": [
+    {
+      "controlId": "credential-and-runtime-boundary",
+      "evidenceKind": "LocalCredentialRuntimeBoundaryEvidence",
+      "description": "Secrets are absent from artifacts and runtime files are owner-controlled."
+    },
+    {
+      "controlId": "database-inventory-and-schema",
+      "evidenceKind": "LocalDatabaseInventoryEvidence",
+      "description": "All declared local databases exist, pass immutable inspection, and match schema contracts."
+    },
+    {
+      "controlId": "database-restore-drill",
+      "evidenceKind": "LocalDatabaseRestoreEvidence",
+      "description": "A local restore drill was executed and its receipt is current."
+    },
+    {
+      "controlId": "enabled-scientific-oracles",
+      "evidenceKind": "LocalScientificOracleEvidence",
+      "description": "Every enabled CPU/GPU scientific capability has deterministic replay and an error budget."
+    },
+    {
+      "controlId": "exact-code-provenance",
+      "evidenceKind": "LocalExactCodeProvenanceEvidence",
+      "description": "Clean worktree and exact commit/tree/content binding."
+    },
+    {
+      "controlId": "formal-operational-zero-skipped",
+      "evidenceKind": "LocalFormalOperationalEvidence",
+      "description": "Formal operational test receipt has no skipped, failed, or todo tests."
+    },
+    {
+      "controlId": "online-anti-rollback",
+      "evidenceKind": "LocalOnlineAntiRollbackEvidence",
+      "description": "Online mutation markers and the local integrity pin prevent rollback/equivocation."
+    }
+  ],
+  "optionalDiagnostics": [
+    {
+      "diagnosticId": "local-slo-alert-policy",
+      "blocking": false,
+      "description": "Automatically observed local health signals; absence never blocks personal readiness."
+    }
+  ],
+  "scientificCapabilities": {
+    "cpu": {
+      "defaultEnabled": true,
+      "requiredEvidence": [
+        "deterministic-replay",
+        "error-budget",
+        "model-data-checkpoint-ir"
+      ]
+    },
+    "gpu": {
+      "defaultEnabled": false,
+      "optInEnvironment": "HEPTA_PERSONAL_GPU_ENABLED",
+      "requiredEvidence": [
+        "same-device-replay",
+        "deterministic-replay",
+        "error-budget",
+        "model-data-checkpoint-ir"
+      ]
+    }
+  },
+  "prohibitedActions": [
+    "external-submission",
+    "publication-claim",
+    "multi-operator-release",
+    "distribution-from-personal-profile"
+  ],
+  "profileHash": "sha256:c98b607a8efa30dac3d7fa9206c7af4d3a0eac5fcc5eaddc7bb82ba008196eab"
+}

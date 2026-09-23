@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "SingleVenueSubmissionRolloutConfiguration",
+  "status": "unconfigured_fail_closed",
+  "enabled": false,
+  "venueId": null,
+  "targetInstanceId": null,
+  "portalConfigurationHash": null,
+  "portalDescriptorHash": null,
+  "portalBindingHash": null,
+  "credentialsPresent": false,
+  "liveCommitEnabled": false,
+  "productionReady": false,
+  "humanSingleUseAuthorizationRequired": true,
+  "sandboxCanaryRequired": true,
+  "sandboxCanaryExternalActionPerformed": false,
+  "externalActionPerformed": false,
+  "configurationHash": "sha256:bec4b159290d39da32f2e6d7a7c3fb4b404f994f6b40f80a505feb181b18136a"
+}

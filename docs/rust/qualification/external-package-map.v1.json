@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "program": "hepta-paper-rust-rewrite",
+  "status": "canonical_external_package_map",
+  "packages": [
+    {
+      "gapId": "GAP-GOV-003",
+      "issue": 25,
+      "packageId": "EXT-GOV-MAIN-001",
+      "schemas": [
+        "protected-main-ruleset-evidence-v1.schema.json"
+      ],
+      "executor": "repository_administrator_and_independent_reviewer",
+      "automaticActivation": false
+    },
+    {
+      "gapId": "GAP-HOST-001",
+      "issue": 17,
+      "packageId": "EXT-HOST-CGROUP-001",
+      "schemas": [
+        "independent-linux-review-v1.schema.json"
+      ],
+      "executor": "target_host_operator_and_independent_linux_reviewer",
+      "automaticActivation": false
+    },
+    {
+      "gapId": "GAP-HOST-002",
+      "issue": 12,
+      "packageId": "EXT-HOST-STORAGE-001",
+      "schemas": [
+        "external-host-storage-package-v1.schema.json"
+      ],
+      "executor": "destructive_test_mount_operator_and_independent_reviewer",
+      "automaticActivation": false
+    },
+    {
+      "gapId": "GAP-KEY-001",
+      "issue": 14,
+      "packageId": "EXT-KEY-OWNER-001",
+      "schemas": [
+        "external-key-owner-drill-v1.schema.json"
+      ],
+      "executor": "external_capability_key_owner_and_independent_reviewer",
+      "automaticActivation": false
+    },
+    {
+      "gapId": "GAP-CODEX-001",
+      "issue": 21,
+      "packageId": "EXT-CODEX-ROLE-001",
+      "schemas": [
+        "authenticated-codex-role-canary-v1.schema.json"
+      ],
+      "executor": "codex_account_owner_and_distinct_role_principals",
+      "automaticActivation": false
+    },
+    {
+      "gapId": "GAP-REL-001",
+      "issue": 22,
+      "packageId": "EXT-CUTOVER-SOAK-001",
+      "schemas": [
+        "production-cutover-soak-v1.schema.json"
+      ],
+      "executor": "campaign_database_operator_and_independent_observer",
+      "automaticActivation": false
+    },
+    {
+      "gapId": "GAP-REL-001",
+      "issue": 22,
+      "packageId": "EXT-AUTHORITY-SET-001",
+      "schemas": [
+        "external-authority-set-v1.schema.json"
+      ],
+      "executor": "four_separately_administered_external_authority_domains",
+      "automaticActivation": false
+    }
+  ]
+}

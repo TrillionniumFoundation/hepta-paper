@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "definitionHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "campaignRevision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "campaignState": {
+      "enum": [
+        "running",
+        "paused",
+        "cancelled",
+        "completed"
+      ]
+    },
+    "data": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "events"
+            },
+            "page": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "version": {
+                  "const": 1
+                },
+                "campaignId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                },
+                "snapshotSequence": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9223372036854775807
+                },
+                "snapshotEventHash": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "events": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "sequence": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9223372036854775807
+                      },
+                      "eventKind": {
+                        "enum": [
+                          "campaign_created",
+                          "node_claimed",
+                          "result_prepared",
+                          "result_integrated",
+                          "failed_pre_provider",
+                          "ambiguous",
+                          "cancelled",
+                          "campaign_state_changed",
+                          "control_result_integrated",
+                          "local_workflow_amended_v1"
+                        ]
+                      },
+                      "payloadHash": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      "previousEventHash": {
+                        "anyOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$"
+                          }
+                        ]
+                      },
+                      "eventHash": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      "recordedAtUnixMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9223372036854775807
+                      }
+                    },
+                    "required": [
+                      "sequence",
+                      "eventKind",
+                      "payloadHash",
+                      "previousEventHash",
+                      "eventHash",
+                      "recordedAtUnixMs"
+                    ]
+                  },
+                  "maxItems": 256
+                },
+                "nextCursor": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "campaignId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9_.:-]+$"
+                        },
+                        "afterSequence": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9223372036854775807
+                        },
+                        "afterEventHash": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        },
+                        "snapshotSequence": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9223372036854775807
+                        },
+                        "snapshotEventHash": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "campaignId",
+                        "afterSequence",
+                        "afterEventHash",
+                        "snapshotSequence",
+                        "snapshotEventHash"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "version",
+                "campaignId",
+                "snapshotSequence",
+                "snapshotEventHash",
+                "events",
+                "nextCursor"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "page"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "logs"
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "stepIndex": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 127
+                  },
+                  "stepId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_.:-]+$"
+                  },
+                  "resultHash": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "committedStateHash": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "artifactHashes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "maxItems": 256
+                  },
+                  "actualCostMicrousd": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9223372036854775807
+                  }
+                },
+                "required": [
+                  "stepIndex",
+                  "stepId",
+                  "resultHash",
+                  "committedStateHash",
+                  "artifactHashes",
+                  "actualCostMicrousd"
+                ]
+              },
+              "maxItems": 128
+            },
+            "nextOffset": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 128
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "entries",
+            "nextOffset"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "slo"
+            },
+            "counters": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "committedSteps": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 128
+                },
+                "remainingSteps": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 128
+                },
+                "spentMicrousd": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                "budgetRemainingMicrousd": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                "pendingStep": {
+                  "type": "boolean"
+                },
+                "gateRejected": {
+                  "type": "boolean"
+                },
+                "amendmentCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1024
+                },
+                "productionSloQualified": {
+                  "const": false
+                }
+              },
+              "required": [
+                "committedSteps",
+                "remainingSteps",
+                "spentMicrousd",
+                "budgetRemainingMicrousd",
+                "pendingStep",
+                "gateRejected",
+                "amendmentCount",
+                "productionSloQualified"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "counters"
+          ]
+        }
+      ]
+    },
+    "productionActivation": {
+      "const": false
+    },
+    "nodeRetirementVerified": {
+      "const": false
+    }
+  },
+  "required": [
+    "version",
+    "definitionHash",
+    "campaignId",
+    "campaignRevision",
+    "campaignState",
+    "data",
+    "productionActivation",
+    "nodeRetirementVerified"
+  ]
+}

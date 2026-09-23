@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "benchmarkFamily": "econometrics_panel_benchmark",
+      "typedOracleKinds": [
+        "property-oracle-v1",
+        "residual-bound-v1"
+      ]
+    },
+    {
+      "benchmarkFamily": "finance_asset_pricing_benchmark",
+      "typedOracleKinds": [
+        "property-oracle-v1",
+        "residual-bound-v1"
+      ]
+    },
+    {
+      "benchmarkFamily": "ml_algorithm_benchmark",
+      "typedOracleKinds": [
+        "property-oracle-v1",
+        "residual-bound-v1"
+      ]
+    },
+    {
+      "benchmarkFamily": "operations_optimization_benchmark",
+      "typedOracleKinds": [
+        "property-oracle-v1",
+        "residual-bound-v1"
+      ]
+    },
+    {
+      "benchmarkFamily": "rl_stochastic_control_benchmark",
+      "typedOracleKinds": [
+        "property-oracle-v1",
+        "residual-bound-v1"
+      ]
+    }
+  ],
+  "languages": [
+    "python",
+    "r"
+  ],
+  "formalTemplateIds": [
+    "hepta.formal.panel-retention-accounting.v1",
+    "hepta.formal.loss-cap-upper-bound.v1",
+    "hepta.formal.schedule-filter-length-safety.v1",
+    "hepta.formal.feasible-allocation-bounds.v1",
+    "hepta.formal.registered-scalar-interval-preservation.v1",
+    "hepta.formal.trajectory-prefix-length-safety.v1"
+  ],
+  "backends": [
+    {
+      "backend": "lean",
+      "availability": "active",
+      "executionMode": "builtin_pinned_lake",
+      "productionQualification": "conditional_on_current_dynamic_formal_authority_kernel_audit_and_fresh_replay"
+    },
+    {
+      "backend": "coq",
+      "availability": "unavailable",
+      "executionMode": "out_of_process_adapter_required",
+      "productionQualification": "separately_qualified_adapter_required"
+    },
+    {
+      "backend": "isabelle",
+      "availability": "unavailable",
+      "executionMode": "out_of_process_adapter_required",
+      "productionQualification": "separately_qualified_adapter_required"
+    }
+  ],
+  "strategies": [
+    {
+      "strategy": "direct_elaboration",
+      "capabilities": [
+        "goal_decomposition",
+        "proof_term_synthesis"
+      ]
+    },
+    {
+      "strategy": "mathlib_retrieval",
+      "capabilities": [
+        "goal_decomposition",
+        "pinned_lemma_index",
+        "lemma_retrieval",
+        "proof_term_synthesis"
+      ]
+    },
+    {
+      "strategy": "bounded_refutation_or_synthesis",
+      "capabilities": [
+        "goal_decomposition",
+        "pinned_lemma_index",
+        "lemma_retrieval",
+        "bounded_counterexample_search",
+        "counterexample_guided_repair",
+        "proof_term_synthesis"
+      ]
+    }
+  ],
+  "sourceHashes": {
+    "paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs": "sha256:0413dc87b1e4af229cf507da815e904dd9aec205d0b4404a285e67e01305b442",
+    "paper-domain/automation/autonomous-formal-support-registry.mjs": "sha256:132a6ef9c8cc21b93b7dad4980330ceca8d1113560cc7a1c6043891a2dcb978e",
+    "paper-domain/research/formal-proof-strategy-registry.mjs": "sha256:444e33ec4ef2338771558cf76d3185b876a92b6779e2204255a2a583b4f14e48"
+  }
+}

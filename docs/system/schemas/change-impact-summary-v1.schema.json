@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChangeImpactSummaryV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion","kind","subject","changedPaths","changedModuleIds","changedCapabilityIds","changedWorkItemIds","changedMilestoneIds","changedRiskIds","changedEvidenceBindingIds","canonicalWorkloadIds","requiredWorkflowContexts","externalBlockerIds","qualificationInvalidations","authorityConsequences","rollbackDisposition","emptyImpact","grantsAuthority"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "ChangeImpactSummaryV1"},
+    "subject": {"type":"object","additionalProperties":false,"required":["base","head"],"properties":{"base":{"type":["string","null"]},"head":{"type":["string","null"]}}},
+    "changedPaths": {"$ref":"#/$defs/stringSet"},
+    "changedModuleIds": {"type":"array","uniqueItems":true,"items":{"pattern":"^module\\.[a-z0-9-]+$"}},
+    "changedCapabilityIds": {"$ref":"#/$defs/stringSet"},
+    "changedWorkItemIds": {"$ref":"#/$defs/stringSet"},
+    "changedMilestoneIds": {"$ref":"#/$defs/stringSet"},
+    "changedRiskIds": {"$ref":"#/$defs/stringSet"},
+    "changedEvidenceBindingIds": {"$ref":"#/$defs/stringSet"},
+    "canonicalWorkloadIds": {"$ref":"#/$defs/stringSet"},
+    "requiredWorkflowContexts": {"$ref":"#/$defs/stringSet"},
+    "externalBlockerIds": {"$ref":"#/$defs/stringSet"},
+    "qualificationInvalidations": {"$ref":"#/$defs/stringSet"},
+    "authorityConsequences": {"$ref":"#/$defs/stringSet"},
+    "rollbackDisposition": {"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}},
+    "emptyImpact": {"type":"boolean"},
+    "grantsAuthority": {"const": false}
+  },
+  "$defs": {"stringSet":{"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1}}}
+}

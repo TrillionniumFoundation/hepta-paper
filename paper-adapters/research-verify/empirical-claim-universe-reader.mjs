@@ -1,0 +1,178 @@
+import path from 'node:path';
+import { analyzeTheoremEnvironmentMacroDefinitions } from '../../paper-domain/quality/latex-theorem-environment-syntax.mjs';
+import {
+  deriveEmpiricalClaimUniverseIdentity,
+} from '../../paper-domain/research/empirical-claim-contract.mjs';
+import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import {
+  extractMarkerDelimitedManuscriptSurfaces,
+  literalManuscriptIncludes,
+  safeManuscriptPath,
+} from './latex-manuscript-reader-support.mjs';
+
+const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
+const BEGIN = /^\s*%\s*HEPTA_EMPIRICAL_CLAIM_BEGIN\s+(\{.*\})\s*$/;
+const END = /^\s*%\s*HEPTA_EMPIRICAL_CLAIM_END\s+([A-Za-z0-9][A-Za-z0-9_.:-]{0,159})\s*$/;
+const MARKER_TOKEN = /HEPTA_EMPIRICAL_CLAIM_(?:BEGIN|END)/;
+
+function validDeclaration(value) {
+  return exactKeys(value, [
+    'claimId', 'metric', 'comparator', 'alternative', 'minimumEffect', 'acceptanceRequired',
+    'proposalClaimRecordHash',
+  ]) && IDENTIFIER.test(String(value.claimId || '')) && IDENTIFIER.test(String(value.metric || ''))
+    && ['baseline', 'ablation'].includes(value.comparator) && ['greater', 'less'].includes(value.alternative)
+    && Number.isFinite(Number(value.minimumEffect)) && Number(value.minimumEffect) >= 0
+    && typeof value.acceptanceRequired === 'boolean'
+    && (value.proposalClaimRecordHash === null || /^sha256:[0-9a-f]{64}$/i.test(String(value.proposalClaimRecordHash || '')));
+}
+
+function extractClaims(relative, read) {
+  const extracted = extractMarkerDelimitedManuscriptSurfaces({
+    relative,
+    read,
+    beginPattern: BEGIN,
+    endPattern: END,
+    markerToken: MARKER_TOKEN,
+    blockerPrefix: 'empirical_claim_universe',
+    bodyInvalidSuffix: 'claim_body_invalid',
+    declarationValid: validDeclaration,
+    declarationIdentity: (declaration) => declaration.claimId,
+    bodyValid: ({ text }) => Boolean(text.trim()),
+  });
+  return { claims: extracted.surfaces, blockers: extracted.blockers };
+}
+
+export function readEmpiricalClaimUniverse({ sourceRoot, manuscriptPath = 'main.tex', maximumFiles = 128 } = {}) {
+  const rootPath = path.resolve(sourceRoot || '.');
+  const rootManuscript = safeManuscriptPath(manuscriptPath);
+  const blockers = [];
+  const files = [];
+  const extractedClaims = [];
+  const visited = new Set();
+  const visit = (relative, depth = 0) => {
+    if (!relative || visited.has(relative)) return;
+    if (visited.size >= maximumFiles || depth > 32) {
+      blockers.push('empirical_claim_universe_include_limit_exceeded');
+      return;
+    }
+    visited.add(relative);
+    const read = readScopedFileSync({ scopeRoot: rootPath, candidate: path.join(rootPath, relative) });
+    if (read.status !== 'scoped_file_read_verified') {
+      blockers.push(`empirical_claim_universe_manuscript_unreadable:${relative}`);
+      return;
+    }
+    files.push(Object.freeze({ path: relative, hash: read.hash, bytes: read.bytes }));
+    const syntax = analyzeTheoremEnvironmentMacroDefinitions(read.content.toString('latin1'));
+    for (const blocker of syntax.blockers) {
+      blockers.push(`empirical_claim_universe_dynamic_tex_unsupported:${relative}:${blocker.offset}`);
+    }
+    const includes = literalManuscriptIncludes({
+      masked: syntax.maskedSource,
+      relative,
+      blockerPrefix: 'empirical_claim_universe',
+      mapInclude: ({ path: included, byteStart }) => ({
+        path: included,
+        offset: byteStart,
+      }),
+    });
+    blockers.push(...includes.blockers);
+    const extracted = extractClaims(relative, read);
+    blockers.push(...extracted.blockers);
+    const events = [
+      ...extracted.claims.map((claim) => ({ type: 'claim', offset: claim.markerByteStart, claim })),
+      ...includes.includes.map((included) => ({ type: 'include', offset: included.offset, included })),
+    ].sort((left, right) => left.offset - right.offset || left.type.localeCompare(right.type));
+    for (const event of events) {
+      if (event.type === 'claim') extractedClaims.push(event.claim);
+      else visit(event.included.path, depth + 1);
+    }
+  };
+  if (!rootManuscript) blockers.push('empirical_claim_universe_manuscript_path_invalid');
+  else visit(rootManuscript);
+  const sortedFiles = files.sort((left, right) => left.path.localeCompare(right.path));
+  const sourceCorpusHash = hashRecord('EmpiricalManuscriptSourceCorpus', sortedFiles);
+  const orderedCandidates = extractedClaims;
+  const empiricalClaimIdentity = deriveEmpiricalClaimUniverseIdentity({
+    manuscriptPath: rootManuscript,
+    claims: orderedCandidates.map((candidate) => ({
+    claimId: candidate.declaration.claimId,
+    metric: candidate.declaration.metric,
+    comparator: candidate.declaration.comparator,
+    alternative: candidate.declaration.alternative,
+    minimumEffect: Number(candidate.declaration.minimumEffect),
+    acceptanceRequired: candidate.declaration.acceptanceRequired,
+    proposalClaimRecordHash: candidate.declaration.proposalClaimRecordHash,
+    manuscriptPath: candidate.manuscriptPath,
+    manuscriptContentHash: candidate.manuscriptContentHash,
+    })),
+  });
+  const manuscriptCorpusHash = empiricalClaimIdentity.manuscriptCorpusHash;
+  const ids = new Set();
+  const claims = orderedCandidates.map((candidate, index) => {
+    const { declaration, ...source } = candidate;
+    if (ids.has(declaration.claimId)) blockers.push(`empirical_claim_universe_claim_id_duplicate:${declaration.claimId}`);
+    ids.add(declaration.claimId);
+    const payload = {
+      version: 1,
+      kind: 'EmpiricalClaimUniverseEntry',
+      ...declaration,
+      minimumEffect: Number(declaration.minimumEffect),
+      ...source,
+      manuscriptClaimHash:
+        empiricalClaimIdentity.claimIdentities[index].manuscriptClaimHash,
+    };
+    return Object.freeze({
+      ...payload,
+      empiricalClaimUniverseEntryHash: hashRecord('EmpiricalClaimUniverseEntry', payload),
+    });
+  });
+  if (!claims.length) blockers.push('empirical_claim_universe_claims_missing');
+  const empiricalClaimUniverseHash = empiricalClaimIdentity.empiricalClaimUniverseHash;
+  const payload = {
+    version: 1,
+    kind: 'EmpiricalClaimUniverse',
+    status: blockers.length ? 'empirical_claim_universe_blocked' : 'empirical_claim_universe_verified',
+    manuscriptPath: rootManuscript,
+    manuscriptCorpusHash,
+    sourceCorpusHash,
+    files: sortedFiles,
+    claims,
+    blockers: [...new Set(blockers)],
+  };
+  const authority = Object.freeze({ ...payload, empiricalClaimUniverseHash });
+  return Object.freeze({
+    ...authority,
+    empiricalClaimUniverseReceiptHash: hashRecord('EmpiricalClaimUniverseReceipt', authority),
+  });
+}
+
+export function canonicalEmpiricalClaimsFromUniverse(universe) {
+  if (universe?.status !== 'empirical_claim_universe_verified') return Object.freeze([]);
+  return Object.freeze(universe.claims.map((claim) => Object.freeze({
+    id: claim.claimId,
+    claimId: claim.claimId,
+    text: claim.text,
+    sourceLocator: `${claim.manuscriptPath}#bytes=${claim.manuscriptByteStart}-${claim.manuscriptByteEnd}`,
+    manuscriptPath: claim.manuscriptPath,
+    manuscriptByteStart: claim.manuscriptByteStart,
+    manuscriptByteEnd: claim.manuscriptByteEnd,
+    manuscriptContentHash: claim.manuscriptContentHash,
+    manuscriptFileHash: claim.manuscriptFileHash,
+    manuscriptClaimHash: claim.manuscriptClaimHash,
+    empiricalClaimUniverseEntryHash: claim.empiricalClaimUniverseEntryHash,
+    empiricalClaimUniverseHash: universe.empiricalClaimUniverseHash,
+    manuscriptCorpusHash: universe.manuscriptCorpusHash,
+    proposalClaimRecordHash: claim.proposalClaimRecordHash,
+    status: 'candidate',
+    kind: 'empirical_claim',
+    verificationPlan: Object.freeze({
+      kind: 'empirical_claim_bound_academic_experiment',
+      requiresWorker: false,
+      requiresEvidence: false,
+      verifier: 'system-owned-claim-bound-analysis-protocol-v2',
+    }),
+    proofObligations: Object.freeze([]),
+  })));
+}

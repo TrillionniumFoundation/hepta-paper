@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "kind": "ImmutableLegacyDifferentialReferenceManifest",
+  "archive": "legacy-differential-reference-v1.tar.gz",
+  "archiveSha256": "sha256:fcf7027a0f9f7f49556314546257a9c252949b46c847fb34471db1bf1a92de3a",
+  "files": [
+    {
+      "path": "paperctl_modules/llm_consumption.py",
+      "bytes": 7762,
+      "sha256": "sha256:dab7f95a6d6efee82a6bc37817c4828c9e530e82703c7856d6b0f61f12ced427"
+    },
+    {
+      "path": "paperctl_modules/paper_production_core.py",
+      "bytes": 19542,
+      "sha256": "sha256:589e194f7f45ce0e8fff5abbd9880641d9050d9c633031288b389a4db81edf35"
+    },
+    {
+      "path": "paperctl_modules/referee_revision.py",
+      "bytes": 55824,
+      "sha256": "sha256:665a2bc60b8d8ec55a078494f579c699135d1e001ceb908fb396fda808bf70e5"
+    }
+  ],
+  "scope": "differential_reference_only_no_runtime_authority",
+  "functionalParityClaimAllowed": false
+}

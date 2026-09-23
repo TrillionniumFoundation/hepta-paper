@@ -1,0 +1,58 @@
+# Broker protocol/journal 分支对照（只读）
+
+- 当前审阅 HEAD：`deec4b742046437ac6b81763a16f031383a314c3`。
+- 对照 ref：`origin/codex/rust-broker-protocol-journal-20260828`，实际 SHA `5ef08664b327f53226b537af8ebbb28a14b48365`。
+- 当前仓库：`/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github/work/latest`。
+- 仅读取已有 ref、源码、测试和文档；未 checkout/fetch、未运行 Cargo、未修改源码。下述缺陷为源码路径确认，新增真实回归尚待实施与执行，不能把旧测试文件存在当作测试通过。
+
+## 结论
+
+没有证据表明旧分支曾有完整安装、服务启动、provider dispatch 与主服务集成而在当前丢失。三个旧 crate 的核心职责已由当前 `hepta-codex-broker` 合并实现；第四个 SQLite crate 在旧 workspace 中也未接入。存在两个具体的当前代码缺口，适宜分别实施：同名 schema SQL 定义未验证；socket 读取没有总截止时间且服务使用读取前的过时验证时间。
+
+## 路径与实际行为对照
+
+| 旧路径 | 旧实际调用与限制 | 当前实际对应 |
+| --- | --- | --- |
+| `rust/crates/hepta-codex-broker-protocol` | `hepta-codex-broker-local/src/service.rs:153–173` 实际调用 peer/framing/capability；56-byte header、HMAC、请求 envelope 是旧私有库协议 | `hepta-codex-broker/src/admission.rs:156–190`，`frame.rs:47–98`，`capability.rs:94–147`；16-byte request header、canonical request、Ed25519、role/runtime/UID/GID/time 校验。协议不兼容，不能直接恢复旧 crate 或宣称字节等价 |
+| `rust/crates/hepta-codex-broker-journal` | `hepta-codex-broker-local/src/service.rs:174–187` 调用 reserve；独立 broker SQLite，并非 campaign 写入资格 | 当前 `service.rs:29–60` 实际从真实 Unix admission 进入 `journal/store.rs:207–297`；原子 nonce+operation、实际 canonical request bytes、持久状态读取与后续 gate linkage |
+| `rust/crates/hepta-codex-broker-local` | 仅 admission 库；`src/service.rs:57` 明示无 provider execution；全 ref 搜索 `BrokerAdmissionServiceV1` 仅自身实现、reexport、测试，无生产 bin/上层 owner | 当前 `server.rs:188–305` 实现 listener/worker/queue/recovery；`:387–442` 实际调用 admission/reserve，只有新 reservation 才调用可选 dispatcher。仓内仍无 `BrokerServerV1::new` 的调用者或 `BrokerOperationDispatcherV1` 实现；公开 server 库尚非已安装主服务 |
+| `rust/crates/hepta-codex-journal-sqlite` | 旧 `rust/Cargo.toml:3–12` workspace members 不含此 crate；除自身文件外无 package/import 调用 | 不能把这个旧孤立目录视作已接线能力遗失；当前 durable broker journal 位于 broker crate 内 |
+
+当前完整库内链：`listener.rs:162` bind → `server.rs:192–205` journal open/integrity/recovery → `listener.rs:208` mark_ready → `server.rs:241` accept → worker `server.rs:387` → `service.rs:38` admission → `admission.rs:165–180` kernel peer/canonical frame/strict capability → `service.rs:51` journal reserve → `server.rs:401` 仅 fresh reservation 的可选 dispatch。`DISPATCH.md:90–93` 同样把安装 adapter 表述为调用者职责，不能据此声称已有完整消费者。
+
+### 已保留或已有更严格对应的行为
+
+- 非本 broker 的 SQLite 在写连接/持久 pragma 之前拒绝：当前 `journal/path.rs:24–26,76–141` 的只读 preflight；真实字节与 sidecar 不变回归在 `journal/tests.rs:626–681`。旧分支 `foreign_database.rs:51–71` 的意图已有对应，不能按文件名缺失认定丢失。
+- exact duplicate 不添加 nonce/transition，不改 first timestamp：当前 `journal/store.rs:226–235,1060–1067`；测试 `journal/tests.rs:183–255` 覆盖 reserved duplicate/restart；`server.rs:398–401,435–439` 返回现有状态且不 dispatch existing。更完整的真实 socket progressed-state 回归仍可补充，当前实现本身没有旧分支硬编码 reserved 的限制。
+- 当前 expired capability/deadline 在纯验证中使用 `<=` 拒绝：`capability.rs:118–122`；journal 自身再检查 `store.rs:217–220`。但服务传入时间的新鲜度有下面的实际缺口。
+- 当前另外已有真实 stopped gate/process identity 与 release recovery 集成测试，见 `tests/durable_process_journal.rs:259,335,381,431,495,538,558,650,716`；这些是本地 fixture 证据，不是 live-provider qualification。
+
+### 旧分支“测试存在”不等于旧行为成立
+
+1. 旧 `hepta-codex-broker-local/tests/progressed_duplicate.rs:165–202` 要求状态推进为 RequestBound 后 exact duplicate 成功并返回 revision1。但同 ref 的 `src/service.rs:213–214` 强制状态 Reserved/revision0，`:196` 固定响应 `reserved`；不能将这个测试作为已通过功能而移植旧实现。
+2. 旧 `hepta-codex-broker-journal/tests/foreign_database.rs:89,115` 使用 `JournalStoreError::SchemaFingerprintMismatch`；同 ref 的该 crate 生产源码没有此 variant 或指纹实现。只读全 crate 搜索这个名字仅命中上述测试。这至少表明 ref 的测试与源码不一致，不能援引其 closure 文案作验收。
+3. 旧 `progressed_duplicate.rs:206–213` 的“exact deadline”测试只断 `is_err()`，请求 capability 在 `:92` 已于12000过期，而调用时间为20000；它不能独立证明 exact request-deadline 分支。
+
+## 当前具体缺口 A：同名 SQL 定义漂移被 schema gate 接受
+
+`journal/path.rs:578–594` 仅 SELECT `type,name` 比较对象清单；`:595–610` 只检查五张表 STRICT。`sqlite_schema.sql`、trigger body、CHECK/FK/index定义没有被比较。`journal/schema.rs:291–335` 中的 append-only/immutable trigger 是实际保护，但把例如 `operation_transitions_no_update` 替换为同名 `BEFORE UPDATE ... BEGIN SELECT 1; END` 不改变当前检查的对象清单或表 strict 标志。
+
+空的合法新 journal 在此替换后，`store.rs:803–830` 的 integrity/FK/现有行 projection 检查也没有数据异常可查，故当前 open 路径没有其他对应定义校验。实际调用点既包括 `open_secure_database` 只读 preflight `path.rs:136–137`，也包括 `verify_database_contract` `:528–531` 与 public `validate_integrity`，不是闲置 helper。
+
+最小下一片：用源内 `SCHEMA_SQL` 在独立 in-memory bundled SQLite 创建预期对象定义，或采用等效源内固定定义清单；有界读取并严格比较实际 `(type,name,tbl_name,sql)`。不要信任数据库自报的 schema hash；不要用 DDL 自动修复既有库。将同一验证接入现有只读 preflight 和完整 contract，以便 writer 前拒绝。保留原 `SCHEMA_VERSION`/成功 DB/schema/hash，新增明确 definition-mismatch error（注意 public enum exhaustive match 兼容影响）。
+
+最低真实测试：创建并关闭真实 journal，合法打开 raw SQLite 后同名替换一个 no-update trigger，关闭；public open 必须以具体定义失配错误拒绝；原库/sidecar bytes 不因拒绝改变。另测保留名字与 STRICT 属性但修改一个 table constraint，以及正常重开、现有 backup/restore 成功，避免只测新增对象已覆盖的路径。当前审阅没有运行这些新测试。
+
+## 当前具体缺口 B：读取总时限及 fresh now
+
+`admission.rs:169–173` 只对 socket 设置一次 `SO_RCVTIMEO`；`frame.rs:54–56,79–82` 使用 `read_exact`。每次 read 都在超时内返回少量字节时，整个 header+payload 可远超 `read_timeout_ms`。这与 ADR-0002:24 的 hard byte/time limit 和 runtime/CODEX_AND_BROKER.md:150 的 bounded deadlines 有差距。现 frame 的1MiB cap只限制字节，并不是总 elapsed time。
+
+`server.rs:363–364` 在读取之前采集 now/trust snapshot，`:387–394` 传这个 now；`service.rs:38–51` 把同一值交给读取后的 capability 校验及 journal reserve。因此一个读入时尚有效、读完时已过期的实际签名请求仍可通过这些时间比较。journal `store.rs:217–224` 也在 `BEGIN IMMEDIATE` 等待之前检查 supplied now，另有 SQLite busy wait 的时间边界；不能仅改 read timeout 后声称所有事务临界时间问题闭合。
+
+最小下一片：socket-specific reader 用单一 `Instant` deadline 覆盖 header+payload，每次系统读取前设置剩余时间，收到部分数据/EINTR之后不重置 deadline；保持 generic frame API 与 canonical字节不变。服务应在有界读取结束后从真实 `BrokerClockV1` 新采 now 并取当前 trust snapshot，再验签与 reserve；内部拆分真实 peer/frame capture 与 authenticate/reserve，保留已有 public 显式 now API，不使用构造的时间冒充生产实时时钟。对 transaction busy wait 的 freshness 若不在本片处理须明确保留。
+
+最低真实连接测试：UnixStream pair/实际 listener 持续在单次timeout以内输送小片段，总时限仍及时拒绝且 nonce/operation均零；header与payload共用预算；完整合法signed请求按旧hash成功；读取期间真实已过期signed capability拒绝；读取后 clock/trust失败不会reserve；client EOF/partial read仍保留原错误分类。用拥有的测试线程/子进程并设置外层上限、join/cleanup，不把短连接空probe当生产资格。
+
+## 未在本审阅声称关闭的范围
+
+当前 server 没有仓内 owner/启动二进制/dispatcher 实现；full admission→listener service integration、部署 UID/凭据隔离、真实 provider、schema gate与全部SQL操作间非协作并发变更、事务等待后的时间新鲜度、认证客户端与不可逆结果的独立权威资格都不能由本次只读比较或上述小修复证明。不要恢复旧 HMAC 或不兼容 wire 来填“同名路径”指标。

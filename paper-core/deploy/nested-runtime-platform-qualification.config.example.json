@@ -1,0 +1,63 @@
+{
+  "version": 2,
+  "kind": "NestedRuntimePlatformQualificationConfiguration",
+  "qualificationBundlePath": "/hepta/nested-runtime-qualification/qualification.json",
+  "conformanceBundlePath": "/hepta/nested-runtime-qualification/conformance.json",
+  "authorityIndependenceBundlePath": "/hepta/nested-runtime-qualification/authority-independence.json",
+  "trustStorePath": "/hepta/nested-runtime-qualification/trust-store.json",
+  "expectedTrustStoreContentHash": "REPLACE_WITH_SHA256_OF_EXACT_TRUST_STORE_FILE",
+  "expectedTrustStoreHash": "REPLACE_WITH_CANONICAL_TRUST_STORE_HASH",
+  "qualificationMaximumLifetimeMs": 2592000000,
+  "conformanceMaximumLifetimeMs": 900000,
+  "conformanceMaximumObservationAgeMs": 600000,
+  "authorityIndependenceMaximumLifetimeMs": 900000,
+  "qualificationAuthority": {
+    "keyIds": [
+      "REPLACE_WITH_INDEPENDENT_PLATFORM_QUALIFIER_KEY_ID"
+    ],
+    "subjectIds": [
+      "REPLACE_WITH_INDEPENDENT_PLATFORM_QUALIFIER_SUBJECT_ID"
+    ],
+    "organizations": [
+      "REPLACE_WITH_INDEPENDENT_PLATFORM_QUALIFIER_ORGANIZATION"
+    ],
+    "publicKeySpkiHashes": [
+      "REPLACE_WITH_PLATFORM_QUALIFIER_ED25519_SPKI_SHA256"
+    ]
+  },
+  "conformanceAuthority": {
+    "keyIds": [
+      "REPLACE_WITH_INDEPENDENT_CONFORMANCE_ATTESTOR_KEY_ID"
+    ],
+    "subjectIds": [
+      "REPLACE_WITH_INDEPENDENT_CONFORMANCE_ATTESTOR_SUBJECT_ID"
+    ],
+    "organizations": [
+      "REPLACE_WITH_INDEPENDENT_CONFORMANCE_ATTESTOR_ORGANIZATION"
+    ],
+    "publicKeySpkiHashes": [
+      "REPLACE_WITH_CONFORMANCE_ATTESTOR_ED25519_SPKI_SHA256"
+    ]
+  },
+  "authorityIndependenceAuthority": {
+    "keyIds": [
+      "REPLACE_WITH_INDEPENDENT_CONTROL_DOMAIN_ATTESTOR_KEY_ID"
+    ],
+    "subjectIds": [
+      "REPLACE_WITH_INDEPENDENT_CONTROL_DOMAIN_ATTESTOR_SUBJECT_ID"
+    ],
+    "organizations": [
+      "REPLACE_WITH_INDEPENDENT_CONTROL_DOMAIN_ATTESTOR_ORGANIZATION"
+    ],
+    "publicKeySpkiHashes": [
+      "REPLACE_WITH_CONTROL_DOMAIN_ATTESTOR_ED25519_SPKI_SHA256"
+    ]
+  },
+  "deploymentOperator": {
+    "principalId": "REPLACE_WITH_DEPLOYMENT_OPERATOR_PRINCIPAL_ID",
+    "provider": "REPLACE_WITH_DEPLOYMENT_OPERATOR_PROVIDER",
+    "organization": "REPLACE_WITH_DEPLOYMENT_OPERATOR_ORGANIZATION",
+    "trustDomainIdentityHash": "REPLACE_WITH_DEPLOYMENT_OPERATOR_TRUST_DOMAIN_SHA256",
+    "identitySubjectHash": "REPLACE_WITH_DEPLOYMENT_OPERATOR_IDENTITY_SUBJECT_SHA256"
+  }
+}

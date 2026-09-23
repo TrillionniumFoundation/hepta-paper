@@ -1,0 +1,346 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QualificationSubjectV3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "repository",
+    "pullRequestNumber",
+    "base",
+    "head",
+    "testedMerge",
+    "definitionSetHash",
+    "completeEligibleRuns",
+    "eligibleRunSetSha256",
+    "selectedRuns",
+    "selectedRunSetSha256",
+    "artifactSetHash",
+    "reviewSnapshotHash",
+    "snapshotIdentity"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 3
+    },
+    "kind": {
+      "const": "QualificationSubjectV3"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "fullName"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "pullRequestNumber": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryId",
+        "repository",
+        "ref",
+        "commit",
+        "tree"
+      ],
+      "properties": {
+        "repositoryId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "head": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryId",
+        "repository",
+        "ref",
+        "commit",
+        "tree"
+      ],
+      "properties": {
+        "repositoryId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "testedMerge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "tree"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "definitionSetHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "completeEligibleRuns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workflowId",
+          "workflowPath",
+          "workflowBlobSha",
+          "workflowSha256",
+          "event",
+          "pullRequestNumber",
+          "runId",
+          "runAttempt",
+          "createdAt",
+          "updatedAt",
+          "status",
+          "conclusion",
+          "checkSuiteId",
+          "jobSetHash",
+          "stepSetHash"
+        ],
+        "properties": {
+          "workflowId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "workflowPath": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workflowBlobSha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "workflowSha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "event": {
+            "const": "pull_request"
+          },
+          "pullRequestNumber": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runAttempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conclusion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checkSuiteId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "jobSetHash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "stepSetHash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "eligibleRunSetSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "producerHistoryWatermark": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "selectedRuns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workflowId",
+          "workflowPath",
+          "workflowBlobSha",
+          "workflowSha256",
+          "event",
+          "pullRequestNumber",
+          "runId",
+          "runAttempt",
+          "createdAt",
+          "updatedAt",
+          "status",
+          "conclusion",
+          "checkSuiteId",
+          "jobSetHash",
+          "stepSetHash"
+        ],
+        "properties": {
+          "workflowId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "workflowPath": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workflowBlobSha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "workflowSha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "event": {
+            "const": "pull_request"
+          },
+          "pullRequestNumber": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runAttempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conclusion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checkSuiteId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "jobSetHash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "stepSetHash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "selectedRunSetSha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "artifactSetHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "reviewSnapshotHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "branchProtectionSnapshotHash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "snapshotIdentity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

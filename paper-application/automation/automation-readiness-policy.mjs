@@ -1,0 +1,239 @@
+import {
+  BOUNDED_CAPABILITY_QUALIFICATION_SCOPE,
+  PRODUCTION_AGENT_AUTHORED_QUALIFICATION_SCOPE,
+} from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
+
+function unique(values) {
+  return Object.freeze([...new Set((values || []).filter(Boolean))]);
+}
+
+const SHA256 = /^sha256:[0-9a-f]{64}$/i;
+
+export function evaluateAutomationReadiness({
+  runtimes = {},
+  campaignQueryReady = false,
+  nodeQueryReady = false,
+  campaignStoreSchema = null,
+  campaignStoreSchemaBlockers = [],
+  operationalIntegrity = null,
+  researchExecutionReleaseAttestor = null,
+  runtimeImageReproducibility = null,
+  gpuScientificCapabilityProofInspection = null,
+  fullResearchQualification = null,
+  liveProviderCanaryRequired = false,
+} = {}) {
+  const agent = runtimes.agent || {};
+  const sandbox = runtimes.sandbox || {};
+  const automationRuntimeReady = agent.usable === true
+    && runtimes.python?.usable === true
+    && runtimes.latex?.usable === true
+    && sandbox.usable === true;
+  const academicEmpiricalReady = sandbox.academicEmpiricalReady === true;
+  const academicEmpiricalReadinessReason = sandbox.academicEmpiricalReadinessReason
+    || 'academic_empirical_readiness_not_reported';
+  const gpuScientificRuntimeReady = runtimes.gpu?.usable === true
+    && runtimes.gpuContainer?.usable === true
+    && runtimes.images?.pythonGpu?.usable === true;
+  const gpuPdeProof = gpuScientificCapabilityProofInspection?.capabilities?.pde;
+  const gpuDeepLearningProof =
+    gpuScientificCapabilityProofInspection?.capabilities?.deepLearning;
+  const gpuPdeOperationalProofReady = gpuPdeProof?.operationalProofReady === true
+    && Array.isArray(gpuPdeProof.operationalReceiptHashes)
+    && gpuPdeProof.operationalReceiptHashes.length > 0
+    && gpuPdeProof.operationalReceiptHashes.every((value) => SHA256.test(value));
+  const gpuPdeProductionQualificationReady =
+    gpuPdeProof?.productionQualificationReady === true
+    && Array.isArray(gpuPdeProof.conformanceReceiptHashes)
+    && gpuPdeProof.conformanceReceiptHashes.length > 0
+    && gpuPdeProof.conformanceReceiptHashes.every((value) => SHA256.test(value));
+  const gpuDeepLearningOperationalProofReady =
+    gpuDeepLearningProof?.operationalProofReady === true
+    && Array.isArray(gpuDeepLearningProof.operationalReceiptHashes)
+    && gpuDeepLearningProof.operationalReceiptHashes.length > 0
+    && gpuDeepLearningProof.operationalReceiptHashes.every((value) => SHA256.test(value));
+  const gpuDeepLearningProductionQualificationReady =
+    gpuDeepLearningProof?.productionQualificationReady === true
+    && Array.isArray(gpuDeepLearningProof.conformanceReceiptHashes)
+    && gpuDeepLearningProof.conformanceReceiptHashes.length > 0
+    && gpuDeepLearningProof.conformanceReceiptHashes.every((value) => SHA256.test(value));
+  const gpuScientificCapabilityProofsReady = gpuPdeOperationalProofReady
+    && gpuPdeProductionQualificationReady
+    && gpuDeepLearningOperationalProofReady
+    && gpuDeepLearningProductionQualificationReady;
+  const campaignStoreReady = campaignQueryReady === true
+    && nodeQueryReady === true
+    && campaignStoreSchema?.status === 'scoped_schema_version_verified'
+    && campaignStoreSchemaBlockers.length === 0
+    && operationalIntegrity?.queryReady === true;
+  const fullAutomaticResearchWritingRuntimePreflightReady = automationRuntimeReady
+    && agent.researchAuthorConfigurationPreflightReady === true
+    && agent.formalReviewConfigurationIndependentPrincipalReady === true
+    && academicEmpiricalReady
+    && researchExecutionReleaseAttestor?.ready === true
+    && researchExecutionReleaseAttestor?.productionReady === true
+    && researchExecutionReleaseAttestor?.fullProductionReady === true
+    && runtimeImageReproducibility?.ready === true
+    && gpuScientificRuntimeReady
+    && gpuScientificCapabilityProofsReady
+    && runtimes.lean?.usable === true;
+  const independentHypothesisPriorArtQualificationReady =
+    fullResearchQualification?.independentHypothesisPriorArtReviewVerified === true
+    && SHA256.test(String(
+      fullResearchQualification?.independentHypothesisPriorArtReceiptHash || '',
+    ));
+  const fullResearchQualificationReady = fullResearchQualification?.ready === true
+    && independentHypothesisPriorArtQualificationReady;
+  const boundedGoldenInfrastructureQualificationReady = fullResearchQualificationReady
+    && fullResearchQualification?.qualificationScope
+      === BOUNDED_CAPABILITY_QUALIFICATION_SCOPE
+    && fullResearchQualification?.genericContentCanaryVerified === true;
+  const productionGenericResearchQualificationReady = fullResearchQualificationReady
+    && fullResearchQualification?.qualificationScope
+      === PRODUCTION_AGENT_AUTHORED_QUALIFICATION_SCOPE;
+  const autonomousQualificationAuthorityReady =
+    boundedGoldenInfrastructureQualificationReady
+    || productionGenericResearchQualificationReady;
+  const liveProviderCanaryReady = agent.researchAuthorProviderAvailable === true
+    && agent.formalReviewProviderAvailable === true;
+  const providersReady = liveProviderCanaryRequired
+    ? liveProviderCanaryReady
+    : liveProviderCanaryReady || fullResearchQualification?.ready === true;
+  const operationalIntegrityReady = operationalIntegrity?.degraded === false;
+  const fullAutomaticResearchWritingReady = fullAutomaticResearchWritingRuntimePreflightReady
+    && providersReady
+    && campaignStoreReady
+    && operationalIntegrityReady
+    && autonomousQualificationAuthorityReady;
+  const campaignFullyQualified = fullAutomaticResearchWritingReady
+    && productionGenericResearchQualificationReady;
+  const blockers = unique([
+    ...(!automationRuntimeReady ? ['automation_runtime_not_ready'] : []),
+    ...(!campaignStoreReady ? ['campaign_store_not_ready'] : []),
+    ...(operationalIntegrity?.degraded === true ? ['automation_operational_integrity_degraded'] : []),
+    ...(!agent.researchAuthorConfigurationPreflightReady ? ['research_author_configuration_not_ready'] : []),
+    ...(!agent.formalReviewConfigurationIndependentPrincipalReady ? ['formal_review_independent_principal_not_ready'] : []),
+    ...(!academicEmpiricalReady ? [academicEmpiricalReadinessReason] : []),
+    ...(researchExecutionReleaseAttestor?.ready !== true ? ['research_execution_release_attestor_not_ready'] : []),
+    ...(researchExecutionReleaseAttestor?.productionReady !== true
+      || researchExecutionReleaseAttestor?.fullProductionReady !== true
+      ? ['research_execution_release_attestor_production_backend_not_ready'] : []),
+    ...(runtimeImageReproducibility?.ready !== true
+      ? ['runtime_image_reproducibility_not_ready'] : []),
+    ...(runtimeImageReproducibility?.blockers || []),
+    ...(!gpuScientificRuntimeReady ? ['gpu_scientific_runtime_not_ready'] : []),
+    ...(!gpuPdeOperationalProofReady ? ['gpu_pde_operational_proof_not_ready'] : []),
+    ...(!gpuPdeProductionQualificationReady
+      ? ['gpu_pde_production_qualification_not_ready'] : []),
+    ...(!gpuDeepLearningOperationalProofReady
+      ? ['gpu_deep_learning_operational_proof_not_ready'] : []),
+    ...(!gpuDeepLearningProductionQualificationReady
+      ? ['gpu_deep_learning_production_qualification_not_ready'] : []),
+    ...(runtimes.lean?.usable !== true ? ['lean_runtime_not_ready'] : []),
+    ...(!providersReady ? ['qualified_provider_canaries_not_ready'] : []),
+    ...(!independentHypothesisPriorArtQualificationReady
+      ? ['independent_hypothesis_prior_art_qualification_not_ready'] : []),
+    ...(!autonomousQualificationAuthorityReady
+      ? ['generic_content_qualification_authority_not_ready'] : []),
+    ...(fullResearchQualification?.blockers || []),
+  ]);
+  return Object.freeze({
+    version: 1,
+    kind: 'AutomationReadinessEvaluation',
+    status: !automationRuntimeReady
+      ? 'automation_plane_runtime_blocked'
+      : !campaignStoreReady
+        ? 'automation_plane_store_blocked'
+        : !operationalIntegrityReady
+          ? 'automation_plane_runtime_degraded'
+          : 'automation_plane_runtime_ready',
+    automationRuntimeReady,
+    automationOperationalReady: automationRuntimeReady && campaignStoreReady && operationalIntegrityReady,
+    academicEmpiricalReady,
+    academicEmpiricalReadinessReason,
+    gpuScientificRuntimeReady,
+    gpuPdeOperationalProofReady,
+    gpuPdeProductionQualificationReady,
+    gpuDeepLearningOperationalProofReady,
+    gpuDeepLearningProductionQualificationReady,
+    gpuScientificCapabilityProofsReady,
+    campaignStoreReady,
+    fullAutomaticResearchWritingRuntimePreflightReady,
+    independentHypothesisPriorArtQualificationReady,
+    fullResearchQualificationReady,
+    boundedGoldenInfrastructureQualificationReady,
+    productionGenericResearchQualificationReady,
+    liveProviderCanaryRequired,
+    liveProviderCanaryReady,
+    campaignFullyQualified,
+    fullAutomaticResearchWritingReady,
+    fullAutomaticResearchWritingStatus: fullAutomaticResearchWritingReady
+      ? 'full_automatic_research_writing_runtime_ready'
+      : fullAutomaticResearchWritingRuntimePreflightReady
+          && providersReady
+          && campaignStoreReady
+          && operationalIntegrityReady
+        ? 'full_automatic_research_writing_qualification_blocked'
+        : 'full_automatic_research_writing_runtime_blocked',
+    blockers,
+  });
+}
+
+export function evaluateAutomationReadinessLevels({
+  runtimeReady = false,
+  runtimeStatus = null,
+  boundedProfileReady = false,
+  configuredScopeReady = false,
+  genericCapabilityReady = false,
+  formalSandboxRuntimeReady = false,
+  dynamicFormalProjectClosureReady = false,
+  autonomousSystemReady = false,
+  submissionDispatcherReady = false,
+} = {}) {
+  const effectiveRuntimeReady = runtimeReady === true;
+  const effectiveBoundedProfileReady = effectiveRuntimeReady
+    && boundedProfileReady === true;
+  const effectiveConfiguredScopeReady = effectiveBoundedProfileReady
+    && configuredScopeReady === true;
+  const genericResearchReady = effectiveBoundedProfileReady
+    && effectiveConfiguredScopeReady
+    && genericCapabilityReady === true
+    && formalSandboxRuntimeReady === true
+    && dynamicFormalProjectClosureReady === true;
+  const productionReady = genericResearchReady
+    && autonomousSystemReady === true
+    && submissionDispatcherReady === true;
+  const blockedRuntimeStatus = runtimeStatus
+    && runtimeStatus !== 'automation_plane_runtime_ready'
+    ? runtimeStatus
+    : 'automation_plane_runtime_blocked';
+  return Object.freeze({
+    version: 1,
+    kind: 'AutomationReadinessLevels',
+    status: !effectiveRuntimeReady
+      ? blockedRuntimeStatus
+      : !effectiveBoundedProfileReady
+        ? 'automation_plane_bounded_profile_blocked'
+        : !genericResearchReady
+          ? 'automation_plane_generic_research_blocked'
+          : !productionReady
+            ? 'automation_plane_production_blocked'
+            : 'automation_plane_production_ready',
+    runtimeReady: effectiveRuntimeReady,
+    boundedProfileReady: effectiveBoundedProfileReady,
+    configuredScopeReady: effectiveConfiguredScopeReady,
+    genericResearchReady,
+    productionReady,
+  });
+}
+
+export function automationReadinessExitCode(evaluation, {
+  requireFullResearch = false,
+  requireFullyAutonomous = false,
+  fullyAutonomousResearchSystemReady = false,
+} = {}) {
+  if (evaluation?.automationRuntimeReady !== true || evaluation?.campaignStoreReady !== true) return 1;
+  if (evaluation?.automationOperationalReady !== true) return 2;
+  if (requireFullResearch && evaluation?.fullAutomaticResearchWritingReady !== true) return 3;
+  if (requireFullyAutonomous && fullyAutonomousResearchSystemReady !== true) return 4;
+  return 0;
+}

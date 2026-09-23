@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/qualification-trust-store-v1.schema.json",
+  "title": "Qualification Trust Store V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "generation",
+    "issuedAtUnixMs",
+    "expiresAtUnixMs",
+    "previousTrustStoreHash",
+    "keys",
+    "forbiddenAuthorityDomains"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "issuedAtUnixMs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "expiresAtUnixMs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "previousTrustStoreHash": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/sha256"
+        }
+      ]
+    },
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "authorityDomainId",
+          "signerKeyId",
+          "publicKeyBase64"
+        ],
+        "properties": {
+          "authorityDomainId": {
+            "$ref": "#/$defs/id"
+          },
+          "signerKeyId": {
+            "$ref": "#/$defs/id"
+          },
+          "publicKeyBase64": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          }
+        }
+      }
+    },
+    "forbiddenAuthorityDomains": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/id"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "const": "implementation-author"
+          }
+        },
+        {
+          "contains": {
+            "const": "repository-admin"
+          }
+        },
+        {
+          "contains": {
+            "const": "github-hosted-ci"
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    }
+  }
+}

@@ -1,0 +1,208 @@
+name: rust-broker-installed-qualification-v2
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installed-authority-boundaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build exact checked-in qualification binaries
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker --bin hepta-trust-bundle-preflight \
+            --release --locked
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-runtime --bin hepta-codex-preexec-gate \
+            --release --locked
+
+      - name: Install distinct authority and role principals
+        run: |
+          set -euo pipefail
+          sudo groupadd --system hepta-trust-read
+          sudo groupadd --system hepta-schema-author-read
+          sudo groupadd --system hepta-author-broker-client
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --groups hepta-trust-read,hepta-author-broker-client hepta-broker
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --groups hepta-schema-author-read,hepta-author-broker-client hepta-author
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin hepta-reviewer
+
+          sudo install -d -o root -g root -m 0755 /usr/local/libexec/hepta
+          sudo install -o root -g root -m 0555 \
+            rust/target/release/hepta-trust-bundle-preflight \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight
+          sudo install -o root -g root -m 0555 \
+            rust/target/release/hepta-codex-preexec-gate \
+            /usr/local/libexec/hepta/hepta-codex-preexec-gate
+
+          sudo install -d -o root -g hepta-trust-read -m 0750 /etc/hepta/trust
+          printf '%s' '{"generation":1,"issuer":"qualification","version":1}' \
+            | sudo tee /etc/hepta/trust/bundle.json >/dev/null
+          sudo chown root:hepta-trust-read /etc/hepta/trust/bundle.json
+          sudo chmod 0440 /etc/hepta/trust/bundle.json
+
+          sudo install -d -o root -g hepta-schema-author-read -m 0750 \
+            /etc/hepta/schema-author
+          printf '%s' '{"additionalProperties":false,"type":"object"}' \
+            | sudo tee /etc/hepta/schema-author/output.schema.json >/dev/null
+          sudo chown root:hepta-schema-author-read \
+            /etc/hepta/schema-author/output.schema.json
+          sudo chmod 0440 /etc/hepta/schema-author/output.schema.json
+
+          sudo install -d -o hepta-broker -g hepta-broker -m 0700 \
+            /var/lib/hepta-broker
+          sudo install -d -o hepta-broker -g hepta-author-broker-client -m 0710 \
+            /run/hepta-author-broker
+
+      - name: Prove authority objects are readable but not mutable by role principals
+        run: |
+          set -euo pipefail
+          trust_gid=$(getent group hepta-trust-read | cut -d: -f3)
+          broker_uid=$(id -u hepta-broker)
+          sudo -u hepta-broker -- \
+            /usr/local/libexec/hepta/hepta-trust-bundle-preflight \
+            /etc/hepta/trust/bundle.json 0 "$trust_gid" "$broker_uid" \
+            | tee /tmp/trust-positive.txt
+
+          ! sudo -u hepta-author -- cat /etc/hepta/trust/bundle.json
+          ! sudo -u hepta-reviewer -- cat /etc/hepta/trust/bundle.json
+          ! sudo -u hepta-broker -- chmod 0600 /etc/hepta/trust/bundle.json
+          ! sudo -u hepta-broker -- sh -c 'printf x > /etc/hepta/trust/bundle.json'
+          sudo -u hepta-author -- cat \
+            /etc/hepta/schema-author/output.schema.json >/dev/null
+          ! sudo -u hepta-reviewer -- cat \
+            /etc/hepta/schema-author/output.schema.json
+          ! sudo -u hepta-author -- chmod 0600 \
+            /etc/hepta/schema-author/output.schema.json
+          ! sudo -u hepta-broker -- chmod 0755 \
+            /usr/local/libexec/hepta/hepta-codex-preexec-gate
+
+      - name: Prove live shared-role listener allows only the authorized principal set
+        run: |
+          set -euo pipefail
+          cat >/tmp/hepta-live-listener.py <<'PY'
+          import os
+          import socket
+          import stat
+          path = "/run/hepta-author-broker/broker.sock"
+          ready = "/run/hepta-author-broker/listener.ready"
+          listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+          listener.bind(path)
+          os.chmod(path, 0o660)
+          listener.listen(4)
+          observed = os.lstat(path)
+          assert stat.S_ISSOCK(observed.st_mode)
+          assert stat.S_IMODE(observed.st_mode) == 0o660
+          with open(ready, "w", encoding="utf-8") as handle:
+              handle.write("ready\n")
+          connection, _ = listener.accept()
+          assert connection.recv(16) == b"ping"
+          connection.sendall(b"pong")
+          connection.close()
+          listener.close()
+          PY
+          sudo chown root:root /tmp/hepta-live-listener.py
+          sudo chmod 0555 /tmp/hepta-live-listener.py
+          sudo -u hepta-broker -g hepta-author-broker-client -- \
+            python3 /tmp/hepta-live-listener.py \
+            >/tmp/listener-server.stdout 2>/tmp/listener-server.stderr &
+          listener_pid=$!
+          trap 'sudo kill "$listener_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 100); do
+            if sudo test -f /run/hepta-author-broker/listener.ready; then
+              break
+            fi
+            if ! kill -0 "$listener_pid" 2>/dev/null; then
+              cat /tmp/listener-server.stdout >&2 || true
+              cat /tmp/listener-server.stderr >&2 || true
+              echo 'listener exited before publishing readiness' >&2
+              exit 1
+            fi
+            sleep 0.05
+          done
+          sudo test -f /run/hepta-author-broker/listener.ready
+          test "$(sudo cat /run/hepta-author-broker/listener.ready)" = ready
+
+          if sudo -u hepta-reviewer -- python3 - <<'PY'
+          import socket
+          client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+          client.connect('/run/hepta-author-broker/broker.sock')
+          PY
+          then
+            echo 'unauthorized reviewer unexpectedly connected' >&2
+            exit 1
+          fi
+
+          sudo -u hepta-author -- python3 - <<'PY' \
+            | tee /tmp/listener-positive.txt
+          import socket
+          client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+          client.connect('/run/hepta-author-broker/broker.sock')
+          client.sendall(b'ping')
+          assert client.recv(16) == b'pong'
+          print('authorized_role_client=connected response=pong')
+          PY
+          wait "$listener_pid"
+          trap - EXIT
+
+          sudo stat -c \
+            'parent=%n dev=%d inode=%i uid=%u gid=%g mode=%a' \
+            /run/hepta-author-broker | tee /tmp/listener-parent-identity.txt
+          sudo stat -c \
+            'socket=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h' \
+            /run/hepta-author-broker/broker.sock | tee /tmp/listener-identity.txt
+          test "$(sudo stat -c %a /run/hepta-author-broker)" = 710
+          test "$(sudo stat -c %a /run/hepta-author-broker/broker.sock)" = 660
+          test "$(sudo stat -c %g /run/hepta-author-broker/broker.sock)" \
+            = "$(getent group hepta-author-broker-client | cut -d: -f3)"
+
+          {
+            id hepta-broker
+            id hepta-author
+            id hepta-reviewer
+            getent group hepta-author-broker-client
+            sudo stat -c 'trust=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+              /etc/hepta/trust/bundle.json
+            sudo stat -c 'schema=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+              /etc/hepta/schema-author/output.schema.json
+            sudo stat -c 'gate=%n dev=%d inode=%i uid=%u gid=%g mode=%a links=%h bytes=%s' \
+              /usr/local/libexec/hepta/hepta-codex-preexec-gate
+            sudo sha256sum /etc/hepta/trust/bundle.json \
+              /etc/hepta/schema-author/output.schema.json \
+              /usr/local/libexec/hepta/hepta-codex-preexec-gate
+          } | tee /tmp/installed-v2-identity.txt
+
+          sudo -u hepta-broker -g hepta-author-broker-client -- rm \
+            /run/hepta-author-broker/broker.sock \
+            /run/hepta-author-broker/listener.ready
+
+      - name: Upload exact-head installed qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-broker-installed-v2-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/trust-positive.txt
+            /tmp/listener-positive.txt
+            /tmp/listener-parent-identity.txt
+            /tmp/listener-identity.txt
+            /tmp/installed-v2-identity.txt
+            /tmp/listener-server.stdout
+            /tmp/listener-server.stderr
+          if-no-files-found: warn
+          retention-days: 90

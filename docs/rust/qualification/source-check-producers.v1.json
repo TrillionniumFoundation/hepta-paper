@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "kind": "HeptaSourceCheckProducerManifestV1",
+  "program": "hepta-paper-rust-rewrite",
+  "status": "canonical_exact_workflow_producers",
+  "repository": "TrillionniumFoundation/hepta-paper",
+  "requiredAppId": 15368,
+  "acceptedEvent": "pull_request",
+  "producers": [
+    {
+      "context": "exact-head-static-gates",
+      "workflowId": 345593865,
+      "workflowPath": ".github/workflows/exact-head-source-validation.yml",
+      "workflowGitBlobSha": "e3f85f7c62abd7706fd58076361f61895f735fb3",
+      "workflowSha256": "sha256:f08353288555ec2c3210f155ad1fa4cbb0f3c8bfa497e07f7a20ce9f0c057ebc"
+    },
+    {
+      "context": "pull-request-static-gates",
+      "workflowId": 344255461,
+      "workflowPath": ".github/workflows/ci.yml",
+      "workflowGitBlobSha": "be7325272ad77b0bee4bcab7bc1b343907f44db5",
+      "workflowSha256": "sha256:8e854f2f9c639c168857717d89b99e0bdb333c44719ee8db442cc26ac54cd034"
+    },
+    {
+      "context": "installed-principal-negative-tests",
+      "workflowId": 345177811,
+      "workflowPath": ".github/workflows/rust-broker-installed-qualification.yml",
+      "workflowGitBlobSha": "d359c99af37d72ca327817068db35c3f255bda75",
+      "workflowSha256": "sha256:ceedb6f5befd5aeb25bc0594927430445e09030533ba14429b13dba0320488b9"
+    },
+    {
+      "context": "installed-authority-boundaries",
+      "workflowId": 345178987,
+      "workflowPath": ".github/workflows/rust-broker-installed-qualification-v2.yml",
+      "workflowGitBlobSha": "5d86a546d5cfe2d21457424886b213bda0662c63",
+      "workflowSha256": "sha256:1b6277b31d007746361ba25d1cc8cbfeb3bd7649ea7a258e1e7f6f724457ed2d"
+    },
+    {
+      "context": "format, lint, test, docs",
+      "workflowId": 344308644,
+      "workflowPath": ".github/workflows/rust-foundation.yml",
+      "workflowGitBlobSha": "e756a2fbc9f416202bd935f7009f5a5653b39add",
+      "workflowSha256": "sha256:e8b4cbc39ad2bffbaa624c75bbeadeafc0558fb78aafda0af48664b5aca66737"
+    },
+    {
+      "context": "validate-contracts",
+      "workflowId": 345551038,
+      "workflowPath": ".github/workflows/rust-plan-v3-external-contracts.yml",
+      "workflowGitBlobSha": "2bbf0cf68ba7637234017fc35dde38d4ff9d5bd1",
+      "workflowSha256": "sha256:71db73fa963a153eee292b02c3ea38f4419f5a58e6a33adf027bf75fa8f85a60"
+    },
+    {
+      "context": "exact-program-truth",
+      "workflowId": 345494676,
+      "workflowPath": ".github/workflows/rust-program-truth.yml",
+      "workflowGitBlobSha": "49b8231cd9346f8ac31379c17256fcca488eba93",
+      "workflowSha256": "sha256:9626fc12e4132b232f427519451c746e195a1fb27e860ceb6579cf7995576119"
+    },
+    {
+      "context": "validate-qualification-artifacts",
+      "workflowId": 345180922,
+      "workflowPath": ".github/workflows/rust-qualification-artifacts.yml",
+      "workflowGitBlobSha": "df5d7ce653751754f29661599742a153bbe58de4",
+      "workflowSha256": "sha256:5ed64b96e7c4cc65621ea0966adae243033e3fd02e8f2ca612bcb890f9c63651"
+    },
+    {
+      "context": "exact-head-source-snapshot",
+      "workflowId": 345837755,
+      "workflowPath": ".github/workflows/rust-source-snapshot.yml",
+      "workflowGitBlobSha": "90998d34ae1f2cdde507b17137c4e8da66c68f6b",
+      "workflowSha256": "sha256:8b3821ae844b68b4f55af079a21eafa51d7282bc24595822aacdaa0137eacbf6"
+    },
+    {
+      "context": "policy-and-sbom",
+      "workflowId": 345596671,
+      "workflowPath": ".github/workflows/rust-supply-chain.yml",
+      "workflowGitBlobSha": "7d842d492f4ad3af3d5385b3883d0f45ca4d3612",
+      "workflowSha256": "sha256:be7f7df5cb2a1a8e760a832d33aff6e8ab58a535b4c97e5e4669d696b6816817"
+    },
+    {
+      "context": "validate",
+      "workflowId": 345634811,
+      "workflowPath": ".github/workflows/workflow-lint.yml",
+      "workflowGitBlobSha": "ed8756dbcb35d7eaa6c306a02e22e182553ad145",
+      "workflowSha256": "sha256:a081e2d5fd90485fb5d2d49ea2c5c2810c9455a2025007976d9e73fd0cffb5f4"
+    },
+    {
+      "context": "exact-head-impacted-tests (0)",
+      "workflowId": 345593865,
+      "workflowPath": ".github/workflows/exact-head-source-validation.yml",
+      "workflowGitBlobSha": "e3f85f7c62abd7706fd58076361f61895f735fb3",
+      "workflowSha256": "sha256:f08353288555ec2c3210f155ad1fa4cbb0f3c8bfa497e07f7a20ce9f0c057ebc"
+    },
+    {
+      "context": "exact-head-impacted-tests (1)",
+      "workflowId": 345593865,
+      "workflowPath": ".github/workflows/exact-head-source-validation.yml",
+      "workflowGitBlobSha": "e3f85f7c62abd7706fd58076361f61895f735fb3",
+      "workflowSha256": "sha256:f08353288555ec2c3210f155ad1fa4cbb0f3c8bfa497e07f7a20ce9f0c057ebc"
+    },
+    {
+      "context": "exact-head-impacted-tests (2)",
+      "workflowId": 345593865,
+      "workflowPath": ".github/workflows/exact-head-source-validation.yml",
+      "workflowGitBlobSha": "e3f85f7c62abd7706fd58076361f61895f735fb3",
+      "workflowSha256": "sha256:f08353288555ec2c3210f155ad1fa4cbb0f3c8bfa497e07f7a20ce9f0c057ebc"
+    },
+    {
+      "context": "exact-head-impacted-tests (3)",
+      "workflowId": 345593865,
+      "workflowPath": ".github/workflows/exact-head-source-validation.yml",
+      "workflowGitBlobSha": "e3f85f7c62abd7706fd58076361f61895f735fb3",
+      "workflowSha256": "sha256:f08353288555ec2c3210f155ad1fa4cbb0f3c8bfa497e07f7a20ce9f0c057ebc"
+    },
+    {
+      "context": "pull-request-impacted-tests (0)",
+      "workflowId": 344255461,
+      "workflowPath": ".github/workflows/ci.yml",
+      "workflowGitBlobSha": "be7325272ad77b0bee4bcab7bc1b343907f44db5",
+      "workflowSha256": "sha256:8e854f2f9c639c168857717d89b99e0bdb333c44719ee8db442cc26ac54cd034"
+    },
+    {
+      "context": "pull-request-impacted-tests (1)",
+      "workflowId": 344255461,
+      "workflowPath": ".github/workflows/ci.yml",
+      "workflowGitBlobSha": "be7325272ad77b0bee4bcab7bc1b343907f44db5",
+      "workflowSha256": "sha256:8e854f2f9c639c168857717d89b99e0bdb333c44719ee8db442cc26ac54cd034"
+    },
+    {
+      "context": "pull-request-impacted-tests (2)",
+      "workflowId": 344255461,
+      "workflowPath": ".github/workflows/ci.yml",
+      "workflowGitBlobSha": "be7325272ad77b0bee4bcab7bc1b343907f44db5",
+      "workflowSha256": "sha256:8e854f2f9c639c168857717d89b99e0bdb333c44719ee8db442cc26ac54cd034"
+    },
+    {
+      "context": "pull-request-impacted-tests (3)",
+      "workflowId": 344255461,
+      "workflowPath": ".github/workflows/ci.yml",
+      "workflowGitBlobSha": "be7325272ad77b0bee4bcab7bc1b343907f44db5",
+      "workflowSha256": "sha256:8e854f2f9c639c168857717d89b99e0bdb333c44719ee8db442cc26ac54cd034"
+    },
+    {
+      "context": "legacy-differential-policy",
+      "workflowId": 344255461,
+      "workflowPath": ".github/workflows/ci.yml",
+      "workflowGitBlobSha": "be7325272ad77b0bee4bcab7bc1b343907f44db5",
+      "workflowSha256": "sha256:8e854f2f9c639c168857717d89b99e0bdb333c44719ee8db442cc26ac54cd034"
+    }
+  ],
+  "authority": {
+    "productionAuthorized": false,
+    "externalAuthorityClaimed": false
+  }
+}

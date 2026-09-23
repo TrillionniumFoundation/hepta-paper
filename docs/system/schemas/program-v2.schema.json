@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hepta program truth v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "programId", "planVersion", "truthStatus", "auditBaseline",
+    "currentStage", "stateDimensions", "authorityCeiling", "canonicalDocuments",
+    "machineRecords", "activeSubplans", "workstreamIds", "openCriticalGates",
+    "historicalDocumentPolicy"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "programId": { "const": "hepta-paper" },
+    "planVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+    "truthStatus": { "const": "canonical_static" },
+    "auditBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryId", "repository", "ref", "commit", "tree", "auditedAt"],
+      "properties": {
+        "repositoryId": { "type": "integer", "minimum": 1 },
+        "repository": { "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "auditedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "currentStage": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "stateDimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "qualification", "activation", "operation", "compatibility"],
+      "properties": {
+        "implementation": { "const": ["not_started", "design_ready", "source_implemented"] },
+        "qualification": { "const": ["unqualified", "source", "hosted_installed", "target_host", "external_authority"] },
+        "activation": { "const": ["disabled", "shadow", "canary", "authoritative", "retired"] },
+        "operation": { "const": ["unknown", "healthy", "degraded", "blocked"] },
+        "compatibility": { "const": ["unassessed", "exact", "semantic", "evaluation", "retire"] }
+      }
+    },
+    "authorityCeiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rustProductionComposition", "rustCampaignWriterActivation", "realCodexCredentials",
+        "liveProviderCalls", "releaseAuthority", "submissionAuthority", "currentNodeControlPlane"
+      ],
+      "properties": {
+        "rustProductionComposition": { "enum": ["absent", "disabled", "shadow", "canary", "authoritative"] },
+        "rustCampaignWriterActivation": { "enum": ["disabled", "shadow", "canary", "authoritative"] },
+        "realCodexCredentials": { "enum": ["forbidden", "externally_qualified"] },
+        "liveProviderCalls": { "enum": ["forbidden", "externally_qualified"] },
+        "releaseAuthority": { "enum": ["absent", "external_only"] },
+        "submissionAuthority": { "enum": ["absent", "external_only"] },
+        "currentNodeControlPlane": { "enum": ["authoritative_under_existing_gates", "shadow", "retired"] }
+      }
+    },
+    "canonicalDocuments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry", "status", "plan", "architecture", "backlog", "risks", "invariants", "documentationGovernance", "milestones", "traceability"],
+      "properties": {
+        "entry": { "$ref": "#/$defs/repositoryPath" },
+        "status": { "$ref": "#/$defs/repositoryPath" },
+        "plan": { "$ref": "#/$defs/repositoryPath" },
+        "architecture": { "$ref": "#/$defs/repositoryPath" },
+        "backlog": { "$ref": "#/$defs/repositoryPath" },
+        "risks": { "$ref": "#/$defs/repositoryPath" },
+        "invariants": { "$ref": "#/$defs/repositoryPath" },
+        "documentationGovernance": { "$ref": "#/$defs/repositoryPath" },
+        "milestones": { "$ref": "#/$defs/repositoryPath" },
+        "traceability": { "$ref": "#/$defs/repositoryPath" }
+      }
+    },
+    "machineRecords": {
+      "type": "array", "minItems": 9, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/repositoryPath" }
+    },
+    "activeSubplans": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "version", "path", "scope"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+          "path": { "$ref": "#/$defs/repositoryPath" },
+          "scope": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+        }
+      }
+    },
+    "workstreamIds": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{1,7}$" }
+    },
+    "openCriticalGates": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^G(?:[0-9]|10)$" }
+    },
+    "historicalDocumentPolicy": { "const": "git_history_only" }
+  },
+  "$defs": {
+    "repositoryPath": { "type": "string", "pattern": "^[^/].+" }
+  }
+}

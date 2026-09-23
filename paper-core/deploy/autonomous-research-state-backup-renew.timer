@@ -1,0 +1,15 @@
+[Unit]
+Description=Renew autonomous research state recovery evidence every 12 hours
+Requires=hepta-immutable-release-recovery.service
+After=hepta-immutable-release-recovery.service
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=12h
+RandomizedDelaySec=15min
+AccuracySec=1min
+Persistent=true
+Unit=autonomous-research-state-backup-renew.service
+
+[Install]
+WantedBy=timers.target

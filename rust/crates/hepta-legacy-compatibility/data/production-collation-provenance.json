@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "profile": "node22.23.1-icu78.2-cldr48-en-US-v1",
+  "production_source": {
+    "path": "workflow-kernel/record-hash.mjs",
+    "sha256": "5c885e62f225e3dd4c7d53cff16686188b9d7ec0ba75e5a41cf7078a1d1ef639"
+  },
+  "artifact": {
+    "filename": "node22-en-us-unihan.postcard",
+    "format": "ICU4X postcard blob",
+    "sha256": "a20c77e130c05fe3265ffe9ef3ab3ed5aa859fe3b328beee0d0d7d2fe324851e",
+    "size_bytes": 1487667
+  },
+  "sources": {
+    "icu_export": {
+      "url": "https://github.com/unicode-org/icu/releases/download/release-78.2/icu4x-icuexportdata-78.2.zip",
+      "sha256": "188cfc25d20229cc67331b9fbf3699a8d6ed7b62bef9cf0e6e004163795e77f8"
+    },
+    "cldr": {
+      "url": "https://github.com/unicode-org/cldr-json/releases/download/48.0.0/cldr-48.0.0-json-full.zip",
+      "sha256": "25ab2651a1a874dd62a727d3c213d7c6bf0fc269b09d2937f0499b82d99fa58e"
+    }
+  },
+  "generator": {
+    "package": "icu4x-datagen",
+    "package_version": "2.1.1",
+    "reported_version": "icu4x-datagen 2.1.1",
+    "binary_sha256": "54fbd594b209cacfdad30c12d2e3135d87359ef6f212b60698277927fbc12485",
+    "install_command": "cargo install icu4x-datagen --version 2.1.1 --no-default-features --features provider,blob_exporter,networking",
+    "markers": [
+      "CollationRootV1",
+      "CollationSpecialPrimariesV1",
+      "CollationTailoringV1",
+      "CollationDiacriticsV1",
+      "CollationJamoV1",
+      "CollationMetadataV1",
+      "CollationReorderingV1",
+      "NormalizerNfdDataV1",
+      "NormalizerNfdTablesV1"
+    ],
+    "locales": [
+      "en-US",
+      "en",
+      "und"
+    ],
+    "deduplication": "none",
+    "collation_root_han": "unihan",
+    "segmenter_models": "none",
+    "dependency_evidence": "generator-compiled-packages.json",
+    "reproducibility": "Generator dependency evidence comes from actual compiled packages, not a reconstructed lock. Reproduction must match the output SHA-256."
+  },
+  "licenses": [
+    {
+      "path": "ICU78.2-LICENSE",
+      "url": "https://raw.githubusercontent.com/unicode-org/icu/release-78.2/LICENSE",
+      "sha256": "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af"
+    },
+    {
+      "path": "CLDR48-LICENSE",
+      "source": "LICENSE inside the verified CLDR48 source ZIP",
+      "sha256": "220ba0e1c43b99530d2d5bdb892a99dca0989414f51ab695ecd90163eaa1ec3b"
+    }
+  ],
+  "verification": {
+    "repeated_generation": "byte-identical across independent outputs",
+    "committed_regeneration_script": "executed successfully against the verified local official archives",
+    "expected_output_sha256": "a20c77e130c05fe3265ffe9ef3ab3ed5aa859fe3b328beee0d0d7d2fe324851e"
+  }
+}

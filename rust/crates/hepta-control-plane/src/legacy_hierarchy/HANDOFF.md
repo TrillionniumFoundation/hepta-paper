@@ -1,0 +1,12 @@
+# Versioned legacy hierarchy contracts
+
+These namespaces preserve distinct branch contracts without replacing the current hierarchical allocator or connecting the old optional runtime wrapper to production dispatch.
+
+- `prepared_v1`: exact source body from `6ba19d317d64418c812abed6af0bf976b3e99825`, `origin/codex/rust-function-gap-closure-20260911` and `origin/codex/rust-source-gap-full-closure-20260911`. Prepared/finalized accounting, generation fences, entitlement-based ranking, renewal, cancellation, stale-prepared reaping and report hashes remain available.
+- `accounting_v1`: exact source body from `cd77c6c2f42fc5e64620f9752bdf4e23c61b3dfd`, `origin/codex/rust-full-replacement-source-closure-v2-20260911`. Weighted ancestor-path ranking, atomic projected reserves, reconcile/release and original report/receipt serialization remain available.
+
+The structs, fields and hash domains remain those of each original module. Namespaces separate colliding V1 names. Their `canonical_hash_v1` dependency still hashes Serde JSON bytes with plain SHA-256. Existing embedded tests are preserved; additional tests bind exact successful report bytes and verify finalized charges are not reaped on expiry/generation changes. None of these fixtures establishes real authority or production admission.
+
+Both APIs consume caller-provided IDs, times, capacities and observations. They are in-memory models, not durable ledger owners. Dropping an allocator loses charges. Release requires only a reservation ID; no independently verified completion evidence is consumed. Consequently they must not be used to release unknown dispatched work. The prepared implementation also preserves historical fallible mutation ordering: fence counter overflow can follow charging, and release/reap remove records before all accounting operations finish. Such errors require discarding/reconstructing the diagnostic model, not retrying a production action. No API here proves process termination, lease revocation or runtime qualification.
+
+The former `HierarchicalControlPlaneV1` wrapper is deliberately not registered: it released finalized hierarchy reservations after inner execution errors, conflicting with the current `RunRequiresInspection` guard. A real mandatory hierarchy gate still needs an owning, durable composition and explicit settlement for unknown outcomes. Restoring source-level data contracts does not close that gap.

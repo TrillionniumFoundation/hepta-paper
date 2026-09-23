@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hepta-paper.invalid/schemas/local-release-attestor-daemon-v2.json",
+  "title": "Local release-attestor daemon configuration v2",
+  "oneOf": [
+    { "$ref": "#/$defs/signer" },
+    { "$ref": "#/$defs/probe" }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,159}$"
+    },
+    "safeVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}$"
+    },
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "socketPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idleTimeoutMs",
+        "requestDeadlineMs",
+        "maximumConcurrentConnections"
+      ],
+      "properties": {
+        "idleTimeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 30000
+        },
+        "requestDeadlineMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 30000
+        },
+        "maximumConcurrentConnections": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 128
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId",
+        "keyVersion",
+        "subjectId",
+        "organization",
+        "privateKeyPath",
+        "publicKeySpkiHash"
+      ],
+      "properties": {
+        "keyId": { "$ref": "#/$defs/safeId" },
+        "keyVersion": { "$ref": "#/$defs/safeVersion" },
+        "subjectId": { "$ref": "#/$defs/safeId" },
+        "organization": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._():-]{0,159}$"
+        },
+        "privateKeyPath": { "$ref": "#/$defs/absolutePath" },
+        "publicKeySpkiHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "signerPublicKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publicKeyPath", "publicKeySpkiHash"],
+      "properties": {
+        "publicKeyPath": { "$ref": "#/$defs/absolutePath" },
+        "publicKeySpkiHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "baseProperties": {
+      "version": { "const": 2 },
+      "kind": {
+        "const": "LocalResearchExecutionReleaseAttestorDaemonConfiguration"
+      },
+      "backendId": { "$ref": "#/$defs/safeId" },
+      "backendVersion": { "$ref": "#/$defs/safeVersion" },
+      "socketPath": { "$ref": "#/$defs/absolutePath" },
+      "socketPolicy": { "$ref": "#/$defs/socketPolicy" },
+      "authority": { "$ref": "#/$defs/authority" }
+    },
+    "signer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "kind",
+        "mode",
+        "backendId",
+        "backendVersion",
+        "socketPath",
+        "socketPolicy",
+        "authority"
+      ],
+      "properties": {
+        "version": { "$ref": "#/$defs/baseProperties/version" },
+        "kind": { "$ref": "#/$defs/baseProperties/kind" },
+        "mode": { "const": "signer" },
+        "backendId": { "$ref": "#/$defs/baseProperties/backendId" },
+        "backendVersion": { "$ref": "#/$defs/baseProperties/backendVersion" },
+        "socketPath": { "$ref": "#/$defs/baseProperties/socketPath" },
+        "socketPolicy": { "$ref": "#/$defs/baseProperties/socketPolicy" },
+        "authority": { "$ref": "#/$defs/baseProperties/authority" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "kind",
+        "mode",
+        "backendId",
+        "backendVersion",
+        "socketPath",
+        "socketPolicy",
+        "signerSocketPath",
+        "signerKeyId",
+        "signerKeyVersion",
+        "signerPublicKey",
+        "authority"
+      ],
+      "properties": {
+        "version": { "$ref": "#/$defs/baseProperties/version" },
+        "kind": { "$ref": "#/$defs/baseProperties/kind" },
+        "mode": { "const": "probe" },
+        "backendId": { "$ref": "#/$defs/baseProperties/backendId" },
+        "backendVersion": { "$ref": "#/$defs/baseProperties/backendVersion" },
+        "socketPath": { "$ref": "#/$defs/baseProperties/socketPath" },
+        "socketPolicy": { "$ref": "#/$defs/baseProperties/socketPolicy" },
+        "signerSocketPath": { "$ref": "#/$defs/absolutePath" },
+        "signerKeyId": { "$ref": "#/$defs/safeId" },
+        "signerKeyVersion": { "$ref": "#/$defs/safeVersion" },
+        "signerPublicKey": { "$ref": "#/$defs/signerPublicKey" },
+        "authority": { "$ref": "#/$defs/baseProperties/authority" }
+      }
+    }
+  }
+}

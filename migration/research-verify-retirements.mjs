@@ -1,0 +1,803 @@
+const PUBLIC_SYMBOLS = {
+  "paperctl_modules/paper_production_theorem_proof_appendix_gate.py": [
+    "build_theorem_proof_appendix_gate",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_applyable_patch_planning.py": [
+    "validate_queue_artifact",
+    "validate_patch_queue_row",
+    "validate_provider_readiness",
+    "research_compute_applyable_patch_planning",
+    "research_compute_applyable_patch_planning_markdown"
+  ],
+  "paperctl_modules/research_compute_bridge.py": [
+    "safe_slug",
+    "normalize_gap_kind",
+    "parse_gap_spec",
+    "resource_profile_for",
+    "expected_outputs_for",
+    "success_criteria_for",
+    "build_job_spec",
+    "validate_bridge_plan",
+    "research_compute_bridge_plan",
+    "research_compute_bridge_markdown"
+  ],
+  "paperctl_modules/research_compute_candidate_note_integration_review.py": [
+    "validate_post_apply_verify_report",
+    "validate_target_snapshot",
+    "validate_patch_queue_snapshot",
+    "research_compute_candidate_note_integration_review",
+    "research_compute_candidate_note_integration_review_markdown"
+  ],
+  "paperctl_modules/research_compute_candidate_note_patch_queue_enqueue.py": [
+    "validate_integration_review_report",
+    "validate_candidate_note_snapshot",
+    "validate_patch_queue_snapshot",
+    "validate_queue_artifact",
+    "validate_enqueue_result",
+    "research_compute_candidate_note_patch_queue_enqueue",
+    "research_compute_candidate_note_patch_queue_enqueue_markdown"
+  ],
+  "paperctl_modules/research_compute_candidate_note_queue_artifact.py": [
+    "validate_enqueue_gate_report",
+    "validate_candidate_note_snapshot",
+    "validate_patch_queue_snapshot",
+    "build_candidate_note_queue_artifact",
+    "research_compute_candidate_note_queue_artifact_gate",
+    "research_compute_candidate_note_queue_artifact_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_candidate_patch_draft.py": [
+    "validate_gate_report",
+    "research_compute_candidate_patch_draft",
+    "research_compute_candidate_patch_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_candidate_referee_loop.py": [
+    "research_compute_candidate_referee_loop_plan",
+    "research_compute_candidate_referee_loop_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_boundary_reentry_draft.py": [
+    "claim_boundary_reentry_draft",
+    "claim_boundary_reentry_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_draft.py": [
+    "research_compute_claim_draft",
+    "research_compute_claim_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_evidence_execution.py": [
+    "research_compute_claim_evidence_execution",
+    "research_compute_claim_evidence_execution_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_evidence_quality_gate.py": [
+    "research_compute_claim_evidence_quality_gate",
+    "research_compute_claim_evidence_quality_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_gap_scout.py": [
+    "research_compute_claim_gap_scout",
+    "research_compute_claim_gap_scout_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_idle_loop_orchestrator.py": [
+    "summarize_step",
+    "research_compute_claim_idle_loop_orchestrator_report",
+    "research_compute_claim_idle_loop_orchestrator_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_local_e2e_smoke.py": [
+    "research_compute_claim_local_e2e_smoke",
+    "research_compute_claim_local_e2e_smoke_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_backlog.py": [
+    "build_executor_response_backlog",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_contract.py": [
+    "research_compute_claim_manuscript_external_submission_execution_executor_response_contract",
+    "research_compute_claim_manuscript_external_submission_execution_executor_response_contract_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_inbox_cursor.py": [
+    "build_executor_response_inbox_cursor",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_inbox_index.py": [
+    "build_executor_response_inbox_index",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_packet_discovery.py": [
+    "build_executor_response_packet_discovery",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_waiting_escalation.py": [
+    "build_executor_response_waiting_escalation",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_waiting_redrive_plan.py": [
+    "build_executor_response_waiting_redrive_plan",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_waiting_scheduler.py": [
+    "build_executor_response_waiting_scheduler",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_waiting_status.py": [
+    "build_executor_response_waiting_status",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_work_item_dispatch.py": [
+    "build_executor_response_work_item_dispatch",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_response_work_item.py": [
+    "build_executor_response_work_item",
+    "markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_executor_task.py": [
+    "research_compute_claim_manuscript_external_submission_execution_executor_task",
+    "research_compute_claim_manuscript_external_submission_execution_executor_task_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_gate.py": [
+    "research_compute_claim_manuscript_external_submission_execution_gate",
+    "research_compute_claim_manuscript_external_submission_execution_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_intent.py": [
+    "research_compute_claim_manuscript_external_submission_execution_intent",
+    "research_compute_claim_manuscript_external_submission_execution_intent_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_performed_evidence_intake.py": [
+    "research_compute_claim_manuscript_external_submission_execution_performed_evidence_intake",
+    "research_compute_claim_manuscript_external_submission_execution_performed_evidence_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_preflight.py": [
+    "research_compute_claim_manuscript_external_submission_execution_preflight",
+    "research_compute_claim_manuscript_external_submission_execution_preflight_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_record_only_fixture_harness.py": [
+    "research_compute_claim_manuscript_external_submission_execution_record_only_fixture_harness",
+    "research_compute_claim_manuscript_external_submission_execution_record_only_fixture_harness_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_execution_terminal_status.py": [
+    "research_compute_claim_manuscript_external_submission_execution_terminal_status",
+    "research_compute_claim_manuscript_external_submission_execution_terminal_status_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_portal_capability_attestation_intake.py": [
+    "research_compute_claim_manuscript_external_submission_portal_capability_attestation_intake",
+    "research_compute_claim_manuscript_external_submission_portal_capability_attestation_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_portal_capability_attestation.py": [
+    "research_compute_claim_manuscript_external_submission_portal_capability_attestation",
+    "research_compute_claim_manuscript_external_submission_portal_capability_attestation_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_external_submission_readiness.py": [
+    "research_compute_claim_manuscript_external_submission_readiness",
+    "research_compute_claim_manuscript_external_submission_readiness_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_lifecycle_orchestrator.py": [
+    "research_compute_claim_manuscript_lifecycle_orchestrator",
+    "research_compute_claim_manuscript_lifecycle_orchestrator_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_merge_submission_readiness.py": [
+    "research_compute_claim_manuscript_merge_submission_readiness",
+    "research_compute_claim_manuscript_merge_submission_readiness_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_patch_materialization.py": [
+    "research_compute_claim_manuscript_patch_materialization",
+    "research_compute_claim_manuscript_patch_materialization_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_source_apply_execution.py": [
+    "research_compute_claim_manuscript_source_apply_execution",
+    "research_compute_claim_manuscript_source_apply_execution_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_source_apply_readiness.py": [
+    "research_compute_claim_manuscript_source_apply_readiness",
+    "research_compute_claim_manuscript_source_apply_readiness_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_manuscript_source_landing_finalization.py": [
+    "research_compute_claim_manuscript_source_landing_finalization",
+    "research_compute_claim_manuscript_source_landing_finalization_markdown"
+  ],
+  "paperctl_modules/research_compute_claim_quality_gate.py": [
+    "research_compute_claim_quality_gate",
+    "research_compute_claim_quality_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_evidence_gate.py": [
+    "validate_ingest_report",
+    "research_compute_evidence_gate",
+    "research_compute_evidence_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_evidence_ingestor.py": [
+    "validate_execute_report",
+    "research_compute_evidence_ingest",
+    "research_compute_evidence_ingest_markdown"
+  ],
+  "paperctl_modules/research_compute_executor.py": [
+    "sha256_file",
+    "is_relative_safe_path",
+    "select_job",
+    "normalize_material",
+    "generate_agent_command_material",
+    "validate_command_material",
+    "output_hashes",
+    "execute_research_compute_job",
+    "research_compute_execute_markdown"
+  ],
+  "paperctl_modules/research_compute_experiment_registry.py": [
+    "experiment_profile",
+    "experiment_metric_acceptance",
+    "infer_experiment_profile",
+    "validate_experiment_spec"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_adapter_install_plan.py": [
+    "install_tool_diagnostics",
+    "install_routes",
+    "formal_verifier_adapter_install_plan",
+    "formal_verifier_adapter_install_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_adapter.py": [
+    "formal_verifier_adapter_manifest",
+    "formal_verifier_adapter_contract",
+    "formal_verifier_readiness",
+    "formal_verifier_readiness_markdown",
+    "validate_formal_verifier_certificate"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_certificate_fixture_harness.py": [
+    "formal_verifier_certificate_fixture_harness",
+    "formal_verifier_certificate_fixture_harness_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_certificate_intake.py": [
+    "formal_verifier_certificate_intake",
+    "formal_verifier_certificate_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_lean_execution_harness.py": [
+    "formal_verifier_lean_execution_harness",
+    "formal_verifier_lean_execution_harness_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_declaration_draft.py": [
+    "formal_verifier_production_claim_lean_declaration_draft",
+    "formal_verifier_production_claim_lean_declaration_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_execution_attempt.py": [
+    "formal_verifier_production_claim_lean_execution_attempt",
+    "formal_verifier_production_claim_lean_execution_attempt_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_feasibility_gate.py": [
+    "formal_verifier_production_claim_lean_feasibility_gate",
+    "formal_verifier_production_claim_lean_feasibility_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_backend_route_selection_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_backend_route_selection_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_backend_route_selection_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_definition_draft.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_definition_draft",
+    "formal_verifier_production_claim_lean_numeric_semantics_definition_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_intake.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_intake",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_production_plan.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_production_plan",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_proof_source_production_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_semantic_refinement_draft.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_semantic_refinement_draft",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_semantic_refinement_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_source_extraction.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_source_extraction",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_source_extraction_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_statement_draft.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_statement_draft",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_statement_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_no_placeholder_proof_attempt.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_no_placeholder_proof_attempt",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_no_placeholder_proof_attempt_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_intake.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_intake",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_production_plan.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_production_plan",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_proof_source_production_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_semantic_statement_draft.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_semantic_statement_draft",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_semantic_statement_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_hsourceproof_composition.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_hsourceproof_composition",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_hsourceproof_composition_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_lean_statement_draft.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_lean_statement_draft",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_lean_statement_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_no_placeholder_lean_proof_attempt.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_no_placeholder_lean_proof_attempt",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_no_placeholder_lean_proof_attempt_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_source_intake.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_source_intake",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_source_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_bundle_recheck.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_bundle_recheck",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_bundle_recheck_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_construction.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_construction",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_construction_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_construction_attempt.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_construction_attempt",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_construction_attempt_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_draft.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_draft",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_construction.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_construction",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_construction_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_implementation_plan.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_implementation_plan",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_implementation_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_packet.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_packet",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_packet_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_reintake.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_reintake",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_reintake_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_work_order_artifact_preflight.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_work_order_artifact_preflight",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_work_order_artifact_preflight_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_work_order_dispatch.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_work_order_dispatch",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authoring_work_order_dispatch_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authorization_preflight.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authorization_preflight",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_authorization_preflight_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_construction_attempt.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_construction_attempt",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_construction_attempt_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_implementation_plan.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_implementation_plan",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_implementation_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_intake.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_intake",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_work_item_dispatch.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_work_item_dispatch",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_source_work_item_dispatch_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_work_item_dispatch.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_work_item_dispatch",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_body_work_item_dispatch_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_construction.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_construction",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_construction_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_implementation_plan.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_implementation_plan",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_implementation_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_skeleton_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_skeleton_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_skeleton_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_source_intake.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_source_intake",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_source_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_work_item_dispatch.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_work_item_dispatch",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_term_source_theorem_proof_work_item_dispatch_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_work_item_dispatch.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_work_item_dispatch",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_premise_proof_work_item_dispatch_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_proof_source_construction.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_proof_source_construction",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_proof_source_construction_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_target_theorem_integration.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_target_theorem_integration",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_target_theorem_integration_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_theorem_extraction.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_theorem_extraction",
+    "formal_verifier_production_claim_lean_numeric_semantics_domain_theorem_bridge_transfer_field_source_backed_theorem_extraction_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_law_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_law_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_law_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_law_proof_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_law_proof_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_law_proof_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_law_proof_source_intake.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_law_proof_source_intake",
+    "formal_verifier_production_claim_lean_numeric_semantics_law_proof_source_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_law_proof_source_production_plan.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_law_proof_source_production_plan",
+    "formal_verifier_production_claim_lean_numeric_semantics_law_proof_source_production_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_law_proof_work_item_dispatch.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_law_proof_work_item_dispatch",
+    "formal_verifier_production_claim_lean_numeric_semantics_law_proof_work_item_dispatch_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_law_signature_draft.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_law_signature_draft",
+    "formal_verifier_production_claim_lean_numeric_semantics_law_signature_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_local_backend_production_plan.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_local_backend_production_plan",
+    "formal_verifier_production_claim_lean_numeric_semantics_local_backend_production_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_local_proof_source_feasibility_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_local_proof_source_feasibility_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_local_proof_source_feasibility_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_refinement_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_refinement_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_refinement_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_trusted_import_capability_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_capability_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_capability_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_trusted_import_law_source_discovery_gate.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_law_source_discovery_gate",
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_law_source_discovery_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_execution_preflight.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_execution_preflight",
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_execution_preflight_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_execution.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_execution",
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_execution_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_plan.py": [
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_plan",
+    "formal_verifier_production_claim_lean_numeric_semantics_trusted_import_setup_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_plan.py": [
+    "formal_verifier_production_claim_lean_plan",
+    "formal_verifier_production_claim_lean_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_primitive_definition_draft.py": [
+    "formal_verifier_production_claim_lean_primitive_definition_draft",
+    "formal_verifier_production_claim_lean_primitive_definition_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_proof_replacement_gate.py": [
+    "formal_verifier_production_claim_lean_proof_replacement_gate",
+    "formal_verifier_production_claim_lean_proof_replacement_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_semantic_definition_draft.py": [
+    "formal_verifier_production_claim_lean_semantic_definition_draft",
+    "formal_verifier_production_claim_lean_semantic_definition_draft_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_semantic_definition_gate.py": [
+    "formal_verifier_production_claim_lean_semantic_definition_gate",
+    "formal_verifier_production_claim_lean_semantic_definition_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_semantic_source_context_extraction.py": [
+    "formal_verifier_production_claim_lean_semantic_source_context_extraction",
+    "formal_verifier_production_claim_lean_semantic_source_context_extraction_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_statement_extraction.py": [
+    "formal_verifier_production_claim_lean_statement_extraction",
+    "formal_verifier_production_claim_lean_statement_extraction_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_terminal_status.py": [
+    "formal_verifier_production_claim_lean_terminal_status",
+    "formal_verifier_production_claim_lean_terminal_status_markdown"
+  ],
+  "paperctl_modules/research_compute_formal_verifier_production_claim_lean_work_item_dispatch.py": [
+    "formal_verifier_production_claim_lean_work_item_dispatch",
+    "formal_verifier_production_claim_lean_work_item_dispatch_markdown"
+  ],
+  "paperctl_modules/research_compute_gap_mapper.py": [
+    "gap_kind_for_request",
+    "request_to_gap_spec",
+    "select_compute_gap_requests",
+    "research_compute_gap_map",
+    "research_compute_gap_map_markdown"
+  ],
+  "paperctl_modules/research_compute_manuscript_patch_draft_discovery.py": [
+    "validate_material_discovery_report",
+    "validate_queue_artifact",
+    "validate_evidence_workspace",
+    "evidence_signals",
+    "research_compute_manuscript_patch_draft_discovery",
+    "research_compute_manuscript_patch_draft_discovery_markdown"
+  ],
+  "paperctl_modules/research_compute_manuscript_patch_draft_preflight.py": [
+    "parse_patch_changed_paths",
+    "expected_boundary_text",
+    "validate_preflight_inputs",
+    "research_compute_manuscript_patch_draft_preflight",
+    "research_compute_manuscript_patch_draft_preflight_markdown"
+  ],
+  "paperctl_modules/research_compute_manuscript_patch_worker_materialization.py": [
+    "validate_material_packet",
+    "materialize_theory_boundary_patch",
+    "materialize_artifact_anchor_patch",
+    "materialize_reproducibility_protocol_patch",
+    "materialize_anonymity_process_patch",
+    "materialize_patch_scope_patch",
+    "unified_patch",
+    "research_compute_manuscript_patch_worker_materialization",
+    "research_compute_manuscript_patch_worker_materialization_markdown"
+  ],
+  "paperctl_modules/research_compute_manuscript_source_apply_gate.py": [
+    "expected_boundary_text",
+    "validate_apply_inputs",
+    "validate_apply_result",
+    "research_compute_manuscript_source_apply_gate",
+    "research_compute_manuscript_source_apply_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_manuscript_source_change_material_packet.py": [
+    "parse_patch_requests_markdown",
+    "validate_packet_material",
+    "research_compute_manuscript_source_change_material_packet",
+    "research_compute_manuscript_source_change_material_packet_markdown"
+  ],
+  "paperctl_modules/research_compute_manuscript_source_material_discovery.py": [
+    "classify_patch_queue_row",
+    "validate_authorization_material",
+    "validate_patch_queue_rows",
+    "research_compute_manuscript_source_material_discovery",
+    "research_compute_manuscript_source_material_discovery_markdown"
+  ],
+  "paperctl_modules/research_compute_manuscript_source_post_apply_verify.py": [
+    "expected_boundary_text",
+    "validate_post_apply",
+    "research_compute_manuscript_source_post_apply_verify",
+    "research_compute_manuscript_source_post_apply_verify_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_chain_final_waiting_status.py": [
+    "validate_closure_capstone_nonpromotion_gate_report",
+    "validate_real_intake_terminal_status_report",
+    "validate_final_waiting_alignment",
+    "research_compute_patch_queue_accepted_decision_chain_final_waiting_status",
+    "research_compute_patch_queue_accepted_decision_chain_final_waiting_status_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_final_waiting_chain_closure_nonpromotion_gate.py": [
+    "validate_final_waiting_chain_closure_capstone_report",
+    "validate_template_verify_alignment",
+    "build_final_waiting_chain_closure_probe_matrix",
+    "research_compute_patch_queue_accepted_decision_final_waiting_chain_closure_nonpromotion_gate",
+    "research_compute_patch_queue_accepted_decision_final_waiting_chain_closure_nonpromotion_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_final_waiting_status_nonpromotion_gate.py": [
+    "validate_final_waiting_status_report",
+    "validate_template_verify_alignment",
+    "build_final_waiting_status_probe_matrix",
+    "research_compute_patch_queue_accepted_decision_final_waiting_status_nonpromotion_gate",
+    "research_compute_patch_queue_accepted_decision_final_waiting_status_nonpromotion_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_fixture_negative_gate.py": [
+    "validate_merge_preflight_refusal_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "validate_decision_template_snapshot",
+    "build_negative_fixture_matrix",
+    "research_compute_patch_queue_accepted_decision_fixture_negative_gate",
+    "research_compute_patch_queue_accepted_decision_fixture_negative_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_intake_positive_shape_dry_run.py": [
+    "validate_negative_gate_report",
+    "validate_packet_alignment",
+    "build_positive_shape_fixture",
+    "validate_positive_shape_fixture",
+    "research_compute_patch_queue_accepted_decision_intake_positive_shape_dry_run",
+    "research_compute_patch_queue_accepted_decision_intake_positive_shape_dry_run_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_positive_shape_nonpromotion_gate.py": [
+    "validate_positive_shape_dry_run_report",
+    "validate_template_verify_alignment",
+    "build_nonpromotion_probe_matrix",
+    "research_compute_patch_queue_accepted_decision_positive_shape_nonpromotion_gate",
+    "research_compute_patch_queue_accepted_decision_positive_shape_nonpromotion_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_real_intake_handoff_nonpromotion_gate.py": [
+    "validate_real_intake_handoff_status_report",
+    "validate_template_verify_alignment",
+    "build_real_intake_handoff_probe_matrix",
+    "research_compute_patch_queue_accepted_decision_real_intake_handoff_nonpromotion_gate",
+    "research_compute_patch_queue_accepted_decision_real_intake_handoff_nonpromotion_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_real_intake_handoff_status.py": [
+    "validate_final_waiting_chain_closure_nonpromotion_gate_report",
+    "validate_handoff_alignment",
+    "research_compute_patch_queue_accepted_decision_real_intake_handoff_status",
+    "research_compute_patch_queue_accepted_decision_real_intake_handoff_status_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_real_intake_terminal_status.py": [
+    "validate_nonpromotion_gate_report",
+    "validate_decision_reintake_status_report",
+    "validate_terminal_alignment",
+    "research_compute_patch_queue_accepted_decision_real_intake_terminal_status",
+    "research_compute_patch_queue_accepted_decision_real_intake_terminal_status_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_accepted_decision_terminal_status_nonpromotion_gate.py": [
+    "validate_real_intake_terminal_status_report",
+    "validate_template_verify_alignment",
+    "build_terminal_status_probe_matrix",
+    "research_compute_patch_queue_accepted_decision_terminal_status_nonpromotion_gate",
+    "research_compute_patch_queue_accepted_decision_terminal_status_nonpromotion_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_manual_review_decision_intake.py": [
+    "validate_manual_review_packet_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "validate_decision_material",
+    "research_compute_patch_queue_manual_review_decision_intake",
+    "research_compute_patch_queue_manual_review_decision_intake_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_manual_review_decision_reintake_status.py": [
+    "validate_template_verify_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "validate_accepted_decision_intake_report",
+    "research_compute_patch_queue_manual_review_decision_reintake_status",
+    "research_compute_patch_queue_manual_review_decision_reintake_status_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_manual_review_decision_template_verify.py": [
+    "validate_decision_template_report",
+    "validate_decision_template_snapshot",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "research_compute_patch_queue_manual_review_decision_template_verify",
+    "research_compute_patch_queue_manual_review_decision_template_verify_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_manual_review_decision_template.py": [
+    "validate_decision_intake_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "research_compute_patch_queue_manual_review_decision_template",
+    "research_compute_patch_queue_manual_review_decision_template_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_manual_review_packet.py": [
+    "validate_review_only_guard_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "research_compute_patch_queue_manual_review_packet",
+    "research_compute_patch_queue_manual_review_packet_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_merge_preflight_execution.py": [
+    "validate_merge_preflight_packet_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "validate_candidate_note",
+    "research_compute_patch_queue_merge_preflight_execution",
+    "research_compute_patch_queue_merge_preflight_execution_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_merge_preflight_packet.py": [
+    "validate_merge_preflight_refusal_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "research_compute_patch_queue_merge_preflight_packet",
+    "research_compute_patch_queue_merge_preflight_packet_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_merge_preflight_refusal.py": [
+    "validate_decision_reintake_status_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "research_compute_patch_queue_merge_preflight_refusal",
+    "research_compute_patch_queue_merge_preflight_refusal_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_post_enqueue_verify.py": [
+    "validate_enqueue_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact_snapshot",
+    "research_compute_patch_queue_post_enqueue_verify",
+    "research_compute_patch_queue_post_enqueue_verify_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_review_only_guard.py": [
+    "validate_post_enqueue_verify_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "research_compute_patch_queue_review_only_guard",
+    "research_compute_patch_queue_review_only_guard_markdown"
+  ],
+  "paperctl_modules/research_compute_patch_queue_review_only_terminal_status.py": [
+    "validate_merge_preflight_execution_report",
+    "validate_patch_queue_row",
+    "validate_queue_artifact",
+    "research_compute_patch_queue_review_only_terminal_status",
+    "research_compute_patch_queue_review_only_terminal_status_markdown"
+  ],
+  "paperctl_modules/research_compute_production_candidate_seed_plan.py": [
+    "production_candidate_seed_plan",
+    "production_candidate_seed_plan_markdown"
+  ],
+  "paperctl_modules/research_compute_source_apply_preflight.py": [
+    "validate_source_authorization_report",
+    "validate_candidate_patch_file",
+    "validate_worktree_snapshot",
+    "research_compute_source_apply_preflight",
+    "research_compute_source_apply_preflight_markdown"
+  ],
+  "paperctl_modules/research_compute_source_apply.py": [
+    "extract_single_new_file_patch",
+    "make_reverse_delete_patch",
+    "validate_apply_preflight_report",
+    "validate_candidate_patch_file",
+    "validate_target_snapshot",
+    "validate_apply_result",
+    "research_compute_source_apply",
+    "research_compute_source_apply_markdown"
+  ],
+  "paperctl_modules/research_compute_source_authorization.py": [
+    "default_authorization_material",
+    "validate_source_gate_report",
+    "validate_authorization_material",
+    "research_compute_source_authorization_packet",
+    "research_compute_source_authorization_packet_markdown"
+  ],
+  "paperctl_modules/research_compute_source_gate.py": [
+    "validate_authorization_material",
+    "validate_draft_report",
+    "research_compute_source_gate",
+    "research_compute_source_gate_markdown"
+  ],
+  "paperctl_modules/research_compute_source_post_apply_verify.py": [
+    "parse_candidate_note",
+    "validate_source_apply_report",
+    "validate_target_file",
+    "validate_candidate_note",
+    "validate_artifact_checks",
+    "validate_rollback",
+    "research_compute_source_post_apply_verify",
+    "research_compute_source_post_apply_verify_markdown"
+  ]
+};
+
+function dispositionFor(sourcePath) {
+  if (sourcePath === 'paperctl_modules/research_compute_executor.py') return 'retired_legacy_unbounded_research_executor';
+  if (sourcePath === 'paperctl_modules/research_compute_claim_local_e2e_smoke.py') return 'retired_research_local_e2e_smoke_harness';
+  if (sourcePath === 'paperctl_modules/research_compute_formal_verifier_lean_execution_harness.py') return 'retired_legacy_local_formal_verifier_harness';
+  if (/research_compute_formal_verifier_production_claim/.test(sourcePath)) return 'retired_generated_claim_specific_formal_authoring_chain';
+  if (/external_submission|portal_capability/.test(sourcePath)) return 'retired_research_misclassified_external_submission_control_plane';
+  if (/source_apply|patch_queue|manuscript_patch|merge|candidate_note/.test(sourcePath)) return 'retired_legacy_research_source_mutation_or_patch_queue_control_plane';
+  if (/fixture|smoke/.test(sourcePath)) return 'retired_research_smoke_fixture';
+  return 'retired_legacy_research_planner_report_surface';
+}
+
+export const RESEARCH_VERIFY_EXPLICIT_RETIREMENTS = Object.freeze(
+  Object.entries(PUBLIC_SYMBOLS).map(([sourcePath, publicSymbols]) => Object.freeze({
+    sourcePath,
+    publicSymbols: Object.freeze([...publicSymbols]),
+    disposition: dispositionFor(sourcePath),
+    reason: 'Legacy research worker execution and generated research-control evidence are excluded from the read-only hepta verification boundary and confer no academic-evidence authority.',
+  })),
+);
+
+export function researchVerifyRetirementDisposition(sourcePath) {
+  return RESEARCH_VERIFY_EXPLICIT_RETIREMENTS.find((entry) => entry.sourcePath === sourcePath) || null;
+}

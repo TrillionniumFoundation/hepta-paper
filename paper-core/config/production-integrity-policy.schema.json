@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hepta-paper.invalid/schemas/production-integrity-policy-v1.json",
+  "title": "Hepta production integrity and SLO policy records",
+  "oneOf": [
+    { "$ref": "#/$defs/integrityPin" },
+    { "$ref": "#/$defs/sloPolicy" }
+  ],
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "hashes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/hash" }
+    },
+    "integrityPin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version", "kind", "status", "deploymentGeneration",
+        "predecessorArtifactPinHash", "ociImageDigest", "ociManifestDigest",
+        "ociConfigDigest", "ociLayerDigests", "ociLayerDigestSetHash",
+        "kubernetesWorkloadDigest", "kubernetesManifestHash",
+        "registryAttestationHash", "cveAttestationHash", "databaseInventoryHash",
+        "databaseHeadSequence", "databaseHeadHash", "restoreDrillReceiptHash",
+        "independentVerifierSubjectHash", "attestationHashes", "issuedAt",
+        "expiresAt", "externalActionPerformed", "productionIntegrityPinHash"
+      ],
+      "properties": {
+        "version": { "const": 1 },
+        "kind": { "const": "ProductionIntegrityPin" },
+        "status": { "const": "production_integrity_pin_active" },
+        "deploymentGeneration": { "type": "integer", "minimum": 1 },
+        "predecessorArtifactPinHash": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/hash" }]
+        },
+        "ociImageDigest": { "$ref": "#/$defs/hash" },
+        "ociManifestDigest": { "$ref": "#/$defs/hash" },
+        "ociConfigDigest": { "$ref": "#/$defs/hash" },
+        "ociLayerDigests": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/hash" }
+        },
+        "ociLayerDigestSetHash": { "$ref": "#/$defs/hash" },
+        "kubernetesWorkloadDigest": { "$ref": "#/$defs/hash" },
+        "kubernetesManifestHash": { "$ref": "#/$defs/hash" },
+        "registryAttestationHash": { "$ref": "#/$defs/hash" },
+        "cveAttestationHash": { "$ref": "#/$defs/hash" },
+        "databaseInventoryHash": { "$ref": "#/$defs/hash" },
+        "databaseHeadSequence": { "type": "integer", "minimum": 1 },
+        "databaseHeadHash": { "$ref": "#/$defs/hash" },
+        "restoreDrillReceiptHash": { "$ref": "#/$defs/hash" },
+        "independentVerifierSubjectHash": { "$ref": "#/$defs/hash" },
+        "attestationHashes": { "$ref": "#/$defs/hashes" },
+        "issuedAt": { "$ref": "#/$defs/time" },
+        "expiresAt": { "$ref": "#/$defs/time" },
+        "externalActionPerformed": { "const": false },
+        "productionIntegrityPinHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "sloPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version", "kind", "minimumTerminalNodeSuccessRate",
+        "maximumQueueWaitP95Ms", "maximumRecoveryP95Ms", "maximumRuntimeBytes",
+        "restoreMaximumAgeMs", "attestationMaximumAgeMs", "alertOnMissingData",
+        "operationalSloAlertPolicyHash"
+      ],
+      "properties": {
+        "version": { "const": 1 },
+        "kind": { "const": "OperationalSloAlertPolicy" },
+        "minimumTerminalNodeSuccessRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "maximumQueueWaitP95Ms": { "type": "integer", "minimum": 1 },
+        "maximumRecoveryP95Ms": { "type": "integer", "minimum": 1 },
+        "maximumRuntimeBytes": { "type": "integer", "minimum": 1 },
+        "restoreMaximumAgeMs": { "type": "integer", "minimum": 1 },
+        "attestationMaximumAgeMs": { "type": "integer", "minimum": 1 },
+        "alertOnMissingData": { "const": true },
+        "operationalSloAlertPolicyHash": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

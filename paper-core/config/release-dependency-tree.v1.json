@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "kind": "ReleaseDependencyTreeContract",
+  "generatedAt": "2026-08-01T13:50:00.000Z",
+  "lockfilePath": "package-lock.json",
+  "lockfileHash": "sha256:e34b7244828cd7fbf457cf28c0b94a55a99e6f71fba97c422ee080b76a8d461e",
+  "nodeModulesPath": "node_modules",
+  "sourceTree": {
+    "version": 1,
+    "kind": "ReleaseDependencySourceTree",
+    "counts": {
+      "entries": 1294,
+      "directories": 186,
+      "files": 1105,
+      "symlinks": 3
+    },
+    "treeHash": "sha256:d9b2f7fe362a4dd88571e1ca42b220de898c66ff5eab4d8402d42e79eab93321"
+  },
+  "readOnlyTree": {
+    "version": 1,
+    "kind": "ReleaseDependencyReadOnlyTree",
+    "counts": {
+      "entries": 1294,
+      "directories": 186,
+      "files": 1105,
+      "symlinks": 3
+    },
+    "treeHash": "sha256:d9b2f7fe362a4dd88571e1ca42b220de898c66ff5eab4d8402d42e79eab93321"
+  },
+  "releaseDependencyTreeContractHash": "sha256:63150301e467b5f605dea00e0fb35bec035b23feadc381aa99dbbdc27205e210"
+}

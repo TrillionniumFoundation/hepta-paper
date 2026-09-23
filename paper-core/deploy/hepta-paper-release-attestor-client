@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+exec /usr/bin/node \
+  /opt/hepta-paper/paper-core/bin/hepta-paper-release-attestor-client.mjs "$@"

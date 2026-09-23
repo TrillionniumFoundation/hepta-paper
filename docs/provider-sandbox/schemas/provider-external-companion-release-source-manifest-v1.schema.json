@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/provider-external-companion-release-source-manifest-v1.schema.json",
+  "title": "ProviderExternalCompanionReleaseSourceManifestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "kind",
+    "status",
+    "protocolVersion",
+    "expectedExternalRepository",
+    "expectedEntrypoint",
+    "repositoryProtocolArtifacts",
+    "externalSubjectRequiredFields",
+    "requiredEvidenceClasses",
+    "authority"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "ProviderExternalCompanionReleaseSourceManifestV1" },
+    "status": { "const": "source_kit_ready_external_acceptance_required" },
+    "protocolVersion": { "const": "provider-technical-sandbox-v1" },
+    "expectedExternalRepository": {
+      "const": "TrillionniumFoundation/hepta-paper-provider-sandbox"
+    },
+    "expectedEntrypoint": {
+      "const": "provider-sandbox.mjs"
+    },
+    "repositoryProtocolArtifacts": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "externalSubjectRequiredFields": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/token" }
+    },
+    "requiredEvidenceClasses": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "credential_free_conformance",
+          "independent_review",
+          "provider_owner_acceptance",
+          "revocation_recovery",
+          "source_release_manifest",
+          "target_host_sandbox"
+        ]
+      }
+    },
+    "authority": { "$ref": "#/$defs/authority" }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}(?![\\s\\S])"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9._:-]{0,191}(?![\\s\\S])"
+    },
+    "gitBlob": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}(?![\\s\\S])"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "gitBlobSha", "role"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "gitBlobSha": { "$ref": "#/$defs/gitBlob" },
+        "role": {
+          "enum": [
+            "external_operational_runner",
+            "portable_reference_implementation",
+            "protocol_documentation",
+            "request_schema",
+            "response_schema"
+          ]
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "externalAuthorityClaimed",
+        "productionAuthorized",
+        "providerCredentialGranted",
+        "releaseAuthorized",
+        "submissionAuthorized"
+      ],
+      "properties": {
+        "externalAuthorityClaimed": { "const": false },
+        "productionAuthorized": { "const": false },
+        "providerCredentialGranted": { "const": false },
+        "releaseAuthorized": { "const": false },
+        "submissionAuthorized": { "const": false }
+      }
+    }
+  }
+}

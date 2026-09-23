@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "kind": "HeptaCompatibilitySupportClassification",
+  "policy": "hash_bound_and_migration_support_paths_are_preserved; retired_code_paths_must_remain_absent",
+  "hashBoundCompatibility": [
+    {
+      "path": "paper-adapters/referee-revise/decision-routing.mjs",
+      "classification": "exact_behavior_compatibility",
+      "productionReachability": "intentional_referee_revise_bridge",
+      "bindingManifest": "migration/legacy-salvage-manifest.v1.json",
+      "differentialEvidence": "migration/tests/p1-referee-revision-differential.mjs"
+    },
+    {
+      "path": "paper-core/src/contracts/workflow-contracts.mjs",
+      "classification": "one_line_migration_facade",
+      "productionReachability": "forbidden",
+      "bindingManifest": "migration/legacy-salvage-manifest.v1.json",
+      "differentialEvidence": "paper-core/tests/architecture-conformance.test.mjs"
+    }
+  ],
+  "deprecatedCompatibility": [
+    {
+      "path": "paper-composition/compat/legacy-stage-adapter-registry.mjs",
+      "implementationRoot": "paper-adapters/empirical-analysis",
+      "classification": "frozen_compatibility_only_empirical_pipeline",
+      "productionReachability": "forbidden",
+      "canonicalReplacement": "paper-domain/automation/experiment-run-contract.mjs",
+      "deprecationReceiptKind": "LegacyEmpiricalAnalysisDeprecationReceipt",
+      "deprecationReceipt": "migration/legacy-empirical-analysis-deprecation-receipt.v1.json",
+      "retirementEvidence": "paper-core/tests/repository-module-imports.test.mjs"
+    }
+  ],
+  "retiredCode": [
+    {
+      "path": "workflow-kernel/workflow.mjs",
+      "classification": "retired_direct_workflow_executor",
+      "replacement": "paper-domain/automation/campaign-plan.mjs"
+    },
+    {
+      "path": "paper-application/workflow/workflow-engine.mjs",
+      "classification": "retired_direct_workflow_executor",
+      "replacement": "paper-application/automation/campaign-engine.mjs"
+    },
+    {
+      "path": "paper-application/workflow/typed-stage-pipeline.mjs",
+      "classification": "retired_direct_stage_pipeline",
+      "replacement": "paper-application/automation/campaign-node-executor.mjs"
+    },
+    {
+      "path": "paper-application/use-cases/paper-stage-handlers.mjs",
+      "classification": "retired_direct_stage_handlers",
+      "replacement": "paper-application/automation/campaign-node-executor.mjs"
+    },
+    {
+      "path": "paper-application/use-cases/local-diagnostic-review-loop.mjs",
+      "classification": "retired_local_diagnostic_loop",
+      "replacement": "paper-domain/automation/campaign-plan.mjs"
+    },
+    {
+      "path": "paper-application/use-cases/local-diagnostic-round-executor.mjs",
+      "classification": "retired_local_diagnostic_round",
+      "replacement": "paper-application/automation/campaign-node-executor.mjs"
+    },
+    {
+      "path": "paper-core/src/workflow-engine.mjs",
+      "classification": "retired_zero_consumer_facade",
+      "replacement": "paper-application/automation/campaign-engine.mjs"
+    },
+    {
+      "path": "paper-core/src/execution-context.mjs",
+      "classification": "retired_zero_consumer_facade",
+      "replacement": "paper-application/execution-context.mjs"
+    },
+    {
+      "path": "paper-core/src/mode-registry.mjs",
+      "classification": "retired_zero_consumer_facade",
+      "replacement": "paper-domain/workflow/mode-registry.mjs"
+    },
+    {
+      "path": "paper-core/src/cold-volume-contract.mjs",
+      "classification": "retired_zero_consumer_facade",
+      "replacement": "paper-adapters/archives/cold-volume-contract.mjs"
+    },
+    {
+      "path": "paper-core/src/cold-volume-cas-repository.mjs",
+      "classification": "retired_zero_consumer_facade",
+      "replacement": "paper-adapters/archives/cold-volume-cas-repository.mjs"
+    },
+    {
+      "path": "paper-core/src/offhost-worm-repository.mjs",
+      "classification": "retired_zero_consumer_facade",
+      "replacement": "paper-adapters/archives/offhost-worm-repository.mjs"
+    },
+    {
+      "path": "paper-core/src/external-intake-verifier.mjs",
+      "classification": "retired_zero_consumer_facade",
+      "replacement": "paper-adapters/governance/external-intake-verifier.mjs"
+    },
+    {
+      "path": "paper-core/src/sqlite-logical-integrity.mjs",
+      "classification": "retired_zero_consumer_facade",
+      "replacement": "paper-adapters/persistence/sqlite-logical-integrity.mjs"
+    },
+    {
+      "path": "paper-composition/bootstrap/service-bootstrap.mjs",
+      "classification": "retired_ambiguous_bootstrap_facade",
+      "replacement": "paper-composition/compat/legacy-context-bootstrap.mjs"
+    },
+    {
+      "path": "paper-adapters/stages/paper-stage-adapter-registry.mjs",
+      "classification": "retired_ambiguous_all_stage_adapter_registry",
+      "replacement": "paper-composition/compat/legacy-stage-adapter-registry.mjs"
+    },
+    {
+      "path": "paper-composition/bootstrap/paper-stage-port-composition.mjs",
+      "classification": "retired_duplicate_compatibility_stage_port_composition",
+      "replacement": "paper-composition/compat/legacy-stage-port-composition.mjs"
+    }
+  ],
+  "migrationSupport": [
+    {
+      "path": "migration/retirement/audit.mjs",
+      "classification": "retirement_audit",
+      "productionReachability": "forbidden"
+    },
+    {
+      "path": "migration/retirement/classification.mjs",
+      "classification": "historical_classification",
+      "productionReachability": "forbidden"
+    },
+    {
+      "path": "migration/retirement/migration-matrix.mjs",
+      "classification": "migration_audit_projection",
+      "productionReachability": "forbidden"
+    },
+    {
+      "path": "migration/retirement/production-state-compat.mjs",
+      "classification": "differential_test_compatibility",
+      "productionReachability": "forbidden"
+    },
+    {
+      "path": "migration/retirement/retirement-execution.mjs",
+      "classification": "retirement_planning_support",
+      "productionReachability": "forbidden"
+    },
+    {
+      "path": "migration/retirement/retirement-planning.mjs",
+      "classification": "retirement_planning_support",
+      "productionReachability": "forbidden"
+    }
+  ],
+  "historicalTranslationSupport": [
+    {
+      "path": "paper-adapters/persistence/legacy-history-snapshot-repository.mjs",
+      "classification": "offline_history_export_support",
+      "productionReachability": "forbidden"
+    },
+    {
+      "path": "paper-adapters/persistence/legacy-history-translator-repository.mjs",
+      "classification": "offline_history_translation_support",
+      "productionReachability": "forbidden"
+    }
+  ]
+}

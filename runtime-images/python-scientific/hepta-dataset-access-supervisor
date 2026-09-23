@@ -1,0 +1,114 @@
+#!/bin/sh
+set -eu
+
+protocol='hepta-container-dataset-supervisor-v1'
+trace_dir='/hepta-supervisor'
+trace_path="$trace_dir/dataset-access.trace"
+identity_path="$trace_dir/supervisor-identity"
+
+expected_hash=''
+trace_owner_uid=''
+trace_owner_gid=''
+workload_uid=''
+workload_gid=''
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --expected-supervisor-sha256)
+      expected_hash="$2"
+      shift 2
+      ;;
+    --trace-owner-uid)
+      trace_owner_uid="$2"
+      shift 2
+      ;;
+    --trace-owner-gid)
+      trace_owner_gid="$2"
+      shift 2
+      ;;
+    --workload-uid)
+      workload_uid="$2"
+      shift 2
+      ;;
+    --workload-gid)
+      workload_gid="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      exit 125
+      ;;
+  esac
+done
+
+case "$expected_hash" in sha256:[0-9a-f][0-9a-f]*) ;; *) exit 125 ;; esac
+for numeric in "$trace_owner_uid" "$trace_owner_gid" "$workload_uid" "$workload_gid"; do
+  case "$numeric" in ''|*[!0-9]*) exit 125 ;; esac
+done
+[ "$#" -gt 0 ] || exit 125
+[ "$(id -u)" -eq 0 ] || exit 125
+[ "$trace_owner_uid" -ne "$workload_uid" ] || exit 125
+[ "$workload_uid" -ne 0 ] || exit 125
+[ -d "$trace_dir" ] || exit 125
+[ "$(stat -c '%u' "$trace_dir")" -eq "$trace_owner_uid" ] || exit 125
+[ "$(stat -c '%g' "$trace_dir")" -eq "$trace_owner_gid" ] || exit 125
+[ "$(stat -c '%a' "$trace_dir")" = '700' ] || exit 125
+[ -f "$trace_path" ] || exit 125
+[ ! -L "$trace_path" ] || exit 125
+[ -f "$identity_path" ] || exit 125
+[ ! -L "$identity_path" ] || exit 125
+[ "$(stat -c '%u' "$trace_path")" -eq "$trace_owner_uid" ] || exit 125
+[ "$(stat -c '%g' "$trace_path")" -eq "$trace_owner_gid" ] || exit 125
+[ "$(stat -c '%u' "$identity_path")" -eq "$trace_owner_uid" ] || exit 125
+[ "$(stat -c '%g' "$identity_path")" -eq "$trace_owner_gid" ] || exit 125
+[ "$(stat -c '%h' "$trace_path")" = '1' ] || exit 125
+[ "$(stat -c '%h' "$identity_path")" = '1' ] || exit 125
+[ "$(stat -c '%a' "$trace_path")" = '600' ] || exit 125
+[ "$(stat -c '%a' "$identity_path")" = '600' ] || exit 125
+
+supervisor_hash="sha256:$(sha256sum "$0" | cut -d ' ' -f 1)"
+[ "$supervisor_hash" = "$expected_hash" ] || exit 125
+tracer_hash="sha256:$(sha256sum /usr/bin/strace | cut -d ' ' -f 1)"
+setpriv_hash="sha256:$(sha256sum /usr/bin/setpriv | cut -d ' ' -f 1)"
+
+umask 077
+: > "$trace_path"
+umask 0007
+set +e
+/usr/bin/strace -f -qq -yy -e trace=open,openat,read -o "$trace_path" -- \
+  /usr/bin/setpriv \
+  --reuid "$workload_uid" \
+  --regid "$workload_gid" \
+  --clear-groups \
+  --bounding-set=-all \
+  --inh-caps=-all \
+  --ambient-caps=-all \
+  --no-new-privs \
+  -- "$@"
+workload_status=$?
+set -e
+
+[ -f "$trace_path" ] || exit 125
+[ ! -L "$trace_path" ] || exit 125
+[ "$(stat -c '%u:%g:%a:%h' "$trace_path")" = "$trace_owner_uid:$trace_owner_gid:600:1" ] || exit 125
+[ "$(stat -c '%u:%g:%a:%h' "$identity_path")" = "$trace_owner_uid:$trace_owner_gid:600:1" ] || exit 125
+trace_hash="sha256:$(sha256sum "$trace_path" | cut -d ' ' -f 1)"
+trace_bytes="$(stat -c '%s' "$trace_path")"
+{
+  printf 'version=1\n'
+  printf 'protocol=%s\n' "$protocol"
+  printf 'supervisor_sha256=%s\n' "$supervisor_hash"
+  printf 'tracer_sha256=%s\n' "$tracer_hash"
+  printf 'setpriv_sha256=%s\n' "$setpriv_hash"
+  printf 'trace_sha256=%s\n' "$trace_hash"
+  printf 'trace_bytes=%s\n' "$trace_bytes"
+  printf 'trace_owner_uid=%s\n' "$trace_owner_uid"
+  printf 'trace_owner_gid=%s\n' "$trace_owner_gid"
+  printf 'workload_uid=%s\n' "$workload_uid"
+  printf 'workload_gid=%s\n' "$workload_gid"
+  printf 'workload_exit_code=%s\n' "$workload_status"
+} > "$identity_path"
+exit "$workload_status"

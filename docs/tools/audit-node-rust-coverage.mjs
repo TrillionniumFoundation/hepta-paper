@@ -106,10 +106,10 @@ function actionModesFromNodeRoute(route) {
   if (!source) throw new Error(`dynamic action route missing Node source: ${route.group}/${route.name}`);
   const text = fs.readFileSync(path.join(ROOT, source), 'utf8');
   const modes = new Set();
-  for (const match of text.matchAll(/--action(?:\\s+<[^>\\n]+>)?\\s+([a-z][a-z0-9-]*(?:\\|[a-z][a-z0-9-]+)+)/g)) {
+  for (const match of text.matchAll(/--action(?:\s+<[^>\n]+>)?\s+([a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]+)+)/g)) {
     for (const value of match[1].split('|')) modes.add(value);
   }
-  for (const match of text.matchAll(/--action\\s+([a-z][a-z0-9-]+)/g)) modes.add(match[1]);
+  for (const match of text.matchAll(/--action\s+([a-z][a-z0-9-]+)/g)) modes.add(match[1]);
   for (const match of text.matchAll(/\[\s*((?:(?:'|")[a-z][a-z0-9-]*(?:'|")\s*,?\s*){2,})\]\.includes\(action\)/g)) {
     for (const value of match[1].matchAll(/(?:'|")([a-z][a-z0-9-]*)(?:'|")/g)) modes.add(value[1]);
   }
@@ -119,7 +119,7 @@ function actionModesFromNodeRoute(route) {
 
 function actionModesFromRustEntrypoint(row) {
   if (typeof row.rustEntrypoint !== 'string') return [];
-  const match = /--action\\s+([a-z][a-z0-9-]*(?:\\|[a-z][a-z0-9-]+)+)/.exec(row.rustEntrypoint);
+  const match = /--action\s+([a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]+)+)/.exec(row.rustEntrypoint);
   return match ? match[1].split('|').sort(compare) : [];
 }
 

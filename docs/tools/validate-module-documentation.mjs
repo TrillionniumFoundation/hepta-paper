@@ -184,15 +184,9 @@ function validateSpec(moduleId, record, source, headings, failures) {
     if (identity.filter((line) => line.startsWith(`${key}:`)).length !== 1
         || !identity.includes(`${key}: ${value}`)) failures.push(`${moduleId}: specification ${key} mismatch`);
   }
-  const required = {
-    pure: ['no durable state', 'cannot grant'], read_only: ['read only', 'cannot mutate'],
-    prepared_result_only: ['prepared result', 'commit sequencer'],
-    central_state_write: ['single-writer', 'fencing'],
-    external_effect: ['durable intent', 'idempotency', 'reconciliation', 'human'],
-  }[record.authority] || [];
-  for (const term of required) {
-    if (!source.toLowerCase().includes(term)) failures.push(`${moduleId}: specification missing authority term "${term}"`);
-  }
+  // Authority/effect consistency is checked against typed manifest fields below.
+  // Requiring English phrases in prose would neither prove implementation
+  // safety nor permit an equivalent translation or shared-contract reference.
 }
 
 

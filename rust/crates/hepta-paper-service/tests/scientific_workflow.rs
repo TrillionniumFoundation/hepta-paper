@@ -190,15 +190,29 @@ fn definition(temp: &Temp, fail: bool) -> LocalWorkflowV1 {
             "raise RuntimeError('private failure detail')\n".into(),
         );
     }
+    definition_for_job(
+        temp,
+        job,
+        ScientificRuntimeKindV1::PythonEmpirical,
+        Path::new("/usr/bin/python3"),
+    )
+}
+
+fn definition_for_job(
+    temp: &Temp,
+    job: ScientificJobV1,
+    runtime: ScientificRuntimeKindV1,
+    executable: &Path,
+) -> LocalWorkflowV1 {
     let scratch = temp.0.join("scratch");
     fs::create_dir(&scratch).unwrap();
     fs::set_permissions(&scratch, fs::Permissions::from_mode(0o700)).unwrap();
-    let python = fs::canonicalize("/usr/bin/python3").unwrap();
+    let executable = fs::canonicalize(executable).unwrap();
     let profile = ScientificRuntimeProfileV1 {
         version: 1,
-        runtime: ScientificRuntimeKindV1::PythonEmpirical,
-        executable_hash: digest(&fs::read(&python).unwrap()),
-        executable: python,
+        runtime,
+        executable_hash: digest(&fs::read(&executable).unwrap()),
+        executable,
         runtime_files: BTreeMap::new(),
         job_hash: scientific_job_hash_v1(&job).unwrap(),
         scratch_root: scratch,
@@ -462,5 +476,139 @@ fn named_binding_rejects_ambiguous_index_and_traversal_before_initialization() {
         def.steps[1].bindings[0].artifact_name = Some(name.into());
         assert!(initialize_local_workflow_v1(def).is_err());
         assert!(!temp.state().exists());
+    }
+}
+
+#[ignore = "requires actual Rscript; the tool-equipped migration job includes installed workflow cases"]
+#[test]
+fn actual_r_autonomous_cli_reopens_the_same_workflow_without_reexecution() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let temp = Temp::new();
+    let job = ScientificJobV1 {
+        version: 1,
+        files: BTreeMap::from([(
+            "main.R".into(),
+            // The real Rust worker, not this program, establishes private umask.
+            "x <- c(2,4,6,8)\nwriteLines(sprintf('{\"count\":%d,\"mean\":%.17g}', length(x), mean(x)), 'result.json')\n".into(),
+        )]),
+        outputs: vec![ScientificOutputV1 {
+            path: "result.json".into(),
+            format: ScientificOutputFormatV1::Json,
+        }],
+    };
+    let mut definition = definition_for_job(
+        &temp,
+        job,
+        ScientificRuntimeKindV1::REmpirical,
+        Path::new("/usr/bin/Rscript"),
+    );
+    let now = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    definition.template.observed_at_unix_ms = now;
+    definition.template.writer_lease.expires_at_unix_ms = now.checked_add(300_000).unwrap();
+    let definition_hash = hepta_control_plane::canonical_hash_v1(&definition).unwrap();
+    let file = temp.0.join("workflow.json");
+    fs::write(&file, serde_json::to_vec(&definition).unwrap()).unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    let invoke = |action: &str, through: Option<&str>| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"));
+        command
+            .args([
+                "autonomous-research",
+                "--campaign-id",
+                "campaign-service",
+                "--workflow-file",
+            ])
+            .arg(&file)
+            .args(["--action", action]);
+        if let Some(through) = through {
+            command.args(["--through-steps", through]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "local workflow command failed: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["ready"], true);
+        assert_eq!(report["definitionHash"], definition_hash.to_string());
+        assert_eq!(report["productionActivation"], false);
+        assert_eq!(report["fullResearchReady"], false);
+        report
+    };
+    invoke("prepare", None);
+    assert!(!temp.state().exists());
+    let launched = invoke("launch", Some("1"));
+    assert_eq!(launched["workflow"]["committedSteps"], 1);
+    assert_eq!(launched["workflow"]["budgetRemainingMicrousd"], 99);
+    assert_eq!(scratch_count(&temp), 1);
+    // Every invocation is a new actual CLI process. Status and continuation
+    // recover the original definition, CAS, journal and SQLite owner.
+    let status = invoke("status", None);
+    assert_eq!(status["workflow"]["committedSteps"], 1);
+    let done = invoke("converge", Some("3"));
+    assert_eq!(done["workflow"]["committedSteps"], 3);
+    assert_eq!(done["workflow"]["budgetRemainingMicrousd"], 97);
+    let replay = invoke("launch", Some("3"));
+    assert_eq!(replay["workflow"]["budgetRemainingMicrousd"], 97);
+    assert_eq!(
+        done["workflow"]["artifactsByStep"],
+        replay["workflow"]["artifactsByStep"]
+    );
+    assert_eq!(scratch_count(&temp), 1);
+    let view =
+        operate_local_workflow_v1(&temp.state(), &definition_hash, WorkflowActionV1::Status, 0)
+            .unwrap();
+    let objects = ObjectStoreV1::open(&temp.state()).unwrap();
+    let result_hash = resolve_scientific_output_v1(
+        &objects,
+        &view.artifacts_by_step["experiment"],
+        "result.json",
+        "CAP-EMPIRICAL",
+    )
+    .unwrap();
+    let result = objects.read(&result_hash).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&result).unwrap()["mean"],
+        5
+    );
+    let manuscript = objects.read(&view.artifacts_by_step["author"][0]).unwrap();
+    assert!(
+        std::str::from_utf8(&manuscript)
+            .unwrap()
+            .contains(std::str::from_utf8(&result).unwrap())
+    );
+    let mut bundle_seen = false;
+    for hash in &view.artifacts_by_step["build"] {
+        let bytes = objects.read(hash).unwrap();
+        if bytes.starts_with(b"HEPTA-NATIVE-BUNDLE-V1") {
+            let entries =
+                native_business::verify_native_build_bundle_v1(&bytes, hash.as_str()).unwrap();
+            assert_eq!(entries[0].content.as_bytes(), manuscript);
+            bundle_seen = true;
+        }
+    }
+    assert!(bundle_seen);
+    if let Some(root) = std::env::var_os("HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT") {
+        let directory = PathBuf::from(root).join("r-autonomous-workflow");
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("command-report.json"),
+            serde_json::to_vec(&done).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            directory.join("replay-report.json"),
+            serde_json::to_vec(&replay).unwrap(),
+        )
+        .unwrap();
+        fs::write(directory.join("result.json"), result).unwrap();
+        fs::write(directory.join("manuscript.md"), manuscript).unwrap();
     }
 }

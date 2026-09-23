@@ -4,6 +4,7 @@ use hepta_paper_service::{
     ServiceRunV1,
     advanced_numerical::{
         ADVANCED_NUMERICAL_MAX_INPUT_BYTES, execute_advanced_numerical_plugin_v1,
+        inspect_advanced_numerical_plugin_status_v1,
     },
     architecture_conformance::{
         ArchitectureConformanceModeV1, inspect_architecture_conformance_v1,
@@ -24,7 +25,7 @@ use hepta_paper_service::{
         parse_autonomous_intake_authority_rotation_arguments,
     },
     autonomous_research::{
-        autonomous_research_help_json_v1, execute_autonomous_research_v1,
+        autonomous_research_help_json_v1, execute_autonomous_research_with_cancellation_v1,
         inspect_autonomous_research_v1, parse_autonomous_research_arguments,
     },
     autonomous_research_one_shot_campaign_attempt::{
@@ -775,16 +776,23 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(2);
         }
         Some("advanced-numerical-plugin") if args.len() == 2 => {
-            let mut bytes = Vec::new();
-            File::open(&args[1])?
-                .take(ADVANCED_NUMERICAL_MAX_INPUT_BYTES as u64 + 1)
-                .read_to_end(&mut bytes)?;
-            if bytes.len() > ADVANCED_NUMERICAL_MAX_INPUT_BYTES {
-                return Err("advanced numerical request exceeds 32KiB".into());
+            if args[1] == "status" {
+                println!(
+                    "{}",
+                    serde_json::to_string(&inspect_advanced_numerical_plugin_status_v1())?
+                );
+            } else {
+                let mut bytes = Vec::new();
+                File::open(&args[1])?
+                    .take(ADVANCED_NUMERICAL_MAX_INPUT_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)?;
+                if bytes.len() > ADVANCED_NUMERICAL_MAX_INPUT_BYTES {
+                    return Err("advanced numerical request exceeds 32KiB".into());
+                }
+                let request: serde_json::Value = serde_json::from_slice(&bytes)?;
+                let result = execute_advanced_numerical_plugin_v1(&request)?;
+                println!("{}", serde_json::to_string(&result)?);
             }
-            let request: serde_json::Value = serde_json::from_slice(&bytes)?;
-            let result = execute_advanced_numerical_plugin_v1(&request)?;
-            println!("{}", serde_json::to_string(&result)?);
         }
         Some("retirement-reference") if args.len() == 2 => {
             let report = verify_retirement_reference_v1(&PathBuf::from(&args[1]))?;
@@ -1222,6 +1230,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some("autonomous-state-provision") => {
+            if args
+                .get(1)
+                .is_some_and(|value| value == "--recover-staging")
+            {
+                let report = hepta_paper_service::autonomous_state_provision::recovery::recover_staging_cli_v1(&args[1..])?;
+                println!("{}", serde_json::to_string(&report)?);
+                return Ok(());
+            }
             let Some(options) = parse_autonomous_state_provisioning_arguments(&args[1..])? else {
                 println!("{AUTONOMOUS_STATE_PROVISIONING_USAGE}");
                 return Ok(());
@@ -1533,7 +1549,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let report = if options.action == "prepare" || options.action == "status" {
                 inspect_autonomous_research_v1(&options)
             } else {
-                execute_autonomous_research_v1(&options)
+                // Install only in this command process, before any worker or
+                // owner is opened. The atomic handlers survive until process exit;
+                // libraries never install handlers or change signal masks.
+                let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+                    signal_hook::flag::register(signal, std::sync::Arc::clone(&cancelled))?;
+                }
+                execute_autonomous_research_with_cancellation_v1(&options, cancelled)
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
             if report["ready"] != serde_json::Value::Bool(true) {

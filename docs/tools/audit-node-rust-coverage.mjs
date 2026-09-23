@@ -93,41 +93,110 @@ export function buildCoverageInventory(routes, catalog, globalCapabilities, modu
   };
 }
 
-export function auditCampaignModeMappings() {
-  const relative = 'docs/migration/campaign-mode-source-map.v1.json';
-  const map = JSON.parse(fs.readFileSync(path.join(ROOT, relative), 'utf8'));
-  if (map.schemaVersion !== 1 || map.kind !== 'NodeCampaignModeSourceMapV1'
-      || map.scope !== 'source_call_chain_not_parity_acceptance'
-      || map.acceptedParity !== false || map.productionActivation !== false || map.nodeRetirement !== false) {
-    throw new Error('invalid campaign mode mapping scope');
+function actionModesFromNodeRoute(route) {
+  // Raw registry routes use argv; projected inventory rows use nodeArgv.
+  // Never silently pick one when a caller supplies contradictory identities.
+  if (route?.argv !== undefined && route?.nodeArgv !== undefined
+      && JSON.stringify(route.argv) !== JSON.stringify(route.nodeArgv)) {
+    throw new Error('conflicting Node argument identities');
   }
-  const entry = fs.readFileSync(path.join(ROOT, map.nodeEntrypoint), 'utf8');
-  const match = /--action <name>\s+([^'\n]+)/.exec(entry);
-  if (!match) throw new Error('campaign action inventory changed');
-  const actions = match[1].split('|').sort(compare);
-  if (JSON.stringify(map.modes.map((row) => row.nodeAction).sort(compare)) !== JSON.stringify(actions)) {
-    throw new Error('campaign action mapping missing, duplicated or drifted');
+  const nodeArgv = route?.argv ?? route?.nodeArgv;
+  if (!Array.isArray(nodeArgv) || nodeArgv.length === 0
+      || nodeArgv.some((value) => typeof value !== 'string' || value.length === 0)) {
+    throw new Error('missing or invalid Node command arguments');
   }
-  const sources = new Set([relative, map.nodeEntrypoint,
-    'docs/modules/examples/local-inspection-requests.v1.json',
-    'docs/modules/schemas/local-workflow-inspection-request-v1.schema.json',
-    'docs/modules/schemas/local-workflow-inspection-response-v1.schema.json',
-    'docs/modules/schemas/local-workflow-list-request-v1.schema.json',
-  ]);
-  for (const row of map.modes) {
-    if (!['partial_local_source', 'unmapped'].includes(row.scope) || !row.remaining) throw new Error('invalid mapping');
-    if (row.scope === 'partial_local_source' && (!row.rustCommand || !row.callChain.length || !row.tests.length)) throw new Error('missing source mapping');
-    if (row.scope === 'unmapped' && (row.rustCommand !== null || row.callChain.length || row.tests.length)) throw new Error('unmapped row claims implementation');
-    for (const reference of [...row.callChain, ...row.tests]) {
-      readSource(reference.path);
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(reference.symbol)
-          || !fs.readFileSync(path.join(ROOT, reference.path), 'utf8').includes(`fn ${reference.symbol}(`)) {
-        throw new Error('mapped source symbol missing');
+  const fixedIndex = nodeArgv.indexOf('--action');
+  if (fixedIndex >= 0 && typeof nodeArgv[fixedIndex + 1] === 'string') {
+    return { source: null, modes: [] };
+  }
+  const actionDeclared = route.forwardedArgumentSchema?.valueFlags?.includes('action') === true;
+  const source = nodeArgv.find((value) => typeof value === 'string' && value.endsWith('.mjs'));
+  if (!source) {
+    if (actionDeclared) {
+      throw new Error(`dynamic action route missing Node source: ${route.group}/${route.name}`);
+    }
+    return { source: null, modes: [] };
+  }
+  const text = fs.readFileSync(path.join(ROOT, source), 'utf8');
+  const modes = new Set();
+  for (const match of text.matchAll(/--action(?:\s+<[^>\n]+>)?\s+([a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]+)+)/g)) {
+    for (const value of match[1].split('|')) modes.add(value);
+  }
+  for (const match of text.matchAll(/--action\s+([a-z][a-z0-9-]+)/g)) modes.add(match[1]);
+  for (const match of text.matchAll(/\[\s*((?:(?:'|")[a-z][a-z0-9-]*(?:'|")\s*,?\s*){2,})\]\.includes\(action\)/g)) {
+    for (const value of match[1].matchAll(/(?:'|")([a-z][a-z0-9-]*)(?:'|")/g)) modes.add(value[1]);
+  }
+  if (modes.size === 0) {
+    if (actionDeclared) throw new Error(`dynamic Node action modes not discoverable: ${source}`);
+    return { source: null, modes: [] };
+  }
+  return { source, modes: [...modes].sort(compare) };
+}
+
+function actionModesFromRustEntrypoint(row) {
+  if (typeof row.rustEntrypoint !== 'string') return [];
+  const match = /--action\s+([a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]+)+)/.exec(row.rustEntrypoint);
+  return match ? match[1].split('|').sort(compare) : [];
+}
+
+function validateCommandArgumentModes(row, route) {
+  const node = actionModesFromNodeRoute(route);
+  const expected = node.modes;
+  const declared = Array.isArray(row.argumentModes)
+    ? row.argumentModes.map((mode) => mode?.nodeAction).sort(compare)
+    : [];
+  if (JSON.stringify(declared) !== JSON.stringify(expected)
+      || new Set(declared).size !== declared.length) {
+    throw new Error(`canonical command map action modes missing, duplicated or drifted: ${row.id}`);
+  }
+
+  const topSources = new Set(row.callChain.map((reference) => `${reference.path}:${reference.symbol}`));
+  const topTests = new Set(row.testCases.map((reference) => `${reference.path}:${reference.symbol}`));
+  for (const mode of row.argumentModes || []) {
+    if (!mode || typeof mode !== 'object' || Array.isArray(mode)
+        || !['partial_local_source', 'unmapped'].includes(mode.scope)
+        || typeof mode.remaining !== 'string' || mode.remaining.length < 20
+        || !Array.isArray(mode.callChain) || !Array.isArray(mode.tests)) {
+      throw new Error(`invalid command argument mode: ${row.id}:${String(mode?.nodeAction)}`);
+    }
+    if (mode.scope === 'partial_local_source'
+        && (typeof mode.rustCommand !== 'string' || !mode.rustCommand
+          || mode.callChain.length === 0 || mode.tests.length === 0)) {
+      throw new Error(`argument mode missing Rust source mapping: ${row.id}:${mode.nodeAction}`);
+    }
+    if (mode.scope === 'unmapped'
+        && (mode.rustCommand !== null || mode.callChain.length !== 0 || mode.tests.length !== 0)) {
+      throw new Error(`unmapped argument mode claims Rust source: ${row.id}:${mode.nodeAction}`);
+    }
+    for (const [references, allowed, kind] of [
+      [mode.callChain, topSources, 'source'], [mode.tests, topTests, 'test'],
+    ]) {
+      const seen = new Set();
+      for (const reference of references) {
+        if (!reference || typeof reference !== 'object' || Array.isArray(reference)
+            || Object.keys(reference).sort().join(',') !== 'path,symbol'
+            || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(reference.symbol)) {
+          throw new Error(`invalid argument-mode ${kind} binding: ${row.id}:${mode.nodeAction}`);
+        }
+        const identity = `${reference.path}:${reference.symbol}`;
+        if (!allowed.has(identity) || seen.has(identity)) {
+          throw new Error(`unbound or duplicate argument-mode ${kind}: ${row.id}:${mode.nodeAction}:${identity}`);
+        }
+        seen.add(identity);
       }
-      sources.add(reference.path);
     }
   }
-  return { ...map, sourceBindings: [...sources].sort(compare).map(readSource) };
+
+  const nodeSet = new Set(expected);
+  const expectedExtensions = actionModesFromRustEntrypoint(row)
+    .filter((mode) => !nodeSet.has(mode)).sort(compare);
+  const declaredExtensions = Array.isArray(row.rustExtensionModes)
+    ? [...row.rustExtensionModes].sort(compare) : [];
+  if (JSON.stringify(declaredExtensions) !== JSON.stringify(expectedExtensions)
+      || new Set(declaredExtensions).size !== declaredExtensions.length) {
+    throw new Error(`Rust-only action modes are not explicitly classified: ${row.id}`);
+  }
+  return node.source ? [node.source] : [];
 }
 
 // This map is deliberately separate from acceptance.  It records only reviewed
@@ -148,7 +217,10 @@ export function auditNodeRustCommandMap(routes, suppliedMap = null) {
       || new Set(actual).size !== actual.length) {
     throw new Error('Node/Rust command map is missing, duplicated or drifted');
   }
+  const argumentModeSources = new Set();
+  const routesById = new Map(routes.map((route) => [`${route.group}/${route.name}`, route]));
   for (const row of map.commands) {
+    for (const source of validateCommandArgumentModes(row, routesById.get(row.id))) argumentModeSources.add(source);
     if (!['partial_local_source', 'unmapped'].includes(row.scope)
         || !['candidate', 'unmapped'].includes(row.compatibilityDecision)
         || typeof row.remaining !== 'string' || row.remaining.length < 20
@@ -205,7 +277,8 @@ export function auditNodeRustCommandMap(routes, suppliedMap = null) {
     sourceSymbolsValidated: true,
     callGraphVerified: false,
     testsExecutedByThisValidator: false,
-    sourceBindings: [relative, ...map.commands.flatMap((row) => [...row.tests, ...row.rustSources])]
+    sourceBindings: [relative, ...argumentModeSources,
+      ...map.commands.flatMap((row) => [...row.tests, ...row.rustSources])]
       .filter((value, index, values) => values.indexOf(value) === index)
       .sort(compare).map(readSource),
   };
@@ -234,9 +307,7 @@ export function auditCurrentCoverage() {
     sources.add(row.rustCandidate.executableExample);
     sources.add(row.rustCandidate.testTarget);
   }
-  report.campaignModeMappings = auditCampaignModeMappings();
   report.commandMappings = auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES);
-  for (const binding of report.campaignModeMappings.sourceBindings) sources.add(binding.path);
   for (const binding of report.commandMappings.sourceBindings) sources.add(binding.path);
   report.sourceBindings = [...sources].sort(compare).map(readSource);
   report.inventorySha256 = sha256(JSON.stringify(report));

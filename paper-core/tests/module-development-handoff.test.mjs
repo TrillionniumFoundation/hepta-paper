@@ -29,7 +29,7 @@ test('every registered module has a concrete implementation handoff', () => {
 });
 
 function cliCommands(source) {
-  const commands = [...source.matchAll(/Some\("([a-z][a-z-]*)"\)\s+if/g)].map((row) => row[1]);
+  const commands = [...source.matchAll(/Some\("([a-z][a-z-]*)"\)\s*(?:if\b|=>)/g)].map((row) => row[1]);
   assert.ok(commands.length > 0, 'CLI extraction must not silently become empty');
   assert.equal(new Set(commands).size, commands.length, 'unexpected duplicate CLI arm');
   return commands.sort();
@@ -53,4 +53,6 @@ test('command documentation comparison exposes additions, omissions and duplicat
   assert.notDeepEqual(documentedCommands('| `first` | described |\n'), cliCommands(source));
   assert.throws(() => documentedCommands('| `first` | one |\n| `first ARG` | two |\n'), /duplicate/);
   assert.throws(() => cliCommands('fn command() {}'), /empty/);
+  assert.deepEqual(cliCommands('Some("plain") => {}, Some("guarded") if ok => {}'), ['guarded', 'plain']);
+  assert.throws(() => cliCommands('Some("same") => {}, Some("same") if ok => {}'), /duplicate/);
 });

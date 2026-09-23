@@ -295,12 +295,13 @@ test('legacy matrix publication control surfaces are narrow only when contract-t
 
 test('checked-in repository control-plane contracts remain fail-closed', () => {
   const codeowners = fs.readFileSync(repositoryControlPlaneFiles.codeowners, 'utf8');
+  const independentOwners = '@ProfHepta @Tomasrgbsf @Franksudoman';
   for (const rule of [
-    '/.github/ @ProfHepta',
-    '/rust/ @ProfHepta',
-    '/paper-adapters/ @ProfHepta',
-    '/migration/ @ProfHepta',
-    '/store/migrations/ @ProfHepta',
+    `/.github/ ${independentOwners}`,
+    `/rust/ ${independentOwners}`,
+    `/paper-adapters/ ${independentOwners}`,
+    `/migration/ ${independentOwners}`,
+    `/store/migrations/ ${independentOwners}`,
   ]) {
     assert.ok(codeowners.split('\n').includes(rule), rule);
   }

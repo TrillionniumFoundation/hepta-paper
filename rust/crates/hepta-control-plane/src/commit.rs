@@ -115,6 +115,17 @@ pub trait CommitSequencerV1: sealed::Sealed {
         requests: &[CommitRequestV1],
     ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError>;
 
+    /// Revalidates time at the final-use boundary. Durable implementations also
+    /// sample inside their transaction; the fixture only observes the callback.
+    fn commit_batch_with_clock(
+        &mut self,
+        requests: &[CommitRequestV1],
+        clock: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError> {
+        clock()?;
+        self.commit_batch(requests)
+    }
+
     /// Atomically integrates one verified prepared result.
     fn commit(&mut self, request: CommitRequestV1) -> Result<CommitReceiptV1, ControlPlaneError> {
         let mut receipts = self.commit_batch(std::slice::from_ref(&request))?;
@@ -532,6 +543,16 @@ impl CommitSequencerV1 for SqliteCommitSequencerV1 {
         &mut self,
         requests: &[CommitRequestV1],
     ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError> {
+        let now = self.now_unix_ms;
+        self.commit_batch_with_clock(requests, &mut || Ok(now))
+    }
+
+    fn commit_batch_with_clock(
+        &mut self,
+        requests: &[CommitRequestV1],
+        clock: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    ) -> Result<Vec<CommitReceiptV1>, ControlPlaneError> {
+        self.advance_clock(clock()?)?;
         self.preview_batch(requests)?;
         let mut staged = self.state.clone();
         let receipts = staged.commit_batch(requests)?;
@@ -557,15 +578,21 @@ impl CommitSequencerV1 for SqliteCommitSequencerV1 {
                 })
             })
             .collect::<Result<Vec<_>, ControlPlaneError>>()?;
-        self.store
-            .append_control_batch(
+        let final_time = self
+            .store
+            .append_control_batch_with_clock(
                 &self.writer,
                 &self.campaign_id,
                 self.state.next_sequence,
                 &entries,
                 self.now_unix_ms,
+                &mut || {
+                    clock()
+                        .map_err(|_| hepta_campaign_writer::CampaignWriterError::InvalidWriterLease)
+                },
             )
             .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
+        self.now_unix_ms = final_time;
         self.state = staged;
         for request in requests {
             self.known_snapshots

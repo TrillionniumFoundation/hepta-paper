@@ -36,9 +36,9 @@ prove its implementation language. No provider or submission integration is adde
 |---|---|---|---|---|
 | `python_empirical` | `CAP-EMPIRICAL` | `main.py` | Python `-I -B main.py` | Actual experiment/program execution and explicitly collected outputs. |
 | `python_numerical` | `CAP-NUMERICAL` | `main.py` | Python `-I -B main.py` | Actual numerical program execution, not only the built-in linear solver. |
-| `r_empirical` | `CAP-EMPIRICAL` | `main.R` | Rscript `--vanilla main.R` | Source adapter present; R execution is not covered by the local validation reported with this increment. |
-| `r_numerical` | `CAP-NUMERICAL` | `main.R` | Rscript `--vanilla main.R` | Same source-only runtime qualification boundary as above. |
-| `lean` | `CAP-FORMAL` | `main.lean` | Lean `-o proof.olean main.lean` | Source adapter present; no claim of kernel audit, axiom policy, Lake dependency closure or independent proof acceptance. |
+| `r_empirical` | `CAP-EMPIRICAL` | `main.R` | Rscript `--vanilla main.R` | Real R execution is exercised by the tool-equipped migration job; exact run evidence is required separately from the ordinary ignored-test suite. |
+| `r_numerical` | `CAP-NUMERICAL` | `main.R` | Rscript `--vanilla main.R` | The same job solves a real R numerical system and verifies the retained result and CAS manifest. |
+| `lean` | `CAP-FORMAL` | `main.lean` | Lean `-o proof.olean main.lean` | The tool-equipped migration job compiles a real proof and rejects an invalid proof. This is not kernel audit, axiom policy, Lake dependency closure or independent proof acceptance. |
 | `pdf_latex` | `CAP-BUILD` | `main.tex` | Canonical pdftex executable, explicit pdflatex format/program, no first-line parsing, restricted input/output, no shell escape, halt on error, job name `paper`. | Actual one-to-three-pass PDF compilation. PDF output is checked for framing only, not parsed or scientifically accepted. |
 
 For TeX, the exact argv additionally contains `-fmt=pdflatex`,
@@ -65,15 +65,17 @@ copy of the documented program. Its result is count 4, mean 5 and sample varianc
 20/3. These are test data, not evidence of a real scientific discovery.
 
 The standalone scientific worker sets `umask 0077` in its own process before
-launching tools, so newly created tool outputs default to mode 0600 even when
-the service's parent shell uses a permissive mask. The library API never changes
-the host process's global umask. Programs invoked directly through that API must
-create private outputs themselves; the documented Python program sets its own
-mask for this reason. Output admission still rejects group- or other-writable
-files, symlinks and hardlinks. Profile files must also be installed with mode
-0600 (or another accepted non-writable-by-group/other mode), and executable
-fixtures must be copied and pinned with safe permissions rather than modifying
-shared Cargo build outputs.
+launching tools. The library API never changes the host process's global umask:
+before execution it creates every declared output path as a singly linked mode
+0600 regular file, creating output-only parent directories as private mode 0700.
+Cooperating Python, R, Lean and TeX tools overwrite those owner-created files.
+If a tool removes/replaces an output, changes it to group/other writable, creates
+a link or special node, changes ownership, or escapes the private attempt root,
+post-execution admission fails closed. The documented Python program still sets
+its own private mask as defense in depth. Profile files must also be installed
+with mode 0600 (or another accepted non-writable-by-group/other mode), and
+executable fixtures must be copied and pinned with safe permissions rather than
+modifying shared Cargo build outputs.
 
 `ScientificRuntimeProfileV1` is closed camelCase JSON with these required fields:
 
@@ -94,8 +96,8 @@ There are 1–32 outputs, each nonempty, within the cumulative profile output li
 Names have 1–256 ASCII bytes; only alphanumeric characters, `_`, `-`, `.` and
 relative `/` separators are allowed. Empty, dot-prefixed, `.`/`..` components,
 absolute paths, backslashes, duplicates and file/directory-prefix conflicts are
-rejected. Source and output paths cannot collide. Nested input directories are
-created privately; the program must create any new output-only subdirectory.
+rejected. Source and output paths cannot collide. Nested input and declared output-only directories are created privately before execution;
+the program may write only the declared output paths.
 `pdf_latex` must request `paper.pdf` in `pdf` format.
 
 Each runtime file is limited to 256 MiB; the executable and additional inventory
@@ -232,3 +234,44 @@ resource qualification and current external evidence. Live models, general autho
 and reviewer repair loops, in-flight cancellation, maintenance, full Node command
 parity, production activation, writer handoff and Node retirement are not closed
 by these tests or this document.
+
+
+## Mandatory installed-tool migration lane
+
+`rust-migration-acceptance.yml` now includes `scientific-tools` in its existing
+final migration decision. That job checks out the exact candidate, installs
+Rust 1.98.0, the existing pinned Lean 4.30.0 toolchain, and the runner's R/TeX
+packages, then records binary hashes and package/version observations. R/TeX
+package observations are not a reproducible transitive runtime closure.
+
+The job executes the **whole** `scientific_runtime` and `scientific_workflow` integration targets with
+`--include-ignored`, not a hand-maintained list of test names. It rejects zero
+tests, failures, ignored cases or filtered cases. The ordinary developer suite
+still leaves installed-tool tests ignored; that ordinary result does not prove
+installed-tool execution. Missing tools fail the dedicated job; there is no
+stub, fallback executable or missing-tool success path.
+
+The added R cases execute empirical mean/variance and a numerical linear solve,
+verify manifest/output hashes against actual CAS bytes, and reject a failed R
+program even after it has created an output file. The Lean case uses the actual
+binary returned by `elan which lean`, compiles a supplied valid proof to a
+nonempty `proof.olean`, and rejects an invalid proof. The existing TeX case
+executes two real compilation passes. Valid supplied test programs are not
+model authorship, scientific discovery or independently accepted research.
+
+`scientific-tool-execution-<head>` retains raw test logs, exact source/tool
+observations, and the generated manifests and output bytes for R empirical,
+R numerical, Lean and TeX. `artifact-0.bin` is the manifest; the remaining bytes
+are the outputs in its declared order. A failed job may retain partial evidence,
+but the final migration decision requires both the tool job and every existing
+migration partition to succeed. Nothing in this job changes production
+activation, complete role parity, writer cutover or Node retirement.
+
+The installed R workflow case runs the real `hepta-paper-rust autonomous-research`
+CLI repeatedly as separate processes: prepare creates no state, launch commits the
+R result, status reopens the owner, converge binds that named output into a
+manuscript and bundle, and a repeated launch reuses the original output and budget.
+The test uses a fresh host-clock lease and the existing service/CAS/SQLite owners.
+Its command, replay, result and manuscript artifacts are retained under
+`r-autonomous-workflow`; the existing 57-route map links this case directly to
+`operator/autonomous-research`. It does not supply model authorship or review.

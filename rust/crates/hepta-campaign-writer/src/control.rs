@@ -240,6 +240,30 @@ impl CampaignWriterStoreV1 {
         entries: &[DurableControlEntryV1],
         now_unix_ms: u64,
     ) -> Result<(), CampaignWriterError> {
+        self.append_control_batch_with_clock(
+            writer,
+            campaign_id,
+            expected_next_sequence,
+            entries,
+            now_unix_ms,
+            &mut || Ok(now_unix_ms),
+        )
+        .map(|_| ())
+    }
+
+    /// Samples the owning host clock after acquiring SQLite and just before
+    /// COMMIT. Expiry, clock failure or rollback aborts the entire batch. The
+    /// returned time is the final observation, not an independent time receipt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_control_batch_with_clock(
+        &mut self,
+        writer: &WriterLeaseV1,
+        campaign_id: &str,
+        expected_next_sequence: u64,
+        entries: &[DurableControlEntryV1],
+        clock_floor: u64,
+        clock: &mut dyn FnMut() -> Result<u64, CampaignWriterError>,
+    ) -> Result<u64, CampaignWriterError> {
         if entries.is_empty() || entries.len() > MAXIMUM_BATCH_ENTRIES {
             return Err(CampaignWriterError::ControlLogConflict);
         }
@@ -261,6 +285,10 @@ impl CampaignWriterStoreV1 {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let now_unix_ms = clock()?;
+        if now_unix_ms < clock_floor {
+            return Err(CampaignWriterError::InvalidWriterLease);
+        }
         assert_writer(&tx, writer, now_unix_ms)?;
         let campaign = load_campaign_from(&tx, campaign_id)?;
         let mut next_sequence: u64 = from_i64(tx.query_row(
@@ -347,8 +375,13 @@ impl CampaignWriterStoreV1 {
         {
             return Err(CampaignWriterError::DatabaseTooLarge);
         }
+        let final_time = clock()?;
+        if final_time < now_unix_ms {
+            return Err(CampaignWriterError::InvalidWriterLease);
+        }
+        assert_writer(&tx, writer, final_time)?;
         tx.commit()?;
-        Ok(())
+        Ok(final_time)
     }
 }
 

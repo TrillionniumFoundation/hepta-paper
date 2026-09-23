@@ -1,3 +1,15 @@
+#[path = "local_workflow/interruption.rs"]
+mod interruption;
+
+#[path = "local_workflow/clock.rs"]
+mod clock;
+
+#[path = "local_workflow/autonomous_entrypoint.rs"]
+mod autonomous_entrypoint;
+
+#[path = "local_workflow/autonomous_amendment.rs"]
+mod autonomous_amendment;
+
 #[path = "local_workflow/inspection.rs"]
 mod inspection;
 

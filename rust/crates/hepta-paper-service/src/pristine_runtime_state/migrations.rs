@@ -1,5 +1,5 @@
 // Actual checked-in migration SQL is hashed at runtime; no acceptance-output snapshot.
-pub(super) const NATIVE_MIGRATIONS: &[(&str, &[u8])] = &[
+pub(crate) const NATIVE_MIGRATIONS: &[(&str, &[u8])] = &[
     (
         "001_initial",
         include_bytes!("../../../../../store/migrations/001_initial.sql"),

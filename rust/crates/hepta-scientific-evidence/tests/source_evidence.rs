@@ -38,7 +38,7 @@ fn update(hasher: &mut Sha256, value: &[u8]) {
 }
 
 #[test]
-fn independent_recomputation_is_accepted_without_assurance_inflation() {
+fn supplied_recomputation_binding_is_checked_without_assurance_inflation() {
     let producer = producer();
     let verification = IndependentVerificationV1 {
         version: 1,

@@ -20,7 +20,9 @@ secondaryOwnerTeam: TEAM-RUNTIME
 independentReviewerTeam: TEAM-EVIDENCE
 ```
 
-The exact executable/image/source digest, configuration digest, deployment generation, host identity, active qualification evidence, and rollback version are supplied by the qualified deployment registry. This static document cannot grant them.
+Common identity, wire, retry, resource, privacy and compatibility requirements
+are normative in the [shared module contract](../MODULE_MODEL.md#shared-engineering-requirements).
+The sections below define this module's implementation-specific boundaries.
 
 ## Mission and non-goals
 
@@ -43,15 +45,11 @@ Outputs:
 - run receipt
 - bounded events and readiness state
 
-Every request, result, event, health record, and receipt carries explicit schema/kind/version, canonical encoding, maximum bytes/counts, freshness and authority requirements, idempotency identity where applicable, unknown-field policy, and confidentiality classification. Large or confidential content moves by immutable artifact reference rather than unbounded protocol payload.
-
 ## State and authority
 
 Maximum authority class: `prepared_result_only`. Current static activation: `disabled`. The registry declaration is a ceiling and request, not an authority grant. It may write only attempt-local workspace or prepared-result state. A verifier and the commit sequencer decide whether any result becomes authoritative.
 
 Declared side-effect classes: `local_ephemeral`, `workspace_mutation`, `prepared_result`.
-
-Module-private journals may support idempotency and recovery but never become a second campaign-state authority. All durable or irreversible boundaries emit a typed receipt or conservative ambiguity disposition.
 
 ## Dependencies
 
@@ -67,53 +65,70 @@ Current implementation and contract roots:
 - `rust/crates/hepta-paper-service`
 - `docs/rust/RUNTIME_MIGRATION_IMPLEMENTATION.md`
 
-Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
-
 ## Concurrency and resources
 
 Runs as a role-specific service with bounded listeners/workers, queue depth, file descriptors, CPU, memory, storage, and deadlines. Startup/recovery capacity is reserved separately. Backpressure is machine-readable, and every accepted operation is linked to a reservation or a documented control-plane exemption.
-
-The qualified profile records minimum/typical/hard maximum resources, startup and warm-cache cost, maximum inflight work and queue depth, preemption points, affinity/anti-affinity, expected duration/confidence, overload response, and settlement evidence.
 
 ## Determinism and optimization contract
 
 Declared class: `deterministic`. The same canonical input, module version, configuration, and explicit clock produce byte-identical canonical output. Map iteration, wall-clock observation order, process IDs, and ambient environment are not semantic inputs.
 
-A candidate-producing module must expose feasible alternatives or a justified singleton, finite resource/cost/latency/risk estimates, uncertainty, expiry, dependency effects, and a canonical payload hash. Local utility is advisory; global priority and integration remain control-plane decisions.
-
 ## Failure, recovery, and idempotency
 
 Startup fails before readiness on identity, schema, registry, qualification, reconciliation, writer-generation, or dependency failure. Runtime failure fences new dispatch, preserves prepared work, and requires deterministic recovery before restart.
-
-Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
 
 ## Security and privacy
 
 Run under a dedicated principal with read-only policy/registry inputs and narrow broker/sequencer ports. It holds no provider, KMS/HSM, WORM, portal, or submission secrets.
 
-Logs and telemetry use an allowlist of bounded machine fields. Credential bytes, private keys, unrestricted prompts/provider responses, confidential manuscript content, developer home paths, and environment dumps are prohibited unless an independently reviewed evidence contract explicitly requires a protected representation.
-
 ## Compatibility and migration
 
 Service upgrades require protocol/state compatibility, reconciliation of in-flight work, exact rollback target, and no dual-writer/external-effect reachability.
-
-Compatibility is one of exact, semantic, evaluation-based, or retired. A breaking protocol, state, authority, resource-unit, side-effect, or rubric change requires a new module version, migration/rollback plan, fresh conformance, and downstream qualification invalidation.
 
 ## SLO, capacity, and observability
 
 Track p50/p95/p99 latency, maximum queue age/depth, throughput, timeout/fallback rate, recovery time, and all zero-tolerance safety counters. Canonical workload and threshold versions are bound in the deployment evidence; source documents do not invent production numbers.
 
-Every signal binds module/version/configuration, campaign/plan/attempt/reservation identities as applicable, schema version, producer trust class, privacy class, and retention rule. A dashboard or healthy heartbeat is not qualification or authority.
-
 ## Operational runbook
 
-Startup validates exact source/binary or image, configuration, principal, paths, schema/state versions, dependency health, qualification freshness, and recovery residue before readiness. Operators stop admission before shutdown, preserve journals and prepared artifacts, reconcile ambiguous effects, and use the owning work-item/external package for escalation. No operator command may bypass idempotency, fencing, independent verification, or the authority ceiling.
+The runnable operator surface is `hepta-paper-rust autonomous-research`;
+the owning execution chain is documented in [local workflow execution and
+recovery](../LOCAL_WORKFLOW_HANDOFF.md). The guarded library APIs and the
+separate state-authority daemon do not establish a production service launcher.
+Build the current checkout, then operate only an explicitly selected disposable
+or admitted local workflow:
+
+```sh
+cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
+rust/target/debug/hepta-paper-rust autonomous-research --campaign-id "$CAMPAIGN" --workflow-file "$DEFINITION" --action prepare
+rust/target/debug/hepta-paper-rust autonomous-research --campaign-id "$CAMPAIGN" --workflow-file "$DEFINITION" --action launch --through-steps 1
+rust/target/debug/hepta-paper-rust autonomous-research --campaign-id "$CAMPAIGN" --workflow-root "$STATE" --definition-hash "$HASH" --action status
+```
+
+`DEFINITION` is a private absolute-path `LocalWorkflowV1`; `STATE` and `HASH`
+come from its actual owner/result, not fabricated examples. With a custom
+`CARGO_TARGET_DIR`, use that build directory instead of `rust/target`.
+Prepare performs no state creation. Launch mutates the selected local state;
+it does not enable a production writer. The current CLI samples the system
+clock, rejects backwards observations and revalidates the lease at dispatch
+and commit; it does not establish trusted or monotonic host time.
+
+| Observed condition | Operator action | Required postcondition |
+|---|---|---|
+| Busy owner | Let the owning operation finish or interrupt that operation; do not remove its lock. | A fresh read-only status succeeds under the existing owner. |
+| Paused or ready for cancellation | Read the current revision; issue pause/resume/cancel with that exact `--expected-revision`. | Re-read persisted lifecycle and committed prefix. |
+| Started without durable prepared output | Preserve attempts, CAS and SQLite. Do not relaunch, delete markers or refund uncertain usage. | An owning reconciliation supplies a definite result; cancel alone does not settle it. |
+| Complete prepared output, commit interrupted | Use `hepta-local-maintenance prepared-plan STATE HASH`; inspect its exact plan/hash before `prepared-commit`. | The same verified bytes commit once, without worker re-execution. |
+| Missing/corrupt CAS, foreign definition or stale lease | Stop new admission and preserve the complete private state for its owner. | Correctly bound evidence/recovery, not edited JSON flags or an old backup over new commits. |
+
+The full maintenance argument contract is in the [actual maintenance
+CLI](../../../rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs).
+A signal to the autonomous CLI interrupts its supervised process group;
+it cannot erase a completed COMMIT or prove absence of remote effects.
 
 ## Verification and evidence
 
 Capability bindings: `CAP-CTL-SNAPSHOT`, `CAP-CTL-POLICY`, `CAP-EXE-DISPATCH`. Related work identifiers: `CTL-001`, `CTL-008`. Implementation/contract roots: `docs/control-plane/COMPOSITION_ROOT.md`, `rust/crates/hepta-paper-service`, `docs/rust/RUNTIME_MIGRATION_IMPLEMENTATION.md`. Required evidence includes positive, negative, malformed, oversize, replay, cancellation/crash, resource, authority, compatibility, and secrecy tests as applicable. Source conformance never substitutes for target-host or external-authority evidence.
-
-The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 ### Runtime migration implementation details
 

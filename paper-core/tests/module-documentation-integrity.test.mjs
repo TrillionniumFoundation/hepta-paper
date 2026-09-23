@@ -71,7 +71,7 @@ test('missing required section fails closed', () => {
   }
 });
 
-test('authority-specific safety language and registry parity fail closed', () => {
+test('typed authority and registry parity fail closed', () => {
   const root = createFixture();
   try {
     const index = JSON.parse(fs.readFileSync(path.join(root, 'docs/modules/module-documentation.v1.json'), 'utf8'));
@@ -225,5 +225,28 @@ test('implementation projection is deterministic and preserves pending work with
   for (const row of Object.values(projection.modules)) {
     assert.equal(row.effectiveQualification, 'not_evaluated');
     assert.equal(row.productionActivationVerified, false);
+  }
+});
+
+
+test('equivalent prose does not require magic authority keywords', () => {
+  const root = createFixture();
+  try {
+    const file = path.join(root, WRITER_SPEC);
+    const source = fs.readFileSync(file, 'utf8')
+      .replaceAll('single-writer', 'exclusive writer')
+      .replaceAll('fencing', 'generation isolation');
+    fs.writeFileSync(file, source);
+    const result = validateModuleDocumentation({ root });
+    assert.equal(result.ok, true, result.failures.join('\n'));
+    // The same reworded document still cannot hide a typed authority escalation.
+    changeJson(root, WRITER_MANIFEST, (value) => {
+      value.sideEffectClasses.push('submission');
+    });
+    const escalated = validateModuleDocumentation({ root });
+    assert.equal(escalated.ok, false);
+    assert.match(escalated.failures.join('\n'), /authority ceiling/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

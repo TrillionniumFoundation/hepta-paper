@@ -306,3 +306,80 @@ test('work-item keys, modules, capabilities and source state are closed-world', 
     evidence.records['TEST-001'].capabilityIds = ['CAP-UNKNOWN'];
   }, /unknown_capability/u);
 });
+
+// These exercise the actual verifier process boundary. The synthetic Cargo
+// executable tests transcript policy only; it is not Rust execution evidence.
+function executableCargoFixture(t, transcript) {
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'rust/tests/selected.rs', '#[test]\nfn selected_owner_test() {}\n');
+    const bundle = evidence.bundles['example-source'];
+    bundle.files[1] = {
+      path: 'rust/tests/selected.rs', role: 'test', mode: '100644', language: 'rust',
+      gitBlob: command(root, 'git', 'hash-object', 'rust/tests/selected.rs'),
+      symbols: [{ kind: 'test', name: 'selected_owner_test' }],
+    };
+    bundle.verificationCommands[0] = {
+      program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 10,
+      args: ['test', '--locked', '-p', 'fixture', 'selected_owner_test', '--', '--exact', '--nocapture'],
+      expectedTargets: ['rust/tests/selected.rs'],
+    };
+  });
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-test-transcript-'));
+  const launcher = path.join(bin, 'cargo');
+  fs.writeFileSync(launcher, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(transcript)});\n`, { mode: 0o700 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${oldPath ?? ''}`;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    fs.rmSync(bin, { recursive: true, force: true });
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  });
+  return fixture;
+}
+
+const zeroCargoSummary = 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s\n';
+const oneCargoSummary = 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n';
+
+for (const [name, transcript] of [
+  ['empty output', ''],
+  ['zero selected tests', zeroCargoSummary],
+  ['ignored selected test', 'test selected_owner_test ... ignored\ntest result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n'],
+  ['different test', `test another_owner_test ... ok\n${oneCargoSummary}`],
+  ['duplicate selected tests', `test selected_owner_test ... ok\n${oneCargoSummary}test selected_owner_test ... ok\n${oneCargoSummary}`],
+  ['success text without summary', 'test selected_owner_test ... ok\n'],
+  ['zero summary after success text', `test selected_owner_test ... ok\n${zeroCargoSummary}`],
+]) {
+  test(`zero-exit Cargo ${name} cannot produce accepted evidence`, (t) => {
+    const fixture = executableCargoFixture(t, transcript);
+    const receipt = path.join(os.tmpdir(), `hepta-rejected-receipt-${path.basename(fixture.root)}.json`);
+    assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true, receipt }),
+      /verification_test_execution_incomplete/u);
+    assert.equal(fs.existsSync(receipt), false, 'failure must not publish an acceptance receipt');
+  });
+}
+
+test('Cargo exact selected execution permits other binaries with zero matching tests', (t) => {
+  const fixture = executableCargoFixture(t,
+    `${zeroCargoSummary}\u001b[32mtest selected_owner_test ... ok\u001b[0m\n${oneCargoSummary}${zeroCargoSummary}`);
+  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+  assert.deepEqual(receipt.authorityClaims, authorityClaims());
+});
+
+for (const [name, body] of [
+  ['skipped', "test('feature_test', { skip: true }, () => {});"],
+  ['todo', "test('feature_test', { todo: true }, () => {});"],
+  ['no registered test', "if (false) test('feature_test', () => {});"],
+]) {
+  test(`actual Node ${name} cannot produce accepted owner-test evidence`, (t) => {
+    const fixture = createFixture((evidence, root) => {
+      write(root, 'test/feature.test.mjs', `import test from 'node:test';\n${body}\n`);
+      evidence.bundles['example-source'].files[1].gitBlob = command(root, 'git', 'hash-object', 'test/feature.test.mjs');
+    });
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true }),
+      /verification_test_execution_incomplete/u);
+  });
+}

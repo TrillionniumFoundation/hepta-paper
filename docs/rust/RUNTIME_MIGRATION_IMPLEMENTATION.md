@@ -163,3 +163,198 @@ credential custody or workload; those require the actual target host.
 No percentage based on crate count, documentation count or passing fixture count
 can establish full replacement. `CTL-001` and production activation remain open
 until the complete production service and its independent evidence are accepted.
+
+## Native provisioning plan identity
+
+`hepta-paper-rust autonomous-state-provision --action plan` remains a read-only
+source preflight. Its exact command flags are owned by the existing command map,
+not a second registry. Runtime-root spelling is normalized before hashing. The
+returned `provisioningPlanId` is the actual production `hashRecord` of
+`AutonomousResearchStateBusinessSchemaProvisioningPlan` and the returned object
+with that one field removed. Machine/topic semantic values and byte observations
+come from the same retained reads, revalidated before return.
+
+Old plans that incorporated an earlier hidden `provisioningPlanId` are not an
+accepted alternative encoding: regenerate them from the current inputs. A source
+byte change changes the plan; an existing runtime is never adopted. The real Node
+hash oracle, equivalent target spellings, changed source and non-overwrite cases
+run in `autonomous_state_provision_route`.
+
+The original no-genesis-input profile remains diagnostic and its execute path
+remains blocked. The explicit `pinned-external-genesis-v1` profile below instead
+validates actual inputs and creates the ten business databases. Neither profile
+activates an online writer, qualifies a host or authorizes Node retirement.
+
+### Native ten-database execution
+
+Use the existing `autonomous-state-provision` command with these additional
+Rust-profile flags: `--genesis-inputs ABSOLUTE_JSON` and
+`--genesis-inputs-sha256 SHA256`. Both are mandatory for native execution. The
+second value must be the independently selected raw-file digest, not a trust
+statement inferred from a file supplied by an untrusted caller.
+
+The closed input document has `version: 1`,
+`kind: NativeStateProvisioningGenesisInputsV1`, and exactly four named objects:
+`ownerTrustStore`, `genesisEnvelope`, `rotationTrustStore`, `bootstrapReceipt`.
+Each object has only `path` (absolute) and `sha256` (lowercase `sha256:` plus 64
+hex digits). Existing pinned-genesis verification reads those public documents;
+no private key is loaded. Genesis needs the existing capability-owner and
+operational-observer Ed25519 signatures, distinct subjects, exact configuration
+and producer binding, and a currently valid interval. The native profile refuses
+`root-owned-configuration` rather than treating a flag as unsigned authority.
+Rotation/bootstrap documents are retained for the existing evidence contract;
+this operation creates generation one and does not perform a rotation.
+
+Machine configuration V2 reuses the existing V1 structural, static-intake and
+budget validator plus the genuine V2 hash/producer binding. The actual registered
+topic observer reads dataset bytes and the original implementation identity.
+This does not activate V2 health or execute that JavaScript implementation.
+
+```bash
+hepta-paper-rust autonomous-state-provision --action plan \
+  --root "$SOURCE_ROOT" --runtime-root "$NEW_RUNTIME_ROOT" \
+  --machine-intake-config "$MACHINE_CONFIG" --topic-producer-profile "$TOPIC_PROFILE" \
+  --dataset-root "$DATASET_ROOT" --genesis-inputs "$GENESIS_INPUTS" \
+  --genesis-inputs-sha256 "$APPROVED_GENESIS_INPUTS_SHA256"
+# Repeat those identical inputs with --action execute --execute --plan-id "$PLAN_ID".
+```
+
+The target must be absent, beneath a non-shared parent owned by the executing
+UID. All ancestor names are checked against retained directory descriptors.
+The plan binds the normalized target, parent device/inode/owner/mode, actual
+retained source observations, signed input pins, schema bundle and original
+seven-field provisioning identity. Its hash excludes only its own identifier.
+The execution profile currently uses the original refresh-policy defaults plus
+explicit maximum-attempt and maximum-cost fields. Other incumbent policy and
+provider CLI options remain unmapped rather than silently ignored.
+
+The constructor uses the original 25 migration files for `native-store`, the
+existing handoff migration data, and compiled business schema templates for the
+other eight roles. Templates are checked against actual Node constructors by
+`autonomous_state_provision_execution`; they contain no fixture genesis rows or
+ready flags. Actual metadata, genuine external genesis, and one fresh random
+handoff nonce and matching cross-database cutover identity are inserted. All ten
+connections are in-memory and explicitly closed before filesystem publication.
+Every database must pass SQLite quick-check and foreign-key checks. Per-image
+bytes are bounded at 32 MiB and the complete image set at 128 MiB.
+
+One private same-parent staging directory receives the ten 0600 files, closed
+namespace and byte verification, a prepared manifest and directory/file fsync.
+The parent directory is synced immediately after creating the recovery name. Linux
+`RENAME_NOREPLACE` installs the whole tree. Final source/currentness and output
+checks cannot turn an already-published result into a no-effect claim. The
+retained prepared receipt lists the actual path, schema and byte digest of every image
+and keeps `freshRuntimeInstalled=false`, `ready=false`, `publicationState=prepared`.
+Only after observing rename, directory sync and byte verification does this owner
+persist `native-provisioning-publication.json` with `publicationState=published`
+and return that exact terminal receipt. It binds the prepared receipt hash;
+`ready` means business-schema initialization only. Online schema transition,
+installed service activation, complete writable-owner admission and external
+qualification remain separate.
+
+### Provisioning failure and recovery runbook
+
+| Failure | Result and operator action | Required invariant |
+|---|---|---|
+| Missing pin, invalid signature/profile/dataset, changed plan | No staging or runtime is created; repair the input through its real owner and obtain a new plan. | A claimed hash or ready flag cannot substitute for authority or bytes. |
+| Construction or pre-publication failure | Runtime stays absent. A created `.NAME.provisioning-*` stage is retained, and later runs reject it for inspection. | No automatic reuse, deletion, hidden retry or overwrite. |
+| Target appears before rename | The existing target is untouched; retain staging and resolve the conflicting owner. | `RENAME_NOREPLACE`, never check-then-overwrite. |
+| Rename succeeds, later sync/verification fails | Error explicitly says `publicationState=published`; preserve the runtime and prepared/terminal receipts. Verify all ten hashes before the next lifecycle action. | Never restore an older backup or delete the installed tree. |
+| Rename outcome uncertain | Error says `publicationState=indeterminate`; preserve both possible names and resolve identities under exclusive maintenance. | Do not infer non-execution or automatically retry. |
+
+Automatic adoption/cleanup of abandoned stages is not implemented. A retained
+stage is not a production runtime or a command-acceptance receipt. The failure
+reports keep the original result and both names so an owner can determine which
+side of publication survived; no production database or live service is touched
+by the repository test harness.
+
+```bash
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --test autonomous_state_provision_execution --test autonomous_state_provision_route
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --lib autonomous_state_provision
+```
+
+Differential tests require the pinned Node oracle runtime for fixture setup,
+then remove Node and external tools from the actual Rust execution PATH. They
+compare every business schema and initial row, separately verify the paired
+handoff identity, and test rejection before writes. Publisher tests additionally
+exercise real target races, retained stages, output corruption, post-rename
+failure and SIGKILL on both sides of rename. They do not qualify a production
+installation or an external principal.
+
+### Explicit unpublished-stage recovery
+
+The existing provisioning command accepts a separate Rust-only profile:
+
+```bash
+hepta-paper-rust autonomous-state-provision --recover-staging "$RECOVERY_REQUEST"
+```
+
+Use the [executable request example](../modules/examples/provisioning-recovery-request.v1.json).
+It is a closed `NativeStateProvisioningRecoveryRequestV1`: `version=1`, exact
+`kind`, `action` (`inspect` or `quarantine`), absolute `runtimeRoot` and
+`stagingRoot`, boolean `execute`, and optional/null `expectedPlanHash`.
+Unknown/duplicate JSON fields, additional CLI arguments and requests above
+64 KiB are refused. A staging name must be the exact same-parent
+`.NAME.provisioning-` plus 32 lowercase hex digits for the selected runtime.
+This profile does not load genesis, model credentials or database connections.
+
+First use `action=inspect`, `execute=false`, `expectedPlanHash=null`. Inspection
+creates no file and reports the actual retained-directory and file identities,
+byte lengths and SHA-256 values in `plan.inventory`. The plan hash binds that
+inventory, the normalized target, both original/quarantine names and the parent
+identity. The only allowed action is non-destructive quarantine, not execution
+or adoption of any staged content. For mutation, retain the selected
+`plan.recoveryPlanHash`, use `action=quarantine`, `execute=true`, and supply that
+value as `expectedPlanHash`. The owner re-reads and compares the entire inventory
+under its exclusive nonblocking parent-directory lock before renaming.
+
+Recovery and new publication share that advisory lock. This is a local
+cooperating-owner contract, not exclusion of older binaries, hostile same-UID
+processes or a qualified network filesystem. Stop such older/noncooperating
+producers before recovery; this command is not a systemd stop or installed-host
+qualification ceremony. The lock needs no persistent lock file and inspection
+never constructs a runtime. Independent targets under one parent serialize.
+
+The bounded inventory accepts only manifest-derived directories/database paths
+and the prepared receipt. Partial or empty files are preserved as bytes, not
+accepted as valid SQL. Files must be private 0600, single-link regular files;
+directories private 0700 on the retained parent device. At most 64 total entries,
+32 MiB per database, 1 MiB for the prepared receipt and 129 MiB aggregate file
+bytes are read. Symlinks, special nodes, unknown names and a terminal publication
+receipt cause refusal. An existing runtime causes refusal even if it appears
+pristine: published roots and newer committed state are never touched.
+
+Quarantine uses same-parent `RENAME_NOREPLACE` to
+`.NAME.quarantined-provisioning-NONCE`, flushes the retained files/directories and
+parent, and re-verifies the original descriptors at the new name. No bytes are
+deleted or rewritten, no missing schema is invented, and the result keeps
+`freshRuntimeInstalled=false`, `productionActivation=false`, `nodeRetirement=false`.
+Preserve the request/plan and receipt outside the runtime. A new ordinary
+provisioning plan can subsequently create a fresh root; the quarantined bytes
+remain available for inspection and are not used as a rollback image.
+
+| Observed failure/state | Operator action |
+|---|---|
+| `owner_busy` | Finish or stop the actual competing cooperating owner; no recovery mutation happened. |
+| Missing/both names, unsafe namespace, existing runtime | Preserve all names and resolve ownership manually. Do not delete or force-adopt a directory. |
+| `recovery_plan_mismatch` | Inspect the changed bytes/identity. Approval of the earlier snapshot does not approve the replacement. |
+| `quarantineState=not_quarantined` | Original staging is retained; resolve the reported input/namespace/destination conflict. |
+| `quarantineState=quarantined` after a late failure | Preserve quarantine. Reissue the identical selected request to verify bytes and finish directory durability. |
+| `quarantineState=indeterminate` or process death | Inspect both names. Exactly one matching name plus the selected plan is required for explicit reconciliation; there is no automatic retry. |
+
+With staging absent and the exact quarantine present, explicit execution of the
+same selected plan returns the same deterministic receipt after full byte/identity
+verification and directory sync. A copied or modified quarantine does not match.
+Once a new runtime exists this recovery profile refuses even replay; normal
+runtime lifecycle owners take over. No source-to-runtime adoption or repair of a
+published root is implied.
+
+The provisioning integration target imports the checked-in request example,
+constructs genuine ten-database native images, models retained staging in its
+private fixture, executes the actual recovery CLI without Node in PATH, compares
+all ten byte hashes, repeats the receipt and creates a fresh runtime while
+preserving quarantine. Unit tests independently use actual SIGKILL at
+before-rename, after-rename and post-sync cuts. Those publisher/recovery byte
+fixtures are not production database, storage-loss or external-principal proof.

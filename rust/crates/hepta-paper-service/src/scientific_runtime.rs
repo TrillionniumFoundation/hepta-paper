@@ -5,9 +5,10 @@
 //! credentials are inherited,
 //! no shell is used and no campaign writer is opened. The service owns admission,
 //! durable dispatch intent, ambiguity handling, CAS insertion and commit.
-//! The standalone worker establishes a private child-process umask. Library
-//! callers must make their admitted programs create outputs without group or
-//! other write permission; this API never mutates the host process's umask.
+//! The standalone worker also establishes a private child-process umask. The
+//! library path does not mutate the host process's umask: it pre-creates every
+//! declared output as an owner-private regular file and rejects any unsafe
+//! replacement or permission drift after the tool exits.
 
 use hepta_codex_protocol::Sha256Digest;
 use hepta_codex_runtime::{
@@ -391,6 +392,42 @@ pub fn execute_scientific_job_v1(
             .map_err(|_| ScientificRuntimeError::Filesystem)?;
         file.write_all(content.as_bytes())
             .and_then(|()| file.sync_all())
+            .map_err(|_| ScientificRuntimeError::Filesystem)?;
+    }
+    // Own the output paths before the tool starts so direct library callers do
+    // not depend on the host process's ambient umask. A cooperating tool opens
+    // and truncates these 0600 files in place. If it removes/replaces one,
+    // changes permissions, creates a link/special node, or escapes the private
+    // root, the post-execution descriptor/identity checks below still fail.
+    for output in &job.outputs {
+        let path = work.join(&output.path);
+        if let Some(parent) = path.parent() {
+            let mut current = work.clone();
+            for part in parent
+                .strip_prefix(&work)
+                .map_err(|_| ScientificRuntimeError::Identity)?
+                .components()
+            {
+                current.push(part);
+                if !current.exists() {
+                    fs::DirBuilder::new()
+                        .mode(0o700)
+                        .create(&current)
+                        .map_err(|_| ScientificRuntimeError::Filesystem)?;
+                }
+                if private_directory(&current)? != owner {
+                    return Err(ScientificRuntimeError::Identity);
+                }
+            }
+        }
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(OFlag::O_NOFOLLOW.bits())
+            .open(&path)
+            .map_err(|_| ScientificRuntimeError::Filesystem)?;
+        file.sync_all()
             .map_err(|_| ScientificRuntimeError::Filesystem)?;
     }
     File::open(&work)

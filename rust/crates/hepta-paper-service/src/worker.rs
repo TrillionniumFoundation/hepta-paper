@@ -9,7 +9,7 @@ use base64ct::{Base64, Encoding};
 use hepta_codex_protocol::Sha256Digest;
 use hepta_codex_runtime::{
     BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1, ProcessTerminationReason,
-    run_bounded_process,
+    run_bounded_process_with_cancellation,
 };
 use hepta_control_plane::{
     ControlPlaneError, ExecutionRequestV1, ModuleExecutorV1, canonical_hash_v1,
@@ -25,7 +25,14 @@ use std::{
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
+
+#[path = "worker_recovery.rs"]
+mod recovery;
 
 /// Explicit backend: native Rust or a pinned process, never a silent fallback.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -103,6 +110,7 @@ pub struct WorkerResponseV1 {
 pub struct ServiceExecutorV1 {
     objects: ObjectStoreV1,
     workers: BTreeMap<String, WorkerBindingV1>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl ServiceExecutorV1 {
@@ -114,10 +122,22 @@ impl ServiceExecutorV1 {
         if workers.len() > 256 {
             return Err(ServiceError::Configuration);
         }
-        Ok(Self { objects, workers })
+        Ok(Self {
+            objects,
+            workers,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    pub(crate) fn with_cancellation(mut self, cancelled: Arc<AtomicBool>) -> Self {
+        self.cancelled = cancelled;
+        self
     }
 
     fn execute_one(&self, request: &ExecutionRequestV1) -> Result<PreparedResultV1, ServiceError> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(ServiceError::Execution);
+        }
         let binding = self
             .workers
             .get(&request.candidate.module_id)
@@ -243,7 +263,7 @@ impl ServiceExecutorV1 {
                 )
             }
             (WorkerBindingV1::Process { .. }, NativeJobV1::Process { input }) => {
-                let response = run_process(binding, request, input)?;
+                let response = run_process(binding, request, input, &self.cancelled)?;
                 if response.version != 1
                     || response.artifacts.is_empty()
                     || response.artifacts.len() > 256
@@ -303,13 +323,37 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
         &mut self,
         requests: &[ExecutionRequestV1],
     ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
+        // Compatibility/direct calls have no supplied live admission observer.
+        // The real control-plane path calls execute_batch_with_admission.
+        self.execute_batch_with_admission(requests, &mut || Ok(()))
+    }
+
+    fn execute_batch_with_admission(
+        &mut self,
+        requests: &[ExecutionRequestV1],
+        revalidate_admission: &mut dyn FnMut() -> Result<(), ControlPlaneError>,
+    ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
         // Exact reservations remain held for the whole dependency wave. Bounded
         // sequential dispatch is conservative; parallel workers require host admission.
+        let guard = recovery::DispatchGuardV1::acquire(&self.objects)
+            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
         requests
             .iter()
             .map(|request| {
-                self.execute_one(request)
-                    .map_err(|_| ControlPlaneError::ExecutionInvalid)
+                guard
+                    .validate()
+                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+                // This is after recovery validation and before handing this
+                // particular request to the worker. The preceding worker can
+                // advance time, so a wave-wide check cannot replace this one.
+                revalidate_admission()?;
+                let result = self
+                    .execute_one(request)
+                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+                guard
+                    .validate()
+                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+                Ok(result)
             })
             .collect()
     }
@@ -319,6 +363,7 @@ fn run_process(
     binding: &WorkerBindingV1,
     request: &ExecutionRequestV1,
     input: Value,
+    cancelled: &AtomicBool,
 ) -> Result<WorkerResponseV1, ServiceError> {
     let WorkerBindingV1::Process {
         executable,
@@ -375,7 +420,7 @@ fn run_process(
         maximum_tail_bytes: 1_048_576,
         ..ProcessLimitsV1::default()
     };
-    let result = run_bounded_process(
+    let result = run_bounded_process_with_cancellation(
         &BoundedProcessRequestV1 {
             executable: executable.clone(),
             arguments: arguments.iter().map(OsString::from).collect(),
@@ -384,6 +429,7 @@ fn run_process(
             stdin: Some(stdin),
         },
         limits,
+        cancelled,
     )
     .map_err(|_| ServiceError::Execution)?;
     if result.termination_reason != ProcessTerminationReason::Exited
@@ -406,6 +452,7 @@ fn run_process(
 pub fn native_implementation_hash_v1() -> Result<Sha256Digest, ServiceError> {
     let mut h = Sha256::new();
     h.update(include_bytes!("worker.rs"));
+    h.update(include_bytes!("worker_recovery.rs"));
     h.update(include_bytes!("objects.rs"));
     h.update(native_business_implementation_hash_v1().as_bytes());
     format!("sha256:{}", hex::encode(h.finalize()))

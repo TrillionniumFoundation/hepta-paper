@@ -102,12 +102,15 @@ writer transfer, or retirement. The [full replacement acceptance contract](FULL_
 requires command/mode and capability-specific evidence before those transitions.
 
 The generated [Node/Rust command compatibility map](node-rust-command-map.v1.json)
-keeps all registered command routes bound to either a reviewed Rust candidate or
-an explicit unmapped decision. Its `partial_local_source` rows are source
-call-chain candidates only; they do not grant parity, production activation or
-Node retirement. The map is checked by `docs/tools/audit-node-rust-coverage.mjs`
-and validates the declared Rust function and executable-test symbols. Source
-symbol existence is not call-graph verification or evidence that tests passed.
+is the **single migration ledger**. It keeps every registered command route and,
+where a command has a multi-action surface, its reviewed argument-mode rows
+bound to either a Rust candidate or an explicit unmapped decision. No second
+campaign/command migration matrix is authoritative. Its `partial_local_source`
+rows are source call-chain candidates only; they do not grant parity, production
+activation or Node retirement. The map is checked by
+`docs/tools/audit-node-rust-coverage.mjs`, which verifies live command/action
+inventory coverage plus the declared Rust function and executable-test symbols.
+Source symbol existence is not call-graph verification or evidence that tests passed.
 The [command gap closure ledger](NODE_RUST_GAP_CLOSURE.md) retains every route,
 including partial candidates, with its Node entrypoint, remaining implementation
 work and required acceptance evidence;
@@ -127,23 +130,28 @@ Adapters are temporary and have retirement work items.
 
 ## 6. Duplicate crate resolution
 
-Before production composition, adjacent Rust responsibilities receive one
-canonical decision, including:
+Adjacent Rust responsibilities now have explicit product-owner decisions:
 
-```text
-hepta-workspace vs hepta-workspace-authority
-hepta-readonly-store vs hepta-readonly-control
-hepta-compatibility vs hepta-legacy-compatibility
-```
+- `hepta-workspace` is the selected durable workspace product owner.
+  `hepta-workspace-authority` remains a standalone compatibility/reference
+  implementation and is absent from the registered product module and product
+  crate dependency graph.
+- `hepta-readonly-control` owns schema/format validation while
+  `hepta-readonly-store` owns physical immutable SQLite inspection and depends
+  on that control contract. This is a layered capability split, not competing
+  read owners.
+- `hepta-legacy-compatibility` owns production Node byte/JSON compatibility.
+  `hepta-compatibility` remains a Rust-draft/reference CLI surface and is not
+  selected by the compatibility product module or product control/service
+  crates.
+- `hepta-orchestration-kernel` remains a standalone compatibility/experimental
+  crate. Snapshot, candidate routing, scheduling/resource, observability and
+  performance product ownership is selected in `hepta-control-plane`; the
+  standalone crate is not re-exported by the product control plane.
 
-Allowed outcomes:
-
-- one public facade over private implementation crates;
-- explicit legacy-only verifier;
-- merge and retire;
-- distinct capability split documented by ADR.
-
-“Both remain available and callers choose” is not acceptable.
+The architecture gate enforces these selections. Compatibility crates may remain
+buildable for differential testing, but “both remain available and callers
+choose” is not an allowed product composition.
 
 ## 7. Data migration
 

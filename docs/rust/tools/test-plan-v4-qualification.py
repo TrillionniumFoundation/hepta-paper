@@ -253,6 +253,69 @@ class PlanV4QualificationTests(unittest.TestCase):
         self.assertEqual(access["runId"], run_id)
         self.assertEqual(access["runAttempt"], attempt)
 
+    def test_only_live_run_mutation_is_retryable_collection_instability(self) -> None:
+        self.assertTrue(
+            COLLECT.retryable_live_collection_error(
+                ValueError(
+                    "workflow_run_mutated_during_jobs_fallback:"
+                    "run=123:fields=status,conclusion,updated_at"
+                )
+            )
+        )
+        self.assertFalse(
+            COLLECT.retryable_live_collection_error(
+                ValueError("github_api_permission_denied:actions_jobs_read:run=123:attempt=1")
+            )
+        )
+        self.assertFalse(
+            COLLECT.retryable_live_collection_error(
+                ValueError("required_job_missing_or_duplicate:context:count=0")
+            )
+        )
+
+    def test_live_run_permission_denied_revalidates_from_run_listing(self) -> None:
+        run = copy.deepcopy(self.fixture.workflow_runs[0])
+        run_id, attempt = COLLECT.run_key(run)
+        jobs = copy.deepcopy(self.fixture.jobs_by_attempt[(run_id, attempt)])
+
+        def fake_fetch_pages(url: str, list_key: str, token: str):
+            self.assertEqual(token, "token")
+            if "/attempts/" in url:
+                self.assertEqual(list_key, "jobs")
+                raise COLLECT.GitHubApiError(403, url)
+            if "/jobs?filter=latest" in url:
+                self.assertEqual(list_key, "jobs")
+                return jobs, [{"jobs": jobs}]
+            self.assertIn(f"/actions/runs?head_sha={run['head_sha']}&event=pull_request", url)
+            self.assertEqual(list_key, "workflow_runs")
+            return [copy.deepcopy(run)], [{"workflow_runs": [copy.deepcopy(run)]}]
+
+        with (
+            mock.patch.object(COLLECT, "fetch_pages", side_effect=fake_fetch_pages),
+            mock.patch.object(
+                COLLECT,
+                "fetch_json",
+                side_effect=COLLECT.GitHubApiError(
+                    403,
+                    f"https://api.github.test/repos/TrillionniumFoundation/hepta-paper/actions/runs/{run_id}",
+                ),
+            ),
+        ):
+            observed, access = COLLECT.fetch_jobs_for_attempt(
+                api="https://api.github.test",
+                repository="TrillionniumFoundation/hepta-paper",
+                run=run,
+                token="token",
+            )
+
+        self.assertEqual(observed, jobs)
+        self.assertEqual(
+            access["accessMode"],
+            "latest_endpoint_after_attempt_permission_denied",
+        )
+        self.assertEqual(access["runId"], run_id)
+        self.assertEqual(access["runAttempt"], attempt)
+
     def test_missing_jobs_read_permission_is_explicitly_classified(self) -> None:
         run = copy.deepcopy(self.fixture.workflow_runs[0])
 

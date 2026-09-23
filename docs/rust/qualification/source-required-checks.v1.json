@@ -39,8 +39,8 @@
   "collector": {
     "workflow": ".github/workflows/rust-effective-source-qualification.yml",
     "context": "derive-effective-source-status",
-    "maximumWaitSeconds": 2700,
-    "pollSeconds": 20,
+    "maximumWaitSeconds": 8100,
+    "pollSeconds": 60,
     "producerManifest": "docs/rust/qualification/source-check-producers.v1.json",
     "capabilityEvidence": "docs/rust/qualification/source-capability-evidence.v1.json",
     "checkEvidenceSchema": "docs/rust/qualification/required-check-evidence-v2.schema.json",

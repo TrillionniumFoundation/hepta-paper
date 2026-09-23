@@ -401,7 +401,7 @@ function validateCommand(command, label, testPaths) {
     if (!allowed) fail('node_command_not_allowlisted', label);
   } else if (command.program === 'cargo') {
     const args = command.args;
-    const allowed = args.length === 8
+    const unscoped = args.length === 8
       && args[0] === 'test'
       && args[1] === '--locked'
       && args[2] === '-p'
@@ -409,9 +409,25 @@ function validateCommand(command, label, testPaths) {
       && SAFE_RUST_TEST_PATTERN.test(args[4])
       && args[5] === '--'
       && args[6] === '--exact'
-      && args[7] === '--nocapture'
-      && workdir === 'rust';
-    if (!allowed) fail('cargo_command_not_allowlisted', label);
+      && args[7] === '--nocapture';
+    const scopedTarget = command.expectedTargets.length === 1
+      ? /^rust\/crates\/([^/]+)\/tests\/([^/]+)\.rs$/u.exec(command.expectedTargets[0])
+      : null;
+    const scoped = args.length === 10
+      && args[0] === 'test'
+      && args[1] === '--locked'
+      && args[2] === '-p'
+      && SAFE_PACKAGE_PATTERN.test(args[3])
+      && args[4] === '--test'
+      && SAFE_RUST_TEST_PATTERN.test(args[5])
+      && SAFE_RUST_TEST_PATTERN.test(args[6])
+      && args[7] === '--'
+      && args[8] === '--exact'
+      && args[9] === '--nocapture'
+      && scopedTarget !== null
+      && scopedTarget[1] === args[3]
+      && scopedTarget[2] === args[5];
+    if ((!unscoped && !scoped) || workdir !== 'rust') fail('cargo_command_not_allowlisted', label);
   } else {
     fail('command_program_not_allowlisted', `${label}:${command.program}`);
   }
@@ -578,6 +594,52 @@ function safeExecutionEnvironment() {
   return env;
 }
 
+// A successful test process is not evidence that the selected test executed.
+// These are pinned libtest/TAP transcript checks, not producer authentication:
+// exact source ownership and the independent cargo discovery gate still apply.
+function assertTestExecution(command, bundle, stdout, label) {
+  const text = stdout.replace(/\x1b\[[0-9;]*m/gu, '');
+  if (command.program === 'cargo') {
+    const selector = command.args[4] === '--test' ? command.args[6] : command.args[4];
+    const resultRows = text.split(/\r?\n/u)
+      .filter((line) => line.startsWith(`test ${selector} ... `));
+    const summaries = [...text.matchAll(
+      /^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;[^\r\n]*$/gmu,
+    )];
+    const counts = summaries.map((row) => row.slice(1, 6).map(Number));
+    if (resultRows.length !== 1 || resultRows[0] !== `test ${selector} ... ok`
+        || counts.length === 0
+        || counts.some((row) => row.some((value) => !Number.isSafeInteger(value)))
+        || counts.reduce((sum, row) => sum + row[0], 0) !== 1
+        || counts.some((row) => row[1] !== 0 || row[2] !== 0 || row[3] !== 0)) {
+      fail('verification_test_execution_incomplete', `${label}:${selector}`);
+    }
+    return;
+  }
+  // Node's non-TTY --test output is TAP. Require the actual aggregate footer;
+  // a file that merely loads (zero registered tests) is not an owner test.
+  const totals = Object.create(null);
+  for (const key of ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo']) {
+    const values = [...text.matchAll(new RegExp(`^# ${key} (\\d+)$`, 'gmu'))];
+    if (values.length !== 1 || !Number.isSafeInteger(Number(values[0][1]))) {
+      fail('verification_test_execution_incomplete', `${label}:tap_${key}`);
+    }
+    totals[key] = Number(values[0][1]);
+  }
+  const successful = [...text.matchAll(/^\s*ok \d+ - (.+)$/gmu)]
+    .map((row) => row[1]);
+  const named = successful.filter((name) => !/ # (?:SKIP|TODO)\b/iu.test(name)
+    && !command.expectedTargets.some((target) => name === target || name.endsWith(`/${target}`)));
+  const expectedNames = bundle.files
+    .filter((file) => command.expectedTargets.includes(file.path))
+    .flatMap((file) => file.symbols.filter((symbol) => symbol.kind === 'test').map((symbol) => symbol.name));
+  if (totals.tests < 1 || totals.pass !== totals.tests
+      || ['fail', 'cancelled', 'skipped', 'todo'].some((key) => totals[key] !== 0)
+      || named.length === 0 || expectedNames.some((name) => !named.includes(name))) {
+    fail('verification_test_execution_incomplete', `${label}:tap_execution`);
+  }
+}
+
 function executeCommands(root, bundles) {
   const observations = [];
   const env = safeExecutionEnvironment();
@@ -610,6 +672,7 @@ function executeCommands(root, bundles) {
       if (result.status !== command.expectedExitCode) {
         fail('verification_command_failed', `${bundleId}:${index}:status=${String(result.status)}`);
       }
+      assertTestExecution(command, bundle, result.stdout ?? '', `${bundleId}:${index}`);
     }
   }
   return observations;

@@ -2,7 +2,7 @@ name: hepta-paper-ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/full-rust-replacement-progress-20260916]
   pull_request:
   workflow_dispatch:
   schedule:

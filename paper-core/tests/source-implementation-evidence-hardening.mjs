@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -137,23 +138,39 @@ function sourceEvidenceRecordsAt(root, target) {
     const manifest = readJsonAt(root, target, manifestPath);
     for (const [recordId, record] of Object.entries(manifest.records ?? {})) {
       if (records.has(recordId)) fail('duplicate_source_evidence_record', `${recordId}:${manifestPath}`);
-      records.set(recordId, { ...record, manifestPath });
+      const evidenceFilePaths = [];
+      for (const bundleId of record.bundleIds ?? []) {
+        const bundle = manifest.bundles?.[bundleId];
+        if (!bundle) fail('source_evidence_bundle_missing', `${recordId}:${bundleId}:${manifestPath}`);
+        for (const file of bundle.files ?? []) evidenceFilePaths.push(file.path);
+      }
+      records.set(recordId, { ...record, manifestPath, evidenceFilePaths });
     }
   }
   return records;
 }
 
-function assertPostStageRegistryEvolution(root, target) {
-  const stageWork = readJsonAt(root, MIG002_STAGE, WORK_ITEMS);
-  const targetWork = readJsonAt(root, target, WORK_ITEMS);
-  const evidenceRecords = sourceEvidenceRecordsAt(root, target);
+// Historical transitions are audited separately. A current PR must preserve its
+// actual base's authority and registry fields; it must not replay old promotions.
+function assertCandidateRegistryEvolution(root, base, target) {
+  const readState = (ref) => ({
+    work: readJsonAt(root, ref, WORK_ITEMS),
+    modules: readJsonAt(root, ref, MODULES),
+    capabilities: readJsonAt(root, ref, CAPABILITIES),
+  });
+  assertRegistryDelta(readState(base), readState(target), sourceEvidenceRecordsAt(root, target));
+}
+
+function assertRegistryDelta(base, target, evidenceRecords) {
+  const stageWork = base.work;
+  const targetWork = target.work;
   const expectedWork = structuredClone(stageWork);
   const promotableModules = new Set();
 
   for (const [recordId, record] of evidenceRecords) {
     const stageItem = stageWork?.items?.[recordId];
     const targetItem = targetWork?.items?.[recordId];
-    if (!stageItem || !targetItem) fail('post_stage_evidence_item_missing', recordId);
+    if (!stageItem || !targetItem) fail('candidate_evidence_item_missing', recordId);
 
     if (equal(stageItem, targetItem)) {
       if (targetItem.state === 'source_implemented' && targetItem.evidenceTier === 'source') {
@@ -168,37 +185,60 @@ function assertPostStageRegistryEvolution(root, target) {
       || targetItem.state !== 'source_implemented'
       || targetItem.evidenceTier !== 'source'
       || record.promotionRequested !== false) {
-      fail('post_stage_transition_not_forward_source_promotion', `${recordId}:${record.manifestPath}`);
+      fail('candidate_transition_not_forward_source_promotion', `${recordId}:${record.manifestPath}`);
     }
     expectedItem.state = 'source_implemented';
     expectedItem.evidenceTier = 'source';
-    if (!equal(expectedItem, targetItem)) fail('post_stage_work_item_scope_drift', recordId);
+    if (!equal(expectedItem, targetItem)) fail('candidate_work_item_scope_drift', recordId);
     expectedWork.items[recordId] = expectedItem;
     promotableModules.add(targetItem.moduleId);
   }
 
-  if (!equal(expectedWork, targetWork)) fail('post_stage_registry_drift', WORK_ITEMS);
+  if (!equal(expectedWork, targetWork)) fail('candidate_registry_drift', WORK_ITEMS);
 
-  const stageModules = readJsonAt(root, MIG002_STAGE, MODULES);
-  const targetModules = readJsonAt(root, target, MODULES);
+  const moduleEvidencePaths = new Map();
+  for (const [recordId, record] of evidenceRecords) {
+    const moduleId = targetWork?.items?.[recordId]?.moduleId;
+    if (!moduleId || !promotableModules.has(moduleId)) continue;
+    const paths = moduleEvidencePaths.get(moduleId) ?? new Set();
+    for (const filePath of record.evidenceFilePaths ?? []) paths.add(filePath);
+    moduleEvidencePaths.set(moduleId, paths);
+  }
+
+  const stageModules = base.modules;
+  const targetModules = target.modules;
   const expectedModules = structuredClone(stageModules);
-  for (const moduleId of promotableModules) {
+  for (const moduleId of Object.keys(targetModules?.modules ?? {})) {
     const stageModule = stageModules?.modules?.[moduleId];
     const targetModule = targetModules?.modules?.[moduleId];
-    if (!stageModule || !targetModule || equal(stageModule, targetModule)) continue;
+    if (!stageModule || !targetModule) fail('candidate_module_missing', moduleId);
+    if (equal(stageModule, targetModule)) continue;
     const expectedModule = structuredClone(stageModule);
-    if (stageModule.state !== 'design_ready' || targetModule.state !== 'source_implemented') {
-      fail('post_stage_module_transition_invalid', moduleId);
+    if (stageModule.state === 'design_ready' && targetModule.state === 'source_implemented') {
+      if (!promotableModules.has(moduleId)) fail('candidate_module_transition_without_source_evidence', moduleId);
+      expectedModule.state = 'source_implemented';
+    } else if (stageModule.state === 'source_implemented' && targetModule.state === 'source_implemented') {
+      const boundPaths = moduleEvidencePaths.get(moduleId) ?? new Set();
+      const stagePaths = new Set(stageModule.paths ?? []);
+      for (const selectedPath of targetModule.paths ?? []) {
+        if (!stagePaths.has(selectedPath) && !boundPaths.has(selectedPath)) {
+          fail('candidate_module_implementation_path_unbound', `${moduleId}:${selectedPath}`);
+        }
+      }
+      // Removing an unselected implementation path is convergence, not promotion.
+      // Every newly selected path above remains source-evidence bound.
+      expectedModule.paths = targetModule.paths;
+    } else {
+      fail('candidate_module_transition_invalid', moduleId);
     }
-    expectedModule.state = 'source_implemented';
-    if (!equal(expectedModule, targetModule)) fail('post_stage_module_scope_drift', moduleId);
+    if (!equal(expectedModule, targetModule)) fail('candidate_module_scope_drift', moduleId);
     expectedModules.modules[moduleId] = expectedModule;
   }
-  if (!equal(expectedModules, targetModules)) fail('post_stage_registry_drift', MODULES);
+  if (!equal(expectedModules, targetModules)) fail('candidate_registry_drift', MODULES);
 
-  const stageCapabilities = readJsonAt(root, MIG002_STAGE, CAPABILITIES);
-  const targetCapabilities = readJsonAt(root, target, CAPABILITIES);
-  if (!equal(stageCapabilities, targetCapabilities)) fail('post_stage_registry_drift', CAPABILITIES);
+  const stageCapabilities = base.capabilities;
+  const targetCapabilities = target.capabilities;
+  if (!equal(stageCapabilities, targetCapabilities)) fail('candidate_registry_drift', CAPABILITIES);
 }
 
 function blankRange(chars, start, end) {
@@ -296,9 +336,30 @@ function assertRustSymbolOwnership(root, entry) {
   }
 }
 
+function parseCargoTestBinding(command) {
+  const args = command.args ?? [];
+  if (args[0] !== 'test') fail('cargo_command_not_test');
+  const packageIndex = args.indexOf('-p');
+  if (packageIndex < 0 || !args[packageIndex + 1]) fail('cargo_package_selector_missing');
+  const separatorIndex = args.indexOf('--');
+  const commandEnd = separatorIndex < 0 ? args.length : separatorIndex;
+  const testTargetIndex = args.indexOf('--test');
+  let selectorIndex = packageIndex + 2;
+  const discoveryPrefix = ['test', '--locked', '-p', args[packageIndex + 1]];
+  if (testTargetIndex >= 0 && testTargetIndex < commandEnd) {
+    const target = args[testTargetIndex + 1];
+    if (!target || testTargetIndex + 2 >= commandEnd) fail('cargo_integration_test_selector_missing');
+    discoveryPrefix.push('--test', target);
+    selectorIndex = testTargetIndex + 2;
+  }
+  const selector = args[selectorIndex];
+  if (!selector || selector.startsWith('-') || selectorIndex >= commandEnd) fail('cargo_test_selector_missing');
+  return { selector, discoveryPrefix };
+}
+
 function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   if (command.program !== 'cargo') return;
-  const selector = command.args[4];
+  const { selector, discoveryPrefix } = parseCargoTestBinding(command);
   const targetEntries = bundle.files.filter((entry) => command.expectedTargets.includes(entry.path) && entry.role === 'test');
   if (targetEntries.length !== command.expectedTargets.length || targetEntries.length < 1) fail('cargo_target_cardinality', bundleId);
   const symbolName = selector.split('::').at(-1);
@@ -315,7 +376,7 @@ function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   const matches = [...source.matchAll(rustSymbolRegex(symbol))];
   if (matches.length !== 1) fail('cargo_declared_test_not_unique_live', `${entry.path}:${symbol.name}:${matches.length}`);
 
-  const discoveryArgs = ['test', '--locked', '-p', command.args[3], selector, '--', '--exact', '--list'];
+  const discoveryArgs = [...discoveryPrefix, selector, '--', '--exact', '--list'];
   const stdout = run(runtime.cargo.path, discoveryArgs, { cwd: path.join(root, 'rust'), timeout: command.timeoutSeconds * 1000 });
   const discovered = stdout.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.endsWith(': test'));
   if (discovered.length !== 1 || discovered[0] !== `${selector}: test`) {
@@ -342,6 +403,58 @@ function selfTest() {
   const match = [...cfg.matchAll(rustSymbolRegex({ kind: 'function', name: 'gated' }))][0];
   const attrs = cfg.slice(Math.max(0, match.index - 320), match.index).match(/(?:#\s*\[[^\]]+\]\s*)+$/u)?.[0] ?? '';
   if (!/\bcfg(?:_attr)?\s*\(/u.test(attrs)) fail('selftest_cfg_not_detected');
+  const base = {
+    work: { items: { 'TEST-001': {
+      state: 'source_implemented', evidenceTier: 'source', moduleId: 'module.example',
+    } } },
+    modules: { modules: { 'module.example': {
+      state: 'source_implemented', activation: 'disabled', authority: 'prepared_result_only',
+      paths: ['src/current.rs'], owners: ['owner', 'reviewer'],
+    } } },
+    capabilities: { capabilities: { 'CAP-EXAMPLE': { authority: 'prepared_result_only' } } },
+  };
+  const records = new Map([['TEST-001', {
+    promotionRequested: false, manifestPath: 'synthetic-only',
+  }]]);
+  // An already implemented current base is not an invalid old-stage promotion.
+  assert.doesNotThrow(() => assertRegistryDelta(base, structuredClone(base), records));
+  const design = structuredClone(base);
+  design.work.items['TEST-001'].state = 'design_ready';
+  design.work.items['TEST-001'].evidenceTier = 'design';
+  design.modules.modules['module.example'].state = 'design_ready';
+  assert.doesNotThrow(() => assertRegistryDelta(design, base, records));
+  assert.throws(() => assertRegistryDelta(design, base, new Map()), /candidate_registry_drift/u);
+  assert.throws(() => assertRegistryDelta(base, design, records), /candidate_transition/u);
+  for (const [field, value] of [
+    ['activation', 'authoritative'], ['authority', 'central_state_write'],
+    ['paths', ['src/other.rs']], ['owners', ['reviewer', 'owner']],
+    ['state', 'source_qualified'],
+  ]) {
+    const hostile = structuredClone(base);
+    hostile.modules.modules['module.example'][field] = value;
+    assert.throws(() => assertRegistryDelta(base, hostile, records), /candidate_module_/u);
+  }
+  const changedCapability = structuredClone(base);
+  changedCapability.capabilities.capabilities['CAP-EXAMPLE'].authority = 'central_state_write';
+  assert.throws(() => assertRegistryDelta(base, changedCapability, records), /candidate_registry_drift/u);
+  const erased = structuredClone(base);
+  delete erased.work.items['TEST-001'];
+  assert.throws(() => assertRegistryDelta(base, erased, records), /candidate_evidence_item_missing/u);
+  const unrelated = structuredClone(base);
+  unrelated.work.items['OTHER-001'] = structuredClone(base.work.items['TEST-001']);
+  assert.throws(() => assertRegistryDelta(base, unrelated, records), /candidate_registry_drift/u);
+  assert.deepEqual(
+    parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', 'module::case', '--', '--exact'] }),
+    { selector: 'module::case', discoveryPrefix: ['test', '--locked', '-p', 'crate-a'] },
+  );
+  assert.deepEqual(
+    parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', 'case_a', '--', '--exact'] }),
+    { selector: 'case_a', discoveryPrefix: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a'] },
+  );
+  assert.throws(
+    () => parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', '--', '--exact'] }),
+    /cargo_integration_test_selector_missing/u,
+  );
   process.stdout.write('source-evidence hardening self-test: ok\n');
 }
 
@@ -374,7 +487,8 @@ assertAncestor(root, APPROVED_PRODUCT, MIG002_STAGE, 'approved-product-to-mig002
 assertAncestor(root, MIG002_STAGE, targetHead, 'mig002-stage-to-target');
 const runtime = runtimeAttestation();
 assertMig002Transition(root);
-assertPostStageRegistryEvolution(root, targetHead);
+assertAncestor(root, MIG002_STAGE, prBase, 'mig002-stage-to-pr-base');
+assertCandidateRegistryEvolution(root, prBase, targetHead);
 for (const manifestPath of SOURCE_EVIDENCE_MANIFESTS) {
   validateEvidenceSemantics(root, readJsonAt(root, targetHead, manifestPath), runtime);
 }
@@ -387,7 +501,7 @@ const receipt = {
   immutableStages: { mainBase: MAIN_BASE, approvedProduct: APPROVED_PRODUCT, mig002Stage: MIG002_STAGE },
   sourceEvidenceManifests: SOURCE_EVIDENCE_MANIFESTS,
   runtime,
-  registryTransition: 'exact:MIG-002 historical transition;post-stage multi-manifest evidence-declared forward-only design/source promotions;authority stable',
+  registryTransition: 'exact:MIG-002 historical transition;actual-PR-base multi-manifest evidence-declared forward-only design/source delta;authority stable',
   sourceSemantics: 'comment-string-aware-unique-symbol-plus-cargo-discovery-binding',
   checkoutPolicy: 'no-untracked-and-no-ignored-repository-inputs',
   productionAuthorized: false,

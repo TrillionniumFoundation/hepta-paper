@@ -5,7 +5,7 @@
   "registryRef": "docs/system/truth/modules.v1.json#/modules/module.compatibility-kernel",
   "specPath": "docs/modules/specs/compatibility-kernel.md",
   "runbookPath": "docs/modules/specs/compatibility-kernel.md#operational-runbook",
-  "implementationPaths": ["rust/crates/hepta-compatibility","rust/crates/hepta-legacy-compatibility"],
+  "implementationPaths": ["rust/crates/hepta-legacy-compatibility"],
   "capabilityIds": ["CAP-CMP-LEGACY"],
   "authorityClass": "read_only",
   "ownerTeams": ["TEAM-PROTOCOL","TEAM-STATE","TEAM-EVIDENCE"],

@@ -1,12 +1,13 @@
-# Team topology for modular development
+# Module responsibility topology
 
-## 1. Goal
+## 1. Current development model
 
-Scale to dozens of contributors while keeping ownership aligned with stable
-module boundaries and preventing central architecture, qualification, or state
-review from becoming a queue for every local implementation change.
+This is a single-maintainer repository, not a 36–54-person organization. The
+maintainer can implement, validate and integrate all modules under the
+[ownership policy](OWNERSHIP_AND_REVIEW.md). Missing secondary staff or GitHub
+teams is not a development or module-completion blocker.
 
-## 2. Planned teams
+## 2. Logical responsibility IDs
 
 | Team ID | Home responsibilities |
 |---|---|
@@ -29,47 +30,14 @@ review from becoming a queue for every local implementation change.
 These are stable responsibility IDs, not claims that corresponding GitHub teams
 already exist.
 
-## 3. Staffing rule
+## 3. Optional future staffing
 
-Each production module requires:
+The IDs identify expertise and component responsibility, not exclusive people.
+One person may cover all of them. Recovery knowledge belongs in actionable
+runbooks and tested state transitions rather than mandatory reviewer rosters.
+If contributors are added, responsibilities may be delegated without changing
+runtime ownership, credential isolation, or the single-writer contract.
 
-- at least two maintainers able to review and operate it;
-- one primary team;
-- one secondary team with recovery knowledge;
-- an independent reviewer team for authority/protocol/state/quality changes;
-- an escalation/on-call owner before production activation.
-
-One engineer may have one primary home module and contribute elsewhere, but no
-authority-bearing module may depend on a single person's availability.
-
-## 4. Suggested organization size
-
-A 36–54 person configuration:
-
-```text
-Kernel/Scheduler/State                 8–12
-Runtime/Workspace/Protocol             8–12
-Author/Review/Formal/Empirical/
-Numerical/Build module groups         16–24
-Evidence/Release/SRE/Performance       4–6
-```
-
-Actual staffing follows workload and risk rather than this example.
-
-## 5. Interaction modes
-
-- **X-as-a-service:** platform teams expose stable self-service contracts and
-  conformance kits.
-- **Collaboration:** temporary for new protocol/authority/state boundaries.
-- **Facilitating:** platform team helps a module adopt a stable contract, then
-  exits the day-to-day path.
-
-Permanent broad collaboration across all teams is a sign that module contracts
-are not sufficiently stable.
-
-## 6. Current blocker
-
-The repository currently routes high-risk paths to one explicit reviewer.
-Before G7, real GitHub teams and CODEOWNER entries must be provisioned and tested
-without weakening no-bypass governance. Until then, the static ownership registry
-is a design mapping only.
+No automatic CODEOWNER team provisioning or minimum reviewer count is required.
+Any future mandatory multi-person review is an explicit owner policy decision,
+not a prerequisite inherited from an aspirational team chart.

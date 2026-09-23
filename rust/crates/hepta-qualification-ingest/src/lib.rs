@@ -8,8 +8,9 @@ mod package_payload;
 
 pub use closure::{
     ExternalQualificationCandidateV1, ExternalQualificationClosureSubjectV1,
-    ExternalQualificationRuntimeFactsV1, QualificationClosureError,
+    ExternalQualificationRuntimeFactsV1, QualificationClosureError, QualificationClosureProfile,
     VerifiedExternalQualificationClosureV1, verify_external_qualification_closure_v1,
+    verify_external_qualification_closure_v2,
 };
 
 pub use package_payload::{
@@ -63,6 +64,17 @@ impl QualificationPackageIdV1 {
     /// Complete package vocabulary accepted by this source version.
     pub const ALL: [Self; 7] = [
         Self::ExtGovMain001,
+        Self::ExtHostCgroup001,
+        Self::ExtHostStorage001,
+        Self::ExtKeyOwner001,
+        Self::ExtCodexRole001,
+        Self::ExtCutoverSoak001,
+        Self::ExtAuthoritySet001,
+    ];
+
+    /// Current operational package set. Repository development approvals are
+    /// owner policy, not an external scientific/runtime authority package.
+    pub const CURRENT_REQUIRED: [Self; 6] = [
         Self::ExtHostCgroup001,
         Self::ExtHostStorage001,
         Self::ExtKeyOwner001,

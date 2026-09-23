@@ -1,7 +1,8 @@
 //! Complete external-qualification closure for one immutable production subject.
 //!
 //! Individual signed packages intentionally grant no activation authority. This
-//! module verifies the complete seven-package set, validates every payload, checks
+//! module verifies either the historical seven-package V1 set or the current six
+//! operational packages in V2, validates every payload, checks
 //! cross-package host/database identities, preserves authority-domain separation,
 //! and returns an opaque closure value suitable for a later independently signed
 //! writer-cutover decision.
@@ -23,6 +24,50 @@ use crate::{
 const MAXIMUM_PACKAGE_PAYLOAD_BYTES: usize = 32 * 1024 * 1024;
 const MAXIMUM_CLOSURE_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_REPOSITORY: &str = "TrillionniumFoundation/hepta-paper";
+
+/// Closed qualification profiles; callers cannot choose an arbitrary subset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QualificationClosureProfile {
+    /// Historical seven-package contract, including independent repository review.
+    LegacySevenPackageV1,
+    /// Current six operational packages; no human PR approval requirement.
+    SingleMaintainerV2,
+}
+impl QualificationClosureProfile {
+    /// Parse an explicitly versioned request. Unknown versions fail closed.
+    #[must_use]
+    pub const fn from_version(version: u16) -> Option<Self> {
+        match version {
+            1 => Some(Self::LegacySevenPackageV1),
+            2 => Some(Self::SingleMaintainerV2),
+            _ => None,
+        }
+    }
+    /// Exact package set required by this version.
+    #[must_use]
+    pub const fn packages(self) -> &'static [QualificationPackageIdV1] {
+        match self {
+            Self::LegacySevenPackageV1 => &QualificationPackageIdV1::ALL,
+            Self::SingleMaintainerV2 => &QualificationPackageIdV1::CURRENT_REQUIRED,
+        }
+    }
+    /// Receipt version, included in the hashed canonical body.
+    #[must_use]
+    pub const fn version(self) -> u16 {
+        match self {
+            Self::LegacySevenPackageV1 => 1,
+            Self::SingleMaintainerV2 => 2,
+        }
+    }
+    /// Number of actual operational authority groups, not human reviewer count.
+    #[must_use]
+    pub const fn authority_group_count(self) -> usize {
+        match self {
+            Self::LegacySevenPackageV1 => 5,
+            Self::SingleMaintainerV2 => 4,
+        }
+    }
+}
 
 /// One signed envelope and its exact canonical package payload bytes.
 #[derive(Clone, Debug)]
@@ -68,6 +113,7 @@ pub struct ExternalQualificationRuntimeFactsV1 {
 /// writer lease, release permit, provider credential or submission authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedExternalQualificationClosureV1 {
+    profile: QualificationClosureProfile,
     subject: ExternalQualificationClosureSubjectV1,
     receipt_hash: String,
     trust_store_generation: u64,
@@ -79,6 +125,12 @@ pub struct VerifiedExternalQualificationClosureV1 {
 }
 
 impl VerifiedExternalQualificationClosureV1 {
+    /// Exact required-package contract used by the verified producer.
+    #[must_use]
+    pub const fn profile(&self) -> QualificationClosureProfile {
+        self.profile
+    }
+
     /// Exact repository/commit/tree shared by every accepted package.
     #[must_use]
     pub fn subject(&self) -> &ExternalQualificationClosureSubjectV1 {
@@ -142,8 +194,46 @@ pub fn verify_external_qualification_closure_v1(
     trust_store_generation: u64,
     trust_store: &QualificationTrustStoreV1,
 ) -> Result<VerifiedExternalQualificationClosureV1, QualificationClosureError> {
+    verify_for_profile(
+        QualificationClosureProfile::LegacySevenPackageV1,
+        candidates,
+        subject,
+        now_unix_ms,
+        trust_store_generation,
+        trust_store,
+    )
+}
+
+/// Verify the six operational packages without a repository-review ceremony.
+/// Signatures, exact subjects, host/database agreement, expiry and authority
+/// separation remain identical to V1. This does not activate any product owner.
+pub fn verify_external_qualification_closure_v2(
+    candidates: &[ExternalQualificationCandidateV1],
+    subject: &ExternalQualificationClosureSubjectV1,
+    now_unix_ms: u64,
+    trust_store_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<VerifiedExternalQualificationClosureV1, QualificationClosureError> {
+    verify_for_profile(
+        QualificationClosureProfile::SingleMaintainerV2,
+        candidates,
+        subject,
+        now_unix_ms,
+        trust_store_generation,
+        trust_store,
+    )
+}
+
+fn verify_for_profile(
+    profile: QualificationClosureProfile,
+    candidates: &[ExternalQualificationCandidateV1],
+    subject: &ExternalQualificationClosureSubjectV1,
+    now_unix_ms: u64,
+    trust_store_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<VerifiedExternalQualificationClosureV1, QualificationClosureError> {
     validate_subject(subject)?;
-    if trust_store_generation == 0 || candidates.len() != QualificationPackageIdV1::ALL.len() {
+    if trust_store_generation == 0 || candidates.len() != profile.packages().len() {
         return Err(QualificationClosureError::PackageSetIncomplete);
     }
     let mut expires_at_unix_ms = candidates
@@ -193,6 +283,7 @@ pub fn verify_external_qualification_closure_v1(
         records.push((verified, payload));
     }
     assemble_verified_closure(
+        profile,
         subject,
         trust_store_generation,
         now_unix_ms,
@@ -202,6 +293,7 @@ pub fn verify_external_qualification_closure_v1(
 }
 
 fn assemble_verified_closure(
+    profile: QualificationClosureProfile,
     subject: &ExternalQualificationClosureSubjectV1,
     trust_store_generation: u64,
     verified_at_unix_ms: u64,
@@ -229,9 +321,7 @@ fn assemble_verified_closure(
             return Err(QualificationClosureError::DuplicatePackage);
         }
     }
-    let expected = QualificationPackageIdV1::ALL
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let expected = profile.packages().iter().copied().collect::<BTreeSet<_>>();
     if by_package.keys().copied().collect::<BTreeSet<_>>() != expected {
         return Err(QualificationClosureError::PackageSetIncomplete);
     }
@@ -251,7 +341,7 @@ fn assemble_verified_closure(
             .or_default()
             .insert(record.authority_domain_id.clone());
     }
-    if authority_groups.len() != 5 {
+    if authority_groups.len() != profile.authority_group_count() {
         return Err(QualificationClosureError::AuthoritySeparationViolation);
     }
     let authority_groups = authority_groups
@@ -290,8 +380,10 @@ fn assemble_verified_closure(
         writer_transfer_receipt_hash: fact(cutover, "writerTransferReceiptHash")?.to_owned(),
     };
 
-    let ordered_packages = QualificationPackageIdV1::ALL
-        .into_iter()
+    let ordered_packages = profile
+        .packages()
+        .iter()
+        .copied()
         .map(|package| {
             let record = by_package
                 .get(&package)
@@ -307,8 +399,15 @@ fn assemble_verified_closure(
         })
         .collect::<Result<Vec<_>, QualificationClosureError>>()?;
     let body = ClosureBodyV1 {
-        version: 1,
-        kind: "VerifiedExternalQualificationClosureV1",
+        version: profile.version(),
+        kind: match profile {
+            QualificationClosureProfile::LegacySevenPackageV1 => {
+                "VerifiedExternalQualificationClosureV1"
+            }
+            QualificationClosureProfile::SingleMaintainerV2 => {
+                "VerifiedExternalQualificationClosureV2"
+            }
+        },
         subject,
         trust_store_generation,
         verified_at_unix_ms,
@@ -323,6 +422,7 @@ fn assemble_verified_closure(
         &serde_json::to_vec(&body).map_err(|_| QualificationClosureError::EncodingInvalid)?,
     );
     Ok(VerifiedExternalQualificationClosureV1 {
+        profile,
         subject: subject.clone(),
         receipt_hash,
         trust_store_generation,
@@ -551,8 +651,15 @@ mod tests {
 
     #[test]
     fn complete_set_derives_cross_bound_opaque_receipt() {
-        let verified = assemble_verified_closure(&subject(), 7, 1_000, 2_000, complete_records())
-            .expect("complete closure");
+        let verified = assemble_verified_closure(
+            QualificationClosureProfile::LegacySevenPackageV1,
+            &subject(),
+            7,
+            1_000,
+            2_000,
+            complete_records(),
+        )
+        .expect("complete closure");
         assert_eq!(verified.packages.len(), 7);
         assert_eq!(verified.authority_groups.len(), 5);
         assert_eq!(verified.trust_store_generation(), 7);
@@ -567,8 +674,15 @@ mod tests {
             verified.assert_current(2_000),
             Err(QualificationClosureError::ClosureExpired)
         ));
-        let repeated = assemble_verified_closure(&subject(), 7, 1_000, 2_000, complete_records())
-            .expect("repeat closure");
+        let repeated = assemble_verified_closure(
+            QualificationClosureProfile::LegacySevenPackageV1,
+            &subject(),
+            7,
+            1_000,
+            2_000,
+            complete_records(),
+        )
+        .expect("repeat closure");
         assert_eq!(verified.receipt_hash(), repeated.receipt_hash());
     }
 
@@ -577,21 +691,42 @@ mod tests {
         let mut incomplete = complete_records();
         incomplete.pop();
         assert!(matches!(
-            assemble_verified_closure(&subject(), 1, 1_000, 2_000, incomplete),
+            assemble_verified_closure(
+                QualificationClosureProfile::LegacySevenPackageV1,
+                &subject(),
+                1,
+                1_000,
+                2_000,
+                incomplete
+            ),
             Err(QualificationClosureError::PackageSetIncomplete)
         ));
 
         let mut duplicate = complete_records();
         duplicate[1].0.nonce = duplicate[0].0.nonce.clone();
         assert!(matches!(
-            assemble_verified_closure(&subject(), 1, 1_000, 2_000, duplicate),
+            assemble_verified_closure(
+                QualificationClosureProfile::LegacySevenPackageV1,
+                &subject(),
+                1,
+                1_000,
+                2_000,
+                duplicate
+            ),
             Err(QualificationClosureError::DuplicateNonce)
         ));
 
         let mut collapsed = complete_records();
         collapsed[3].0.authority_domain_id = "governance-review".into();
         assert!(matches!(
-            assemble_verified_closure(&subject(), 1, 1_000, 2_000, collapsed),
+            assemble_verified_closure(
+                QualificationClosureProfile::LegacySevenPackageV1,
+                &subject(),
+                1,
+                1_000,
+                2_000,
+                collapsed
+            ),
             Err(QualificationClosureError::AuthoritySeparationViolation)
         ));
     }
@@ -601,7 +736,14 @@ mod tests {
         let mut records = complete_records();
         records[2].1["hostIdentityHash"] = Value::String(format!("sha256:{}", "9".repeat(64)));
         assert!(matches!(
-            assemble_verified_closure(&subject(), 1, 1_000, 2_000, records),
+            assemble_verified_closure(
+                QualificationClosureProfile::LegacySevenPackageV1,
+                &subject(),
+                1,
+                1_000,
+                2_000,
+                records
+            ),
             Err(QualificationClosureError::CrossPackageIdentityMismatch)
         ));
     }

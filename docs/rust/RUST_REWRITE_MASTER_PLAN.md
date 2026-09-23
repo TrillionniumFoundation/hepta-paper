@@ -113,7 +113,7 @@ not yet satisfy this complete subject. G0 and
 | INV-016 | Production child containment survives `setsid`, double fork and descendant escape attempts. |
 | INV-017 | A listener configuration proves an intended authorized principal and rejects non-authorized principals. |
 | INV-018 | Exact-head evidence binds source commit, tree, tested ref, workflows and produced artifacts. |
-| INV-019 | `main` admits changes only through a no-bypass protected merge boundary with current-head checks and independent review. |
+| INV-019 | `main` admits changes only through a no-bypass protected merge boundary with current-head checks and maintainer-controlled integration. |
 | INV-020 | Zero-job, skipped-required-job and `action_required` runs never count as qualification. |
 | INV-021 | Qualification automatically demotes when its exact-head or evidence preconditions cease to hold. |
 | INV-022 | A writer-cutover permit binds exact runtime subject, database preimage and first writer lease. |
@@ -311,7 +311,7 @@ Dates are forecasts, never gate substitutes.
    committed schema, and pass live currentness revalidation.
 6. Retain producer definitions, run/job/step snapshot identity, exact-head/tree
    and supply-chain artifacts.
-7. Obtain independent latest-push review.
+7. Integrate the exact tested head under the single-maintainer policy; no second-person approval is required.
 8. Integrate the RC into the sole product branch and close duplicate P0 PRs.
 9. Refresh the product integration PR and repeat its entire exact-head matrix.
 10. Complete governance issue #25 and legacy replay issue #28.

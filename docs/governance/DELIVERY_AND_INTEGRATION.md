@@ -1,123 +1,60 @@
 # Delivery and integration discipline
 
-## 1. Goal
+## 1. Current workflow
 
-Allow many module teams to deliver concurrently without turning `main`, the Rust
-release-candidate branch, global protocols, or authority-bearing state into an
-unreviewable integration queue.
+Use one active development stream against the maintained Rust integration
+branch, `codex/full-rust-replacement-progress-20260916`. Original Node `main`
+remains the incumbent product until the actual migration is complete. Source
+integration does not activate production or retire Node.
 
-## 2. Change package
+The [ownership policy](OWNERSHIP_AND_REVIEW.md) permits the single maintainer
+to integrate their own work without independent, Code Owner or last-push
+approval. Required tests are retained; review headcount is not a merge gate.
 
-Every PR declares:
+## 2. Change scope
 
-```text
-exact base and head subject
-change class
-capability/module/work-item/milestone IDs
-public protocol and state-schema impact
-authority and side-effect impact
-resource/SLO and canonical-workload impact
-qualification invalidations
-migration, rollout, rollback, and recovery behavior
-required owner and independent reviewer teams
-```
+Keep implementation, directly affected contracts, tests and useful operational
+documentation together. Use the existing command map and PR to identify actual
+behavior, compatibility, failure/recovery handling and remaining gaps. Do not
+require a second ledger, a ceremonial RFC or changes to every module document
+for a local implementation change.
 
-The declaration is checked against the machine traceability graph. A PR cannot
-self-classify as module-local when reachability shows a protocol, authority,
-state, objective, qualification, or shared-runtime effect.
+Changes to public protocols or persistent state carry their real consumer and
+migration tests. Changes to credentials, external effects or writer ownership
+carry negative-authority, final-use and crash/reconciliation tests. These are
+behavioral obligations, not cross-team approval assignments.
 
-## 3. Branch and stacking rules
+## 3. Branch discipline
 
-- Keep two persistent branch trees: original Node `main` and Rust rewrite
-  `codex/full-rust-replacement-progress-20260916`. The Rust branch is the sole
-  source-convergence surface; consolidation does not merge Rust into Node `main`.
-- Temporary module or stacked branches target the current Rust candidate or an
-  explicitly named dependency. Converge their reviewed changes, retain exact
-  source dispositions and remove temporary names after integration.
-- A stacked PR states its exact dependency chain and cannot inherit predecessor
-  evidence after either head or base moves.
-- Temporary generator, self-mutating workflow, probe, or transport trees are
-  preserved as audit objects rather than adopted as product implementations.
-- Final integration uses an expected-head guard and no administrator bypass.
+Temporary branches target the current Rust integration head. After integration,
+start subsequent work from the integrated tree, especially after a squash merge.
+Do not merge older whole trees just to make commit counts match. Compare residual
+behavior and files, record absorb/supersede/retain decisions in the existing
+[consolidation record](../migration/BRANCH_CONSOLIDATION.md), and preserve useful
+history without treating every retained ref as another product candidate.
 
-The [branch consolidation record](../migration/BRANCH_CONSOLIDATION.md)
-records the retained Node baseline, archived source objects and source decisions.
-Preserve the deletion-time ref set and disposition evidence even when a later
-inventory contains only the two surviving names. Source-history integration does
-not grant independent parity, qualification, production activation or retirement.
+## 4. CI and integration
 
-## 4. Commit and PR sizing
+Run applicable module, consumer, integration and fault tests. Unknown impact
+requires investigation or broader validation, not silent omission. The required
+source workflows must report on the exact candidate; previous green heads do not
+qualify changed code. A static source-binding check is not a test execution.
 
-A logical change should keep implementation, contracts, tests, machine truth,
-and current documentation atomic. It should not mix unrelated capabilities or
-mass formatting with authority/state semantics.
+Before integration, re-read the live base/head and check all required contexts,
+inspect applicable exact-head/prospective-merge evidence, resolve real findings,
+and merge with the expected head SHA. Use the existing signed GitHub integration
+path. No independent human approval or staff-availability ceremony is required.
+After integration, source artifacts keep their original subjects; the product
+head obtains its own applicable validation.
 
-Large migrations are split by stable capability while preserving one final
-cutover transaction. A small line count does not excuse a wide authority or
-consumer blast radius; a larger generated-schema update may remain one atomic
-protocol change.
+## 5. Recovery and documentation
 
-## 5. Review routing
+Rollback follows actual effects: source revert, configuration rollback, prepared
+work drain, forward/reverse schema migration, or reconciliation of an external
+operation. Never restore an old backup over newer commits, enable two writers,
+or blindly repeat an operation whose outcome is unknown.
 
-| Change class | Minimum review |
-|---|---|
-| private module implementation | primary or secondary module owner |
-| public module protocol | module owner, protocol team, direct consumers |
-| global objective/resource policy | scheduler, kernel, evidence/SRE |
-| durable state/writer schema | state, migration/recovery reviewer |
-| authority/credential boundary | owning team plus independent security/evidence reviewer |
-| qualification/evidence schema | evidence, CI/SRE, affected capability owner |
-| release/submission/external effect | release team and named external authority |
-| ownership/governance | governance owner and every materially affected team |
-
-The latest push must be reviewed; stale approval is not carried forward.
-
-## 6. CI lanes
-
-```text
-module fast lane
-consumer contract lane
-architecture/authority reachability lane
-system integration and replay lane
-canonical performance/fault lane
-exact-subject release-candidate qualification lane
-```
-
-Affected CI is an optimization, not permission to omit a required consumer or
-shared-kernel lane. Unknown impact fails toward broader validation.
-
-## 7. Merge transaction
-
-Before merge:
-
-1. re-read live base/head/merge identities;
-2. verify every required context comes from its bound producer and complete run
-   history;
-3. verify all review conversations and latest-push decisions;
-4. verify machine truth, document manifest, evidence bindings, and CODEOWNERS;
-5. verify no new authority, writer, external effect, or historical document was
-   introduced outside the declared scope;
-6. merge with the exact expected head;
-7. invalidate predecessor artifacts and trigger fresh product-head validation.
-
-## 8. Rollback
-
-Every merged capability change has a predeclared rollback class:
-
-- source revert only;
-- configuration/module-version rollback;
-- prepared-result drain then rollback;
-- state migration with reverse/forward recovery;
-- irreversible external effect requiring reconciliation rather than rollback.
-
-Rollback never means re-enabling two writers or replaying an ambiguous provider,
-release, or submission action.
-
-## 9. Documentation-rebuild integration rule
-
-The global documentation rebuild is based on the audited Rust RC source but is a
-new tree. It must land through its own draft PR, run the fresh exact-head/source
-matrix available to that PR, receive latest-push review, and then be integrated
-into the single product convergence surface. No prior RC artifact or approval is
-inherited. Deleting working-tree history is a source change; Git history remains
-the audit archive.
+Document executable setup, inputs, failure categories and recovery steps where
+they change. Common policy belongs in the canonical policy, not repeated across
+32 runbooks. A documentation-only improvement may travel in the ordinary PR;
+it does not require its own independent approval project.

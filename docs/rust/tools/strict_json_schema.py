@@ -24,7 +24,7 @@ ANNOTATIONS = {
 ASSERTIONS = {
     "$ref", "type", "const", "enum", "required", "properties",
     "additionalProperties", "propertyNames", "minProperties", "maxProperties", "minItems",
-    "maxItems", "uniqueItems", "items", "minLength", "maxLength", "pattern",
+    "maxItems", "uniqueItems", "items", "contains", "minContains", "maxContains", "minLength", "maxLength", "pattern",
     "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "format",
     "allOf", "anyOf", "oneOf", "not", "if", "then", "else",
 }
@@ -177,7 +177,7 @@ def validate_schema_definition(schema: Any, root: Any) -> None:
                     or any(not isinstance(value, str) or value not in known for value in types)
                     or len(set(types)) != len(types)):
                 fail_definition(location, "invalid schema type declaration")
-        for key in ("minProperties", "maxProperties", "minItems", "maxItems", "minLength", "maxLength"):
+        for key in ("minProperties", "maxProperties", "minItems", "maxItems", "minContains", "maxContains", "minLength", "maxLength"):
             if key in selected and (not type_matches(selected[key], "integer") or selected[key] < 0):
                 fail_definition(location, f"{key} must be a nonnegative integer")
         for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
@@ -217,7 +217,7 @@ def validate_schema_definition(schema: Any, root: Any) -> None:
                     fail_definition(location, f"{key} must be a nonempty array")
                 pending.extend((value, f"{location}.{key}[{index}]", depth + 1)
                                for index, value in enumerate(selected[key]))
-        for key in ("items", "propertyNames", "additionalProperties", "not", "if", "then", "else"):
+        for key in ("items", "contains", "propertyNames", "additionalProperties", "not", "if", "then", "else"):
             if key in selected:
                 pending.append((selected[key], f"{location}.{key}", depth + 1))
         if "$ref" in selected:
@@ -362,6 +362,19 @@ def _validate(instance: Any, schema: Any, root: Any, path: str, budget: list[int
             fail(path, "additionalProperties must be boolean or schema")
 
     if isinstance(instance, list):
+        if "contains" in schema:
+            matches = 0
+            for index, value in enumerate(instance):
+                try:
+                    _validate(value, schema["contains"], root, f"{path}[{index}]", budget)
+                    matches += 1
+                except SchemaValidationError as error:
+                    if isinstance(error, SchemaDefinitionError):
+                        raise
+            minimum_matches = schema.get("minContains", 1)
+            maximum_matches = schema.get("maxContains")
+            if matches < minimum_matches or (maximum_matches is not None and matches > maximum_matches):
+                fail(path, f"contains matched {matches} items outside the required bounds")
         minimum = schema.get("minItems")
         maximum = schema.get("maxItems")
         if minimum is not None and len(instance) < minimum:

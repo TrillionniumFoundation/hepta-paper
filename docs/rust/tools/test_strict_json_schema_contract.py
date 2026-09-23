@@ -13,6 +13,7 @@ class SchemaContractPreflightTests(unittest.TestCase):
             {"if": bad, "else": {}}, {"if": {"const": 1}, "else": bad},
             {"if": {"const": 2}, "then": bad}, {"properties": {"absent": bad}},
             {"$defs": {"unused": bad}}, {"items": bad}, {"additionalProperties": bad},
+            {"contains": bad},
         ]
         for schema in cases:
             with self.subTest(schema=schema):
@@ -27,6 +28,7 @@ class SchemaContractPreflightTests(unittest.TestCase):
             {"uniqueItems": 1}, {"pattern": "["}, {"enum": []},
             {"anyOf": []}, {"format": "unimplemented-format"}, {"$ref": None},
             {"items": None}, {"not": None}, {"if": None},
+            {"contains": None}, {"minContains": True}, {"maxContains": -1},
         ]
         for schema in cases:
             with self.subTest(schema=schema):
@@ -90,6 +92,28 @@ class SchemaContractPreflightTests(unittest.TestCase):
         schema = {"not": {"$ref": "#/$defs/d19"}, "$defs": definitions}
         with self.assertRaisesRegex(SCHEMA.SchemaDefinitionError, "budget exhausted"):
             SCHEMA.validate(1, schema)
+
+    def test_contains_counts_exact_matches_and_does_not_confuse_boolean_with_number(self) -> None:
+        schema = {"contains": {"const": 1}, "minContains": 1, "maxContains": 1}
+        for value in [[1], [True, 1], ["a", 1.0], {"notAnArray": True}]:
+            SCHEMA.validate(value, schema)
+        for value in [[], [True], [1, 1.0], ["1"]]:
+            with self.assertRaises(SCHEMA.SchemaValidationError):
+                SCHEMA.validate(value, schema)
+
+    def test_contains_defaults_zero_matches_and_inapplicable_bounds(self) -> None:
+        with self.assertRaises(SCHEMA.SchemaValidationError):
+            SCHEMA.validate([], {"contains": True})
+        SCHEMA.validate([], {"contains": False, "minContains": 0})
+        SCHEMA.validate([1], {"minContains": 2, "maxContains": 0})
+        with self.assertRaises(SCHEMA.SchemaValidationError):
+            SCHEMA.validate([1], {"contains": True, "minContains": 2, "maxContains": 1})
+
+    def test_contains_cannot_swallow_schema_errors_or_recursive_evaluation(self) -> None:
+        schema = {"contains": {"$ref": "#/$defs/cycle"}, "minContains": 0,
+                  "$defs": {"cycle": {"$ref": "#/$defs/cycle"}}}
+        with self.assertRaises(SCHEMA.SchemaDefinitionError):
+            SCHEMA.validate([1], schema)
 
 
 if __name__ == "__main__":

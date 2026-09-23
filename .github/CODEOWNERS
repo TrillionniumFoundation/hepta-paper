@@ -1,29 +1,30 @@
-# High-risk authority and release surfaces require review by an explicit
-# independent repository writer. Multiple owners prevent an author-only review deadlock. Keep this file synchronized with the protected-main ruleset.
+# Advisory ownership routing for the current single-maintainer repository.
+# Required PR approval count is zero; this file does not create an approval gate.
+# Logical module responsibility IDs do not assert additional human maintainers.
 
-/.github/ @ProfHepta @Tomasrgbsf @Franksudoman
-/.gitmodules @ProfHepta @Tomasrgbsf @Franksudoman
-/core @ProfHepta @Tomasrgbsf @Franksudoman
-/runtime-images/ @ProfHepta @Tomasrgbsf @Franksudoman
-/docs/ @ProfHepta @Tomasrgbsf @Franksudoman
+/.github/ @ProfHepta
+/.gitmodules @ProfHepta
+/core @ProfHepta
+/runtime-images/ @ProfHepta
+/docs/ @ProfHepta
 
-/rust/ @ProfHepta @Tomasrgbsf @Franksudoman
+/rust/ @ProfHepta
 
-/workflow-kernel/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-domain/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-ports/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-application/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-adapters/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-composition/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-core/bin/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-core/src/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-core/config/ @ProfHepta @Tomasrgbsf @Franksudoman
-/paper-core/docs/ @ProfHepta @Tomasrgbsf @Franksudoman
+/workflow-kernel/ @ProfHepta
+/paper-domain/ @ProfHepta
+/paper-ports/ @ProfHepta
+/paper-application/ @ProfHepta
+/paper-adapters/ @ProfHepta
+/paper-composition/ @ProfHepta
+/paper-core/bin/ @ProfHepta
+/paper-core/src/ @ProfHepta
+/paper-core/config/ @ProfHepta
+/paper-core/docs/ @ProfHepta
 
-/migration/ @ProfHepta @Tomasrgbsf @Franksudoman
-/store/migrations/ @ProfHepta @Tomasrgbsf @Franksudoman
+/migration/ @ProfHepta
+/store/migrations/ @ProfHepta
 
-/package.json @ProfHepta @Tomasrgbsf @Franksudoman
-/package-lock.json @ProfHepta @Tomasrgbsf @Franksudoman
-/RELEASE.md @ProfHepta @Tomasrgbsf @Franksudoman
-/CHANGELOG.md @ProfHepta @Tomasrgbsf @Franksudoman
+/package.json @ProfHepta
+/package-lock.json @ProfHepta
+/RELEASE.md @ProfHepta
+/CHANGELOG.md @ProfHepta

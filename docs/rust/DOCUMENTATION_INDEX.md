@@ -94,7 +94,7 @@ The candidate cannot be accepted as source-qualified without retained current
 V3 evidence binding the exact base/head/tested-merge identities and complete
 eligible run-attempt histories. Tests for the historical identity and run-history
 defects are present; static source cannot certify that the current candidate's
-hosted workflow and independent review have completed successfully.
+hosted workflow has completed successfully and the maintainer accepts the change.
 
 The G0 work items `QUAL-001` through `QUAL-005` own closure. Historical green
 artifacts and superseded approval cannot be reused.
@@ -155,4 +155,4 @@ node docs/tools/validate-development-docs.mjs
 python3 docs/rust/tools/validate-program-truth.py
 ```
 
-The full exact-head workflow matrix and independent review remain mandatory.
+The full applicable exact-head workflow matrix remains mandatory; independent human PR approval does not.

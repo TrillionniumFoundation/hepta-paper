@@ -38,7 +38,6 @@ jobs:
 
           root = Path('docs/rust/qualification')
           expected = {
-              'EXT-GOV-MAIN-001': ('GAP-GOV-003', 'protected-main-ruleset-evidence-v1.schema.json'),
               'EXT-HOST-CGROUP-001': ('GAP-HOST-001', 'independent-linux-review-v1.schema.json'),
               'EXT-HOST-STORAGE-001': ('GAP-HOST-002', 'external-host-storage-package-v1.schema.json'),
               'EXT-KEY-OWNER-001': ('GAP-KEY-001', 'external-key-owner-drill-v1.schema.json'),
@@ -51,6 +50,9 @@ jobs:
               'external-qualification-closure-request-v1.schema.json',
               'external-qualification-closure-receipt-v1.schema.json',
               'qualification-trust-store-v1.schema.json',
+              'protected-main-ruleset-evidence-v1.schema.json',
+              'external-qualification-closure-request-v2.schema.json',
+              'external-qualification-closure-receipt-v2.schema.json',
           }
           schemas = {}
           for name in sorted({v[1] for v in expected.values()} | support):
@@ -60,7 +62,7 @@ jobs:
               assert value['type'] == 'object', name
               assert value['additionalProperties'] is False, name
               version = value['properties'].get('schemaVersion', value['properties'].get('version'))
-              assert version and version.get('const') == 1, name
+              assert version and version.get('const') == (2 if name.endswith('-v2.schema.json') else 1), name
               assert value['required'], name
           for package_id, (_, name) in expected.items():
               schema = schemas[name]
@@ -75,7 +77,7 @@ jobs:
           assert mapping['program'] == 'hepta-paper-rust-rewrite'
           assert mapping['status'] == 'canonical_external_package_map'
           rows = mapping['packages']
-          assert len(rows) == 7 and {r['packageId'] for r in rows} == set(expected)
+          assert len(rows) == 6 and {r['packageId'] for r in rows} == set(expected)
           covered = set()
           for row in rows:
               gap, schema = expected[row['packageId']]
@@ -89,7 +91,7 @@ jobs:
           assert covered == set(external_gaps)
 
           runtime = Path('rust/crates/hepta-qualification-ingest/src/lib.rs').read_text(encoding='utf-8')
-          assert set(re.findall(r'=> "(EXT-[A-Z0-9-]+)"', runtime)) == set(expected)
+          assert set(re.findall(r'=> "(EXT-[A-Z0-9-]+)"', runtime)) == set(expected) | {'EXT-GOV-MAIN-001'}
           closure = Path('rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs').read_text(encoding='utf-8')
           for token in [
               'payload_semantics: "strict_package_v1"',

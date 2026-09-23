@@ -195,7 +195,7 @@
     "GAP-GOV-003": {
       "type": "external_gap",
       "priority": "P0",
-      "state": "blocked_external",
+      "state": "retired",
       "moduleId": "module.source-qualification",
       "capabilityIds": [
         "CAP-QUAL-SOURCE"
@@ -444,7 +444,7 @@
     "MOD-007": {
       "type": "implementation",
       "priority": "P1",
-      "state": "blocked_external",
+      "state": "retired",
       "moduleId": "module.module-registry",
       "capabilityIds": [
         "CAP-GOV-OWNERSHIP"
@@ -684,7 +684,7 @@
     "QUAL-005": {
       "type": "implementation",
       "priority": "P0",
-      "state": "blocked_external",
+      "state": "retired",
       "moduleId": "module.source-qualification",
       "capabilityIds": [
         "CAP-QUAL-SOURCE"

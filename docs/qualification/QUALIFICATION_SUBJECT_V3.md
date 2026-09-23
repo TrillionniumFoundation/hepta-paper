@@ -112,4 +112,4 @@ unresolved conversation appears
 The proposed shape is defined in
 `docs/qualification/schemas/qualification-subject-v3.schema.json`. Adoption
 requires collector, effective-artifact, live-revalidation, tests, workflow
-digests, and independent latest-head review to change atomically.
+digests, and maintainer verification of exact tested source to change atomically.

@@ -1,8 +1,9 @@
 # RFC and ADR process
 
-## 1. When an RFC is required
+## 1. When a design note is useful
 
-Use an RFC before implementation for:
+Record material decisions in the existing module contract or PR. A separate
+RFC is optional, not a pre-implementation approval gate. Useful topics include:
 
 - new capability or module boundary;
 - protocol/schema breaking change;
@@ -36,7 +37,7 @@ An RFC is a proposal, not current architecture.
 
 ## 3. ADR content
 
-After decision, create one stable ADR containing:
+For durable cross-cutting decisions, record one stable ADR containing:
 
 ```text
 status: accepted/superseded
@@ -61,5 +62,6 @@ status/date suffix.
 
 ## 5. Review
 
-RFC/ADR review follows the strongest change class. Architecture cannot approve
+The maintainer decides after applicable tests. No separate human reviewer is
+required for an RFC or ADR. Architecture cannot manufacture
 external authority on behalf of the real authority owner.

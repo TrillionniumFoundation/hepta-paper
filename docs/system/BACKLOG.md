@@ -1,5 +1,11 @@
 # Global executable backlog
 
+Current development follows the [single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md).
+Mandatory independent repository approval (`GAP-GOV-003`/`QUAL-005`) and
+mandatory Code Owner team provisioning (`MOD-007`) are retired, not externally
+qualified. Logical staffing work is optional; real source, runtime and recovery
+checks remain required. Historical references do not restore an approval gate.
+
 The machine work graph is `docs/system/truth/work-items.v2.json`. This projection
 summarizes current closure order; scoped Rust implementation items remain in
 `docs/rust/RUST_REWRITE_BACKLOG.md` to avoid a second copy of the same detailed
@@ -9,15 +15,15 @@ status.
 
 | Gate | Priority work | Current static state |
 |---|---|---|
-| G0 | QUAL-001…005: exact base/head/merge and complete eligible-run history | design ready; independent decision blocked |
+| G0 | QUAL-001…005: exact base/head/merge and complete eligible-run history | design ready; source execution/currentness still requires exact evidence; human approval retired |
 | G1 | SYS-001…006: singular truth, schemas, evidence bindings, history cleanup | source implemented; fresh exact-head qualification required |
-| G2 | MOD-001…008: module registry, protocol, SDK and conformance | typed registry source implemented; full command protocol, SDK, conformance and real teams pending |
+| G2 | MOD-001…008: module registry, protocol, SDK and conformance | typed registry source implemented; full command protocol, SDK and conformance pending; team staffing is optional |
 | G3 | CTL-001…008: Rust composition root, policy, dispatch, verification and sequencer | non-production policy/dispatch/sequencer vertical source implemented; production composition remains open |
 | G4 | RES-001…007: hierarchical accounting, DRF, aging, reservations and bounded blocking | weighted resource/aging source slice implemented; full hierarchy, starvation and blocking qualification pending |
 | G5 | MIG/NODE/domain module items: capability inventory, adapters, shadow and cutover | current Node modules registered; migration implementation pending |
 | G6 | SCH-001…007: deterministic scheduler, optimizer certificate, fallback and calibration | bounded exact/fallback source implemented; Pareto reduction, optimizer port and calibration pending |
 | G7 | PERF/OBS/ORG: canonical workloads, SLOs, ownership and affected CI | design ready |
-| G8 | governance, host, storage, key, Codex, release and legacy replay packages | blocked external |
+| G8 | host, storage, key, Codex, release and legacy replay packages | blocked external |
 | G9 | production-shaped shadow, canary and rollback | not started |
 | G10 | atomic Rust authority transfer and Node retirement | not started |
 
@@ -32,7 +38,7 @@ retired           intentionally removed with migration evidence
 ```
 
 No gate closes because a source file exists. Closure requires the milestone's
-exact evidence package, dependency closure, latest required review, and current
+exact evidence package, dependency closure, maintainer integration decision, and current
 rollback/recovery disposition.
 
 ## Definition of done
@@ -48,7 +54,7 @@ protocol/state compatibility decision
 resource, SLO and canonical workload impact
 failure, reconciliation and rollback behavior
 operator/observability impact
-exact evidence tier and reviewer domain
+exact evidence tier and actual producer identity
 remaining blockers and true owners
 ```
 

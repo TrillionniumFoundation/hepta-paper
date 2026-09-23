@@ -16,7 +16,8 @@ migration/cutover
 documentation/machine truth
 ```
 
-The highest applicable class determines review and CI.
+The highest applicable class determines test scope. Human review is optional
+under the single-maintainer policy, not an additional queue.
 
 ## 2. Delivery lanes
 
@@ -37,7 +38,7 @@ changes. Runs canonical correctness/fault/performance workloads.
 
 ### Authority lane
 
-Credentials, signing, release, storage custody, submission, protected-main, or
+Credentials, signing, release, storage custody, submission, or
 production activation. Requires independently controlled evidence and cannot be
 closed by hosted CI alone.
 
@@ -52,6 +53,6 @@ and after authority graphs.
 - no old-head evidence reuse;
 - no hidden generated source or self-modifying workflow;
 - exact expected-head guard for integration;
-- unresolved request changes block;
+- real correctness findings must be resolved; no required human approval;
 - documentation and machine truth updated in the same semantic change;
 - rollback is executable, not prose-only.

@@ -67,7 +67,7 @@ migration phases. A violation is not an optimizer tradeoff.
 | ID | Invariant |
 |---|---|
 | INV-035 | Every production module is registered with a stable ID, exact version, capabilities, authority, protocol range, SLO, and rollback. |
-| INV-036 | Every module has primary and secondary ownership plus an independent reviewer for authority-bearing changes. |
+| INV-036 | Every module has explicit implementation, recovery and verification responsibilities; one maintainer may fill them. Runtime principal separation is enforced by product contracts, not mandatory human PR approvals. |
 | INV-037 | Module implementations depend on public contracts, not another module's private source. |
 | INV-038 | Module qualification binds module-specific tests and workloads; global CI success alone is not module qualification. |
 | INV-039 | A missing owner, expired qualification, incompatible protocol, or unknown version removes the module from admission. |

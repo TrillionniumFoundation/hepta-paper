@@ -198,6 +198,157 @@ fn template(
     })
 }
 
+
+#[test]
+fn autonomous_research_entry_uses_durable_workflow_owner_and_replays_completion() {
+    use hepta_paper_service::autonomous_research::{
+        AutonomousResearchOptions, execute_autonomous_research_v1,
+    };
+
+    let temp = Temp::new();
+    let definition_path = temp.0.join("autonomous-definition.json");
+    let definition = definition(&temp);
+    fs::write(
+        &definition_path,
+        serde_json::to_vec(&definition).expect("definition encoding"),
+    )
+    .expect("definition write");
+
+    let prepared = execute_autonomous_research_v1(&AutonomousResearchOptions {
+        action: "prepare".into(),
+        launch_mode: "local-run".into(),
+        paper_id: None,
+        campaign_id: Some("campaign-service".into()),
+        require_full_ready: false,
+        help: false,
+        workflow_definition: Some(definition_path),
+        state_directory: Some(temp.state()),
+        definition_hash: None,
+        through_steps: None,
+        expected_revision: None,
+        now_unix_ms: None,
+    })
+    .expect("autonomous prepare");
+    assert_eq!(prepared["operationSucceeded"], true);
+    assert_eq!(prepared["campaignPersisted"], true);
+    assert_eq!(prepared["ready"], false);
+    let hash: hepta_codex_protocol::Sha256Digest = prepared["definitionHash"]
+        .as_str()
+        .expect("definition hash")
+        .parse()
+        .expect("digest");
+
+    let converged = execute_autonomous_research_v1(&AutonomousResearchOptions {
+        action: "converge".into(),
+        launch_mode: "local-run".into(),
+        paper_id: None,
+        campaign_id: Some("campaign-service".into()),
+        require_full_ready: false,
+        help: false,
+        workflow_definition: None,
+        state_directory: Some(temp.state()),
+        definition_hash: Some(hash.clone()),
+        through_steps: None,
+        expected_revision: None,
+        now_unix_ms: Some(1100),
+    })
+    .expect("autonomous converge");
+    assert_eq!(converged["operationSucceeded"], true);
+    assert_eq!(converged["workerExecutionPerformed"], true);
+    assert_eq!(converged["workflow"]["committedSteps"], 7);
+    assert_eq!(converged["workflow"]["campaignState"], "completed");
+    assert_eq!(converged["providerExecutionPerformed"], false);
+
+    let attempts = attempt_count(&temp);
+    let replay = execute_autonomous_research_v1(&AutonomousResearchOptions {
+        action: "converge".into(),
+        launch_mode: "local-run".into(),
+        paper_id: None,
+        campaign_id: Some("campaign-service".into()),
+        require_full_ready: false,
+        help: false,
+        workflow_definition: None,
+        state_directory: Some(temp.state()),
+        definition_hash: Some(hash),
+        through_steps: None,
+        expected_revision: None,
+        now_unix_ms: Some(1200),
+    })
+    .expect("autonomous replay");
+    assert_eq!(replay["workflow"]["committedSteps"], 7);
+    assert_eq!(replay["workerExecutionPerformed"], false);
+    assert_eq!(attempt_count(&temp), attempts);
+}
+
+#[test]
+fn autonomous_research_entry_cancels_before_dispatch_and_stays_terminal() {
+    use hepta_paper_service::autonomous_research::{
+        AutonomousResearchOptions, execute_autonomous_research_v1,
+    };
+
+    let temp = Temp::new();
+    let definition_path = temp.0.join("autonomous-cancel-definition.json");
+    fs::write(
+        &definition_path,
+        serde_json::to_vec(&definition(&temp)).expect("definition encoding"),
+    )
+    .expect("definition write");
+    let prepared = execute_autonomous_research_v1(&AutonomousResearchOptions {
+        action: "prepare".into(),
+        launch_mode: "local-run".into(),
+        paper_id: None,
+        campaign_id: Some("campaign-service".into()),
+        require_full_ready: false,
+        help: false,
+        workflow_definition: Some(definition_path),
+        state_directory: Some(temp.state()),
+        definition_hash: None,
+        through_steps: None,
+        expected_revision: None,
+        now_unix_ms: None,
+    })
+    .expect("prepare");
+    let hash: hepta_codex_protocol::Sha256Digest = prepared["definitionHash"]
+        .as_str()
+        .expect("definition hash")
+        .parse()
+        .expect("digest");
+    let cancelled = execute_autonomous_research_v1(&AutonomousResearchOptions {
+        action: "cancel".into(),
+        launch_mode: "local-run".into(),
+        paper_id: None,
+        campaign_id: Some("campaign-service".into()),
+        require_full_ready: false,
+        help: false,
+        workflow_definition: None,
+        state_directory: Some(temp.state()),
+        definition_hash: Some(hash.clone()),
+        through_steps: None,
+        expected_revision: Some(0),
+        now_unix_ms: Some(1200),
+    })
+    .expect("cancel");
+    assert_eq!(cancelled["workflow"]["campaignState"], "cancelled");
+    assert_eq!(attempt_count(&temp), 0);
+
+    let rejected = execute_autonomous_research_v1(&AutonomousResearchOptions {
+        action: "launch".into(),
+        launch_mode: "local-run".into(),
+        paper_id: None,
+        campaign_id: Some("campaign-service".into()),
+        require_full_ready: false,
+        help: false,
+        workflow_definition: None,
+        state_directory: Some(temp.state()),
+        definition_hash: Some(hash),
+        through_steps: Some(1),
+        expected_revision: None,
+        now_unix_ms: Some(1300),
+    });
+    assert!(rejected.is_err());
+    assert_eq!(attempt_count(&temp), 0);
+}
+
 #[test]
 fn actual_artifacts_flow_through_all_seven_documented_steps() {
     let (temp, hash) = fixture();

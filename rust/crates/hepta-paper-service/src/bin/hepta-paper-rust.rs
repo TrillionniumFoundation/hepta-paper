@@ -25,7 +25,7 @@ use hepta_paper_service::{
     },
     autonomous_research::{
         autonomous_research_help_json_v1, execute_autonomous_research_v1,
-        inspect_autonomous_research_v1, parse_autonomous_research_arguments,
+        parse_autonomous_research_arguments,
     },
     autonomous_research_one_shot_campaign_attempt::{
         autonomous_research_one_shot_campaign_attempt_help_json_v1,
@@ -1530,13 +1530,18 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            let report = if options.action == "prepare" || options.action == "status" {
-                inspect_autonomous_research_v1(&options)
-            } else {
-                execute_autonomous_research_v1(&options)
+            let report = match execute_autonomous_research_v1(&options) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
-            if report["ready"] != serde_json::Value::Bool(true) {
+            let operation_succeeded =
+                report["operationSucceeded"] == serde_json::Value::Bool(true);
+            let full_ready = report["ready"] == serde_json::Value::Bool(true);
+            if !operation_succeeded || (options.require_full_ready && !full_ready) {
                 std::process::exit(2);
             }
         }
@@ -1904,7 +1909,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | autonomous-state-partial-root-maintenance --action plan|execute [options]",
                 " | personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH] [--help]",
                 " | submission-handoff-export --campaign-id ID --bundle-root ABSOLUTE_PATH --request ABSOLUTE_JSON_PATH [--action inspect|export]",
-                " | autonomous-research --action prepare|launch|status|resume|converge --paper-id ID [--launch-mode local-run|production-run|golden-bootstrap]",
+                " | autonomous-research --action prepare|launch|status|pause|resume|cancel|converge [--paper-id ID|--campaign-id ID] [--launch-mode local-run|production-run|golden-bootstrap] [--workflow-definition ABSOLUTE_PATH] [--state-directory ABSOLUTE_PATH --definition-hash sha256:...] [--through-steps N] [--expected-revision N] [--now UNIX_MILLIS]",
                 " | autonomous-research-one-shot-campaign-attempt --action plan|preflight|execute|status [--dataset-mount-file PATH|--attempt-id ID] [--root PATH --runtime-root PATH --control-root PATH]",
                 " | autonomous-empirical-plugin-release --action template|plan|publish|inspect [--template ABSOLUTE_PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config ABSOLUTE_PATH] [--install-root ABSOLUTE_PATH] [--activation ABSOLUTE_PATH]",
                 " | autonomous-intake-authority-rotation --action plan|apply --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",

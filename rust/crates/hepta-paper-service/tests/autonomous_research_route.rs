@@ -26,6 +26,7 @@ fn help_and_prepare_are_truthful_fail_closed_reports() {
     let report: Value = serde_json::from_slice(&report.stdout).unwrap();
     assert_eq!(report["ready"], false);
     assert_eq!(report["campaignPersisted"], false);
+    assert_eq!(report["operationSucceeded"], false);
     assert_eq!(report["providerExecutionPerformed"], false);
     assert_eq!(report["externalActionPerformed"], false);
 }

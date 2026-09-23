@@ -282,3 +282,79 @@ handoff identity, and test rejection before writes. Publisher tests additionally
 exercise real target races, retained stages, output corruption, post-rename
 failure and SIGKILL on both sides of rename. They do not qualify a production
 installation or an external principal.
+
+### Explicit unpublished-stage recovery
+
+The existing provisioning command accepts a separate Rust-only profile:
+
+```bash
+hepta-paper-rust autonomous-state-provision --recover-staging "$RECOVERY_REQUEST"
+```
+
+Use the [executable request example](../modules/examples/provisioning-recovery-request.v1.json).
+It is a closed `NativeStateProvisioningRecoveryRequestV1`: `version=1`, exact
+`kind`, `action` (`inspect` or `quarantine`), absolute `runtimeRoot` and
+`stagingRoot`, boolean `execute`, and optional/null `expectedPlanHash`.
+Unknown/duplicate JSON fields, additional CLI arguments and requests above
+64 KiB are refused. A staging name must be the exact same-parent
+`.NAME.provisioning-` plus 32 lowercase hex digits for the selected runtime.
+This profile does not load genesis, model credentials or database connections.
+
+First use `action=inspect`, `execute=false`, `expectedPlanHash=null`. Inspection
+creates no file and reports the actual retained-directory and file identities,
+byte lengths and SHA-256 values in `plan.inventory`. The plan hash binds that
+inventory, the normalized target, both original/quarantine names and the parent
+identity. The only allowed action is non-destructive quarantine, not execution
+or adoption of any staged content. For mutation, retain the selected
+`plan.recoveryPlanHash`, use `action=quarantine`, `execute=true`, and supply that
+value as `expectedPlanHash`. The owner re-reads and compares the entire inventory
+under its exclusive nonblocking parent-directory lock before renaming.
+
+Recovery and new publication share that advisory lock. This is a local
+cooperating-owner contract, not exclusion of older binaries, hostile same-UID
+processes or a qualified network filesystem. Stop such older/noncooperating
+producers before recovery; this command is not a systemd stop or installed-host
+qualification ceremony. The lock needs no persistent lock file and inspection
+never constructs a runtime. Independent targets under one parent serialize.
+
+The bounded inventory accepts only manifest-derived directories/database paths
+and the prepared receipt. Partial or empty files are preserved as bytes, not
+accepted as valid SQL. Files must be private 0600, single-link regular files;
+directories private 0700 on the retained parent device. At most 64 total entries,
+32 MiB per database, 1 MiB for the prepared receipt and 129 MiB aggregate file
+bytes are read. Symlinks, special nodes, unknown names and a terminal publication
+receipt cause refusal. An existing runtime causes refusal even if it appears
+pristine: published roots and newer committed state are never touched.
+
+Quarantine uses same-parent `RENAME_NOREPLACE` to
+`.NAME.quarantined-provisioning-NONCE`, flushes the retained files/directories and
+parent, and re-verifies the original descriptors at the new name. No bytes are
+deleted or rewritten, no missing schema is invented, and the result keeps
+`freshRuntimeInstalled=false`, `productionActivation=false`, `nodeRetirement=false`.
+Preserve the request/plan and receipt outside the runtime. A new ordinary
+provisioning plan can subsequently create a fresh root; the quarantined bytes
+remain available for inspection and are not used as a rollback image.
+
+| Observed failure/state | Operator action |
+|---|---|
+| `owner_busy` | Finish or stop the actual competing cooperating owner; no recovery mutation happened. |
+| Missing/both names, unsafe namespace, existing runtime | Preserve all names and resolve ownership manually. Do not delete or force-adopt a directory. |
+| `recovery_plan_mismatch` | Inspect the changed bytes/identity. Approval of the earlier snapshot does not approve the replacement. |
+| `quarantineState=not_quarantined` | Original staging is retained; resolve the reported input/namespace/destination conflict. |
+| `quarantineState=quarantined` after a late failure | Preserve quarantine. Reissue the identical selected request to verify bytes and finish directory durability. |
+| `quarantineState=indeterminate` or process death | Inspect both names. Exactly one matching name plus the selected plan is required for explicit reconciliation; there is no automatic retry. |
+
+With staging absent and the exact quarantine present, explicit execution of the
+same selected plan returns the same deterministic receipt after full byte/identity
+verification and directory sync. A copied or modified quarantine does not match.
+Once a new runtime exists this recovery profile refuses even replay; normal
+runtime lifecycle owners take over. No source-to-runtime adoption or repair of a
+published root is implied.
+
+The provisioning integration target imports the checked-in request example,
+constructs genuine ten-database native images, models retained staging in its
+private fixture, executes the actual recovery CLI without Node in PATH, compares
+all ten byte hashes, repeats the receipt and creates a fresh runtime while
+preserving quarantine. Unit tests independently use actual SIGKILL at
+before-rename, after-rename and post-sync cuts. Those publisher/recovery byte
+fixtures are not production database, storage-loss or external-principal proof.

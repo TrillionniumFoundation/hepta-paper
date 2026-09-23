@@ -229,3 +229,38 @@ fn process_death_on_either_side_of_rename_preserves_recoverable_evidence() {
         assert!(Target::open(&fixture.0.join("runtime")).is_err());
     }
 }
+
+#[test]
+fn publisher_is_excluded_by_the_same_parent_lock_as_recovery() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let competing = fixture.target();
+    let lock = competing.lock().unwrap();
+    let failure = publish(&target, &images(), &prepared(), &|| Ok(())).unwrap_err();
+    assert!(failure.0.contains("owner_busy"));
+    assert!(fixture.stages().is_empty());
+    assert!(!target.path.exists());
+    drop(lock);
+    assert_eq!(
+        publish(&target, &images(), &prepared(), &|| Ok(())).unwrap()["freshRuntimeInstalled"],
+        true
+    );
+}
+
+#[test]
+fn preobserved_target_rechecks_retained_staging_after_obtaining_the_owner_lock() {
+    let fixture = Fixture::new();
+    let first = fixture.target();
+    let previously_observed = fixture.target();
+    assert!(
+        publish(&first, &images(), &prepared(), &|| Err(error(
+            "input_expired"
+        )))
+        .is_err()
+    );
+    assert_eq!(fixture.stages().len(), 1);
+    let failure = publish(&previously_observed, &images(), &prepared(), &|| Ok(())).unwrap_err();
+    assert!(failure.0.contains("retained_staging_requires_inspection"));
+    assert_eq!(fixture.stages().len(), 1);
+    assert!(!first.path.exists());
+}

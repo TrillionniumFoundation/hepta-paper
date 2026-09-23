@@ -19,6 +19,7 @@ mod execution;
 pub(crate) mod files;
 mod inputs;
 mod publication;
+pub mod recovery;
 mod schema;
 
 const PROVISIONING_BLOCKER: &str = "rust_autonomous_state_provision_execute_not_ported";
@@ -60,6 +61,10 @@ Optional: --root WORKSPACE_PATH --machine-intake-genesis-authority external|root
           --runtime-reproducibility-maximum-attempts-per-epoch N
           --runtime-reproducibility-maximum-cost-usd-per-epoch N
           --plan-id sha256:... --execute
+
+Recovery profile: autonomous-state-provision --recover-staging ABSOLUTE_REQUEST_JSON
+NativeStateProvisioningRecoveryRequestV1 selects inspect or explicit quarantine.
+It preserves unpublished bytes; it cannot adopt, delete or replace a runtime.
 "#;
 
 #[derive(Clone, Debug)]

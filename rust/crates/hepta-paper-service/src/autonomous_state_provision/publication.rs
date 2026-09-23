@@ -6,7 +6,7 @@ use super::{
 };
 use nix::{
     errno::Errno,
-    fcntl::{OFlag, RenameFlags, open, openat, renameat2},
+    fcntl::{Flock, FlockArg, OFlag, RenameFlags, open, openat, renameat2},
     sys::stat::{Mode, mkdirat},
 };
 use serde_json::{Value, json};
@@ -40,12 +40,17 @@ fn nonexistent(path: &Path) -> Result<()> {
 }
 pub(super) struct Target {
     pub path: PathBuf,
-    name: String,
-    parent: File,
+    pub(super) name: String,
+    pub(super) parent: File,
     parents: Vec<(PathBuf, File, Metadata)>,
 }
 impl Target {
     pub fn open(requested: &Path) -> Result<Self> {
+        let target = Self::open_parent(requested)?;
+        target.require_fresh()?;
+        Ok(target)
+    }
+    pub(super) fn open_parent(requested: &Path) -> Result<Self> {
         let path = files::absolute(requested)?;
         let name = path
             .file_name()
@@ -80,10 +85,21 @@ impl Target {
             parents,
         };
         target.assert_current()?;
-        nonexistent(&target.path)?;
-        let prefix = format!(".{}.provisioning-", target.name);
+        Ok(target)
+    }
+    pub(super) fn lock(&self) -> Result<Flock<File>> {
+        Flock::lock(self.parent.try_clone()?, FlockArg::LockExclusiveNonblock)
+            .map_err(|_| error("autonomous_state_provisioning_owner_busy"))
+    }
+    pub(super) fn require_absent(&self) -> Result<()> {
+        self.assert_current()?;
+        nonexistent(&self.path)
+    }
+    fn require_fresh(&self) -> Result<()> {
+        self.require_absent()?;
+        let prefix = format!(".{}.provisioning-", self.name);
         for (index, entry) in
-            fs::read_dir(target.path.parent().ok_or_else(|| error(INVALID))?)?.enumerate()
+            fs::read_dir(self.path.parent().ok_or_else(|| error(INVALID))?)?.enumerate()
         {
             if index >= 4096 {
                 return Err(error("autonomous_state_provisioning_parent_entry_bound"));
@@ -94,7 +110,7 @@ impl Target {
                 ));
             }
         }
-        Ok(target)
+        self.assert_current()
     }
     pub fn observation(&self) -> Result<Value> {
         let m = self.parent.metadata()?;
@@ -234,8 +250,8 @@ fn publish_with_hook(
     revalidate: &impl Fn() -> Result<()>,
     hook: &mut impl FnMut(&str) -> Result<()>,
 ) -> Result<Value> {
-    target.assert_current()?;
-    nonexistent(&target.path)?;
+    let _owner_lock = target.lock()?;
+    target.require_fresh()?;
     if images.len() != 10 {
         return Err(error("autonomous_state_provisioning_ten_images_required"));
     }

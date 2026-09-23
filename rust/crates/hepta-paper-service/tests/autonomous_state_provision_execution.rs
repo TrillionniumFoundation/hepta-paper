@@ -406,3 +406,114 @@ fn direct_api_cannot_bypass_positive_budget_or_execution_confirmation() {
     );
     assert!(!fixture.runtime().exists());
 }
+
+#[test]
+fn real_ten_database_stage_is_quarantined_by_the_cli_without_node_or_byte_loss() {
+    let fixture = Fixture::new();
+    let mut options = fixture.options();
+    let selected = plan(&options).unwrap();
+    options.action = "execute".into();
+    options.execute = true;
+    options.expected_plan_id = Some(selected["provisioningPlanId"].as_str().unwrap().into());
+    let original = execute(&options).unwrap();
+    // Construct a disposable retained-stage fixture from genuine native images.
+    // This models pre-publication residue; actual SIGKILL cuts are separate tests.
+    let staging = fixture
+        .root
+        .join(".rust-runtime.provisioning-0123456789abcdef0123456789abcdef");
+    fs::remove_file(
+        fixture
+            .runtime()
+            .join("native-provisioning-publication.json"),
+    )
+    .unwrap();
+    fs::rename(fixture.runtime(), &staging).unwrap();
+    let request_path = fixture.root.join("recovery-request.json");
+    let mut request: Value = serde_json::from_str(include_str!(
+        "../../../../docs/modules/examples/provisioning-recovery-request.v1.json"
+    ))
+    .unwrap();
+    request["runtimeRoot"] = json!(fixture.runtime());
+    request["stagingRoot"] = json!(staging);
+    let call = |value: &Value| {
+        fs::write(&request_path, serde_json::to_vec(value).unwrap()).unwrap();
+        fs::set_permissions(&request_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .args(["autonomous-state-provision", "--recover-staging"])
+            .arg(&request_path)
+            .env_clear()
+            .env("PATH", "/no-node-or-external-tools")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let inspected = call(&request);
+    assert_eq!(inspected["mutationPerformed"], false);
+    assert_eq!(
+        inspected["plan"]["inventory"]["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        11
+    );
+    request["action"] = json!("quarantine");
+    request["execute"] = json!(true);
+    request["expectedPlanHash"] = inspected["plan"]["recoveryPlanHash"].clone();
+    let recovered = call(&request);
+    assert_eq!(recovered["freshRuntimeInstalled"], false);
+    assert_eq!(recovered["productionActivation"], false);
+    assert_eq!(recovered["deletionPerformed"], false);
+    assert!(!fixture.runtime().exists());
+    assert!(!staging.exists());
+    assert_eq!(call(&request), recovered);
+    let quarantine = Path::new(recovered["quarantineRoot"].as_str().unwrap());
+    for database in original["databaseInstances"].as_array().unwrap() {
+        let bytes =
+            fs::read(quarantine.join(database["sourceRelativePath"].as_str().unwrap())).unwrap();
+        assert_eq!(
+            format!("sha256:{:x}", Sha256::digest(&bytes)),
+            database["sourceSha256"]
+        );
+    }
+    // The preserved quarantine does not block a newly planned fresh constructor.
+    options.action = "plan".into();
+    options.execute = false;
+    options.expected_plan_id = None;
+    let new_plan = plan(&options).unwrap();
+    options.action = "execute".into();
+    options.execute = true;
+    options.expected_plan_id = Some(new_plan["provisioningPlanId"].as_str().unwrap().into());
+    assert_eq!(execute(&options).unwrap()["freshRuntimeInstalled"], true);
+    assert!(quarantine.is_dir());
+}
+
+#[test]
+fn recovery_cli_rejects_unknown_fields_and_unconfirmed_mutation() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("bad-recovery-request.json");
+    for body in [
+        json!({"version":1,"kind":"NativeStateProvisioningRecoveryRequestV1","action":"quarantine",
+            "runtimeRoot":fixture.runtime(),"stagingRoot":fixture.root.join(".rust-runtime.provisioning-0123456789abcdef0123456789abcdef"),
+            "execute":false,"expectedPlanHash":format!("sha256:{}","1".repeat(64))}),
+        json!({"version":1,"kind":"NativeStateProvisioningRecoveryRequestV1","action":"inspect",
+            "runtimeRoot":fixture.runtime(),"stagingRoot":fixture.root.join(".rust-runtime.provisioning-0123456789abcdef0123456789abcdef"),
+            "execute":false,"expectedPlanHash":null,"allowRuntimeAdoption":true}),
+    ] {
+        fs::write(&path, serde_json::to_vec(&body).unwrap()).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .args(["autonomous-state-provision", "--recover-staging"])
+            .arg(&path)
+            .env_clear()
+            .env("PATH", "/no-external-tools")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(!fixture.runtime().exists());
+    }
+}

@@ -1230,6 +1230,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some("autonomous-state-provision") => {
+            if args
+                .get(1)
+                .is_some_and(|value| value == "--recover-staging")
+            {
+                let report = hepta_paper_service::autonomous_state_provision::recovery::recover_staging_cli_v1(&args[1..])?;
+                println!("{}", serde_json::to_string(&report)?);
+                return Ok(());
+            }
             let Some(options) = parse_autonomous_state_provisioning_arguments(&args[1..])? else {
                 println!("{AUTONOMOUS_STATE_PROVISIONING_USAGE}");
                 return Ok(());

@@ -8194,7 +8194,7 @@
     },
     {
       "id": "maintenance/autonomous-state-provision",
-      "rustEntrypoint": "hepta-paper-rust autonomous-state-provision --action plan|execute [options] [--genesis-inputs ABSOLUTE_JSON --genesis-inputs-sha256 SHA256]",
+      "rustEntrypoint": "hepta-paper-rust autonomous-state-provision --action plan|execute [options] [--genesis-inputs ABSOLUTE_JSON --genesis-inputs-sha256 SHA256]; Rust-only recovery profile: hepta-paper-rust autonomous-state-provision --recover-staging ABSOLUTE_REQUEST_JSON",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -8245,20 +8245,44 @@
         {
           "path": "rust/crates/hepta-paper-service/src/pristine_runtime_state/machine.rs",
           "symbol": "verify_external"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery.rs",
+          "symbol": "recover_staging_cli_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery.rs",
+          "symbol": "recover"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/inventory.rs",
+          "symbol": "capture"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/inventory.rs",
+          "symbol": "verify"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication.rs",
+          "symbol": "lock"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
         "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
         "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs"
       ],
-      "remaining": "The explicit pinned-external-genesis-v1 profile now validates real machine-intake V2 configuration, original registered topic/dataset byte identity and two actual Ed25519 genesis signatures; it constructs all ten business databases in memory using the original 25 native migrations, existing handoff migrations and original-constructor schema templates, seeds exact metadata/genesis and paired random handoff identities, and atomically publishes one fresh private root with NOREPLACE, retained descriptors, file/directory fsync and output hash verification. Real original Node constructor schema and seed-row comparisons run against the actual Rust CLI with Node absent from its execution PATH. Invalid authority, stale source/plan, target races, unregistered staged paths, post-rename failures and SIGKILL before/after publication preserve explicit outcomes and do not overwrite or automatically retry. The no-genesis-input diagnostic profile remains blocked. Root-owned production genesis, complete incumbent provider/policy CLI flags, adopted-root maintenance, automatic abandoned-stage reconciliation, online schema/authority activation, installed service handoff, independent full-command acceptance and Node retirement remain open; offline business initialization is not a production writer grant. Prepared stage records now keep installed/ready false; only the publishing owner persists a separate terminal receipt after successful rename, sync and byte checks. The parent staging name is fsynced before child construction. Direct API budget bounds and execution confirmations are enforced as well as CLI validation.",
+      "remaining": "The explicit pinned-external-genesis-v1 profile now validates real machine-intake V2 configuration, original registered topic/dataset byte identity and two actual Ed25519 genesis signatures; it constructs all ten business databases in memory using the original 25 native migrations, existing handoff migrations and original-constructor schema templates, seeds exact metadata/genesis and paired random handoff identities, and atomically publishes one fresh private root with NOREPLACE, retained descriptors, file/directory fsync and output hash verification. Real original Node constructor schema and seed-row comparisons run against the actual Rust CLI with Node absent from its execution PATH. Invalid authority, stale source/plan, target races, unregistered staged paths, post-rename failures and SIGKILL before/after publication preserve explicit outcomes and do not overwrite or automatically retry. The no-genesis-input diagnostic profile remains blocked. Root-owned production genesis, complete incumbent provider/policy CLI flags, adopted-root maintenance, automatic abandoned-stage reconciliation, online schema/authority activation, installed service handoff, independent full-command acceptance and Node retirement remain open; offline business initialization is not a production writer grant. Prepared stage records now keep installed/ready false; only the publishing owner persists a separate terminal receipt after successful rename, sync and byte checks. The parent staging name is fsynced before child construction. Direct API budget bounds and execution confirmations are enforced as well as CLI validation. An explicit Rust-only --recover-staging request now inspects and quarantines an unpublished staging tree under the same nonblocking retained-parent flock used by the publisher. A selected plan binds parent/root/file inode identity, metadata, full bounded byte hashes and the closed manifest namespace. Explicit quarantine uses NOREPLACE and fsync, retains all bytes, reports known versus indeterminate move outcomes, and permits exact-plan reconciliation after SIGKILL. Existing runtime roots, links, changed bytes or inodes, unexpected files and destination collisions are refused. This is not stage adoption, schema repair, deletion, external authorization or online activation; operators must quiesce older/noncooperating binaries before recovery. The executable documented request, real ten-database byte-preservation/reprovisioning CLI test and real process crash cuts cover this profile.",
       "rustSources": [
+        "docs/modules/examples/provisioning-recovery-request.v1.json",
         "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
         "rust/crates/hepta-paper-service/src/autonomous_state_provision/business-schemas.v1.json",
         "rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs",
         "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
         "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/inventory.rs",
         "rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs",
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/machine_intake/configuration.rs",
@@ -8336,6 +8360,62 @@
         {
           "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
           "symbol": "failure_before_terminal_receipt_preserves_published_not_success_claim"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+          "symbol": "real_ten_database_stage_is_quarantined_by_the_cli_without_node_or_byte_loss"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+          "symbol": "recovery_cli_rejects_unknown_fields_and_unconfirmed_mutation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "inspection_is_read_only_and_quarantine_preserves_bytes_with_exact_replay"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "changed_bytes_and_byte_identical_inode_replacement_invalidate_the_selected_plan"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "recovery_refuses_existing_runtime_even_if_it_looks_pristine"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "unexpected_names_symlinks_hardlinks_and_publication_receipts_are_never_adopted"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "recovery_and_publication_use_the_same_nonblocking_parent_owner"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "quarantine_collision_and_source_change_before_rename_preserve_originals"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "post_rename_failure_keeps_quarantine_and_is_reconciled_by_exact_plan"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "recovery_requires_exact_action_confirmation_and_canonical_same_parent_stage"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "empty_and_partial_stages_are_supported_but_oversized_files_are_not_read"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "symbol": "real_process_crash_on_every_quarantine_boundary_recovers_without_losing_bytes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "publisher_is_excluded_by_the_same_parent_lock_as_recovery"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "preobserved_target_rechecks_retained_staging_after_obtaining_the_owner_lock"
         }
       ],
       "argumentModes": [
@@ -8535,9 +8615,17 @@
             {
               "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
               "symbol": "failure_before_terminal_receipt_preserves_published_not_success_claim"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "publisher_is_excluded_by_the_same_parent_lock_as_recovery"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "preobserved_target_rechecks_retained_staging_after_obtaining_the_owner_lock"
             }
           ],
-          "remaining": "The explicit pinned-external-genesis-v1 profile now validates real machine-intake V2 configuration, original registered topic/dataset byte identity and two actual Ed25519 genesis signatures; it constructs all ten business databases in memory using the original 25 native migrations, existing handoff migrations and original-constructor schema templates, seeds exact metadata/genesis and paired random handoff identities, and atomically publishes one fresh private root with NOREPLACE, retained descriptors, file/directory fsync and output hash verification. Real original Node constructor schema and seed-row comparisons run against the actual Rust CLI with Node absent from its execution PATH. Invalid authority, stale source/plan, target races, unregistered staged paths, post-rename failures and SIGKILL before/after publication preserve explicit outcomes and do not overwrite or automatically retry. The no-genesis-input diagnostic profile remains blocked. Root-owned production genesis, complete incumbent provider/policy CLI flags, adopted-root maintenance, automatic abandoned-stage reconciliation, online schema/authority activation, installed service handoff, independent full-command acceptance and Node retirement remain open; offline business initialization is not a production writer grant. Prepared stage records now keep installed/ready false; only the publishing owner persists a separate terminal receipt after successful rename, sync and byte checks. The parent staging name is fsynced before child construction. Direct API budget bounds and execution confirmations are enforced as well as CLI validation."
+          "remaining": "The explicit pinned-external-genesis-v1 profile now validates real machine-intake V2 configuration, original registered topic/dataset byte identity and two actual Ed25519 genesis signatures; it constructs all ten business databases in memory using the original 25 native migrations, existing handoff migrations and original-constructor schema templates, seeds exact metadata/genesis and paired random handoff identities, and atomically publishes one fresh private root with NOREPLACE, retained descriptors, file/directory fsync and output hash verification. Real original Node constructor schema and seed-row comparisons run against the actual Rust CLI with Node absent from its execution PATH. Invalid authority, stale source/plan, target races, unregistered staged paths, post-rename failures and SIGKILL before/after publication preserve explicit outcomes and do not overwrite or automatically retry. The no-genesis-input diagnostic profile remains blocked. Root-owned production genesis, complete incumbent provider/policy CLI flags, adopted-root maintenance, automatic abandoned-stage reconciliation, online schema/authority activation, installed service handoff, independent full-command acceptance and Node retirement remain open; offline business initialization is not a production writer grant. Prepared stage records now keep installed/ready false; only the publishing owner persists a separate terminal receipt after successful rename, sync and byte checks. The parent staging name is fsynced before child construction. Direct API budget bounds and execution confirmations are enforced as well as CLI validation. An explicit Rust-only --recover-staging request now inspects and quarantines an unpublished staging tree under the same nonblocking retained-parent flock used by the publisher. A selected plan binds parent/root/file inode identity, metadata, full bounded byte hashes and the closed manifest namespace. Explicit quarantine uses NOREPLACE and fsync, retains all bytes, reports known versus indeterminate move outcomes, and permits exact-plan reconciliation after SIGKILL. Existing runtime roots, links, changed bytes or inodes, unexpected files and destination collisions are refused. This is not stage adoption, schema repair, deletion, external authorization or online activation; operators must quiesce older/noncooperating binaries before recovery. The executable documented request, real ten-database byte-preservation/reprovisioning CLI test and real process crash cuts cover this profile."
         }
       ]
     },

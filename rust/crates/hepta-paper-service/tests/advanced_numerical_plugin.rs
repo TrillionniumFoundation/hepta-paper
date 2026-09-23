@@ -69,8 +69,15 @@ fn cli_status_reports_exact_native_surface_without_claiming_incumbent_runtime() 
     assert_eq!(report["runtimeIdentityVerified"], false);
     assert_eq!(report["osSandboxVerified"], false);
     assert_eq!(report["productionQualified"], false);
-    assert_eq!(report["supportedAnalysisFamilies"].as_array().map(Vec::len), Some(3));
-    assert!(report["blockers"].as_array().is_some_and(|values| !values.is_empty()));
+    assert_eq!(
+        report["supportedAnalysisFamilies"].as_array().map(Vec::len),
+        Some(3)
+    );
+    assert!(
+        report["blockers"]
+            .as_array()
+            .is_some_and(|values| !values.is_empty())
+    );
 }
 
 #[test]

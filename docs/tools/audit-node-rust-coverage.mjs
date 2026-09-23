@@ -94,16 +94,29 @@ export function buildCoverageInventory(routes, catalog, globalCapabilities, modu
 }
 
 function actionModesFromNodeRoute(route) {
-  if (!route || !Array.isArray(route.nodeArgv)) return { source: null, modes: [] };
-  const fixedIndex = route.nodeArgv.indexOf('--action');
-  if (fixedIndex >= 0 && typeof route.nodeArgv[fixedIndex + 1] === 'string') {
+  // Raw registry routes use argv; projected inventory rows use nodeArgv.
+  // Never silently pick one when a caller supplies contradictory identities.
+  if (route?.argv !== undefined && route?.nodeArgv !== undefined
+      && JSON.stringify(route.argv) !== JSON.stringify(route.nodeArgv)) {
+    throw new Error('conflicting Node argument identities');
+  }
+  const nodeArgv = route?.argv ?? route?.nodeArgv;
+  if (!Array.isArray(nodeArgv) || nodeArgv.length === 0
+      || nodeArgv.some((value) => typeof value !== 'string' || value.length === 0)) {
+    throw new Error('missing or invalid Node command arguments');
+  }
+  const fixedIndex = nodeArgv.indexOf('--action');
+  if (fixedIndex >= 0 && typeof nodeArgv[fixedIndex + 1] === 'string') {
     return { source: null, modes: [] };
   }
-  if (!route.forwardedArgumentSchema?.valueFlags?.includes('action')) {
+  const actionDeclared = route.forwardedArgumentSchema?.valueFlags?.includes('action') === true;
+  const source = nodeArgv.find((value) => typeof value === 'string' && value.endsWith('.mjs'));
+  if (!source) {
+    if (actionDeclared) {
+      throw new Error(`dynamic action route missing Node source: ${route.group}/${route.name}`);
+    }
     return { source: null, modes: [] };
   }
-  const source = route.nodeArgv.find((value) => typeof value === 'string' && value.endsWith('.mjs'));
-  if (!source) throw new Error(`dynamic action route missing Node source: ${route.group}/${route.name}`);
   const text = fs.readFileSync(path.join(ROOT, source), 'utf8');
   const modes = new Set();
   for (const match of text.matchAll(/--action(?:\s+<[^>\n]+>)?\s+([a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]+)+)/g)) {
@@ -113,7 +126,10 @@ function actionModesFromNodeRoute(route) {
   for (const match of text.matchAll(/\[\s*((?:(?:'|")[a-z][a-z0-9-]*(?:'|")\s*,?\s*){2,})\]\.includes\(action\)/g)) {
     for (const value of match[1].matchAll(/(?:'|")([a-z][a-z0-9-]*)(?:'|")/g)) modes.add(value[1]);
   }
-  if (modes.size === 0) throw new Error(`dynamic Node action modes not discoverable: ${source}`);
+  if (modes.size === 0) {
+    if (actionDeclared) throw new Error(`dynamic Node action modes not discoverable: ${source}`);
+    return { source: null, modes: [] };
+  }
   return { source, modes: [...modes].sort(compare) };
 }
 

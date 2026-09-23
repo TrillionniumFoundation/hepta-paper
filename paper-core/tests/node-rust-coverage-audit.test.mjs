@@ -122,3 +122,34 @@ test('canonical command ledger owns every campaign action mode and explicit gap'
   assert.ok(modes.find((row) => row.nodeAction === 'resume').remaining.includes('not equivalent'));
   assert.equal(report.acceptedParityRows, 0);
 });
+
+test('raw registry and projected argv identities discover the same real action modes', () => {
+  const projected = COMMAND_REGISTRY_ROUTES.map(({ argv, ...route }) => ({ ...route, nodeArgv: argv }));
+  assert.deepEqual(auditNodeRustCommandMap(projected), auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES));
+  const portal = report.commandMappings.commands.find((row) => row.id === 'operator/portal-target-qualification');
+  assert.deepEqual(portal.argumentModes.map((mode) => mode.nodeAction).sort(),
+    ['import-execute', 'import-plan', 'preflight', 'status']);
+});
+
+test('real action mapping cannot disappear or claim an unknown or duplicate action', () => {
+  for (const mutate of [
+    (row) => { row.argumentModes.pop(); },
+    (row) => { row.argumentModes[0].nodeAction = 'unimplemented-future-action'; },
+    (row) => { row.argumentModes.push(structuredClone(row.argumentModes[0])); },
+  ]) {
+    const map = structuredClone(report.commandMappings);
+    mutate(map.commands.find((row) => row.id === 'operator/portal-target-qualification'));
+    assert.throws(() => auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, map), /action modes missing, duplicated or drifted/);
+  }
+});
+
+test('missing and contradictory argv cannot bypass action-mode verification', () => {
+  for (const patch of [
+    { argv: undefined }, { argv: [] }, { argv: [null] },
+    { nodeArgv: ['node', 'different-script.mjs'] },
+  ]) {
+    const routes = COMMAND_REGISTRY_ROUTES.map((route) => route.name === 'portal-target-qualification'
+      ? { ...route, ...patch } : route);
+    assert.throws(() => auditNodeRustCommandMap(routes), /Node (?:command arguments|argument identities)/);
+  }
+});

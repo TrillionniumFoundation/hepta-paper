@@ -4293,10 +4293,13 @@
         {
           "path": "rust/crates/hepta-paper-service/src/advanced_numerical.rs",
           "symbol": "execute_advanced_numerical_plugin_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/advanced_numerical.rs",
+          "symbol": "inspect_advanced_numerical_plugin_status_v1"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
         "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs"
       ],
       "remaining": "Native Rust now exposes a truthful status projection plus the three checked-in reference-candidate run families (linear-algebra, monte-carlo, optimization). Status reports the exact native families and keeps signed-bundle/runtime-identity/OS-sandbox/independent-evidence/production qualification false. The incumbent signed bundle/trust store, executable/source/package identity, kernel OS sandbox and resource receipt, GPU container authority, complete ten-family surface, independent oracle/replay/uncertainty qualification, provider effects and production activation remain unimplemented; the native result cannot authorize Node retirement.",
@@ -7108,18 +7111,172 @@
         {
           "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
           "symbol": "apply_local_workflow_change_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "list_local_workflows_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "inspect_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "read_local_workflow_snapshot"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "symbol": "run"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "symbol": "read_current_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/inspection.rs",
+          "symbol": "read_local_event_page"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "set_state"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+          "symbol": "set_campaign_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_with_clock_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+          "symbol": "set_campaign_state_with_clock"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "history"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "payload"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "configuration"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/lib.rs",
+          "symbol": "run_service_v1"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/control.rs",
+          "symbol": "append_control_batch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
+          "symbol": "plan_prepared_reconciliation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
+          "symbol": "apply_prepared_reconciliation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+          "symbol": "execute_autonomous_research_with_cancellation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "operate_local_workflow_with_clock_and_cancellation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/lib.rs",
+          "symbol": "run_service_with_clock_and_cancellation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/worker.rs",
+          "symbol": "run_process"
+        },
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+          "symbol": "run_bounded_process_with_cancellation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+          "symbol": "plan_gc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+          "symbol": "apply_gc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+          "symbol": "resume_gc"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/purge.rs",
+          "symbol": "plan_purge"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/purge.rs",
+          "symbol": "apply_purge"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/purge.rs",
+          "symbol": "resume_purge"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/recovery.rs",
+          "symbol": "verify_recovery"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/recovery.rs",
+          "symbol": "recovery_facts_at"
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/local_recovery.rs",
+          "symbol": "read_immutable_local_recovery"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance.rs",
+          "symbol": "backup"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/maintenance/recovery.rs",
+          "symbol": "restore_local_backup_v1"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/local_workflow.rs",
-        "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
+        "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+        "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+        "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs",
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/purge.rs",
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs"
       ],
       "remaining": "Campaign inspection and lifecycle are local bounded primitives; full Node campaign command/effect parity is unimplemented. Existing local CLI mutation modes now use live system-clock admission when NOW is omitted; explicit NOW remains a deterministic drill. Amendment rechecks the previous lease after the SQLite lock and before COMMIT, preserves atomic rollback, and returns clock-free exact replay. This is explicit renewal, not automatic lease renewal or physical worker cancellation.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
-        "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs"
+        "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
+        "rust/crates/hepta-campaign-writer/src/control.rs",
+        "rust/crates/hepta-campaign-writer/src/inspection.rs",
+        "rust/crates/hepta-campaign-writer/src/lib.rs",
+        "rust/crates/hepta-campaign-writer/src/local_recovery.rs",
+        "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+        "rust/crates/hepta-paper-service/src/lib.rs",
+        "rust/crates/hepta-paper-service/src/maintenance.rs",
+        "rust/crates/hepta-paper-service/src/maintenance/gc.rs",
+        "rust/crates/hepta-paper-service/src/maintenance/purge.rs",
+        "rust/crates/hepta-paper-service/src/maintenance/reconcile.rs",
+        "rust/crates/hepta-paper-service/src/maintenance/recovery.rs",
+        "rust/crates/hepta-paper-service/src/worker.rs",
+        "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+        "rust/crates/hepta-paper-service/src/workflow/recovery.rs"
       ],
       "testCases": [
         {
@@ -7137,6 +7294,114 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
           "symbol": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_list_uses_explicit_roots_and_rejects_duplicates_and_stale_hashes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "status_is_read_only_and_corrupt_or_missing_artifacts_are_not_repaired"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "local_events_cursor_freezes_prefix_and_rejects_forged_anchors"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "documented_inspection_queries_validate_real_history_without_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "pause_resume_and_absolute_progress_retry_preserve_commits"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "symbol": "autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "budget_and_lease_amendment_replay_is_exact_and_history_survives_old_expiry"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "appended_step_executes_once_without_replaying_committed_prefix"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "cancel_is_terminal_and_stale_or_rollback_commands_do_not_dispatch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "cancellation_before_dispatch_creates_no_attempt_and_status_stays_read_only"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "cancellation_after_preparation_preserves_commits_and_replays_without_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "sigint_stops_real_worker_group_and_blocks_ambiguous_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "symbol": "sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
+          "symbol": "prepared_reconciliation_commits_actual_cached_output_once_without_execution"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
+          "symbol": "merely_started_work_is_never_reexecuted_by_reconciliation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "actual_artifacts_flow_through_all_seven_documented_steps"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs",
+          "symbol": "gc_moves_only_unreferenced_object_and_preserves_workflow_resume"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs",
+          "symbol": "interrupted_gc_fences_service_and_reconciles_both_sides_of_move"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/purge.rs",
+          "symbol": "purge_unlinks_only_hash_selected_quarantine_and_retains_audit_records"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/purge.rs",
+          "symbol": "finished_purge_still_rejects_clock_before_retention_floor"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "recovery_replays_real_partial_history_and_creates_no_sidecars"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "materialized_state_and_revision_tampering_are_detected"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "original_path_restore_preserves_replay_and_next_commit"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+          "symbol": "restore_does_not_overwrite_post_backup_history"
         }
       ],
       "argumentModes": [

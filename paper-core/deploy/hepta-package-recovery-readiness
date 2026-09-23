@@ -1,5 +1,0 @@
-#!/bin/sh
-set -eu
-
-exec /usr/bin/node \
-  /opt/hepta-paper/paper-core/bin/paper-campaign.mjs "$@"

@@ -65,15 +65,17 @@ copy of the documented program. Its result is count 4, mean 5 and sample varianc
 20/3. These are test data, not evidence of a real scientific discovery.
 
 The standalone scientific worker sets `umask 0077` in its own process before
-launching tools, so newly created tool outputs default to mode 0600 even when
-the service's parent shell uses a permissive mask. The library API never changes
-the host process's global umask. Programs invoked directly through that API must
-create private outputs themselves; the documented Python program sets its own
-mask for this reason. Output admission still rejects group- or other-writable
-files, symlinks and hardlinks. Profile files must also be installed with mode
-0600 (or another accepted non-writable-by-group/other mode), and executable
-fixtures must be copied and pinned with safe permissions rather than modifying
-shared Cargo build outputs.
+launching tools. The library API never changes the host process's global umask:
+before execution it creates every declared output path as a singly linked mode
+0600 regular file, creating output-only parent directories as private mode 0700.
+Cooperating Python, R, Lean and TeX tools overwrite those owner-created files.
+If a tool removes/replaces an output, changes it to group/other writable, creates
+a link or special node, changes ownership, or escapes the private attempt root,
+post-execution admission fails closed. The documented Python program still sets
+its own private mask as defense in depth. Profile files must also be installed
+with mode 0600 (or another accepted non-writable-by-group/other mode), and
+executable fixtures must be copied and pinned with safe permissions rather than
+modifying shared Cargo build outputs.
 
 `ScientificRuntimeProfileV1` is closed camelCase JSON with these required fields:
 
@@ -94,8 +96,8 @@ There are 1–32 outputs, each nonempty, within the cumulative profile output li
 Names have 1–256 ASCII bytes; only alphanumeric characters, `_`, `-`, `.` and
 relative `/` separators are allowed. Empty, dot-prefixed, `.`/`..` components,
 absolute paths, backslashes, duplicates and file/directory-prefix conflicts are
-rejected. Source and output paths cannot collide. Nested input directories are
-created privately; the program must create any new output-only subdirectory.
+rejected. Source and output paths cannot collide. Nested input and declared output-only directories are created privately before execution;
+the program may write only the declared output paths.
 `pdf_latex` must request `paper.pdf` in `pdf` format.
 
 Each runtime file is limited to 256 MiB; the executable and additional inventory

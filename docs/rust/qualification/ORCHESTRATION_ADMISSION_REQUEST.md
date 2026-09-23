@@ -1,10 +1,10 @@
 # Orchestration source-admission request
 
-This request binds the new deterministic Rust orchestration kernel to the canonical direct-to-main release-candidate review surface.
+This request binds the selected Rust product orchestration owners to the canonical release-candidate review surface. The standalone `hepta-orchestration-kernel` crate is compatibility/experimental source and is not product evidence.
 
 Admission requires, on one unchanged exact head:
 
-- the `hepta-orchestration-kernel` workspace member and `hepta-control-plane` facade compile under pinned Rust 1.98;
+- the selected `hepta-control-plane` product owners compile under pinned Rust 1.98, and product Cargo/API surfaces do not depend on or re-export `hepta-orchestration-kernel`;
 - full-workspace tests pass with all features and the committed dependency lock;
 - full-workspace Clippy passes for all targets and features with warnings denied;
 - rustdoc passes with warnings denied;

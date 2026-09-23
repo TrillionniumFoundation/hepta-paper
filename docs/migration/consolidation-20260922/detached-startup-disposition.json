@@ -1,9 +1,0 @@
-{
-  "reviewedTips": [
-    "3ec5fdf8f568842ce499c7b91c6a6bb33b7b721a",
-    "5a874512313bb99da3a0f9157c4da2303f364054"
-  ],
-  "decision": "supersede",
-  "rationale": "Both local commits change the same eight file blobs: database logical recovery digest, mutation storage and nonempty recovery regression are byte-identical to current. Remaining exact diffs add fixed-target transaction guard and retained post-inventory, correct safety margin to original plan window (with boundary regression), document logical finalization rows, add effective WAL/real-UID snapshot options with inherited ordinary owner behavior. Original recovery semantics remain present. Old source is not reintroduced.",
-  "reviewScope": "local source comparison, not independent product acceptance"
-}

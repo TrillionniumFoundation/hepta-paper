@@ -1,9 +1,0 @@
-{
-  "kind": "BranchDispositionBindingCheckV1",
-  "boundDecisionCount": 178,
-  "unplannedRefs": [],
-  "dispositionBindingsComplete": true,
-  "independentReviewVerified": false,
-  "automaticMerge": false,
-  "productionActivationVerified": false
-}

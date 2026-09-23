@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "operationId": "amend-1",
-  "expectedRevision": 3,
-  "steps": [],
-  "additionalBudgetMicrousd": 50,
-  "leaseExpiresAtUnixMs": 200000,
-  "repairRejectedReview": false
-}

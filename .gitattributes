@@ -1,3 +1,0 @@
-# The test verifies this literal historical type excerpt by SHA-256. Preserve
-# its original trailing blank line; all other whitespace checks still apply.
-rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/reference_types.rs whitespace=-blank-at-eof

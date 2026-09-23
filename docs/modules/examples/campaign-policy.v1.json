@@ -1,1 +1,0 @@
-{"kind":"ready","nodes":[{"nodeId":"plan","kind":"research-plan","status":"completed"},{"nodeId":"write","kind":"writer","status":"queued","dependencies":["plan"]},{"nodeId":"review","kind":"referee-1","status":"queued","dependencies":["write"]}],"limit":2}

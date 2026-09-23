@@ -1,7 +1,7 @@
 //! Current V1 machine-intake health derived from actual configuration/static files
 //! and a private snapshot of the original SQLite state. This report is diagnostic;
 //! it never admits work or grants mutation, provider or deployment authority.
-mod configuration;
+pub(crate) mod configuration;
 pub(crate) mod contract;
 mod retry_time;
 mod status;

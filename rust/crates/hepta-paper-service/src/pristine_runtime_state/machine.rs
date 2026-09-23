@@ -129,7 +129,7 @@ fn subject_string(value: &Value) -> Result<String> {
         .map_err(|_| error(ERROR))?,
     })
 }
-fn verify_external(
+pub(crate) fn verify_external(
     documents: &PinnedMachineGenesisDocumentsV1,
     configuration: &Value,
     profile: &Value,

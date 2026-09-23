@@ -159,3 +159,28 @@ Remaining temporary transport and divergent heads retain their exact source
 objects. Their existence is not another active product completion claim. No
 history deletion, mirror push, imported green check or automatic Node retirement
 is authorized by this review routing update.
+
+## Remaining temporary source dispositions: 2026-09-23
+
+The following decisions compare the source reachable from the live tips with
+`d55e7adc178e239266a3ed6617b8dea67352e3b1`, not just commit counts. They select
+source for #139; they are not independent review approval or transferable CI.
+References and encoded transport bytes remain intact for recovery. No second
+product PR or execution owner is maintained by these retained names.
+
+| Temporary head | Exact tip | Source disposition |
+|---|---|---|
+| `clock-validation-8f8be6d5` | `eb15218ed82159af8889f12d7a0577fd179b5e11` | Retain reference. Branch-only paths are encoded `.ci-transfer`/validation inputs and transient workflows, not active Rust owner code. Keep the current explicit live-clock, persisted amendment and cancellation product path. |
+| `converge-rust-product-20260923` | `528e0fe0f341947d7fe379b717776f4ffba61198` | Supersede under the seven-path #140 decision above; keep the identical scientific verifier and stronger current CLI. |
+| `dispatch-admission-transfer-20260923` | `cd827b2f1bac7b3d9be69ccc770131af3d232655` | Retain reference. Branch-only changes are scientific source-transfer parts and a transport workflow; do not install transport as product or qualification. |
+| `dispatch-admission-upload-1f208a1c` | `d4997b8af4747ee0b98007d46567e4ab579082bd` | Retain reference. Only the development-input export workflow is branch-only; no native product implementation needs merging. |
+| `full-rust-closure-20260923` | `f7678044d7e56725f74de13edad11116cad553d8` | Supersede. Actual scientific runtime, scientific test and gap-generator files already match the selected source. Preserve current narrowed verifier claims and advanced status implementation instead of replacing the whole tree. |
+| `renewal-candidate-35741395233` | `5bebb5fde1a44a6a664b9f9955876b88959f9e00` | Supersede. Current amendment retains exact replay plus persisted-root/current-definition continuation and signal cancellation. The older local adapter removes these and resurrects a separate campaign-mode map; do not import it. |
+| `rust-convergence-20260923` | `ae0f263d82028f88811ee0812252e8ba0e6ca746` | Supersede. Product control-plane manifest and public exports already match its prototype removal. Retain current autonomous owner, owned scientific outputs, installed-tool evidence and exact current source bindings rather than older replacements. |
+| `scientific-tools-upload-45065ffb` | `3793c382c17a1ab4a5ab01a8f27af062f4bd99fd` | Supersede active source; retain transport reference. Current scientific tests include the real-tool cases plus private input ownership. Do not restore ambient-permission dependence, prototype re-export or volatile human-report hashes from its older tree. |
+
+Ancestor heads are already reachable through the retained candidate history.
+No whole-tree merge, force push, branch deletion or administrative review bypass
+is needed to implement these source decisions. Any future code recovered from a
+transport archive still requires an ordinary source review and new exact-head
+tests; the archive's name or prior validation does not authorize it.

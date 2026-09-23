@@ -180,8 +180,105 @@ byte change changes the plan; an existing runtime is never adopted. The real Nod
 hash oracle, equivalent target spellings, changed source and non-overwrite cases
 run in `autonomous_state_provision_route`.
 
-This hash contract does not validate full machine-intake V2 authority or create
-ten business databases. The current `execute` remains explicitly blocked until
-the real constructors, native/handoff initialization, genesis and staged
-publication/recovery are composed. No `ready` plan or source test is a writer
-capability, external qualification or Node-retirement receipt.
+The original no-genesis-input profile remains diagnostic and its execute path
+remains blocked. The explicit `pinned-external-genesis-v1` profile below instead
+validates actual inputs and creates the ten business databases. Neither profile
+activates an online writer, qualifies a host or authorizes Node retirement.
+
+### Native ten-database execution
+
+Use the existing `autonomous-state-provision` command with these additional
+Rust-profile flags: `--genesis-inputs ABSOLUTE_JSON` and
+`--genesis-inputs-sha256 SHA256`. Both are mandatory for native execution. The
+second value must be the independently selected raw-file digest, not a trust
+statement inferred from a file supplied by an untrusted caller.
+
+The closed input document has `version: 1`,
+`kind: NativeStateProvisioningGenesisInputsV1`, and exactly four named objects:
+`ownerTrustStore`, `genesisEnvelope`, `rotationTrustStore`, `bootstrapReceipt`.
+Each object has only `path` (absolute) and `sha256` (lowercase `sha256:` plus 64
+hex digits). Existing pinned-genesis verification reads those public documents;
+no private key is loaded. Genesis needs the existing capability-owner and
+operational-observer Ed25519 signatures, distinct subjects, exact configuration
+and producer binding, and a currently valid interval. The native profile refuses
+`root-owned-configuration` rather than treating a flag as unsigned authority.
+Rotation/bootstrap documents are retained for the existing evidence contract;
+this operation creates generation one and does not perform a rotation.
+
+Machine configuration V2 reuses the existing V1 structural, static-intake and
+budget validator plus the genuine V2 hash/producer binding. The actual registered
+topic observer reads dataset bytes and the original implementation identity.
+This does not activate V2 health or execute that JavaScript implementation.
+
+```bash
+hepta-paper-rust autonomous-state-provision --action plan \
+  --root "$SOURCE_ROOT" --runtime-root "$NEW_RUNTIME_ROOT" \
+  --machine-intake-config "$MACHINE_CONFIG" --topic-producer-profile "$TOPIC_PROFILE" \
+  --dataset-root "$DATASET_ROOT" --genesis-inputs "$GENESIS_INPUTS" \
+  --genesis-inputs-sha256 "$APPROVED_GENESIS_INPUTS_SHA256"
+# Repeat those identical inputs with --action execute --execute --plan-id "$PLAN_ID".
+```
+
+The target must be absent, beneath a non-shared parent owned by the executing
+UID. All ancestor names are checked against retained directory descriptors.
+The plan binds the normalized target, parent device/inode/owner/mode, actual
+retained source observations, signed input pins, schema bundle and original
+seven-field provisioning identity. Its hash excludes only its own identifier.
+The execution profile currently uses the original refresh-policy defaults plus
+explicit maximum-attempt and maximum-cost fields. Other incumbent policy and
+provider CLI options remain unmapped rather than silently ignored.
+
+The constructor uses the original 25 migration files for `native-store`, the
+existing handoff migration data, and compiled business schema templates for the
+other eight roles. Templates are checked against actual Node constructors by
+`autonomous_state_provision_execution`; they contain no fixture genesis rows or
+ready flags. Actual metadata, genuine external genesis, and one fresh random
+handoff nonce and matching cross-database cutover identity are inserted. All ten
+connections are in-memory and explicitly closed before filesystem publication.
+Every database must pass SQLite quick-check and foreign-key checks. Per-image
+bytes are bounded at 32 MiB and the complete image set at 128 MiB.
+
+One private same-parent staging directory receives the ten 0600 files, closed
+namespace and byte verification, a prepared manifest and directory/file fsync.
+The parent directory is synced immediately after creating the recovery name. Linux
+`RENAME_NOREPLACE` installs the whole tree. Final source/currentness and output
+checks cannot turn an already-published result into a no-effect claim. The
+retained prepared receipt lists the actual path, schema and byte digest of every image
+and keeps `freshRuntimeInstalled=false`, `ready=false`, `publicationState=prepared`.
+Only after observing rename, directory sync and byte verification does this owner
+persist `native-provisioning-publication.json` with `publicationState=published`
+and return that exact terminal receipt. It binds the prepared receipt hash;
+`ready` means business-schema initialization only. Online schema transition,
+installed service activation, complete writable-owner admission and external
+qualification remain separate.
+
+### Provisioning failure and recovery runbook
+
+| Failure | Result and operator action | Required invariant |
+|---|---|---|
+| Missing pin, invalid signature/profile/dataset, changed plan | No staging or runtime is created; repair the input through its real owner and obtain a new plan. | A claimed hash or ready flag cannot substitute for authority or bytes. |
+| Construction or pre-publication failure | Runtime stays absent. A created `.NAME.provisioning-*` stage is retained, and later runs reject it for inspection. | No automatic reuse, deletion, hidden retry or overwrite. |
+| Target appears before rename | The existing target is untouched; retain staging and resolve the conflicting owner. | `RENAME_NOREPLACE`, never check-then-overwrite. |
+| Rename succeeds, later sync/verification fails | Error explicitly says `publicationState=published`; preserve the runtime and prepared/terminal receipts. Verify all ten hashes before the next lifecycle action. | Never restore an older backup or delete the installed tree. |
+| Rename outcome uncertain | Error says `publicationState=indeterminate`; preserve both possible names and resolve identities under exclusive maintenance. | Do not infer non-execution or automatically retry. |
+
+Automatic adoption/cleanup of abandoned stages is not implemented. A retained
+stage is not a production runtime or a command-acceptance receipt. The failure
+reports keep the original result and both names so an owner can determine which
+side of publication survived; no production database or live service is touched
+by the repository test harness.
+
+```bash
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --test autonomous_state_provision_execution --test autonomous_state_provision_route
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --lib autonomous_state_provision
+```
+
+Differential tests require the pinned Node oracle runtime for fixture setup,
+then remove Node and external tools from the actual Rust execution PATH. They
+compare every business schema and initial row, separately verify the paired
+handoff identity, and test rejection before writes. Publisher tests additionally
+exercise real target races, retained stages, output corruption, post-rename
+failure and SIGKILL on both sides of rename. They do not qualify a production
+installation or an external principal.

@@ -245,3 +245,37 @@ impl ObservedMachineIntakeConfigurationV1 {
         })
     }
 }
+
+/// The fresh-state constructor reuses V1 field/budget validation, but verifies
+/// the actual V2 hash and producer binding first. This does not activate V2 health.
+pub(crate) fn verify_configuration_v2(value: &Value) -> bool {
+    let mut keys = CONFIGURATION_KEYS.to_vec();
+    keys.push("machineProducerProfileHash");
+    if !contract::exact_keys(value, &keys)
+        || value["version"].as_f64() != Some(2.0)
+        || value["machineAppendEnabled"] != true
+        || !contract::hash_valid(&value["machineProducerProfileHash"])
+        || !contract::record_hash_valid(
+            value,
+            "AutonomousResearchMachineIntakeConfiguration",
+            "configurationHash",
+        )
+    {
+        return false;
+    }
+    let Some(mut projected) = value.as_object().cloned() else {
+        return false;
+    };
+    projected.remove("machineProducerProfileHash");
+    projected.remove("configurationHash");
+    projected.insert("version".into(), json!(1));
+    let mut projected = Value::Object(projected);
+    let Ok(hash) = hepta_legacy_compatibility::production_hash_record_v1(
+        "AutonomousResearchMachineIntakeConfiguration",
+        &projected,
+    ) else {
+        return false;
+    };
+    projected["configurationHash"] = json!(hash.as_str());
+    verify_configuration_v1(&projected)
+}

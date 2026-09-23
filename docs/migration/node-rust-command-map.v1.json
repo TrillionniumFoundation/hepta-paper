@@ -8194,7 +8194,7 @@
     },
     {
       "id": "maintenance/autonomous-state-provision",
-      "rustEntrypoint": "hepta-paper-rust autonomous-state-provision --action plan|execute [options]",
+      "rustEntrypoint": "hepta-paper-rust autonomous-state-provision --action plan|execute [options] [--genesis-inputs ABSOLUTE_JSON --genesis-inputs-sha256 SHA256]",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -8213,16 +8213,60 @@
         {
           "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
           "symbol": "execute_autonomous_state_provisioning_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs",
+          "symbol": "plan"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
+          "symbol": "load"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
+          "symbol": "assert_current"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs",
+          "symbol": "build"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication.rs",
+          "symbol": "publish"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/machine_intake/configuration.rs",
+          "symbol": "verify_configuration_v2"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/pristine_runtime_state/machine.rs",
+          "symbol": "verify_external"
         }
       ],
       "tests": [
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+        "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
         "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs"
       ],
-      "remaining": "Rust now binds the explicit machine-intake and topic-producer JSON identities, dataset-root identity, ten-role state manifest, runtime policy and stable provisioning plan hash in a read-only native preflight. Execute remains fail-closed: the ten repository constructors, capability-bound staging/atomic rename, schema-transition and handoff receipts, external authority inputs, and crash cleanup/recovery are not yet ported; no runtime is written and no external authority is invoked. The plan now normalizes the target before deriving one hash over the returned payload without provisioningPlanId, and its machine/topic semantic values and byte observations come from the same retained reads. The actual Node hashRecord oracle verifies this hash contract; changed source bytes invalidate prior plans and existing targets are never adopted. Previously emitted self-containing plan IDs must be regenerated. These repairs do not implement the ten business constructors, publication or recovery.",
+      "remaining": "The explicit pinned-external-genesis-v1 profile now validates real machine-intake V2 configuration, original registered topic/dataset byte identity and two actual Ed25519 genesis signatures; it constructs all ten business databases in memory using the original 25 native migrations, existing handoff migrations and original-constructor schema templates, seeds exact metadata/genesis and paired random handoff identities, and atomically publishes one fresh private root with NOREPLACE, retained descriptors, file/directory fsync and output hash verification. Real original Node constructor schema and seed-row comparisons run against the actual Rust CLI with Node absent from its execution PATH. Invalid authority, stale source/plan, target races, unregistered staged paths, post-rename failures and SIGKILL before/after publication preserve explicit outcomes and do not overwrite or automatically retry. The no-genesis-input diagnostic profile remains blocked. Root-owned production genesis, complete incumbent provider/policy CLI flags, adopted-root maintenance, automatic abandoned-stage reconciliation, online schema/authority activation, installed service handoff, independent full-command acceptance and Node retirement remain open; offline business initialization is not a production writer grant. Prepared stage records now keep installed/ready false; only the publishing owner persists a separate terminal receipt after successful rename, sync and byte checks. The parent staging name is fsynced before child construction. Direct API budget bounds and execution confirmations are enforced as well as CLI validation.",
       "rustSources": [
-        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
-        "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs"
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/business-schemas.v1.json",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs",
+        "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+        "rust/crates/hepta-paper-service/src/machine_intake/configuration.rs",
+        "rust/crates/hepta-paper-service/src/online_schema_transition/schema_data.json",
+        "rust/crates/hepta-paper-service/src/pristine_runtime_state/machine.rs",
+        "rust/crates/hepta-paper-service/src/pristine_runtime_state/migrations.rs",
+        "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+        "rust/oracle/state-provision-v1.mjs"
       ],
       "testCases": [
         {
@@ -8244,13 +8288,61 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
           "symbol": "changed_source_bytes_invalidate_a_plan_without_creating_runtime_state"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+          "symbol": "native_cli_creates_all_ten_canonical_databases_without_node_at_execution"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+          "symbol": "genuine_genesis_verifier_rejects_bad_signatures_and_wrong_subjects_before_publication"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+          "symbol": "source_change_missing_pin_and_unsigned_profile_never_install"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+          "symbol": "existing_or_symlinked_targets_never_get_overwritten"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "final_revalidation_failure_retains_private_stage_without_runtime"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "target_appearing_at_rename_is_never_clobbered"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "after_rename_failure_reports_published_and_preserves_all_bytes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "unexpected_staged_content_is_rejected_before_rename"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "process_death_on_either_side_of_rename_preserves_recoverable_evidence"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+          "symbol": "direct_api_cannot_bypass_positive_budget_or_execution_confirmation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "published_receipt_is_issued_only_after_observed_installation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "symbol": "failure_before_terminal_receipt_preserves_published_not_success_claim"
         }
       ],
       "argumentModes": [
         {
           "nodeAction": "plan",
           "scope": "partial_local_source",
-          "rustCommand": "hepta-paper-rust autonomous-state-provision --action plan [options]",
+          "rustCommand": "hepta-paper-rust autonomous-state-provision --action plan [options] [--genesis-inputs ABSOLUTE_JSON --genesis-inputs-sha256 SHA256]",
           "callChain": [
             {
               "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
@@ -8263,20 +8355,72 @@
             {
               "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
               "symbol": "inspect_autonomous_state_provisioning_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs",
+              "symbol": "plan"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
+              "symbol": "load"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
+              "symbol": "assert_current"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/machine_intake/configuration.rs",
+              "symbol": "verify_configuration_v2"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/pristine_runtime_state/machine.rs",
+              "symbol": "verify_external"
             }
           ],
           "tests": [
             {
               "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "parser_rejects_execute_without_confirmation_or_plan"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
               "symbol": "plan_is_source_bound_and_execute_is_fail_closed"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "plan_id_binds_the_returned_payload_once_and_matches_the_actual_node_hash"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "equivalent_target_spellings_have_one_plan_identity_and_existing_roots_are_not_adopted"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "changed_source_bytes_invalidate_a_plan_without_creating_runtime_state"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "native_cli_creates_all_ten_canonical_databases_without_node_at_execution"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "genuine_genesis_verifier_rejects_bad_signatures_and_wrong_subjects_before_publication"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "source_change_missing_pin_and_unsigned_profile_never_install"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "existing_or_symlinked_targets_never_get_overwritten"
             }
           ],
-          "remaining": "Plan binds the current Rust provisioning inputs without writing runtime state; full constructor composition remains open."
+          "remaining": "Read-only source-bound native plan with actual signature/dataset/schema inputs; no state is created."
         },
         {
           "nodeAction": "execute",
           "scope": "partial_local_source",
-          "rustCommand": "hepta-paper-rust autonomous-state-provision --action execute [options]",
+          "rustCommand": "hepta-paper-rust autonomous-state-provision --action execute [options] [--genesis-inputs ABSOLUTE_JSON --genesis-inputs-sha256 SHA256]",
           "callChain": [
             {
               "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
@@ -8289,6 +8433,38 @@
             {
               "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
               "symbol": "execute_autonomous_state_provisioning_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs",
+              "symbol": "plan"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs",
+              "symbol": "execute"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
+              "symbol": "load"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
+              "symbol": "assert_current"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs",
+              "symbol": "build"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication.rs",
+              "symbol": "publish"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/machine_intake/configuration.rs",
+              "symbol": "verify_configuration_v2"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/pristine_runtime_state/machine.rs",
+              "symbol": "verify_external"
             }
           ],
           "tests": [
@@ -8299,9 +8475,69 @@
             {
               "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
               "symbol": "plan_is_source_bound_and_execute_is_fail_closed"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "plan_id_binds_the_returned_payload_once_and_matches_the_actual_node_hash"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "equivalent_target_spellings_have_one_plan_identity_and_existing_roots_are_not_adopted"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+              "symbol": "changed_source_bytes_invalidate_a_plan_without_creating_runtime_state"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "native_cli_creates_all_ten_canonical_databases_without_node_at_execution"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "genuine_genesis_verifier_rejects_bad_signatures_and_wrong_subjects_before_publication"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "source_change_missing_pin_and_unsigned_profile_never_install"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "existing_or_symlinked_targets_never_get_overwritten"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "final_revalidation_failure_retains_private_stage_without_runtime"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "target_appearing_at_rename_is_never_clobbered"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "after_rename_failure_reports_published_and_preserves_all_bytes"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "unexpected_staged_content_is_rejected_before_rename"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "process_death_on_either_side_of_rename_preserves_recoverable_evidence"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+              "symbol": "direct_api_cannot_bypass_positive_budget_or_execution_confirmation"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "published_receipt_is_issued_only_after_observed_installation"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+              "symbol": "failure_before_terminal_receipt_preserves_published_not_success_claim"
             }
           ],
-          "remaining": "Execute is currently fail-closed before repository construction/publication; the Node mutation path is not yet replaced."
+          "remaining": "The explicit pinned-external-genesis-v1 profile now validates real machine-intake V2 configuration, original registered topic/dataset byte identity and two actual Ed25519 genesis signatures; it constructs all ten business databases in memory using the original 25 native migrations, existing handoff migrations and original-constructor schema templates, seeds exact metadata/genesis and paired random handoff identities, and atomically publishes one fresh private root with NOREPLACE, retained descriptors, file/directory fsync and output hash verification. Real original Node constructor schema and seed-row comparisons run against the actual Rust CLI with Node absent from its execution PATH. Invalid authority, stale source/plan, target races, unregistered staged paths, post-rename failures and SIGKILL before/after publication preserve explicit outcomes and do not overwrite or automatically retry. The no-genesis-input diagnostic profile remains blocked. Root-owned production genesis, complete incumbent provider/policy CLI flags, adopted-root maintenance, automatic abandoned-stage reconciliation, online schema/authority activation, installed service handoff, independent full-command acceptance and Node retirement remain open; offline business initialization is not a production writer grant. Prepared stage records now keep installed/ready false; only the publishing owner persists a separate terminal receipt after successful rename, sync and byte checks. The parent staging name is fsynced before child construction. Direct API budget bounds and execution confirmations are enforced as well as CLI validation."
         }
       ]
     },

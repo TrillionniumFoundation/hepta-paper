@@ -2,8 +2,8 @@
 //! not writer quiescence, deployment qualification, or active runtime authority.
 mod baseline;
 mod ledger;
-mod machine;
-mod migrations;
+pub(crate) mod machine;
+pub(crate) mod migrations;
 mod query;
 use crate::sqlite_mutation_coordinator::{Result, error, hash, sha};
 pub use machine::PinnedMachineGenesisDocumentsV1;

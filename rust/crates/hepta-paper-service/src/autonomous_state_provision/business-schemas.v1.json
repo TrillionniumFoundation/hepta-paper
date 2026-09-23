@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "kind": "NativeBusinessSchemaTemplatesV1",
+  "scope": "compiled_schema_only_no_genesis_or_authority",
+  "roles": {
+    "external-qualification": {
+      "objects": [
+        {
+          "type": "table",
+          "name": "autonomous_external_qualification_attempt_lease",
+          "tbl_name": "autonomous_external_qualification_attempt_lease",
+          "sql": "CREATE TABLE autonomous_external_qualification_attempt_lease (\n          scope TEXT PRIMARY KEY,\n          owner_id TEXT NOT NULL,\n          lease_token TEXT NOT NULL,\n          lease_generation INTEGER NOT NULL CHECK(lease_generation >= 1),\n          acquired_at TEXT NOT NULL,\n          renewed_at TEXT NOT NULL,\n          expires_at TEXT NOT NULL\n        ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_external_qualification_attempt_reservation",
+          "tbl_name": "autonomous_external_qualification_attempt_reservation",
+          "sql": "CREATE TABLE autonomous_external_qualification_attempt_reservation (\n          scope TEXT NOT NULL,\n          state_generation INTEGER NOT NULL CHECK(state_generation >= 1),\n          state_hash TEXT NOT NULL,\n          recovery_identity_hash TEXT NOT NULL,\n          cycle INTEGER NOT NULL CHECK(cycle >= 1),\n          epoch INTEGER NOT NULL CHECK(epoch >= 1),\n          attempt_count INTEGER NOT NULL CHECK(attempt_count >= 1),\n          total_attempt_count INTEGER NOT NULL CHECK(total_attempt_count >= 1),\n          reserved_cost_usd REAL NOT NULL CHECK(reserved_cost_usd >= 0),\n          prior_attempt_count INTEGER NOT NULL CHECK(prior_attempt_count >= 0),\n          prior_total_attempt_count INTEGER NOT NULL CHECK(prior_total_attempt_count >= 0),\n          prior_reserved_cost_usd REAL NOT NULL CHECK(prior_reserved_cost_usd >= 0),\n          attempt_reservation_cost_usd REAL NOT NULL CHECK(attempt_reservation_cost_usd > 0),\n          idempotency_key TEXT NOT NULL,\n          lease_owner_id TEXT NOT NULL,\n          lease_token_hash TEXT NOT NULL,\n          lease_generation INTEGER NOT NULL CHECK(lease_generation >= 1),\n          created_at TEXT NOT NULL,\n          external_action_may_have_started INTEGER NOT NULL DEFAULT 0\n            CHECK(external_action_may_have_started IN (0,1)),\n          started_actions_json TEXT NOT NULL DEFAULT '[]',\n          first_started_at TEXT,\n          last_started_at TEXT,\n          side_effect_permit_hash TEXT,\n          recovery_takeover_count INTEGER NOT NULL DEFAULT 0\n            CHECK(recovery_takeover_count >= 0),\n          last_recovery_takeover_at TEXT,\n          cancelled_at TEXT,\n          cancelled_state_generation INTEGER,\n          cancelled_state_hash TEXT,\n          PRIMARY KEY(scope,state_generation)\n        ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_external_qualification_state",
+          "tbl_name": "autonomous_external_qualification_state",
+          "sql": "CREATE TABLE autonomous_external_qualification_state (\n          scope TEXT PRIMARY KEY,\n          generation INTEGER NOT NULL CHECK(generation >= 1),\n          state_hash TEXT NOT NULL,\n          state_json TEXT NOT NULL,\n          updated_at TEXT NOT NULL\n        ) STRICT"
+        }
+      ]
+    },
+    "full-research-qualification-publication": {
+      "objects": [
+        {
+          "type": "table",
+          "name": "full_research_qualification_pointer_authority",
+          "tbl_name": "full_research_qualification_pointer_authority",
+          "sql": "CREATE TABLE full_research_qualification_pointer_authority (\n    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),\n    receipt_json TEXT NOT NULL,\n    receipt_content_hash TEXT NOT NULL,\n    receipt_hash TEXT NOT NULL,\n    runtime_receipt_hash TEXT NOT NULL,\n    qualification_state_hash TEXT NOT NULL,\n    qualification_state_generation INTEGER NOT NULL CHECK(qualification_state_generation>=1),\n    publisher_scope TEXT NOT NULL,\n    publisher_owner_id TEXT NOT NULL,\n    publisher_lease_generation INTEGER NOT NULL CHECK(publisher_lease_generation>=1),\n    issued_at TEXT NOT NULL,\n    expires_at TEXT NOT NULL,\n    publication_generation INTEGER NOT NULL CHECK(publication_generation>=1),\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "full_research_qualification_pointer_lease",
+          "tbl_name": "full_research_qualification_pointer_lease",
+          "sql": "CREATE TABLE full_research_qualification_pointer_lease (\n    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),\n    lease_owner TEXT,\n    lease_token TEXT,\n    lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation>=0),\n    lease_expires_at TEXT,\n    recovered_lease_count INTEGER NOT NULL DEFAULT 0 CHECK(recovered_lease_count>=0),\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        }
+      ]
+    },
+    "machine-intake": {
+      "objects": [
+        {
+          "type": "table",
+          "name": "autonomous_research_machine_intake",
+          "tbl_name": "autonomous_research_machine_intake",
+          "sql": "CREATE TABLE autonomous_research_machine_intake (\n    intake_id TEXT PRIMARY KEY,\n    intake_hash TEXT NOT NULL UNIQUE,\n    paper_id TEXT NOT NULL,\n    campaign_id TEXT NOT NULL UNIQUE,\n    intake_json TEXT NOT NULL,\n    admission_json TEXT NOT NULL,\n    admission_hash TEXT NOT NULL,\n    source_kind TEXT NOT NULL CHECK(source_kind IN ('machine','recurring-golden','static-file')),\n    source_ref TEXT NOT NULL,\n    source_authority_hash TEXT NOT NULL,\n    disposition TEXT NOT NULL CHECK(disposition IN ('invalid','pending','enqueued','superseded')),\n    lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation >= 0),\n    campaign_plan_hash TEXT,\n    preparation_hash TEXT,\n    enqueued_at TEXT,\n    failure_count INTEGER NOT NULL DEFAULT 0 CHECK(failure_count >= 0),\n    next_attempt_at TEXT NOT NULL,\n    last_error TEXT,\n    invalid_reason TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_machine_intake_authority_genesis",
+          "tbl_name": "autonomous_research_machine_intake_authority_genesis",
+          "sql": "CREATE TABLE autonomous_research_machine_intake_authority_genesis (\n    singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n    origin TEXT NOT NULL CHECK(origin IN(\n      'fresh-v2-genesis','fresh-v2-root-owned-configuration'\n    )),\n    configuration_hash TEXT NOT NULL,\n    producer_profile_hash TEXT NOT NULL,\n    authority_generation INTEGER NOT NULL CHECK(authority_generation=1),\n    external_genesis_envelope_hash TEXT NOT NULL,\n    external_genesis_envelope_json TEXT NOT NULL,\n    owner_trust_store_hash TEXT NOT NULL,\n    owner_trust_store_snapshot_json TEXT NOT NULL,\n    verified_signers_json TEXT NOT NULL,\n    genesis_payload_json TEXT NOT NULL,\n    genesis_hash TEXT NOT NULL UNIQUE,\n    created_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_machine_intake_authority_rotation",
+          "tbl_name": "autonomous_research_machine_intake_authority_rotation",
+          "sql": "CREATE TABLE autonomous_research_machine_intake_authority_rotation (\n    authority_generation INTEGER PRIMARY KEY CHECK(authority_generation >= 2),\n    transition TEXT NOT NULL,\n    previous_configuration_hash TEXT NOT NULL,\n    previous_producer_profile_hash TEXT,\n    previous_rotation_receipt_hash TEXT,\n    next_configuration_hash TEXT NOT NULL,\n    next_producer_profile_hash TEXT NOT NULL,\n    next_provider_configuration_hash TEXT NOT NULL,\n    next_implementation_sha256 TEXT NOT NULL,\n    plan_hash TEXT NOT NULL UNIQUE,\n    plan_json TEXT NOT NULL,\n    rotation_intent_hash TEXT NOT NULL UNIQUE,\n    intent_nonce TEXT NOT NULL UNIQUE,\n    authority_trust_store_hash TEXT NOT NULL,\n    owner_trust_store_hash TEXT NOT NULL,\n    bootstrap_receipt_hash TEXT NOT NULL,\n    authority_anchor_hash TEXT NOT NULL,\n    bootstrap_receipt_json TEXT NOT NULL,\n    owner_trust_store_snapshot_json TEXT NOT NULL,\n    rotation_trust_store_snapshot_json TEXT NOT NULL,\n    bootstrap_verified_signers_json TEXT NOT NULL,\n    rotator_key_snapshot_hash TEXT NOT NULL,\n    rotator_public_key_snapshot_json TEXT NOT NULL,\n    verified_signer_key_id TEXT NOT NULL,\n    verified_signer_subject_id TEXT NOT NULL,\n    verified_signer_role TEXT NOT NULL,\n    verified_signer_json TEXT NOT NULL,\n    rotation_intent_json TEXT NOT NULL,\n    pre_state_hash TEXT NOT NULL,\n    quiescence_state_hash TEXT NOT NULL,\n    post_state_hash TEXT NOT NULL,\n    quarantined_legacy_machine_admission_count INTEGER NOT NULL\n      CHECK(quarantined_legacy_machine_admission_count >= 0),\n    rotation_receipt_hash TEXT NOT NULL UNIQUE,\n    rotation_receipt_json TEXT NOT NULL,\n    rotated_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_machine_intake_daily_admission",
+          "tbl_name": "autonomous_research_machine_intake_daily_admission",
+          "sql": "CREATE TABLE autonomous_research_machine_intake_daily_admission (\n    epoch_start TEXT PRIMARY KEY,\n    machine_append_count INTEGER NOT NULL CHECK(machine_append_count >= 0),\n    reserved_cost_usd REAL NOT NULL CHECK(reserved_cost_usd >= 0),\n    reserved_agent_calls INTEGER NOT NULL CHECK(reserved_agent_calls >= 0),\n    reserved_gpu_jobs INTEGER NOT NULL CHECK(reserved_gpu_jobs >= 0),\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_machine_intake_lease",
+          "tbl_name": "autonomous_research_machine_intake_lease",
+          "sql": "CREATE TABLE autonomous_research_machine_intake_lease (\n    intake_id TEXT PRIMARY KEY REFERENCES autonomous_research_machine_intake(intake_id),\n    owner_id TEXT NOT NULL,\n    lease_token TEXT NOT NULL,\n    lease_generation INTEGER NOT NULL CHECK(lease_generation >= 1),\n    acquired_at TEXT NOT NULL,\n    renewed_at TEXT NOT NULL,\n    expires_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_machine_intake_metadata",
+          "tbl_name": "autonomous_research_machine_intake_metadata",
+          "sql": "CREATE TABLE autonomous_research_machine_intake_metadata (\n    singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n    configured_source_authority_hash TEXT NOT NULL,\n    authorized_machine_producer_profile_hash TEXT,\n    authority_generation INTEGER NOT NULL DEFAULT 1 CHECK(authority_generation >= 1),\n    last_authority_rotation_receipt_hash TEXT\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_machine_intake_migration_quarantine",
+          "tbl_name": "autonomous_research_machine_intake_migration_quarantine",
+          "sql": "CREATE TABLE autonomous_research_machine_intake_migration_quarantine (\n    migration_id INTEGER PRIMARY KEY AUTOINCREMENT,\n    legacy_intake_id TEXT,\n    legacy_row_json TEXT NOT NULL,\n    reason TEXT NOT NULL,\n    quarantined_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "trigger",
+          "name": "autonomous_research_machine_intake_authority_genesis_no_delete",
+          "tbl_name": "autonomous_research_machine_intake_authority_genesis",
+          "sql": "CREATE TRIGGER autonomous_research_machine_intake_authority_genesis_no_delete\n    BEFORE DELETE ON autonomous_research_machine_intake_authority_genesis\n    BEGIN SELECT RAISE(ABORT,\n      'autonomous_research_machine_intake_authority_genesis_append_only'); END"
+        },
+        {
+          "type": "trigger",
+          "name": "autonomous_research_machine_intake_authority_genesis_no_update",
+          "tbl_name": "autonomous_research_machine_intake_authority_genesis",
+          "sql": "CREATE TRIGGER autonomous_research_machine_intake_authority_genesis_no_update\n    BEFORE UPDATE ON autonomous_research_machine_intake_authority_genesis\n    BEGIN SELECT RAISE(ABORT,\n      'autonomous_research_machine_intake_authority_genesis_append_only'); END"
+        },
+        {
+          "type": "trigger",
+          "name": "autonomous_research_machine_intake_authority_rotation_no_delete",
+          "tbl_name": "autonomous_research_machine_intake_authority_rotation",
+          "sql": "CREATE TRIGGER autonomous_research_machine_intake_authority_rotation_no_delete\n    BEFORE DELETE ON autonomous_research_machine_intake_authority_rotation\n    BEGIN SELECT RAISE(ABORT,\n      'autonomous_research_machine_intake_authority_rotation_append_only'); END"
+        },
+        {
+          "type": "trigger",
+          "name": "autonomous_research_machine_intake_authority_rotation_no_update",
+          "tbl_name": "autonomous_research_machine_intake_authority_rotation",
+          "sql": "CREATE TRIGGER autonomous_research_machine_intake_authority_rotation_no_update\n    BEFORE UPDATE ON autonomous_research_machine_intake_authority_rotation\n    BEGIN SELECT RAISE(ABORT,\n      'autonomous_research_machine_intake_authority_rotation_append_only'); END"
+        }
+      ]
+    },
+    "resident-instance": {
+      "objects": [
+        {
+          "type": "table",
+          "name": "autonomous_research_supervisor_instance",
+          "tbl_name": "autonomous_research_supervisor_instance",
+          "sql": "CREATE TABLE autonomous_research_supervisor_instance (\n        scope_id TEXT PRIMARY KEY,\n        status TEXT NOT NULL CHECK(status IN ('running','stopped')),\n        owner_id TEXT,\n        lease_token TEXT,\n        lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation >= 0),\n        lease_duration_ms INTEGER NOT NULL CHECK(lease_duration_ms >= 1000),\n        heartbeat_interval_ms INTEGER NOT NULL CHECK(heartbeat_interval_ms >= 250),\n        started_at TEXT,\n        last_heartbeat_at TEXT,\n        lease_expires_at TEXT,\n        startup_reconciled_at TEXT,\n        startup_reconciliation_receipt_hash TEXT,\n        fully_autonomous_required INTEGER NOT NULL DEFAULT 0 CHECK(fully_autonomous_required IN (0,1)),\n        fully_autonomous_prerequisite_identity_hash TEXT,\n        machine_intake_reconciled_at TEXT,\n        machine_intake_reconciliation_receipt_hash TEXT,\n        machine_intake_configuration_hash TEXT,\n        machine_intake_dataset_snapshot_hash TEXT,\n        machine_intake_reconciliation_failed_at TEXT,\n        machine_intake_reconciliation_failure TEXT,\n        last_cycle_at TEXT,\n        last_cycle_receipt_hash TEXT,\n        stopped_at TEXT,\n        stop_reason TEXT,\n        recovered_lease_count INTEGER NOT NULL DEFAULT 0 CHECK(recovered_lease_count >= 0),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        }
+      ]
+    },
+    "runtime-reproducibility-publication": {
+      "objects": [
+        {
+          "type": "table",
+          "name": "runtime_image_reproducibility_receipt",
+          "tbl_name": "runtime_image_reproducibility_receipt",
+          "sql": "CREATE TABLE runtime_image_reproducibility_receipt (\n    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),\n    receipt_json TEXT NOT NULL,\n    receipt_content_hash TEXT NOT NULL,\n    receipt_hash TEXT NOT NULL,\n    issued_at TEXT NOT NULL,\n    expires_at TEXT NOT NULL,\n    publication_generation INTEGER NOT NULL CHECK(publication_generation>=1),\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        }
+      ]
+    },
+    "runtime-reproducibility-refresh": {
+      "objects": [
+        {
+          "type": "table",
+          "name": "runtime_reproducibility_refresh_attempt",
+          "tbl_name": "runtime_reproducibility_refresh_attempt",
+          "sql": "CREATE TABLE runtime_reproducibility_refresh_attempt (\n    lease_generation INTEGER PRIMARY KEY,\n    owner_id TEXT NOT NULL,\n    campaign_id TEXT NOT NULL,\n    epoch_start TEXT NOT NULL,\n    configuration_identity_hash TEXT NOT NULL,\n    reserved_cost_usd REAL NOT NULL CHECK(reserved_cost_usd >= 0),\n    cost_authority TEXT NOT NULL,\n    status TEXT NOT NULL CHECK(status IN ('reserved','succeeded','failed','cancelled')),\n    error TEXT,\n    receipt_hash TEXT,\n    reserved_at TEXT NOT NULL,\n    completed_at TEXT\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "runtime_reproducibility_refresh_budget_epoch",
+          "tbl_name": "runtime_reproducibility_refresh_budget_epoch",
+          "sql": "CREATE TABLE runtime_reproducibility_refresh_budget_epoch (\n    epoch_start TEXT PRIMARY KEY,\n    epoch_end TEXT NOT NULL,\n    policy_json TEXT NOT NULL,\n    policy_hash TEXT NOT NULL,\n    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),\n    reserved_cost_usd REAL NOT NULL DEFAULT 0 CHECK(reserved_cost_usd >= 0),\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "runtime_reproducibility_refresh_state",
+          "tbl_name": "runtime_reproducibility_refresh_state",
+          "sql": "CREATE TABLE runtime_reproducibility_refresh_state (\n    scope_id TEXT PRIMARY KEY,\n    status TEXT NOT NULL,\n    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),\n    next_attempt_at TEXT NOT NULL,\n    last_error TEXT,\n    last_configuration_identity_hash TEXT,\n    last_receipt_hash TEXT,\n    last_receipt_content_hash TEXT,\n    last_issued_at TEXT,\n    last_expires_at TEXT,\n    recovered_lease_count INTEGER NOT NULL DEFAULT 0 CHECK(recovered_lease_count >= 0),\n    lease_owner TEXT,\n    lease_token TEXT,\n    lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation >= 0),\n    lease_expires_at TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        }
+      ]
+    },
+    "supervisor-state": {
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_autonomous_research_supervisor_external_action_history",
+          "tbl_name": "autonomous_research_supervisor_external_action_journal",
+          "sql": "CREATE INDEX idx_autonomous_research_supervisor_external_action_history\n    ON autonomous_research_supervisor_external_action_journal(campaign_id,started_at,attempt_id)"
+        },
+        {
+          "type": "index",
+          "name": "idx_autonomous_research_supervisor_external_action_idempotency",
+          "tbl_name": "autonomous_research_supervisor_external_action_journal",
+          "sql": "CREATE UNIQUE INDEX idx_autonomous_research_supervisor_external_action_idempotency\n    ON autonomous_research_supervisor_external_action_journal(idempotency_key)\n    WHERE idempotency_key IS NOT NULL"
+        },
+        {
+          "type": "index",
+          "name": "idx_autonomous_research_supervisor_external_action_one_active",
+          "tbl_name": "autonomous_research_supervisor_external_action_journal",
+          "sql": "CREATE UNIQUE INDEX idx_autonomous_research_supervisor_external_action_one_active\n    ON autonomous_research_supervisor_external_action_journal(campaign_id)\n    WHERE status='in_progress'"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_supervisor_campaign",
+          "tbl_name": "autonomous_research_supervisor_campaign",
+          "sql": "CREATE TABLE autonomous_research_supervisor_campaign (\n    campaign_id TEXT PRIMARY KEY,\n    paper_id TEXT NOT NULL,\n    disposition TEXT NOT NULL CHECK(disposition IN ('active','blocked','settled')),\n    policy_json TEXT NOT NULL,\n    policy_hash TEXT NOT NULL,\n    lifecycle_started_at TEXT NOT NULL,\n    absolute_deadline_at TEXT NOT NULL,\n    dispatch_count INTEGER NOT NULL DEFAULT 0 CHECK(dispatch_count >= 0),\n    active_dispatch_phase TEXT CHECK(active_dispatch_phase IN (\n      'reserved','started','recovery_pending','resumable'\n    )),\n    active_dispatch_count INTEGER CHECK(active_dispatch_count >= 1),\n    active_dispatch_lease_generation INTEGER CHECK(active_dispatch_lease_generation >= 1),\n    active_dispatch_reservation_hash TEXT,\n    provider_canary_count INTEGER NOT NULL DEFAULT 0 CHECK(provider_canary_count >= 0),\n    provider_canary_reserved_cost_usd REAL NOT NULL DEFAULT 0 CHECK(provider_canary_reserved_cost_usd >= 0),\n    observed_campaign_cost_usd REAL NOT NULL DEFAULT 0 CHECK(observed_campaign_cost_usd >= 0),\n    observed_qualification_reserved_cost_usd REAL NOT NULL DEFAULT 0 CHECK(observed_qualification_reserved_cost_usd >= 0),\n    cost_known INTEGER NOT NULL DEFAULT 1 CHECK(cost_known IN (0,1)),\n    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),\n    next_dispatch_at TEXT NOT NULL,\n    last_provider_canary_at TEXT,\n    last_provider_canary_status TEXT,\n    last_provider_canary_receipt_hash TEXT,\n    last_outcome_json TEXT,\n    last_error TEXT,\n    terminal_reason TEXT,\n    recovered_lease_count INTEGER NOT NULL DEFAULT 0 CHECK(recovered_lease_count >= 0),\n    lease_owner TEXT,\n    lease_token TEXT,\n    lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation >= 0),\n    lease_expires_at TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_supervisor_external_action_journal",
+          "tbl_name": "autonomous_research_supervisor_external_action_journal",
+          "sql": "CREATE TABLE autonomous_research_supervisor_external_action_journal (\n    attempt_id TEXT PRIMARY KEY,\n    campaign_id TEXT NOT NULL,\n    action_kind TEXT NOT NULL CHECK(action_kind IN (\n      'provider-canary','production-readiness','golden-release-attestor'\n    )),\n    reservation_hash TEXT NOT NULL,\n    idempotency_key TEXT NOT NULL,\n    lease_generation INTEGER NOT NULL CHECK(lease_generation>=1),\n    dispatch_count INTEGER NOT NULL CHECK(dispatch_count>=1),\n    provider_canary_count INTEGER NOT NULL CHECK(provider_canary_count>=0),\n    status TEXT NOT NULL CHECK(status IN (\n      'in_progress','completed','failed','recovered_incomplete'\n    )),\n    marker_json TEXT NOT NULL,\n    marker_hash TEXT NOT NULL,\n    progress_json TEXT,\n    progress_hash TEXT,\n    receipt_json TEXT,\n    receipt_hash TEXT,\n    started_at TEXT NOT NULL,\n    completed_at TEXT,\n    recovery_result_json TEXT,\n    recovery_result_hash TEXT,\n    UNIQUE(campaign_id,action_kind,reservation_hash)\n  ) STRICT"
+        }
+      ]
+    },
+    "topic-producer": {
+      "objects": [
+        {
+          "type": "table",
+          "name": "autonomous_research_topic_producer_daily_budget",
+          "tbl_name": "autonomous_research_topic_producer_daily_budget",
+          "sql": "CREATE TABLE autonomous_research_topic_producer_daily_budget (\n    epoch_start TEXT PRIMARY KEY,\n    provider_canary_attempt_count INTEGER NOT NULL CHECK(provider_canary_attempt_count>=0),\n    provider_canary_reserved_cost_usd REAL NOT NULL CHECK(provider_canary_reserved_cost_usd>=0),\n    produced_topic_count INTEGER NOT NULL CHECK(produced_topic_count>=0),\n    updated_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_topic_producer_generation",
+          "tbl_name": "autonomous_research_topic_producer_generation",
+          "sql": "CREATE TABLE autonomous_research_topic_producer_generation (\n    generation_sequence INTEGER PRIMARY KEY CHECK(generation_sequence>=1),\n    status TEXT NOT NULL CHECK(status IN ('planned','authorized','produced','failed')),\n    lease_generation INTEGER NOT NULL CHECK(lease_generation>=1),\n    producer_topic_id TEXT NOT NULL UNIQUE,\n    topic_fingerprint TEXT NOT NULL UNIQUE,\n    canonical_research_topic_hash TEXT NOT NULL,\n    budget_reservation_id TEXT NOT NULL UNIQUE,\n    budget_epoch_start TEXT NOT NULL,\n    planned_generation_hash TEXT NOT NULL UNIQUE,\n    planned_generation_json TEXT NOT NULL,\n    capability_hash TEXT UNIQUE, capability_nonce TEXT UNIQUE, capability_json TEXT,\n    intake_id TEXT UNIQUE, intake_hash TEXT UNIQUE, admission_hash TEXT UNIQUE,\n    error TEXT,\n    provider_canary_attempt_started INTEGER NOT NULL DEFAULT 0\n      CHECK(provider_canary_attempt_started IN (0,1)),\n    provider_canary_attempt_journal_json TEXT,\n    provider_canary_side_effect_inspection_json TEXT,\n    created_at TEXT NOT NULL, updated_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_topic_producer_lease",
+          "tbl_name": "autonomous_research_topic_producer_lease",
+          "sql": "CREATE TABLE autonomous_research_topic_producer_lease (\n    singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n    owner_id TEXT NOT NULL, lease_token TEXT NOT NULL,\n    lease_generation INTEGER NOT NULL CHECK(lease_generation>=1),\n    acquired_at TEXT NOT NULL, renewed_at TEXT NOT NULL, expires_at TEXT NOT NULL\n  ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "autonomous_research_topic_producer_metadata",
+          "tbl_name": "autonomous_research_topic_producer_metadata",
+          "sql": "CREATE TABLE autonomous_research_topic_producer_metadata (\n    singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n    machine_intake_configuration_hash TEXT NOT NULL,\n    producer_profile_hash TEXT NOT NULL,\n    provider_configuration_hash TEXT NOT NULL,\n    implementation_sha256 TEXT NOT NULL,\n    lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation>=0),\n    generation_high_watermark INTEGER NOT NULL DEFAULT 0 CHECK(generation_high_watermark>=0),\n    last_observed_at TEXT,\n    last_produced_at TEXT,\n    next_attempt_at TEXT\n  ) STRICT"
+        }
+      ]
+    }
+  }
+}

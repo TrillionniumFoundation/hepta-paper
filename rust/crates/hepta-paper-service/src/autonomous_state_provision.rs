@@ -1,9 +1,9 @@
-//! Bounded native preflight for autonomous research state provisioning.
+//! Native fresh-state construction and bounded diagnostic provisioning preflight.
 //!
 //! The plan path binds the same source inputs as the incumbent command and
-//! proves their local identity without creating a runtime.  The execute path
-//! is deliberately fail-closed until the ten repository constructors and
-//! their external authority boundary have a reviewed native implementation.
+//! proves their local identity without creating a runtime. Native execution
+//! requires pinned signed genesis and reuses the existing constructors and
+//! authority verifiers; the no-genesis compatibility profile stays read-only.
 
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
@@ -15,13 +15,32 @@ use std::{
 };
 use thiserror::Error;
 
+mod execution;
 pub(crate) mod files;
+mod inputs;
+mod publication;
+mod schema;
 
 const PROVISIONING_BLOCKER: &str = "rust_autonomous_state_provision_execute_not_ported";
 
 #[derive(Debug, Error)]
 #[error("{0}")]
 pub struct AutonomousStateProvisioningError(pub String);
+impl From<rusqlite::Error> for AutonomousStateProvisioningError {
+    fn from(value: rusqlite::Error) -> Self {
+        Self(format!("autonomous_state_provisioning_sqlite:{value}"))
+    }
+}
+impl From<std::io::Error> for AutonomousStateProvisioningError {
+    fn from(value: std::io::Error) -> Self {
+        Self(format!("autonomous_state_provisioning_io:{value}"))
+    }
+}
+impl From<serde_json::Error> for AutonomousStateProvisioningError {
+    fn from(value: serde_json::Error) -> Self {
+        Self(format!("autonomous_state_provisioning_json:{value}"))
+    }
+}
 pub type Result<T> = std::result::Result<T, AutonomousStateProvisioningError>;
 fn error(code: impl Into<String>) -> AutonomousStateProvisioningError {
     AutonomousStateProvisioningError(code.into())
@@ -29,9 +48,11 @@ fn error(code: impl Into<String>) -> AutonomousStateProvisioningError {
 
 pub const AUTONOMOUS_STATE_PROVISIONING_USAGE: &str = r#"Usage: autonomous-state-provision --action plan|execute [options]
 
-Native source-bound preflight for the autonomous research ten-database
-provisioning contract. Plan is read-only. Execute remains fail-closed until
-the native repository constructors and external authority boundary are ported.
+Native ten-database provisioning. Plan is read-only. With independently pinned
+--genesis-inputs and --genesis-inputs-sha256, execute constructs all ten business
+schemas and publishes a fresh root atomically. Without them execute is blocked.
+The native profile requires external signed genesis; it never activates online
+authority, invokes a provider or retires Node.
 
 Required: --runtime-root PATH --machine-intake-config PATH
           --topic-producer-profile PATH --dataset-root PATH
@@ -54,6 +75,8 @@ pub struct AutonomousStateProvisioningOptions {
     pub machine_intake_genesis_authority: String,
     pub maximum_attempts_per_epoch: u64,
     pub maximum_cost_usd_per_epoch: f64,
+    pub genesis_inputs: Option<PathBuf>,
+    pub genesis_inputs_sha256: Option<String>,
 }
 
 fn valid_hash(value: &str) -> bool {
@@ -100,6 +123,8 @@ pub fn parse_autonomous_state_provisioning_arguments(
         "topic-producer-profile",
         "dataset-root",
         "machine-intake-genesis-authority",
+        "genesis-inputs",
+        "genesis-inputs-sha256",
         "runtime-reproducibility-maximum-attempts-per-epoch",
         "runtime-reproducibility-maximum-cost-usd-per-epoch",
     ]);
@@ -209,6 +234,8 @@ pub fn parse_autonomous_state_provisioning_arguments(
         machine_intake_genesis_authority: authority,
         maximum_attempts_per_epoch: attempts,
         maximum_cost_usd_per_epoch: cost,
+        genesis_inputs: values.get("genesis-inputs").map(PathBuf::from),
+        genesis_inputs_sha256: values.get("genesis-inputs-sha256").cloned(),
     }))
 }
 
@@ -320,6 +347,9 @@ fn plan_payload(options: &AutonomousStateProvisioningOptions) -> Result<Value> {
 pub fn inspect_autonomous_state_provisioning_v1(
     options: &AutonomousStateProvisioningOptions,
 ) -> Result<Value> {
+    if options.genesis_inputs.is_some() || options.genesis_inputs_sha256.is_some() {
+        return execution::plan(options);
+    }
     let runtime = files::absolute(&options.runtime_root)
         .map_err(|_| error("autonomous_state_provisioning_cwd_invalid"))?;
     if runtime.exists() {
@@ -340,6 +370,9 @@ pub fn inspect_autonomous_state_provisioning_v1(
 pub fn execute_autonomous_state_provisioning_v1(
     options: &AutonomousStateProvisioningOptions,
 ) -> Result<Value> {
+    if options.genesis_inputs.is_some() || options.genesis_inputs_sha256.is_some() {
+        return execution::execute(options);
+    }
     let plan = inspect_autonomous_state_provisioning_v1(options)?;
     if options.expected_plan_id.as_deref() != plan["provisioningPlanId"].as_str() {
         return Err(error("autonomous_state_provisioning_plan_mismatch"));

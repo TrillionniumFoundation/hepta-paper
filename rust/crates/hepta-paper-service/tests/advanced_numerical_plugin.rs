@@ -55,6 +55,25 @@ fn invoke_bytes(bytes: &[u8]) -> std::process::Output {
 }
 
 #[test]
+fn cli_status_reports_exact_native_surface_without_claiming_incumbent_runtime() {
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .args(["advanced-numerical-plugin", "status"])
+        .output()
+        .expect("invoke native status");
+    assert!(output.status.success(), "stderr: {:?}", output.stderr);
+    let report: Value = serde_json::from_slice(&output.stdout).expect("status JSON");
+    assert_eq!(report["kind"], "AdvancedNumericalPluginRuntimeInspection");
+    assert_eq!(report["status"], "advanced_numerical_plugin_runner_partial");
+    assert_eq!(report["nativeReferenceCandidate"], true);
+    assert_eq!(report["signedBundleVerified"], false);
+    assert_eq!(report["runtimeIdentityVerified"], false);
+    assert_eq!(report["osSandboxVerified"], false);
+    assert_eq!(report["productionQualified"], false);
+    assert_eq!(report["supportedAnalysisFamilies"].as_array().map(Vec::len), Some(3));
+    assert!(report["blockers"].as_array().is_some_and(|values| !values.is_empty()));
+}
+
+#[test]
 fn cli_executes_bounded_candidate_and_reports_unqualified_boundary() {
     let output = invoke(&request(
         "linear-algebra",

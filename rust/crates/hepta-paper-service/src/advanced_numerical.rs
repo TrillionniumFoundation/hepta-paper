@@ -117,6 +117,26 @@ pub fn supports_advanced_numerical_family_v1(family: &str) -> bool {
     SUPPORTED_FAMILIES.contains(&family)
 }
 
+/// Report the exact native reference-candidate surface without pretending to
+/// inspect or qualify the incumbent signed plugin runtime.  This is the Rust
+/// counterpart of the operator's status mode only at the command/capability
+/// boundary; target-host bundle, sandbox and independent evidence remain open.
+pub fn inspect_advanced_numerical_plugin_status_v1() -> Value {
+    json!({
+        "version": 1,
+        "kind": "AdvancedNumericalPluginRuntimeInspection",
+        "status": "advanced_numerical_plugin_runner_partial",
+        "pluginId": "hepta.reference.native",
+        "supportedAnalysisFamilies": SUPPORTED_FAMILIES,
+        "nativeReferenceCandidate": true,
+        "signedBundleVerified": false,
+        "runtimeIdentityVerified": false,
+        "osSandboxVerified": false,
+        "productionQualified": false,
+        "blockers": BLOCKERS,
+    })
+}
+
 struct ParsedRequest {
     plugin_id: String,
     analysis_family: String,

@@ -4296,9 +4296,10 @@
         }
       ],
       "tests": [
+        "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
         "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs"
       ],
-      "remaining": "Native Rust executes only the three checked-in reference-candidate families (linear-algebra, monte-carlo, optimization) with request/result hash checks and an explicit unqualified result. The incumbent signed bundle/trust store, executable/source/package identity, kernel OS sandbox and resource receipt, GPU container authority, complete ten-family surface, independent oracle/replay/uncertainty qualification, provider effects, complete status/run argument modes and production activation remain unimplemented; the native result cannot authorize Node retirement.",
+      "remaining": "Native Rust now exposes a truthful status projection plus the three checked-in reference-candidate run families (linear-algebra, monte-carlo, optimization). Status reports the exact native families and keeps signed-bundle/runtime-identity/OS-sandbox/independent-evidence/production qualification false. The incumbent signed bundle/trust store, executable/source/package identity, kernel OS sandbox and resource receipt, GPU container authority, complete ten-family surface, independent oracle/replay/uncertainty qualification, provider effects and production activation remain unimplemented; the native result cannot authorize Node retirement.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/advanced_numerical.rs"
@@ -4311,16 +4312,34 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
           "symbol": "cli_rejects_request_hash_tampering_and_unsupported_families"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
+          "symbol": "cli_status_reports_exact_native_surface_without_claiming_incumbent_runtime"
         }
       ],
       "argumentModes": [
         {
           "nodeAction": "status",
-          "scope": "unmapped",
-          "rustCommand": null,
-          "callChain": [],
-          "tests": [],
-          "remaining": "The incumbent Node status mode has no Rust status caller; a native calculation request must not be counted as status parity."
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-paper-rust advanced-numerical-plugin status",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+              "symbol": "command"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/advanced_numerical.rs",
+              "symbol": "inspect_advanced_numerical_plugin_status_v1"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/advanced_numerical_plugin.rs",
+              "symbol": "cli_status_reports_exact_native_surface_without_claiming_incumbent_runtime"
+            }
+          ],
+          "remaining": "Rust status reports the exact native reference-candidate surface and non-authority blockers. It does not inspect the incumbent signed bundle/trust store, OS sandbox, target-host runtime or independent qualification evidence."
         },
         {
           "nodeAction": "run",

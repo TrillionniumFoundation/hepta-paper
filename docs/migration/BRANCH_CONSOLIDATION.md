@@ -1,6 +1,7 @@
 # Two persistent source trees
 
-The repository retains two long-lived branches:
+The repository retains two long-lived integration/baseline branches; temporary
+review heads may coexist while their exact differences are resolved:
 
 - `main`: original Node baseline at `7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2`.
 - `codex/full-rust-replacement-progress-20260916`: the consolidated Rust rewrite.
@@ -133,3 +134,28 @@ use a retired base. Their original identities and before/after GitHub states
 are retained in the recovery record. They are superseded by source
 consolidation, not recorded as merged, qualified or accepted. No old PR review
 or check result transfers to this integration commit.
+
+## Current PR convergence: 2026-09-23
+
+The active review lane is #139, `codex/full-rust-final-closure-20260923`,
+targeting the retained Rust integration branch. `main` remains the Node baseline.
+This is a review routing decision, not a claim that the candidate is qualified.
+
+PR #137 head `aa1749db011af350a1245a12ea168b82ce169e35` is an ancestor of
+#139's reviewed starting head `655d3265cd3fd9b2c1d2958969a515cead02226b`.
+It was closed as superseded; no branch or historical evidence was deleted.
+
+PR #140 head `528e0fe0f341947d7fe379b717776f4ffba61198` was compared by all
+seven changed paths, not assumed merged from commit counts. Its scientific
+verifier implementation/test subtree already matches #139. Keep #139's narrowed
+evidence wording and existing autonomous entry: nonmutating prepare, live-clock
+admission, definition/revision-bound continuation, amendment and signal
+cancellation. Do not replace these with #140's alternate flags, caller-supplied
+`--now`, prepare-time state creation or unobserved external-effect assertions.
+The existing real CLI/workflow/replay/interruption tests cover the retained path.
+#140 was closed as superseded; its source branch remains review history.
+
+Remaining temporary transport and divergent heads retain their exact source
+objects. Their existence is not another active product completion claim. No
+history deletion, mirror push, imported green check or automatic Node retirement
+is authorized by this review routing update.

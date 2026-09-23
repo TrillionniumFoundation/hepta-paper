@@ -2,6 +2,10 @@
 
 Copy this structure only for a real registered module. Replace every field and sentence; an incomplete section is a blocker, not optional prose. Every registered module must have exactly one specification under `docs/modules/specs/`, one manifest under `docs/modules/manifests/`, and one entry in `module-documentation.v1.json`.
 
+Common identity, wire, retry, resource, privacy and compatibility requirements
+are normative in the [shared module contract](MODULE_MODEL.md#shared-engineering-requirements).
+The sections below define this module's implementation-specific boundaries.
+
 ## Identity
 
 ```text

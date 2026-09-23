@@ -20,7 +20,9 @@ secondaryOwnerTeam: TEAM-WORKSPACE
 independentReviewerTeam: TEAM-EVIDENCE
 ```
 
-The exact executable/image/source digest, configuration digest, deployment generation, host identity, active qualification evidence, and rollback version are supplied by the qualified deployment registry. This static document cannot grant them.
+Common identity, wire, retry, resource, privacy and compatibility requirements
+are normative in the [shared module contract](../MODULE_MODEL.md#shared-engineering-requirements).
+The sections below define this module's implementation-specific boundaries.
 
 ## Mission and non-goals
 
@@ -42,8 +44,6 @@ Outputs:
 - PDF/package artifacts
 - reproducibility manifest and SBOM
 - build verification receipt
-
-Every request, result, event, health record, and receipt carries explicit schema/kind/version, canonical encoding, maximum bytes/counts, freshness and authority requirements, idempotency identity where applicable, unknown-field policy, and confidentiality classification. Large or confidential content moves by immutable artifact reference rather than unbounded protocol payload.
 
 ### Native bundle and separate PDF compilation
 
@@ -81,8 +81,6 @@ Maximum authority class: `prepared_result_only`. Current static activation: `aut
 
 Declared side-effect classes: `local_ephemeral`, `workspace_mutation`, `prepared_result`.
 
-Module-private journals may support idempotency and recovery but never become a second campaign-state authority. All durable or irreversible boundaries emit a typed receipt or conservative ambiguity disposition.
-
 ## Dependencies
 
 Hard registered module dependencies:
@@ -102,19 +100,13 @@ Additive Rust implementation roots (the incumbent roots above remain distinct):
 - `rust/crates/hepta-paper-service/src/scientific_runtime.rs`
 - `rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs`
 
-Imports of another module's private source are not a dependency contract. Runtime, schema, trust, host, dataset, provider, and external-authority dependencies must also be bound by exact identity in the deployment subject.
-
 ## Concurrency and resources
 
 Runs behind a qualified process/container runner with explicit CPU, memory, PID, storage, deadline, network, token/provider, and optional GPU envelopes. Child concurrency is included in the reservation; overload returns a bounded busy/retry disposition rather than bypassing central admission.
 
-The qualified profile records minimum/typical/hard maximum resources, startup and warm-cache cost, maximum inflight work and queue depth, preemption points, affinity/anti-affinity, expected duration/confidence, overload response, and settlement evidence.
-
 ## Determinism and optimization contract
 
 Declared class: `seeded`. Reproduction binds the exact input, module/runtime version, configuration, dataset, and explicit seed. Hardware- or solver-dependent variation must remain within a versioned tolerance/evaluation contract and is independently measured.
-
-A candidate-producing module must expose feasible alternatives or a justified singleton, finite resource/cost/latency/risk estimates, uncertainty, expiry, dependency effects, and a canonical payload hash. Local utility is advisory; global priority and integration remain control-plane decisions.
 
 ## Failure, recovery, and idempotency
 
@@ -130,25 +122,17 @@ prepared/committed attempt reuses its bytes, while started compilation without
 a durable prepared record stays ambiguous until reconciled. Neither path
 restores an older package over newer committed work automatically.
 
-Retries occur only at the documented layer and use a new attempt when identity, method, policy, tolerance, dataset, runtime, or irreversible-effect disposition changes. Exact duplicates return the original result/receipt; conflicting reuse of an idempotency identity is rejected.
-
 ## Security and privacy
 
 Use pinned non-root runtimes, read-only inputs, bounded generated-code execution, content-addressed outputs, and separate release signing authority.
-
-Logs and telemetry use an allowlist of bounded machine fields. Credential bytes, private keys, unrestricted prompts/provider responses, confidential manuscript content, developer home paths, and environment dumps are prohibited unless an independently reviewed evidence contract explicitly requires a protected representation.
 
 ## Compatibility and migration
 
 Toolchain/image/lock/manuscript schema and package format are bound. Rebuild comparison declares byte-exact or semantic equivalence.
 
-Compatibility is one of exact, semantic, evaluation-based, or retired. A breaking protocol, state, authority, resource-unit, side-effect, or rubric change requires a new module version, migration/rollback plan, fresh conformance, and downstream qualification invalidation.
-
 ## SLO, capacity, and observability
 
 Track admission/start latency, execution duration, success/timeout/cancel rate, resource and cost settlement, output validity, evidence/quality gain, reproducibility, and recovery time. Quality and scientific metrics are versioned by workload and cannot be replaced by repository-wide green CI.
-
-Every signal binds module/version/configuration, campaign/plan/attempt/reservation identities as applicable, schema version, producer trust class, privacy class, and retention rule. A dashboard or healthy heartbeat is not qualification or authority.
 
 ## Operational runbook
 
@@ -173,8 +157,6 @@ drift, length overflow, unsafe paths and collisions. Workflow/service tests
 exercise prepared content and durable replay. The last command requires the
 actual installed TeX tool; an ordinary run that leaves it ignored is not
 compiler evidence and no successful tool-host run is asserted here.
-
-The module documentation validator additionally proves one-to-one registry/spec/manifest coverage, required section presence, registry-field consistency, source-path existence, and authority-specific safety language.
 
 See the [installed-tool migration lane](../SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane).
 The existing migration decision now also requires a tool-equipped lane running the real TeX test with `--include-ignored` and retaining PDF and manifest bytes. Missing tools or ignored/filtered tests cannot make that lane pass. Full packaging/BibTeX, reproducible toolchain closure and release acceptance remain separate.

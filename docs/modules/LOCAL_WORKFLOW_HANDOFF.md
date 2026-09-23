@@ -83,8 +83,9 @@ hepta-local-workflow advance /absolute/new-state sha256:<digest> 7 1400
 ```
 
 The example clock and revision values are disposable test values, not production
-configuration. Real callers read the current revision and provide an explicit
-monotonic clock within the admitted local lease. `advance` uses an ABSOLUTE target
+configuration. Real callers read the current revision and use the live-clock owner within the
+admitted local lease. An explicit timestamp is a deterministic local drill, not
+a monotonic host clock or a trusted-time attestation. `advance` uses an ABSOLUTE target
 step count: retrying target 3 never means execute three additional steps. Pause,
 resume and cancel bind the expected campaign revision; repeated identical state
 transitions are idempotent only at the immediately resulting revision. Cancelled

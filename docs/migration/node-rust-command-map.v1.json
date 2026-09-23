@@ -8218,7 +8218,7 @@
       "tests": [
         "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs"
       ],
-      "remaining": "Rust now binds the explicit machine-intake and topic-producer JSON identities, dataset-root identity, ten-role state manifest, runtime policy and stable provisioning plan hash in a read-only native preflight. Execute remains fail-closed: the ten repository constructors, capability-bound staging/atomic rename, schema-transition and handoff receipts, external authority inputs, and crash cleanup/recovery are not yet ported; no runtime is written and no external authority is invoked.",
+      "remaining": "Rust now binds the explicit machine-intake and topic-producer JSON identities, dataset-root identity, ten-role state manifest, runtime policy and stable provisioning plan hash in a read-only native preflight. Execute remains fail-closed: the ten repository constructors, capability-bound staging/atomic rename, schema-transition and handoff receipts, external authority inputs, and crash cleanup/recovery are not yet ported; no runtime is written and no external authority is invoked. The plan now normalizes the target before deriving one hash over the returned payload without provisioningPlanId, and its machine/topic semantic values and byte observations come from the same retained reads. The actual Node hashRecord oracle verifies this hash contract; changed source bytes invalidate prior plans and existing targets are never adopted. Previously emitted self-containing plan IDs must be regenerated. These repairs do not implement the ten business constructors, publication or recovery.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
@@ -8232,6 +8232,18 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
           "symbol": "plan_is_source_bound_and_execute_is_fail_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+          "symbol": "plan_id_binds_the_returned_payload_once_and_matches_the_actual_node_hash"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+          "symbol": "equivalent_target_spellings_have_one_plan_identity_and_existing_roots_are_not_adopted"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_route.rs",
+          "symbol": "changed_source_bytes_invalidate_a_plan_without_creating_runtime_state"
         }
       ],
       "argumentModes": [

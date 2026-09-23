@@ -163,3 +163,25 @@ credential custody or workload; those require the actual target host.
 No percentage based on crate count, documentation count or passing fixture count
 can establish full replacement. `CTL-001` and production activation remain open
 until the complete production service and its independent evidence are accepted.
+
+## Native provisioning plan identity
+
+`hepta-paper-rust autonomous-state-provision --action plan` remains a read-only
+source preflight. Its exact command flags are owned by the existing command map,
+not a second registry. Runtime-root spelling is normalized before hashing. The
+returned `provisioningPlanId` is the actual production `hashRecord` of
+`AutonomousResearchStateBusinessSchemaProvisioningPlan` and the returned object
+with that one field removed. Machine/topic semantic values and byte observations
+come from the same retained reads, revalidated before return.
+
+Old plans that incorporated an earlier hidden `provisioningPlanId` are not an
+accepted alternative encoding: regenerate them from the current inputs. A source
+byte change changes the plan; an existing runtime is never adopted. The real Node
+hash oracle, equivalent target spellings, changed source and non-overwrite cases
+run in `autonomous_state_provision_route`.
+
+This hash contract does not validate full machine-intake V2 authority or create
+ten business databases. The current `execute` remains explicitly blocked until
+the real constructors, native/handoff initialization, genesis and staged
+publication/recovery are composed. No `ready` plan or source test is a writer
+capability, external qualification or Node-retirement receipt.

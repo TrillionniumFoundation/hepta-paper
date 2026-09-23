@@ -261,8 +261,16 @@ fn inspect_input(path: &Path, directory: bool) -> Result<Value> {
 }
 
 fn plan_payload(options: &AutonomousStateProvisioningOptions) -> Result<Value> {
-    let machine = read_json(&options.machine_intake_config)?;
-    let topic = read_json(&options.topic_producer_profile)?;
+    // The semantic inputs and the byte observations must describe the same
+    // retained objects. A second read may observe a different file generation.
+    let machine_input = files::Snapshot::read(&options.machine_intake_config)
+        .map_err(|_| error("autonomous_state_provisioning_input_identity_invalid"))?;
+    let topic_input = files::Snapshot::read(&options.topic_producer_profile)
+        .map_err(|_| error("autonomous_state_provisioning_input_identity_invalid"))?;
+    let machine: Value = serde_json::from_slice(&machine_input.bytes)
+        .map_err(|_| error("autonomous_state_provisioning_input_json_invalid"))?;
+    let topic: Value = serde_json::from_slice(&topic_input.bytes)
+        .map_err(|_| error("autonomous_state_provisioning_input_json_invalid"))?;
     if !machine.is_object() || !topic.is_object() {
         return Err(error("autonomous_state_provisioning_input_shape_invalid"));
     }
@@ -299,25 +307,21 @@ fn plan_payload(options: &AutonomousStateProvisioningOptions) -> Result<Value> {
         .filter_map(|row| row["role"].as_str())
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    let mut payload = json!({"version": 1, "kind": "AutonomousResearchStateBusinessSchemaProvisioningPlan", "status": "autonomous_research_state_business_schema_provisioning_plan_ready", "ready": true, "runtimeRoot": options.runtime_root, "stateDatabaseManifestHash": manifest_hash, "databaseRoles": roles, "provisioningIdentity": identity, "machineIntakeConfiguration": inspect_input(&options.machine_intake_config, false)?, "topicProducerProfile": inspect_input(&options.topic_producer_profile, false)?, "datasetRoot": inspect_input(&options.dataset_root, true)?, "freshRuntimeRequired": true, "stagedAtomicInstallationRequired": true, "onlineSchemaTransitionRequired": true});
-    let plan_id = input_hash(
-        "AutonomousResearchStateBusinessSchemaProvisioningPlan",
-        &payload,
-    )?;
-    payload["provisioningPlanId"] = json!(plan_id);
+    let payload = json!({"version": 1, "kind": "AutonomousResearchStateBusinessSchemaProvisioningPlan", "status": "autonomous_research_state_business_schema_provisioning_plan_ready", "ready": true, "runtimeRoot": options.runtime_root, "stateDatabaseManifestHash": manifest_hash, "databaseRoles": roles, "provisioningIdentity": identity, "machineIntakeConfiguration": machine_input.observation(), "topicProducerProfile": topic_input.observation(), "datasetRoot": inspect_input(&options.dataset_root, true)?, "freshRuntimeRequired": true, "stagedAtomicInstallationRequired": true, "onlineSchemaTransitionRequired": true});
+    machine_input
+        .assert_current()
+        .and_then(|()| topic_input.assert_current())
+        .map_err(|_| error("autonomous_state_provisioning_input_identity_invalid"))?;
+    // The public plan ID is added once by the caller, after root normalization.
+    // It must never commit to an earlier, hidden copy of its own ID.
     Ok(payload)
 }
 
 pub fn inspect_autonomous_state_provisioning_v1(
     options: &AutonomousStateProvisioningOptions,
 ) -> Result<Value> {
-    let runtime = if options.runtime_root.is_absolute() {
-        options.runtime_root.clone()
-    } else {
-        std::env::current_dir()
-            .map_err(|_| error("autonomous_state_provisioning_cwd_invalid"))?
-            .join(&options.runtime_root)
-    };
+    let runtime = files::absolute(&options.runtime_root)
+        .map_err(|_| error("autonomous_state_provisioning_cwd_invalid"))?;
     if runtime.exists() {
         return Err(error(
             "autonomous_state_provisioning_fresh_runtime_required",

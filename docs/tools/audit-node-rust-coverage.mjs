@@ -110,7 +110,7 @@ function actionModesFromNodeRoute(route) {
     for (const value of match[1].split('|')) modes.add(value);
   }
   for (const match of text.matchAll(/--action\\s+([a-z][a-z0-9-]+)/g)) modes.add(match[1]);
-  for (const match of text.matchAll(/\\[\\s*((?:(?:'|")[a-z][a-z0-9-]*(?:'|")\\s*,?\\s*){2,})\\]\\.includes\\(action\\)/g)) {
+  for (const match of text.matchAll(/\[\s*((?:(?:'|")[a-z][a-z0-9-]*(?:'|")\s*,?\s*){2,})\]\.includes\(action\)/g)) {
     for (const value of match[1].matchAll(/(?:'|")([a-z][a-z0-9-]*)(?:'|")/g)) modes.add(value[1]);
   }
   if (modes.size === 0) throw new Error(`dynamic Node action modes not discoverable: ${source}`);

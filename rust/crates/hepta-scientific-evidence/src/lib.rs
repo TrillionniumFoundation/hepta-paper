@@ -40,7 +40,7 @@ pub struct ProducerEvidenceV1 {
     pub evidence_level: EvidenceLevelV1,
 }
 
-/// Independent recomputation and policy result.
+/// Verifier-supplied artifact-set binding and policy result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IndependentVerificationV1 {
@@ -50,7 +50,7 @@ pub struct IndependentVerificationV1 {
     pub verifier_implementation_hash: String,
     /// Producer capsule hash verified by this record.
     pub producer_evidence_hash: String,
-    /// Independently recomputed artifact-set hash.
+    /// Artifact-set hash claimed by the verifier. This crate checks consistency only; it does not read artifact bytes.
     pub recomputed_artifact_set_hash: String,
     /// Evidence level actually established by this verifier.
     pub evidence_level: EvidenceLevelV1,
@@ -76,9 +76,11 @@ pub struct VerifiedEvidenceCapsuleV1 {
     pub artifact_hashes: Vec<String>,
 }
 
-/// Checks supplied implementation identifiers, artifact-set recomputation claims
-/// and non-inflation. Actual artifact reads, scientific verification and external
-/// attestation authentication belong to independently controlled producers.
+/// Checks supplied implementation identifiers, verifier-supplied artifact-set hash
+/// claims, and assurance non-inflation. This function does not read artifact bytes,
+/// recompute scientific results, authenticate verifier identity, or validate an
+/// external attestation; those responsibilities belong to independently controlled
+/// owners outside this crate.
 pub fn verify_evidence_capsule_v1(
     producer: &ProducerEvidenceV1,
     verification: &IndependentVerificationV1,
@@ -124,7 +126,7 @@ pub fn verify_evidence_capsule_v1(
     })
 }
 
-/// Canonical hash used by an independent recomputer over a sorted artifact set.
+/// Canonical hash of a caller-supplied sorted artifact-hash set.
 pub fn hash_artifact_set(values: &[String]) -> Result<String, EvidenceError> {
     if values.is_empty() {
         return Err(EvidenceError::ArtifactSetInvalid);
@@ -265,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn independent_recomputation_is_accepted_without_assurance_inflation() {
+    fn supplied_recomputation_binding_is_checked_without_assurance_inflation() {
         let producer = producer();
         let verification = IndependentVerificationV1 {
             version: 1,

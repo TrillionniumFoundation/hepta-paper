@@ -1512,4 +1512,3 @@ fn assert_inspection_schema<T: serde::Serialize>(schema: &str, value: &T) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
-

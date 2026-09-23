@@ -216,3 +216,20 @@ prompt/schema drift, verify runtime-config drift becomes ambiguous, cancel an
 already released process, and recover exact fixture cgroup identities. The
 fixture execution entry and allowing authority exist only under unit-test control;
 these tests do not constitute live-provider or production-host qualification.
+
+## Process exit during procfs recovery observation
+
+A process can exit and be reaped after a `/proc` entry or task file is opened.
+The retained task-file read then returns `ESRCH`, not necessarily `ENOENT`;
+Rust's `ErrorKind` alone may describe it as `Uncategorized`. The runtime now
+classifies only task-scoped `ENOENT`/`ESRCH` as disappearance. Other I/O errors
+retain their existing failure behavior, and existing permission policy is not
+broadened by this change.
+
+The existing orphan/group scan still verifies the original boot, session,
+group, UID and start identity before signaling or declaring cleanup complete.
+Disappearance never proves a provider action did not occur: a durably authorized
+operation still reconciles to the original ambiguous disposition. The regression
+holds a real proc-stat descriptor across an owned child's termination/reap, and
+the broker test retains the stopped-gate/no-target-execution assertion. This is
+a recovery fix, not permission to retry an external effect.

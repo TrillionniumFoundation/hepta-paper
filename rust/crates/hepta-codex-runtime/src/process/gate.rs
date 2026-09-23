@@ -557,10 +557,8 @@ fn observe_orphaned_target_group(
         let stat = match fs::read_to_string(proc_root.join("stat")) {
             Ok(value) => value,
             Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-                ) =>
+                if (proc_task_disappeared(&error)
+                    || error.kind() == std::io::ErrorKind::PermissionDenied) =>
             {
                 continue;
             }
@@ -971,6 +969,23 @@ struct ObservedProcessIdentity {
     stopped: bool,
 }
 
+// procfs can return ESRCH from read() on an already opened task file when
+// that task exits and is reaped between enumeration/open and read. ErrorKind
+// alone is insufficient: Rust may classify this errno as Uncategorized.
+// Restrict this classification to task-scoped procfs observations; unrelated
+// I/O/permission/format failures must retain their previous error semantics.
+fn proc_task_disappeared(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(nix::libc::ESRCH)
+}
+
+fn proc_task_read_error(pid: u32, field: &'static str, error: std::io::Error) -> DurableGateError {
+    if proc_task_disappeared(&error) {
+        DurableGateError::ProcessAbsent(pid)
+    } else {
+        DurableGateError::Filesystem(field, error.kind())
+    }
+}
+
 fn inspect_process(
     pid: u32,
     expected_executable: &GateExecutableIdentityV1,
@@ -982,10 +997,8 @@ fn inspect_process(
     let executable = match fs::metadata(proc_root.join("exe")) {
         Ok(value) => value,
         Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-            ) =>
+            if (proc_task_disappeared(&error)
+                || error.kind() == std::io::ErrorKind::PermissionDenied) =>
         {
             return Err(DurableGateError::ProcessAbsent(pid));
         }
@@ -997,7 +1010,7 @@ fn inspect_process(
         return Err(DurableGateError::ProcessExecutableMismatch);
     }
     let stat = fs::read_to_string(proc_root.join("stat"))
-        .map_err(|error| DurableGateError::Filesystem("proc_stat", error.kind()))?;
+        .map_err(|error| proc_task_read_error(pid, "proc_stat", error))?;
     let close = stat
         .rfind(") ")
         .ok_or(DurableGateError::ProcessStatMalformed)?;
@@ -1012,7 +1025,7 @@ fn inspect_process(
         .parse::<u64>()
         .map_err(|_| DurableGateError::ProcessStatMalformed)?;
     let status = fs::read_to_string(proc_root.join("status"))
-        .map_err(|error| DurableGateError::Filesystem("proc_status", error.kind()))?;
+        .map_err(|error| proc_task_read_error(pid, "proc_status", error))?;
     let uid = status
         .lines()
         .find_map(|line| line.strip_prefix("Uid:"))
@@ -1065,10 +1078,8 @@ fn journaled_group_has_live_members(
         let stat = match fs::read_to_string(proc_root.join("stat")) {
             Ok(value) => value,
             Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-                ) =>
+                if (proc_task_disappeared(&error)
+                    || error.kind() == std::io::ErrorKind::PermissionDenied) =>
             {
                 continue;
             }
@@ -1100,10 +1111,8 @@ fn journaled_group_has_live_members(
         let status = match fs::read_to_string(proc_root.join("status")) {
             Ok(value) => value,
             Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-                ) =>
+                if (proc_task_disappeared(&error)
+                    || error.kind() == std::io::ErrorKind::PermissionDenied) =>
             {
                 continue;
             }
@@ -1127,10 +1136,8 @@ fn journaled_group_has_live_members(
             let executable = match fs::canonicalize(proc_root.join("exe")) {
                 Ok(value) => value,
                 Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-                    ) =>
+                    if (proc_task_disappeared(&error)
+                        || error.kind() == std::io::ErrorKind::PermissionDenied) =>
                 {
                     continue;
                 }
@@ -1297,4 +1304,70 @@ pub enum DurableGateError {
     DigestConstruction,
     #[error(transparent)]
     Process(#[from] BoundedProcessError),
+}
+
+#[cfg(test)]
+mod proc_exit_tests {
+    use super::*;
+
+    struct ChildGuard(Child);
+
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn only_missing_proc_tasks_are_classified_as_absent() {
+        for errno in [nix::libc::ENOENT, nix::libc::ESRCH] {
+            let error = std::io::Error::from_raw_os_error(errno);
+            assert!(proc_task_disappeared(&error));
+            assert!(matches!(
+                proc_task_read_error(123, "proc_stat", error),
+                DurableGateError::ProcessAbsent(123)
+            ));
+        }
+        for errno in [
+            nix::libc::EACCES,
+            nix::libc::EPERM,
+            nix::libc::EIO,
+            nix::libc::EINVAL,
+        ] {
+            let error = std::io::Error::from_raw_os_error(errno);
+            let kind = error.kind();
+            assert!(!proc_task_disappeared(&error));
+            assert!(matches!(
+                proc_task_read_error(123, "proc_stat", error),
+                DurableGateError::Filesystem("proc_stat", observed) if observed == kind
+            ));
+        }
+    }
+
+    #[test]
+    fn retained_proc_stat_descriptor_reports_a_reaped_task_without_hiding_io_errors() {
+        let mut child = ChildGuard(
+            Command::new("/bin/sleep")
+                .arg("30")
+                .env_clear()
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn owned process"),
+        );
+        let pid = child.0.id();
+        let mut stat = File::open(format!("/proc/{pid}/stat")).expect("retain original proc file");
+        child.0.kill().expect("stop owned process");
+        child.0.wait().expect("reap owned process");
+        let error = stat
+            .read_to_string(&mut String::new())
+            .expect_err("original task is gone");
+        assert_eq!(error.raw_os_error(), Some(nix::libc::ESRCH));
+        assert!(matches!(
+            proc_task_read_error(pid, "proc_stat", error),
+            DurableGateError::ProcessAbsent(observed) if observed == pid
+        ));
+    }
 }

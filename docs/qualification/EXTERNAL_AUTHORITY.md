@@ -11,7 +11,6 @@ release, portal, or submission facts.
 
 | Package | Gap | Active schema | Authority |
 |---|---|---|---|
-| EXT-GOV-MAIN-001 | GAP-GOV-003 | `protected-main-ruleset-evidence-v1.schema.json` | repository governance administrator plus independent reviewer |
 | EXT-HOST-CGROUP-001 | GAP-HOST-001 | `independent-linux-review-v1.schema.json` | target-host operator plus independent Linux reviewer |
 | EXT-HOST-STORAGE-001 | GAP-HOST-002 | `external-host-storage-package-v1.schema.json` | destructive storage/host operator plus independent reviewer |
 | EXT-KEY-OWNER-001 | GAP-KEY-001 | `external-key-owner-drill-v1.schema.json` | capability key owner plus independent reviewer |
@@ -39,12 +38,29 @@ the same review.
 
 The [Rust implementation handoff](../../rust/crates/hepta-qualification-ingest/HANDOFF.md)
 defines the file boundaries, resource limits and durable replay behavior. The
-CLI supplies the actual seven envelopes and payloads to
-`verify_external_qualification_closure_v1` before opening its replay ledger.
+current V2 CLI supplies the actual six operational envelopes and payloads to
+`verify_external_qualification_closure_v2` before opening its replay ledger.
 Cgroup/storage host identity and storage/cutover database identity must agree;
 individual package validity alone does not establish complete qualification.
 The existing report JSON and its digest remain distinct from the opaque
 `VerifiedExternalQualificationClosureV1` and cannot recreate that value.
+
+### Historical compatibility
+
+`EXT-GOV-MAIN-001` / `GAP-GOV-003` and
+`protected-main-ruleset-evidence-v1.schema.json` are retained only for explicit
+V1 historical verification. They are not current package-map requirements and
+cannot block single-maintainer development. V1 receipt hashes and seven-package
+validation remain unchanged; selecting V2 requires an explicit request version 2.
+V2 has six exact package IDs and four operational authority groups, with no
+repository-review group. Missing a real operational package still fails.
+
+Current [request V2](../rust/qualification/external-qualification-closure-request-v2.schema.json)
+and [receipt V2](../rust/qualification/external-qualification-closure-receipt-v2.schema.json)
+keep strict payload checks, signatures, time windows, host/database binding and
+durable replay rules. Their version/kind is included in the receipt hash; they
+are not relabelled V1 evidence. A PR merge is neither a runtime grant nor proof
+that an external operation occurred.
 
 ## 3. Common envelope
 

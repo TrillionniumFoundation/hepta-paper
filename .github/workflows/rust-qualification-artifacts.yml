@@ -45,6 +45,8 @@ jobs:
               'external-qualification-closure-request-v1.schema.json',
               'external-qualification-closure-receipt-v1.schema.json',
               'qualification-trust-store-v1.schema.json',
+              'external-qualification-closure-request-v2.schema.json',
+              'external-qualification-closure-receipt-v2.schema.json',
               *package_schemas,
           ]
           for name in schemas:
@@ -57,7 +59,7 @@ jobs:
               version = decoded['properties'].get('schemaVersion')
               if version is None:
                   version = decoded['properties'].get('version')
-              assert version is not None and version.get('const') == 1, name
+              assert version is not None and version.get('const') == (2 if name.endswith('-v2.schema.json') else 1), name
               assert decoded['required'], name
               if name in package_schemas:
                   assert decoded['properties']['decision'] == {
@@ -84,7 +86,7 @@ jobs:
               root / 'external-package-map.v1.json'
           ).read_text(encoding='utf-8'))
           by_id = {row['packageId']: row for row in mapping['packages']}
-          assert len(by_id) == 7
+          assert len(by_id) == 6 and 'EXT-GOV-MAIN-001' not in by_id
           assert by_id['EXT-HOST-STORAGE-001']['schemas'] == [
               'external-host-storage-package-v1.schema.json'
           ]
@@ -98,7 +100,9 @@ jobs:
           ).read_text(encoding='utf-8')
           for required in [
               'validate_external_package_payload_v1(',
-              'verify_external_qualification_closure_v1(',
+              'verify_external_qualification_closure_v1',
+              'verify_external_qualification_closure_v2',
+              'QualificationClosureProfile::from_version(request.version)',
               'payload_semantics: "strict_package_v1"',
               'replay_protection: "durable_sqlite_v2"',
               'clock_rollback_protection: true',

@@ -64,7 +64,7 @@ Closing a milestone requires one immutable evidence package that binds:
 - required test/workflow/workload artifacts;
 - invariant and zero-tolerance results;
 - unresolved risks and accepted residual-risk authority;
-- latest required review decisions;
+- maintainer integration decision decisions;
 - rollback/recovery disposition;
 - closure timestamp and expiry/revalidation rule.
 

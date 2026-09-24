@@ -4,16 +4,6 @@
   "status": "canonical_external_package_map",
   "packages": [
     {
-      "gapId": "GAP-GOV-003",
-      "issue": 25,
-      "packageId": "EXT-GOV-MAIN-001",
-      "schemas": [
-        "protected-main-ruleset-evidence-v1.schema.json"
-      ],
-      "executor": "repository_administrator_and_independent_reviewer",
-      "automaticActivation": false
-    },
-    {
       "gapId": "GAP-HOST-001",
       "issue": 17,
       "packageId": "EXT-HOST-CGROUP-001",

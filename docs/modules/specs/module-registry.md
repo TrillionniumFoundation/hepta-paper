@@ -104,9 +104,13 @@ Current channel is `disabled`. A new version progresses through registered/contr
 - `MOD-001` — `source_implemented`
 - `MOD-004` — `source_implemented`
 - `MOD-005` — `source_implemented`
-- `MOD-007` — `blocked_external`
+- `MOD-007` — `retired`
 - `MOD-008` — `source_implemented`
 - `ORG-001` — `design_ready`
 - `ORG-002` — `design_ready`
 - `ORG-003` — `design_ready`
 - `ORG-004` — `source_implemented`
+
+The retired governance work items describe the removed human approval/staffing
+ceremony, not accepted external runtime evidence. See the current
+[single-maintainer policy](../../governance/OWNERSHIP_AND_REVIEW.md).

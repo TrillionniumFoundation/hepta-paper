@@ -124,7 +124,7 @@ explicitly synthetic test observations.
 These are offline consistency checks, not authentication of uploaded records,
 proof that no GitHub run was omitted, reviewer approval, or a stable live-state
 snapshot. The live collector, exact checkout and byte checks in the V1 revalidator,
-fresh V3 comparison and separate independent review remain required. V2 live
+fresh V3 comparison and maintainer integration remain required. V2 live
 verification still invokes the existing V1 currentness verifier and cannot turn
 its failure into success. No module, milestone or production authority is promoted
 by these test fixtures. This contributes to QUAL-001..004 without closing G0.
@@ -135,9 +135,13 @@ Current channel is `disabled`. A new version progresses through registered/contr
 
 ## Open blockers
 
-- `GAP-GOV-003` — `blocked_external`
+- `GAP-GOV-003` — `retired`
 - `QUAL-001` — `design_ready`
 - `QUAL-002` — `design_ready`
 - `QUAL-003` — `design_ready`
 - `QUAL-004` — `design_ready`
-- `QUAL-005` — `blocked_external`
+- `QUAL-005` — `retired`
+
+The retired governance work items describe the removed human approval/staffing
+ceremony, not accepted external runtime evidence. See the current
+[single-maintainer policy](../../governance/OWNERSHIP_AND_REVIEW.md).

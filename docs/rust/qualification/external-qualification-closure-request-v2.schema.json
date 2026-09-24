@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/external-qualification-closure-request-v2.schema.json",
+  "title": "External Qualification Closure Request V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "repository",
+    "commit",
+    "tree",
+    "consumerUid",
+    "trustStore",
+    "replayLedger",
+    "envelopes"
+  ],
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "repository": {
+      "const": "TrillionniumFoundation/hepta-paper"
+    },
+    "commit": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "tree": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "consumerUid": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "trustStore": {
+      "$ref": "#/$defs/authorityFile"
+    },
+    "envelopes": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "packageId",
+          "path",
+          "ownerUid",
+          "payloadPath",
+          "payloadOwnerUid"
+        ],
+        "properties": {
+          "packageId": {
+            "$ref": "#/$defs/packageId"
+          },
+          "path": {
+            "$ref": "#/$defs/absolutePath"
+          },
+          "ownerUid": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payloadPath": {
+            "$ref": "#/$defs/absolutePath"
+          },
+          "payloadOwnerUid": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "packageId"
+            ],
+            "properties": {
+              "packageId": {
+                "const": "EXT-HOST-CGROUP-001"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "packageId"
+            ],
+            "properties": {
+              "packageId": {
+                "const": "EXT-HOST-STORAGE-001"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "packageId"
+            ],
+            "properties": {
+              "packageId": {
+                "const": "EXT-KEY-OWNER-001"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "packageId"
+            ],
+            "properties": {
+              "packageId": {
+                "const": "EXT-CODEX-ROLE-001"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "packageId"
+            ],
+            "properties": {
+              "packageId": {
+                "const": "EXT-CUTOVER-SOAK-001"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "packageId"
+            ],
+            "properties": {
+              "packageId": {
+                "const": "EXT-AUTHORITY-SET-001"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "replayLedger": {
+      "$ref": "#/$defs/privateLedger"
+    }
+  },
+  "$defs": {
+    "gitHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/[^\\u0000]*$",
+      "minLength": 2,
+      "maxLength": 4096
+    },
+    "packageId": {
+      "enum": [
+        "EXT-HOST-CGROUP-001",
+        "EXT-HOST-STORAGE-001",
+        "EXT-KEY-OWNER-001",
+        "EXT-CODEX-ROLE-001",
+        "EXT-CUTOVER-SOAK-001",
+        "EXT-AUTHORITY-SET-001"
+      ]
+    },
+    "authorityFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "ownerUid"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "ownerUid": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "privateLedger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "ownerUid"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "ownerUid": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "description": "Current single-maintainer profile: six operational packages, no repository-review package. V1 remains a separate historical contract."
+}

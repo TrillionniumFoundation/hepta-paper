@@ -1,5 +1,10 @@
 # External blocker closure runbook
 
+Repository PR approvals are not part of this runbook. The owner-retired
+`EXT-GOV-MAIN-001` package is historical V1 only; use the six-package explicit
+V2 request for current operational qualification. Signing principals below are
+runtime evidence owners, not mandatory human source-code approvers.
+
 This runbook is the execution checklist for the blockers that cannot be closed
 from the repository worktree alone. Every package is evidence-only until an
 independent reviewer accepts the exact candidate. No step grants production,
@@ -21,7 +26,6 @@ For every package:
 
 | Blocker / issue | Executor | Preflight and evidence | Closure condition | Forbidden shortcut |
 |---|---|---|---|---|
-| `GAP-GOV-003` / #25 | Repository administrator plus independent reviewer | Export the active protected-main ruleset with `gh api`, bind the ruleset hash to the exact head, run all seven denial probes, and write `protected-main-ruleset-evidence-v1.schema.json`. | All denial probes pass and the independent reviewer signs the exact-candidate decision. | A source declaration or a historical green run cannot stand in for the active ruleset export. |
 | `GAP-HOST-001` / #17 | Target-host operator plus independent Linux reviewer | On the dedicated host run `docs/rust/qualification/hepta-broker-host-qualification.sh` and `hepta-broker-cgroup-v2-target-host-qualification.sh`; retain listener, UID/GID, SO_PEERCRED, systemd, cgroup and schema receipts under `independent-linux-review-v1.schema.json`. | The receipts are bound to the exact binary/configuration identity and independently signed. | Hosted CI or a local fixture cannot qualify the target host. |
 | `GAP-HOST-002` / #12 | Destructive test-mount operator plus independent reviewer | Run WAL/reboot, disk-full, corruption, restore, rollback and 72-hour production-topology soak on a disposable mount; package the result with `external-host-storage-package-v1.schema.json` and `production-cutover-soak-v1.schema.json`. | Every destructive drill completes, recovery is data-preserving, and the independent reviewer accepts the retained logs and hashes. | Do not run destructive drills against the live store or treat a short local test as the soak. |
 | `GAP-KEY-001` / #14 | External capability-key owner plus independent reviewer | Perform key rotation, revocation, rollback and compromise drills using the external key-owner package; retain signed receipts under `external-key-owner-drill-v1.schema.json`. | The key owner confirms custody separation and the reviewer verifies that revoked material cannot authorize a run. | Repository-local test keys cannot close external key custody. |

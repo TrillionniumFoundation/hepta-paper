@@ -12,7 +12,8 @@ lease, native deployment qualification or Node retirement authority.
 - [`src/package_payload.rs`](src/package_payload.rs): strict per-package payload
   schemas, package-specific decisions and nested signature verification.
 - [`src/closure.rs`](src/closure.rs): the public
-  `verify_external_qualification_closure_v1` factory and opaque
+  versioned `verify_external_qualification_closure_v1` /
+  `verify_external_qualification_closure_v2` factories and opaque
   `VerifiedExternalQualificationClosureV1`. Only the factory establishes the
   complete set and its cross-package runtime facts; the opaque value has no
   deserialization constructor.
@@ -24,7 +25,10 @@ lease, native deployment qualification or Node retirement authority.
 The [request schema](../../../docs/rust/qualification/external-qualification-closure-request-v1.schema.json),
 [receipt schema](../../../docs/rust/qualification/external-qualification-closure-receipt-v1.schema.json)
 and [trust store schema](../../../docs/rust/qualification/qualification-trust-store-v1.schema.json)
-remain V1. The durable ledger schema is V2. The report digest and the opaque
+describe the unchanged historical V1 profile. Current
+[request V2](../../../docs/rust/qualification/external-qualification-closure-request-v2.schema.json)
+and [receipt V2](../../../docs/rust/qualification/external-qualification-closure-receipt-v2.schema.json)
+remove only the repository-review package. The durable ledger schema is V2. The report digest and the opaque
 closure digest are separate domains and are not interchangeable.
 
 ## File and resource contract
@@ -32,8 +36,8 @@ closure digest are separate domains and are not interchangeable.
 The request is a canonical absolute path to a singly linked regular file,
 owned by the effective consumer UID, mode `0400` or `0600`, under its private
 `0700` directory. Its declared consumer UID must match the actual Linux process.
-Request and trust documents are limited to 1 MiB each. Exactly seven declared
-envelope/payload pairs are required, with distinct paths that do not alias the
+Request and trust documents are limited to 1 MiB each. Exactly six declared
+envelope/payload pairs are required for current V2 (seven for historical V1), with distinct paths that do not alias the
 declared trust-store or ledger path.
 
 Trust, envelope and payload files must be owned by the declared external UID,
@@ -63,24 +67,24 @@ bytes, not total process RSS: parsed JSON and signature structures add overhead.
    again and require it not to precede the initial sample. Recheck the original
    validated trust document's retained validity window. Pass the actual envelopes
    and payloads to the public opaque factory at this fresh time. It
-   re-verifies them, requires all seven package IDs, distinct nonces and payload
-   hashes, and five independent authority groups. An authority domain cannot
+   re-verifies them, requires the exact versioned package set, distinct nonces and payload
+   hashes, and four operational authority groups for V2 (five for V1). An authority domain cannot
    straddle those groups. Its retained exclusive expiry is the minimum of all
-   seven envelope expiries, all seven payload expiries and the four required
+   required envelope expiries, all required payload expiries and the four required
    inner authority-receipt expiries. The payload-derived bound is returned only
    after payload validation and every required nested signature succeeds.
 4. Require cgroup and storage packages to agree on `hostIdentityHash`; storage
    and cutover/soak packages must agree on `databaseIdentityHash`. The factory
    also derives service identity, Codex runtime identity and writer-transfer
    receipt identity from the verified payloads.
-5. Build the existing V1 report from records obtained through the opaque
+5. Build the versioned V1 or V2 report from records obtained through the opaque
    closure's `package()` accessors. Joint verification failure occurs before
    opening, creating or advancing the replay ledger.
 6. Acquire `BEGIN IMMEDIATE`, which may wait behind another writer. Before any
    clock/trust advancement or nonce query, sample the actual system clock again,
    reject regression from step 3 and recheck both the original trust window and
    the genuinely verified opaque closure. Advance monotonic verifier time and
-   trust generation using this post-lock sample; check all seven nonces, then
+   trust generation using this post-lock sample; check every required nonce, then
    insert the canonical receipt and nonce bindings. Exact existing replay passes
    the same fresh gate. Commit and sync precede stdout publication.
 
@@ -173,3 +177,25 @@ Complete native deployment and independently controlled production packages
 remain required. See the
 [external authority protocol](../../../docs/qualification/EXTERNAL_AUTHORITY.md)
 and [qualification model](../../../docs/qualification/QUALIFICATION_MODEL.md).
+
+## Current single-maintainer profile and compatibility
+
+`ClosureRequestV1.version` is an explicit selector: 1 retains the historical
+seven-package contract; 2 selects `SingleMaintainerV2` and exactly the six
+`CURRENT_REQUIRED` package IDs. Unknown versions, duplicates, a governance
+package substituted for a runtime package, and incomplete sets fail before
+file intake. No caller can supply a relaxable required-package list.
+
+The common producer authenticates every supplied operational payload and
+cross-package identity through the existing verifier. V2 receipt kind/version
+are distinct and hashed. The opaque value exposes `profile()` so consumers can
+check the actual producer contract. Existing seven-package V1 receipt bytes and
+replay remain unchanged; six-package data is never accepted as V1.
+
+The real signed-fixture tests execute the shared post-file CLI owner, commit
+and repeat a six-package receipt through SQLite, and reject signature tampering,
+host substitution, package omission and clock rollback. These tests do not
+claim a real independently owned host, credential or production installation.
+Keep the current file/UID, trust, validity and precommit admission rules; no
+human PR approval is part of them. Use `cargo test --locked -p
+hepta-qualification-ingest` from `rust` to run both historical and current cases.

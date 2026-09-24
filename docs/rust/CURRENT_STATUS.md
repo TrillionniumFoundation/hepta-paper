@@ -1,5 +1,11 @@
 # hepta-paper Rust rewrite current status
 
+Current development follows the [single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md).
+Mandatory independent repository approval (`GAP-GOV-003`/`QUAL-005`) and
+mandatory Code Owner team provisioning (`MOD-007`) are retired, not externally
+qualified. Logical staffing work is optional; real source, runtime and recovery
+checks remain required. Historical references do not restore an approval gate.
+
 This is the scoped human-readable **static source declaration** for the Rust
 control-plane migration. Global development truth is owned by
 [`../system/CURRENT_STATUS.md`](../system/CURRENT_STATUS.md) and
@@ -75,7 +81,7 @@ review. Local execution does not qualify a branch or authorize a deployment.
 | Rust campaign writer | `source_implemented` | atomic campaign/control result and receipt persistence, replay and signed activation source await exact-head qualification | explicitly local marked database writes; no production activation |
 | Scientific evidence orchestration | `source_implemented` | eligible for exact-head workflow promotion | no assurance elevation |
 | Cutover/retirement contracts | `source_implemented` | durable journal, epoch, process-crash/concurrency and data-preserving local rollback tests await exact-head qualification | local drill only; production requires separate signed authorization |
-| Protected main merge boundary | `blocked_external` | policy is configured; seven denial probes and independent signed decision remain | none |
+| Protected main merge boundary | `retired` | obsolete human approval package retired; live machine checks remain | none |
 | Trusted legacy matrix replay | `blocked_external` | private archive exists; retained hosted replay receipt/index remains absent | verification only |
 | Production target host | `blocked_external` | repository and hosted runners cannot establish target-host facts | none |
 | Real Codex credentials/provider | `blocked_external` | real credential custody and live role canaries remain absent | none |
@@ -160,7 +166,6 @@ release, portal or submission authority.
 
 | Gap | Status | Evidence collector | Required real owner |
 |---|---|---|---|
-| `GAP-GOV-003` | `blocked_external` | issue #25 | repository administrator distinct from the implementation author plus independent reviewer |
 | `GAP-HOST-001` | `blocked_external` | issue #17 | target-host operator plus independent Linux reviewer |
 | `GAP-HOST-002` | `blocked_external` | issue #12 | destructive storage/host operator plus independent reviewer |
 | `GAP-KEY-001` | `blocked_external` | issue #14 | external capability-key owner plus independent reviewer |
@@ -173,10 +178,9 @@ release, portal or submission authority.
 |---|---|---|---|
 | `LEGACY-REPLAY-001` | `blocked_external` | issue #28 | private companion operator plus independent archive/replay reviewer |
 
-Historical repository evidence records protected `main` and configured status
-contexts. `GAP-GOV-003` remains open until the current active policy export, all
-seven denial outcomes and an independent signed exact-candidate decision are
-retained; the historical configuration is not a current policy attestation.
+The owner retired `GAP-GOV-003` as a human repository-approval prerequisite.
+Live branch settings still enforce required checks and safe references. Historical
+seven-denial packages remain V1 evidence only, not current operational requirements.
 
 The 263-file legacy archive has been recovered in the private companion and its
 digest/matrix can be checked locally. `LEGACY-REPLAY-001` remains open until the
@@ -230,9 +234,10 @@ authority.
    required-check and V3-subject evidence; the legacy currentness check alone is insufficient.
 3. Retain exact-head/tree, workflow-definition, run/job/step and artifact
    digests; reject collisions, zero-job, skipped, stale or failed reruns.
-4. Obtain an independent review of the exact new candidate and integrate through
-   the repository's existing qualified merge boundary.
-5. Complete issue #25 denial evidence and exact policy export.
+4. Integrate the exact tested candidate using the expected-head guard; the
+   maintainer may merge their own work without independent human approval.
+5. Verify the current required-check and reference-protection configuration;
+   the obsolete issue #25 human approval requirement is retired.
 6. Complete issue #28 hosted private legacy replay and acknowledgement.
 7. Execute target-host listener/systemd/cgroup qualification in issue #17.
 8. Execute destructive storage, reboot, corruption and 72-hour soak in issue #12.

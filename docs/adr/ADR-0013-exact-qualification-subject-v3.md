@@ -28,5 +28,5 @@ base movement or noncanonical reruns.
 ## Adoption gates
 
 The schemas, collector, derivation, live revalidation, workflows, adversarial
-tests, producer digests, exact-head matrix, and independent latest-head review
+tests, producer digests, exact-head matrix, and maintainer verification of exact tested source
 must change as one qualification transaction.

@@ -293,19 +293,32 @@ test('legacy matrix publication control surfaces are narrow only when contract-t
   assert.deepEqual(selection.selectedTests, unmapped.tests);
 });
 
-test('checked-in repository control-plane contracts remain fail-closed', () => {
-  const codeowners = fs.readFileSync(repositoryControlPlaneFiles.codeowners, 'utf8');
-  const independentOwners = '@ProfHepta @Tomasrgbsf @Franksudoman';
-  for (const rule of [
-    `/.github/ ${independentOwners}`,
-    `/rust/ ${independentOwners}`,
-    `/paper-adapters/ ${independentOwners}`,
-    `/migration/ ${independentOwners}`,
-    `/store/migrations/ ${independentOwners}`,
-  ]) {
-    assert.ok(codeowners.split('\n').includes(rule), rule);
+function assertOwnershipRouting(source) {
+  const rules = new Map(source.split('\n')
+    .map((line) => line.split('#')[0].trim()).filter(Boolean)
+    .map((line) => { const [scope, ...owners] = line.split(/\s+/u); return [scope, owners]; }));
+  for (const scope of ['/.github/', '/rust/', '/paper-adapters/', '/migration/', '/store/migrations/']) {
+    const owners = rules.get(scope);
+    assert.ok(owners?.length, `missing ownership routing: ${scope}`);
+    for (const owner of owners) assert.match(owner, /^@[A-Za-z0-9-]+(?:\/[A-Za-z0-9-]+)?$/u);
   }
-  assert.doesNotMatch(codeowners, /@TrillionniumFoundation(?:\s|$)/u);
+  assert.doesNotMatch(source, /@TrillionniumFoundation(?:\s|$)/u);
+}
+
+test('ownership routing allows one maintainer without prescribing reviewer identities or headcount', () => {
+  const scopes = ['/.github/', '/rust/', '/paper-adapters/', '/migration/', '/store/migrations/'];
+  for (const owners of ['@maintainer', '@maintainer @optional-contributor']) {
+    const source = scopes.map((scope) => `${scope} ${owners}`).join('\n');
+    assert.doesNotThrow(() => assertOwnershipRouting(source));
+    assert.throws(() => assertOwnershipRouting(source.replace('/rust/', '/other/')), /missing ownership/u);
+    assert.throws(() => assertOwnershipRouting(source.replaceAll('@maintainer', 'not-an-owner')));
+  }
+});
+
+test('checked-in repository control-plane contracts remain fail-closed', () => {
+  // Ownership routes are not a mandatory human review policy. Do not duplicate
+  // individual usernames or reviewer counts in the impact graph's test suite.
+  assertOwnershipRouting(fs.readFileSync(repositoryControlPlaneFiles.codeowners, 'utf8'));
 
   const continuousIntegration = fs.readFileSync(
     repositoryControlPlaneFiles.continuousIntegration,

@@ -194,6 +194,20 @@ function assertRegistryDelta(base, target, evidenceRecords) {
     promotableModules.add(targetItem.moduleId);
   }
 
+  // Explicit owner-policy retirement is not a source/authority promotion.
+  // Keep every other field and every business/operational work item unchanged.
+  for (const recordId of ['GAP-GOV-003', 'QUAL-005', 'MOD-007']) {
+    const before = stageWork?.items?.[recordId];
+    const after = targetWork?.items?.[recordId];
+    if (!before || !after || equal(before, after)) continue;
+    if (before.state !== 'blocked_external' || after.state !== 'retired') {
+      fail('candidate_governance_retirement_invalid', recordId);
+    }
+    const retired = { ...before, state: 'retired' };
+    if (!equal(retired, after)) fail('candidate_governance_retirement_scope_drift', recordId);
+    expectedWork.items[recordId] = retired;
+  }
+
   if (!equal(expectedWork, targetWork)) fail('candidate_registry_drift', WORK_ITEMS);
 
   const moduleEvidencePaths = new Map();
@@ -238,7 +252,15 @@ function assertRegistryDelta(base, target, evidenceRecords) {
 
   const stageCapabilities = base.capabilities;
   const targetCapabilities = target.capabilities;
-  if (!equal(stageCapabilities, targetCapabilities)) fail('candidate_registry_drift', CAPABILITIES);
+  const expectedCapabilities = structuredClone(stageCapabilities);
+  if (targetWork?.items?.['GAP-GOV-003']?.state === 'retired') {
+    for (const capability of Object.values(expectedCapabilities.capabilities ?? {})) {
+      if (Array.isArray(capability.externalBlockerIds)) {
+        capability.externalBlockerIds = capability.externalBlockerIds.filter((id) => id !== 'GAP-GOV-003');
+      }
+    }
+  }
+  if (!equal(expectedCapabilities, targetCapabilities)) fail('candidate_registry_drift', CAPABILITIES);
 }
 
 function blankRange(chars, start, end) {
@@ -455,6 +477,27 @@ function selfTest() {
     () => parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', '--', '--exact'] }),
     /cargo_integration_test_selector_missing/u,
   );
+  const policyBase = structuredClone(base);
+  policyBase.work.items['GAP-GOV-003'] = {
+    state: 'blocked_external', evidenceTier: 'external_authority', moduleId: 'module.example',
+  };
+  policyBase.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = ['GAP-GOV-003', 'GAP-HOST-001'];
+  const retired = structuredClone(policyBase);
+  retired.work.items['GAP-GOV-003'].state = 'retired';
+  retired.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = ['GAP-HOST-001'];
+  assert.doesNotThrow(() => assertRegistryDelta(policyBase, retired, records));
+  for (const change of [
+    (candidate) => { candidate.work.items['GAP-GOV-003'].state = 'source_qualified'; },
+    (candidate) => { candidate.work.items['GAP-GOV-003'].evidenceTier = 'source'; },
+    (candidate) => { candidate.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = []; },
+    (candidate) => { candidate.modules.modules['module.example'].activation = 'authoritative'; },
+    (candidate) => { candidate.work.items['TEST-001'].state = 'retired'; },
+  ]) {
+    const hostile = structuredClone(retired);
+    change(hostile);
+    assert.throws(() => assertRegistryDelta(policyBase, hostile, records), /candidate_/u);
+  }
+  assert.throws(() => assertRegistryDelta(retired, policyBase, records), /candidate_governance_retirement_invalid/u);
   process.stdout.write('source-evidence hardening self-test: ok\n');
 }
 

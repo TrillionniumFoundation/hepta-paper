@@ -20,12 +20,14 @@ This change closes only the two repository-local G0 identity findings on PR #42.
 
 ## Integration boundary
 
-The auxiliary PR may merge into `codex/rust-plan-v4-rc1-20260831` only after all
-current workflow families execute successfully on its exact head and an
-independent latest-head reviewer approves ordinary integration. That merge
-invalidates PR #42's previous packet; PR #42 must then run its complete matrix
-and receive a new exact-head decision.
+Use the retained Rust integration branch
+`codex/full-rust-replacement-progress-20260916`. An ordinary PR may integrate
+once the exact-current workflow families and applicable prospective-merge tests
+succeed, using an expected-head guard. The single maintainer may make that
+decision; no independent latest-push review or second-person signature is required.
+Changed source/base/producer identity invalidates earlier evidence as before.
 
-`GAP-GOV-003`, `LEGACY-REPLAY-001`, `GAP-HOST-001`, `GAP-HOST-002`,
-`GAP-KEY-001`, `GAP-CODEX-001`, and `GAP-REL-001` are not closed by this source
-change.
+`GAP-GOV-003` and the human approval part `QUAL-005` are retired by owner policy,
+not accepted external evidence. `LEGACY-REPLAY-001`, `GAP-HOST-001`,
+`GAP-HOST-002`, `GAP-KEY-001`, `GAP-CODEX-001` and `GAP-REL-001` still describe
+actual runtime, custody, historical or external-effect facts absent from source.

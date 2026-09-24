@@ -1,5 +1,11 @@
 # Rust rewrite executable backlog
 
+Current development follows the [single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md).
+Mandatory independent repository approval (`GAP-GOV-003`/`QUAL-005`) and
+mandatory Code Owner team provisioning (`MOD-007`) are retired, not externally
+qualified. Logical staffing work is optional; real source, runtime and recovery
+checks remain required. Historical references do not restore an approval gate.
+
 This is the canonical human **static implementation backlog**. Stable IDs do
 not change. Status tokens are machine-compared with
 `current-status.v1.json`; drift is a CI failure.
@@ -127,7 +133,6 @@ These rows are source contracts and deterministic simulations. The real 72-hour 
 
 | Gap | Status | Issue | Closure authority |
 |---|---|---:|---|
-| GAP-GOV-003 | blocked_external | #25 | repository administrator distinct from the implementation author plus independent reviewer |
 | GAP-HOST-001 | blocked_external | #17 | target-host operator plus independent Linux reviewer |
 | GAP-HOST-002 | blocked_external | #12 | destructive storage/host operator plus independent reviewer |
 | GAP-KEY-001 | blocked_external | #14 | external capability-key owner plus independent reviewer |

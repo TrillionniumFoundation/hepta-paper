@@ -876,3 +876,125 @@ fn genuine_changed_and_partial_replays_keep_existing_conflict_semantics() {
     ));
     assert_eq!(fixture.snapshot(), before);
 }
+
+fn single_maintainer(mut fixture: AcceptanceFixture) -> AcceptanceFixture {
+    fixture.request.version = 2;
+    fixture
+        .request
+        .envelopes
+        .retain(|source| source.package_id != QualificationPackageIdV1::ExtGovMain001);
+    fixture.signed.candidates.retain(|candidate| {
+        candidate.envelope.package_id != QualificationPackageIdV1::ExtGovMain001
+    });
+    fixture
+}
+
+#[test]
+fn single_maintainer_six_signed_packages_commit_and_replay_without_governance_approval() {
+    let fixture = single_maintainer(AcceptanceFixture::new("single-maintainer-v2"));
+    validate_request(&fixture.request).unwrap();
+    fixture.signed.assert_individually_valid();
+    let receipt = fixture
+        .accept(NOW)
+        .expect("six actual signed operational packages");
+    assert_eq!(receipt.body.version, 2);
+    assert_eq!(receipt.body.kind, "ExternalQualificationClosureReceiptV2");
+    assert_eq!(receipt.body.packages.len(), 6);
+    assert_eq!(receipt.body.authority_groups.len(), 4);
+    assert!(!receipt.body.authority_groups.contains_key("governance"));
+    assert!(
+        receipt
+            .body
+            .packages
+            .iter()
+            .all(|package| package.package_id != "EXT-GOV-MAIN-001")
+    );
+    assert!(!receipt.body.automatic_activation);
+    assert!(!receipt.body.production_activation);
+    assert!(receipt.body.source_status_unchanged);
+    let snapshot = fixture.snapshot();
+    let repeated = fixture.accept(NOW).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&receipt).unwrap(),
+        serde_json::to_vec(&repeated).unwrap()
+    );
+    assert_eq!(snapshot, fixture.snapshot());
+    let verified = hepta_qualification_ingest::verify_external_qualification_closure_v2(
+        &fixture.signed.candidates,
+        &ExternalQualificationClosureSubjectV1 {
+            repository: REQUIRED_REPOSITORY.into(),
+            commit: COMMIT.into(),
+            tree: TREE.into(),
+        },
+        NOW,
+        1,
+        &fixture.signed.trust,
+    )
+    .unwrap();
+    assert_eq!(
+        verified.profile(),
+        QualificationClosureProfile::SingleMaintainerV2
+    );
+    assert!(
+        verified
+            .package(QualificationPackageIdV1::ExtGovMain001)
+            .is_none()
+    );
+    assert!(verified.assert_current(NOW).is_ok());
+}
+
+#[test]
+fn single_maintainer_profile_rejects_missing_or_substituted_operational_packages() {
+    for mode in 0..3 {
+        let mut fixture = AcceptanceFixture::new("single-maintainer-required-set");
+        fixture.request.version = 2;
+        if mode == 0 {
+            fixture.request.envelopes.remove(1);
+            fixture.signed.candidates.remove(1);
+        } else if mode == 1 {
+            fixture = single_maintainer(fixture);
+            fixture.request.envelopes.pop();
+            fixture.signed.candidates.pop();
+        }
+        assert!(validate_request(&fixture.request).is_err());
+        assert!(fixture.accept(NOW).is_err());
+        fixture.assert_no_ledger();
+    }
+    let mut legacy = single_maintainer(AcceptanceFixture::new("legacy-still-needs-seven"));
+    legacy.request.version = 1;
+    assert!(validate_request(&legacy.request).is_err());
+    assert!(legacy.accept(NOW).is_err());
+    legacy.assert_no_ledger();
+}
+
+#[test]
+fn single_maintainer_does_not_relax_signatures_cross_package_binding_or_replay_clock() {
+    let mut bad_signature = single_maintainer(AcceptanceFixture::new("v2-signature"));
+    bad_signature.signed.candidates[0].envelope.signature_base64 =
+        Base64UrlUnpadded::encode_string(&[0u8; 64]);
+    assert!(bad_signature.accept(NOW).is_err());
+    bad_signature.assert_no_ledger();
+
+    let mut drift = AcceptanceFixture::new("v2-cross-package");
+    drift
+        .signed
+        .update_payload(2, |payload| payload["hostIdentityHash"] = json!(hash(99)));
+    let drift = single_maintainer(drift);
+    drift.signed.assert_individually_valid();
+    assert!(matches!(
+        drift.accept(NOW),
+        Err(ClosureError::Closure(
+            QualificationClosureError::CrossPackageIdentityMismatch
+        ))
+    ));
+    drift.assert_no_ledger();
+
+    let fixture = single_maintainer(AcceptanceFixture::new("v2-clock"));
+    fixture.accept(NOW).unwrap();
+    let snapshot = fixture.snapshot();
+    assert!(matches!(
+        fixture.accept(NOW - 1),
+        Err(ClosureError::ClockRollback)
+    ));
+    assert_eq!(snapshot, fixture.snapshot());
+}

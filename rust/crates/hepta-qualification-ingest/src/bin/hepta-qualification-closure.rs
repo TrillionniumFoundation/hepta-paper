@@ -25,10 +25,11 @@ use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::VerifyingKey;
 use hepta_qualification_ingest::{
     ExternalQualificationCandidateV1, ExternalQualificationClosureSubjectV1,
-    QualificationClosureError, QualificationIngestError, QualificationPackageIdV1,
-    QualificationPayloadError, QualificationSubjectV1, QualificationTrustStoreV1,
-    VerifiedExternalQualificationV1, load_external_qualification_file_v1,
-    validate_external_package_payload_v1, verify_external_qualification_closure_v1,
+    QualificationClosureError, QualificationClosureProfile, QualificationIngestError,
+    QualificationPackageIdV1, QualificationPayloadError, QualificationSubjectV1,
+    QualificationTrustStoreV1, VerifiedExternalQualificationV1,
+    load_external_qualification_file_v1, validate_external_package_payload_v1,
+    verify_external_qualification_closure_v1, verify_external_qualification_closure_v2,
     verify_external_qualification_v1,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
@@ -442,13 +443,21 @@ fn verify_and_commit_closure_with_clock(
     initial_now_unix_ms: u64,
     mut clock: impl FnMut() -> Result<u64, ClosureError>,
 ) -> Result<ExternalQualificationClosureReceiptV1, ClosureError> {
+    let profile = QualificationClosureProfile::from_version(request.version)
+        .ok_or(ClosureError::RequestInvalid)?;
     // The earlier per-file validation preserves established diagnostic order.
     // Reverify the exact retained bytes through the complete public producer;
     // only records from this genuine opaque result can enter the old receipt.
     // This sample follows all authority file reads, before SQLite is opened.
     let verified_at_unix_ms = sample_clock_after(&mut clock, initial_now_unix_ms)?;
     trust.assert_current(verified_at_unix_ms)?;
-    let verified = verify_external_qualification_closure_v1(
+    let verifier = match profile {
+        QualificationClosureProfile::LegacySevenPackageV1 => {
+            verify_external_qualification_closure_v1
+        }
+        QualificationClosureProfile::SingleMaintainerV2 => verify_external_qualification_closure_v2,
+    };
+    let verified = verifier(
         candidates,
         &ExternalQualificationClosureSubjectV1 {
             repository: request.repository.clone(),
@@ -459,8 +468,10 @@ fn verify_and_commit_closure_with_clock(
         trust.generation,
         trust.store,
     )?;
-    let records = QualificationPackageIdV1::ALL
-        .into_iter()
+    let records = profile
+        .packages()
+        .iter()
+        .copied()
         .map(|package| {
             verified
                 .package(package)
@@ -469,6 +480,7 @@ fn verify_and_commit_closure_with_clock(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let receipt = assemble_receipt(
+        profile,
         &request.repository,
         &request.commit,
         &request.tree,
@@ -511,11 +523,18 @@ fn sample_clock_after(
 }
 
 fn validate_request(request: &ClosureRequestV1) -> Result<(), ClosureError> {
-    if request.version != 1
+    let profile = QualificationClosureProfile::from_version(request.version)
+        .ok_or(ClosureError::RequestInvalid)?;
+    if request
+        .envelopes
+        .iter()
+        .map(|source| source.package_id)
+        .collect::<BTreeSet<_>>()
+        != profile.packages().iter().copied().collect::<BTreeSet<_>>()
         || request.repository != REQUIRED_REPOSITORY
         || !valid_git_hash(&request.commit)
         || !valid_git_hash(&request.tree)
-        || request.envelopes.len() != QualificationPackageIdV1::ALL.len()
+        || request.envelopes.len() != profile.packages().len()
         || !request.trust_store.path.is_absolute()
         || !request.replay_ledger.path.is_absolute()
         || request.replay_ledger.owner_uid != request.consumer_uid
@@ -541,6 +560,7 @@ fn validate_request(request: &ClosureRequestV1) -> Result<(), ClosureError> {
 }
 
 fn assemble_receipt(
+    profile: QualificationClosureProfile,
     repository: &str,
     commit: &str,
     tree: &str,
@@ -564,9 +584,7 @@ fn assemble_receipt(
         }
     }
 
-    let expected = QualificationPackageIdV1::ALL
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let expected = profile.packages().iter().copied().collect::<BTreeSet<_>>();
     if by_package.keys().copied().collect::<BTreeSet<_>>() != expected {
         return Err(ClosureError::PackageSetIncomplete);
     }
@@ -586,12 +604,14 @@ fn assemble_receipt(
             .or_default()
             .insert(record.authority_domain_id.clone());
     }
-    if authority_groups.len() != 5 {
+    if authority_groups.len() != profile.authority_group_count() {
         return Err(ClosureError::AuthoritySeparationViolation);
     }
 
-    let packages = QualificationPackageIdV1::ALL
-        .into_iter()
+    let packages = profile
+        .packages()
+        .iter()
+        .copied()
         .map(|package| -> Result<ClosurePackageReceiptV1, ClosureError> {
             let record = by_package
                 .get(&package)
@@ -612,8 +632,15 @@ fn assemble_receipt(
         .collect::<BTreeMap<_, _>>();
 
     let body = ExternalQualificationClosureBodyV1 {
-        version: 1,
-        kind: "ExternalQualificationClosureReceiptV1",
+        version: profile.version(),
+        kind: match profile {
+            QualificationClosureProfile::LegacySevenPackageV1 => {
+                "ExternalQualificationClosureReceiptV1"
+            }
+            QualificationClosureProfile::SingleMaintainerV2 => {
+                "ExternalQualificationClosureReceiptV2"
+            }
+        },
         status: "external_qualification_set_verified",
         repository: repository.to_owned(),
         commit: commit.to_owned(),
@@ -1306,7 +1333,15 @@ mod tests {
         tree: &str,
         records: Vec<VerifiedExternalQualificationV1>,
     ) -> Result<ExternalQualificationClosureReceiptV1, ClosureError> {
-        assemble_receipt(repository, commit, tree, 1, TEST_TRUST_HASH, records)
+        assemble_receipt(
+            QualificationClosureProfile::LegacySevenPackageV1,
+            repository,
+            commit,
+            tree,
+            1,
+            TEST_TRUST_HASH,
+            records,
+        )
     }
 
     fn verified(
@@ -1606,6 +1641,7 @@ mod tests {
             record.nonce = format!("rotated-nonce-{index}");
         }
         let rotated = assemble_receipt(
+            QualificationClosureProfile::LegacySevenPackageV1,
             REQUIRED_REPOSITORY,
             &"a".repeat(40),
             &"b".repeat(40),

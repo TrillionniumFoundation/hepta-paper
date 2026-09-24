@@ -9,14 +9,14 @@ writer, release or submission use.
 Use one convergence branch and one integration PR.
 
 ```text
-candidate branch  codex/rust-plan-v4-rc1-20260831
+integration branch codex/full-rust-replacement-progress-20260916
 static truth      docs/rust/current-status.v1.json
 required checks   docs/rust/qualification/source-required-checks.v1.json
 effective result  effective-status.v1.json workflow artifact
 ```
 
 Do not combine evidence from different heads. Any push invalidates prior
-effective status and latest-push review.
+effective status; no latest-push human approval is required.
 
 ## 2. Source qualification
 
@@ -36,7 +36,7 @@ For the exact candidate head:
    - its SHA-256;
    - workflow/run/attempt identity.
 7. Confirm the artifact authority fields remain false.
-8. Obtain independent latest-push review.
+8. Integrate the exact tested head under the single-maintainer policy; no second-person approval is required.
 
 A source artifact is invalid when its head, tree, static-truth digest,
 required-check manifest or any bound file changes.
@@ -243,10 +243,11 @@ authority secrets are excluded.
 
 ## 14. External blocker execution
 
-### Governance — issue #25
+### Repository policy — retired issue #25 approval ceremony
 
-Retain active policy export/hash, exact required contexts, all seven denial
-outcomes and an independent exact-candidate signed decision.
+Read the live required checks and safe-reference configuration. Required human
+approvals are zero under the single-maintainer policy; do not request seven
+denial probes or a second-person signature as an ordinary development step.
 
 ### Legacy replay — issue #28
 

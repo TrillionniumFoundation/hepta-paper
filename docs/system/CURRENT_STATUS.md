@@ -1,5 +1,11 @@
 # hepta-paper global development status
 
+Current development follows the [single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md).
+Mandatory independent repository approval (`GAP-GOV-003`/`QUAL-005`) and
+mandatory Code Owner team provisioning (`MOD-007`) are retired, not externally
+qualified. Logical staffing work is optional; real source, runtime and recovery
+checks remain required. Historical references do not restore an approval gate.
+
 This is a committed **static status projection** for the complete system. It
 records current implementation, planned architecture, and known blockers. It
 does not qualify or activate its own commit.
@@ -18,7 +24,7 @@ The block above records the historical 2026-09-01 audit, not the current source
 head. The current runtime migration candidate is indexed in
 [`../rust/RUNTIME_MIGRATION_IMPLEMENTATION.md`](../rust/RUNTIME_MIGRATION_IMPLEMENTATION.md).
 Its exact branch/commit/tree must obtain fresh exact-subject workflow evidence
-and independent review; the historical provenance cannot qualify this tree.
+and maintainer integration; the historical provenance cannot qualify this tree.
 
 ## Current authority ceiling
 
@@ -54,7 +60,7 @@ produce and revalidate the V3-bound artifact. The dedicated V3 workflows execute
 `QUAL-001` through `QUAL-005` remain conservative machine-truth acceptance items.
 Their open status must not be described as proof that the V3 code is absent.
 Closure still needs the full current producer matrix, retained raw evidence,
-live V3 currentness and independent exact-candidate review. A green legacy
+live V3 currentness and maintainer verification of exact tested source. A green legacy
 `source-qualification-current` check alone does not establish the V3 subject.
 
 ## Global machine-truth inventory
@@ -90,7 +96,7 @@ backlog and machine projection rather than becoming a second global status sourc
 | global scheduler/optimizer | bounded exact selection, deterministic fallback and replayable certificate source implemented; full optimizer port/calibration pending | fresh exact-subject qualification required | disabled |
 | hierarchical DRF/aging/reservation model | current Node governor plus Rust weighted dominant-share, aging and exact reservation/accounting source slice | full canonical workload qualification pending | disabled for Rust control |
 | performance qualification | source implemented; exact-host baseline absent | no exact-host baseline | disabled |
-| team-scale ownership | design ready | real GitHub teams not provisioned | current single-reviewer policy retained |
+| optional team-scale ownership | design mapping only | no staffing prerequisite | single-maintainer policy; required approvals = 0 |
 | release/submission verification ports | source implemented | external packages absent | external actions disabled |
 
 ## Executable local/shadow migration candidate
@@ -126,7 +132,6 @@ remain open for their unimplemented work items and exact-subject qualification.
 
 | ID | Missing independently controlled fact |
 |---|---|
-| `GAP-GOV-003` | protected-main policy export, seven denial probes, and independent exact-candidate decision |
 | `LEGACY-REPLAY-001` | retained secret-gated 263-file hosted replay and independent acknowledgement |
 | `GAP-HOST-001` | target-host listener, schema, gate, systemd, and cgroup qualification |
 | `GAP-HOST-002` | destructive storage, reboot, corruption, and 72-hour production-topology soak |
@@ -150,7 +155,7 @@ The candidate working tree now has:
 - Git history, issues, pull requests, and retained artifacts as the audit archive.
 
 These are source changes only. G1 remains open until the resulting exact tree
-passes its required workflows and independent review.
+passes its required workflows before maintainer integration.
 
 ## Next closure order
 
@@ -180,4 +185,4 @@ npm run release:state-check
 ```
 
 The full locked test matrix, exact-head workflow evidence, and required
-independent review remain authoritative over local results.
+maintainer decisions remain separate from local test results.

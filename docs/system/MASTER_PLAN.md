@@ -1,5 +1,11 @@
 # Hepta Global Development Plan 1.1
 
+Current development follows the [single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md).
+Mandatory independent repository approval (`GAP-GOV-003`/`QUAL-005`) and
+mandatory Code Owner team provisioning (`MOD-007`) are retired, not externally
+qualified. Logical staffing work is optional; real source, runtime and recovery
+checks remain required. Historical references do not restore an approval gate.
+
 Status: **static development plan**
 Applies to: the complete `hepta-paper` system
 Rust migration subplan: `docs/rust/RUST_REWRITE_MASTER_PLAN.md`
@@ -43,7 +49,7 @@ Plan 1.1 closes documentation-design gaps found by the second full audit:
 - delivery, module-template, traceability, and milestone contracts are explicit.
 
 These are source-implemented documentation controls. G1 remains open until this
-new tree passes exact-subject checks and independent review.
+new tree passes exact-subject checks before maintainer integration.
 
 ## 2. Non-negotiable outcomes
 
@@ -70,8 +76,8 @@ new tree passes exact-subject checks and independent review.
     verifiable across Node-to-Rust migration.
 12. A source document, test fixture, repository administrator, or model process
     cannot self-promote production or external-authority status.
-13. Every module has a primary owner, secondary owner, independent reviewer,
-    version policy, rollback version, SLO, and conformance evidence.
+13. Every module has explicit implementation/recovery responsibilities, a version
+    policy, rollback version, SLO and conformance evidence; one maintainer may fill its roles.
 14. The repository retains only current development documents and active ADRs;
     Git history is the sole archive for superseded plans and snapshots.
 
@@ -225,15 +231,17 @@ Exit criteria:
 
 ### ORG — team ownership and development governance
 
-Establish home modules, secondary ownership, independent review, CODEOWNER
-provisioning, change classes, RFC/ADR rules, release trains, and escalation.
+Maintain clear module responsibilities, actionable recovery knowledge and
+applicable tests under the single-maintainer policy. Real team provisioning and
+mandatory human approval are not current prerequisites.
 
 Exit criteria:
 
 - ordinary module implementation changes do not require a single global reviewer;
 - protocol, authority, writer, objective, and qualification changes receive
-  cross-team review;
-- no module has a single-person merge or operational bus factor.
+  their applicable protocol, authority, recovery and workload tests;
+- one maintainer may integrate all modules; operational recovery is documented
+  and tested without making additional human staff a prerequisite.
 
 ### Existing implementation workstreams
 

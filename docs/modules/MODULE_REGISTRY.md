@@ -18,7 +18,7 @@ capabilityIds and workItemIds
 protocolRange
 authorityClass and sideEffectClasses
 determinismClass
-primary/secondary/independent reviewer teams
+implementation/recovery/verification responsibility IDs (one maintainer may fill all)
 hard module dependencies
 rollout channel and rollback target
 qualificationPolicy
@@ -134,4 +134,4 @@ The validator requires exact registry/spec/manifest set equality, complete templ
 
 ## 9. Current registry limitations
 
-The static registry documents current Node and Rust capability owners, but planned team IDs do not yet correspond to provisioned GitHub teams. Until `ORG-001` closes through real organizational configuration, `.github/CODEOWNERS` retains the existing explicit repository reviewer and modules are not considered organizationally production-ready.
+The registry's TEAM IDs describe responsibility areas. The current single maintainer fills them; real GitHub teams and secondary staff are optional future organization, not module-completion prerequisites. CODEOWNERS is advisory routing and does not require another person's approval.

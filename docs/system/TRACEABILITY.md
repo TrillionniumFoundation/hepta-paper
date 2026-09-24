@@ -70,7 +70,7 @@ The affected-test planner should consume this graph rather than relying only on 
 
 ## 5. No circular qualification
 
-A capability cannot qualify itself by producing the only evidence that judges it. At minimum, the implementation producer, mechanical validator, and required independent reviewer/authority are distinct roles for authority-bearing, scientific, release, qualification, and global-objective changes.
+A capability cannot qualify itself by producing the only evidence that judges it. Implementation production and mechanical validation must be distinguishable. Actual scientific/runtime authority domains remain separated where the product contract requires it; this is not a requirement for different human source-code approvers. One maintainer may integrate the validated source.
 
 A module specification and manifest describe required behavior and evidence; neither may serve as the sole evidence that its own implementation satisfies those requirements.
 

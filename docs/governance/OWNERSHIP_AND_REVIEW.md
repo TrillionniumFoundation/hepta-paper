@@ -1,81 +1,64 @@
 # Ownership and review policy
 
-## 1. Ownership record
+## 1. Current single-maintainer decision
 
-`docs/system/truth/modules.v1.json` records planned owner team IDs. GitHub
-CODEOWNERS is the enforcement projection after teams are provisioned.
+The repository owner selected single-maintainer development. `@ProfHepta` owns
+integration and may author, test and merge a change without a second person's
+approval. The owner may delegate implementation and integration to authorized
+tools. Do not invent another reviewer, request a ceremonial self-approval, or
+block development on unstaffed teams.
 
-For each module:
+Both protected branches use this PR approval configuration:
 
 ```text
-primary owner
-secondary owner
-independent reviewer
-security/state/release reviewer where applicable
-operational escalation owner
+required_approving_review_count = 0
+require_code_owner_reviews = false
+require_last_push_approval = false
+dismiss_stale_reviews = false
 ```
 
-## 2. Change classes
+This policy replaces mandatory independent, Code Owner and last-push approvals.
+It does not disable the required machine checks, exact-head merge guard, signed
+integration, administrator enforcement, or force-push/deletion protections.
+Optional reviews are useful feedback, not a staffing prerequisite.
 
-| Class | Examples | Required review |
+## 2. Responsibilities, not a fictitious organization
+
+`docs/system/truth/modules.v1.json` retains stable `TEAM-*` responsibility IDs
+for code navigation and module boundaries. Its ordered owner roles describe
+primary, recovery and verification expertise, not three different people or
+existing GitHub teams. `.github/CODEOWNERS` routes to the current maintainer.
+Future multi-person staffing is optional and requires an explicit policy change.
+
+## 3. Change classes select evidence
+
+| Class | Changes | Applicable validation |
 |---|---|---|
-| C0 | comments, typo, generated non-semantic projection | module owner; docs validator |
-| C1 | compatible private implementation | primary or secondary owner; module CI |
-| C2 | public module contract, resource/SLO envelope | module owner + protocol + consumers |
-| C3 | scheduler objective/fairness/policy | scheduler + kernel + evidence/product |
-| C4 | state schema, writer, recovery, migration | state + kernel + migration/recovery reviewer |
-| C5 | authority, credentials, external effect, qualification | security/evidence + relevant external owner; independent latest-push review |
-| C6 | release/cutover/retirement | release + state + governance + external authority as required |
+| C0 | comments and non-semantic generated projections | relevant documentation/format checks |
+| C1 | private implementation | module tests and lint |
+| C2 | public protocol or resource contract | affected consumer and compatibility tests |
+| C3 | scheduling, policy or objectives | constraint, workload and decision regressions |
+| C4 | schema, writer, recovery or migration | real transactions, crash/replay and data-preserving rollback |
+| C5 | credentials, authority or external effects | wrong-principal, final-use, expiry and ambiguous-effect tests |
+| C6 | release, cutover or retirement | exact artifacts, one-writer transfer and operational evidence |
 
-A change is classified by its strongest effect. Splitting files does not lower
-its class.
+The strongest actual effect determines scope. Splitting files or labelling a
+change a refactor does not remove its applicable tests. State the affected
+behavior, evidence, compatibility and remaining gaps in the existing PR; a new
+approval checklist or parallel status board is not required.
 
-## 3. Self-review limits
+## 4. Development acceptance versus runtime authority
 
-The author may explain and test a change but cannot supply an independent review
-required for:
+Passing source checks permits maintainer integration; it does not prove a model
+ran, a target host survived failure, or a remote operation completed. Scientific
+author/reviewer role isolation, authenticated runtime evidence, credential
+custody, unique-writer fencing and external-effect reconciliation remain actual
+product contracts. Separate service principals do not require hiring separate
+human PR approvers. Do not use this development policy to forge operational
+facts or relabel a fixture signature as a real service receipt.
 
-- branch governance;
-- target-host acceptance;
-- credential/key custody;
-- scientific/evidence independence;
-- release/KMS/HSM/WORM/submission authority;
-- latest-push approval where policy requires a distinct reviewer.
-
-## 4. Review inputs
-
-Every PR states:
-
-```text
-change class
-module/capability/work-item IDs
-exact base/head subject
-authority and side-effect delta
-protocol/state compatibility
-resource/performance impact
-failure/recovery/rollback
-evidence and reviewer domains
-manifest/document impact
-```
-
-Reviewers reject unbounded “refactor” or “no behavior change” statements when
-public contracts, authority reachability, resource use, or failure behavior
-changed.
-
-## 5. Consumer review
-
-A public protocol change identifies direct consumers from the module dependency
-graph. Compatible additions may use generated tests; breaking or semantic
-changes require named consumer review and migration.
-
-## 6. Emergency changes
-
-Emergency repair does not bypass evidence. It may shorten rollout scope but must
-still bind exact source, authority, rollback, and independent review. Temporary
-risk acceptance has an expiry and cleanup item.
-
-## 7. CODEOWNER generation
-
-When real team handles exist, CODEOWNERS should be generated from the ownership
-registry and checked for drift. High-risk shared roots retain multiple owner
-teams; ordinary module-private paths route to that module's teams.
+`EXT-GOV-MAIN-001` and its independent repository-review ceremony are historical
+V1 compatibility, not required by the current V2 operational qualification set.
+The maintainer's live repository settings and applicable CI are the development
+merge boundary. Emergency repairs use the same actual tests and recovery rules;
+there is no extra independent-review prerequisite.

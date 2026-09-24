@@ -8,19 +8,12 @@ approval. The owner may delegate implementation and integration to authorized
 tools. Do not invent another reviewer, request a ceremonial self-approval, or
 block development on unstaffed teams.
 
-Both protected branches use this PR approval configuration:
-
-```text
-required_approving_review_count = 0
-require_code_owner_reviews = false
-require_last_push_approval = false
-dismiss_stale_reviews = false
-```
-
-This policy replaces mandatory independent, Code Owner and last-push approvals.
-It does not disable the required machine checks, exact-head merge guard, signed
-integration, administrator enforcement, or force-push/deletion protections.
-Optional reviews are useful feedback, not a staffing prerequisite.
+Both protected branches have pull-request review protection disabled. There is
+no required approving-review count, Code Owner approval, stale-review ceremony,
+or last-push approval. PRs remain the integration surface while the required
+machine checks, exact-head merge guard, signed integration, administrator
+enforcement, and force-push/deletion protections remain enabled. Optional review
+is feedback, never a staffing prerequisite.
 
 ## 2. Responsibilities, not a fictitious organization
 
@@ -59,6 +52,6 @@ facts or relabel a fixture signature as a real service receipt.
 
 `EXT-GOV-MAIN-001` and its independent repository-review ceremony are historical
 V1 compatibility, not required by the current V2 operational qualification set.
-The maintainer's live repository settings and applicable CI are the development
-merge boundary. Emergency repairs use the same actual tests and recovery rules;
+The live protected-branch settings plus applicable exact-source CI are the
+development merge boundary. Emergency repairs use the same actual tests and recovery rules;
 there is no extra independent-review prerequisite.

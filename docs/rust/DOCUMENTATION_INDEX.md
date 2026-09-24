@@ -96,8 +96,8 @@ eligible run-attempt histories. Tests for the historical identity and run-histor
 defects are present; static source cannot certify that the current candidate's
 hosted workflow has completed successfully and the maintainer accepts the change.
 
-The G0 work items `QUAL-001` through `QUAL-005` own closure. Historical green
-artifacts and superseded approval cannot be reused.
+The G0 work items `QUAL-001` through `QUAL-004` own closure; `QUAL-005` is
+retired. Historical green artifacts and stale source evidence cannot be reused.
 
 ## Native composition implementation handoffs
 

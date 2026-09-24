@@ -253,11 +253,18 @@ function assertRegistryDelta(base, target, evidenceRecords) {
   const stageCapabilities = base.capabilities;
   const targetCapabilities = target.capabilities;
   const expectedCapabilities = structuredClone(stageCapabilities);
-  if (targetWork?.items?.['GAP-GOV-003']?.state === 'retired') {
-    for (const capability of Object.values(expectedCapabilities.capabilities ?? {})) {
-      if (Array.isArray(capability.externalBlockerIds)) {
-        capability.externalBlockerIds = capability.externalBlockerIds.filter((id) => id !== 'GAP-GOV-003');
-      }
+  // Owner-retired human-approval/staffing prerequisites are not external
+  // operational authorities. Once retired in machine truth, they must not remain
+  // active capability blockers. No other blocker, authority or capability field
+  // is permitted to change through this policy exception.
+  const retiredGovernanceBlockers = new Set(
+    ['GAP-GOV-003', 'QUAL-005', 'MOD-007']
+      .filter((id) => targetWork?.items?.[id]?.state === 'retired'),
+  );
+  for (const capability of Object.values(expectedCapabilities.capabilities ?? {})) {
+    if (Array.isArray(capability.externalBlockerIds)) {
+      capability.externalBlockerIds = capability.externalBlockerIds
+        .filter((id) => !retiredGovernanceBlockers.has(id));
     }
   }
   if (!equal(expectedCapabilities, targetCapabilities)) fail('candidate_registry_drift', CAPABILITIES);
@@ -478,17 +485,22 @@ function selfTest() {
     /cargo_integration_test_selector_missing/u,
   );
   const policyBase = structuredClone(base);
-  policyBase.work.items['GAP-GOV-003'] = {
-    state: 'blocked_external', evidenceTier: 'external_authority', moduleId: 'module.example',
-  };
-  policyBase.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = ['GAP-GOV-003', 'GAP-HOST-001'];
+  for (const id of ['GAP-GOV-003', 'QUAL-005', 'MOD-007']) {
+    policyBase.work.items[id] = {
+      state: 'blocked_external', evidenceTier: 'external_authority', moduleId: 'module.example',
+    };
+  }
+  policyBase.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = [
+    'GAP-GOV-003', 'QUAL-005', 'MOD-007', 'GAP-HOST-001',
+  ];
   const retired = structuredClone(policyBase);
-  retired.work.items['GAP-GOV-003'].state = 'retired';
+  for (const id of ['GAP-GOV-003', 'QUAL-005', 'MOD-007']) retired.work.items[id].state = 'retired';
   retired.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = ['GAP-HOST-001'];
   assert.doesNotThrow(() => assertRegistryDelta(policyBase, retired, records));
   for (const change of [
     (candidate) => { candidate.work.items['GAP-GOV-003'].state = 'source_qualified'; },
-    (candidate) => { candidate.work.items['GAP-GOV-003'].evidenceTier = 'source'; },
+    (candidate) => { candidate.work.items['QUAL-005'].evidenceTier = 'source'; },
+    (candidate) => { candidate.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds.push('MOD-007'); },
     (candidate) => { candidate.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = []; },
     (candidate) => { candidate.modules.modules['module.example'].activation = 'authoritative'; },
     (candidate) => { candidate.work.items['TEST-001'].state = 'retired'; },

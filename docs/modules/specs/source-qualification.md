@@ -37,7 +37,7 @@ Inputs:
 - repository/base/head/merge identities
 - workflow definition hashes
 - complete eligible run/attempt history
-- artifacts and independent review decisions
+- artifacts and required-check/currentness observations
 
 Outputs:
 
@@ -72,11 +72,11 @@ Declared class: `external_observation`. Determinism applies to validation of a f
 
 ## Failure, recovery, and idempotency
 
-Fail closed on repository/ref/tree drift, incomplete run history, mutable workflow definitions, missing artifacts, stale or conflicting reviews, clock rollback, revoked trust, or any attempt to derive authority from the current producer.
+Fail closed on repository/ref/tree drift, incomplete run history, mutable workflow definitions, missing artifacts, stale or conflicting required-check observations, clock rollback, revoked trust, or any attempt to derive authority from the current producer.
 
 ## Security and privacy
 
-Separate evidence producer, mechanical verifier, reviewer, repository administrator, and external authority. Trust material is public verification data only; secret keys never enter artifacts.
+Separate evidence producer, mechanical verifier, repository administrator, and runtime/external authorities where those operational contracts require it. Source integration itself requires no second human reviewer. Trust material is public verification data only; secret keys never enter artifacts.
 
 ## Compatibility and migration
 
@@ -122,8 +122,7 @@ qualification runner, including real CLI failure and round-trip checks using
 explicitly synthetic test observations.
 
 These are offline consistency checks, not authentication of uploaded records,
-proof that no GitHub run was omitted, reviewer approval, or a stable live-state
-snapshot. The live collector, exact checkout and byte checks in the V1 revalidator,
+proof that no GitHub run was omitted or a stable live-state snapshot. The live collector, exact checkout and byte checks in the V1 revalidator,
 fresh V3 comparison and maintainer integration remain required. V2 live
 verification still invokes the existing V1 currentness verifier and cannot turn
 its failure into success. No module, milestone or production authority is promoted

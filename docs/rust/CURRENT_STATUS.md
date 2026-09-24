@@ -29,10 +29,11 @@ they are not a substitute for V3 base/head/tested-merge and complete eligible
 run-attempt-history binding. Zero-job, skipped, dirty, stale, base-moved,
 merge-moved and run-history-mutated evidence must fail closed.
 
-`QUAL-001` through `QUAL-005` remain open acceptance records in static machine
-truth. Their historical defect wording does not mean the V3 source is still
-missing. No current exact-head qualification or independent acceptance is
-asserted by this document.
+`QUAL-001` through `QUAL-004` remain open source-qualification acceptance
+records in static machine truth; `QUAL-005` is retired under the
+single-maintainer policy. Their historical defect wording does not mean the V3
+source is still missing. No current exact-head qualification is asserted by
+this document.
 
 ## Bound baseline and current candidate
 

@@ -57,8 +57,9 @@ source now exists: `qualification_subject_v3.py` and
 produce and revalidate the V3-bound artifact. The dedicated V3 workflows execute
 `run-qualification-subject-v3.sh`, including raw collection/projection checks.
 
-`QUAL-001` through `QUAL-005` remain conservative machine-truth acceptance items.
-Their open status must not be described as proof that the V3 code is absent.
+`QUAL-001` through `QUAL-004` remain conservative machine-truth acceptance
+items; `QUAL-005` is retired under the single-maintainer policy. Their open
+status must not be described as proof that the V3 code is absent.
 Closure still needs the full current producer matrix, retained raw evidence,
 live V3 currentness and maintainer verification of exact tested source. A green legacy
 `source-qualification-current` check alone does not establish the V3 subject.

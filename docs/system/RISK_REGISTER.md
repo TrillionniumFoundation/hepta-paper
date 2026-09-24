@@ -16,7 +16,7 @@ expiry. “Mitigated” requires executable negative evidence.
 | RR-048 | Continuous small work starves GPU or large-memory jobs | 5 | 4 | open | RES | DRF, aging, reservation, maximum-wait workload |
 | RR-049 | Optimizer timeout, nondeterminism, or infeasibility blocks control progress | 4 | 5 | open | SCH/CTL | deterministic fallback and plan replay corpus |
 | RR-050 | Module protocol/version combinations drift beyond tested coverage | 4 | 5 | open | MOD/Protocol | compatibility matrix, N/N-1 gates, rollback test |
-| RR-051 | One CODEOWNER remains an organizational serialization point | 5 | 4 | blocked_external | ORG | real team provisioning and denial/approval workflow evidence |
+| RR-051 | Ownership routing becomes stale when contributors are added | 2 | 2 | controlled | ORG | single-maintainer responsibility map plus explicit policy change before mandatory multi-person routing |
 | RR-052 | Functional CI passes while throughput, P99, cost, or fairness regresses | 4 | 4 | open | PERF | canonical workloads and regression budgets |
 | RR-053 | Central scheduler or registry becomes a throughput/availability bottleneck | 3 | 5 | open | CTL/SRE | capacity model, bounded failover/recovery, load evidence |
 | RR-054 | Module upgrade changes durable state or prepared-result semantics incompatibly | 3 | 5 | open | MOD/State | migration contract, golden replay, rollback version |
@@ -37,7 +37,7 @@ expiry. “Mitigated” requires executable negative evidence.
 |---|---|---:|---:|---|---|---|
 | RR-065 | Historical status or plan re-enters current search and misleads implementation | 5 | 4 | mitigating | SYS | no history paths, manifest coverage, forbidden-name gate |
 | RR-066 | Human projections drift from machine truth | 5 | 4 | mitigating | SYS | generation or semantic comparison in CI |
-| RR-067 | New modules or documents are added without owner/reviewer coverage | 4 | 4 | open | ORG/SYS | registry and CODEOWNER consistency validator |
+| RR-067 | New modules or documents are added without owner/runbook coverage | 4 | 4 | open | ORG/SYS | registry ownership, runbook and document-manifest consistency validator |
 | RR-068 | Large documentation-only changes silently alter qualification subjects | 4 | 5 | open | Qualification | exact subject invalidation and fresh evidence requirement |
 | RR-069 | Compatibility forwarding files become a second permanent documentation layer | 3 | 3 | controlled | SYS | explicit projection classification and retirement deadline |
 

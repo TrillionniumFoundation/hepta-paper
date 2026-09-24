@@ -22,7 +22,7 @@ not prose.
 | RR-013 | Shared implementation defeats independent verification | 4 | 5 | open | Evidence | implementation-diversity matrix |
 | RR-014 | Filesystem recovery is inferred from unit tests | 4 | 5 | mitigating | Workspace | descriptor race tests plus target kill/restore matrix |
 | RR-015 | SQLite migration corrupts live state | 2 | 5 | open | Database | production-shaped copies and restore canary |
-| RR-016 | CI is green but `main` is bypassable or checks the wrong ref | 4 | 5 | blocked_external | Governance | issue #25 policy export, denial probes and independent decision |
+| RR-016 | CI is green but the protected integration ref is bypassable or checks the wrong ref | 4 | 5 | mitigating | Governance | live protection export, exact-ref required checks, signed integration and denial probes |
 | RR-017 | Toolchain/dependency upgrade changes behavior | 3 | 4 | mitigating | SRE | lock, SBOM, audit and reproducible build |
 | RR-018 | Model quality regresses while deterministic gates pass | 4 | 4 | blocked_external | Product/Evidence | live evaluation thresholds |
 | RR-019 | Missing usage is treated as zero cost | 3 | 4 | mitigating | Campaign | conservative settlement and reconciliation |

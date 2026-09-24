@@ -18,6 +18,7 @@ use hepta_codex_runtime::{
     build_codex_invocation, inspect_codex_invocation_postflight, inspect_codex_runtime_identity,
     spawn_blocked_preexec_gate, verify_runtime_identity_unchanged,
 };
+use hepta_workspace::MutationPolicyV1;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -57,6 +58,7 @@ pub struct CodexDispatchPlanV1<'a> {
     pub parent_environment: RestrictedEnvironmentV1,
     pub model_child_environment: &'a RestrictedEnvironmentV1,
     pub prompt: Vec<u8>,
+    pub mutation_policy: &'a MutationPolicyV1,
     pub invocation_policy: CodexInvocationPolicyV1,
     pub process_limits: ProcessLimitsV1,
     pub gate_policy: DurableGatePolicyV1,
@@ -178,6 +180,16 @@ fn run_reserved_codex_operation_inner(
         validate_schema(&schema).map_err(CodexDispatchError::Schema)?;
         plan.authority
             .authorize(&request, &before, &invocation, now(&plan)?)?;
+        // Persist the exact before-inventory before provider release. A crash after
+        // execution can then validate mutations without re-running the provider.
+        crate::prepared_result::capture_workspace_before_dispatch(
+            &request,
+            &initial.request_hash,
+            &plan.workspace,
+            uid,
+            &plan.gate_policy.state_directory,
+            plan.mutation_policy,
+        )?;
         Ok((before, invocation, schema))
     })();
     let (before, invocation, schema) = match preflight {

@@ -13,6 +13,9 @@ use hepta_codex_protocol::{
 use hepta_codex_runtime::{
     CgroupV2PolicyV1, codex_parent_environment_policy_v1, model_child_environment_policy_v1,
 };
+use hepta_workspace::{
+    MutationPolicyV1, WorkspaceRootV1, mutation_policy_hash_v1, workspace_identity_hash_v1,
+};
 use std::{
     collections::BTreeMap,
     ffi::OsString,
@@ -60,6 +63,7 @@ struct Fixture {
     parent: RestrictedEnvironmentV1,
     child: RestrictedEnvironmentV1,
     prompt: Vec<u8>,
+    mutation_policy: MutationPolicyV1,
 }
 impl Fixture {
     fn new(output: &str, extra: &str) -> Self {
@@ -85,7 +89,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 cat >/dev/null
-printf started > started
+printf started > started.txt
 {extra}
 printf '%s' '{output}' > "$output"
 printf '%s\n' '{{"type":"thread.started","thread_id":"thread-1"}}' '{{"type":"turn.started"}}' '{{"type":"turn.completed","usage":{{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}}}'
@@ -102,6 +106,15 @@ printf '%s\n' '{{"type":"thread.started","thread_id":"thread-1"}}' '{{"type":"tu
         );
         let workspace = root.join("workspace");
         fs::create_dir(&workspace).unwrap();
+        fs::set_permissions(&workspace, fs::Permissions::from_mode(0o700)).unwrap();
+        let mutation_policy = MutationPolicyV1 {
+            version: 1,
+            read_only: false,
+            allowed_path_prefixes: vec!["started.txt".to_owned()],
+            allowed_extensions: ["txt".to_owned()].into_iter().collect(),
+            maximum_changed_entries: 1,
+            maximum_changed_file_bytes: 1024,
+        };
         let schema = root.join("schema.json");
         create(&schema, br#"{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}"#, 0o400);
         let output = root.join("output.json");
@@ -162,6 +175,7 @@ printf '%s\n' '{{"type":"thread.started","thread_id":"thread-1"}}' '{{"type":"tu
             parent,
             child,
             prompt: b"Return a JSON answer.".to_vec(),
+            mutation_policy,
         }
     }
     fn plan<'a>(&'a self, cancelled: &'a AtomicBool) -> CodexDispatchPlanV1<'a> {
@@ -176,6 +190,7 @@ printf '%s\n' '{{"type":"thread.started","thread_id":"thread-1"}}' '{{"type":"tu
             parent_environment: self.parent.clone(),
             model_child_environment: &self.child,
             prompt: self.prompt.clone(),
+            mutation_policy: &self.mutation_policy,
             invocation_policy: CodexInvocationPolicyV1::local_fixture(self.uid),
             process_limits: ProcessLimitsV1 {
                 timeout_ms: 2_000,
@@ -232,9 +247,12 @@ printf '%s\n' '{{"type":"thread.started","thread_id":"thread-1"}}' '{{"type":"tu
             session_policy: SessionPolicy::EphemeralNewThread,
             prompt_envelope_hash: invocation.prompt_hash,
             input_manifest_hash: hash_bytes(b"input").unwrap(),
-            workspace_identity_hash: hash_bytes(b"workspace").unwrap(),
+            workspace_identity_hash: workspace_identity_hash_v1(
+                &WorkspaceRootV1::open(&self.workspace, self.uid).unwrap(),
+            )
+            .unwrap(),
             output_schema_hash: invocation.output_schema_hash,
-            mutation_policy_hash: hash_bytes(b"mutations").unwrap(),
+            mutation_policy_hash: mutation_policy_hash_v1(&self.mutation_policy).unwrap(),
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
             network_policy: NetworkPolicy::None,
             approval_policy: ApprovalPolicy::Never,
@@ -308,8 +326,39 @@ fn actual_cli_output_is_durable_schema_validated_and_never_replayed() {
         OperationState::SchemaValidated
     );
     assert!(result.durable_result_path.exists());
-    assert!(fixture.workspace.join("started").exists());
+    assert!(fixture.workspace.join("started.txt").exists());
     assert!(result.process.process_group_cleanup_verified);
+    let prepared = crate::finalize_codex_prepared_result(
+        &mut store,
+        &fixture.root,
+        "dispatch-1",
+        &fixture.workspace,
+        fixture.uid,
+        &fixture.mutation_policy,
+        12_001,
+    )
+    .unwrap();
+    assert_eq!(
+        store.load_journal("dispatch-1").unwrap().current_state,
+        OperationState::ResultPrepared
+    );
+    assert_eq!(prepared.output_hash, result.output_hash);
+    assert_eq!(prepared.token_usage.unwrap().input_tokens, 1);
+    let replay = crate::finalize_codex_prepared_result(
+        &mut store,
+        &fixture.root,
+        "dispatch-1",
+        &fixture.workspace,
+        fixture.uid,
+        &fixture.mutation_policy,
+        12_002,
+    )
+    .unwrap();
+    assert_eq!(replay, prepared);
+    assert_eq!(
+        crate::read_codex_prepared_output(&fixture.root, &prepared, fixture.uid).unwrap(),
+        br#"{"answer":"local success"}"#
+    );
     assert!(
         crate::create_broker_backup(
             &store,
@@ -329,7 +378,7 @@ fn actual_cli_output_is_durable_schema_validated_and_never_replayed() {
         12_001,
     )
     .unwrap();
-    assert_eq!(bundle.sidecar_count, 1);
+    assert_eq!(bundle.sidecar_count, 3);
     fs::remove_file(&result.durable_result_path).unwrap();
     assert!(matches!(
         crate::create_quiesced_codex_dispatch_backup(
@@ -351,6 +400,210 @@ fn actual_cli_output_is_durable_schema_validated_and_never_replayed() {
     store.validate_integrity().unwrap();
 }
 #[test]
+fn prepared_result_crash_cuts_resume_without_provider_reexecution() {
+    use crate::prepared_result::{
+        PreparedResultFaultInjectionPointV1, finalize_codex_prepared_result_with_fault,
+    };
+
+    for (fault, expected_state, receipt_published) in [
+        (
+            PreparedResultFaultInjectionPointV1::AfterWorkspaceSnapshotted,
+            OperationState::WorkspaceSnapshotted,
+            false,
+        ),
+        (
+            PreparedResultFaultInjectionPointV1::AfterMutationValidated,
+            OperationState::MutationValidated,
+            false,
+        ),
+        (
+            PreparedResultFaultInjectionPointV1::AfterPreparedReceiptPublication,
+            OperationState::MutationValidated,
+            true,
+        ),
+    ] {
+        let fixture = Fixture::new(r#"{"answer":"recoverable"}"#, "");
+        let mut store = fixture.reserved();
+        let cancelled = AtomicBool::new(false);
+        let dispatch =
+            run_reserved_codex_operation_inner(&mut store, fixture.plan(&cancelled), false)
+                .unwrap();
+        let started = fs::metadata(fixture.workspace.join("started.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        assert!(matches!(
+            finalize_codex_prepared_result_with_fault(
+                &mut store,
+                &fixture.root,
+                "dispatch-1",
+                &fixture.workspace,
+                fixture.uid,
+                &fixture.mutation_policy,
+                12_001,
+                fault,
+            ),
+            Err(CodexDispatchError::InvalidBinding(
+                "prepared_result_fault_injected"
+            ))
+        ));
+        assert_eq!(
+            store.load_journal("dispatch-1").unwrap().current_state,
+            expected_state
+        );
+        assert_eq!(
+            fixture
+                .root
+                .join("codex-result-dispatch-1.prepared.json")
+                .exists(),
+            receipt_published
+        );
+
+        let receipt = crate::finalize_codex_prepared_result(
+            &mut store,
+            &fixture.root,
+            "dispatch-1",
+            &fixture.workspace,
+            fixture.uid,
+            &fixture.mutation_policy,
+            12_002,
+        )
+        .unwrap();
+        let journal = store.load_journal("dispatch-1").unwrap();
+        assert_eq!(journal.current_state, OperationState::ResultPrepared);
+        for state in [
+            OperationState::WorkspaceSnapshotted,
+            OperationState::MutationValidated,
+            OperationState::ResultPrepared,
+        ] {
+            assert_eq!(
+                journal
+                    .transitions
+                    .iter()
+                    .filter(|row| row.to == state)
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(receipt.output_hash, dispatch.output_hash);
+        assert_eq!(
+            fs::metadata(fixture.workspace.join("started.txt"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            started
+        );
+    }
+}
+
+#[test]
+fn prepared_result_rejects_self_consistent_output_sidecar_substitution() {
+    let fixture = Fixture::new(r#"{"answer":"original"}"#, "");
+    let mut store = fixture.reserved();
+    let cancelled = AtomicBool::new(false);
+    run_reserved_codex_operation_inner(&mut store, fixture.plan(&cancelled), false).unwrap();
+
+    let path = fixture.root.join("codex-result-dispatch-1.json");
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let substituted = br#"{"answer":"substituted"}"#;
+    evidence["outputHex"] = json!(hex::encode(substituted));
+    evidence["outputHash"] = json!(hash_bytes(substituted).unwrap());
+    create(&path, &serde_json::to_vec(&evidence).unwrap(), 0o600);
+
+    assert!(matches!(
+        crate::finalize_codex_prepared_result(
+            &mut store,
+            &fixture.root,
+            "dispatch-1",
+            &fixture.workspace,
+            fixture.uid,
+            &fixture.mutation_policy,
+            12_001,
+        ),
+        Err(CodexDispatchError::InvalidBinding(
+            "execution_journal_binding"
+        ))
+    ));
+    assert_eq!(
+        store.load_journal("dispatch-1").unwrap().current_state,
+        OperationState::SchemaValidated
+    );
+}
+
+#[test]
+fn prepared_result_rejects_self_consistent_event_stream_substitution() {
+    let fixture = Fixture::new(r#"{"answer":"original"}"#, "");
+    let mut store = fixture.reserved();
+    let cancelled = AtomicBool::new(false);
+    run_reserved_codex_operation_inner(&mut store, fixture.plan(&cancelled), false).unwrap();
+
+    let path = fixture.root.join("codex-result-dispatch-1.json");
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let substituted = concat!(
+        "{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}\n",
+        "{\"type\":\"turn.started\"}\n",
+        "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":2,",
+        "\"cached_input_tokens\":0,\"output_tokens\":1}}\n"
+    )
+    .as_bytes();
+    evidence["stdoutHex"] = json!(hex::encode(substituted));
+    evidence["stdoutHash"] = json!(hash_bytes(substituted).unwrap());
+    create(&path, &serde_json::to_vec(&evidence).unwrap(), 0o600);
+
+    assert!(matches!(
+        crate::finalize_codex_prepared_result(
+            &mut store,
+            &fixture.root,
+            "dispatch-1",
+            &fixture.workspace,
+            fixture.uid,
+            &fixture.mutation_policy,
+            12_001,
+        ),
+        Err(CodexDispatchError::InvalidBinding(
+            "execution_journal_binding"
+        ))
+    ));
+    assert_eq!(
+        store.load_journal("dispatch-1").unwrap().current_state,
+        OperationState::SchemaValidated
+    );
+}
+
+#[test]
+fn disallowed_workspace_mutation_never_becomes_prepared() {
+    let fixture = Fixture::new(
+        r#"{"answer":"mutation refused"}"#,
+        "printf forbidden > forbidden.bin",
+    );
+    let mut store = fixture.reserved();
+    let cancelled = AtomicBool::new(false);
+    let _result =
+        run_reserved_codex_operation_inner(&mut store, fixture.plan(&cancelled), false).unwrap();
+    assert!(matches!(
+        crate::finalize_codex_prepared_result(
+            &mut store,
+            &fixture.root,
+            "dispatch-1",
+            &fixture.workspace,
+            fixture.uid,
+            &fixture.mutation_policy,
+            12_001,
+        ),
+        Err(CodexDispatchError::InvalidBinding("workspace"))
+    ));
+    assert_eq!(
+        store.load_journal("dispatch-1").unwrap().current_state,
+        OperationState::SchemaValidated
+    );
+    assert!(matches!(
+        run_reserved_codex_operation_inner(&mut store, fixture.plan(&cancelled), false),
+        Err(CodexDispatchError::OperationNotReserved)
+    ));
+}
+
+#[test]
 fn fixture_never_enters_production_even_with_allowing_test_authority() {
     let fixture = Fixture::new(r#"{"answer":"no"}"#, "");
     let mut store = fixture.reserved();
@@ -359,7 +612,7 @@ fn fixture_never_enters_production_even_with_allowing_test_authority() {
         run_reserved_codex_operation(&mut store, fixture.plan(&cancelled)),
         Err(CodexDispatchError::ProductionAuthorityRequired)
     ));
-    assert!(!fixture.workspace.join("started").exists());
+    assert!(!fixture.workspace.join("started.txt").exists());
     assert_eq!(
         store.load_journal("dispatch-1").unwrap().current_state,
         OperationState::RejectedPreflight
@@ -396,7 +649,7 @@ fn role_and_prompt_drift_are_rejected_before_the_target_starts() {
             run_reserved_codex_operation_inner(&mut store, plan, false),
             Err(CodexDispatchError::InvalidBinding(_))
         ));
-        assert!(!fixture.workspace.join("started").exists());
+        assert!(!fixture.workspace.join("started.txt").exists());
     }
 }
 #[test]
@@ -422,7 +675,7 @@ fn cancellation_after_release_cleans_up_and_prevents_retry() {
     let mut store = fixture.reserved();
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancel = cancelled.clone();
-    let marker = fixture.workspace.join("started");
+    let marker = fixture.workspace.join("started.txt");
     let handle = thread::spawn(move || {
         // The full workspace suite can be CPU saturated while a real target
         // process is admitted. Keep the assertion bounded but avoid turning
@@ -507,7 +760,7 @@ fn cancellation_before_spawn_never_creates_a_target() {
         store.load_journal("dispatch-1").unwrap().current_state,
         OperationState::CancelledBeforeSpawn
     );
-    assert!(!fixture.workspace.join("started").exists());
+    assert!(!fixture.workspace.join("started.txt").exists());
 }
 
 #[test]

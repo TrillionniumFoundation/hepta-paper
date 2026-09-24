@@ -76,7 +76,13 @@ Declared class: `deterministic`. The same canonical input, module version, confi
 
 ## Failure, recovery, and idempotency
 
-Fail closed on peer, capability, socket, runtime, schema, journal, gate, containment, stream, or prepared-result mismatch. Restart reconciliation distinguishes pre-release, may-have-started, prepared, and committed outcomes without duplicate provider calls.
+Fail closed on peer, capability, socket, runtime, schema, journal, gate,
+containment, stream, workspace or prepared-result mismatch. Dispatch persists the
+pre-release workspace inventory before provider release. Local finalization
+recomputes the descriptor-bound post-execution inventory and cross-checks the
+stream, output and schema-validation identities against the journal before
+publishing a prepared receipt. Restart re-enters only missing local transitions;
+it never repeats a released provider call.
 
 ## Security and privacy
 
@@ -101,8 +107,12 @@ production launch command or provision credentials.
 Before listener readiness call `recover_codex_dispatch_containment`, then the
 normal journal reconciliation. A replaced cgroup or unresolved released
 operation blocks admission; do not adopt a numeric PID or synthesize success.
-On shutdown stop admission and join the existing bounded workers. A provider
-timeout remains unknown until its original operation is reconciled.
+For a journal at `SchemaValidated`, `WorkspaceSnapshotted` or
+`MutationValidated`, invoke `finalize_codex_prepared_result` with the same bound
+workspace and mutation policy. It reuses the original evidence and advances only
+missing local transitions; it must not dispatch the provider again. On shutdown
+stop admission and join the existing bounded workers. A provider timeout remains
+unknown until its original operation is reconciled.
 
 For a backup, use `create_quiesced_codex_dispatch_backup` under its exclusive
 dispatch lock. Retain its manifest hash separately. Restore only with
@@ -118,7 +128,7 @@ Capability bindings: `CAP-EXE-BROKER`. Related work identifiers: `GAP-CODEX-001`
 
 ### Runtime migration implementation details
 
-See the [Codex dispatch implementation and operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md). It describes external execution-authority verification, permit and deadline binding, bounded stdin/stdout/stderr, cancellation, cgroup attachment and cleanup, output-schema validation, event journaling, and provider ambiguity. Its quiesced dispatch backup/restore contract binds shared/exclusive locking, journal and sidecar hash manifests, fresh restore destinations and rejection of active PID/cgroup authority recovery. The implementation roots explicitly include containment, event-stream, runtime and testkit crates. Local protocol tests cannot establish target-host cgroup, namespace or process-gate qualification.
+See the [Codex dispatch implementation and operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md). It describes external execution-authority verification, permit and deadline binding, bounded stdin/stdout/stderr, cancellation, cgroup attachment and cleanup, output-schema validation, event journaling, provider ambiguity, descriptor-bound mutation validation and crash-reentrant prepared-result publication. Its quiesced dispatch backup/restore contract binds shared/exclusive locking, journal and all three sidecar hash manifests, fresh restore destinations and rejection of active PID/cgroup authority recovery. The implementation roots explicitly include containment, event-stream, workspace, runtime and testkit crates. Local protocol tests cannot establish target-host cgroup, namespace, process-gate or real credential qualification.
 
 ## Rollout and rollback
 

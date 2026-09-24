@@ -16,6 +16,7 @@ hepta-codex-event-stream = { version = "=0.1.0", path = "../hepta-codex-event-st
 hepta-codex-journal = { version = "=0.1.0", path = "../hepta-codex-journal" }
 hepta-codex-protocol = { version = "=0.1.0", path = "../hepta-codex-protocol" }
 hepta-codex-runtime = { version = "=0.1.0", path = "../hepta-codex-runtime" }
+hepta-workspace = { version = "=0.1.0", path = "../hepta-workspace" }
 nix.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

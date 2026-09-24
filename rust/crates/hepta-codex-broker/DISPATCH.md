@@ -39,19 +39,39 @@ The official noninteractive Codex argv and prompt are constructed by
    descriptors, hash the actual bytes, and fsync immutable stdout/output evidence
    before advancing deterministic result processing.
 6. Decode complete JSONL, require a successful terminal turn, parse the actual
-   final JSON, and validate its bound schema. Success ends at `SchemaValidated`.
+   final JSON, and validate its bound schema. Dispatch itself ends at
+   `SchemaValidated`.
+7. `finalize_codex_prepared_result` reopens the exact persisted request, the
+   pre-release workspace inventory and the exclusive execution evidence. It
+   recomputes the current descriptor-bound workspace inventory, validates the
+   mutation manifest against the request-bound policy, and cross-checks the
+   event-stream, final-output and schema-validation hashes against the broker
+   journal. Only then does it advance `WorkspaceSnapshotted` ->
+   `MutationValidated` -> `ResultPrepared` and publish the immutable prepared
+   receipt.
 
 A cancelled or ambiguous released execution is never automatically replayed.
 A repeated operation ID is refused by dispatch and remains queryable in the
-journal. The API deliberately does not assert `WorkspaceSnapshotted`,
-`MutationValidated`, `ResultPrepared`, `Acknowledged`, campaign-write or submission
-authority: those require independent workspace/mutation and commit attestations.
+journal. The finalizer never launches Codex and never grants `Acknowledged`,
+campaign-write, release or submission authority. Those remain separate consumer
+and commit boundaries.
 
-`codex-result-<operation>.json` is a bounded durable evidence artifact containing
-request/runtime/argv identities and actual captured stream/output bytes (hex).
-Consumers must compare its request and evidence hashes with the journal. The
-artifact is created exclusively and never overwritten. It is evidence for local
-recovery; it is not a signed prepared-result receipt.
+The broker retains three bounded, owner-only sidecars per completed prepared
+operation:
+
+- `codex-result-<operation>.before.json` binds the pre-release workspace identity,
+  mutation policy and complete initial inventory;
+- `codex-result-<operation>.json` binds request/runtime/argv identities and the
+  actual captured stream/output bytes;
+- `codex-result-<operation>.prepared.json` binds the recomputed mutation manifest,
+  prepared workspace result, journal evidence and exact output identity.
+
+All three are created exclusively and never overwritten. Re-entry after a crash
+accepts only byte-identical sidecars and transition evidence. A self-consistent
+replacement output or event stream is still rejected when it differs from the
+journal. `read_codex_prepared_output` returns bytes only after the prepared
+receipt and execution-evidence identities are recomputed. A prepared receipt is
+provider/workspace evidence; it is not campaign-write authority.
 
 ## Restart containment
 
@@ -72,10 +92,12 @@ already absent. The process journal then applies its existing conservative
 release/ambiguity recovery rules.
 
 `create_quiesced_codex_dispatch_backup` obtains an exclusive lock against all
-qualified dispatches, refuses active journaled processes, unreconciled containment
-records and launch envelopes, copies the SQLite journal and all durable result
-sidecars, and verifies the source journal and sidecar identities did not change.
-A completed Codex operation with missing result evidence cannot be backed up.
+qualified dispatches and local finalization, refuses active journaled processes,
+unreconciled containment records and launch envelopes, copies the SQLite journal
+and all durable result sidecars, and verifies the source journal and sidecar
+identities did not change. A completed Codex operation with missing execution
+evidence cannot be backed up; a prepared operation also requires its exact
+pre-release inventory and prepared receipt sidecars.
 The final `manifest.json` pins every copied file's bytes/hash and the logical
 journal fingerprint. An interrupted directory without that manifest is incomplete.
 
@@ -213,9 +235,13 @@ Build the workspace `hepta-codex-preexec-gate` binary first. Unit tests execute 
 credential-free deterministic local CLI through the same gate path, validate
 actual output and durable journal transitions, reject fixture production/role/
 prompt/schema drift, verify runtime-config drift becomes ambiguous, cancel an
-already released process, and recover exact fixture cgroup identities. The
-fixture execution entry and allowing authority exist only under unit-test control;
-these tests do not constitute live-provider or production-host qualification.
+already released process, and recover exact fixture cgroup identities. Prepared
+result tests inject interruptions after workspace snapshot, mutation validation
+and receipt publication; each restart advances every state exactly once without
+provider re-execution. Adversarial tests rewrite output and JSONL bytes together
+with their own matching hashes and require journal-bound rejection. The fixture
+execution entry and allowing authority exist only under unit-test control; these
+tests do not constitute live-provider or production-host qualification.
 
 ## Process exit during procfs recovery observation
 

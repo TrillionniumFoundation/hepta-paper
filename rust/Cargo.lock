@@ -724,6 +724,7 @@ dependencies = [
  "hepta-codex-journal",
  "hepta-codex-protocol",
  "hepta-codex-runtime",
+ "hepta-workspace",
  "hex",
  "nix",
  "rusqlite",

@@ -25,6 +25,7 @@ mod journal;
 mod listener;
 mod output_schema;
 mod peer;
+mod prepared_result;
 mod response;
 mod server;
 mod service;
@@ -79,6 +80,9 @@ pub use listener::{
 };
 pub use peer::{
     PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1, PeerPrincipalV1, inspect_peer_identity,
+};
+pub use prepared_result::{
+    BrokerPreparedResultReceiptV1, finalize_codex_prepared_result, read_codex_prepared_output,
 };
 pub use response::{
     BrokerMachineCodeV1, BrokerResponseError, BrokerResponseFramePolicyV1, BrokerResponseKindV1,

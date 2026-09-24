@@ -77,7 +77,7 @@
       "properties": {
         "currentBuildClosureVerificationRequired": { "const": true },
         "exactHeadBaseMergeRequired": { "const": true },
-        "independentReviewRequired": { "const": true },
+        "independentReviewRequired": { "const": false },
         "targetHostQualificationRequired": { "const": true }
       }
     },

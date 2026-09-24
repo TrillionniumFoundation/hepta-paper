@@ -1232,6 +1232,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Some("autonomous-state-provision") => {
             if args
                 .get(1)
+                .is_some_and(|value| value == "--recover-publication")
+            {
+                let report = hepta_paper_service::autonomous_state_provision::publication_recovery::reconcile_publication_cli_v1(&args[1..])?;
+                println!("{}", serde_json::to_string(&report)?);
+                return Ok(());
+            }
+            if args
+                .get(1)
                 .is_some_and(|value| value == "--recover-staging")
             {
                 let report = hepta_paper_service::autonomous_state_provision::recovery::recover_staging_cli_v1(&args[1..])?;

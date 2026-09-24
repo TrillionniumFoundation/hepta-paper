@@ -358,3 +358,64 @@ all ten byte hashes, repeats the receipt and creates a fresh runtime while
 preserving quarantine. Unit tests independently use actual SIGKILL at
 before-rename, after-rename and post-sync cuts. Those publisher/recovery byte
 fixtures are not production database, storage-loss or external-principal proof.
+
+### Reconcile a published root with no terminal receipt
+
+Use the existing command, not the staging-quarantine profile:
+
+```bash
+hepta-paper-rust autonomous-state-provision --recover-publication "$RECOVERY_REQUEST"
+```
+
+The [executable request](../modules/examples/publication-recovery-request.v1.json)
+is a closed `NativeStatePublicationRecoveryRequestV1`, version 1, containing
+`action`, absolute `runtimeRoot`, `expectedPreparedReceiptHash`, boolean `execute`
+and optional/null `expectedPlanHash`. Start with `action=inspect`, `execute=false`
+and no plan hash. Select the prepared-record digest from your retained original
+initialization evidence; a digest copied from untrusted bytes does not authenticate
+that history. Inspection checks the exact prepared-record fields, false authority
+flags, current compiled schema bundle/manifest and every one of the ten recorded
+file hashes/lengths. It does not invoke SQLite, genesis, a provider or a signer.
+
+Inspection reports `published_without_terminal` or `terminal_present`, plus
+`plan.recoveryPlanHash`. To persist a missing terminal, use `action=finalize`,
+`execute=true` and that exact plan hash. This is a current-object/CAS selection,
+not a human-review ceremony. Parent, directory and database inode identities and
+bytes must still match. The new native-only plan hashes canonical compact serde
+JSON, including its kind, without its own hash field. It preserves full u64
+inode/device values; it does not use the historical Node numeric hash domain.
+The existing parent lock excludes cooperating publication
+and staging-recovery owners. Quiesce older or noncooperating producers separately;
+this local advisory lock is not installed-service isolation.
+
+All existing bounds apply: private 0700 directories and 0600 single-link files,
+same device, no symlinks/special nodes, at most 64 entries, 32 MiB per database,
+1 MiB per receipt and 129 MiB aggregate. Only the original complete ten database
+paths, prepared receipt and optional terminal receipt are admitted. New tables,
+new committed rows, missing files, WAL sidecars, unregistered files, changed
+inode identity or conflicting terminal content block recovery. Nothing is
+restored over those bytes.
+
+The owner syncs retained files/directories and the publication parent, derives
+the exact terminal through the existing publisher, and exclusively creates
+`native-provisioning-publication.json` only when absent. Existing matching
+terminals are verified without rewriting their identity. JSON is checked for
+duplicate keys before its original serde numeric representation is retained;
+`1.0` is not silently rewritten as `1`. The integration test requires recovered
+terminal bytes and its hash to equal the original publisher output.
+
+After writing, the owner observes the completed namespace and compares it to the
+original held database/root objects. Late failures retain `publicationState=published`
+and `terminalWriteAttempted`; they never report no effect or invite automatic
+retry. SIGKILL before writing, after writing/sync and after final verification is
+covered by actual subprocess tests. Reissuing the same selected request verifies
+matching state and returns the same receipt. A partial or conflicting terminal
+is retained and refused, not overwritten; repair of such content is outside this
+profile. Missing prepared history or a missing trusted digest similarly requires
+explicit investigation rather than reconstructed authority.
+
+This completes receipt reconciliation for unchanged fresh initialization, not
+arbitrary published-root maintenance. Its terminal's `ready`/`freshRuntimeInstalled`
+mean the selected historical business-schema initialization only. Production
+activation, writer transfer, current external qualification and Node retirement
+remain false. It never uses an old database image to replace newer work.

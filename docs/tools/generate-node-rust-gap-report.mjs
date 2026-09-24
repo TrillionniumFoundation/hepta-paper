@@ -29,7 +29,7 @@ function criterion(category) {
     return 'Rust-owned deterministic generator with byte-compatible outputs, negative tests, and no Node execution dependency.';
   }
   if (category === 'verification / retirement authority') {
-    return 'Rust verifier/retirement implementation plus exact-head, historical, recovery, independent review, and authority-removal evidence.';
+    return 'Rust verifier/retirement implementation plus exact-head, historical, recovery, maintainer evaluation, and authority-removal evidence.';
   }
   if (category === 'external authority / target host') {
     return 'Complete Rust call chain first, then target-host/external authority qualification, recovery evidence, and writer/credential ownership.';

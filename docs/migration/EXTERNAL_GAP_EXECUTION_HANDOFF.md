@@ -3,8 +3,14 @@
 This handoff is bound to the source-baseline candidate commit
 `161d54f603152c95411beb7fc9a7ab79919ffe8d` on
 `codex/full-rust-replacement-progress-20260916`. It is an executable packet
-for evidence that cannot be produced by a local source checkout. It does not
-mark a route implemented, accepted, activated or retired.
+for evidence that cannot be produced by a local source checkout. This file's
+source-status table and ledger hash describe that historical baseline, not the
+current implementation. For live status use the existing
+[command map and generated ledger](NODE_RUST_GAP_CLOSURE.md) and
+[runtime implementation](../rust/RUNTIME_MIGRATION_IMPLEMENTATION.md).
+It does not mark a route implemented, accepted, activated or retired.
+The current single-maintainer policy supersedes historical human-review language:
+no independent human reviewer is required for repository integration.
 
 ## Source-baseline branch evidence and current consolidation policy
 
@@ -38,10 +44,10 @@ python3 docs/tools/audit-branch-convergence.py --candidate HEAD
 Every divergent branch needs an owner, a disposition (`absorb`, `supersede`,
 `retain_reference` or `reject`), the complete two-tree change list and review
 evidence. Preserve those records after branch-name deletion. A digest-shaped
-value is not independent review evidence; local source consolidation cannot
-self-grant the external acceptance required by this handoff.
+value is not behavioral evidence. The maintainer may make these source decisions;
+source consolidation does not itself prove runtime/external effects.
 
-## Current Rust migration state
+## Historical source-baseline migration state
 
 The command map contains 57 Node routes. All 57 have an explicit Rust
 candidate or bounded fail-closed boundary, so `unmapped=0`; every row remains
@@ -61,7 +67,7 @@ deployment-environment file, and the standalone operational/owner verifier CLIs
 follow the incumbent environment/default-root resolution. These changes improve
 local behavior parity but do not create external acceptance.
 
-## External execution packages
+## Historical package scope; current machine authority boundaries remain
 
 | Scope | Existing local Rust boundary | Required external package | Required acceptance evidence |
 |---|---|---|---|
@@ -93,8 +99,9 @@ An external collector must return one immutable packet containing:
    release and submission artifacts.
 5. Positive, negative, malformed, limit, timeout, cancellation, crash and
    replay receipts for every selected mode.
-6. Independent reviewer/owner evidence bound to the same candidate. A local
-   receipt or matching hash alone is insufficient.
+6. Maintainer-selected semantic evaluation and actual operational-owner evidence
+   bound to the same candidate. A local hash does not establish a runtime effect;
+   no second human approver is required.
 
 The packet must state whether each effect was read-only, local mutation,
 external action or network action. A blocked or missing external package must

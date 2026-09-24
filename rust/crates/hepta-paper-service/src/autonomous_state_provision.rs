@@ -21,7 +21,7 @@ mod inputs;
 mod publication;
 pub mod publication_recovery;
 pub mod recovery;
-mod schema;
+pub(crate) mod schema;
 
 const PROVISIONING_BLOCKER: &str = "rust_autonomous_state_provision_execute_not_ported";
 

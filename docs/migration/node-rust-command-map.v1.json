@@ -8739,18 +8739,40 @@
           "symbol": "inspect_autonomous_state_partial_root_maintenance_v1"
         },
         {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/plan.rs",
+          "symbol": "build"
+        },
+        {
           "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
           "symbol": "execute_autonomous_state_partial_root_maintenance_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/execution.rs",
+          "symbol": "execute"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/execution.rs",
+          "symbol": "recover_or_replay"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs",
+          "symbol": "build_partial_missing"
         }
       ],
       "tests": [
-        "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs"
+        "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
+        "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs"
       ],
-      "remaining": "Rust now performs a bounded no-follow preflight over the production-shaped partial runtime root, rescue root, five existing database identities, manifest role closure, machine/topic/dataset inputs and writer quiescence receipt. Execute verifies the source-bound plan id but remains fail-closed: rescue copy/restore, exclusive SQLite locks, schema repair, atomic publication, rollback/crash recovery, lease renewal and external authority are not ported; no runtime or rescue path is written.",
+      "remaining": "Rust now implements the historical manifest-bound 5+5 offline repair: read-only exact plan identity; all-five existing SQLite EXCLUSIVE locks; rescue copy plus restore verification; construction of the five missing business databases through the canonical native schema owner; narrowly scoped supervisor-journal repair; no-clobber publication; post-repair inventory/business-state verification; and durable terminal reconciliation. Real Node-built 5+5 fixtures prove success without Node in the execution PATH, target-appearance refusal, pre-commit SIGKILL rollback followed by fresh-fence retry, post-commit recovery, and exact terminal replay. The route remains a partial compatibility candidate because the incumbent optional policy/provider CLI fields are not all accepted by Rust, online schema transition/installed writable-owner activation is intentionally separate, and target-host/independent operational acceptance remains open.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
-        "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs"
+        "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/plan.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/execution.rs",
+        "rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs",
+        "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
+        "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+        "rust/oracle/partial-root-v1.mjs"
       ],
       "testCases": [
         {
@@ -8760,6 +8782,26 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
           "symbol": "invalid_or_incomplete_sqlite_observation_fails_closed_without_mutation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+          "symbol": "real_five_plus_five_repair_runs_without_node_and_preserves_existing_business_bytes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+          "symbol": "target_appearance_after_plan_fails_before_rescue_or_existing_mutation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+          "symbol": "precommit_crash_rolls_back_owned_publication_and_fresh_fence_retries_once"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+          "symbol": "crash_after_supervisor_commit_recovers_success_without_duplicate_writes"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+          "symbol": "crash_after_terminal_replays_the_persisted_success_receipt"
         }
       ],
       "argumentModes": [
@@ -8779,15 +8821,23 @@
             {
               "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
               "symbol": "inspect_autonomous_state_partial_root_maintenance_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/plan.rs",
+              "symbol": "build"
             }
           ],
           "tests": [
             {
               "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
               "symbol": "invalid_or_incomplete_sqlite_observation_fails_closed_without_mutation"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+              "symbol": "real_five_plus_five_repair_runs_without_node_and_preserves_existing_business_bytes"
             }
           ],
-          "remaining": "Plan performs the bounded Rust partial-root preflight; production repair authority remains absent."
+          "remaining": "Plan is implemented for the exact historical 5+5 shape; optional incumbent policy/provider CLI modes and independent operational acceptance remain."
         },
         {
           "nodeAction": "execute",
@@ -8805,6 +8855,18 @@
             {
               "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
               "symbol": "execute_autonomous_state_partial_root_maintenance_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/execution.rs",
+              "symbol": "execute"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/execution.rs",
+              "symbol": "recover_or_replay"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs",
+              "symbol": "build_partial_missing"
             }
           ],
           "tests": [
@@ -8813,11 +8875,27 @@
               "symbol": "parser_requires_double_gated_execute"
             },
             {
-              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_route.rs",
-              "symbol": "invalid_or_incomplete_sqlite_observation_fails_closed_without_mutation"
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+              "symbol": "real_five_plus_five_repair_runs_without_node_and_preserves_existing_business_bytes"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+              "symbol": "target_appearance_after_plan_fails_before_rescue_or_existing_mutation"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+              "symbol": "precommit_crash_rolls_back_owned_publication_and_fresh_fence_retries_once"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+              "symbol": "crash_after_supervisor_commit_recovers_success_without_duplicate_writes"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+              "symbol": "crash_after_terminal_replays_the_persisted_success_receipt"
             }
           ],
-          "remaining": "Execute validates the plan but remains fail-closed before rescue copy, repair, publication and crash recovery."
+          "remaining": "The bounded offline 5+5 repair and crash reconciliation are implemented. Online schema transition/installed writer activation, optional incumbent CLI modes, and target-host operational acceptance remain separate."
         }
       ]
     },

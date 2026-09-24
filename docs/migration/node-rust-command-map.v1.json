@@ -7092,7 +7092,7 @@
     },
     {
       "id": "operator/campaign",
-      "rustEntrypoint": "hepta-local-workflow {list|status|events|logs|pause|resume|amend|cancel} ...",
+      "rustEntrypoint": "hepta-local-workflow {list|status|events|logs|pause|resume|amend|cancel|cancel-node} ...",
       "scope": "partial_local_source",
       "compatibilityDecision": "candidate",
       "callChain": [
@@ -7243,6 +7243,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/maintenance/recovery.rs",
           "symbol": "restore_local_backup_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "cancel_local_workflow_node_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "symbol": "cancel_local_workflow_node_with_clock_v1"
         }
       ],
       "tests": [
@@ -7255,7 +7263,7 @@
         "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
         "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs"
       ],
-      "remaining": "Campaign inspection and lifecycle are local bounded primitives; full Node campaign command/effect parity is unimplemented. Existing local CLI mutation modes now use live system-clock admission when NOW is omitted; explicit NOW remains a deterministic drill. Amendment rechecks the previous lease after the SQLite lock and before COMMIT, preserves atomic rollback, and returns clock-free exact replay. This is explicit renewal, not automatic lease renewal or physical worker cancellation.",
+      "remaining": "Campaign inspection and lifecycle are local bounded primitives; full Node campaign command/effect parity is unimplemented. Existing local CLI mutation modes use live system-clock admission when NOW is omitted; explicit NOW remains a deterministic drill. Sequential cancel-node now preserves an already committed step as an idempotent no-op and terminally cancels an uncommitted step plus its dependent suffix without erasing ambiguous attempt evidence. Arbitrary DAG projection and production node infrastructure cancellation remain separate.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow.rs",
@@ -7402,6 +7410,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
           "symbol": "restore_does_not_overwrite_post_backup_history"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "symbol": "cancel_node_preserves_committed_steps_and_cancels_the_uncommitted_suffix"
         }
       ],
       "argumentModes": [
@@ -7759,11 +7771,37 @@
         },
         {
           "nodeAction": "cancel-node",
-          "scope": "unmapped",
-          "rustCommand": null,
-          "callChain": [],
-          "tests": [],
-          "remaining": "Full Node behavior, state/effect parity, target-host and independent acceptance remain required."
+          "scope": "partial_local_source",
+          "rustCommand": "hepta-local-workflow cancel-node STATE HASH STEP_ID REVISION [NOW]",
+          "callChain": [
+            {
+              "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+              "symbol": "execute"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+              "symbol": "cancel_local_workflow_node_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+              "symbol": "cancel_local_workflow_node_with_clock_v1"
+            },
+            {
+              "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+              "symbol": "set_state"
+            },
+            {
+              "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+              "symbol": "set_campaign_state"
+            }
+          ],
+          "tests": [
+            {
+              "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+              "symbol": "cancel_node_preserves_committed_steps_and_cancels_the_uncommitted_suffix"
+            }
+          ],
+          "remaining": "Sequential local topology only: an already committed step is an idempotent terminal no-op; cancelling an uncommitted step fences the whole dependent suffix by terminally cancelling the workflow while preserving pending/ambiguous attempt evidence. Unknown steps and stale revisions fail closed. Arbitrary Node DAG projection, per-node infrastructure teardown and independently accepted command parity remain open."
         },
         {
           "nodeAction": "retry",

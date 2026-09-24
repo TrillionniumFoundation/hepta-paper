@@ -187,6 +187,15 @@ plans, receipts and actual CAS bytes under the existing cooperative workflow loc
 It does not acquire a writer lease. Inspection remains available after lease
 expiry. It never recreates missing artifacts or performs lifecycle recovery.
 
+`hepta-local-workflow cancel-node STATE HASH STEP_ID REVISION [NOW]` is the
+bounded compatibility path for the incumbent node-cancel command. The local
+topology is strictly sequential: a committed step is already terminal and
+replays as an unchanged no-op; an uncommitted step owns the complete remaining
+suffix, so cancellation terminally fences the workflow. Unknown steps, stale
+revisions and later execution fail closed. A pending/prepared attempt is
+preserved for normal reconciliation rather than deleted or refunded. This is
+not a claim of arbitrary DAG cancellation or production worker teardown.
+
 | Command | Input | Output and boundary |
 |---|---|---|
 | `events` | Closed JSON `{action:"events", cursor:null, limit:2}`; limit 1–256. Supply the returned `nextCursor` for another page. | Hash-only SQLite event metadata. Cursor binds campaign, last delivered global sequence/hash and frozen snapshot sequence/hash. Events appended later stay outside that page series. Altered/deleted anchors or a corrupt chain fail closed. Filtering a campaign can leave global sequence gaps. Full-chain verification is capped at 100000 events, not a production retention strategy. |

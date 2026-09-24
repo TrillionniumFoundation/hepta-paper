@@ -23,8 +23,12 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let arguments = std::env::args().collect::<Vec<_>>();
+    if arguments.len() == 2 && matches!(arguments[1].as_str(), "--help" | "-h") {
+        println!("usage: hepta-codex-broker <absolute-config.json>");
+        return Ok(());
+    }
     if arguments.len() != 2 {
-        return Err("usage: hepta-codex-product-broker <absolute-config.json>".to_owned());
+        return Err("usage: hepta-codex-broker <absolute-config.json>".to_owned());
     }
     let path = Path::new(&arguments[1]);
     if !path.is_absolute() {

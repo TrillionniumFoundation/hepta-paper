@@ -22,7 +22,7 @@ Read the current PR head/base and exact workflow subject before integration;
 never copy a predecessor's green checks into the current candidate's status.
 
 `hepta-paper-rust autonomous-research` remains the bounded local workflow entry.
-`hepta-codex-product-broker <absolute-config.json>` is the separate installed
+`hepta-codex-broker <absolute-config.json>` is the separate installed
 broker entry, using the existing configuration loader, dispatcher and journal.
 A running broker is not a complete author/reviewer/revision workflow, and a
 local workflow receipt is not a provider execution receipt. Their remaining

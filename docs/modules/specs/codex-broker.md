@@ -98,6 +98,20 @@ Track readiness, admission/dispatch latency, busy and rejection rates, queue dep
 
 ## Operational runbook
 
+The canonical executable is `hepta-codex-broker <absolute-config.json>`, matching
+both deployment manifest versions. `--help` and `-h` print usage without loading
+configuration, starting signal watchers, opening a listener or touching journals.
+The former unpublished `hepta-codex-product-broker` target is removed rather than
+kept as another product launcher.
+
+`load_product_codex_broker_configuration` returns an inspectable but externally
+immutable `LoadedProductCodexBrokerConfigurationV1`. Callers use `configuration()`
+and `identity()`; direct field mutation is no longer supported. The composer
+reopens the original configuration through that same bounded owner/principal
+loader and compares the full captured identity and policy before opening the
+runtime, journal or listener. This is a startup revalidation boundary, not a
+lifetime configuration-revocation feed or protection against every later race.
+
 The installed adapter is `ProductCodexDispatcherV1`, supplied through
 `BrokerServerV1::with_dispatcher`. It requires a canonical operation descriptor
 owned by a principal distinct from the broker. The dispatcher retains the operation-directory device/inode and refuses path replacement while allowing new descriptors in the original directory. That descriptor binds the exact

@@ -24,6 +24,7 @@ pub(super) struct NativeTransactionEvidenceV1<'a> {
     pub(super) cache: &'a VerifiedAuthorityCacheWriteV1,
     pub(super) fence: &'a Fence,
     pub(super) verifier: &'a Online,
+    pub(super) installed_authority: Option<&'a RetainedInstalledAuthorityV2>,
     pub(super) checked_at: &'a Cell<i64>,
     pub(super) package: &'a PackageDeletionWriterGuard,
 }
@@ -41,6 +42,7 @@ impl<'a> From<&'a PreparedInitialOnlineMutationCompositionV1> for NativeTransact
             cache: &value.cache,
             fence: &value.fence,
             verifier: &value.verifier,
+            installed_authority: value.installed_authority.as_ref(),
             checked_at: &value.checked_at,
             package: &value.package,
         }
@@ -74,7 +76,8 @@ impl NativeTransactionEvidenceV1<'_> {
             .assert_current()
             .map_err(|e| error(e.to_string()))?;
         self.manifest.assert_current()?;
-        self.verifier.assert_process_current_v1()?;
+        self.verifier
+            .assert_transport_current_v1(OnlineAuthorityTransportV1::assert_current)?;
         self.startup.assert_retained_for_native_store_transaction(
             self.initial_inventory,
             self.verifier,
@@ -113,14 +116,15 @@ impl NativeTransactionEvidenceV1<'_> {
             )?;
         cache.assert_current(self.verifier, source, guard, &mut clock)?;
         self.fence
-            .assert_native_store_transaction_current_v1(recovery, self.verifier)?;
+            .assert_native_store_with_pins(recovery, self.verifier, || {
+                assert_product_owner_current(self.installed_authority, self.fence, self.verifier)
+            })?;
         self.package
             .assert_current()
             .map_err(|e| error(e.to_string()))?;
         guard.assert_bound_to(inventory)?;
         let completed = clock.now_millis()?;
         self.assert_evidence_valid_at(completed)?;
-        self.fence
-            .assert_native_store_transaction_valid_at_v1(recovery, completed)
+        self.fence.assert_native_store_time(recovery, completed)
     }
 }

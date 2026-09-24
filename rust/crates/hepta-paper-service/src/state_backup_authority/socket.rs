@@ -87,6 +87,16 @@ pub(crate) struct ObservedSocketAuthorityInputsV1 {
 type SocketBackup = PinnedStateBackupAuthorityV1<LocalStateAuthoritySocketTransportV1>;
 type SocketOnline = PinnedMutationAuthorityV1<LocalStateAuthoritySocketTransportV1>;
 
+/// One source-owned set of authority channels sharing the exact same initial
+/// kernel socket origin. No channel has sent an authority request at creation.
+pub(crate) struct SocketActivationAuthorityBundleV1 {
+    pub(crate) backup: SocketBackup,
+    pub(crate) authority: SocketOnline,
+    pub(crate) verifier: SocketOnline,
+    pub(crate) recovery_online: SocketOnline,
+    pub(crate) origin: LocalStateAuthoritySocketTransportV1,
+}
+
 impl ObservedSocketAuthorityInputsV1 {
     pub(crate) fn load(path: &Path, raw_file_pin: &str) -> Result<Self> {
         if !path.to_str().is_some_and(valid_path_text) {
@@ -190,6 +200,40 @@ impl ObservedSocketAuthorityInputsV1 {
     /// Consume the actual pinned inputs after the owning recovery service has
     /// checked its options and observed database scope. There is no transport
     /// argument: both clients originate from one real kernel observation.
+    pub(crate) fn connect_activation_bundle(self) -> Result<SocketActivationAuthorityBundleV1> {
+        self.assert_current()?;
+        let online_path = PathBuf::from(text(
+            &self.value,
+            "onlineMutationAuthorityConfigurationPath",
+        )?);
+        let online_pin =
+            text(&self.value, "onlineMutationAuthorityConfigurationSha256")?.to_owned();
+        let origin = LocalStateAuthoritySocketTransportV1::connect(&self.options)?;
+        let backup_transport = origin.same_origin_channel_v1();
+        let authority_transport = origin.same_origin_channel_v1();
+        let verifier_transport = origin.same_origin_channel_v1();
+        let recovery_transport = origin.same_origin_channel_v1();
+        let authority =
+            PinnedMutationAuthorityV1::load(&online_path, &online_pin, authority_transport)?;
+        let verifier =
+            PinnedMutationAuthorityV1::load(&online_path, &online_pin, verifier_transport)?;
+        let recovery_online =
+            PinnedMutationAuthorityV1::load(&online_path, &online_pin, recovery_transport)?;
+        self.assert_current()?;
+        let backup = SocketBackup::from_socket_inputs(self, backup_transport)?;
+        authority.assert_socket_current_v1()?;
+        verifier.assert_socket_current_v1()?;
+        recovery_online.assert_socket_current_v1()?;
+        origin.assert_origin_current_v1()?;
+        Ok(SocketActivationAuthorityBundleV1 {
+            backup,
+            authority,
+            verifier,
+            recovery_online,
+            origin,
+        })
+    }
+
     pub(crate) fn connect_recovery_pair(self) -> Result<(SocketBackup, SocketOnline)> {
         self.assert_current()?;
         let (backup_transport, online_transport) =

@@ -99,7 +99,7 @@ impl ProcessMutationAuthorityTransportV1 {
             )?,
         })
     }
-    pub(super) fn current(&self) -> Result<()> {
+    pub(crate) fn current(&self) -> Result<()> {
         self.process_configuration.assert_current()?;
         self.authority_configuration.assert_current()?;
         self.command.assert_current()

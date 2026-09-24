@@ -11,8 +11,8 @@ use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::VerifyingKey;
 use hepta_codex_protocol::{AgentRole, Sha256Digest};
 use hepta_codex_runtime::{
-    CgroupV2PolicyV1, CodexInvocationPolicyV1, DurableGatePolicyV1,
-    RuntimeIdentityPolicyV1, codex_parent_environment_policy_v1, inspect_codex_runtime_identity,
+    CgroupV2PolicyV1, CodexInvocationPolicyV1, DurableGatePolicyV1, RuntimeIdentityPolicyV1,
+    codex_parent_environment_policy_v1, inspect_codex_runtime_identity,
 };
 use sha2::{Digest, Sha256};
 
@@ -42,9 +42,7 @@ pub fn compose_product_codex_broker(
                 .runtime
                 .parent_environment
                 .iter()
-                .map(|(key, value)| {
-                    (OsString::from(key.as_str()), OsString::from(value.as_str()))
-                }),
+                .map(|(key, value)| (OsString::from(key.as_str()), OsString::from(value.as_str()))),
             &BTreeMap::new(),
         )
         .map_err(|_| ProductCodexBrokerDaemonError::Environment)?;
@@ -118,10 +116,8 @@ pub fn compose_product_codex_broker(
         configuration.trust_bundle_reader_gid,
         configuration.broker_uid,
     );
-    let loaded_bundle = load_signed_capability_trust_bundle(
-        &configuration.trust_bundle_path,
-        trust_source_policy,
-    )?;
+    let loaded_bundle =
+        load_signed_capability_trust_bundle(&configuration.trust_bundle_path, trust_source_policy)?;
     let verified_bundle = verify_capability_trust_bundle(
         &loaded_bundle.envelope,
         configuration.role,
@@ -221,12 +217,12 @@ fn decode_bundle_authority(
         }
         let value: [u8; 32] = bytes
             .try_into()
-            .map_err(|_| ProductCodexBrokerDaemonError::AuthorityKeys)?;
+            .map_err(|_| ProductCodexBrokerDaemonErDaemonError::AuthorityKeys)?;
         let key = VerifyingKey::from_bytes(&value)
             .map_err(|_| ProductCodexBrokerDaemonError::AuthorityKeys)?;
         keys.push((entry.key_id.clone(), key));
     }
-    CapabilityBundleAuthorityV1::new(keys).map_err(ProductCodexBrokerDaemonError::TrustBundle)
+    CapabilityBundleAuthorityV1::new(keys).map_err(ProductCodexBrokerDaemonErDaemonError::TrustBundle)
 }
 
 fn hash_path(domain: &str, path: &Path) -> Result<Sha256Digest, ProductCodexBrokerDaemonError> {

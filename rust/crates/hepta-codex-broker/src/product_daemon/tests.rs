@@ -5,11 +5,10 @@ use hepta_codex_protocol::{AgentRole, Sha256Digest};
 use crate::PeerPrincipalV1;
 
 use super::{
-    ProductBundleAuthorityKeyV1, ProductCgroupConfigurationV1,
-    ProductCodexBrokerConfigurationV1, ProductJournalConfigurationV1,
-    ProductListenerConfigurationV1, ProductProcessLimitsConfigurationV1,
-    ProductRuntimeConfigurationV1, ProductServerConfigurationV1,
-    config::validate_configuration_shape,
+    ProductBundleAuthorityKeyV1, ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationV1,
+    ProductJournalConfigurationV1, ProductListenerConfigurationV1,
+    ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
+    ProductServerConfigurationV1, config::validate_configuration_shape,
 };
 
 fn digest() -> Sha256Digest {

@@ -178,8 +178,9 @@ pub fn load_product_codex_broker_configuration(
     let parent = path
         .parent()
         .ok_or(ProductCodexBrokerDaemonError::ConfigurationPath)?;
-    let parent_metadata = fs::symlink_metadata(parent)
-        .map_err(|error| ProductCodexBrokerDaemonError::Filesystem("config_parent", error.kind()))?;
+    let parent_metadata = fs::symlink_metadata(parent).map_err(|error| {
+        ProductCodexBrokerDaemonError::Filesystem("config_parent", error.kind())
+    })?;
     let first = fs::symlink_metadata(path)
         .map_err(|error| ProductCodexBrokerDaemonError::Filesystem("config", error.kind()))?;
     if !parent_metadata.is_dir()
@@ -198,9 +199,9 @@ pub fn load_product_codex_broker_configuration(
         .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
         .open(path)
         .map_err(|error| ProductCodexBrokerDaemonError::Filesystem("config_open", error.kind()))?;
-    let opened = file
-        .metadata()
-        .map_err(|error| ProductCodexBrokerDaemonError::Filesystem("config_metadata", error.kind()))?;
+    let opened = file.metadata().map_err(|error| {
+        ProductCodexBrokerDaemonError::Filesystem("config_metadata", error.kind())
+    })?;
     if !same_file(&first, &opened) {
         return Err(ProductCodexBrokerDaemonError::ConfigurationChanged);
     }
@@ -209,8 +210,9 @@ pub fn load_product_codex_broker_configuration(
         .take(MAXIMUM_CONFIGURATION_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| ProductCodexBrokerDaemonError::Filesystem("config_read", error.kind()))?;
-    let after = fs::symlink_metadata(path)
-        .map_err(|error| ProductCodexBrokerDaemonError::Filesystem("config_recheck", error.kind()))?;
+    let after = fs::symlink_metadata(path).map_err(|error| {
+        ProductCodexBrokerDaemonError::Filesystem("config_recheck", error.kind())
+    })?;
     if bytes.is_empty()
         || bytes.len() as u64 > MAXIMUM_CONFIGURATION_BYTES
         || !same_file(&opened, &after)
@@ -280,7 +282,7 @@ pub(super) fn validate_configuration_shape(
         &configuration.journal.path,
         &configuration.runtime.executable,
         &configuration.runtime.codex_home,
-        &configuration.gate_executable,
+         &configuration.gate_executable,
         &configuration.gate_state_directory,
         &configuration.cgroup.delegated_root,
     ] {

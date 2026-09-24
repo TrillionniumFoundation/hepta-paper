@@ -73,6 +73,54 @@ journal. `read_codex_prepared_output` returns bytes only after the prepared
 receipt and execution-evidence identities are recomputed. A prepared receipt is
 provider/workspace evidence; it is not campaign-write authority.
 
+## Consumer-visible results and acknowledgement recovery
+
+The normal authenticated `BrokerServerV1` request now returns the existing V1
+`Prepared` response when the durable journal is `ResultPrepared`, including
+its exact prepared-receipt digest. `Acknowledged` includes both original
+prepared and acknowledgement digests. The response is derived from a freshly
+loaded, validated journal, not the dispatch callback's return value. Other
+states retain `Reserved`/`Existing` with their actual state and no fabricated
+prepared identity. Reservation/existing telemetry still counts admission, not
+provider completion. No new wire fields or response version are introduced.
+
+The same signed request can query its original result while its existing
+capability is valid. It never dispatches an existing operation again. Conflicting
+request bodies still fail journal admission. Losing a response or restarting the
+listener does not reset the operation, and a preflight failure is not a prepared
+result. This response transports identities only, not artifact bytes, a writer
+capability, a scientific verdict or a campaign-commit receipt. Full service-side
+result transport and the authenticated author/reviewer consumer remain separate.
+
+`verify_persisted_prepared_result_acknowledgement` still reloads the actual
+request and journal and applies the original signature, key and age policy.
+It also accepts an already acknowledged operation only when every subject field,
+the original signed-body digest and terminal timestamp match. Applying this
+verified duplicate returns the original terminal journal without another write.
+A different validly signed acknowledgement for the same operation is a conflict.
+Expired/future acknowledgements remain rejected; historical observation is not
+permission to renew or reissue an acknowledgement with changed fields.
+
+Two writers which verified the same prepared state may race. A definite
+`ResultPrepared`-to-`Acknowledged` CAS conflict is resolved by reading back and
+checking the exact committed acknowledgement. Other database/persistence errors
+remain errors, including a commit whose outcome is unknown; they are not
+converted to success and cannot authorize provider re-execution.
+
+The `service_lifecycle` target includes actual signed socket admission, real
+SQLite state, the bounded credential-free process/gate fixture, dropped replies,
+listener restart, acknowledgement reopen, conflicting signed inputs and rollback
+at both journal fault points. Build the pre-exec gate before running this target:
+
+```sh
+cargo build --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --bins
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-broker --test service_lifecycle
+```
+
+These are source recovery/transport regressions, not live model or installed
+cross-principal qualification. The full 57-route acceptance denominator, actual
+production writer transfer and Node retirement do not change.
+
 ## Restart containment
 
 The [cgroup ownership contract](../hepta-cgroup-containment/HANDOFF.md) specifies

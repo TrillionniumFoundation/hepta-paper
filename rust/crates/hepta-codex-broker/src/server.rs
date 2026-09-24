@@ -525,10 +525,7 @@ fn spawn_worker(
                 });
             match reservation {
                 Ok(reservation) => {
-                    let (kind, mut journal_state) = match reservation.outcome {
-                        ReservationOutcomeV1::Reserved(journal) => (true, journal.current_state),
-                        ReservationOutcomeV1::Existing(journal) => (false, journal.current_state),
-                    };
+                    let kind = matches!(reservation.outcome, ReservationOutcomeV1::Reserved(_));
                     if kind && let Some(dispatcher) = &dispatcher {
                         if dispatcher
                             .dispatch(&mut journal, &reservation.operation_id, &shutdown)
@@ -551,25 +548,19 @@ fn spawn_worker(
                                 )?;
                             }
                         }
-                        journal_state = journal
-                            .load_journal(&reservation.operation_id)?
-                            .current_state;
                     }
-                    let response = if kind {
+                    let observed = journal.load_journal(&reservation.operation_id)?;
+                    if observed.operation_id != reservation.operation_id
+                        || observed.request_hash != reservation.request_hash
+                    {
+                        return Err(BrokerServerError::ResultEvidenceMissing);
+                    }
+                    let response = response_from_durable_journal(&observed, kind)?;
+                    if kind {
                         telemetry.reserved();
-                        BrokerResponseV1::reserved(
-                            reservation.operation_id,
-                            reservation.request_hash,
-                            journal_state,
-                        )
                     } else {
                         telemetry.existing();
-                        BrokerResponseV1::existing(
-                            reservation.operation_id,
-                            reservation.request_hash,
-                            journal_state,
-                        )
-                    };
+                    }
                     if write_response_frame(&mut stream, &response, response_policy).is_err() {
                         telemetry.response_write_failed();
                     }
@@ -608,6 +599,43 @@ fn spawn_worker(
         Ok(())
     });
     handle.map_err(|error| BrokerServerError::WorkerSpawn(error.kind()))
+}
+
+// Use the existing V1 prepared/acknowledged response shapes. A reservation
+// alone is not a completed result, and a duplicate request must return the
+// original durable result identity without calling the dispatcher again.
+fn response_from_durable_journal(
+    journal: &hepta_codex_journal::OperationJournalV1,
+    newly_reserved: bool,
+) -> Result<BrokerResponseV1, BrokerServerError> {
+    use hepta_codex_journal::OperationState;
+    let evidence = |state| {
+        journal
+            .transitions
+            .iter()
+            .find(|transition| transition.to == state)
+            .and_then(|transition| transition.evidence_hash.clone())
+            .ok_or(BrokerServerError::ResultEvidenceMissing)
+    };
+    let operation = journal.operation_id.clone();
+    let request = journal.request_hash.clone();
+    let response = match journal.current_state {
+        OperationState::ResultPrepared => BrokerResponseV1::prepared(
+            operation,
+            request,
+            evidence(OperationState::ResultPrepared)?,
+        ),
+        OperationState::Acknowledged => BrokerResponseV1::acknowledged(
+            operation,
+            request,
+            evidence(OperationState::ResultPrepared)?,
+            evidence(OperationState::Acknowledged)?,
+        ),
+        state if newly_reserved => BrokerResponseV1::reserved(operation, request, state),
+        state => BrokerResponseV1::existing(operation, request, state),
+    };
+    response.validate()?;
+    Ok(response)
 }
 
 enum ServerReservationError {
@@ -667,6 +695,8 @@ pub enum BrokerServerError {
     PeerPolicyBindingMismatch,
     #[error("startup process identity mismatch requires manual recovery: {0}")]
     StartupProcessIdentityMismatch(String),
+    #[error("durable broker result identity is absent or inconsistent")]
+    ResultEvidenceMissing,
     #[error("broker numeric conversion overflowed")]
     NumericOverflow,
     #[error("broker worker queue lock was poisoned")]

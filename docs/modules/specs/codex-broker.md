@@ -126,6 +126,15 @@ Without this adapter, admission/reservation is not provider execution. The
 is the executable API runbook; credential and installed daemon composition remain
 separate deployment inputs.
 
+The normal authenticated RPC now exposes the original journal-bound prepared
+and acknowledged receipt digests using the existing V1 response kinds. Exact
+request retries do not redispatch. Exact signed acknowledgement replay retains
+its original subject/time/signature checks and returns the durable terminal
+without appending again; conflicting acknowledgements remain rejected. See the
+[consumer recovery contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md#consumer-visible-results-and-acknowledgement-recovery)
+for lost-response/restart behavior, actual test commands and the still-missing
+artifact transport and campaign-consumer integration.
+
 Before listener readiness call `recover_codex_dispatch_containment`, then the
 normal journal reconciliation. A replaced cgroup or unresolved released
 operation blocks admission; do not adopt a numeric PID or synthesize success.

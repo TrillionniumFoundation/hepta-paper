@@ -526,27 +526,27 @@ fn spawn_worker(
             match reservation {
                 Ok(reservation) => {
                     let kind = matches!(reservation.outcome, ReservationOutcomeV1::Reserved(_));
-                    if kind && let Some(dispatcher) = &dispatcher {
-                        if dispatcher
+                    if kind
+                        && let Some(dispatcher) = &dispatcher
+                        && dispatcher
                             .dispatch(&mut journal, &reservation.operation_id, &shutdown)
                             .is_err()
-                        {
-                            // The durable state carries failure/ambiguity; never resubmit this operation.
-                            // An error before a state transition is an internal dispatch rejection.
-                            let state = journal
-                                .load_journal(&reservation.operation_id)?
-                                .current_state;
-                            if state == hepta_codex_journal::OperationState::Reserved {
-                                journal.append_transition(
-                                    &reservation.operation_id,
-                                    state,
-                                    hepta_codex_journal::OperationState::RejectedPreflight,
-                                    clock.now_unix_ms()?,
-                                    None,
-                                    Some("codex_dispatch_rejected".to_owned()),
-                                    FaultInjectionPointV1::None,
-                                )?;
-                            }
+                    {
+                        // The durable state carries failure/ambiguity; never resubmit this operation.
+                        // An error before a state transition is an internal dispatch rejection.
+                        let state = journal
+                            .load_journal(&reservation.operation_id)?
+                            .current_state;
+                        if state == hepta_codex_journal::OperationState::Reserved {
+                            journal.append_transition(
+                                &reservation.operation_id,
+                                state,
+                                hepta_codex_journal::OperationState::RejectedPreflight,
+                                clock.now_unix_ms()?,
+                                None,
+                                Some("codex_dispatch_rejected".to_owned()),
+                                FaultInjectionPointV1::None,
+                            )?;
                         }
                     }
                     let observed = journal.load_journal(&reservation.operation_id)?;

@@ -35,7 +35,7 @@ pub fn compose_product_codex_broker(
     loaded: LoadedProductCodexBrokerConfigurationV1,
     shutdown: Arc<AtomicBool>,
 ) -> Result<BrokerServerV1, ProductCodexBrokerDaemonError> {
-    let configuration = loaded.configuration;
+    let configuration = loaded.into_current_configuration()?;
     let parent_environment = codex_parent_environment_policy_v1()
         .build(
             configuration
@@ -205,7 +205,7 @@ pub fn run_product_codex_broker(
     .map_err(ProductCodexBrokerDaemonError::Server)
 }
 
-fn decode_bundle_authority(
+pub(super) fn decode_bundle_authority(
     configuration: &ProductCodexBrokerConfigurationV1,
 ) -> Result<CapabilityBundleAuthorityV1, ProductCodexBrokerDaemonError> {
     let mut keys = Vec::with_capacity(configuration.trust_bundle_authority_keys.len());

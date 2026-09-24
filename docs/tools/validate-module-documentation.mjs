@@ -165,12 +165,19 @@ function sectionsOf(source) {
 
 function validateSpec(moduleId, record, source, headings, failures) {
   const sections = sectionsOf(source);
-  if (/\b(?:TODO|TBD|PLACEHOLDER|FIXME)\b/i.test(source)) failures.push(`${moduleId}: specification contains placeholder language`);
   for (const heading of headings) {
     const matches = sections.get(heading) || [];
     if (matches.length === 0) failures.push(`${moduleId}: missing heading ## ${heading}`);
     else if (matches.length !== 1) failures.push(`${moduleId}: duplicate heading ## ${heading}`);
-    else if (!matches[0].join('\n').trim()) failures.push(`${moduleId}: empty section ## ${heading}`);
+    else {
+      const body = matches[0].join('\n').trim();
+      if (!body) failures.push(`${moduleId}: empty section ## ${heading}`);
+      // A bare marker is not a section. A documented defect or limitation may
+      // use these words; banning them throughout prose does not prove closure.
+      else if (/^(?:TODO|TBD|PLACEHOLDER|FIXME)[\s.:;!-]*$/i.test(body)) {
+        failures.push(`${moduleId}: placeholder-only section ## ${heading}`);
+      }
+    }
   }
   const identity = sections.get('Identity')?.[0] || [];
   const fields = {

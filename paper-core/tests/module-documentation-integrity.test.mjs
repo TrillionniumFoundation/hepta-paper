@@ -250,3 +250,40 @@ test('equivalent prose does not require magic authority keywords', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('documented unfinished work is allowed without granting authority', () => {
+  const root = createFixture();
+  try {
+    fs.appendFileSync(path.join(root, WRITER_SPEC),
+      '\nTODO: GAP-HOST-002 retains its restore-drill and target-host evidence requirements. This note grants no additional authority.\n');
+    const result = validateModuleDocumentation({ root });
+    assert.equal(result.ok, true, result.failures.join('\n'));
+    changeJson(root, WRITER_MANIFEST, (value) => {
+      value.sideEffectClasses.push('submission');
+    });
+    const escalated = validateModuleDocumentation({ root });
+    assert.equal(escalated.ok, false);
+    assert.match(escalated.failures.join('\n'), /authority ceiling/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const marker of ['TODO', 'TBD', 'PLACEHOLDER', 'FIXME']) {
+  test(`a bare ${marker} marker cannot replace a required section`, () => {
+    const root = createFixture();
+    try {
+      const file = path.join(root, WRITER_SPEC);
+      const source = fs.readFileSync(file, 'utf8').replace(
+        /## Inputs and outputs[\s\S]*?(?=## State and authority)/,
+        `## Inputs and outputs\n\n${marker}\n\n`,
+      );
+      fs.writeFileSync(file, source);
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, false);
+      assert.match(result.failures.join('\n'), /placeholder-only section/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}

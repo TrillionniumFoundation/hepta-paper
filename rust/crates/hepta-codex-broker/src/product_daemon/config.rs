@@ -163,10 +163,44 @@ impl ProductCodexBrokerConfigurationIdentityV1 {
     }
 }
 
+/// Configuration captured by the installed-principal loader. Callers may inspect
+/// it but cannot replace its policy while retaining a previously checked identity.
+///
+/// ```compile_fail
+/// use hepta_codex_broker::{LoadedProductCodexBrokerConfigurationV1, ProductCodexBrokerConfigurationV1};
+/// fn substitute(loaded: &mut LoadedProductCodexBrokerConfigurationV1,
+///               replacement: ProductCodexBrokerConfigurationV1) {
+///     loaded.configuration = replacement;
+/// }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadedProductCodexBrokerConfigurationV1 {
-    pub configuration: ProductCodexBrokerConfigurationV1,
-    pub identity: ProductCodexBrokerConfigurationIdentityV1,
+    pub(super) configuration: ProductCodexBrokerConfigurationV1,
+    pub(super) identity: ProductCodexBrokerConfigurationIdentityV1,
+}
+
+impl LoadedProductCodexBrokerConfigurationV1 {
+    #[must_use]
+    pub fn configuration(&self) -> &ProductCodexBrokerConfigurationV1 {
+        &self.configuration
+    }
+
+    #[must_use]
+    pub fn identity(&self) -> &ProductCodexBrokerConfigurationIdentityV1 {
+        &self.identity
+    }
+
+    /// Recheck the captured file and principal before opening a runtime, journal
+    /// or listener. This is a bounded preflight, not a lifetime revocation feed.
+    pub(super) fn into_current_configuration(
+        self,
+    ) -> Result<ProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError> {
+        let current = load_product_codex_broker_configuration(self.identity.canonical_path())?;
+        if current != self {
+            return Err(ProductCodexBrokerDaemonError::ConfigurationChanged);
+        }
+        Ok(current.configuration)
+    }
 }
 
 pub fn load_product_codex_broker_configuration(

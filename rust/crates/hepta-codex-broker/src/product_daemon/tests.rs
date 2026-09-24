@@ -1,14 +1,17 @@
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 
+use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::SigningKey;
 use hepta_codex_protocol::{AgentRole, Sha256Digest};
 
-use crate::PeerPrincipalV1;
+use crate::{PeerPrincipalV1, TrustBundleError};
 
 use super::{
     ProductBundleAuthorityKeyV1, ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationV1,
-    ProductJournalConfigurationV1, ProductListenerConfigurationV1,
+    ProductCodexBrokerDaemonError, ProductJournalConfigurationV1, ProductListenerConfigurationV1,
     ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
-    ProductServerConfigurationV1, config::validate_configuration_shape,
+    ProductServerConfigurationV1, compose::decode_bundle_authority,
+    config::validate_configuration_shape,
 };
 
 fn digest() -> Sha256Digest {
@@ -124,4 +127,55 @@ fn authority_collapsing_or_relative_paths_fail_shape_validation() {
     let mut relative = configuration();
     relative.journal.path = PathBuf::from("relative.sqlite");
     assert!(validate_configuration_shape(&relative).is_err());
+}
+
+fn signing_authority_configuration() -> ProductCodexBrokerConfigurationV1 {
+    let mut value = configuration();
+    let key = SigningKey::from_bytes(&[7_u8; 32]).verifying_key();
+    value.trust_bundle_authority_keys[0].public_key_base64 =
+        Base64UrlUnpadded::encode_string(key.as_bytes());
+    value
+}
+
+#[test]
+fn authority_key_decoder_accepts_real_keys_and_rejects_bad_encodings() {
+    let valid = signing_authority_configuration();
+    assert!(decode_bundle_authority(&valid).is_ok());
+    for encoded in ["", "AA", "not_base64!"] {
+        let mut invalid = valid.clone();
+        invalid.trust_bundle_authority_keys[0].public_key_base64 = encoded.to_owned();
+        assert!(matches!(
+            decode_bundle_authority(&invalid),
+            Err(ProductCodexBrokerDaemonError::AuthorityKeys)
+        ));
+    }
+    let mut padded = valid;
+    padded.trust_bundle_authority_keys[0]
+        .public_key_base64
+        .push('=');
+    assert!(matches!(
+        decode_bundle_authority(&padded),
+        Err(ProductCodexBrokerDaemonError::AuthorityKeys)
+    ));
+}
+
+#[test]
+fn authority_key_decoder_preserves_duplicate_and_weak_key_denials() {
+    let mut duplicate = signing_authority_configuration();
+    duplicate
+        .trust_bundle_authority_keys
+        .push(duplicate.trust_bundle_authority_keys[0].clone());
+    assert!(matches!(
+        decode_bundle_authority(&duplicate),
+        Err(ProductCodexBrokerDaemonError::TrustBundle(
+            TrustBundleError::DuplicateAuthorityKey(_)
+        ))
+    ));
+    let weak = configuration();
+    assert!(matches!(
+        decode_bundle_authority(&weak),
+        Err(ProductCodexBrokerDaemonError::TrustBundle(
+            TrustBundleError::WeakAuthorityKey(_)
+        ))
+    ));
 }

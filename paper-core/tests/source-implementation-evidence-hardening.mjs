@@ -406,7 +406,16 @@ function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   if (matches.length !== 1) fail('cargo_declared_test_not_unique_live', `${entry.path}:${symbol.name}:${matches.length}`);
 
   const discoveryArgs = [...discoveryPrefix, selector, '--', '--exact', '--list'];
-  const stdout = run(runtime.cargo.path, discoveryArgs, { cwd: path.join(root, 'rust'), timeout: command.timeoutSeconds * 1000 });
+  // Discovery may be the first Cargo command in a clean prospective-merge target.
+  // Keep the exact selector/list proof, but give cold dependency + test-harness
+  // compilation enough time instead of inheriting a historical 300s per-test
+  // execution budget. The enclosing workflow still has its independent job
+  // deadline, so this does not turn a hung discovery into an unbounded pass.
+  const discoveryTimeoutMs = Math.max(command.timeoutSeconds * 1000, 600_000);
+  const stdout = run(runtime.cargo.path, discoveryArgs, {
+    cwd: path.join(root, 'rust'),
+    timeout: discoveryTimeoutMs,
+  });
   const discovered = stdout.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.endsWith(': test'));
   if (discovered.length !== 1 || discovered[0] !== `${selector}: test`) {
     fail('cargo_discovery_binding_failed', `${selector}:${JSON.stringify(discovered)}`);

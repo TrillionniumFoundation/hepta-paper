@@ -282,7 +282,7 @@ pub(super) fn validate_configuration_shape(
         &configuration.journal.path,
         &configuration.runtime.executable,
         &configuration.runtime.codex_home,
-         &configuration.gate_executable,
+        &configuration.gate_executable,
         &configuration.gate_state_directory,
         &configuration.cgroup.delegated_root,
     ] {

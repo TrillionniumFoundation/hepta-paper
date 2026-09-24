@@ -117,11 +117,11 @@ fn configuration_json_is_closed_and_absolute() {
 
 #[test]
 fn authority_collapsing_or_relative_paths_fail_shape_validation() {
-    let mut configuration = configuration();
-    configuration.operation_authority_uid = configuration.broker_uid;
-    assert!(validate_configuration_shape(&configuration).is_err());
+    let mut collapsed = configuration();
+    collapsed.operation_authority_uid = collapsed.broker_uid;
+    assert!(validate_configuration_shape(&collapsed).is_err());
 
-    let mut configuration = configuration();
-    configuration.journal.path = PathBuf::from("relative.sqlite");
-    assert!(validate_configuration_shape(&configuration).is_err());
+    let mut relative = configuration();
+    relative.journal.path = PathBuf::from("relative.sqlite");
+    assert!(validate_configuration_shape(&relative).is_err());
 }

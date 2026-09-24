@@ -217,12 +217,12 @@ fn decode_bundle_authority(
         }
         let value: [u8; 32] = bytes
             .try_into()
-            .map_err(|_| ProductCodexBrokerDaemonErDaemonError::AuthorityKeys)?;
+            .map_err(|_| ProductCodexBrokerDaemonError::AuthorityKeys)?;
         let key = VerifyingKey::from_bytes(&value)
             .map_err(|_| ProductCodexBrokerDaemonError::AuthorityKeys)?;
         keys.push((entry.key_id.clone(), key));
     }
-    CapabilityBundleAuthorityV1::new(keys).map_err(ProductCodexBrokerDaemonErDaemonError::TrustBundle)
+    CapabilityBundleAuthorityV1::new(keys).map_err(ProductCodexBrokerDaemonError::TrustBundle)
 }
 
 fn hash_path(domain: &str, path: &Path) -> Result<Sha256Digest, ProductCodexBrokerDaemonError> {

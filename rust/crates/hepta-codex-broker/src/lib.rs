@@ -26,6 +26,7 @@ mod listener;
 mod output_schema;
 mod peer;
 mod prepared_result;
+mod product;
 mod response;
 mod server;
 mod service;
@@ -50,8 +51,8 @@ pub use capability::{
     capability_signing_bytes, verify_request_capability,
 };
 pub use codex_dispatch::{
-    CodexDispatchAuthorityV1, CodexDispatchError, CodexDispatchPlanV1, CodexDispatchResultV1,
-    run_reserved_codex_operation,
+    CodexDispatchAuthorityV1, CodexDispatchAuthorizationPointV1, CodexDispatchError,
+    CodexDispatchPlanV1, CodexDispatchResultV1, run_reserved_codex_operation,
 };
 pub use dispatch_backup::{
     CodexDispatchBackupBundleReceiptV1, CodexDispatchBackupEntryV1, CodexDispatchBackupManifestV1,
@@ -83,6 +84,10 @@ pub use peer::{
 };
 pub use prepared_result::{
     BrokerPreparedResultReceiptV1, finalize_codex_prepared_result, read_codex_prepared_output,
+};
+pub use product::{
+    ProductCodexDispatcherConfigurationV1, ProductCodexDispatcherV1, ProductCodexError,
+    ProductCodexOperationV1, ProductOperationSourceIdentityV1,
 };
 pub use response::{
     BrokerMachineCodeV1, BrokerResponseError, BrokerResponseFramePolicyV1, BrokerResponseKindV1,

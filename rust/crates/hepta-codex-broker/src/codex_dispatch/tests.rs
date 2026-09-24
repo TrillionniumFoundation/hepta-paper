@@ -45,6 +45,7 @@ impl CodexDispatchAuthorityV1 for TestAuthority {
         _: &CodexExecutionRequestV1,
         _: &CodexRuntimeIdentityV1,
         _: &CodexInvocationV1,
+        _: CodexDispatchAuthorizationPointV1,
         _: u64,
     ) -> Result<(), CodexDispatchError> {
         Ok(())
@@ -209,6 +210,7 @@ printf '%s\n' '{{"type":"thread.started","thread_id":"thread-1"}}' '{{"type":"tu
             ),
             containment: ProcessContainmentModeV1::ProcessGroupOnly,
             authority: &TestAuthority,
+            authority_evidence_hash: hash_bytes(b"test-authority").unwrap(),
             clock: &Clock,
             cancelled,
         }
@@ -343,6 +345,10 @@ fn actual_cli_output_is_durable_schema_validated_and_never_replayed() {
         OperationState::ResultPrepared
     );
     assert_eq!(prepared.output_hash, result.output_hash);
+    assert_eq!(
+        prepared.authority_evidence_hash,
+        hash_bytes(b"test-authority").unwrap()
+    );
     assert_eq!(prepared.token_usage.unwrap().input_tokens, 1);
     let replay = crate::finalize_codex_prepared_result(
         &mut store,

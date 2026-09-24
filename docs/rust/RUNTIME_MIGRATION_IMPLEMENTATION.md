@@ -16,7 +16,7 @@ qualification receipt, deployment authorization, or declaration that Node is ret
 | Durable campaign authority | Writer lease, atomic state/accounting/event and full result/receipt log, crash recovery | [Campaign writer](../../rust/crates/hepta-campaign-writer/README.md) |
 | Durable control execution | Persistent sequencer, replay validation and independent artifact-byte verifier | [Control plane](../../rust/crates/hepta-control-plane/README.md) |
 | Runnable service | CLI/stdin composition, CAS, dispatch intent, native jobs and pinned process workers | [Service](../../rust/crates/hepta-paper-service/README.md) |
-| Real broker dispatch | Authenticated request, role invocation, pre-exec gate, cgroup containment, output-schema validation, durable recovery | [Broker dispatch](../../rust/crates/hepta-codex-broker/DISPATCH.md) |
+| Real broker dispatch | Authenticated request plus an authority-owned product operation descriptor, role invocation, pre-exec gate, cgroup containment, output/schema and workspace-mutation validation, durable recovery | [Broker dispatch](../../rust/crates/hepta-codex-broker/DISPATCH.md) |
 | Cooperative single writer | Durable journal, Node adapter fencing, backup/restore and same-database handoff/rollback | [Cutover](../../rust/crates/hepta-cutover/README.md) |
 | Native authority inspection | Operational and owner evidence, nested-runtime qualification, journal discovery and signed target registries | [Authority inspection](../modules/NATIVE_AUTHORITY_INSPECTION_HANDOFF.md) |
 | Local integrity-key lifecycle | Read-only status/loading and create-once Ed25519 provisioning, locking and crash-safe no-clobber publication | [Integrity keys](../modules/RELEASE_INTEGRITY_KEY_HANDOFF.md) |
@@ -68,12 +68,17 @@ records its actual language and pinned executable/source configuration; it never
 counts a Node worker as a native Rust rewrite. The local process runner supervises
 trusted code but does not enforce a production security sandbox.
 
-The real broker API requires a caller-supplied, independently verified production
-authority implementation. It checks authority at irreversible boundaries and
-uses the existing gate and cgroup containment. Schema-validated provider output
-does not automatically become an accepted campaign result: workspace mutation,
-scientific validation, prepared-result integration and sequencer acceptance remain
-separate contracts. No universal accept-all authority adapter is installed.
+The real broker installs `ProductCodexDispatcherV1` rather than a universal
+accept-all authority. A separate operation principal owns canonical descriptors,
+prompt/input-manifest/schema bytes and exact campaign, role, lease, workspace,
+mutation and budget bindings. The broker revalidates those inputs at preflight,
+physical release and postflight; postflight permits only mutations subsequently
+accepted by the durable workspace owner. Descriptor identity is retained in the
+prepared receipt. The existing gate and cgroup containment remain mandatory.
+Schema-validated provider output still does not automatically become an accepted
+campaign result: scientific validation, prepared-result acknowledgement and
+sequencer acceptance remain separate contracts. Installed daemon configuration,
+real provider credentials and author/reviewer canaries remain deployment evidence.
 
 Broker recovery includes a quiesced backup bundle containing the journal and
 durable result sidecars. Restore verifies an independently retained manifest hash

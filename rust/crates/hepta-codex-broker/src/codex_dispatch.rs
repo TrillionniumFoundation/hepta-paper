@@ -31,16 +31,31 @@ use std::{
 };
 use thiserror::Error;
 
+/// Exact physical boundary at which dispatch authority is revalidated.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CodexDispatchAuthorizationPointV1 {
+    /// Before a blocked child is created. Mutable workspace state must still
+    /// equal the authority-owned baseline.
+    Preflight,
+    /// Immediately before the blocked child is released. Mutable workspace
+    /// state must still equal the authority-owned baseline.
+    PhysicalRelease,
+    /// After child and containment cleanup, before provider output is accepted.
+    /// Legitimate workspace mutations are validated by the prepared-result
+    /// owner rather than being confused with pre-release input drift.
+    Postflight,
+}
+
 /// Deployment integration must verify accepted external qualification, current lease,
 /// request input/workspace/mutation bindings, role-separated principal and home,
 /// and budget authority. There is intentionally no permissive implementation.
-/// Called before spawn, immediately before release, and before accepting output.
 pub trait CodexDispatchAuthorityV1: Send + Sync {
     fn authorize(
         &self,
         request: &CodexExecutionRequestV1,
         runtime: &CodexRuntimeIdentityV1,
         invocation: &CodexInvocationV1,
+        point: CodexDispatchAuthorizationPointV1,
         now_unix_ms: u64,
     ) -> Result<(), CodexDispatchError>;
 }
@@ -64,6 +79,7 @@ pub struct CodexDispatchPlanV1<'a> {
     pub gate_policy: DurableGatePolicyV1,
     pub containment: ProcessContainmentModeV1,
     pub authority: &'a dyn CodexDispatchAuthorityV1,
+    pub authority_evidence_hash: Sha256Digest,
     pub clock: &'a dyn BrokerClockV1,
     pub cancelled: &'a AtomicBool,
 }
@@ -178,8 +194,13 @@ fn run_reserved_codex_operation_inner(
         }
         let schema: Value = serde_json::from_slice(&schema_bytes)?;
         validate_schema(&schema).map_err(CodexDispatchError::Schema)?;
-        plan.authority
-            .authorize(&request, &before, &invocation, now(&plan)?)?;
+        plan.authority.authorize(
+            &request,
+            &before,
+            &invocation,
+            CodexDispatchAuthorizationPointV1::Preflight,
+            now(&plan)?,
+        )?;
         // Persist the exact before-inventory before provider release. A crash after
         // execution can then validate mutations without re-running the provider.
         crate::prepared_result::capture_workspace_before_dispatch(
@@ -189,6 +210,7 @@ fn run_reserved_codex_operation_inner(
             uid,
             &plan.gate_policy.state_directory,
             plan.mutation_policy,
+            &plan.authority_evidence_hash,
         )?;
         Ok((before, invocation, schema))
     })();
@@ -301,8 +323,13 @@ fn run_reserved_codex_operation_inner(
                 "output_not_empty_before_release",
             ));
         }
-        plan.authority
-            .authorize(&request, &before, &invocation, now(&plan)?)?;
+        plan.authority.authorize(
+            &request,
+            &before,
+            &invocation,
+            CodexDispatchAuthorizationPointV1::PhysicalRelease,
+            now(&plan)?,
+        )?;
         check_deadline(&request, &plan)?;
         blocked.restrict_execution_timeout(
             request
@@ -383,8 +410,13 @@ fn run_reserved_codex_operation_inner(
         let after = inspect_runtime(&plan)?;
         verify_runtime_identity_unchanged(&before, &after)?;
         let postflight = inspect_codex_invocation_postflight(&invocation, true)?;
-        plan.authority
-            .authorize(&request, &after, &invocation, now(&plan)?)?;
+        plan.authority.authorize(
+            &request,
+            &after,
+            &invocation,
+            CodexDispatchAuthorizationPointV1::Postflight,
+            now(&plan)?,
+        )?;
         if process.stdout_truncated || process.stdout_bytes != process.stdout_tail.len() as u64 {
             return Err(CodexDispatchError::InvalidBinding("complete_event_stream"));
         }
@@ -673,6 +705,8 @@ pub enum CodexDispatchError {
     RuntimeIdentity(#[from] hepta_codex_runtime::RuntimeIdentityError),
     #[error(transparent)]
     RuntimeDrift(#[from] hepta_codex_runtime::RuntimeQualificationError),
+    #[error(transparent)]
+    Product(#[from] crate::ProductCodexError),
 }
 
 #[cfg(test)]

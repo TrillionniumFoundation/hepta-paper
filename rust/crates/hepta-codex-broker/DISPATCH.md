@@ -116,10 +116,18 @@ creation uses a private journal-copy path only while exclusive dispatch quiescen
 and sidecar checks are held. Recovery takes the same exclusive lock, so it cannot
 kill a concurrently executing operation.
 
-`BrokerServerV1::with_dispatcher` installs a `BrokerOperationDispatcherV1` adapter.
-Its `recover_before_ready` composes containment recovery; `dispatch` resolves local
-bound inputs and calls the qualified API. Only fresh reservations are dispatched.
-Without an adapter the server continues to provide admission/reservation only.
+`BrokerServerV1::with_dispatcher` installs the product
+`ProductCodexDispatcherV1`. It consumes one canonical, authority-owned
+`ProductCodexOperationV1` per operation and binds role/task,
+campaign/node/attempt, lease/revision, validity, prompt and input-manifest
+files, actual initial workspace inventory, schema, mutation policy,
+network/approval posture and cost/output/event limits. The operation-authority
+UID must differ from the broker UID; the directory device/inode is retained for the dispatcher lifetime, so replacement is not adopted. Descriptor, prompt and input-manifest bytes
+are checked before provider release and at every live authority revalidation;
+the descriptor digest enters the prepared receipt. Its `recover_before_ready`
+composes containment recovery and completes only deterministic local prepared
+states without provider re-execution. Without this adapter the server continues
+to provide admission/reservation only.
 
 ## Server worker ownership
 

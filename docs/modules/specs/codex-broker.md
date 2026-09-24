@@ -98,11 +98,19 @@ Track readiness, admission/dispatch latency, busy and rejection rates, queue dep
 
 ## Operational runbook
 
-The embedding host must install `BrokerOperationDispatcherV1` through
-`BrokerServerV1::with_dispatcher`. Without this adapter, admission/reservation
-is not provider execution. The [dispatch operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md)
-is the executable API runbook; this specification does not invent a generic
-production launch command or provision credentials.
+The installed adapter is `ProductCodexDispatcherV1`, supplied through
+`BrokerServerV1::with_dispatcher`. It requires a canonical operation descriptor
+owned by a principal distinct from the broker. The dispatcher retains the operation-directory device/inode and refuses path replacement while allowing new descriptors in the original directory. That descriptor binds the exact
+campaign attempt, role/task, lease/revision, prompt and input-manifest bytes,
+initial workspace inventory, output schema, mutation policy, validity window and
+resource/cost ceilings. These authority inputs are revalidated before provider
+release and again before accepting provider output; the postflight check permits
+only workspace changes subsequently accepted by the durable mutation owner. The
+descriptor digest is carried into the durable prepared receipt.
+Without this adapter, admission/reservation is not provider execution. The
+[dispatch operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md)
+is the executable API runbook; credential and installed daemon composition remain
+separate deployment inputs.
 
 Before listener readiness call `recover_codex_dispatch_containment`, then the
 normal journal reconciliation. A replaced cgroup or unresolved released

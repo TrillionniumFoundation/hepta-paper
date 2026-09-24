@@ -41,6 +41,7 @@ struct WorkspaceBeforeV1 {
     request_hash: Sha256Digest,
     workspace_identity_hash: Sha256Digest,
     mutation_policy_hash: Sha256Digest,
+    authority_evidence_hash: Sha256Digest,
     initial_inventory: TreeInventoryV1,
 }
 
@@ -76,6 +77,7 @@ pub struct BrokerPreparedResultReceiptV1 {
     pub output_schema_hash: Sha256Digest,
     pub workspace_identity_hash: Sha256Digest,
     pub mutation_policy_hash: Sha256Digest,
+    pub authority_evidence_hash: Sha256Digest,
     pub output_hash: Sha256Digest,
     pub schema_validation_hash: Sha256Digest,
     pub event_stream_hash: Sha256Digest,
@@ -102,6 +104,7 @@ struct PreparedReceiptHashView<'a> {
     output_schema_hash: &'a Sha256Digest,
     workspace_identity_hash: &'a Sha256Digest,
     mutation_policy_hash: &'a Sha256Digest,
+    authority_evidence_hash: &'a Sha256Digest,
     output_hash: &'a Sha256Digest,
     schema_validation_hash: &'a Sha256Digest,
     event_stream_hash: &'a Sha256Digest,
@@ -127,6 +130,7 @@ impl BrokerPreparedResultReceiptV1 {
             output_schema_hash: &self.output_schema_hash,
             workspace_identity_hash: &self.workspace_identity_hash,
             mutation_policy_hash: &self.mutation_policy_hash,
+            authority_evidence_hash: &self.authority_evidence_hash,
             output_hash: &self.output_hash,
             schema_validation_hash: &self.schema_validation_hash,
             event_stream_hash: &self.event_stream_hash,
@@ -156,6 +160,7 @@ pub(crate) fn capture_workspace_before_dispatch(
     owner_uid: u32,
     state_directory: &Path,
     policy: &MutationPolicyV1,
+    authority_evidence_hash: &Sha256Digest,
 ) -> Result<(), CodexDispatchError> {
     validate_private_state(state_directory, owner_uid)?;
     if mutation_policy_hash_v1(policy).map_err(workspace_error)? != request.mutation_policy_hash {
@@ -172,6 +177,7 @@ pub(crate) fn capture_workspace_before_dispatch(
         request_hash: request_hash.clone(),
         workspace_identity_hash: workspace_hash,
         mutation_policy_hash: request.mutation_policy_hash.clone(),
+        authority_evidence_hash: authority_evidence_hash.clone(),
         initial_inventory: root.inventory().map_err(workspace_error)?,
     };
     let bytes = serde_json::to_vec(&value)?;
@@ -379,6 +385,7 @@ fn finalize_codex_prepared_result_inner(
         output_schema_hash: request.output_schema_hash.clone(),
         workspace_identity_hash: request.workspace_identity_hash.clone(),
         mutation_policy_hash: request.mutation_policy_hash.clone(),
+        authority_evidence_hash: before.authority_evidence_hash.clone(),
         output_hash: execution.output_hash.clone(),
         schema_validation_hash,
         event_stream_hash: decoded.raw_stream_hash,

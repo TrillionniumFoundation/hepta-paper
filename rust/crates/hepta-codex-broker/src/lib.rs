@@ -27,6 +27,7 @@ mod output_schema;
 mod peer;
 mod prepared_result;
 mod product;
+mod product_daemon;
 mod response;
 mod server;
 mod service;
@@ -88,6 +89,15 @@ pub use prepared_result::{
 pub use product::{
     ProductCodexDispatcherConfigurationV1, ProductCodexDispatcherV1, ProductCodexError,
     ProductCodexOperationV1, ProductOperationSourceIdentityV1,
+};
+pub use product_daemon::{
+    LoadedProductCodexBrokerConfigurationV1, ProductBundleAuthorityKeyV1,
+    ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationIdentityV1,
+    ProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError,
+    ProductJournalConfigurationV1, ProductListenerConfigurationV1,
+    ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
+    ProductServerConfigurationV1, compose_product_codex_broker,
+    load_product_codex_broker_configuration, run_product_codex_broker,
 };
 pub use response::{
     BrokerMachineCodeV1, BrokerResponseError, BrokerResponseFramePolicyV1, BrokerResponseKindV1,

@@ -306,6 +306,54 @@ fn connect_now(
     Ok((stream, before))
 }
 
+// Closing a cancelled transport is not proof that the provider stopped. The
+// existing durable intent remains ambiguous and recovery stays query-only.
+// One monotonic deadline covers the complete exchange, including partial frames.
+fn with_interruptible_transport<T>(
+    stream: &UnixStream,
+    cancelled: &AtomicBool,
+    deadline: std::time::Instant,
+    operation: impl FnOnce() -> Result<T, ServiceError>,
+) -> Result<T, ServiceError> {
+    use std::{
+        net::Shutdown,
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
+        return Err(ServiceError::Execution);
+    }
+    std::thread::scope(|scope| {
+        // Disconnect also wakes the watcher during unwinding. No detached task
+        // can outlive the borrowed stream or interfere with a later operation.
+        let (completed, completion) = mpsc::sync_channel::<()>(0);
+        let watcher = std::thread::Builder::new()
+            .name("hepta-broker-transport".into())
+            .spawn_scoped(scope, move || {
+                loop {
+                    let now = Instant::now();
+                    if cancelled.load(Ordering::Acquire) || now >= deadline {
+                        let _ = stream.shutdown(Shutdown::Both);
+                        return;
+                    }
+                    let wait = deadline.duration_since(now).min(Duration::from_millis(10));
+                    match completion.recv_timeout(wait) {
+                        Err(mpsc::RecvTimeoutError::Timeout) => (),
+                        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+            })
+            .map_err(|_| ServiceError::Execution)?;
+        let result = operation();
+        drop(completed);
+        watcher.join().map_err(|_| ServiceError::Execution)?;
+        if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(ServiceError::Execution);
+        }
+        result
+    })
+}
+
 /// The existing attempt journal selects this mode; request JSON cannot request
 /// a replay of an execution. All recovery modes use only HEPTAQX1.
 #[derive(Clone, Copy)]
@@ -342,6 +390,9 @@ pub(crate) fn consume(
         return Err(ServiceError::Execution);
     }
     let started_at = std::time::Instant::now();
+    let deadline = started_at
+        .checked_add(std::time::Duration::from_millis(source.timeout_ms))
+        .ok_or(ServiceError::Execution)?;
     let execution_backend = !matches!(mode, BrokerConsumeModeV1::PreparedOnly);
     let captured = CapturedRequest::open(source, &execution.attempt_id)?;
     validate_binding(
@@ -387,13 +438,15 @@ pub(crate) fn consume(
         return Err(ServiceError::Execution);
     }
     let expected_prepared = if matches!(mode, BrokerConsumeModeV1::ExecuteOnce) {
-        let response = hepta_codex_broker::dispatch_signed_operation(
-            &stream,
-            &policy,
-            &captured.request,
-            remaining()?,
-        )
-        .map_err(|_| ServiceError::Execution)?;
+        let response = with_interruptible_transport(&stream, cancelled, deadline, || {
+            hepta_codex_broker::dispatch_signed_operation(
+                &stream,
+                &policy,
+                &captured.request,
+                remaining()?,
+            )
+            .map_err(|_| ServiceError::Execution)
+        })?;
         captured.revalidate(source)?;
         if cancelled.load(Ordering::Acquire) {
             return Err(ServiceError::Execution);
@@ -418,8 +471,10 @@ pub(crate) fn consume(
     } else {
         stream
     };
-    let delivery = query_prepared_result(&stream, &policy, &captured.request, remaining()?)
-        .map_err(|_| ServiceError::Execution)?;
+    let delivery = with_interruptible_transport(&stream, cancelled, deadline, || {
+        query_prepared_result(&stream, &policy, &captured.request, remaining()?)
+            .map_err(|_| ServiceError::Execution)
+    })?;
     if expected_prepared
         .as_ref()
         .is_some_and(|expected| expected != &delivery.receipt().prepared_receipt_hash)
@@ -465,4 +520,77 @@ pub(crate) fn consume(
         return Err(ServiceError::Artifact);
     }
     Ok((delivery.output().to_vec(), evidence))
+}
+
+#[cfg(test)]
+mod interruption_tests {
+    use super::*;
+    use std::{
+        io::{Read, Write},
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn monotonic_deadline_interrupts_a_partial_frame() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(b"x").unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let began = Instant::now();
+        let result = with_interruptible_transport(
+            &stream,
+            &AtomicBool::new(false),
+            began + Duration::from_millis(40),
+            || {
+                let mut frame = [0_u8; 2];
+                (&stream)
+                    .read_exact(&mut frame)
+                    .map_err(|_| ServiceError::Execution)
+            },
+        );
+        assert!(result.is_err());
+        assert!(began.elapsed() < Duration::from_millis(750));
+        assert_eq!(peer.read(&mut [0_u8; 1]).unwrap(), 0);
+    }
+
+    #[test]
+    fn completed_exchange_leaves_no_watcher_to_close_later_use() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let result = with_interruptible_transport(
+            &stream,
+            &cancelled,
+            Instant::now() + Duration::from_millis(40),
+            || Ok(7),
+        )
+        .unwrap();
+        assert_eq!(result, 7);
+        std::thread::sleep(Duration::from_millis(60));
+        (&stream).write_all(b"x").unwrap();
+        let mut byte = [0_u8; 1];
+        peer.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, *b"x");
+    }
+
+    #[test]
+    fn cancellation_never_returns_success_or_invokes_precancelled_work() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let result = with_interruptible_transport(&stream, &cancelled, deadline, || {
+            cancelled.store(true, Ordering::Release);
+            Ok(7)
+        });
+        assert!(result.is_err());
+        let called = std::cell::Cell::new(false);
+        assert!(
+            with_interruptible_transport(&stream, &cancelled, deadline, || {
+                called.set(true);
+                Ok(7)
+            })
+            .is_err()
+        );
+        assert!(!called.get());
+    }
 }

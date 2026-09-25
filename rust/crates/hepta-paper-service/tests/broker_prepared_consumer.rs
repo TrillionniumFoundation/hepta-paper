@@ -567,3 +567,280 @@ fn malformed_request_preflight_is_retryable_without_dispatch() {
     assert!(run_service_v1(f.config.clone()).unwrap().commit_receipts[0].newly_committed);
     server.join().unwrap();
 }
+
+fn broker_workflow_definition(
+    f: &Fixture,
+    state: &std::path::Path,
+) -> hepta_paper_service::workflow::LocalWorkflowV1 {
+    use hepta_paper_service::workflow::{LocalWorkflowV1, WorkflowStepV1};
+    let candidate = f.config.frontier.candidates[0].clone();
+    let job = ObjectStoreV1::open(&f.config.state_directory)
+        .unwrap()
+        .read(&candidate.payload_hash)
+        .unwrap();
+    let mut template = f.config.clone();
+    template.state_directory = state.to_path_buf();
+    template.frontier.candidates.clear();
+    LocalWorkflowV1 {
+        version: 1,
+        template,
+        steps: vec![WorkflowStepV1 {
+            id: candidate.candidate_id,
+            module_id: candidate.module_id,
+            capability_id: candidate.capability_id,
+            resources: candidate.resources,
+            cost_microusd: candidate.cost_microusd,
+            job_template: serde_json::from_slice(&job).unwrap(),
+            bindings: vec![],
+            gate: None,
+        }],
+    }
+}
+
+fn interrupted_workflow_recovers_original_broker_result(execute: bool) {
+    use hepta_paper_service::workflow::{
+        WorkflowActionV1, initialize_local_workflow_v1,
+        operate_local_workflow_with_clock_and_cancellation_v1,
+        operate_local_workflow_with_clock_v1,
+    };
+    use std::{
+        io::Read,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+        time::{Duration, Instant},
+    };
+    let f = if execute {
+        Fixture::new_execution()
+    } else {
+        Fixture::new()
+    };
+    let state = f.root.join("interrupted-workflow");
+    let definition = broker_workflow_definition(&f, &state);
+    let definition_hash = initialize_local_workflow_v1(definition).unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let peer_cancelled = Arc::clone(&cancelled);
+    let listener = f.listener();
+    let mut expected = Vec::new();
+    if execute {
+        hepta_codex_broker::write_request_frame(&mut expected, &f.request, Default::default())
+            .unwrap();
+    } else {
+        hepta_codex_broker::write_result_query_frame(&mut expected, &f.request, Default::default())
+            .unwrap();
+    }
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(1500)))
+            .unwrap();
+        let mut received = vec![0; expected.len()];
+        stream.read_exact(&mut received).unwrap();
+        assert_eq!(received, expected);
+        let began = Instant::now();
+        peer_cancelled.store(true, Ordering::Release);
+        let mut byte = [0_u8; 1];
+        let ended = stream.read(&mut byte);
+        (began.elapsed(), ended)
+    });
+    let mut clock = || Ok(f.config.observed_at_unix_ms);
+    assert!(
+        operate_local_workflow_with_clock_and_cancellation_v1(
+            &state,
+            &definition_hash,
+            WorkflowActionV1::Advance { through_steps: 1 },
+            &mut clock,
+            cancelled,
+        )
+        .is_err()
+    );
+    let (elapsed, ended) = server.join().unwrap();
+    assert!(
+        matches!(ended, Ok(0)),
+        "cancel must close IPC, not wait for its timeout: {ended:?}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(750),
+        "cancellation took {elapsed:?}"
+    );
+    let attempts: Vec<_> = fs::read_dir(state.join("attempts"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].extension().unwrap(), "started");
+    let status = operate_local_workflow_with_clock_v1(
+        &state,
+        &definition_hash,
+        WorkflowActionV1::Status,
+        &mut clock,
+    )
+    .unwrap();
+    assert_eq!(status.committed_steps, 0);
+    assert_eq!(status.budget_remaining_microusd, 100);
+    fs::remove_file(&f.socket_path).unwrap();
+    // The ordinary workflow is reopened. The protocol fixture accepts query
+    // only: any accidental second execution request fails the test.
+    let recovery = f.serve(f.listener(), OUTPUT, false, false);
+    let recovered = operate_local_workflow_with_clock_v1(
+        &state,
+        &definition_hash,
+        WorkflowActionV1::Advance { through_steps: 1 },
+        &mut clock,
+    )
+    .unwrap();
+    recovery.join().unwrap();
+    assert_eq!(recovered.committed_steps, 1);
+    assert_eq!(recovered.budget_remaining_microusd, 90);
+    fs::remove_file(&f.socket_path).unwrap();
+    let replay = operate_local_workflow_with_clock_v1(
+        &state,
+        &definition_hash,
+        WorkflowActionV1::Advance { through_steps: 1 },
+        &mut clock,
+    )
+    .unwrap();
+    assert_eq!(replay.budget_remaining_microusd, 90);
+    assert_eq!(replay.artifacts_by_step, recovered.artifacts_by_step);
+}
+
+#[test]
+fn cancelled_broker_dispatch_unblocks_and_workflow_recovery_queries_only() {
+    interrupted_workflow_recovers_original_broker_result(true);
+}
+
+#[test]
+fn cancelled_prepared_query_unblocks_and_workflow_recovery_queries_only() {
+    interrupted_workflow_recovers_original_broker_result(false);
+}
+
+fn check_broker_cli_signal(signal: nix::sys::signal::Signal) {
+    use std::{
+        io::Read,
+        process::Stdio,
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
+    let f = Fixture::new_execution();
+    let state = f.root.join("cli-interrupted-workflow");
+    let definition = broker_workflow_definition(&f, &state);
+    let path = f.root.join("workflow-input.json");
+    fs::write(&path, serde_json::to_vec(&definition).unwrap()).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let mut expected = Vec::new();
+    hepta_codex_broker::write_request_frame(&mut expected, &f.request, Default::default()).unwrap();
+    let listener = f.listener();
+    listener.set_nonblocking(true).unwrap();
+    let (ready, request_observed) = mpsc::sync_channel(1);
+    let server = thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(15);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("CLI did not reach broker: {e}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut received = vec![0; expected.len()];
+        stream.read_exact(&mut received).unwrap();
+        assert_eq!(received, expected);
+        ready.send(()).unwrap();
+        stream.read(&mut [0_u8; 1])
+    });
+    let command = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"));
+        command
+            .args([
+                "autonomous-research",
+                "--campaign-id",
+                &f.request.campaign_id,
+                "--workflow-file",
+            ])
+            .arg(&path);
+        command
+    };
+    let mut child = command()
+        .args(["--action", "launch"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    if request_observed
+        .recv_timeout(Duration::from_secs(15))
+        .is_err()
+    {
+        let _ = child.kill();
+        let output = child.wait_with_output().unwrap();
+        panic!(
+            "normal CLI did not dispatch: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let began = Instant::now();
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap()),
+        signal,
+    )
+    .unwrap();
+    while child.try_wait().unwrap().is_none() && began.elapsed() < Duration::from_millis(1500) {
+        thread::sleep(Duration::from_millis(5));
+    }
+    if child.try_wait().unwrap().is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("signal did not interrupt the broker wait");
+    }
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["interruptionRequested"], true);
+    assert_eq!(report["reconciliationRequired"], true);
+    assert_eq!(report["productionActivation"], false);
+    assert_eq!(server.join().unwrap().unwrap(), 0);
+    let status = command().args(["--action", "status"]).output().unwrap();
+    assert!(status.status.success());
+    let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["workflow"]["committedSteps"], 0);
+    assert_eq!(status["workflow"]["pendingStep"], true);
+    fs::remove_file(&f.socket_path).unwrap();
+    let recovery = f.serve(f.listener(), OUTPUT, false, false);
+    let output = command().args(["--action", "converge"]).output().unwrap();
+    recovery.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let recovered: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(recovered["workflow"]["committedSteps"], 1);
+    assert_eq!(recovered["workflow"]["budgetRemainingMicrousd"], 90);
+    fs::remove_file(&f.socket_path).unwrap();
+    let replay = command().args(["--action", "converge"]).output().unwrap();
+    assert!(replay.status.success());
+    let replay: serde_json::Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(replay["workflow"]["budgetRemainingMicrousd"], 90);
+    assert_eq!(
+        replay["workflow"]["artifactsByStep"],
+        recovered["workflow"]["artifactsByStep"]
+    );
+}
+
+#[test]
+fn autonomous_cli_sigterm_interrupts_broker_and_restarts_query_only() {
+    check_broker_cli_signal(nix::sys::signal::Signal::SIGTERM);
+}
+
+#[test]
+fn autonomous_cli_sigint_interrupts_broker_and_restarts_query_only() {
+    check_broker_cli_signal(nix::sys::signal::Signal::SIGINT);
+}

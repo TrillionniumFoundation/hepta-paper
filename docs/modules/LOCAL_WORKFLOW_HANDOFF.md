@@ -448,11 +448,11 @@ signature into the very payload from which that attempt is derived.
 
 The client checks the socket object and kernel peer before sending the existing
 read-only result-query frame. Connection backlog pressure fails immediately;
-subsequent I/O uses the broker client's cumulative timeout. The broker retains
-signature/currentness checks and never turns this query into a reservation or
-execution. Request, directory and socket identities are checked again after the
-reply. Cancellation before or after the bounded query refuses local acceptance;
-it does not send a remote cancellation or undo an upstream provider action.
+subsequent I/O uses the shared monotonic transport deadline described below. The
+broker retains signature/currentness checks and never turns this query into a
+reservation or execution. Request, directory and socket identities are checked
+again after the reply. Interrupted queries cannot be accepted locally and never
+become execution permission.
 
 Returned output is verified by the existing broker decoder, stored as one CAS
 artifact, independently read by the service verifier, then committed by the
@@ -524,10 +524,23 @@ backend identity participates in the existing attempt hash, so changing a worker
 kind cannot convert an ambiguous effect into a fresh query or another execution.
 A completed local commit replays without IPC or another debit.
 
-Cancellation denies local acceptance around the bounded exchange; this is not a
-remote cancellation protocol and cannot recall an already released provider
-operation. The observed provider usage is retained; accounting still charges the
-admitted upper bound, not a measured provider invoice. No request/operation
+Both broker backends use `with_interruptible_transport` for execution responses
+and result queries. One monotonic deadline covers the complete exchange,
+including partial frames, rather than restarting on each read. A scoped watcher
+checks the existing sticky cancellation token at intervals of at most 10 ms and
+shuts down only this invocation's Unix transport on interruption or deadline.
+The watcher is joined before returning; completed exchanges leave no task that
+could close a later use of the socket. Scheduling latency is host-dependent, not
+a hard real-time guarantee. A final interruption check refuses a raced success.
+
+The ordinary autonomous CLI already forwards SIGINT/SIGTERM through this token;
+it can now leave a blocked broker wait without waiting for the socket timeout.
+The durable `.started` record survives. A new process queries the original
+operation, commits the recovered bytes through the existing verifier/sequencer,
+and replays without IPC or another debit. Closing IPC is not a remote cancel ACK,
+proof of provider termination, settled failure, or permission to refund/reissue.
+The observed provider usage is retained; accounting still charges the admitted
+upper bound, not a measured provider invoice. No request/operation
 signing owner, dynamic author/reviewer request producer, scientific quality
 acceptance, commit-bound ACK or installed production acceptance is synthesized.
 Both broker backends remain refused by the existing full production-writer API.
@@ -535,7 +548,11 @@ Both broker backends remain refused by the existing full production-writer API.
 The `broker_prepared_consumer` target exercises both ordinary CLI/workflow
 backends, first execution, query-only recovery after lost response, malformed
 response identity, reservation-only refusal, stale CLI clock and unrelated
-ambiguity. Its protocol peer is explicitly a fixture. The broker's
+ambiguity. It also exercises cancellation of execution/query waits through the
+normal workflow and SIGINT/SIGTERM through the actual autonomous CLI, followed
+by independent-process query-only recovery, durable commit and replay. Unit
+tests cover an interrupted partial frame, watcher lifetime and cancellation
+racing a successful response. Its protocol peer is explicitly a fixture. The broker's
 `service_lifecycle` target separately exercises the new typed client against the
 actual signed admission, SQLite journal, supervised fixture process and restart.
 These are source tests, not a live model canary.

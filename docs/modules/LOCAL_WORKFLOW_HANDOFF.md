@@ -22,7 +22,7 @@ prior committed result -> hash-verified CAS bytes -> explicit JSON-pointer bindi
 -> NativeJobV1 decode and capability validation -> current snapshot and candidate
 -> fsynced immutable step configuration -> run_service_v1
 -> registry / policy / planner / allocator / ServiceExecutorV1
--> native kernel OR exact executable/code-bound local process
+-> native kernel OR exact executable/code-bound local process OR bound broker backend
 -> prepared results -> independent content verifier -> SQLite commit sequencer
 -> read-only chain recomputation -> optional exact-subject routing gate
 ```
@@ -62,8 +62,10 @@ Resources are conservatively summed across the entire immutable definition;
 checked arithmetic and the initial capacity/budget bound prevent composition of
 individually valid steps into an over-budget workflow. Memory sums are deliberately
 conservative, not measured peaks. Worker accounting remains the existing admitted
-upper-bound accounting, not OS resource metering. Provider calls, external actions
-and central-writer requests in step vectors must be zero in this local surface.
+upper-bound accounting, not OS resource metering or a provider invoice. Native,
+process and prepared-only backends require zero provider calls; the explicitly
+selected broker execution backend requires exactly one. External actions and
+central-writer requests remain forbidden in this local surface.
 
 ## Command examples
 
@@ -102,8 +104,10 @@ unknown state. The lock is nonblocking and bound to a regular private inode.
 This is cooperative same-principal integrity, NOT hostile same-UID isolation.
 
 A step configuration is fsynced before the service's durable dispatch intent.
-A crash before invocation may replay that same plan. A prepared result can resume
-through the existing byte-verified cache. A committed result advances only through
+A crash before invocation may replay that same plan. A native/process prepared result can resume
+through the existing byte-verified cache. An uncommitted broker result additionally
+requires current query-only admission of its original request and exact receipt;
+its cache is not an authorization grant. A committed result advances only through
 the original SQLite log, without re-execution or a second debit. Started work with
 no complete prepared result remains ambiguous and cannot automatically retry.
 Saved plan mutation, CAS corruption, missing objects, unknown journal entries,
@@ -146,8 +150,9 @@ external effects are not claimed equivalent. No per-command parity row is promot
 The original 57 command routes and all argument-dependent modes remain the audit
 inventory, not seven local-kernel jobs.
 
-Next implementation work is actual authorized author/reviewer broker integration,
-model-driven revision and repair rounds, qualification of scientific/runtime and
+Next implementation work is the dynamic trusted role-request producer and
+ordinary independent author/reviewer/revision composition, measured provider
+settlement and commit-bound signed acknowledgement, qualification of scientific/runtime and
 manuscript compilation adapters, full operator/maintenance mapping and accepted
 capability replay. Remote
 credentials, target-host isolation, private historical corpus, storage soak,
@@ -462,6 +467,23 @@ upper bound once; this is not a measured provider invoice. Request cost and toke
 hints may not exceed admission, and reported input/output tokens are checked.
 Reopening a committed result neither queries again nor charges again.
 
+An uncommitted `.prepared` file is different. At restart the original SQLite
+sequencer verifies its durable log and exposes an opaque read-only result index;
+only an exact result already in that index may replay without IPC. Otherwise the
+consumer reopens the original pinned request, asks the current broker through
+query-only admission, and compares the complete original evidence and output.
+A withdrawn request, current refusal, changed receipt or changed output cannot
+fall back to cache. Failure retains the exact prepared bytes and start identity;
+a subsequent valid query can commit once without provider re-execution. Query
+currentness is the existing broker's admission boundary, not an atomic distributed
+revocation-and-SQL-COMMIT protocol or a lifetime authorization grant.
+
+A provider result prepared before a failed commit is still unsettled. The
+existing recovery lock refuses a different incoming plan until the exact prior
+result is durably committed; it does not release budget merely because paired
+`.started`/`.prepared` files exist. Original-plan query recovery remains available.
+This conservative fence does not implement provider invoicing or refunds.
+
 Only an exact incoming broker-query identity may revisit its own unresolved
 `.started` record. Other unresolved native/process attempts still fence admission.
 A missing, expired or unprepared result never causes automatic model execution.
@@ -522,7 +544,8 @@ an explicit owning reconciliation; no guessed failure releases the identity.
 Other unresolved native/process/broker attempts still fence new admission. The
 backend identity participates in the existing attempt hash, so changing a worker
 kind cannot convert an ambiguous effect into a fresh query or another execution.
-A completed local commit replays without IPC or another debit.
+A completed local commit replays without IPC or another debit. An uncommitted
+prepared cache must instead pass the current query-only checks above.
 
 Both broker backends use `with_interruptible_transport` for execution responses
 and result queries. One monotonic deadline covers the complete exchange,
@@ -555,4 +578,7 @@ tests cover an interrupted partial frame, watcher lifetime and cancellation
 racing a successful response. Its protocol peer is explicitly a fixture. The broker's
 `service_lifecycle` target separately exercises the new typed client against the
 actual signed admission, SQLite journal, supervised fixture process and restart.
-These are source tests, not a live model canary.
+The `cache_admission` submodule drives real service preparation followed by a
+failing precommit clock, then exercises withdrawal, current refusal, exact
+receipt/output preservation, query-only recovery, cross-plan provider fencing and
+offline durable replay. These are source tests, not a live model canary.

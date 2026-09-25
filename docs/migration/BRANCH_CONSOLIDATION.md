@@ -35,6 +35,34 @@ migration selection. Its evidence is compilation evidence, not executed tests,
 provider qualification, production activation or Node retirement. Existing
 runtime, recovery, source-evidence and strict-lint checks remain required.
 
+## Signed delivery and current-source verification
+
+Delivery continues on the same #142 head, not a new full-Rust branch. Preserve
+all worktree changes before fetching; query the actual PR head/base and live
+protection rather than treating a historical SHA or this document as current.
+
+```sh
+git fetch origin
+gh pr view 142 --repo TrillionniumFoundation/hepta-paper --json headRefName,headRefOid,baseRefName,baseRefOid,state
+gh api repos/TrillionniumFoundation/hepta-paper/branches/codex%2Ffull-rust-replacement-progress-20260916/protection
+```
+
+The delivery operation must bind the exact expected predecessor. GitHub's signed
+`createCommitOnBranch` path is suitable when its returned commit has a verified
+signature and its tree equals the locally reviewed tree. A failed/uncertain API
+response requires reading the actual ref before retrying; it never permits a
+force update, unsigned fallback or disabling required checks/signatures. Local
+uncommitted changes and reference-only forks must not be reset to achieve a
+nominally clean submission.
+
+Every delivered head gets new exact-head and deterministic prospective-merge
+verification against the freshly fetched integration base. These are different
+subjects even when their trees match. Passing historical checks, source inventory
+bindings or a signed delivery commit do not establish executed tests, independent
+scientific review, installed cutover or release/submission authority. The
+existing branch-convergence auditor records complete two-tree content comparisons
+and explicit dispositions; its binding check is not independent acceptance.
+
 ## Review and recovery record
 
 The pre-cleanup inventory contained 228 remote heads, 49 ancestors, one matching

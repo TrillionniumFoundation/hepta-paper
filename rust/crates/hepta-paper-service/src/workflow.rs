@@ -520,10 +520,7 @@ fn payload(
         ) => (),
         (WorkerBindingV1::Process { .. }, NativeJobV1::Process { .. }) => (),
         (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
-            if source.matches_capability(&step.capability_id) && input.version == 1 =>
-        {
-            ()
-        }
+            if source.matches_capability(&step.capability_id) && input.version == 1 => {}
         _ => return Err(WorkflowError::Definition),
     }
     Ok(job)

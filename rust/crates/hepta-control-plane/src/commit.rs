@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use hepta_codex_protocol::Sha256Digest;
 use serde::{Deserialize, Serialize};
@@ -140,7 +143,7 @@ pub struct FixtureCommitSequencerV1 {
     current_state_hash: Sha256Digest,
     authorized_verifier_hash: Sha256Digest,
     next_sequence: u64,
-    receipts_by_result: BTreeMap<Sha256Digest, CommitReceiptV1>,
+    receipts_by_result: Arc<BTreeMap<Sha256Digest, CommitReceiptV1>>,
     fail_on_sequence: Option<u64>,
 }
 
@@ -153,7 +156,7 @@ impl FixtureCommitSequencerV1 {
             initial_state_hash,
             authorized_verifier_hash,
             next_sequence: 1,
-            receipts_by_result: BTreeMap::new(),
+            receipts_by_result: Arc::new(BTreeMap::new()),
             fail_on_sequence: None,
         }
     }
@@ -263,7 +266,7 @@ impl FixtureCommitSequencerV1 {
             .next_sequence
             .checked_add(1)
             .ok_or(ControlPlaneError::CommitInvalid)?;
-        self.receipts_by_result
+        Arc::make_mut(&mut self.receipts_by_result)
             .insert(receipt.result_hash.clone(), receipt.clone());
         Ok(receipt)
     }
@@ -346,7 +349,35 @@ impl std::fmt::Debug for SqliteCommitSequencerV1 {
     }
 }
 
+/// Read-only view of the original sequencer's verified durable commit index.
+///
+/// Cloning this view shares the existing index; it does not scan SQLite, create
+/// another ledger, or grant admission to any new result. Later commits cannot
+/// mutate a retained snapshot. The original sequencer still owns final replay
+/// validation and every new commit.
+#[derive(Clone, Debug)]
+pub struct CommittedResultSnapshotV1 {
+    receipts: Arc<BTreeMap<Sha256Digest, CommitReceiptV1>>,
+}
+
+impl CommittedResultSnapshotV1 {
+    /// Whether these exact result bytes already have a verified durable receipt.
+    #[must_use]
+    pub fn contains_result(&self, result_hash: &Sha256Digest) -> bool {
+        self.receipts.contains_key(result_hash)
+    }
+}
+
 impl SqliteCommitSequencerV1 {
+    /// Capture the current verified commit index without copying its history.
+    /// This is historical replay evidence, not current provider authority.
+    #[must_use]
+    pub fn committed_result_snapshot(&self) -> CommittedResultSnapshotV1 {
+        CommittedResultSnapshotV1 {
+            receipts: Arc::clone(&self.state.receipts_by_result),
+        }
+    }
+
     /// Opens or restores the stream through a generation-fenced writer store.
     /// The store must already hold a live writer lease and an existing campaign.
     /// Reopen recomputes every prepared-result and state-transition hash and

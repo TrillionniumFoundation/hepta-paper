@@ -160,6 +160,82 @@ impl ServiceExecutorV1 {
         self
     }
 
+    // Prepared bytes are not durable commit evidence. Only the index restored
+    // and verified by the actual sequencer permits an IPC-free historical replay.
+    // Uncommitted broker output must pass the original current, query-only path;
+    // preserve the original evidence and never reissue a provider operation.
+    fn revalidate_cached_broker_result(
+        &self,
+        request: &ExecutionRequestV1,
+        binding: &WorkerBindingV1,
+        result: &PreparedResultV1,
+        identity: &Sha256Digest,
+    ) -> Result<(), ServiceError> {
+        use crate::broker_prepared::BrokerConsumeModeV1;
+        let (source, mode) = match binding {
+            WorkerBindingV1::BrokerPrepared { source } => {
+                (source, BrokerConsumeModeV1::PreparedOnly)
+            }
+            WorkerBindingV1::BrokerExecute { source } => {
+                (source, BrokerConsumeModeV1::RecoverExecution)
+            }
+            _ => return Ok(()),
+        };
+        let context = self
+            .broker_context
+            .as_ref()
+            .ok_or(ServiceError::Configuration)?;
+        let result_hash = result.result_hash().map_err(|_| ServiceError::Artifact)?;
+        if context.committed_results.contains_result(&result_hash) {
+            return Ok(());
+        }
+        if result.artifact_hashes.len() != 1
+            || result.actual_resources != request.candidate.resources
+            || result.actual_cost_microusd != request.candidate.cost_microusd
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let cached: Value = serde_json::from_slice(&self.objects.read(&result.evidence_hash)?)
+            .map_err(|_| ServiceError::Artifact)?;
+        let sent = cached
+            .get("workerEvidence")
+            .and_then(|value| value.get("executionSentInThisInvocation"))
+            .and_then(Value::as_bool)
+            .ok_or(ServiceError::Artifact)?;
+        if matches!(mode, BrokerConsumeModeV1::PreparedOnly) && sent {
+            return Err(ServiceError::Artifact);
+        }
+        let job: NativeJobV1 =
+            serde_json::from_slice(&self.objects.read(&request.candidate.payload_hash)?)
+                .map_err(|_| ServiceError::Configuration)?;
+        let input = match (binding, job) {
+            (WorkerBindingV1::BrokerPrepared { .. }, NativeJobV1::BrokerPrepared { input })
+            | (WorkerBindingV1::BrokerExecute { .. }, NativeJobV1::BrokerExecute { input }) => {
+                input
+            }
+            _ => return Err(ServiceError::Configuration),
+        };
+        let (bytes, mut evidence) = crate::broker_prepared::consume(
+            source,
+            &input,
+            request,
+            context,
+            self.objects.maximum_object_bytes(),
+            &self.cancelled,
+            mode,
+            || Ok(()),
+        )?;
+        // The original invocation may have dispatched once; this one never did.
+        // Retain that historical fact rather than rewriting the evidence hash.
+        evidence["executionSentInThisInvocation"] = Value::Bool(sent);
+        let expected = json!({"version":1,"requestHash":identity,
+            "verifier":"broker_prepared_consumer", "workerEvidence":evidence});
+        if cached != expected || self.objects.read(&result.artifact_hashes[0])? != bytes {
+            return Err(ServiceError::Artifact);
+        }
+        Ok(())
+    }
+
     fn execute_one(&self, request: &ExecutionRequestV1) -> Result<PreparedResultV1, ServiceError> {
         if self.cancelled.load(Ordering::Acquire) {
             return Err(ServiceError::Execution);
@@ -193,6 +269,7 @@ impl ServiceExecutorV1 {
             {
                 self.objects.read(hash)?;
             }
+            self.revalidate_cached_broker_result(request, binding, &result, &identity)?;
             return Ok(result);
         }
         let started = self.objects.attempt_path(&identity, "started");
@@ -404,27 +481,33 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
         // sequential dispatch is conservative; parallel workers require host admission.
         // Only the exact incoming read-only query can revisit its start record.
         // An unresolved provider/process attempt still fences the entire owner.
-        let readonly_retries = requests
-            .iter()
-            .filter_map(|request| {
-                self.workers
-                    .get(&request.candidate.module_id)
-                    .filter(|binding| {
-                        matches!(
-                            binding,
-                            WorkerBindingV1::BrokerPrepared { .. }
-                                | WorkerBindingV1::BrokerExecute { .. }
-                        )
-                    })
-                    .map(|binding| {
-                        execution_identity(request, binding)
-                            .map(|hash| hash.as_str().trim_start_matches("sha256:").to_owned())
-                    })
-            })
-            .collect::<Result<BTreeSet<_>, _>>()
-            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
-        let guard = recovery::DispatchGuardV1::acquire(&self.objects, &readonly_retries)
-            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+        let mut readonly_retries = BTreeSet::new();
+        let mut prepared_retries = BTreeSet::new();
+        for request in requests {
+            let binding = self
+                .workers
+                .get(&request.candidate.module_id)
+                .ok_or(ControlPlaneError::ExecutionInvalid)?;
+            let identity = execution_identity(request, binding)
+                .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+            let identity = identity.as_str().trim_start_matches("sha256:").to_owned();
+            if matches!(
+                binding,
+                WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. }
+            ) {
+                readonly_retries.insert(identity.clone());
+            }
+            prepared_retries.insert(identity);
+        }
+        let guard = recovery::DispatchGuardV1::acquire(
+            &self.objects,
+            &readonly_retries,
+            &prepared_retries,
+            self.broker_context
+                .as_ref()
+                .map(|context| &context.committed_results),
+        )
+        .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
         requests
             .iter()
             .map(|request| {

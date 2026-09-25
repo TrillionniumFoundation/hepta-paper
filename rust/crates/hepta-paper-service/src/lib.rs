@@ -379,6 +379,7 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         observed_at,
     )
     .map_err(|_| ServiceError::Persistence)?;
+    let committed_results = sequencer.committed_result_snapshot();
     // Persistent sequencer independently validates plan replay and current state.
     let tenant = config.snapshot.campaign_id.clone();
     let allocator = ResourceAllocatorV1::new(
@@ -399,6 +400,7 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
             campaign_id: config.snapshot.campaign_id.clone(),
             campaign_revision: config.snapshot.campaign_revision,
             lease_generation: writer_generation,
+            committed_results,
         })
         .with_cancellation(Arc::clone(&cancelled));
     let mut control = ControlPlaneV1::new(

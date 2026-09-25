@@ -58,6 +58,7 @@ pub(crate) struct BrokerConsumerContextV1 {
     pub campaign_id: String,
     pub campaign_revision: u64,
     pub lease_generation: u64,
+    pub committed_results: hepta_control_plane::CommittedResultSnapshotV1,
 }
 
 /// The authority publishes this filename after the real plan chooses its attempt.
@@ -79,6 +80,8 @@ pub fn broker_prepared_implementation_hash_v1(
     canonical_hash_v1(&(
         "hepta-broker-prepared-consumer-v1",
         include_str!("broker_prepared.rs"),
+        include_str!("worker.rs"),
+        include_str!("worker_recovery.rs"),
         source,
     ))
     .map_err(|_| ServiceError::Configuration)

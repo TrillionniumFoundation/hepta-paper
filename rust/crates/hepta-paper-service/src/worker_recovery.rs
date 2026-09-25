@@ -89,6 +89,8 @@ impl DispatchGuardV1 {
     pub(super) fn acquire(
         objects: &ObjectStoreV1,
         readonly_retries: &BTreeSet<String>,
+        prepared_retries: &BTreeSet<String>,
+        committed_results: Option<&hepta_control_plane::CommittedResultSnapshotV1>,
     ) -> Result<Self, ServiceError> {
         let state = objects.root().parent().ok_or(ServiceError::Artifact)?;
         let owner = private_root(state)?.uid();
@@ -173,6 +175,21 @@ impl DispatchGuardV1 {
                     || evidence.request_hash.as_str().strip_prefix("sha256:") != Some(identity)
                 {
                     return Err(ServiceError::Execution);
+                }
+                // A provider result is not settled just because its bytes were
+                // prepared. A different plan cannot spend the same still-held
+                // budget after a precommit failure. Resume only the original
+                // incoming attempt or prove its exact durable commit from the
+                // already-verified owner index; never refund or erase evidence.
+                if result.actual_resources.provider_calls > 0
+                    && !prepared_retries.contains(identity)
+                {
+                    let result_hash = result.result_hash().map_err(|_| ServiceError::Execution)?;
+                    if !committed_results
+                        .is_some_and(|committed| committed.contains_result(&result_hash))
+                    {
+                        return Err(ServiceError::Execution);
+                    }
                 }
                 prepared.insert(identity.to_owned());
             }

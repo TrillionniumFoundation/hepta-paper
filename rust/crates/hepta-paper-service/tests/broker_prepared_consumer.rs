@@ -1,5 +1,7 @@
 //! Existing service and real filesystem/Unix IPC tests. The remote side is an
 //! explicit protocol fixture, not live-model or installed-broker qualification.
+#[path = "broker_prepared_consumer/cache_admission.rs"]
+mod cache_admission;
 #[path = "broker_prepared_consumer/fixture.rs"]
 mod fixture;
 use fixture::*;

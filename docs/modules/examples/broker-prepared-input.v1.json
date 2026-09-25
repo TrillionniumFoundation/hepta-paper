@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "inputManifest": {
+    "research": "original"
+  },
+  "taskKind": "draft",
+  "promptEnvelopeHash": "sha256:cf07194ee232eb531e15f690000d19846dea69cf05504782658afcfacb9228a2",
+  "workspaceIdentityHash": "sha256:21a3230e03772a58aff1b3709a9e232850916337e1fba95c434076b6668c6e08",
+  "mutationPolicyHash": "sha256:d3336a334a5e8a2e6266703c54eaa332034daa74461ad1271507bb5ec6188d35",
+  "outputSchemaHash": "sha256:df0ad6e43880f09c90ebf95f19110178aba6890df0010ebda7485029e2b543b4"
+}

@@ -166,6 +166,12 @@ Capability bindings: `CAP-EXE-BROKER`. Related work identifiers: `GAP-CODEX-001`
 
 See the [Codex dispatch implementation and operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md). It describes external execution-authority verification, permit and deadline binding, bounded stdin/stdout/stderr, cancellation, cgroup attachment and cleanup, output-schema validation, event journaling, provider ambiguity, descriptor-bound mutation validation and crash-reentrant prepared-result publication. Its quiesced dispatch backup/restore contract binds shared/exclusive locking, journal and all three sidecar hash manifests, fresh restore destinations and rejection of active PID/cgroup authority recovery. The implementation roots explicitly include containment, event-stream, workspace, runtime and testkit crates. Local protocol tests cannot establish target-host cgroup, namespace, process-gate or real credential qualification.
 
+The ordinary service and local workflow can now import an existing broker result
+through the [broker-prepared consumer](../LOCAL_WORKFLOW_HANDOFF.md#broker-prepared-result-consumption).
+It uses the existing CAS, verifier and SQLite sequencer without dispatching a
+provider or sending an ACK. This closes the local result-consumer slice only;
+request issuance, live role canaries and production activation remain separate.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

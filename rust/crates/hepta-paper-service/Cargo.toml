@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hepta-codex-broker = { path = "../hepta-codex-broker", version = "=0.1.0" }
 signal-hook = { version = "=0.3.18", default-features = false }
 ed25519-dalek = { workspace = true, features = ["pem", "pkcs8"] }
 getrandom = "=0.3.4"

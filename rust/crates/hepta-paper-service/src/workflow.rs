@@ -261,6 +261,11 @@ impl LocalWorkflowV1 {
             }
             match t.workers.get(&step.module_id) {
                 Some(WorkerBindingV1::Native) => (),
+                Some(WorkerBindingV1::BrokerPrepared { source })
+                    if source.matches_capability(&step.capability_id) =>
+                {
+                    source.validate().map_err(|_| WorkflowError::Definition)?;
+                }
                 Some(WorkerBindingV1::Process {
                     network_declared: false,
                     ..
@@ -514,6 +519,11 @@ fn payload(
             NativeJobV1::ArtifactInventory { .. } | NativeJobV1::InspectNodeDatabase { .. },
         ) => (),
         (WorkerBindingV1::Process { .. }, NativeJobV1::Process { .. }) => (),
+        (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
+            if source.matches_capability(&step.capability_id) && input.version == 1 =>
+        {
+            ()
+        }
         _ => return Err(WorkflowError::Definition),
     }
     Ok(job)

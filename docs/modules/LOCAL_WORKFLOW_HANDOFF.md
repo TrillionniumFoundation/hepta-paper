@@ -416,3 +416,70 @@ replay preserving earlier committed steps. This is not a live model fixture.
 cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
 cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --lib
 ```
+
+## Broker-prepared result consumption
+
+The existing service and local workflow now accept `WorkerBindingV1::BrokerPrepared`
+(`kind: broker_prepared`, `source: BrokerPreparedSourceV1`) with a matching
+`NativeJobV1::BrokerPrepared` (`kind: broker_prepared`, `input: BrokerPreparedInputV1`).
+The implementation is `rust/crates/hepta-paper-service/src/broker_prepared.rs`.
+Its registry execution is `InProcess`, with the hash returned by
+`broker_prepared_implementation_hash_v1(&source)`, not the native-kernel hash.
+There is no subprocess or provider dispatch in this backend.
+
+The source closes the absolute broker socket, its expected UID/GID, canonical
+request directory and its owner UID/GID, role, runtime identity and 1–30000 ms
+query deadline. The input closes version 1, task kind, prompt-envelope hash,
+workspace and mutation-policy hashes, output-schema hash and the desired input
+manifest. That manifest is bounded to 1 MiB of Serde JSON; its SHA-256 must match
+the original broker request. Previous workflow artifacts can enter it through
+ordinary `/input/inputManifest/...` bindings. Roles are Author/Repairer for
+CAP-AUTHOR, Reviewer for CAP-REVIEW and FormalReviewer for CAP-FORMAL.
+
+The selected request owner publishes the original canonical signed request as
+`hex(SHA256(local_attempt_id_utf8)).json` in the configured request directory.
+`broker_prepared_request_filename_v1` supplies the exact filename. The operation
+ID and attempt ID must both equal the actual selected local attempt; campaign,
+step, planning revision and writer generation must match the existing service.
+Request files must be single-link regular files, mode 0400 or 0440. Original
+file descriptors and directory identity are retained through the query.
+Publishing a request after plan selection avoids putting an attempt-dependent
+signature into the very payload from which that attempt is derived.
+
+The client checks the socket object and kernel peer before sending the existing
+read-only result-query frame. Connection backlog pressure fails immediately;
+subsequent I/O uses the broker client's cumulative timeout. The broker retains
+signature/currentness checks and never turns this query into a reservation or
+execution. Request, directory and socket identities are checked again after the
+reply. Cancellation before or after the bounded query refuses local acceptance;
+it does not send a remote cancellation or undo an upstream provider action.
+
+Returned output is verified by the existing broker decoder, stored as one CAS
+artifact, independently read by the service verifier, then committed by the
+existing SQLite sequencer. The original broker receipt and token observation
+remain in private CAS evidence. The service charges the admitted candidate cost
+upper bound once; this is not a measured provider invoice. Request cost and token
+hints may not exceed admission, and reported input/output tokens are checked.
+Reopening a committed result neither queries again nor charges again.
+
+Only an exact incoming broker-query identity may revisit its own unresolved
+`.started` record. Other unresolved native/process attempts still fence admission.
+A missing, expired or unprepared result never causes automatic model execution.
+Partial local record/CAS writes still follow the existing inspection-required
+rules; this addition does not claim arbitrary torn-write repair.
+
+This is a local result consumer, not a model planner, operation/request signer,
+provider launcher, scientific acceptance, production writer or commit-bound ACK
+sender. The production API continues to refuse this backend. Real role-principal
+and deployment qualification, request issuance and author/reviewer canaries are
+still separate work. The consumer tests use a labelled local protocol peer plus
+real Unix sockets, CAS, SQLite and the ordinary CLI; the existing broker delivery
+tests separately cover the actual signed journal and live query-admission path.
+
+Run `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
+--test broker_prepared_consumer` for this consumer regression target.
+
+The [checked-in input example](examples/broker-prepared-input.v1.json) is consumed
+by the executable consumer tests. Its digest strings bind named local fixture
+inputs, not real credentials or accepted scientific evidence. It is only the
+job's `input` body, not a complete service configuration or signed request.

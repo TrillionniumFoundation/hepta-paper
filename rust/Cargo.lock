@@ -906,6 +906,7 @@ dependencies = [
  "futures-lite",
  "getrandom",
  "hepta-campaign-writer",
+ "hepta-codex-broker",
  "hepta-codex-protocol",
  "hepta-codex-runtime",
  "hepta-control-plane",

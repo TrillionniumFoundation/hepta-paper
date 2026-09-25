@@ -20,6 +20,7 @@ pub mod autonomous_state_partial_root_maintenance;
 pub mod autonomous_state_provision;
 pub mod autonomous_submission_dispatcher;
 pub mod autonomous_submission_dispatcher_challenge;
+pub mod broker_prepared;
 pub mod campaign_policy;
 pub mod campaign_slo;
 pub mod command_surface;
@@ -287,6 +288,15 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
                     && configuration_hash
                         == &canonical_hash_v1(worker).map_err(|_| ServiceError::Configuration)?
             }
+            (
+                hepta_module_platform::ModuleExecutionV1::InProcess {
+                    implementation_hash,
+                },
+                WorkerBindingV1::BrokerPrepared { source },
+            ) => {
+                implementation_hash
+                    == &broker_prepared::broker_prepared_implementation_hash_v1(source)?
+            }
             _ => false,
         };
         if !matches {
@@ -311,6 +321,7 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
     if observed_at < config.observed_at_unix_ms {
         return Err(ServiceError::Persistence);
     }
+    let writer_generation = config.writer_lease.generation;
     let writer = store
         .acquire_writer(config.writer_lease, observed_at)
         .map_err(|_| ServiceError::Persistence)?;
@@ -356,8 +367,13 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         objects.maximum_object_bytes(),
     )
     .map_err(|_| ServiceError::Artifact)?;
-    let executor =
-        ServiceExecutorV1::new(objects, config.workers)?.with_cancellation(Arc::clone(&cancelled));
+    let executor = ServiceExecutorV1::new(objects, config.workers)?
+        .with_broker_context(broker_prepared::BrokerConsumerContextV1 {
+            campaign_id: config.snapshot.campaign_id.clone(),
+            campaign_revision: config.snapshot.campaign_revision,
+            lease_generation: writer_generation,
+        })
+        .with_cancellation(Arc::clone(&cancelled));
     let mut control = ControlPlaneV1::new(
         registry,
         config.hard_policy.registry_policy_hash.clone(),

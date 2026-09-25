@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     fs,
     io::Read,
@@ -38,6 +38,10 @@ mod recovery;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerBindingV1 {
+    /// Read an already-prepared result from the selected role broker; never dispatch.
+    BrokerPrepared {
+        source: crate::broker_prepared::BrokerPreparedSourceV1,
+    },
     /// Linked Rust artifact inventory / native SQLite inspection implementation.
     Native,
     /// Operator-selected executable. This is process supervision, not a sandbox.
@@ -66,6 +70,10 @@ pub enum WorkerBindingV1 {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeJobV1 {
+    /// Exact original inputs for a read-only broker result query.
+    BrokerPrepared {
+        input: crate::broker_prepared::BrokerPreparedInputV1,
+    },
     /// Verify every input object's bytes and produce a deterministic inventory.
     ArtifactInventory {
         /// Exact content hashes; output preserves declared ordering.
@@ -111,6 +119,7 @@ pub struct ServiceExecutorV1 {
     objects: ObjectStoreV1,
     workers: BTreeMap<String, WorkerBindingV1>,
     cancelled: Arc<AtomicBool>,
+    broker_context: Option<crate::broker_prepared::BrokerConsumerContextV1>,
 }
 
 impl ServiceExecutorV1 {
@@ -126,7 +135,16 @@ impl ServiceExecutorV1 {
             objects,
             workers,
             cancelled: Arc::new(AtomicBool::new(false)),
+            broker_context: None,
         })
+    }
+
+    pub(crate) fn with_broker_context(
+        mut self,
+        context: crate::broker_prepared::BrokerConsumerContextV1,
+    ) -> Self {
+        self.broker_context = Some(context);
+        self
     }
 
     pub(crate) fn with_cancellation(mut self, cancelled: Arc<AtomicBool>) -> Self {
@@ -146,18 +164,7 @@ impl ServiceExecutorV1 {
         // the same immutable plan again. They must not create a new execution
         // identity: a retry must reuse the prepared output or stop on an
         // unresolved durable dispatch intent, never repeat provider work.
-        let identity = canonical_hash_v1(&(
-            "hepta-service-attempt-v1",
-            request.version,
-            &request.attempt_id,
-            &request.snapshot_hash,
-            &request.plan_hash,
-            &request.candidate,
-            &request.reservation.tenant_id,
-            request.reservation.reserved,
-            binding,
-        ))
-        .map_err(|_| ServiceError::Configuration)?;
+        let identity = execution_identity(request, binding)?;
         let prepared = self.objects.attempt_path(&identity, "prepared");
         if prepared.exists() {
             let bytes = read_private_record(&prepared)?;
@@ -181,7 +188,8 @@ impl ServiceExecutorV1 {
             return Ok(result);
         }
         let started = self.objects.attempt_path(&identity, "started");
-        if started.exists() {
+        let readonly_query = matches!(binding, WorkerBindingV1::BrokerPrepared { .. });
+        if started.exists() && !readonly_query {
             return Err(ServiceError::Execution);
         }
         let payload = self.objects.read(&request.candidate.payload_hash)?;
@@ -194,9 +202,32 @@ impl ServiceExecutorV1 {
         ) {
             return Err(ServiceError::Configuration);
         }
-        self.objects
-            .record(&started, identity.to_string().as_bytes())?;
+        if !started.exists() {
+            self.objects
+                .record(&started, identity.to_string().as_bytes())?;
+        } else if read_private_record(&started)? != identity.to_string().as_bytes() {
+            return Err(ServiceError::Execution);
+        }
         let (mut artifacts, evidence) = match (binding, job) {
+            (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input }) => {
+                let context = self
+                    .broker_context
+                    .as_ref()
+                    .ok_or(ServiceError::Configuration)?;
+                let (bytes, evidence) = crate::broker_prepared::consume(
+                    source,
+                    &input,
+                    request,
+                    context,
+                    self.objects.maximum_object_bytes(),
+                    &self.cancelled,
+                )?;
+                (
+                    vec![self.objects.put(&bytes)?],
+                    json!({"version":1,"requestHash":identity,
+                    "verifier":"broker_prepared_consumer", "workerEvidence": evidence}),
+                )
+            }
             (WorkerBindingV1::Native, NativeJobV1::ArtifactInventory { artifacts }) => {
                 if artifacts.is_empty() || artifacts.len() > 256 {
                     return Err(ServiceError::Configuration);
@@ -335,7 +366,22 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
     ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
         // Exact reservations remain held for the whole dependency wave. Bounded
         // sequential dispatch is conservative; parallel workers require host admission.
-        let guard = recovery::DispatchGuardV1::acquire(&self.objects)
+        // Only the exact incoming read-only query can revisit its start record.
+        // An unresolved provider/process attempt still fences the entire owner.
+        let readonly_retries = requests
+            .iter()
+            .filter_map(|request| {
+                self.workers
+                    .get(&request.candidate.module_id)
+                    .filter(|binding| matches!(binding, WorkerBindingV1::BrokerPrepared { .. }))
+                    .map(|binding| {
+                        execution_identity(request, binding)
+                            .map(|hash| hash.as_str().trim_start_matches("sha256:").to_owned())
+                    })
+            })
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+        let guard = recovery::DispatchGuardV1::acquire(&self.objects, &readonly_retries)
             .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
         requests
             .iter()
@@ -357,6 +403,24 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
             })
             .collect()
     }
+}
+
+fn execution_identity(
+    request: &ExecutionRequestV1,
+    binding: &WorkerBindingV1,
+) -> Result<Sha256Digest, ServiceError> {
+    canonical_hash_v1(&(
+        "hepta-service-attempt-v1",
+        request.version,
+        &request.attempt_id,
+        &request.snapshot_hash,
+        &request.plan_hash,
+        &request.candidate,
+        &request.reservation.tenant_id,
+        request.reservation.reserved,
+        binding,
+    ))
+    .map_err(|_| ServiceError::Configuration)
 }
 
 fn run_process(

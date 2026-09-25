@@ -199,3 +199,33 @@ claim a real independently owned host, credential or production installation.
 Keep the current file/UID, trust, validity and precommit admission rules; no
 human PR approval is part of them. Use `cargo test --locked -p
 hepta-qualification-ingest` from `rust` to run both historical and current cases.
+
+
+## Restricted research qualification V3
+
+The existing CLI also accepts the closed
+[research request V3](../../../docs/rust/qualification/research-qualification-request-v3.schema.json)
+and emits the distinct
+[research receipt V3](../../../docs/rust/qualification/research-qualification-receipt-v3.schema.json).
+It requires exactly the host/cgroup, destructive-storage, key-owner, separate-role
+Codex and cutover/soak packages. Repository-review and irreversible-action
+publication/submission packages are neither required nor accepted in this scope.
+Actual signatures, nested payload validation, cross-host/database identities,
+expiry, authority separation, bounded external file intake, post-lock clock
+checks and the original SQLite replay ledger are unchanged. Changing a previously
+accepted full package set into this scope cannot reuse the old acceptance.
+
+The public factory `verify_research_qualification_v3` returns a separate opaque
+`VerifiedResearchQualificationV3`. It exposes retained facts but has no conversion
+or dereference to `VerifiedExternalQualificationClosureV1`; a compile-fail test
+protects that boundary. V1/V2 full producers still reject the five-package set,
+and the full production-writer API cannot accept this research type. This
+separates evidence intake and persistent acceptance, not a new production
+research writer. The named runtime consumer, real host evidence and explicit
+writer activation still require composition. No source fixture is external
+qualification, a provider credential, release permission or submission authority.
+
+`cargo test -p hepta-qualification-ingest --locked` runs actual fixture-signature
+acceptance, missing/extra package denial, cross-host/signature rejection,
+cross-profile replay and the type boundary; the same suite preserves full V1/V2
+fixtures and real SQLite lock-wait currentness tests.

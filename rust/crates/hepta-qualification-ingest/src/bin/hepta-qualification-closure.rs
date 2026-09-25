@@ -30,7 +30,7 @@ use hepta_qualification_ingest::{
     QualificationTrustStoreV1, VerifiedExternalQualificationV1,
     load_external_qualification_file_v1, validate_external_package_payload_v1,
     verify_external_qualification_closure_v1, verify_external_qualification_closure_v2,
-    verify_external_qualification_v1,
+    verify_external_qualification_v1, verify_research_qualification_v3,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -436,6 +436,27 @@ fn verify_and_commit_closure(
     })
 }
 
+// The CLI records either scope in the original replay owner. Keeping the
+// opaque alternatives separate prevents accidental use of research as full.
+enum AcceptedClosure {
+    Full(hepta_qualification_ingest::VerifiedExternalQualificationClosureV1),
+    Research(hepta_qualification_ingest::VerifiedResearchQualificationV3),
+}
+impl AcceptedClosure {
+    fn package(&self, id: QualificationPackageIdV1) -> Option<&VerifiedExternalQualificationV1> {
+        match self {
+            Self::Full(value) => value.package(id),
+            Self::Research(value) => value.package(id),
+        }
+    }
+    fn assert_current(&self, now: u64) -> Result<(), QualificationClosureError> {
+        match self {
+            Self::Full(value) => value.assert_current(now),
+            Self::Research(value) => value.assert_current(now),
+        }
+    }
+}
+
 fn verify_and_commit_closure_with_clock(
     request: &ClosureRequestV1,
     candidates: &[ExternalQualificationCandidateV1],
@@ -451,23 +472,40 @@ fn verify_and_commit_closure_with_clock(
     // This sample follows all authority file reads, before SQLite is opened.
     let verified_at_unix_ms = sample_clock_after(&mut clock, initial_now_unix_ms)?;
     trust.assert_current(verified_at_unix_ms)?;
-    let verifier = match profile {
-        QualificationClosureProfile::LegacySevenPackageV1 => {
-            verify_external_qualification_closure_v1
-        }
-        QualificationClosureProfile::SingleMaintainerV2 => verify_external_qualification_closure_v2,
+    let subject = ExternalQualificationClosureSubjectV1 {
+        repository: request.repository.clone(),
+        commit: request.commit.clone(),
+        tree: request.tree.clone(),
     };
-    let verified = verifier(
-        candidates,
-        &ExternalQualificationClosureSubjectV1 {
-            repository: request.repository.clone(),
-            commit: request.commit.clone(),
-            tree: request.tree.clone(),
-        },
-        verified_at_unix_ms,
-        trust.generation,
-        trust.store,
-    )?;
+    let verified = match profile {
+        QualificationClosureProfile::LegacySevenPackageV1 => {
+            AcceptedClosure::Full(verify_external_qualification_closure_v1(
+                candidates,
+                &subject,
+                verified_at_unix_ms,
+                trust.generation,
+                trust.store,
+            )?)
+        }
+        QualificationClosureProfile::SingleMaintainerV2 => {
+            AcceptedClosure::Full(verify_external_qualification_closure_v2(
+                candidates,
+                &subject,
+                verified_at_unix_ms,
+                trust.generation,
+                trust.store,
+            )?)
+        }
+        QualificationClosureProfile::RestrictedResearchV3 => {
+            AcceptedClosure::Research(verify_research_qualification_v3(
+                candidates,
+                &subject,
+                verified_at_unix_ms,
+                trust.generation,
+                trust.store,
+            )?)
+        }
+    };
     let records = profile
         .packages()
         .iter()
@@ -640,8 +678,13 @@ fn assemble_receipt(
             QualificationClosureProfile::SingleMaintainerV2 => {
                 "ExternalQualificationClosureReceiptV2"
             }
+            QualificationClosureProfile::RestrictedResearchV3 => "ResearchQualificationReceiptV3",
         },
-        status: "external_qualification_set_verified",
+        status: if profile == QualificationClosureProfile::RestrictedResearchV3 {
+            "research_only_qualification_set_verified"
+        } else {
+            "external_qualification_set_verified"
+        },
         repository: repository.to_owned(),
         commit: commit.to_owned(),
         tree: tree.to_owned(),

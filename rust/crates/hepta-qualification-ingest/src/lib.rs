@@ -9,8 +9,9 @@ mod package_payload;
 pub use closure::{
     ExternalQualificationCandidateV1, ExternalQualificationClosureSubjectV1,
     ExternalQualificationRuntimeFactsV1, QualificationClosureError, QualificationClosureProfile,
-    VerifiedExternalQualificationClosureV1, verify_external_qualification_closure_v1,
-    verify_external_qualification_closure_v2,
+    VerifiedExternalQualificationClosureV1, VerifiedResearchQualificationV3,
+    verify_external_qualification_closure_v1, verify_external_qualification_closure_v2,
+    verify_research_qualification_v3,
 };
 
 pub use package_payload::{
@@ -81,6 +82,16 @@ impl QualificationPackageIdV1 {
         Self::ExtCodexRole001,
         Self::ExtCutoverSoak001,
         Self::ExtAuthoritySet001,
+    ];
+
+    /// Fixed restricted-research set. No publication/submission authority set
+    /// is required or accepted; host/storage/key/role/cutover safety remains.
+    pub const RESEARCH_REQUIRED: [Self; 5] = [
+        Self::ExtHostCgroup001,
+        Self::ExtHostStorage001,
+        Self::ExtKeyOwner001,
+        Self::ExtCodexRole001,
+        Self::ExtCutoverSoak001,
     ];
 
     /// Canonical externally visible package identifier.

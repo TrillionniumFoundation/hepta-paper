@@ -998,3 +998,139 @@ fn single_maintainer_does_not_relax_signatures_cross_package_binding_or_replay_c
     ));
     assert_eq!(snapshot, fixture.snapshot());
 }
+
+fn research_only(mut fixture: AcceptanceFixture) -> AcceptanceFixture {
+    fixture.request.version = 3;
+    fixture
+        .request
+        .envelopes
+        .retain(|source| QualificationPackageIdV1::RESEARCH_REQUIRED.contains(&source.package_id));
+    fixture.signed.candidates.retain(|candidate| {
+        QualificationPackageIdV1::RESEARCH_REQUIRED.contains(&candidate.envelope.package_id)
+    });
+    fixture
+}
+
+#[test]
+fn research_profile_accepts_five_signed_packages_without_publication_authority() {
+    let fixture = research_only(AcceptanceFixture::new("research-v3"));
+    validate_request(&fixture.request).unwrap();
+    fixture.signed.assert_individually_valid();
+    let first = fixture.accept(NOW).unwrap();
+    assert_eq!(first.body.version, 3);
+    assert_eq!(first.body.kind, "ResearchQualificationReceiptV3");
+    assert_eq!(
+        first.body.status,
+        "research_only_qualification_set_verified"
+    );
+    assert_eq!(first.body.packages.len(), 5);
+    assert!(!first.body.production_activation);
+    assert!(!first.body.automatic_activation);
+    assert!(
+        first
+            .body
+            .packages
+            .iter()
+            .all(|package| package.package_id != "EXT-AUTHORITY-SET-001"
+                && package.package_id != "EXT-GOV-MAIN-001")
+    );
+    let before = fixture.snapshot();
+    assert_eq!(
+        first.receipt_hash,
+        fixture.accept(NOW).unwrap().receipt_hash
+    );
+    assert_eq!(before, fixture.snapshot());
+    let subject = ExternalQualificationClosureSubjectV1 {
+        repository: REQUIRED_REPOSITORY.into(),
+        commit: COMMIT.into(),
+        tree: TREE.into(),
+    };
+    let verified = verify_research_qualification_v3(
+        &fixture.signed.candidates,
+        &subject,
+        NOW,
+        1,
+        &fixture.signed.trust,
+    )
+    .unwrap();
+    assert!(
+        verified
+            .package(QualificationPackageIdV1::ExtAuthoritySet001)
+            .is_none()
+    );
+    assert!(verified.assert_current(NOW).is_ok());
+    assert!(
+        verified
+            .assert_current(verified.expires_at_unix_ms())
+            .is_err()
+    );
+    assert!(
+        verify_external_qualification_closure_v1(
+            &fixture.signed.candidates,
+            &subject,
+            NOW,
+            1,
+            &fixture.signed.trust
+        )
+        .is_err()
+    );
+    assert!(
+        verify_external_qualification_closure_v2(
+            &fixture.signed.candidates,
+            &subject,
+            NOW,
+            1,
+            &fixture.signed.trust
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn research_profile_does_not_accept_missing_extra_or_wrong_scope_packages() {
+    for missing in 0..5 {
+        let mut fixture = research_only(AcceptanceFixture::new("research-missing"));
+        fixture.request.envelopes.remove(missing);
+        fixture.signed.candidates.remove(missing);
+        assert!(validate_request(&fixture.request).is_err());
+        assert!(fixture.accept(NOW).is_err());
+        fixture.assert_no_ledger();
+    }
+    let mut extra = single_maintainer(AcceptanceFixture::new("research-extra-publication"));
+    extra.request.version = 3;
+    assert!(validate_request(&extra.request).is_err());
+    assert!(extra.accept(NOW).is_err());
+    extra.assert_no_ledger();
+}
+
+#[test]
+fn research_profile_retains_signature_and_cross_host_checks() {
+    let mut signature = research_only(AcceptanceFixture::new("research-bad-signature"));
+    signature.signed.candidates[0].envelope.signature_base64 =
+        Base64UrlUnpadded::encode_string(&[0; 64]);
+    assert!(signature.accept(NOW).is_err());
+    signature.assert_no_ledger();
+    let mut fixture = AcceptanceFixture::new("research-cross-host");
+    fixture
+        .signed
+        .update_payload(2, |payload| payload["hostIdentityHash"] = json!(hash(99)));
+    let fixture = research_only(fixture);
+    fixture.signed.assert_individually_valid();
+    assert!(matches!(
+        fixture.accept(NOW),
+        Err(ClosureError::Closure(
+            QualificationClosureError::CrossPackageIdentityMismatch
+        ))
+    ));
+    fixture.assert_no_ledger();
+}
+
+#[test]
+fn accepted_full_closure_cannot_be_replayed_as_research_scope() {
+    let fixture = single_maintainer(AcceptanceFixture::new("cross-profile-replay"));
+    fixture.accept(NOW).unwrap();
+    let fixture = research_only(fixture);
+    let before = fixture.snapshot();
+    assert!(fixture.accept(NOW).is_err());
+    assert_eq!(before, fixture.snapshot());
+}

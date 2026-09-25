@@ -32,6 +32,8 @@ pub enum QualificationClosureProfile {
     LegacySevenPackageV1,
     /// Current six operational packages; no human PR approval requirement.
     SingleMaintainerV2,
+    /// Research-only acceptance: never convertible into a full closure grant.
+    RestrictedResearchV3,
 }
 impl QualificationClosureProfile {
     /// Parse an explicitly versioned request. Unknown versions fail closed.
@@ -40,6 +42,7 @@ impl QualificationClosureProfile {
         match version {
             1 => Some(Self::LegacySevenPackageV1),
             2 => Some(Self::SingleMaintainerV2),
+            3 => Some(Self::RestrictedResearchV3),
             _ => None,
         }
     }
@@ -49,6 +52,7 @@ impl QualificationClosureProfile {
         match self {
             Self::LegacySevenPackageV1 => &QualificationPackageIdV1::ALL,
             Self::SingleMaintainerV2 => &QualificationPackageIdV1::CURRENT_REQUIRED,
+            Self::RestrictedResearchV3 => &QualificationPackageIdV1::RESEARCH_REQUIRED,
         }
     }
     /// Receipt version, included in the hashed canonical body.
@@ -57,6 +61,7 @@ impl QualificationClosureProfile {
         match self {
             Self::LegacySevenPackageV1 => 1,
             Self::SingleMaintainerV2 => 2,
+            Self::RestrictedResearchV3 => 3,
         }
     }
     /// Number of actual operational authority groups, not human reviewer count.
@@ -64,7 +69,7 @@ impl QualificationClosureProfile {
     pub const fn authority_group_count(self) -> usize {
         match self {
             Self::LegacySevenPackageV1 => 5,
-            Self::SingleMaintainerV2 => 4,
+            Self::SingleMaintainerV2 | Self::RestrictedResearchV3 => 4,
         }
     }
 }
@@ -222,6 +227,78 @@ pub fn verify_external_qualification_closure_v2(
         trust_store_generation,
         trust_store,
     )
+}
+
+/// Independently verified research-only evidence. Its private payload cannot be
+/// deserialized, converted or borrowed as a full release/submission closure.
+/// Host/storage, keys, role isolation and cutover/soak remain mandatory.
+///
+/// ```compile_fail
+/// use hepta_qualification_ingest::{VerifiedResearchQualificationV3, VerifiedExternalQualificationClosureV1};
+/// fn requires_full(_: &VerifiedExternalQualificationClosureV1) {}
+/// fn cannot_promote(research: &VerifiedResearchQualificationV3) { requires_full(research); }
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedResearchQualificationV3 {
+    inner: VerifiedExternalQualificationClosureV1,
+}
+impl VerifiedResearchQualificationV3 {
+    /// Research subject; identical identities do not change the authority scope.
+    pub fn subject(&self) -> &ExternalQualificationClosureSubjectV1 {
+        self.inner.subject()
+    }
+    /// Domain-separated research-only closure hash.
+    pub fn receipt_hash(&self) -> &str {
+        self.inner.receipt_hash()
+    }
+    /// Currentness over every original envelope and payload expiry.
+    pub fn assert_current(&self, now_unix_ms: u64) -> Result<(), QualificationClosureError> {
+        self.inner.assert_current(now_unix_ms)
+    }
+    /// First invalid millisecond, including nested payload evidence windows.
+    pub const fn expires_at_unix_ms(&self) -> u64 {
+        self.inner.expires_at_unix_ms()
+    }
+    /// Original trust generation; no signing or currentness authority is minted.
+    pub const fn trust_store_generation(&self) -> u64 {
+        self.inner.trust_store_generation()
+    }
+    /// Exact retained package. Publication/submission packages are always absent.
+    pub fn package(
+        &self,
+        id: QualificationPackageIdV1,
+    ) -> Option<&VerifiedExternalQualificationV1> {
+        self.inner.package(id)
+    }
+    /// Host/database/runtime facts retain the same cross-package checks.
+    pub fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1 {
+        self.inner.runtime_facts()
+    }
+    /// Still-separated operational control domains, not a human approval count.
+    pub fn authority_groups(&self) -> &BTreeMap<String, Vec<String>> {
+        self.inner.authority_groups()
+    }
+}
+
+/// Verify the fixed five-package research scope. A full closure verifier still
+/// rejects this set, and adding a publication package here is also rejected.
+/// This function does not activate a writer or authorize a provider operation.
+pub fn verify_research_qualification_v3(
+    candidates: &[ExternalQualificationCandidateV1],
+    subject: &ExternalQualificationClosureSubjectV1,
+    now_unix_ms: u64,
+    trust_store_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<VerifiedResearchQualificationV3, QualificationClosureError> {
+    verify_for_profile(
+        QualificationClosureProfile::RestrictedResearchV3,
+        candidates,
+        subject,
+        now_unix_ms,
+        trust_store_generation,
+        trust_store,
+    )
+    .map(|inner| VerifiedResearchQualificationV3 { inner })
 }
 
 fn verify_for_profile(
@@ -407,6 +484,7 @@ fn assemble_verified_closure(
             QualificationClosureProfile::SingleMaintainerV2 => {
                 "VerifiedExternalQualificationClosureV2"
             }
+            QualificationClosureProfile::RestrictedResearchV3 => "VerifiedResearchQualificationV3",
         },
         subject,
         trust_store_generation,

@@ -16,7 +16,9 @@ compile_error!("hepta-codex-broker V1 requires Linux SO_PEERCRED semantics");
 mod acknowledgement;
 mod admission;
 mod capability;
+mod client;
 mod codex_dispatch;
+mod delivery;
 mod dispatch_backup;
 mod dispatch_containment;
 mod fake_execution;
@@ -67,7 +69,7 @@ pub use fake_execution::{
 };
 pub use frame::{
     BrokerFrameError, BrokerFramePolicyV1, DecodedRequestFrameV1, read_request_frame,
-    write_request_frame,
+    write_request_frame, write_result_query_frame,
 };
 pub use journal::{
     BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerJournalError, BrokerJournalPolicyV1,
@@ -121,3 +123,10 @@ pub use trust_source::{
     TrustBundleSourceError, install_signed_capability_trust_bundle_from_source,
     load_signed_capability_trust_bundle,
 };
+
+pub use delivery::{
+    BrokerPreparedDeliveryV1, load_codex_prepared_delivery, read_prepared_delivery_frame,
+    write_prepared_delivery_frame,
+};
+
+pub use client::{BrokerResultClientError, query_prepared_result};

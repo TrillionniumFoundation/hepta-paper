@@ -23,6 +23,8 @@ use crate::{
 };
 use crate::{admission::read_unix_request, service::reserve_authenticated_request_revalidated};
 
+mod result_query;
+
 const HARD_MAXIMUM_WORKERS: usize = 32;
 const HARD_MAXIMUM_QUEUE_CAPACITY: usize = 256;
 const HARD_MAXIMUM_ACCEPT_POLL_MS: u64 = 1_000;
@@ -119,6 +121,18 @@ pub trait BrokerOperationDispatcherV1: Send + Sync {
         operation_id: &str,
         cancelled: &AtomicBool,
     ) -> Result<(), crate::CodexDispatchError>;
+
+    /// Loads immutable output from the existing prepared journal, never dispatches.
+    /// Reservation-only/custom dispatchers deny unless they supply the real source.
+    fn prepared_delivery(
+        &self,
+        _journal: &BrokerJournalStoreV1,
+        _operation_id: &str,
+    ) -> Result<crate::BrokerPreparedDeliveryV1, crate::CodexDispatchError> {
+        Err(crate::CodexDispatchError::InvalidBinding(
+            "prepared_delivery_unavailable",
+        ))
+    }
 }
 
 /// Role-specific service; reservation-only by default, with explicit qualified dispatch opt-in.
@@ -484,6 +498,47 @@ fn spawn_worker(
                     continue;
                 }
             };
+            if pending.is_result_query() {
+                let admitted = match pending.authenticate(&trust_store, now) {
+                    Ok(admitted) => admitted,
+                    Err(_) => {
+                        telemetry.admission_rejected();
+                        if !write_rejection(
+                            &mut stream,
+                            BrokerMachineCodeV1::AdmissionRejected,
+                            response_policy,
+                        ) {
+                            telemetry.response_write_failed();
+                        }
+                        continue;
+                    }
+                };
+                let context = result_query::ResultQueryContext {
+                    journal: &journal,
+                    dispatcher: dispatcher.as_deref(),
+                    trust_manager: &trust_manager,
+                    startup_bundle_hash: &startup_bundle_hash,
+                    clock: clock.as_ref(),
+                    capability_policy: admission_policy.capability,
+                    response_policy,
+                    write_timeout_ms,
+                    admitted_at_unix_ms: now,
+                };
+                match context.respond(&admitted, &mut stream) {
+                    Ok(()) => telemetry.existing(),
+                    Err(result_query::ResultQueryError::Rejected(code)) => {
+                        if !write_rejection(&mut stream, code, response_policy) {
+                            telemetry.response_write_failed();
+                        }
+                    }
+                    Err(result_query::ResultQueryError::DeliveryInterrupted) => {
+                        // A partial response must never be followed by another frame.
+                        // Keep the operation unchanged for an explicit authenticated query.
+                        telemetry.response_write_failed();
+                    }
+                }
+                continue;
+            }
             let reservation = pending
                 .authenticate(&trust_store, now)
                 .map_err(|error| ServerReservationError::State(BrokerStateError::Admission(error)))

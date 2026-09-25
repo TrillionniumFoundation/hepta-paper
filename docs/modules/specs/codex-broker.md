@@ -132,8 +132,13 @@ request retries do not redispatch. Exact signed acknowledgement replay retains
 its original subject/time/signature checks and returns the durable terminal
 without appending again; conflicting acknowledgements remain rejected. See the
 [consumer recovery contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md#consumer-visible-results-and-acknowledgement-recovery)
-for lost-response/restart behavior, actual test commands and the still-missing
-artifact transport and campaign-consumer integration.
+for lost-response/restart behavior and actual test commands. The explicit
+`HEPTAQX1` read-only query now transports the journal-bound original receipt and
+actual output through the existing role broker without reservation or dispatch.
+The normal execution wire stays unchanged. The consumer checks the expected
+broker peer and exact request/receipt/output; current authority is rechecked
+before output chunks. Expired-request recovery authority, the full
+campaign consumer and commit-bound ACK transport remain separate.
 
 Before listener readiness call `recover_codex_dispatch_containment`, then the
 normal journal reconciliation. A replaced cgroup or unresolved released

@@ -936,3 +936,6 @@ fn journal_only_backup_rejects_dispatch_inflight_state() {
     );
     assert!(!target.exists());
 }
+
+#[path = "tests/delivery.rs"]
+mod delivery;

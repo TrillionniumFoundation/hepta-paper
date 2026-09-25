@@ -239,6 +239,19 @@ impl ProductCodexDispatcherV1 {
     }
 }
 impl BrokerOperationDispatcherV1 for ProductCodexDispatcherV1 {
+    fn prepared_delivery(
+        &self,
+        journal: &BrokerJournalStoreV1,
+        operation_id: &str,
+    ) -> Result<crate::BrokerPreparedDeliveryV1, CodexDispatchError> {
+        crate::load_codex_prepared_delivery(
+            journal,
+            &self.configuration.gate_policy.state_directory,
+            operation_id,
+            self.configuration.broker_uid,
+        )
+    }
+
     fn recover_before_ready(
         &self,
         journal: &mut BrokerJournalStoreV1,

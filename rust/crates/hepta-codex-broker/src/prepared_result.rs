@@ -501,6 +501,26 @@ pub fn read_codex_prepared_output(
     Ok(bytes)
 }
 
+pub(crate) fn read_prepared_receipt(
+    state_directory: &Path,
+    operation_id: &str,
+    owner_uid: u32,
+) -> Result<BrokerPreparedResultReceiptV1, CodexDispatchError> {
+    let bytes = read_private_sidecar(
+        &prepared_result_path(state_directory, operation_id),
+        owner_uid,
+        MAXIMUM_SIDECAR_BYTES,
+    )?;
+    let receipt: BrokerPreparedResultReceiptV1 = serde_json::from_slice(&bytes)?;
+    receipt.verify_hash()?;
+    if serde_json::to_vec(&receipt)? != bytes || receipt.operation_id != operation_id {
+        return Err(CodexDispatchError::InvalidBinding(
+            "prepared_receipt_canonical",
+        ));
+    }
+    Ok(receipt)
+}
+
 fn advance_local_transition(
     store: &mut BrokerJournalStoreV1,
     operation_id: &str,
@@ -566,7 +586,7 @@ fn create_or_verify_sidecar(
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .custom_flags(nix::libc::O_NOFOLLOW)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
         .open(path)
     {
         Ok(mut file) => {
@@ -604,7 +624,7 @@ fn read_private_sidecar(
 ) -> Result<Vec<u8>, CodexDispatchError> {
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
         .open(path)?;
     let before = file.metadata()?;
     if !before.is_file()

@@ -88,9 +88,70 @@ The same signed request can query its original result while its existing
 capability is valid. It never dispatches an existing operation again. Conflicting
 request bodies still fail journal admission. Losing a response or restarting the
 listener does not reset the operation, and a preflight failure is not a prepared
-result. This response transports identities only, not artifact bytes, a writer
-capability, a scientific verdict or a campaign-commit receipt. Full service-side
-result transport and the authenticated author/reviewer consumer remain separate.
+result. The legacy execution response transports identities only; it does not
+become a writer capability, scientific verdict or campaign-commit receipt.
+
+### Explicit read-only prepared-output query
+
+The same role-specific broker endpoint now accepts `HEPTAQX1`: the existing
+16-byte request framing with a distinct read-only magic and the exact original
+canonical signed `CodexExecutionRequestV1` payload. `HEPTACX1` execution framing
+and `HEPTARX1` response encoding are unchanged. Execution-only admission APIs
+reject query frames. This route never reserves an operation or nonce, invokes
+the dispatcher, renews a capability, acknowledges a result, or writes a campaign.
+An unknown operation returns `operation_not_found`; an existing non-prepared
+operation returns `state_conflict`. A different validly signed request for the
+same operation is a conflict, not a replacement.
+
+`ProductCodexDispatcherV1::prepared_delivery` loads the original committed
+`ResultPrepared`/`Acknowledged` journal, canonical prepared receipt and actual
+output sidecar. It checks the prepared-transition digest, full persisted request,
+role/runtime/schema/workspace/attempt/revision/lease bindings and actual output
+bytes. Missing or changed sidecars fail closed, without re-executing the model
+or reconstructing a supposedly successful result. The existing dispatch shared
+lock excludes cooperating backup/recovery. This observation does not reclaim
+credentials or grant another operation's workspace permissions.
+
+On success an ordinary `Prepared` or `Acknowledged` response precedes one
+`HEPTAPX1` frame: 8-byte magic, big-endian u64 receipt length, big-endian u64 output
+length, canonical receipt JSON, then raw provider-output bytes. Each length is
+positive and at most 64 MiB; output must also fit the original signed request
+limit. The consumer rejects oversized lengths before allocation, noncanonical
+receipt bytes, any expected-receipt/request mismatch and corrupted/truncated
+output. `BrokerPreparedDeliveryV1` exposes read-only getters and is a content
+result, not a signed scientific or campaign-write grant.
+
+Use `query_prepared_result` with an already connected Unix socket, an explicit
+expected broker peer policy, the original signed request and a 1–30000 ms
+cumulative I/O timeout. The caller owns bounded connection establishment. Kernel
+peer checks precede sending the request. The server rechecks current trust,
+request expiry and nondecreasing clock after loading the sidecars and before
+every bounded output chunk. Writes share one elapsed-time budget; progress does
+not restart it. Failure after a partial response closes the connection without
+another response or ACK. Bytes already sent cannot be recalled by later
+revocation; the API returns a result only after verifying the entire frame.
+
+Lost replies are recovered by an explicit identical query under still-current
+capability authority, including after listener restart or acknowledgement.
+The query intentionally does not add an expired-request bypass. Long-running
+operations needing fresh recovery authority, full writer-issued author/reviewer
+inputs, durable consumer/CAS commit and commit-bound ACK transport remain
+separate product integration work. No live model or full Node parity is claimed.
+
+The `codex_dispatch::tests::delivery` cases use real Unix sockets, Ed25519
+admission, SQLite, original sidecars and credential-free supervised processes.
+They execute the actual client/server path, wrong-subject/signature rejection,
+no-reservation/no-dispatch behavior, expiry during reading, corrupted/truncated
+bytes, acknowledgement replay and lost-response restart. These fixture runtimes
+are not authenticated live-model evidence. The stale-listener tests explicitly
+stop listening while retaining a duplicate descriptor, so concurrent fork/exec
+cannot replace the intended stale-socket assertion with a transient live socket.
+Production live-predecessor rejection is unchanged.
+
+```sh
+cargo test --locked -p hepta-codex-broker --lib codex_dispatch::tests::delivery
+cargo test --locked -p hepta-codex-broker --lib listener::tests
+```
 
 `verify_persisted_prepared_result_acknowledgement` still reloads the actual
 request and journal and applies the original signature, key and age policy.

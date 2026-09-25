@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const FRAME_MAGIC: [u8; 8] = *b"HEPTACX1";
+const RESULT_QUERY_MAGIC: [u8; 8] = *b"HEPTAQX1";
 const FRAME_HEADER_BYTES: usize = 16;
 const HARD_MAXIMUM_PAYLOAD_BYTES: usize = 1024 * 1024;
 
@@ -90,12 +91,26 @@ pub fn read_request_frame<R: Read>(
     reader: &mut R,
     policy: BrokerFramePolicyV1,
 ) -> Result<DecodedRequestFrameV1, BrokerFrameError> {
+    let (frame, query) = read_server_request_frame(reader, policy)?;
+    if query {
+        return Err(BrokerFrameError::InvalidMagic);
+    }
+    Ok(frame)
+}
+
+// Only the server chooses the read-only route. Execution-only public APIs must
+// reject the query magic rather than inadvertently reserve a new operation.
+pub(crate) fn read_server_request_frame<R: Read>(
+    reader: &mut R,
+    policy: BrokerFramePolicyV1,
+) -> Result<(DecodedRequestFrameV1, bool), BrokerFrameError> {
     let policy = policy.validate()?;
     let mut header = [0_u8; FRAME_HEADER_BYTES];
     reader
         .read_exact(&mut header)
         .map_err(|error| BrokerFrameError::Read(error.kind()))?;
-    if header[..8] != FRAME_MAGIC {
+    let query = header[..8] == RESULT_QUERY_MAGIC;
+    if header[..8] != FRAME_MAGIC && !query {
         return Err(BrokerFrameError::InvalidMagic);
     }
     let payload_length = u64::from_be_bytes(
@@ -132,11 +147,14 @@ pub fn read_request_frame<R: Read>(
         return Err(BrokerFrameError::NonCanonicalJson);
     }
     let payload_hash = sha256_digest(&payload)?;
-    Ok(DecodedRequestFrameV1 {
-        request,
-        payload,
-        payload_hash,
-    })
+    Ok((
+        DecodedRequestFrameV1 {
+            request,
+            payload,
+            payload_hash,
+        },
+        query,
+    ))
 }
 
 /// Writes exactly one length-prefixed request frame.
@@ -144,6 +162,25 @@ pub fn write_request_frame<W: Write>(
     writer: &mut W,
     request: &CodexExecutionRequestV1,
     policy: BrokerFramePolicyV1,
+) -> Result<Sha256Digest, BrokerFrameError> {
+    write_framed_request(writer, request, policy, &FRAME_MAGIC)
+}
+
+/// Requests bytes of an existing operation. Carries the original signed request;
+/// it never permits reservation, re-dispatch or automatic capability renewal.
+pub fn write_result_query_frame<W: Write>(
+    writer: &mut W,
+    request: &CodexExecutionRequestV1,
+    policy: BrokerFramePolicyV1,
+) -> Result<Sha256Digest, BrokerFrameError> {
+    write_framed_request(writer, request, policy, &RESULT_QUERY_MAGIC)
+}
+
+fn write_framed_request<W: Write>(
+    writer: &mut W,
+    request: &CodexExecutionRequestV1,
+    policy: BrokerFramePolicyV1,
+    magic: &[u8; 8],
 ) -> Result<Sha256Digest, BrokerFrameError> {
     let policy = policy.validate()?;
     request
@@ -163,7 +200,7 @@ pub fn write_request_frame<W: Write>(
     let length =
         u64::try_from(payload.len()).map_err(|_| BrokerFrameError::InvalidLengthEncoding)?;
     writer
-        .write_all(&FRAME_MAGIC)
+        .write_all(magic)
         .and_then(|()| writer.write_all(&length.to_be_bytes()))
         .and_then(|()| writer.write_all(&payload))
         .and_then(|()| writer.flush())

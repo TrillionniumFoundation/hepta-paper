@@ -151,6 +151,12 @@ The static module state is `source_implemented`, matching the Identity section a
 
 The [native business handoff](../NATIVE_BUSINESS_HANDOFF.md) defines the seven bounded kernels, actual wire examples, output contracts and executable documentation tests. These kernels must not be counted as full Node business-role parity. The [full replacement acceptance contract](../../migration/FULL_REPLACEMENT_ACCEPTANCE.md) defines the remaining command, capability, branch and operational evidence chain.
 
+The ordinary service and local workflow can now import an existing broker result
+through the [broker-prepared consumer](../LOCAL_WORKFLOW_HANDOFF.md#broker-prepared-result-consumption).
+It uses the existing CAS, verifier and SQLite sequencer without dispatching a
+provider or sending an ACK. This closes the local result-consumer slice only;
+request issuance, live role canaries and production activation remain separate.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

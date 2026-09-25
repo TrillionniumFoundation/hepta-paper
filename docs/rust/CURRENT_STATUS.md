@@ -29,10 +29,11 @@ they are not a substitute for V3 base/head/tested-merge and complete eligible
 run-attempt-history binding. Zero-job, skipped, dirty, stale, base-moved,
 merge-moved and run-history-mutated evidence must fail closed.
 
-`QUAL-001` through `QUAL-005` remain open acceptance records in static machine
-truth. Their historical defect wording does not mean the V3 source is still
-missing. No current exact-head qualification or independent acceptance is
-asserted by this document.
+`QUAL-001` through `QUAL-004` remain open source-qualification acceptance
+records in static machine truth; `QUAL-005` is retired under the
+single-maintainer policy. Their historical defect wording does not mean the V3
+source is still missing. No current exact-head qualification is asserted by
+this document.
 
 ## Bound baseline and current candidate
 
@@ -49,12 +50,11 @@ The prior release-candidate branch `codex/rust-plan-v4-rc1-20260831` and its
 `codex/rust-plan-v3-final-product-20260830` integration base are historical audit
 lineage. They do not identify the current implementation candidate:
 
-```text
-implementation branch  codex/full-rust-replacement-progress-20260916
-integration baseline   9570cec7bba9211099b24cb185abad907a591e0f
-stage                  native command and local/shadow runtime migration
-exact head/tree        read live; never substituted by a historical audit digest
-```
+The sole active PR and integration branch are selected by the
+[delivery policy](../governance/DELIVERY_AND_INTEGRATION.md#1-current-workflow).
+Read its live head/base and source trees; this projection does not maintain a
+second current-candidate digest. The stage remains native command and
+local/shadow runtime migration.
 
 The current implementation map, reproducible commands and remaining production
 boundaries are in
@@ -64,8 +64,8 @@ tracked in [`../migration/NODE_RUST_GAP_CLOSURE.md`](../migration/NODE_RUST_GAP_
 The command inventory currently consumes no independent parity acceptance
 receipts; its counts must not be presented as a project completion percentage.
 Each changed candidate still needs a producer-authenticated non-empty matrix,
-retained fully schema-valid artifacts, live V3 revalidation and independent
-review. Local execution does not qualify a branch or authorize a deployment.
+retained fully schema-valid artifacts, live V3 revalidation and maintainer
+verification. Local execution does not qualify a branch or authorize a deployment.
 
 ## Static source state
 

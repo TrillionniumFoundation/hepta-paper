@@ -1,11 +1,11 @@
 # Executable Rust migration: implementation and acceptance boundaries
 
-This document describes the current source on
-`codex/full-rust-replacement-progress-20260916`, whose integration baseline is
-`9570cec7bba9211099b24cb185abad907a591e0f`. Earlier planning-provider replay work
-used `6e56a3508e871018e1b4e0c5a573b50818032e38`; that historical digest does not
-identify this candidate. This is a technical implementation record, not a
-qualification receipt, deployment authorization, or declaration that Node is retired.
+This document describes the current implementation selected by the
+[delivery policy](../governance/DELIVERY_AND_INTEGRATION.md#1-current-workflow).
+Read the live PR head and integration base before comparing or validating source;
+historical baseline SHAs do not identify the current candidate. This is a
+technical implementation record, not a qualification receipt, deployment
+authorization, or declaration that Node is retired.
 
 ## Implementation map
 
@@ -16,7 +16,7 @@ qualification receipt, deployment authorization, or declaration that Node is ret
 | Durable campaign authority | Writer lease, atomic state/accounting/event and full result/receipt log, crash recovery | [Campaign writer](../../rust/crates/hepta-campaign-writer/README.md) |
 | Durable control execution | Persistent sequencer, replay validation and independent artifact-byte verifier | [Control plane](../../rust/crates/hepta-control-plane/README.md) |
 | Runnable service | CLI/stdin composition, CAS, dispatch intent, native jobs and pinned process workers | [Service](../../rust/crates/hepta-paper-service/README.md) |
-| Real broker dispatch | Authenticated request, role invocation, pre-exec gate, cgroup containment, output-schema validation, durable recovery | [Broker dispatch](../../rust/crates/hepta-codex-broker/DISPATCH.md) |
+| Real broker dispatch | Authenticated request plus an authority-owned product operation descriptor, role invocation, pre-exec gate, cgroup containment, output/schema and workspace-mutation validation, durable recovery | [Broker dispatch](../../rust/crates/hepta-codex-broker/DISPATCH.md) |
 | Cooperative single writer | Durable journal, Node adapter fencing, backup/restore and same-database handoff/rollback | [Cutover](../../rust/crates/hepta-cutover/README.md) |
 | Native authority inspection | Operational and owner evidence, nested-runtime qualification, journal discovery and signed target registries | [Authority inspection](../modules/NATIVE_AUTHORITY_INSPECTION_HANDOFF.md) |
 | Local integrity-key lifecycle | Read-only status/loading and create-once Ed25519 provisioning, locking and crash-safe no-clobber publication | [Integrity keys](../modules/RELEASE_INTEGRITY_KEY_HANDOFF.md) |
@@ -68,12 +68,17 @@ records its actual language and pinned executable/source configuration; it never
 counts a Node worker as a native Rust rewrite. The local process runner supervises
 trusted code but does not enforce a production security sandbox.
 
-The real broker API requires a caller-supplied, independently verified production
-authority implementation. It checks authority at irreversible boundaries and
-uses the existing gate and cgroup containment. Schema-validated provider output
-does not automatically become an accepted campaign result: workspace mutation,
-scientific validation, prepared-result integration and sequencer acceptance remain
-separate contracts. No universal accept-all authority adapter is installed.
+The real broker installs `ProductCodexDispatcherV1` rather than a universal
+accept-all authority. A separate operation principal owns canonical descriptors,
+prompt/input-manifest/schema bytes and exact campaign, role, lease, workspace,
+mutation and budget bindings. The broker revalidates those inputs at preflight,
+physical release and postflight; postflight permits only mutations subsequently
+accepted by the durable workspace owner. Descriptor identity is retained in the
+prepared receipt. The existing gate and cgroup containment remain mandatory.
+Schema-validated provider output still does not automatically become an accepted
+campaign result: scientific validation, prepared-result acknowledgement and
+sequencer acceptance remain separate contracts. Installed daemon configuration,
+real provider credentials and author/reviewer canaries remain deployment evidence.
 
 Broker recovery includes a quiesced backup bundle containing the journal and
 durable result sidecars. Restore verifies an independently retained manifest hash
@@ -358,3 +363,64 @@ all ten byte hashes, repeats the receipt and creates a fresh runtime while
 preserving quarantine. Unit tests independently use actual SIGKILL at
 before-rename, after-rename and post-sync cuts. Those publisher/recovery byte
 fixtures are not production database, storage-loss or external-principal proof.
+
+### Reconcile a published root with no terminal receipt
+
+Use the existing command, not the staging-quarantine profile:
+
+```bash
+hepta-paper-rust autonomous-state-provision --recover-publication "$RECOVERY_REQUEST"
+```
+
+The [executable request](../modules/examples/publication-recovery-request.v1.json)
+is a closed `NativeStatePublicationRecoveryRequestV1`, version 1, containing
+`action`, absolute `runtimeRoot`, `expectedPreparedReceiptHash`, boolean `execute`
+and optional/null `expectedPlanHash`. Start with `action=inspect`, `execute=false`
+and no plan hash. Select the prepared-record digest from your retained original
+initialization evidence; a digest copied from untrusted bytes does not authenticate
+that history. Inspection checks the exact prepared-record fields, false authority
+flags, current compiled schema bundle/manifest and every one of the ten recorded
+file hashes/lengths. It does not invoke SQLite, genesis, a provider or a signer.
+
+Inspection reports `published_without_terminal` or `terminal_present`, plus
+`plan.recoveryPlanHash`. To persist a missing terminal, use `action=finalize`,
+`execute=true` and that exact plan hash. This is a current-object/CAS selection,
+not a human-review ceremony. Parent, directory and database inode identities and
+bytes must still match. The new native-only plan hashes canonical compact serde
+JSON, including its kind, without its own hash field. It preserves full u64
+inode/device values; it does not use the historical Node numeric hash domain.
+The existing parent lock excludes cooperating publication
+and staging-recovery owners. Quiesce older or noncooperating producers separately;
+this local advisory lock is not installed-service isolation.
+
+All existing bounds apply: private 0700 directories and 0600 single-link files,
+same device, no symlinks/special nodes, at most 64 entries, 32 MiB per database,
+1 MiB per receipt and 129 MiB aggregate. Only the original complete ten database
+paths, prepared receipt and optional terminal receipt are admitted. New tables,
+new committed rows, missing files, WAL sidecars, unregistered files, changed
+inode identity or conflicting terminal content block recovery. Nothing is
+restored over those bytes.
+
+The owner syncs retained files/directories and the publication parent, derives
+the exact terminal through the existing publisher, and exclusively creates
+`native-provisioning-publication.json` only when absent. Existing matching
+terminals are verified without rewriting their identity. JSON is checked for
+duplicate keys before its original serde numeric representation is retained;
+`1.0` is not silently rewritten as `1`. The integration test requires recovered
+terminal bytes and its hash to equal the original publisher output.
+
+After writing, the owner observes the completed namespace and compares it to the
+original held database/root objects. Late failures retain `publicationState=published`
+and `terminalWriteAttempted`; they never report no effect or invite automatic
+retry. SIGKILL before writing, after writing/sync and after final verification is
+covered by actual subprocess tests. Reissuing the same selected request verifies
+matching state and returns the same receipt. A partial or conflicting terminal
+is retained and refused, not overwritten; repair of such content is outside this
+profile. Missing prepared history or a missing trusted digest similarly requires
+explicit investigation rather than reconstructed authority.
+
+This completes receipt reconciliation for unchanged fresh initialization, not
+arbitrary published-root maintenance. Its terminal's `ready`/`freshRuntimeInstalled`
+mean the selected historical business-schema initialization only. Production
+activation, writer transfer, current external qualification and Node retirement
+remain false. It never uses an old database image to replace newer work.

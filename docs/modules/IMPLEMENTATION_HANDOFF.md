@@ -235,9 +235,9 @@ not replace the campaign engine, its writer, or in-flight process cancellation.
 
 ## module.workspace-authority
 
-**Implementation scope:** Rust descriptor-bound workspace operations.
+**Implementation scope:** Product owner `hepta-workspace`; `hepta-workspace-authority` remains a distinct compatibility/reference contract.
 
-**API and concrete types:** [rust/crates/hepta-workspace-authority/src/lib.rs](../../rust/crates/hepta-workspace-authority/src/lib.rs). **Engineering contract:** [WORKSPACE_AND_EXECUTION.md](../runtime/WORKSPACE_AND_EXECUTION.md). **Module specification:** [workspace-authority](specs/workspace-authority.md).
+**API and concrete types:** [rust/crates/hepta-workspace/src/lib.rs](../../rust/crates/hepta-workspace/src/lib.rs). **Engineering contract:** [WORKSPACE_AND_EXECUTION.md](../runtime/WORKSPACE_AND_EXECUTION.md). **Module specification:** [workspace-authority](specs/workspace-authority.md).
 
 **Boundary and recovery:** WorkspaceRootV1, MutationPolicyV1 and PreparedWorkspaceResultV1 define the boundaries. Bind before/after inventories; forbid unsafe links, replacement identities and reviewer mutations.
 

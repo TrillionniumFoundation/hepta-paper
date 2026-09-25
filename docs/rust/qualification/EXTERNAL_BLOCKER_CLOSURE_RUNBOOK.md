@@ -35,9 +35,10 @@ For every package:
 
 ## Final handoff gate
 
-After all packages are independently accepted, regenerate the exact-head
-qualification artifacts, run `docs/rust/tools/verify-effective-status-current.py`
-against the current checkout, and repeat the protected-main review. A package
+After all operational packages are accepted by their named authorities,
+regenerate the exact-head qualification artifacts and run
+`docs/rust/tools/verify-effective-status-current.py` against the current checkout.
+No protected-main human-review ceremony is repeated. A package
 whose head, tree, producer run, configuration or authority receipt changes is
 invalid and must be regenerated. Only then may the repository owner decide
 whether the separate parity, production-activation and Node-retirement gates

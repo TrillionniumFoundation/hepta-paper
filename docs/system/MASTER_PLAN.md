@@ -260,8 +260,8 @@ SYS/MOD/CTL/SCH/RES/PERF/OBS/ORG ownership model.
 | G4 | Concurrency and resource model are qualified | fairness, backpressure, starvation, crash and scale workloads |
 | G5 | Node capabilities are wrapped behind module contracts | no new direct cross-layer authority; differential evidence retained |
 | G6 | Global optimizer is qualified | hard-constraint proof, fixed-workload optimum/gap, safe fallback |
-| G7 | Organization can scale | team CODEOWNERS provisioned; module CI and review policy operational |
-| G8 | Production prerequisites are independently qualified | governance, legacy replay, host, storage, key, Codex, release and submission packages |
+| G7 | Organization can scale | responsibility map, module CI, runbooks and optional contributor-routing policy operational |
+| G8 | Production prerequisites are independently qualified | legacy replay, host, storage, key, Codex, release and submission packages |
 | G9 | Shadow and canary complete | production-shaped comparison, rollback and no dual writer |
 | G10 | Rust control plane becomes authoritative | atomic writer transfer and Node authority retirement evidence |
 
@@ -282,7 +282,7 @@ gate. Each gate closes only from its named evidence and reviewer domain.
 8. Establish canonical workloads and baseline performance on named hosts.
 9. Add global optimization over bounded candidate frontiers with a deterministic
    fallback.
-10. Provision team ownership and CODEOWNER groups before broad contributor scale.
+10. Keep single-maintainer ownership until contributors actually exist; add team/CODEOWNER routing only when staffing requires it.
 11. Complete external host, credential, key, storage, release, and submission
     qualification.
 12. Run shadow, canary, rollback, atomic cutover, and final Node-authority
@@ -300,7 +300,7 @@ authority gained and authority retained elsewhere
 protocol and compatibility impact
 resource and performance impact
 failure/recovery and rollback behavior
-test, benchmark, evidence, and reviewer requirements
+test, benchmark, evidence, and operational-authority requirements
 status and document-manifest impact
 ```
 

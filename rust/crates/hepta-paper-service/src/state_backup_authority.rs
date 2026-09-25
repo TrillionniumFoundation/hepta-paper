@@ -301,6 +301,32 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
         }
         Ok(())
     }
+    /// Rewrap only the untrusted transport while retaining the exact pinned
+    /// backup/public-key/online-configuration owner.
+    pub(crate) fn assert_transport_current_v1(
+        &self,
+        check: impl FnOnce(&T) -> Result<()>,
+    ) -> Result<()> {
+        self.current()?;
+        check(&self.transport)?;
+        self.current()
+    }
+    pub(crate) fn map_transport<U: StateBackupAuthorityTransportV1>(
+        self,
+        map: impl FnOnce(T) -> U,
+    ) -> PinnedStateBackupAuthorityV1<U> {
+        PinnedStateBackupAuthorityV1 {
+            configuration: self.configuration,
+            public_document: self.public_document,
+            profile: self.profile,
+            trust: self.trust,
+            key: self.key,
+            configuration_hash: self.configuration_hash,
+            online: self.online,
+            online_configuration: self.online_configuration,
+            transport: map(self.transport),
+        }
+    }
     fn signature(&self, receipt: &Value) -> bool {
         let Some(encoded) = receipt["signature"].as_str() else {
             return false;

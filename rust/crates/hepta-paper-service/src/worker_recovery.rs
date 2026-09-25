@@ -86,7 +86,10 @@ fn read_record(path: &Path, owner: u32) -> Result<Vec<u8>, ServiceError> {
 }
 
 impl DispatchGuardV1 {
-    pub(super) fn acquire(objects: &ObjectStoreV1) -> Result<Self, ServiceError> {
+    pub(super) fn acquire(
+        objects: &ObjectStoreV1,
+        readonly_retries: &BTreeSet<String>,
+    ) -> Result<Self, ServiceError> {
         let state = objects.root().parent().ok_or(ServiceError::Artifact)?;
         let owner = private_root(state)?.uid();
         let path = state.join("attempts");
@@ -176,7 +179,11 @@ impl DispatchGuardV1 {
         }
         // A different request/plan/campaign must not evade an earlier ambiguous
         // start. Do not delete records, synthesize results, or silently retry.
-        if started != prepared {
+        if !prepared.is_subset(&started)
+            || started
+                .difference(&prepared)
+                .any(|identity| !readonly_retries.contains(identity))
+        {
             return Err(ServiceError::Execution);
         }
         guard.validate()?;

@@ -248,7 +248,11 @@ impl LocalWorkflowV1 {
                 || seen.contains(&step.id)
                 || step.bindings.len() > 32
                 || step.resources.external_actions != 0
-                || step.resources.provider_calls != 0
+                || step.resources.provider_calls
+                    != u64::from(matches!(
+                        t.workers.get(&step.module_id),
+                        Some(WorkerBindingV1::BrokerExecute { .. })
+                    ))
                 || step.resources.central_writer_turns != 0
             {
                 return Err(WorkflowError::Definition);
@@ -261,6 +265,12 @@ impl LocalWorkflowV1 {
             }
             match t.workers.get(&step.module_id) {
                 Some(WorkerBindingV1::Native) => (),
+                Some(
+                    WorkerBindingV1::BrokerPrepared { source }
+                    | WorkerBindingV1::BrokerExecute { source },
+                ) if source.matches_capability(&step.capability_id) => {
+                    source.validate().map_err(|_| WorkflowError::Definition)?;
+                }
                 Some(WorkerBindingV1::Process {
                     network_declared: false,
                     ..
@@ -514,6 +524,9 @@ fn payload(
             NativeJobV1::ArtifactInventory { .. } | NativeJobV1::InspectNodeDatabase { .. },
         ) => (),
         (WorkerBindingV1::Process { .. }, NativeJobV1::Process { .. }) => (),
+        (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
+        | (WorkerBindingV1::BrokerExecute { source }, NativeJobV1::BrokerExecute { input })
+            if source.matches_capability(&step.capability_id) && input.version == 1 => {}
         _ => return Err(WorkflowError::Definition),
     }
     Ok(job)
@@ -842,6 +855,107 @@ fn set_state(
         )
         .map_err(|_| WorkflowError::Conflict)?;
     Ok(())
+}
+
+/// Cancel one node in the local sequential workflow without weakening the
+/// existing campaign writer. Committed steps are terminal and replay as no-ops.
+/// Any uncommitted step owns the complete remaining suffix, so cancelling it
+/// terminally fences future admission while retaining pending/prepared evidence.
+pub fn cancel_local_workflow_node_v1(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    step_id: &str,
+    expected_revision: u64,
+    now: u64,
+) -> Result<WorkflowProgressV1, WorkflowError> {
+    cancel_local_workflow_node_with_clock_v1(
+        root,
+        expected_definition,
+        step_id,
+        expected_revision,
+        &mut || Ok(now),
+    )
+}
+
+pub fn cancel_local_workflow_node_with_clock_v1(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    step_id: &str,
+    expected_revision: u64,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+) -> Result<WorkflowProgressV1, WorkflowError> {
+    if !identifier(step_id) {
+        return Err(WorkflowError::Definition);
+    }
+    let owner = private_root(root)?;
+    let _guard = lock(root, owner)?;
+    let original: LocalWorkflowV1 =
+        serde_json::from_slice(&read_record(&root.join("workflow.json"), owner)?)
+            .map_err(|_| WorkflowError::Definition)?;
+    original.validate()?;
+    if original.template.state_directory != root {
+        return Err(WorkflowError::Definition);
+    }
+    private_root(&root.join("objects"))?;
+    private_root(&root.join("attempts"))?;
+    let objects = ObjectStoreV1::open(root)?;
+    let observed = history(&original, owner, &objects)?;
+    let definition = observed.active_definition.clone();
+    if &hash(&definition)? != expected_definition {
+        return Err(WorkflowError::Definition);
+    }
+    let index = definition
+        .steps
+        .iter()
+        .position(|step| step.id == step_id)
+        .ok_or(WorkflowError::Definition)?;
+
+    // Node returns already-terminal nodes unchanged. The local workflow has a
+    // committed terminal prefix, so no clock or revision check is needed here.
+    if index < observed.results.len() {
+        return Ok(progress(
+            &definition,
+            expected_definition.clone(),
+            &observed,
+        ));
+    }
+
+    let mut last = observed.clock_floor;
+    let mut clock = || {
+        let now = observe()?;
+        if now < last || now >= definition.template.writer_lease.expires_at_unix_ms {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        last = now;
+        Ok(now)
+    };
+    clock().map_err(|_| WorkflowError::Conflict)?;
+    let current = observed.campaign.state;
+    let duplicate = current == CampaignStateV1::Cancelled
+        && expected_revision.checked_add(1) == Some(observed.campaign.revision);
+    if !duplicate {
+        if observed.campaign.revision != expected_revision
+            || matches!(
+                current,
+                CampaignStateV1::Cancelled | CampaignStateV1::Completed
+            )
+        {
+            return Err(WorkflowError::Conflict);
+        }
+        set_state(
+            &definition,
+            owner,
+            expected_revision,
+            CampaignStateV1::Cancelled,
+            &mut clock,
+        )?;
+    }
+    let observed = history(&original, owner, &objects)?;
+    Ok(progress(
+        &definition,
+        expected_definition.clone(),
+        &observed,
+    ))
 }
 
 /// Execute a bounded local operation. Cooperative callers share a nonblocking

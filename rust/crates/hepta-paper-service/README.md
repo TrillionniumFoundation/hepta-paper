@@ -51,7 +51,7 @@ production/online activation and admission gaps.
 | `autonomous-intake-authority-rotation [OPTIONS]` | Inspect the native authority-rotation preflight. Applying rotation remains fail-closed before generation CAS, journal publication or external effects. |
 | `autonomous-research [OPTIONS]` | With explicit `--workflow-file`, local prepare/launch/status/converge/pause/resume/cancel use the existing immutable workflow, SQLite/CAS and dispatch owner; lifecycle mutations bind `--expected-revision`. Without a workflow file it remains diagnostic-only. This is not automatic research planning, live-model authority or full Node parity. See the local workflow handoff. |
 | `autonomous-research-one-shot-campaign-attempt [OPTIONS]` | Inspect bounded plan/preflight/execute/status inputs and report blocked execution; no provider, journal or native writer is opened. |
-| `autonomous-state-partial-root-maintenance [OPTIONS]` | Inspect the bounded partial-root maintenance plan. Execute remains blocked; it does not copy, repair, restore or publish runtime state. |
+| `autonomous-state-partial-root-maintenance [OPTIONS]` | Plan or execute the exact historical 5+5 offline repair: exclusive locks, restore-verified rescue, five missing native business databases, scoped supervisor-journal repair, no-clobber publication and crash reconciliation. It does not activate the online writer or retire Node. |
 | `autonomous-state-provision [OPTIONS]` | Inspect source-bound state-provisioning inputs. Execute remains blocked before constructors, schema handoff and atomic runtime publication. |
 | `autonomous-submission-dispatcher [OPTIONS]` | Inspect the dispatcher input boundary without granting delivery, provider credentials or remote reconciliation authority. |
 | `autonomous-submission-dispatcher-challenge [OPTIONS]` | Inspect the challenge contract; a diagnostic does not execute the incumbent dispatcher or accept a remote outcome. |
@@ -442,3 +442,20 @@ and CAS byte coverage, identity checks, deadlines and test selection are not
 relaxed. This avoids spending most process-workflow feedback time in unoptimized
 hash compression of large debug executables. It is a development-build setting,
 not a production throughput or target-host qualification result.
+
+
+## Compiled command catalog and broker execution
+
+`hepta-paper-rust --help-json` returns `RustCommandCatalogV1` from the same typed
+`CommandV1` enum used by the actual dispatcher. It has no operational side
+effects and rejects extra arguments. The Rust unit and `cli_command_catalog`
+integration tests compare this real catalog to the command table above; no Node
+test parses the spelling of Rust match arms. This catalog describes the 43 Rust
+entrypoints, not complete parity for the separate 57-route Node inventory.
+
+The [local workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#explicit-signed-broker-execution-and-recovery)
+defines `broker_execute` alongside the unchanged `broker_prepared` backend.
+It sends one original independently signed request, then uses the original
+query/CAS/SQLite path; unresolved retry is query-only. Actual execution CLI calls
+use the live host clock. Neither backend signs a request or grants production,
+release, submission or scientific-acceptance authority.

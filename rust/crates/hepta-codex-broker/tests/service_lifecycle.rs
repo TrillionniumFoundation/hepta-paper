@@ -514,3 +514,9 @@ fn failed_spawn_journal_commit_kills_fake_process_and_rolls_back_transition() {
         OperationState::RequestBound,
     );
 }
+
+#[path = "service_lifecycle/acknowledgement_recovery.rs"]
+mod acknowledgement_recovery;
+
+#[path = "service_lifecycle/result_response.rs"]
+mod result_response;

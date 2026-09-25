@@ -23,6 +23,8 @@ use crate::{
 };
 use crate::{admission::read_unix_request, service::reserve_authenticated_request_revalidated};
 
+mod result_query;
+
 const HARD_MAXIMUM_WORKERS: usize = 32;
 const HARD_MAXIMUM_QUEUE_CAPACITY: usize = 256;
 const HARD_MAXIMUM_ACCEPT_POLL_MS: u64 = 1_000;
@@ -119,6 +121,18 @@ pub trait BrokerOperationDispatcherV1: Send + Sync {
         operation_id: &str,
         cancelled: &AtomicBool,
     ) -> Result<(), crate::CodexDispatchError>;
+
+    /// Loads immutable output from the existing prepared journal, never dispatches.
+    /// Reservation-only/custom dispatchers deny unless they supply the real source.
+    fn prepared_delivery(
+        &self,
+        _journal: &BrokerJournalStoreV1,
+        _operation_id: &str,
+    ) -> Result<crate::BrokerPreparedDeliveryV1, crate::CodexDispatchError> {
+        Err(crate::CodexDispatchError::InvalidBinding(
+            "prepared_delivery_unavailable",
+        ))
+    }
 }
 
 /// Role-specific service; reservation-only by default, with explicit qualified dispatch opt-in.
@@ -484,6 +498,47 @@ fn spawn_worker(
                     continue;
                 }
             };
+            if pending.is_result_query() {
+                let admitted = match pending.authenticate(&trust_store, now) {
+                    Ok(admitted) => admitted,
+                    Err(_) => {
+                        telemetry.admission_rejected();
+                        if !write_rejection(
+                            &mut stream,
+                            BrokerMachineCodeV1::AdmissionRejected,
+                            response_policy,
+                        ) {
+                            telemetry.response_write_failed();
+                        }
+                        continue;
+                    }
+                };
+                let context = result_query::ResultQueryContext {
+                    journal: &journal,
+                    dispatcher: dispatcher.as_deref(),
+                    trust_manager: &trust_manager,
+                    startup_bundle_hash: &startup_bundle_hash,
+                    clock: clock.as_ref(),
+                    capability_policy: admission_policy.capability,
+                    response_policy,
+                    write_timeout_ms,
+                    admitted_at_unix_ms: now,
+                };
+                match context.respond(&admitted, &mut stream) {
+                    Ok(()) => telemetry.existing(),
+                    Err(result_query::ResultQueryError::Rejected(code)) => {
+                        if !write_rejection(&mut stream, code, response_policy) {
+                            telemetry.response_write_failed();
+                        }
+                    }
+                    Err(result_query::ResultQueryError::DeliveryInterrupted) => {
+                        // A partial response must never be followed by another frame.
+                        // Keep the operation unchanged for an explicit authenticated query.
+                        telemetry.response_write_failed();
+                    }
+                }
+                continue;
+            }
             let reservation = pending
                 .authenticate(&trust_store, now)
                 .map_err(|error| ServerReservationError::State(BrokerStateError::Admission(error)))
@@ -525,51 +580,42 @@ fn spawn_worker(
                 });
             match reservation {
                 Ok(reservation) => {
-                    let (kind, mut journal_state) = match reservation.outcome {
-                        ReservationOutcomeV1::Reserved(journal) => (true, journal.current_state),
-                        ReservationOutcomeV1::Existing(journal) => (false, journal.current_state),
-                    };
-                    if kind && let Some(dispatcher) = &dispatcher {
-                        if dispatcher
+                    let kind = matches!(reservation.outcome, ReservationOutcomeV1::Reserved(_));
+                    if kind
+                        && let Some(dispatcher) = &dispatcher
+                        && dispatcher
                             .dispatch(&mut journal, &reservation.operation_id, &shutdown)
                             .is_err()
-                        {
-                            // The durable state carries failure/ambiguity; never resubmit this operation.
-                            // An error before a state transition is an internal dispatch rejection.
-                            let state = journal
-                                .load_journal(&reservation.operation_id)?
-                                .current_state;
-                            if state == hepta_codex_journal::OperationState::Reserved {
-                                journal.append_transition(
-                                    &reservation.operation_id,
-                                    state,
-                                    hepta_codex_journal::OperationState::RejectedPreflight,
-                                    clock.now_unix_ms()?,
-                                    None,
-                                    Some("codex_dispatch_rejected".to_owned()),
-                                    FaultInjectionPointV1::None,
-                                )?;
-                            }
-                        }
-                        journal_state = journal
+                    {
+                        // The durable state carries failure/ambiguity; never resubmit this operation.
+                        // An error before a state transition is an internal dispatch rejection.
+                        let state = journal
                             .load_journal(&reservation.operation_id)?
                             .current_state;
+                        if state == hepta_codex_journal::OperationState::Reserved {
+                            journal.append_transition(
+                                &reservation.operation_id,
+                                state,
+                                hepta_codex_journal::OperationState::RejectedPreflight,
+                                clock.now_unix_ms()?,
+                                None,
+                                Some("codex_dispatch_rejected".to_owned()),
+                                FaultInjectionPointV1::None,
+                            )?;
+                        }
                     }
-                    let response = if kind {
+                    let observed = journal.load_journal(&reservation.operation_id)?;
+                    if observed.operation_id != reservation.operation_id
+                        || observed.request_hash != reservation.request_hash
+                    {
+                        return Err(BrokerServerError::ResultEvidenceMissing);
+                    }
+                    let response = response_from_durable_journal(&observed, kind)?;
+                    if kind {
                         telemetry.reserved();
-                        BrokerResponseV1::reserved(
-                            reservation.operation_id,
-                            reservation.request_hash,
-                            journal_state,
-                        )
                     } else {
                         telemetry.existing();
-                        BrokerResponseV1::existing(
-                            reservation.operation_id,
-                            reservation.request_hash,
-                            journal_state,
-                        )
-                    };
+                    }
                     if write_response_frame(&mut stream, &response, response_policy).is_err() {
                         telemetry.response_write_failed();
                     }
@@ -608,6 +654,43 @@ fn spawn_worker(
         Ok(())
     });
     handle.map_err(|error| BrokerServerError::WorkerSpawn(error.kind()))
+}
+
+// Use the existing V1 prepared/acknowledged response shapes. A reservation
+// alone is not a completed result, and a duplicate request must return the
+// original durable result identity without calling the dispatcher again.
+fn response_from_durable_journal(
+    journal: &hepta_codex_journal::OperationJournalV1,
+    newly_reserved: bool,
+) -> Result<BrokerResponseV1, BrokerServerError> {
+    use hepta_codex_journal::OperationState;
+    let evidence = |state| {
+        journal
+            .transitions
+            .iter()
+            .find(|transition| transition.to == state)
+            .and_then(|transition| transition.evidence_hash.clone())
+            .ok_or(BrokerServerError::ResultEvidenceMissing)
+    };
+    let operation = journal.operation_id.clone();
+    let request = journal.request_hash.clone();
+    let response = match journal.current_state {
+        OperationState::ResultPrepared => BrokerResponseV1::prepared(
+            operation,
+            request,
+            evidence(OperationState::ResultPrepared)?,
+        ),
+        OperationState::Acknowledged => BrokerResponseV1::acknowledged(
+            operation,
+            request,
+            evidence(OperationState::ResultPrepared)?,
+            evidence(OperationState::Acknowledged)?,
+        ),
+        state if newly_reserved => BrokerResponseV1::reserved(operation, request, state),
+        state => BrokerResponseV1::existing(operation, request, state),
+    };
+    response.validate()?;
+    Ok(response)
 }
 
 enum ServerReservationError {
@@ -667,6 +750,8 @@ pub enum BrokerServerError {
     PeerPolicyBindingMismatch,
     #[error("startup process identity mismatch requires manual recovery: {0}")]
     StartupProcessIdentityMismatch(String),
+    #[error("durable broker result identity is absent or inconsistent")]
+    ResultEvidenceMissing,
     #[error("broker numeric conversion overflowed")]
     NumericOverflow,
     #[error("broker worker queue lock was poisoned")]

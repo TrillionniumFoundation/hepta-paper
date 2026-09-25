@@ -3278,6 +3278,10 @@
         {
           "path": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
           "symbol": "run_bounded_process_with_cancellation"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/broker_prepared.rs",
+          "symbol": "consume"
         }
       ],
       "tests": [
@@ -3287,9 +3291,10 @@
         "rust/crates/hepta-paper-service/tests/native_business_service/dispatch_recovery.rs",
         "rust/crates/hepta-paper-service/tests/scientific_workflow.rs",
         "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
-        "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"
+        "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
       ],
-      "remaining": "Without --workflow-file or an explicit persisted --workflow-root/--definition-hash reference the original fail-closed diagnostic remains. The explicit --workflow-file local-run path now composes the existing immutable LocalWorkflowV1, SQLite campaign writer, durable dispatch/recovery, CAS byte verification and commit replay without a second scheduler or result store. Prepare validates without creating state; launch initializes an absent root or retries the exact existing owner; converge uses an absolute step endpoint; status is read-only; pause/resume/cancel require the observed campaign revision. Actual CLI tests cover seven-step execution, real Rust child workers, restart/idempotent replay, stale revisions, changed definitions, terminal cancellation, and a crashing child not relaunched across CLI restarts. Process external/network outcomes remain unobserved rather than fabricated false. The CLI now supplies a freshly sampled system clock through the existing workflow, service, sequencer and SQLite writer. Clock rollback, unavailable time or lease expiry stops later individual request handoffs within the same wave as well as subsequent waves; clock and lease are rechecked after acquiring the actual SQLite write transaction and immediately before COMMIT. Controlled-clock regressions cover whole-batch/lifecycle rollback, retained prepared outputs, preserved prior commits and refusal to relaunch after expiry. Live dispatch checks do not themselves renew a lease, terminate an in-flight process or attest independent host time. This bounded path does not implement automatic planning, live author/reviewer models, remote-effect settlement, automatic lease renewal, all incumbent arguments, independently accepted command parity, production activation, writer transfer or Node retirement. Per-request admission uses the original live clock and sequencer under the existing service dispatch lock; it is not an atomic check-and-spawn or physical in-flight cancellation mechanism. The required tool-equipped migration lane now exercises the actual autonomous CLI with a real R program: prepare without state, partial launch, independent-process status/continuation, named result into manuscript/bundle, and exact replay without another execution or charge. This is explicit-program local workflow evidence, not model-driven autonomous research or accepted full-role parity; ordinary ignored-test runs cannot establish this installed-tool result. The actual autonomous CLI now accepts an explicit persisted root plus expected current definition hash for continuation and lifecycle, and an amend action with a bounded private WorkflowAmendmentV1 file. A crate-private read through the existing immutable definition, SQLite amendment history and CAS recovers the current definition without exposing or requiring a copy of private writer fields. Mutating consumers still recheck the explicit expected hash under the existing owner lock. Explicit renewal/budget changes use the original live-lease transaction; exact request replay returns the immutable original receipt even after later progress or terminal completion, without another write or dispatch. CLI regressions cover post-amendment continuation, an expired original file with valid renewed owner state, stale hash, foreign campaign, request substitution, terminal refusal and unsafe input. This is not an automatic heartbeat or complete incumbent autonomous research parity. The actual autonomous CLI now handles SIGINT/SIGTERM with a sticky in-memory token carried through its existing workflow, service, executor and bounded process-group owner. Pre-observed interruption denies spawn; active workers use the existing TERM/KILL, reap and verified group cleanup. Admission and precommit clock callbacks also observe interruption. Real CLI tests verify a declared Python worker and its descendant terminate, no later step runs, committed prefixes survive, and complete prepared outputs replay without relaunch or another debit. Started-without-prepared attempts remain pending across restart; explicit revision-bound Cancel may seal future admission but retains that pending evidence and does not settle or refund it. Native in-process kernels are not preempted mid-calculation, escaped processes and external effects are not attested, and a signal racing an already completed COMMIT does not erase that commit. Independent command/role/host acceptance remains open.",
+      "remaining": "Without --workflow-file or an explicit persisted --workflow-root/--definition-hash reference the original fail-closed diagnostic remains. The explicit --workflow-file local-run path now composes the existing immutable LocalWorkflowV1, SQLite campaign writer, durable dispatch/recovery, CAS byte verification and commit replay without a second scheduler or result store. Prepare validates without creating state; launch initializes an absent root or retries the exact existing owner; converge uses an absolute step endpoint; status is read-only; pause/resume/cancel require the observed campaign revision. Actual CLI tests cover seven-step execution, real Rust child workers, restart/idempotent replay, stale revisions, changed definitions, terminal cancellation, and a crashing child not relaunched across CLI restarts. Process external/network outcomes remain unobserved rather than fabricated false. The CLI now supplies a freshly sampled system clock through the existing workflow, service, sequencer and SQLite writer. Clock rollback, unavailable time or lease expiry stops later individual request handoffs within the same wave as well as subsequent waves; clock and lease are rechecked after acquiring the actual SQLite write transaction and immediately before COMMIT. Controlled-clock regressions cover whole-batch/lifecycle rollback, retained prepared outputs, preserved prior commits and refusal to relaunch after expiry. Live dispatch checks do not themselves renew a lease, terminate an in-flight process or attest independent host time. This bounded path does not implement automatic planning, live author/reviewer models, remote-effect settlement, automatic lease renewal, all incumbent arguments, independently accepted command parity, production activation, writer transfer or Node retirement. Per-request admission uses the original live clock and sequencer under the existing service dispatch lock; it is not an atomic check-and-spawn or physical in-flight cancellation mechanism. The required tool-equipped migration lane now exercises the actual autonomous CLI with a real R program: prepare without state, partial launch, independent-process status/continuation, named result into manuscript/bundle, and exact replay without another execution or charge. This is explicit-program local workflow evidence, not model-driven autonomous research or accepted full-role parity; ordinary ignored-test runs cannot establish this installed-tool result. The actual autonomous CLI now accepts an explicit persisted root plus expected current definition hash for continuation and lifecycle, and an amend action with a bounded private WorkflowAmendmentV1 file. A crate-private read through the existing immutable definition, SQLite amendment history and CAS recovers the current definition without exposing or requiring a copy of private writer fields. Mutating consumers still recheck the explicit expected hash under the existing owner lock. Explicit renewal/budget changes use the original live-lease transaction; exact request replay returns the immutable original receipt even after later progress or terminal completion, without another write or dispatch. CLI regressions cover post-amendment continuation, an expired original file with valid renewed owner state, stale hash, foreign campaign, request substitution, terminal refusal and unsafe input. This is not an automatic heartbeat or complete incumbent autonomous research parity. The actual autonomous CLI now handles SIGINT/SIGTERM with a sticky in-memory token carried through its existing workflow, service, executor and bounded process-group owner. Pre-observed interruption denies spawn; active workers use the existing TERM/KILL, reap and verified group cleanup. Admission and precommit clock callbacks also observe interruption. Real CLI tests verify a declared Python worker and its descendant terminate, no later step runs, committed prefixes survive, and complete prepared outputs replay without relaunch or another debit. Started-without-prepared attempts remain pending across restart; explicit revision-bound Cancel may seal future admission but retains that pending evidence and does not settle or refund it. Native in-process kernels are not preempted mid-calculation, escaped processes and external effects are not attested, and a signal racing an already completed COMMIT does not erase that commit. Independent command/role/host acceptance remains open. The broker-prepared local consumer now binds the original request and imports existing broker output through the normal service/workflow CAS, verifier and SQLite owner. Exact read-only query retry preserves unrelated ambiguous attempts; committed replay performs no IPC or additional debit. Local protocol-peer tests do not establish live model operation issuance, author/reviewer quality, production composition, signed commit ACK or full command parity.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/autonomous_research.rs",
@@ -3305,7 +3310,8 @@
         "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
         "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
         "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
-        "rust/crates/hepta-codex-runtime/src/process/unix.rs"
+        "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+        "rust/crates/hepta-paper-service/src/broker_prepared.rs"
       ],
       "testCases": [
         {
@@ -3399,6 +3405,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
           "symbol": "sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs",
+          "symbol": "normal_workflow_uses_broker_backend_and_retains_committed_prefix"
         }
       ],
       "argumentModes": [
@@ -7251,6 +7261,10 @@
         {
           "path": "rust/crates/hepta-paper-service/src/workflow.rs",
           "symbol": "cancel_local_workflow_node_with_clock_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/broker_prepared.rs",
+          "symbol": "consume"
         }
       ],
       "tests": [
@@ -7261,9 +7275,10 @@
         "rust/crates/hepta-paper-service/tests/workflow_extensions/gc.rs",
         "rust/crates/hepta-paper-service/tests/workflow_extensions/purge.rs",
         "rust/crates/hepta-paper-service/tests/workflow_extensions/reconcile.rs",
-        "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs"
+        "rust/crates/hepta-paper-service/tests/workflow_extensions/recovery.rs",
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
       ],
-      "remaining": "Campaign inspection and lifecycle are local bounded primitives; full Node campaign command/effect parity is unimplemented. Existing local CLI mutation modes use live system-clock admission when NOW is omitted; explicit NOW remains a deterministic drill. Sequential cancel-node now preserves an already committed step as an idempotent no-op and terminally cancels an uncommitted step plus its dependent suffix without erasing ambiguous attempt evidence. Arbitrary DAG projection and production node infrastructure cancellation remain separate.",
+      "remaining": "Campaign inspection and lifecycle are local bounded primitives; full Node campaign command/effect parity is unimplemented. Existing local CLI mutation modes use live system-clock admission when NOW is omitted; explicit NOW remains a deterministic drill. Sequential cancel-node now preserves an already committed step as an idempotent no-op and terminally cancels an uncommitted step plus its dependent suffix without erasing ambiguous attempt evidence. Arbitrary DAG projection and production node infrastructure cancellation remain separate. The broker-prepared local consumer now binds the original request and imports existing broker output through the normal service/workflow CAS, verifier and SQLite owner. Exact read-only query retry preserves unrelated ambiguous attempts; committed replay performs no IPC or additional debit. Local protocol-peer tests do not establish live model operation issuance, author/reviewer quality, production composition, signed commit ACK or full command parity.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow.rs",
@@ -7284,7 +7299,8 @@
         "rust/crates/hepta-paper-service/src/maintenance/recovery.rs",
         "rust/crates/hepta-paper-service/src/worker.rs",
         "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
-        "rust/crates/hepta-paper-service/src/workflow/recovery.rs"
+        "rust/crates/hepta-paper-service/src/workflow/recovery.rs",
+        "rust/crates/hepta-paper-service/src/broker_prepared.rs"
       ],
       "testCases": [
         {
@@ -7414,6 +7430,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "symbol": "cancel_node_preserves_committed_steps_and_cancels_the_uncommitted_suffix"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs",
+          "symbol": "normal_workflow_uses_broker_backend_and_retains_committed_prefix"
         }
       ],
       "argumentModes": [
@@ -8106,17 +8126,23 @@
         {
           "path": "rust/crates/hepta-paper-service/src/workflow.rs",
           "symbol": "operate_local_workflow_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/broker_prepared.rs",
+          "symbol": "consume"
         }
       ],
       "tests": [
         "rust/crates/hepta-paper-service/tests/local_workflow.rs",
-        "rust/crates/hepta-paper-service/tests/local_workflow/inspection.rs"
+        "rust/crates/hepta-paper-service/tests/local_workflow/inspection.rs",
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
       ],
-      "remaining": "Bounded local workflow advancement only; no Node batch production dispatch or provider semantics. Actual local workflow advancement now preserves the control-plane inspection-required failure through ServiceError and the real source chain to bounded CLI diagnostics. A real Rust worker marker test confirms that repeated identical unresolved attempts do not rerun that worker. The service still creates a fresh runtime for every call: the copied diagnostic does not persist whole-plan resource charges, qualify restart recovery or supply Node batch parity.",
+      "remaining": "Bounded local workflow advancement only; no Node batch production dispatch or provider semantics. Actual local workflow advancement now preserves the control-plane inspection-required failure through ServiceError and the real source chain to bounded CLI diagnostics. A real Rust worker marker test confirms that repeated identical unresolved attempts do not rerun that worker. The service still creates a fresh runtime for every call: the copied diagnostic does not persist whole-plan resource charges, qualify restart recovery or supply Node batch parity. The broker-prepared local consumer now binds the original request and imports existing broker output through the normal service/workflow CAS, verifier and SQLite owner. Exact read-only query retry preserves unrelated ambiguous attempts; committed replay performs no IPC or additional debit. Local protocol-peer tests do not establish live model operation issuance, author/reviewer quality, production composition, signed commit ACK or full command parity.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow.rs",
-        "rust/crates/hepta-paper-service/src/control_error.rs"
+        "rust/crates/hepta-paper-service/src/control_error.rs",
+        "rust/crates/hepta-paper-service/src/broker_prepared.rs"
       ],
       "testCases": [
         {
@@ -8126,6 +8152,10 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow/inspection.rs",
           "symbol": "actual_workflow_worker_failure_survives_typed_source_chain_and_cli_projection"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs",
+          "symbol": "normal_workflow_uses_broker_backend_and_retains_committed_prefix"
         }
       ]
     },

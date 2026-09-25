@@ -16,7 +16,9 @@ compile_error!("hepta-codex-broker V1 requires Linux SO_PEERCRED semantics");
 mod acknowledgement;
 mod admission;
 mod capability;
+mod client;
 mod codex_dispatch;
+mod delivery;
 mod dispatch_backup;
 mod dispatch_containment;
 mod fake_execution;
@@ -25,6 +27,9 @@ mod journal;
 mod listener;
 mod output_schema;
 mod peer;
+mod prepared_result;
+mod product;
+mod product_daemon;
 mod response;
 mod server;
 mod service;
@@ -49,8 +54,8 @@ pub use capability::{
     capability_signing_bytes, verify_request_capability,
 };
 pub use codex_dispatch::{
-    CodexDispatchAuthorityV1, CodexDispatchError, CodexDispatchPlanV1, CodexDispatchResultV1,
-    run_reserved_codex_operation,
+    CodexDispatchAuthorityV1, CodexDispatchAuthorizationPointV1, CodexDispatchError,
+    CodexDispatchPlanV1, CodexDispatchResultV1, run_reserved_codex_operation,
 };
 pub use dispatch_backup::{
     CodexDispatchBackupBundleReceiptV1, CodexDispatchBackupEntryV1, CodexDispatchBackupManifestV1,
@@ -64,7 +69,7 @@ pub use fake_execution::{
 };
 pub use frame::{
     BrokerFrameError, BrokerFramePolicyV1, DecodedRequestFrameV1, read_request_frame,
-    write_request_frame,
+    write_request_frame, write_result_query_frame,
 };
 pub use journal::{
     BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerJournalError, BrokerJournalPolicyV1,
@@ -79,6 +84,22 @@ pub use listener::{
 };
 pub use peer::{
     PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1, PeerPrincipalV1, inspect_peer_identity,
+};
+pub use prepared_result::{
+    BrokerPreparedResultReceiptV1, finalize_codex_prepared_result, read_codex_prepared_output,
+};
+pub use product::{
+    ProductCodexDispatcherConfigurationV1, ProductCodexDispatcherV1, ProductCodexError,
+    ProductCodexOperationV1, ProductOperationSourceIdentityV1,
+};
+pub use product_daemon::{
+    LoadedProductCodexBrokerConfigurationV1, ProductBundleAuthorityKeyV1,
+    ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationIdentityV1,
+    ProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError,
+    ProductJournalConfigurationV1, ProductListenerConfigurationV1,
+    ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
+    ProductServerConfigurationV1, compose_product_codex_broker,
+    load_product_codex_broker_configuration, run_product_codex_broker,
 };
 pub use response::{
     BrokerMachineCodeV1, BrokerResponseError, BrokerResponseFramePolicyV1, BrokerResponseKindV1,
@@ -102,3 +123,10 @@ pub use trust_source::{
     TrustBundleSourceError, install_signed_capability_trust_bundle_from_source,
     load_signed_capability_trust_bundle,
 };
+
+pub use delivery::{
+    BrokerPreparedDeliveryV1, load_codex_prepared_delivery, read_prepared_delivery_frame,
+    write_prepared_delivery_frame,
+};
+
+pub use client::{BrokerResultClientError, dispatch_signed_operation, query_prepared_result};

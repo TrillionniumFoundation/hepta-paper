@@ -834,6 +834,36 @@ impl BrokerJournalStoreV1 {
         Ok(())
     }
 
+    /// Lists complete journals in deterministic operation-id order.
+    /// The caller supplies a hard bound so startup recovery cannot allocate
+    /// from an unbounded or unexpectedly foreign database.
+    pub fn list_operation_journals(
+        &self,
+        maximum_operations: usize,
+    ) -> Result<Vec<OperationJournalV1>, BrokerJournalError> {
+        if maximum_operations == 0 || maximum_operations > 1_000_000 {
+            return Err(BrokerJournalError::InvalidPolicy);
+        }
+        let maximum =
+            i64::try_from(maximum_operations).map_err(|_| BrokerJournalError::InvalidPolicy)?;
+        let mut statement = self
+            .connection
+            .prepare("SELECT operation_id FROM operations ORDER BY operation_id LIMIT ?1")?;
+        let ids = statement
+            .query_map([maximum.saturating_add(1)], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        if ids.len() > maximum_operations {
+            return Err(BrokerJournalError::OperationCountExceeded {
+                observed: ids.len(),
+                maximum: maximum_operations,
+            });
+        }
+        ids.into_iter()
+            .map(|operation_id| self.load_journal(&operation_id))
+            .collect()
+    }
+
     /// Number of durable operation reservations.
     pub fn operation_count(&self) -> Result<u64, BrokerJournalError> {
         let value: i64 =
@@ -1441,6 +1471,10 @@ pub enum BrokerJournalError {
     DatabaseFileLinkCountInvalid(u64),
     #[error("broker journal database is too large: observed {observed}, maximum {maximum}")]
     DatabaseFileTooLarge { observed: u64, maximum: u64 },
+    #[error(
+        "broker journal operation count exceeds startup bound: observed {observed}, maximum {maximum}"
+    )]
+    OperationCountExceeded { observed: usize, maximum: usize },
     #[error("broker journal sidecar is invalid: {0}")]
     DatabaseSidecarInvalid(String),
     #[error("broker journal sidecar permissions are invalid for {suffix}: {mode:o}")]

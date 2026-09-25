@@ -407,7 +407,10 @@ fn validate_result_binding(
             "backup_result_operation",
         ))?;
     let journal = store.load_journal(id)?;
-    if name != format!("codex-result-{id}.json")
+    let accepted_name = name == format!("codex-result-{id}.json")
+        || name == format!("codex-result-{id}.before.json")
+        || name == format!("codex-result-{id}.prepared.json");
+    if !accepted_name
         || value.get("requestHash").and_then(serde_json::Value::as_str)
             != Some(journal.request_hash.as_str())
     {

@@ -336,6 +336,7 @@ pub(crate) fn consume(
     maximum_output_bytes: u64,
     cancelled: &AtomicBool,
     mode: BrokerConsumeModeV1,
+    record_started: impl FnOnce() -> Result<(), ServiceError>,
 ) -> Result<(Vec<u8>, Value), ServiceError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(ServiceError::Execution);
@@ -358,6 +359,11 @@ pub(crate) fn consume(
     }])
     .map_err(|_| ServiceError::Configuration)?;
     let (stream, before) = connect_now(source)?;
+    let peer =
+        hepta_codex_broker::inspect_peer_identity(&stream).map_err(|_| ServiceError::Execution)?;
+    policy
+        .authorize(peer)
+        .map_err(|_| ServiceError::Execution)?;
     captured.revalidate(source)?;
     if cancelled.load(Ordering::Acquire) {
         return Err(ServiceError::Execution);
@@ -371,6 +377,15 @@ pub(crate) fn consume(
             .filter(|value| *value > 0)
             .ok_or(ServiceError::Execution)
     };
+    // Local request, binding, connection and peer failures are not ambiguous
+    // external results. Only now persist the intent, before any request frame.
+    // A failure from here on keeps the intent and cannot authorize re-execution.
+    remaining()?;
+    record_started()?;
+    captured.revalidate(source)?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(ServiceError::Execution);
+    }
     let expected_prepared = if matches!(mode, BrokerConsumeModeV1::ExecuteOnce) {
         let response = hepta_codex_broker::dispatch_signed_operation(
             &stream,

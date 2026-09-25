@@ -450,3 +450,120 @@ fn ordinary_execution_library_also_rejects_stale_serialized_time() {
         std::io::ErrorKind::WouldBlock
     );
 }
+
+#[test]
+fn preflight_rejection_preserves_fresh_execution_for_the_ordinary_cli() {
+    let f = Fixture::new_execution();
+    let path = f.root.join("execution-preflight.json");
+    fs::write(&path, serde_json::to_vec(&f.config).unwrap()).unwrap();
+    fs::remove_file(&f.request_path).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("run")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(
+        fs::read_dir(f.config.state_directory.join("attempts"))
+            .unwrap()
+            .count(),
+        0,
+        "a locally missing request cannot have dispatched a provider operation"
+    );
+    f.publish(&f.request);
+    let server = f.serve_execution(f.listener(), OUTPUT, 0);
+    let accepted = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("run")
+        .arg(&path)
+        .output()
+        .unwrap();
+    server.join().unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    fs::remove_file(&f.socket_path).unwrap();
+    let replay = run_service_v1(f.config.clone()).unwrap();
+    assert!(!replay.commit_receipts[0].newly_committed);
+}
+
+#[test]
+fn invalid_execution_request_does_not_create_an_ambiguous_dispatch() {
+    let f = Fixture::new_execution();
+    let listener = f.listener();
+    listener.set_nonblocking(true).unwrap();
+    let mut invalid = f.request.clone();
+    invalid.campaign_revision += 1;
+    f.publish(&invalid);
+    assert!(run_service_v1(f.config.clone()).is_err());
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    assert_eq!(
+        fs::read_dir(f.config.state_directory.join("attempts"))
+            .unwrap()
+            .count(),
+        0,
+        "local admission rejection is not an unknown external result"
+    );
+    drop(listener);
+    fs::remove_file(&f.socket_path).unwrap();
+    f.publish(&f.request);
+    let server = f.serve_execution(f.listener(), OUTPUT, 0);
+    assert!(run_service_v1(f.config.clone()).unwrap().commit_receipts[0].newly_committed);
+    server.join().unwrap();
+}
+
+#[test]
+fn failed_broker_connection_preserves_fresh_dispatch() {
+    let f = Fixture::new_execution();
+    // A missing endpoint cannot have received an execution request.
+    assert!(run_service_v1(f.config.clone()).is_err());
+    assert_eq!(
+        fs::read_dir(f.config.state_directory.join("attempts"))
+            .unwrap()
+            .count(),
+        0
+    );
+    // A stale socket pathname is also a known local connection failure.
+    drop(f.listener());
+    assert!(run_service_v1(f.config.clone()).is_err());
+    assert_eq!(
+        fs::read_dir(f.config.state_directory.join("attempts"))
+            .unwrap()
+            .count(),
+        0
+    );
+    fs::remove_file(&f.socket_path).unwrap();
+    let server = f.serve_execution(f.listener(), OUTPUT, 0);
+    let accepted = run_service_v1(f.config.clone()).unwrap();
+    server.join().unwrap();
+    assert!(accepted.commit_receipts[0].newly_committed);
+}
+
+#[test]
+fn malformed_request_preflight_is_retryable_without_dispatch() {
+    let f = Fixture::new_execution();
+    fs::set_permissions(&f.request_path, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&f.request_path, b"{not json}").unwrap();
+    fs::set_permissions(&f.request_path, fs::Permissions::from_mode(0o400)).unwrap();
+    let listener = f.listener();
+    listener.set_nonblocking(true).unwrap();
+    assert!(run_service_v1(f.config.clone()).is_err());
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    assert_eq!(
+        fs::read_dir(f.config.state_directory.join("attempts"))
+            .unwrap()
+            .count(),
+        0
+    );
+    f.publish(&f.request);
+    let server = f.serve_execution(listener, OUTPUT, 0);
+    assert!(run_service_v1(f.config.clone()).unwrap().commit_receipts[0].newly_committed);
+    server.join().unwrap();
+}

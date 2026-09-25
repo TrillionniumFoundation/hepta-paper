@@ -497,8 +497,14 @@ retain their zero-provider-call contract. The real broker, not the service JSON,
 verifies the independently supplied signature, current capability and qualified
 product operation before a provider can start.
 
-On a fresh existing attempt, the service fsyncs its existing `.started` record
-before sending one execution frame. `dispatch_signed_operation` requires the
+On a fresh attempt, the service captures and validates the signed request,
+connects the selected endpoint and authenticates its kernel peer before writing
+any dispatch intent. A missing, malformed or mismatched request, missing/stale
+socket or denied peer leaves no `.started` record and may be retried with the
+same immutable operation. Only after these local checks does it fsync the
+existing `.started` record, revalidate the held request and cancellation, and
+send one execution frame. No error after intent persistence deletes that record
+or authorizes a second execution. `dispatch_signed_operation` requires the
 expected kernel peer and exact operation/request response binding. Reservation,
 running or rejected state is not a prepared result. On a prepared response it
 opens another connection, requests the bytes using the original read-only query,

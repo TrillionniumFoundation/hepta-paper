@@ -84,27 +84,31 @@ mod tests {
         }
     }
     #[test]
-    fn compiled_command_catalog_matches_documented_entrypoints() {
-        let document = include_str!("../README.md");
-        let rows = document
-            .lines()
-            .filter_map(|line| line.strip_prefix("| `"))
-            .filter_map(|tail| tail.split_once('`').map(|(name, _)| name))
-            .filter_map(|name| name.split_whitespace().next())
-            .collect::<Vec<_>>();
-        let documented = rows.iter().copied().collect::<BTreeSet<_>>();
-        assert_eq!(
-            documented.len(),
-            rows.len(),
-            "duplicate documentation entrypoint"
-        );
-        let actual = CommandV1::ALL
-            .iter()
-            .map(|command| command.name())
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            documented, actual,
-            "document real commands, not source match-arm spelling"
+    fn canonical_migration_ledger_uses_real_compiled_entrypoints() {
+        let ledger: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../docs/migration/node-rust-command-map.v1.json"
+        ))
+        .unwrap();
+        let rows = ledger["commands"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        let mut seen = BTreeSet::new();
+        let mut native_rows = 0;
+        for row in rows {
+            let id = row["id"].as_str().unwrap();
+            assert!(seen.insert(id), "duplicate canonical route: {id}");
+            let mut words = row["rustEntrypoint"].as_str().unwrap().split_whitespace();
+            if words.next() == Some("hepta-paper-rust") {
+                let name = words.next().expect("missing Rust command");
+                assert!(
+                    CommandV1::parse(name).is_some(),
+                    "{id}: unknown command {name}"
+                );
+                native_rows += 1;
+            }
+        }
+        assert!(
+            native_rows > 0,
+            "canonical ledger must exercise the normal entrypoint"
         );
     }
 }

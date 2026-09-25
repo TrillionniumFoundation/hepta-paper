@@ -214,11 +214,23 @@ impl ServiceExecutorV1 {
         ) {
             return Err(ServiceError::Configuration);
         }
-        if !started.exists() {
-            self.objects
-                .record(&started, identity.to_string().as_bytes())?;
-        } else if read_private_record(&started)? != identity.to_string().as_bytes() {
+        if !fresh_attempt && read_private_record(&started)? != identity.to_string().as_bytes() {
             return Err(ServiceError::Execution);
+        }
+        let record_started = || {
+            if fresh_attempt {
+                self.objects
+                    .record(&started, identity.to_string().as_bytes())
+            } else {
+                Ok(())
+            }
+        };
+        // Broker admission can still reject without sending any request bytes.
+        // Its consumer records the durable intent at the transport boundary,
+        // after capturing the exact request and authenticating the local peer.
+        // Never remove an intent after that boundary: recovery stays query-only.
+        if !readonly_query {
+            record_started()?;
         }
         let (mut artifacts, evidence) = match (binding, job) {
             (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
@@ -244,6 +256,7 @@ impl ServiceExecutorV1 {
                     self.objects.maximum_object_bytes(),
                     &self.cancelled,
                     mode,
+                    record_started,
                 )?;
                 (
                     vec![self.objects.put(&bytes)?],

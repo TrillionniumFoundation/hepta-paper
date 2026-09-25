@@ -52,6 +52,7 @@ use hepta_paper_service::{
         AutonomousSubmissionDispatcherChallengeOptions,
         inspect_autonomous_submission_dispatcher_challenge_v1,
     },
+    cli_commands::CommandV1,
     command_surface::{
         ci_command_matrix_json_v1, classify_npm_script_surface_json_v1, command_usage_json_v1,
         generated_npm_route_scripts_json_v1, synchronize_command_surface_json_v1,
@@ -462,19 +463,29 @@ const DISPATCHER_CHALLENGE_USAGE: &str = r#"{
 
 fn command() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        Some("native-identity") if args.len() == 1 => {
+    if args.as_slice() == ["--help-json"] {
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "version": 1, "kind": "RustCommandCatalogV1",
+                "commands": CommandV1::ALL.iter().map(|command| command.name()).collect::<Vec<_>>()
+            }))?
+        );
+        return Ok(());
+    }
+    match args.first().and_then(|name| CommandV1::parse(name)) {
+        Some(CommandV1::NativeIdentity) if args.len() == 1 => {
             println!("{}", native_implementation_hash_v1()?);
         }
-        Some("put") if args.len() == 3 => {
+        Some(CommandV1::Put) if args.len() == 3 => {
             let store = ObjectStoreV1::open(&PathBuf::from(&args[1]))?;
             println!("{}", store.put(&read_bounded(&args[2])?)?);
         }
-        Some("run") if args.len() == 2 => {
+        Some(CommandV1::Run) if args.len() == 2 => {
             let config: ServiceRunV1 = serde_json::from_slice(&read_bounded(&args[1])?)?;
             println!("{}", serde_json::to_string(&run_service_v1(config)?)?);
         }
-        Some("serve") if args.len() == 1 => {
+        Some(CommandV1::Serve) if args.len() == 1 => {
             // One closed JSON request per line; EOF performs orderly shutdown.
             let mut stdin = io::stdin().lock();
             loop {
@@ -492,7 +503,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string(&run_service_v1(config)?)?);
             }
         }
-        Some("verify-legacy-freeze") if args.len() == 5 => {
+        Some(CommandV1::VerifyLegacyFreeze) if args.len() == 5 => {
             let receipt = verify_legacy_node_freeze_v1(
                 PathBuf::from(&args[1]),
                 LegacyNodeFreezeSubjectV1 {
@@ -503,14 +514,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             println!("{}", serde_json::to_string(receipt.receipt())?);
         }
-        Some("inspect-db") if args.len() == 2 => {
+        Some(CommandV1::InspectDb) if args.len() == 2 => {
             let store = hepta_readonly_store::ReadOnlyStoreV1::open(PathBuf::from(&args[1]))?;
             println!(
                 "{}",
                 serde_json::to_string(&store.node_logical_snapshot()?)?
             );
         }
-        Some("store-integrity") if args.len() == 1 || args.len() == 2 => {
+        Some(CommandV1::StoreIntegrity) if args.len() == 1 || args.len() == 2 => {
             let database = args
                 .get(1)
                 .map(PathBuf::from)
@@ -522,7 +533,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("sqlite logical integrity report blocked".into());
             }
         }
-        Some("store-status") if (1..=4).contains(&args.len()) => {
+        Some(CommandV1::StoreStatus) if (1..=4).contains(&args.len()) => {
             let mut database = None;
             let mut runtime_root = None;
             let mut allow_isolated_verification_evidence = false;
@@ -552,7 +563,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             println!("{}", serde_json::to_string(&report)?);
         }
-        Some("automation-status") if args.len() >= 2 => {
+        Some(CommandV1::AutomationStatus) if args.len() >= 2 => {
             let mut help = false;
             let mut json = false;
             for flag in args.iter().skip(1) {
@@ -579,14 +590,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let _ = json;
             println!("{}", automation_status_help_json_v1());
         }
-        Some("store-migrate") if (args.len() == 2 || args.len() == 3) => {
+        Some(CommandV1::StoreMigrate) if (args.len() == 2 || args.len() == 3) => {
             let target = args.get(2).map(|value| value.parse::<u32>()).transpose()?;
             println!(
                 "{}",
                 serde_json::to_string(&migrate_node_store_v1(&PathBuf::from(&args[1]), target,)?)?
             );
         }
-        Some("repository-assets") => {
+        Some(CommandV1::RepositoryAssets) => {
             let (root, manifest_path, flag_start) =
                 if args.get(1).is_none_or(|value| value.starts_with("--")) {
                     let (root, manifest) = default_repository_asset_paths()?;
@@ -648,7 +659,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         }
-        Some("command-surface") if args.len() == 2 || args.len() == 3 => {
+        Some(CommandV1::CommandSurface) if args.len() == 2 || args.len() == 3 => {
             let root = PathBuf::from(&args[1]);
             match args.get(2).map(String::as_str) {
                 None => {
@@ -682,7 +693,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("verify-architecture") if args.len() >= 2 => {
+        Some(CommandV1::VerifyArchitecture) if args.len() >= 2 => {
             let root = PathBuf::from(&args[1]);
             let mut json_output = false;
             for flag in args.iter().skip(2) {
@@ -711,7 +722,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("architecture conformance verification blocked".into());
             }
         }
-        Some("verify-critical") => {
+        Some(CommandV1::VerifyCritical) => {
             let options = match parse_critical_module_coverage_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -747,7 +758,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("verify-full") => {
+        Some(CommandV1::VerifyFull) => {
             let options = match parse_full_suite_verification_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -775,7 +786,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             // useful evidence, but it cannot silently become test parity.
             std::process::exit(2);
         }
-        Some("advanced-numerical-plugin") if args.len() == 2 => {
+        Some(CommandV1::AdvancedNumericalPlugin) if args.len() == 2 => {
             if args[1] == "status" {
                 println!(
                     "{}",
@@ -794,7 +805,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string(&result)?);
             }
         }
-        Some("retirement-reference") if args.len() == 2 => {
+        Some(CommandV1::RetirementReference) if args.len() == 2 => {
             let report = verify_retirement_reference_v1(&PathBuf::from(&args[1]))?;
             let blocked = report["status"] == "retirement_reference_blocked";
             println!("{}", serde_json::to_string(&report)?);
@@ -802,7 +813,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("retirement reference verification blocked".into());
             }
         }
-        Some("retirement-matrix") => {
+        Some(CommandV1::RetirementMatrix) => {
             let mut workspace_root = None;
             let mut runtime_root = None;
             let mut index = 1;
@@ -835,7 +846,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("retirement matrix is locally inspectable but blocked by source or owner evidence".into());
             }
         }
-        Some("retirement-drill-attest") if args.len() == 2 => {
+        Some(CommandV1::RetirementDrillAttest) if args.len() == 2 => {
             let request: LegacyDeletionDrillAttestationRequestV1 =
                 serde_json::from_slice(&read_bounded(&args[1])?)?;
             let report = inspect_legacy_deletion_drill_attest_v1(request)?;
@@ -847,21 +858,21 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
-        Some("release-trust-gate") if args.len() == 2 => {
+        Some(CommandV1::ReleaseTrustGate) if args.len() == 2 => {
             let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
             println!(
                 "{}",
                 serde_json::to_string(&build_release_trust_layer_gate_from_values_v1(&input)?)?
             );
         }
-        Some("release-state") if args.len() == 2 => {
+        Some(CommandV1::ReleaseState) if args.len() == 2 => {
             let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
             println!(
                 "{}",
                 serde_json::to_string(&inspect_release_state_v1(&input)?)?
             );
         }
-        Some("release-attest") if args.len() == 2 => {
+        Some(CommandV1::ReleaseAttest) if args.len() == 2 => {
             let request: ReleaseAttestationRequestV1 =
                 serde_json::from_slice(&read_bounded(&args[1])?)?;
             let report = inspect_release_attestation_v1(request)?;
@@ -870,7 +881,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("release attestation blocked pending external evidence".into());
             }
         }
-        Some("retirement-status") if args.len() == 1 || args.len() == 2 => {
+        Some(CommandV1::RetirementStatus) if args.len() == 1 || args.len() == 2 => {
             let input: serde_json::Value = if args.len() == 1 {
                 serde_json::json!({})
             } else {
@@ -881,7 +892,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&inspect_retirement_status_v1(&input)?)?
             );
         }
-        Some("runtime-r-source-cas") if args.len() >= 2 => {
+        Some(CommandV1::RuntimeRSourceCas) if args.len() >= 2 => {
             let repository_root = PathBuf::from(&args[1]);
             let mut action = "status";
             let mut seed = None;
@@ -921,7 +932,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("R runtime source CAS verification blocked".into());
             }
         }
-        Some("research-readiness") => {
+        Some(CommandV1::ResearchReadiness) => {
             let mut workspace_root = None;
             let mut runtime_root = None;
             let mut working_directory = env::current_dir()?;
@@ -1023,7 +1034,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("research readiness state-safety inspection is blocked".into());
             }
         }
-        Some("external-authority-intake") => {
+        Some(CommandV1::ExternalAuthorityIntake) => {
             let mut author_config = None;
             let mut author_hash = None;
             let mut release_config = None;
@@ -1101,7 +1112,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("generic-domain-capability-evidence") => {
+        Some(CommandV1::GenericDomainCapabilityEvidence) => {
             let mut action = "status".to_owned();
             let mut action_seen = false;
             let mut runtime_root = None;
@@ -1166,7 +1177,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("research-capability-matrix") => {
+        Some(CommandV1::ResearchCapabilityMatrix) => {
             let mut request = None;
             let mut require_production_ready = false;
             let mut index = 1;
@@ -1211,7 +1222,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
-        Some("local-golden-dataset-provision") => {
+        Some(CommandV1::LocalGoldenDatasetProvision) => {
             let Some(options) = parse_local_golden_dataset_provisioning_arguments(&args[1..])?
             else {
                 println!("{}", local_golden_dataset_provisioning_usage());
@@ -1229,7 +1240,15 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("autonomous-state-provision") => {
+        Some(CommandV1::AutonomousStateProvision) => {
+            if args
+                .get(1)
+                .is_some_and(|value| value == "--recover-publication")
+            {
+                let report = hepta_paper_service::autonomous_state_provision::publication_recovery::reconcile_publication_cli_v1(&args[1..])?;
+                println!("{}", serde_json::to_string(&report)?);
+                return Ok(());
+            }
             if args
                 .get(1)
                 .is_some_and(|value| value == "--recover-staging")
@@ -1253,7 +1272,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("autonomous-state-partial-root-maintenance") => {
+        Some(CommandV1::AutonomousStatePartialRootMaintenance) => {
             let Some(options) =
                 parse_autonomous_state_partial_root_maintenance_arguments(&args[1..])?
             else {
@@ -1271,7 +1290,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("personal-gpu-operational-gate") => {
+        Some(CommandV1::PersonalGpuOperationalGate) => {
             let options = match parse_personal_gpu_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1360,7 +1379,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-intake-authority-rotation") => {
+        Some(CommandV1::AutonomousIntakeAuthorityRotation) => {
             let mut options = match parse_autonomous_intake_authority_rotation_arguments(&args[1..])
             {
                 Ok(options) => options,
@@ -1410,7 +1429,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-empirical-plugin-release") => {
+        Some(CommandV1::AutonomousEmpiricalPluginRelease) => {
             let options = match parse_autonomous_empirical_plugin_release_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1440,7 +1459,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-submission-dispatcher") => {
+        Some(CommandV1::AutonomousSubmissionDispatcher) => {
             let mut options = match parse_autonomous_submission_dispatcher_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1475,7 +1494,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-submission-dispatcher-challenge") => {
+        Some(CommandV1::AutonomousSubmissionDispatcherChallenge) => {
             let options = match parse_dispatcher_challenge_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1531,7 +1550,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-research") => {
+        Some(CommandV1::AutonomousResearch) => {
             let options = match parse_autonomous_research_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1563,7 +1582,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-research-one-shot-campaign-attempt") => {
+        Some(CommandV1::AutonomousResearchOneShotCampaignAttempt) => {
             let mut options =
                 parse_autonomous_research_one_shot_campaign_attempt_arguments(&args[1..])?;
             if options.help {
@@ -1637,7 +1656,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             std::process::exit(2);
         }
-        Some("submission-handoff-export") => {
+        Some(CommandV1::SubmissionHandoffExport) => {
             let options = match parse_submission_handoff_export_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1663,7 +1682,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("full-production-readiness") => {
+        Some(CommandV1::FullProductionReadiness) => {
             let mut options = match parse_full_production_readiness_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1698,7 +1717,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("strict-full-auto-acceptance") => {
+        Some(CommandV1::StrictFullAutoAcceptance) => {
             let options = match parse_strict_full_auto_acceptance_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1725,7 +1744,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-supervisor") => {
+        Some(CommandV1::AutonomousSupervisor) => {
             let options = parse_supervisor_health_arguments(&args[1..])?;
             let action = options
                 .get("action")
@@ -1766,7 +1785,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("personal-self-hosted-readiness") => {
+        Some(CommandV1::PersonalSelfHostedReadiness) => {
             let mut workspace_root = None;
             let mut runtime_root = None;
             let mut cpu_receipt = None;

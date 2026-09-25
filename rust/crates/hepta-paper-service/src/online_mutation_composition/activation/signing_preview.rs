@@ -112,10 +112,17 @@ impl PreparedInitialOnlineMutationCompositionV1 {
             &mut clock,
         )?;
         let guard = inventory.native_store_transaction_guard_v1()?;
-        let recovery = self.fence.retain_native_store_transaction_v1(
+        let recovery = self.fence.retain_native_store_with_pins(
             &self.fence_binding,
             &guard,
             &self.verifier,
+            || {
+                assert_product_owner_current(
+                    self.installed_authority.as_ref(),
+                    &self.fence,
+                    &self.verifier,
+                )
+            },
         )?;
         let path = inventory
             .runtime_root()
@@ -173,7 +180,7 @@ impl PreparedInitialOnlineMutationCompositionV1 {
                 guard.assert_original_target_current_v1()?;
                 let now = clock.now_millis()?;
                 evidence.assert_evidence_valid_at(now)?;
-                self.fence.assert_native_store_transaction_valid_at_v1(&recovery, now)?;
+                self.fence.assert_native_store_time(&recovery, now)?;
                 qualification.assert_current(u64::try_from(now).map_err(|_| rejected())?)
                     .map_err(|e| error(e.to_string()))?;
                 let report = json!({"version":1,"kind":"NativeReconciliationSigningDiagnostic",

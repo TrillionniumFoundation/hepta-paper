@@ -119,7 +119,13 @@ pub(super) fn configuration(
         })
         .collect::<Result<Vec<_>>>()?;
     let binding = prepared.fence_binding.value();
-    let body = json!({
+    let (profile_field, profile_hash) = prepared.verifier.inspect_transport_v1(|transport| {
+        (
+            transport.profile_field(),
+            transport.profile_hash().to_owned(),
+        )
+    });
+    let mut body = json!({
         "domain":"HeptaNativeAutomationReconciliationConfigurationV1","version":1,
         "workspaceRoot":prepared.workspace_root,"runtimeRoot":inventory.runtime_root(),
         "backupRoot":prepared.backup_root,"databasePath":state.database_path,
@@ -139,11 +145,13 @@ pub(super) fn configuration(
         "controlUnitHash":canonical_hash_v1(unit).map_err(|_| reject())?,
         "binaryHash":native.executable_hash(),
         "onlineAuthorityConfigurationHash":prepared.verifier.configuration_hash(),
-        "onlineAuthorityProcessConfigurationHash":prepared.verifier.process_configuration_hash(),
         "backupAuthorityConfigurationHash":binding["backupAuthorityConfigurationHash"],
         "externalStorageRoot":external_root,"externalStorageEnrollmentHashV2":enrollment,
         "durableEpochHash":epoch
     });
+    body.as_object_mut()
+        .ok_or_else(reject)?
+        .insert(profile_field.into(), json!(profile_hash));
     Ok(NativeConfigurationV1 {
         hash: canonical_hash_v1(&body).map_err(|_| reject())?,
         epoch_hash: epoch,

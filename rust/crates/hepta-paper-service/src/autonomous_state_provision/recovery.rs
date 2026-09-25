@@ -12,7 +12,7 @@ use std::{
     os::fd::AsFd,
     path::{Path, PathBuf},
 };
-mod inventory;
+pub(super) mod inventory;
 use inventory::Snapshot;
 const INVALID: &str = "autonomous_state_provisioning_recovery_request_invalid";
 

@@ -53,10 +53,17 @@ impl PreparedInitialOnlineMutationCompositionV1 {
             &mut clock,
         )?;
         let guard = inventory.native_store_transaction_guard_v1()?;
-        let recovery = self.fence.retain_native_store_transaction_v1(
+        let recovery = self.fence.retain_native_store_with_pins(
             &self.fence_binding,
             &guard,
             &self.verifier,
+            || {
+                assert_product_owner_current(
+                    self.installed_authority.as_ref(),
+                    &self.fence,
+                    &self.verifier,
+                )
+            },
         )?;
         let database_path =
             inventory
@@ -89,6 +96,7 @@ impl PreparedInitialOnlineMutationCompositionV1 {
             cache: &self.cache,
             fence: &self.fence,
             verifier: &self.verifier,
+            installed_authority: self.installed_authority.as_ref(),
             checked_at: &self.checked_at,
             package: &self.package,
         };
@@ -126,9 +134,7 @@ impl PreparedInitialOnlineMutationCompositionV1 {
                         storage.assert_current().map_err(|e| error(e.to_string()))?;
                         let now = CompositionClock(evidence.checked_at).now_millis()?;
                         evidence.assert_evidence_valid_at(now)?;
-                        evidence
-                            .fence
-                            .assert_native_store_transaction_valid_at_v1(&recovery, now)?;
+                        evidence.fence.assert_native_store_time(&recovery, now)?;
                         admission.assert_valid_at(now)
                     };
                     check()?;

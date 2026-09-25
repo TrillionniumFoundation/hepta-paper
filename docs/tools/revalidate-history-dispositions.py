@@ -56,13 +56,7 @@ def source_decision(old: str, selected: list[dict], previous: dict, policy: str)
     return 'reference'
 
 
-def build_report(root: pathlib.Path, candidate: str, archive: pathlib.Path = ARCHIVE) -> dict:
-    candidate = git(root, 'rev-parse', '--verify', candidate + '^{commit}').decode().strip()
-    candidate_tree = git(root, 'rev-parse', candidate + '^{tree}').decode().strip()
-    selected_tree = tree(root, candidate)
-    snapshot = git(root, 'show', f'{candidate}:{archive}/remote-heads-before.txt')
-    ledger_bytes = git(root, 'show', f'{candidate}:{archive}/final-source-decision-ledger.json.gz')
-    ledger = json.loads(gzip.decompress(ledger_bytes))
+def parse_heads(snapshot: bytes) -> list[tuple[str, str]]:
     heads = []
     refs = set()
     for line in snapshot.decode().splitlines():
@@ -71,12 +65,63 @@ def build_report(root: pathlib.Path, candidate: str, archive: pathlib.Path = ARC
             raise ValueError('malformed or duplicate archived head')
         refs.add(ref)
         heads.append((oid, ref))
+    return heads
+
+
+def missing_commits(root: pathlib.Path, heads: list[tuple[str, str]]) -> list[str]:
+    tips = sorted({tip for tip, _ in heads})
+    raw = subprocess.check_output(
+        ['git', 'cat-file', '--batch-check=%(objectname) %(objecttype)'], cwd=root,
+        input=('\n'.join(tips) + '\n').encode(), stderr=subprocess.PIPE,
+    )
+    records = [line.split() for line in raw.decode().splitlines()]
+    if len(records) != len(tips):
+        raise ValueError('incomplete archived commit type observation')
+    missing = []
+    for expected, record in zip(tips, records):
+        if len(record) != 2 or record[0] != expected or record[1] not in ('commit', 'missing'):
+            raise ValueError('archived head is not a commit object')
+        if record[1] == 'missing':
+            missing.append(expected)
+    return missing
+
+
+def fetch_missing_history(root: pathlib.Path, candidate: str) -> dict:
+    # Only OIDs from the immutable selected snapshot may be fetched. This never
+    # pushes a ref, checks out old code, merges history or executes an old script.
+    snapshot = git(root, 'show', f'{candidate}:{ARCHIVE}/remote-heads-before.txt')
+    heads = parse_heads(snapshot)
+    missing = missing_commits(root, heads)
+    observation = {'requestedTips': missing, 'attempted': bool(missing), 'exitCode': None}
+    if missing:
+        args = ['git', 'fetch', '--no-tags', '--recurse-submodules=no', 'origin', *missing]
+        try:
+            result = subprocess.run(args, cwd=root, capture_output=True, timeout=240)
+            observation.update(exitCode=result.returncode, stdoutSha256=digest(result.stdout),
+                               stderrSha256=digest(result.stderr), timedOut=False)
+        except subprocess.TimeoutExpired as error:
+            observation.update(exitCode=124, stdoutSha256=digest(error.stdout or b''),
+                               stderrSha256=digest(error.stderr or b''), timedOut=True)
+    observation['remainingTips'] = missing_commits(root, heads)
+    return observation
+
+
+def build_report(root: pathlib.Path, candidate: str, archive: pathlib.Path = ARCHIVE) -> dict:
+    candidate = git(root, 'rev-parse', '--verify', candidate + '^{commit}').decode().strip()
+    candidate_tree = git(root, 'rev-parse', candidate + '^{tree}').decode().strip()
+    selected_tree = tree(root, candidate)
+    snapshot = git(root, 'show', f'{candidate}:{archive}/remote-heads-before.txt')
+    ledger_bytes = git(root, 'show', f'{candidate}:{archive}/final-source-decision-ledger.json.gz')
+    ledger = json.loads(gzip.decompress(ledger_bytes))
+    heads = parse_heads(snapshot)
+    refs = {ref for _, ref in heads}
+    missing_archived_commits = missing_commits(root, heads)
     histories = {row['sourceRef'].replace('refs/remotes/origin/', 'refs/heads/'): row
                  for row in ledger['branchHistoryDecisions']}
     if any(ref not in refs for ref in histories):
         raise ValueError('historical decision references an uncaptured branch')
     source_rows = []
-    missing = set()
+    missing = set(missing_archived_commits)
     for row in ledger['sourceDecisions']:
         old = row['oldGitBlob']
         if not OID.fullmatch(old):
@@ -174,12 +219,21 @@ def main() -> None:
     parser.add_argument('--candidate', required=True)
     parser.add_argument('--output', type=pathlib.Path, required=True)
     parser.add_argument('--root', type=pathlib.Path, default=pathlib.Path.cwd())
+    parser.add_argument('--fetch-missing-from-origin', action='store_true')
+    parser.add_argument('--require-complete', action='store_true')
     args = parser.parse_args()
-    report = build_report(args.root.resolve(), args.candidate)
+    root = args.root.resolve()
+    candidate = git(root, 'rev-parse', '--verify', args.candidate + '^{commit}').decode().strip()
+    fetch_observation = fetch_missing_history(root, candidate) if args.fetch_missing_from_origin else None
+    report = build_report(root, candidate)
+    if fetch_observation is not None:
+        report['archivedCommitFetch'] = fetch_observation
     args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')
     print(json.dumps({key: report[key] for key in ['candidateCommit', 'candidateTree', 'branchCount',
           'uniqueTipCount', 'sourceVariantCount', 'completeContentObservation',
           'branchDispositionCounts', 'sourceDispositionCounts', 'missingObjects', 'missingSelectedPaths']}, sort_keys=True))
+    if args.require_complete and not report['completeContentObservation']:
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

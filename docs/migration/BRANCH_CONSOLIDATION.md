@@ -75,11 +75,15 @@ automatically classified as absorbed. Byte-identical content can be selected;
 changed successors, unverified compatibility ports and missing objects remain
 explicit references. Rejected prototypes are not resurrected by merge ancestry.
 
-The report's `completeContentObservation` is separate from job execution success.
-A runner without an archived object reports its exact missing OID and cannot
-certify that content. All runtime, independent-review and activation fields stay
-false. Existing source/call-chain tests and both current validation subjects remain
-required; this inventory is not a new acceptance authority or duplicate test run.
+The standalone report's `completeContentObservation` is explicit. The CI entry
+first fetches only missing commit OIDs listed in the frozen snapshot from `origin`
+and then requires a complete observation. Fetching writes no branch, executes no
+historical code and grants no merge authority. A failed or incomplete fetch retains
+the exact missing OIDs and makes the gate fail, rather than labelling the inventory
+complete. Tree/tag objects cannot substitute for archived commits. All runtime,
+independent-review and activation fields stay false. Existing source/call-chain
+tests and both current validation subjects remain required; this inventory is not
+a new acceptance authority or duplicate test run.
 
 ## Review and recovery record
 

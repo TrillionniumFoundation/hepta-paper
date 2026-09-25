@@ -55,7 +55,8 @@ jobs:
             --audit "$evidence/audit.json" --commit "$EXPECTED_HEAD_SHA" \
             --branch "$EXPECTED_HEAD_REF" > "$evidence/capture-binding.json"
           python3 -B docs/tools/revalidate-history-dispositions.py \
-            --candidate "$EXPECTED_HEAD_SHA" --output "$evidence/history-content.json"
+            --candidate "$EXPECTED_HEAD_SHA" --fetch-missing-from-origin --require-complete \
+            --output "$evidence/history-content.json"
           date -u +'%Y-%m-%dT%H:%M:%SZ' > "$evidence/finished-at.txt"
           printf '%s\n' "$EXPECTED_HEAD_SHA" > "$evidence/commit.txt"
           git rev-parse HEAD^{tree} > "$evidence/tree.txt"

@@ -72,5 +72,76 @@ class DispositionTests(unittest.TestCase):
             self.assertEqual(missing['sourceDispositionCounts'], {'reference': 1})
 
 
+    def test_malformed_duplicate_and_non_head_names_are_rejected(self):
+        oid = 'a' * 40
+        for data in [f'{oid} refs/heads/a\n{oid} refs/heads/a\n',
+                     f'{oid} refs/tags/a\n', 'invalid refs/heads/a\n']:
+            with self.assertRaises(ValueError):
+                MODULE.parse_heads(data.encode())
+
+    def test_fetches_only_missing_frozen_tip_and_preserves_current_refs(self):
+        with tempfile.TemporaryDirectory(prefix='hepta-history-fetch-') as directory:
+            root = pathlib.Path(directory)
+            origin = root / 'origin'; origin.mkdir()
+            def git(repository, *args):
+                return subprocess.check_output(['git', *args], cwd=repository,
+                                               stderr=subprocess.PIPE).decode().strip()
+            git(origin, 'init', '-q', '-b', 'main')
+            git(origin, 'config', 'user.name', 'test')
+            git(origin, 'config', 'user.email', 'test@invalid.example')
+            (origin / 'a.rs').write_text('fn source() {}\n')
+            git(origin, 'add', '.')
+            git(origin, '-c', 'commit.gpgsign=false', 'commit', '-qm', 'initial')
+            blob = git(origin, 'rev-parse', 'HEAD:a.rs')
+            old = git(origin, '-c', 'commit.gpgsign=false', 'commit-tree',
+                      git(origin, 'rev-parse', 'HEAD^{tree}'), '-m', 'separate historical tip')
+            git(origin, 'update-ref', 'refs/heads/history-only', old)
+            archive = origin / MODULE.ARCHIVE; archive.mkdir(parents=True)
+            (archive / 'remote-heads-before.txt').write_text(f'{old} refs/heads/history-only\n')
+            ledger = {'branchHistoryDecisions': [], 'observedCurrentFiles': {},
+                      'sourceDecisions': [{'id': 'source-1', 'oldPath': 'a.rs', 'oldGitBlob': blob,
+                      'newPaths': ['a.rs'], 'decision': 'retained-current', 'rationale': 'retain source'}]}
+            (archive / 'final-source-decision-ledger.json.gz').write_bytes(
+                gzip.compress(json.dumps(ledger).encode(), mtime=0))
+            git(origin, 'add', '.')
+            git(origin, '-c', 'commit.gpgsign=false', 'commit', '-qm', 'current source')
+            clone = root / 'clone'
+            subprocess.check_call(['git', 'clone', '--quiet', '--no-local', '--single-branch',
+                                   '--branch', 'main', str(origin), str(clone)])
+            head = git(clone, 'rev-parse', 'HEAD')
+            refs = git(clone, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads')
+            report = MODULE.build_report(clone, head)
+            self.assertFalse(report['completeContentObservation'])
+            self.assertEqual(report['missingObjects'], [old])
+            fetch = MODULE.fetch_missing_history(clone, head)
+            self.assertTrue(fetch['attempted'])
+            self.assertEqual(fetch['requestedTips'], [old])
+            self.assertEqual(fetch['exitCode'], 0)
+            self.assertEqual(fetch['remainingTips'], [])
+            self.assertEqual(git(clone, 'rev-parse', 'HEAD'), head)
+            self.assertEqual(git(clone, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads'), refs)
+            self.assertEqual(git(clone, 'status', '--porcelain=v1'), '')
+            self.assertTrue(MODULE.build_report(clone, head)['completeContentObservation'])
+            self.assertFalse(MODULE.fetch_missing_history(clone, head)['attempted'])
+            # A valid tree object must not be accepted as a historical commit.
+            with self.assertRaisesRegex(ValueError, 'not a commit'):
+                MODULE.missing_commits(clone, [(git(clone, 'rev-parse', 'HEAD^{tree}'), 'refs/heads/fake')])
+            # The CI completeness mode must be a real failing exit, not a label.
+            ledger['sourceDecisions'][0]['oldGitBlob'] = 'f' * 40
+            target = clone / MODULE.ARCHIVE / 'final-source-decision-ledger.json.gz'
+            target.write_bytes(gzip.compress(json.dumps(ledger).encode(), mtime=0))
+            git(clone, 'config', 'user.name', 'test')
+            git(clone, 'config', 'user.email', 'test@invalid.example')
+            git(clone, 'add', '.')
+            git(clone, '-c', 'commit.gpgsign=false', 'commit', '-qm', 'unavailable source object')
+            destination = root / 'incomplete.json'
+            result = subprocess.run(['python3', '-B', str(pathlib.Path(MODULE.__file__)),
+                                     '--root', str(clone), '--candidate', git(clone, 'rev-parse', 'HEAD'),
+                                     '--require-complete', '--output', str(destination)],
+                                    capture_output=True, check=False)
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(json.loads(destination.read_text())['completeContentObservation'])
+
+
 if __name__ == '__main__':
     unittest.main()

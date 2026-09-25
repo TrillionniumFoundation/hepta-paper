@@ -209,7 +209,7 @@ impl Fixture {
             &config.planner_policy,
         )
         .unwrap();
-        let attempt = format!("{}:attempt:0", plan.plan_hash.as_str());
+        let attempt = format!("{}:attempt:1", plan.plan_hash.as_str());
         let request = CodexExecutionRequestV1 {
             version: 1,
             operation_id: attempt.clone(),
@@ -284,7 +284,21 @@ impl Fixture {
         let expected = serde_json::to_vec(&self.request).unwrap();
         let response = prepared_response(&self.request, output, corrupt);
         thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "expected result query did not arrive"
+                        );
+                        thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("result listener: {error}"),
+                }
+            };
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(30)))
                 .unwrap();

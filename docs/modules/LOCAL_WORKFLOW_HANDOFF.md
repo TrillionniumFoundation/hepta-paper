@@ -480,7 +480,9 @@ revocation-and-SQL-COMMIT protocol or a lifetime authorization grant.
 
 A provider result prepared before a failed commit is still unsettled. The
 existing recovery lock refuses a different incoming plan until the exact prior
-result is durably committed; it does not release budget merely because paired
+result is durably committed. Dependency waves within the same already-admitted
+atomic plan may continue under its existing reservation; a wave boundary is not
+a new plan. The lock does not release budget merely because paired
 `.started`/`.prepared` files exist. Original-plan query recovery remains available.
 This conservative fence does not implement provider invoicing or refunds.
 
@@ -582,3 +584,12 @@ The `cache_admission` submodule drives real service preparation followed by a
 failing precommit clock, then exercises withdrawal, current refusal, exact
 receipt/output preservation, query-only recovery, cross-plan provider fencing and
 offline durable replay. These are source tests, not a live model canary.
+
+
+The process-crash fixtures strip debug sections only from their private copied
+Rust executable before binding its hash and read/execute-only mode. The service's
+256 MiB executable bound and all actual crash, pending-intent and non-reexecution
+assertions remain enforced. Shared Cargo executables are never modified. The
+`plan_waves` broker regression separately uses the actual ordinary CLI to commit
+two provider dependency waves in one atomic plan and replay both without IPC.
+This is a labelled local protocol fixture, not independent live research review.

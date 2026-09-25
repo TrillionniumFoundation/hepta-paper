@@ -1061,7 +1061,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker.rs",
           "role": "implementation",
-          "gitBlob": "59b7b00c72a53fc5ffa6d5ca2ea72748747b040e",
+          "gitBlob": "6e85f318690cce81e5aa4df059b76cea435fc8f4",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -1167,7 +1167,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker_recovery.rs",
           "role": "implementation",
-          "gitBlob": "eca62ef4b28da797732a823c834bbc8ed1127f70",
+          "gitBlob": "9e57c2782e5db7b89e9c0776f1cb4d3c7ecefb8e",
           "mode": "100644",
           "language": "rust",
           "symbols": [

@@ -295,7 +295,7 @@
       ]
     },
     "production-composition-source": {
-      "description": "Existing ordinary service/autonomous/local-workflow composition over the original registry, planner, dispatch lock, CAS verifier and SQLite sequencer. Named executable regressions cover actual local workers, chained artifacts, lifecycle/amendment/cancellation, live clocks, broker dispatch, current query-only recovery and durable replay. Prepared broker bytes are not admission: only the verified durable commit index permits IPC-free historical replay; uncommitted recovery must retain the original request/receipt/output and an unsettled provider preparation fences a different plan. The commit index is a read-only shared view of the existing owner, not another ledger. Broker peers are explicit protocol fixtures; separate broker tests verify real signed admission. Dynamic trusted role issuance, independent live scientific review/revision, measured provider invoicing, commit-bound signed ACK, installed research/production qualification and Node retirement remain open.",
+      "description": "Existing ordinary service/autonomous/local-workflow composition over the original registry, planner, dispatch lock, CAS verifier and SQLite sequencer. Named executable regressions cover actual local workers, chained artifacts, lifecycle/amendment/cancellation, live clocks, broker dispatch, current query-only recovery and durable replay. Prepared broker bytes are not admission: only the verified durable commit index permits IPC-free historical replay; uncommitted recovery must retain the original request/receipt/output and an unsettled provider preparation fences a different plan. The commit index is a read-only shared view of the existing owner, not another ledger. Broker peers are explicit protocol fixtures; separate broker tests verify real signed admission. Dynamic trusted role issuance, independent live scientific review/revision, measured provider invoicing, commit-bound signed ACK, installed research/production qualification and Node retirement remain open. Later dependency waves of the same already-admitted atomic plan retain their original reservation; an unrelated new plan remains fenced. Private crash-worker copies have debug sections stripped before hashing, without changing the actual worker code, shared Cargo executable or product admission bound.",
       "files": [
         {
           "path": "rust/crates/hepta-paper-service/src/production.rs",
@@ -460,7 +460,7 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
           "role": "test",
-          "gitBlob": "7902af6cf09db6c197c9e59f6ce7c6b3f926cf90",
+          "gitBlob": "545b4006cf97ab6568052c4563fbc9c65ec326f8",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -578,7 +578,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker.rs",
           "role": "implementation",
-          "gitBlob": "59b7b00c72a53fc5ffa6d5ca2ea72748747b040e",
+          "gitBlob": "6e85f318690cce81e5aa4df059b76cea435fc8f4",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -676,7 +676,7 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs",
           "role": "test",
-          "gitBlob": "1f6fbc579b8405eee59cc2c1cafc944d15c3e8fb",
+          "gitBlob": "ee92036c458f20abd62edc335843b704905849e8",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -741,7 +741,7 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/fixture.rs",
           "role": "test",
-          "gitBlob": "58506e896fec4973d70681a72d93a41708da7711",
+          "gitBlob": "2714611331a152938ffd32e09f738173512a29a0",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -780,7 +780,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker_recovery.rs",
           "role": "implementation",
-          "gitBlob": "eca62ef4b28da797732a823c834bbc8ed1127f70",
+          "gitBlob": "9e57c2782e5db7b89e9c0776f1cb4d3c7ecefb8e",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -825,6 +825,19 @@
             {
               "kind": "test",
               "name": "unsettled_provider_preparation_fences_a_different_plan_before_ipc"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/plan_waves.rs",
+          "role": "test",
+          "gitBlob": "c91039ad5a01c76eb25002082adffd3ab69a71bf",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "prepared_provider_result_allows_later_wave_of_same_atomic_plan"
             }
           ]
         }
@@ -1658,6 +1671,25 @@
           "timeoutSeconds": 600,
           "expectedTargets": [
             "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "plan_waves::prepared_provider_result_allows_later_wave_of_same_atomic_plan",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/plan_waves.rs"
           ]
         }
       ]

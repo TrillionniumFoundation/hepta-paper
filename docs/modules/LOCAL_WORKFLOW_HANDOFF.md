@@ -593,3 +593,14 @@ assertions remain enforced. Shared Cargo executables are never modified. The
 `plan_waves` broker regression separately uses the actual ordinary CLI to commit
 two provider dependency waves in one atomic plan and replay both without IPC.
 This is a labelled local protocol fixture, not independent live research review.
+
+## Versioned broker manuscript repair
+
+The existing amendment owner now admits the bounded broker manuscript revision
+contract described in [the amendment handoff](WORKFLOW_AMENDMENT_HANDOFF.md#broker-manuscript-revision-contract).
+The ordinary autonomous entry binds the rejected assessment and previous
+manuscript into a fresh author/revise input, then requires the unchanged reviewer
+contract over the revised bytes. It preserves rejection, committed history,
+query-only uncertain recovery and the existing resource ceilings. This does not
+close dynamic request issuance, independent installed role canaries, measured
+provider billing, commit-bound ACK or installed research/retirement acceptance.

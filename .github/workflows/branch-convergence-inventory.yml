@@ -33,6 +33,7 @@ jobs:
           set -euo pipefail
           python3 -B docs/tools/test_branch_convergence.py
           python3 -B docs/tools/test_branch_observation.py
+          python3 -B docs/tools/test_historical_dispositions.py
 
       - name: Capture every public branch and exact two-tree changes
         shell: bash
@@ -53,6 +54,8 @@ jobs:
             --before "$evidence/heads-before.tsv" --after "$evidence/heads-after.tsv" \
             --audit "$evidence/audit.json" --commit "$EXPECTED_HEAD_SHA" \
             --branch "$EXPECTED_HEAD_REF" > "$evidence/capture-binding.json"
+          python3 -B docs/tools/revalidate-history-dispositions.py \
+            --candidate "$EXPECTED_HEAD_SHA" --output "$evidence/history-content.json"
           date -u +'%Y-%m-%dT%H:%M:%SZ' > "$evidence/finished-at.txt"
           printf '%s\n' "$EXPECTED_HEAD_SHA" > "$evidence/commit.txt"
           git rev-parse HEAD^{tree} > "$evidence/tree.txt"

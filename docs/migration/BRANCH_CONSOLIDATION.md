@@ -63,6 +63,24 @@ scientific review, installed cutover or release/submission authority. The
 existing branch-convergence auditor records complete two-tree content comparisons
 and explicit dispositions; its binding check is not independent acceptance.
 
+## Archived content revalidation
+
+`docs/tools/revalidate-history-dispositions.py` reads the archived **complete**
+remote-head snapshot and original source-decision ledger from the selected commit,
+not from mutable working files. The existing branch-inventory workflow publishes
+its `history-content.json` beside the live inventory. It compares every recorded
+tip directly to the current tree, deduplicates unique-tip comparisons, and binds
+all old source blobs to the current selected paths. Historical ancestors are not
+automatically classified as absorbed. Byte-identical content can be selected;
+changed successors, unverified compatibility ports and missing objects remain
+explicit references. Rejected prototypes are not resurrected by merge ancestry.
+
+The report's `completeContentObservation` is separate from job execution success.
+A runner without an archived object reports its exact missing OID and cannot
+certify that content. All runtime, independent-review and activation fields stay
+false. Existing source/call-chain tests and both current validation subjects remain
+required; this inventory is not a new acceptance authority or duplicate test run.
+
 ## Review and recovery record
 
 The pre-cleanup inventory contained 228 remote heads, 49 ancestors, one matching

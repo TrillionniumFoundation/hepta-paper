@@ -314,7 +314,7 @@ impl Fixture {
     pub fn serve_execution(
         &self,
         listener: UnixListener,
-        output: &'static [u8],
+        output: &[u8],
         response_mode: u8,
     ) -> thread::JoinHandle<()> {
         self.serve_execution_sequence(listener, vec![self.request.clone()], output, response_mode)
@@ -324,9 +324,10 @@ impl Fixture {
         &self,
         listener: UnixListener,
         requests: Vec<CodexExecutionRequestV1>,
-        output: &'static [u8],
+        output: &[u8],
         response_mode: u8,
     ) -> thread::JoinHandle<()> {
+        let output = output.to_vec();
         thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
             let accept = || {
@@ -368,7 +369,7 @@ impl Fixture {
                 if response_mode == 1 {
                     return;
                 } // lost response after possible effect
-                let response = prepared_response(&request, output, false);
+                let response = prepared_response(&request, &output, false);
                 let mut response_cursor = std::io::Cursor::new(&response);
                 let (mut initial, _) = hepta_codex_broker::read_response_frame(
                     &mut response_cursor,
@@ -411,7 +412,7 @@ impl Fixture {
     pub fn serve(
         &self,
         listener: UnixListener,
-        output: &'static [u8],
+        output: &[u8],
         reject: bool,
         corrupt: bool,
     ) -> thread::JoinHandle<()> {

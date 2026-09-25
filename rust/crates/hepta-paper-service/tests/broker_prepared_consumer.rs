@@ -6,6 +6,8 @@ mod cache_admission;
 mod fixture;
 #[path = "broker_prepared_consumer/plan_waves.rs"]
 mod plan_waves;
+#[path = "broker_prepared_consumer/revision.rs"]
+mod revision;
 use fixture::*;
 use hepta_paper_service::{ObjectStoreV1, run_service_v1};
 use std::{

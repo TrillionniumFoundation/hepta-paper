@@ -39,19 +39,150 @@ The official noninteractive Codex argv and prompt are constructed by
    descriptors, hash the actual bytes, and fsync immutable stdout/output evidence
    before advancing deterministic result processing.
 6. Decode complete JSONL, require a successful terminal turn, parse the actual
-   final JSON, and validate its bound schema. Success ends at `SchemaValidated`.
+   final JSON, and validate its bound schema. Dispatch itself ends at
+   `SchemaValidated`.
+7. `finalize_codex_prepared_result` reopens the exact persisted request, the
+   pre-release workspace inventory and the exclusive execution evidence. It
+   recomputes the current descriptor-bound workspace inventory, validates the
+   mutation manifest against the request-bound policy, and cross-checks the
+   event-stream, final-output and schema-validation hashes against the broker
+   journal. Only then does it advance `WorkspaceSnapshotted` ->
+   `MutationValidated` -> `ResultPrepared` and publish the immutable prepared
+   receipt.
 
 A cancelled or ambiguous released execution is never automatically replayed.
 A repeated operation ID is refused by dispatch and remains queryable in the
-journal. The API deliberately does not assert `WorkspaceSnapshotted`,
-`MutationValidated`, `ResultPrepared`, `Acknowledged`, campaign-write or submission
-authority: those require independent workspace/mutation and commit attestations.
+journal. The finalizer never launches Codex and never grants `Acknowledged`,
+campaign-write, release or submission authority. Those remain separate consumer
+and commit boundaries.
 
-`codex-result-<operation>.json` is a bounded durable evidence artifact containing
-request/runtime/argv identities and actual captured stream/output bytes (hex).
-Consumers must compare its request and evidence hashes with the journal. The
-artifact is created exclusively and never overwritten. It is evidence for local
-recovery; it is not a signed prepared-result receipt.
+The broker retains three bounded, owner-only sidecars per completed prepared
+operation:
+
+- `codex-result-<operation>.before.json` binds the pre-release workspace identity,
+  mutation policy and complete initial inventory;
+- `codex-result-<operation>.json` binds request/runtime/argv identities and the
+  actual captured stream/output bytes;
+- `codex-result-<operation>.prepared.json` binds the recomputed mutation manifest,
+  prepared workspace result, journal evidence and exact output identity.
+
+All three are created exclusively and never overwritten. Re-entry after a crash
+accepts only byte-identical sidecars and transition evidence. A self-consistent
+replacement output or event stream is still rejected when it differs from the
+journal. `read_codex_prepared_output` returns bytes only after the prepared
+receipt and execution-evidence identities are recomputed. A prepared receipt is
+provider/workspace evidence; it is not campaign-write authority.
+
+## Consumer-visible results and acknowledgement recovery
+
+The normal authenticated `BrokerServerV1` request now returns the existing V1
+`Prepared` response when the durable journal is `ResultPrepared`, including
+its exact prepared-receipt digest. `Acknowledged` includes both original
+prepared and acknowledgement digests. The response is derived from a freshly
+loaded, validated journal, not the dispatch callback's return value. Other
+states retain `Reserved`/`Existing` with their actual state and no fabricated
+prepared identity. Reservation/existing telemetry still counts admission, not
+provider completion. No new wire fields or response version are introduced.
+
+The same signed request can query its original result while its existing
+capability is valid. It never dispatches an existing operation again. Conflicting
+request bodies still fail journal admission. Losing a response or restarting the
+listener does not reset the operation, and a preflight failure is not a prepared
+result. The legacy execution response transports identities only; it does not
+become a writer capability, scientific verdict or campaign-commit receipt.
+
+### Explicit read-only prepared-output query
+
+The same role-specific broker endpoint now accepts `HEPTAQX1`: the existing
+16-byte request framing with a distinct read-only magic and the exact original
+canonical signed `CodexExecutionRequestV1` payload. `HEPTACX1` execution framing
+and `HEPTARX1` response encoding are unchanged. Execution-only admission APIs
+reject query frames. This route never reserves an operation or nonce, invokes
+the dispatcher, renews a capability, acknowledges a result, or writes a campaign.
+An unknown operation returns `operation_not_found`; an existing non-prepared
+operation returns `state_conflict`. A different validly signed request for the
+same operation is a conflict, not a replacement.
+
+`ProductCodexDispatcherV1::prepared_delivery` loads the original committed
+`ResultPrepared`/`Acknowledged` journal, canonical prepared receipt and actual
+output sidecar. It checks the prepared-transition digest, full persisted request,
+role/runtime/schema/workspace/attempt/revision/lease bindings and actual output
+bytes. Missing or changed sidecars fail closed, without re-executing the model
+or reconstructing a supposedly successful result. The existing dispatch shared
+lock excludes cooperating backup/recovery. This observation does not reclaim
+credentials or grant another operation's workspace permissions.
+
+On success an ordinary `Prepared` or `Acknowledged` response precedes one
+`HEPTAPX1` frame: 8-byte magic, big-endian u64 receipt length, big-endian u64 output
+length, canonical receipt JSON, then raw provider-output bytes. Each length is
+positive and at most 64 MiB; output must also fit the original signed request
+limit. The consumer rejects oversized lengths before allocation, noncanonical
+receipt bytes, any expected-receipt/request mismatch and corrupted/truncated
+output. `BrokerPreparedDeliveryV1` exposes read-only getters and is a content
+result, not a signed scientific or campaign-write grant.
+
+Use `query_prepared_result` with an already connected Unix socket, an explicit
+expected broker peer policy, the original signed request and a 1–30000 ms
+cumulative I/O timeout. The caller owns bounded connection establishment. Kernel
+peer checks precede sending the request. The server rechecks current trust,
+request expiry and nondecreasing clock after loading the sidecars and before
+every bounded output chunk. Writes share one elapsed-time budget; progress does
+not restart it. Failure after a partial response closes the connection without
+another response or ACK. Bytes already sent cannot be recalled by later
+revocation; the API returns a result only after verifying the entire frame.
+
+Lost replies are recovered by an explicit identical query under still-current
+capability authority, including after listener restart or acknowledgement.
+The query intentionally does not add an expired-request bypass. Long-running
+operations needing fresh recovery authority, full writer-issued author/reviewer
+inputs and commit-bound ACK transport remain separate product integration work.
+The ordinary service now supplies durable consumer/CAS commit and an explicit
+signed-request execution backend; see its
+[workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#explicit-signed-broker-execution-and-recovery). No live model or full Node parity is claimed.
+
+The `codex_dispatch::tests::delivery` cases use real Unix sockets, Ed25519
+admission, SQLite, original sidecars and credential-free supervised processes.
+They execute the actual client/server path, wrong-subject/signature rejection,
+no-reservation/no-dispatch behavior, expiry during reading, corrupted/truncated
+bytes, acknowledgement replay and lost-response restart. These fixture runtimes
+are not authenticated live-model evidence. The stale-listener tests explicitly
+stop listening while retaining a duplicate descriptor, so concurrent fork/exec
+cannot replace the intended stale-socket assertion with a transient live socket.
+Production live-predecessor rejection is unchanged.
+
+```sh
+cargo test --locked -p hepta-codex-broker --lib codex_dispatch::tests::delivery
+cargo test --locked -p hepta-codex-broker --lib listener::tests
+```
+
+`verify_persisted_prepared_result_acknowledgement` still reloads the actual
+request and journal and applies the original signature, key and age policy.
+It also accepts an already acknowledged operation only when every subject field,
+the original signed-body digest and terminal timestamp match. Applying this
+verified duplicate returns the original terminal journal without another write.
+A different validly signed acknowledgement for the same operation is a conflict.
+Expired/future acknowledgements remain rejected; historical observation is not
+permission to renew or reissue an acknowledgement with changed fields.
+
+Two writers which verified the same prepared state may race. A definite
+`ResultPrepared`-to-`Acknowledged` CAS conflict is resolved by reading back and
+checking the exact committed acknowledgement. Other database/persistence errors
+remain errors, including a commit whose outcome is unknown; they are not
+converted to success and cannot authorize provider re-execution.
+
+The `service_lifecycle` target includes actual signed socket admission, real
+SQLite state, the bounded credential-free process/gate fixture, dropped replies,
+listener restart, acknowledgement reopen, conflicting signed inputs and rollback
+at both journal fault points. Build the pre-exec gate before running this target:
+
+```sh
+cargo build --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --bins
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-broker --test service_lifecycle
+```
+
+These are source recovery/transport regressions, not live model or installed
+cross-principal qualification. The full 57-route acceptance denominator, actual
+production writer transfer and Node retirement do not change.
 
 ## Restart containment
 
@@ -72,10 +203,12 @@ already absent. The process journal then applies its existing conservative
 release/ambiguity recovery rules.
 
 `create_quiesced_codex_dispatch_backup` obtains an exclusive lock against all
-qualified dispatches, refuses active journaled processes, unreconciled containment
-records and launch envelopes, copies the SQLite journal and all durable result
-sidecars, and verifies the source journal and sidecar identities did not change.
-A completed Codex operation with missing result evidence cannot be backed up.
+qualified dispatches and local finalization, refuses active journaled processes,
+unreconciled containment records and launch envelopes, copies the SQLite journal
+and all durable result sidecars, and verifies the source journal and sidecar
+identities did not change. A completed Codex operation with missing execution
+evidence cannot be backed up; a prepared operation also requires its exact
+pre-release inventory and prepared receipt sidecars.
 The final `manifest.json` pins every copied file's bytes/hash and the logical
 journal fingerprint. An interrupted directory without that manifest is incomplete.
 
@@ -94,10 +227,18 @@ creation uses a private journal-copy path only while exclusive dispatch quiescen
 and sidecar checks are held. Recovery takes the same exclusive lock, so it cannot
 kill a concurrently executing operation.
 
-`BrokerServerV1::with_dispatcher` installs a `BrokerOperationDispatcherV1` adapter.
-Its `recover_before_ready` composes containment recovery; `dispatch` resolves local
-bound inputs and calls the qualified API. Only fresh reservations are dispatched.
-Without an adapter the server continues to provide admission/reservation only.
+`BrokerServerV1::with_dispatcher` installs the product
+`ProductCodexDispatcherV1`. It consumes one canonical, authority-owned
+`ProductCodexOperationV1` per operation and binds role/task,
+campaign/node/attempt, lease/revision, validity, prompt and input-manifest
+files, actual initial workspace inventory, schema, mutation policy,
+network/approval posture and cost/output/event limits. The operation-authority
+UID must differ from the broker UID; the directory device/inode is retained for the dispatcher lifetime, so replacement is not adopted. Descriptor, prompt and input-manifest bytes
+are checked before provider release and at every live authority revalidation;
+the descriptor digest enters the prepared receipt. Its `recover_before_ready`
+composes containment recovery and completes only deterministic local prepared
+states without provider re-execution. Without this adapter the server continues
+to provide admission/reservation only.
 
 ## Server worker ownership
 
@@ -213,9 +354,13 @@ Build the workspace `hepta-codex-preexec-gate` binary first. Unit tests execute 
 credential-free deterministic local CLI through the same gate path, validate
 actual output and durable journal transitions, reject fixture production/role/
 prompt/schema drift, verify runtime-config drift becomes ambiguous, cancel an
-already released process, and recover exact fixture cgroup identities. The
-fixture execution entry and allowing authority exist only under unit-test control;
-these tests do not constitute live-provider or production-host qualification.
+already released process, and recover exact fixture cgroup identities. Prepared
+result tests inject interruptions after workspace snapshot, mutation validation
+and receipt publication; each restart advances every state exactly once without
+provider re-execution. Adversarial tests rewrite output and JSONL bytes together
+with their own matching hashes and require journal-bound rejection. The fixture
+execution entry and allowing authority exist only under unit-test control; these
+tests do not constitute live-provider or production-host qualification.
 
 ## Process exit during procfs recovery observation
 

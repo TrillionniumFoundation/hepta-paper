@@ -481,28 +481,36 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
         // sequential dispatch is conservative; parallel workers require host admission.
         // Only the exact incoming read-only query can revisit its start record.
         // An unresolved provider/process attempt still fences the entire owner.
-        let mut readonly_retries = BTreeSet::new();
-        let mut prepared_retries = BTreeSet::new();
-        for request in requests {
-            let binding = self
-                .workers
-                .get(&request.candidate.module_id)
-                .ok_or(ControlPlaneError::ExecutionInvalid)?;
-            let identity = execution_identity(request, binding)
-                .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
-            let identity = identity.as_str().trim_start_matches("sha256:").to_owned();
-            if matches!(
-                binding,
-                WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. }
-            ) {
-                readonly_retries.insert(identity.clone());
-            }
-            prepared_retries.insert(identity);
+        let active_plan = requests.first().map(|request| &request.plan_hash);
+        if requests
+            .iter()
+            .any(|request| Some(&request.plan_hash) != active_plan)
+        {
+            return Err(ControlPlaneError::ExecutionInvalid);
         }
+        let readonly_retries = requests
+            .iter()
+            .filter_map(|request| {
+                self.workers
+                    .get(&request.candidate.module_id)
+                    .filter(|binding| {
+                        matches!(
+                            binding,
+                            WorkerBindingV1::BrokerPrepared { .. }
+                                | WorkerBindingV1::BrokerExecute { .. }
+                        )
+                    })
+                    .map(|binding| {
+                        execution_identity(request, binding)
+                            .map(|hash| hash.as_str().trim_start_matches("sha256:").to_owned())
+                    })
+            })
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
         let guard = recovery::DispatchGuardV1::acquire(
             &self.objects,
             &readonly_retries,
-            &prepared_retries,
+            active_plan,
             self.broker_context
                 .as_ref()
                 .map(|context| &context.committed_results),

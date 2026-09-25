@@ -89,7 +89,7 @@ impl DispatchGuardV1 {
     pub(super) fn acquire(
         objects: &ObjectStoreV1,
         readonly_retries: &BTreeSet<String>,
-        prepared_retries: &BTreeSet<String>,
+        active_plan: Option<&Sha256Digest>,
         committed_results: Option<&hepta_control_plane::CommittedResultSnapshotV1>,
     ) -> Result<Self, ServiceError> {
         let state = objects.root().parent().ok_or(ServiceError::Artifact)?;
@@ -178,11 +178,13 @@ impl DispatchGuardV1 {
                 }
                 // A provider result is not settled just because its bytes were
                 // prepared. A different plan cannot spend the same still-held
-                // budget after a precommit failure. Resume only the original
-                // incoming attempt or prove its exact durable commit from the
+                // budget after a precommit failure. All dependency waves of one
+                // already-admitted plan share its reserved budget until atomic
+                // commit; they may continue without inventing a new plan.
+                // Otherwise prove the exact durable commit from the
                 // already-verified owner index; never refund or erase evidence.
                 if result.actual_resources.provider_calls > 0
-                    && !prepared_retries.contains(identity)
+                    && active_plan != Some(&result.plan_hash)
                 {
                     let result_hash = result.result_hash().map_err(|_| ServiceError::Execution)?;
                     if !committed_results

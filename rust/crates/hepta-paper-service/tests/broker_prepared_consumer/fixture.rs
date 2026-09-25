@@ -317,7 +317,16 @@ impl Fixture {
         output: &'static [u8],
         response_mode: u8,
     ) -> thread::JoinHandle<()> {
-        let request = self.request.clone();
+        self.serve_execution_sequence(listener, vec![self.request.clone()], output, response_mode)
+    }
+
+    pub fn serve_execution_sequence(
+        &self,
+        listener: UnixListener,
+        requests: Vec<CodexExecutionRequestV1>,
+        output: &'static [u8],
+        response_mode: u8,
+    ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
             let accept = || {
@@ -341,53 +350,61 @@ impl Fixture {
                     }
                 }
             };
-            let mut stream = accept();
-            let mut expected = Vec::new();
-            hepta_codex_broker::write_request_frame(&mut expected, &request, Default::default())
+            for request in requests {
+                let mut stream = accept();
+                let mut expected = Vec::new();
+                hepta_codex_broker::write_request_frame(
+                    &mut expected,
+                    &request,
+                    Default::default(),
+                )
                 .unwrap();
-            let mut actual = vec![0; expected.len()];
-            stream.read_exact(&mut actual).unwrap();
-            assert_eq!(
-                actual, expected,
-                "first call must send the bound execution request"
-            );
-            if response_mode == 1 {
-                return;
-            } // lost response after possible effect
-            let response = prepared_response(&request, output, false);
-            let mut response_cursor = std::io::Cursor::new(&response);
-            let (mut initial, _) =
-                hepta_codex_broker::read_response_frame(&mut response_cursor, Default::default())
-                    .unwrap();
-            if response_mode == 2 {
-                initial.request_hash = Some(hash(b"wrong request"));
+                let mut actual = vec![0; expected.len()];
+                stream.read_exact(&mut actual).unwrap();
+                assert_eq!(
+                    actual, expected,
+                    "first call must send the bound execution request"
+                );
+                if response_mode == 1 {
+                    return;
+                } // lost response after possible effect
+                let response = prepared_response(&request, output, false);
+                let mut response_cursor = std::io::Cursor::new(&response);
+                let (mut initial, _) = hepta_codex_broker::read_response_frame(
+                    &mut response_cursor,
+                    Default::default(),
+                )
+                .unwrap();
+                if response_mode == 2 {
+                    initial.request_hash = Some(hash(b"wrong request"));
+                }
+                if response_mode == 3 {
+                    // Use the parsed journal state from a valid reservation fixture.
+                    initial.kind = hepta_codex_broker::BrokerResponseKindV1::Existing;
+                    initial.prepared_receipt_hash = None;
+                    initial.current_state = Some(serde_json::from_str("\"reserved\"").unwrap());
+                }
+                write_response_frame(&mut stream, &initial, Default::default()).unwrap();
+                drop(stream);
+                if response_mode != 0 {
+                    return;
+                }
+                let mut stream = accept();
+                let mut expected = Vec::new();
+                hepta_codex_broker::write_result_query_frame(
+                    &mut expected,
+                    &request,
+                    Default::default(),
+                )
+                .unwrap();
+                let mut actual = vec![0; expected.len()];
+                stream.read_exact(&mut actual).unwrap();
+                assert_eq!(
+                    actual, expected,
+                    "output retrieval must never issue another execution"
+                );
+                stream.write_all(&response).unwrap();
             }
-            if response_mode == 3 {
-                // Use the parsed journal state from a valid reservation fixture.
-                initial.kind = hepta_codex_broker::BrokerResponseKindV1::Existing;
-                initial.prepared_receipt_hash = None;
-                initial.current_state = Some(serde_json::from_str("\"reserved\"").unwrap());
-            }
-            write_response_frame(&mut stream, &initial, Default::default()).unwrap();
-            drop(stream);
-            if response_mode != 0 {
-                return;
-            }
-            let mut stream = accept();
-            let mut expected = Vec::new();
-            hepta_codex_broker::write_result_query_frame(
-                &mut expected,
-                &request,
-                Default::default(),
-            )
-            .unwrap();
-            let mut actual = vec![0; expected.len()];
-            stream.read_exact(&mut actual).unwrap();
-            assert_eq!(
-                actual, expected,
-                "output retrieval must never issue another execution"
-            );
-            stream.write_all(&response).unwrap();
         })
     }
 

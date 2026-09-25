@@ -681,6 +681,30 @@ fn process_binding(executable: PathBuf, cwd: PathBuf, arguments: Vec<String>) ->
     // executable policy or changing a shared Cargo artifact in place.
     let private_executable = cwd.join("pinned-worker");
     fs::copy(&executable, &private_executable).unwrap();
+    // A debug integration-test binary can exceed the actual 256 MiB worker
+    // admission bound. Strip only this private copy before hashing it, retaining
+    // the real Rust worker code and every crash/recovery assertion. Never widen
+    // the product bound or mutate Cargo's shared executable to make a test pass.
+    fs::set_permissions(&private_executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let before = fs::metadata(&private_executable).unwrap().len();
+    let stripped = Command::new("strip")
+        .arg("-S")
+        .arg(&private_executable)
+        .output()
+        .unwrap();
+    assert!(
+        stripped.status.success(),
+        "strip private fixture: {}",
+        String::from_utf8_lossy(&stripped.stderr)
+    );
+    let after = fs::metadata(&private_executable).unwrap().len();
+    assert!(
+        after <= 256 * 1024 * 1024,
+        "private worker still exceeds product bound: {after}"
+    );
+    eprintln!(
+        "private Rust worker before={before} after={after} bytes; shared executable unchanged"
+    );
     fs::set_permissions(&private_executable, fs::Permissions::from_mode(0o500)).unwrap();
     let executable = fs::canonicalize(private_executable).unwrap();
     WorkerBindingV1::Process {

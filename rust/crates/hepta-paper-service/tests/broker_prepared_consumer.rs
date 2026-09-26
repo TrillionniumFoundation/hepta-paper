@@ -2,6 +2,8 @@
 //! explicit protocol fixture, not live-model or installed-broker qualification.
 #[path = "broker_prepared_consumer/cache_admission.rs"]
 mod cache_admission;
+#[path = "broker_prepared_consumer/capacity_admission.rs"]
+mod capacity_admission;
 #[path = "broker_prepared_consumer/fixture.rs"]
 mod fixture;
 #[path = "broker_prepared_consumer/plan_waves.rs"]

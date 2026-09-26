@@ -578,7 +578,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker.rs",
           "role": "implementation",
-          "gitBlob": "6e85f318690cce81e5aa4df059b76cea435fc8f4",
+          "gitBlob": "be37b780025964e59f80b07492ca0d21f7692ff5",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -676,7 +676,7 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs",
           "role": "test",
-          "gitBlob": "ef89b164c41b8d62a6e271638f1d4d30ffbf3871",
+          "gitBlob": "df3976d980eb9617c4636ba74c4c67e4a057fa1c",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -780,13 +780,17 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker_recovery.rs",
           "role": "implementation",
-          "gitBlob": "9e57c2782e5db7b89e9c0776f1cb4d3c7ecefb8e",
+          "gitBlob": "ff9668d62ca1d4af3b8912ec4525f4d54259ff7d",
           "mode": "100644",
           "language": "rust",
           "symbols": [
             {
               "kind": "function",
               "name": "acquire"
+            },
+            {
+              "kind": "function",
+              "name": "require_record_capacity"
             }
           ]
         },
@@ -872,6 +876,31 @@
             {
               "kind": "test",
               "name": "broker_revision_lost_response_recovers_query_only_and_second_rejection_is_durable"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
+          "role": "test",
+          "mode": "100644",
+          "language": "rust",
+          "gitBlob": "f198fc9603af65a76c47918c904da4ebb07fdd9c",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "full_attempt_journal_rejects_before_any_broker_connection_or_start_record"
+            },
+            {
+              "kind": "test",
+              "name": "last_attempt_pair_commits_and_full_journal_replays_without_broker"
+            },
+            {
+              "kind": "test",
+              "name": "batch_reserves_all_result_pairs_before_its_first_broker_connection"
+            },
+            {
+              "kind": "test",
+              "name": "final_prepared_slot_recovers_a_lost_response_without_reissuing_execution"
             }
           ]
         }
@@ -1781,6 +1810,82 @@
           "timeoutSeconds": 600,
           "expectedTargets": [
             "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/revision.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "capacity_admission::full_attempt_journal_rejects_before_any_broker_connection_or_start_record",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "capacity_admission::last_attempt_pair_commits_and_full_journal_replays_without_broker",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "capacity_admission::batch_reserves_all_result_pairs_before_its_first_broker_connection",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "capacity_admission::final_prepared_slot_recovers_a_lost_response_without_reissuing_execution",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
           ]
         }
       ]

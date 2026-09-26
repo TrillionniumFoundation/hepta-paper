@@ -488,27 +488,27 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
         {
             return Err(ControlPlaneError::ExecutionInvalid);
         }
-        let readonly_retries = requests
-            .iter()
-            .filter_map(|request| {
-                self.workers
-                    .get(&request.candidate.module_id)
-                    .filter(|binding| {
-                        matches!(
-                            binding,
-                            WorkerBindingV1::BrokerPrepared { .. }
-                                | WorkerBindingV1::BrokerExecute { .. }
-                        )
-                    })
-                    .map(|binding| {
-                        execution_identity(request, binding)
-                            .map(|hash| hash.as_str().trim_start_matches("sha256:").to_owned())
-                    })
-            })
-            .collect::<Result<BTreeSet<_>, _>>()
-            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+        let mut incoming = BTreeSet::new();
+        let mut readonly_retries = BTreeSet::new();
+        for request in requests {
+            let binding = self
+                .workers
+                .get(&request.candidate.module_id)
+                .ok_or(ControlPlaneError::ExecutionInvalid)?;
+            let identity = execution_identity(request, binding)
+                .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+            let identity = identity.as_str().trim_start_matches("sha256:").to_owned();
+            incoming.insert(identity.clone());
+            if matches!(
+                binding,
+                WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. }
+            ) {
+                readonly_retries.insert(identity);
+            }
+        }
         let guard = recovery::DispatchGuardV1::acquire(
             &self.objects,
+            &incoming,
             &readonly_retries,
             active_plan,
             self.broker_context

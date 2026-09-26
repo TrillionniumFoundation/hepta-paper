@@ -594,6 +594,33 @@ assertions remain enforced. Shared Cargo executables are never modified. The
 two provider dependency waves in one atomic plan and replay both without IPC.
 This is a labelled local protocol fixture, not independent live research review.
 
+## Attempt-record count admission
+
+The existing dispatch-directory lock now protects capacity preflight for the
+complete incoming execution batch, before its first worker or broker connection.
+`worker_recovery.rs::require_record_capacity` first scans and validates only the
+immutable record names, then counts those records plus both missing records for
+each distinct new attempt. A cached replay consumes no new slot; an
+already-started query-only recovery requires only its missing prepared slot.
+Only a capacity-admissible directory proceeds to full record and evidence-object
+validation, followed by a second name-set check under the same flock. The
+existing hard record bound is not raised, and admission does not delete
+historical evidence or turn an ambiguous provider attempt into a refund/retry.
+
+`capacity_admission.rs` runs the ordinary `hepta-paper-rust run` entry against a
+full, structurally valid inert history and proves no broker connection or new
+start record. At the exact last-pair boundary, actual broker-protocol output goes
+through CAS and SQLite, then the now-full journal replays the committed result
+offline. The inert history is a capacity fixture, not fabricated scientific or
+billing acceptance. Unit cases separately cover multiple incoming attempts,
+duplicate identities, cached results and a query's final prepared slot.
+
+This closes record-count admission for one execution batch, not unlimited
+retention or whole-plan cross-wave storage reservation. The existing aggregate
+byte/read limits, safe compaction, long-running retention and installed recovery
+qualification remain separate constraints. No capacity failure grants provider
+termination, actual cost settlement, production activation or Node retirement.
+
 ## Versioned broker manuscript repair
 
 The existing amendment owner now admits the bounded broker manuscript revision

@@ -224,7 +224,11 @@ fn validate_authority_bindings(
     deployment: &VerifiedProductionDeploymentV1,
     legacy_freeze: &VerifiedLegacyNodeFreezeV1,
 ) -> Result<(), ServiceError> {
-    if config.version != 1
+    if !matches!(
+        qualification.profile(),
+        hepta_qualification_ingest::QualificationClosureProfile::LegacySevenPackageV1
+            | hepta_qualification_ingest::QualificationClosureProfile::SingleMaintainerV2
+    ) || config.version != 1
         || config.service.version != 1
         || config.service.production_activation
         || config.service.hard_policy.external_actions_authorized

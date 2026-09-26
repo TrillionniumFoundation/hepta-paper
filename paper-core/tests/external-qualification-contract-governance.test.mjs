@@ -24,6 +24,8 @@ const supportSchemas = [
   'qualification-trust-store-v1.schema.json',
   'external-qualification-closure-request-v2.schema.json',
   'external-qualification-closure-receipt-v2.schema.json',
+  'research-qualification-request-v3.schema.json',
+  'research-qualification-receipt-v3.schema.json',
 ];
 
 const payloadTokens = [
@@ -92,7 +94,9 @@ function assertStrictSchema(name, schema) {
   assert.equal(schema.type, 'object', name);
   assert.equal(schema.additionalProperties, false, name);
   const version = schema.properties.schemaVersion || schema.properties.version;
-  assert.equal(version?.const, name.endsWith('-v2.schema.json') ? 2 : 1, name);
+  const versionMatch = /-v([123])\.schema\.json$/u.exec(name);
+  assert.ok(versionMatch, `unsupported versioned schema ${name}`);
+  assert.equal(version?.const, Number(versionMatch[1]), name);
   assert.ok(Array.isArray(schema.required) && schema.required.length > 0, name);
 }
 
@@ -301,4 +305,45 @@ test('V2 executable schema rejects missing, repeated, legacy and unknown package
   const report = JSON.parse(result.stdout);
   assert.deepEqual(new Set(report.failures.map((failure) => failure.name)),
     new Set(['missing', 'duplicate', 'legacy', 'version', 'unknown']), JSON.stringify(report));
+});
+
+
+test('research V3 schemas reject full-scope substitution and missing packages', () => {
+  const schema = read('docs/rust/qualification/research-qualification-request-v3.schema.json');
+  const request = JSON.parse(schema);
+  const receipt = readSchema('research-qualification-receipt-v3.schema.json');
+  const ids = Object.keys(expectedPackages).filter((id) => id !== 'EXT-AUTHORITY-SET-001');
+  assert.deepEqual(new Set(request.$defs.packageId.enum), new Set(ids));
+  assert.deepEqual(receipt.$defs.packageId, request.$defs.packageId);
+  assert.equal(receipt.properties.kind.const, 'ResearchQualificationReceiptV3');
+  assert.equal(receipt.properties.productionActivation.const, false);
+  assert.equal(receipt.properties.automaticActivation.const, false);
+  const valid = {
+    version: 3, repository: 'TrillionniumFoundation/hepta-paper',
+    commit: 'a'.repeat(40), tree: 'b'.repeat(40), consumerUid: 1000,
+    trustStore: { path: '/authority/trust.json', ownerUid: 0 },
+    replayLedger: { path: '/consumer/replay.sqlite', ownerUid: 1000 },
+    envelopes: ids.map((packageId, index) => ({ packageId,
+      path: `/authority/envelope-${index}.json`, ownerUid: 0,
+      payloadPath: `/authority/payload-${index}.json`, payloadOwnerUid: 0 })),
+  };
+  const rows = [{ name: 'valid', schema, instance: JSON.stringify(valid) }];
+  for (const [name, mutate] of [
+    ['missing', (value) => value.envelopes.pop()],
+    ['duplicate', (value) => { value.envelopes[1].packageId = value.envelopes[0].packageId; }],
+    ['publication', (value) => { value.envelopes[0].packageId = 'EXT-AUTHORITY-SET-001'; }],
+    ['full-profile', (value) => { value.version = 2; }],
+    ['extra-authority', (value) => { value.productionActivation = true; }],
+  ]) {
+    const value = structuredClone(valid);
+    mutate(value);
+    rows.push({ name, schema, instance: JSON.stringify(value) });
+  }
+  const result = spawnSync('python3', ['docs/rust/tools/strict_json_schema.py', '--batch-stdin'], {
+    cwd: repositoryRoot, input: JSON.stringify(rows), encoding: 'utf8', timeout: 30_000,
+  });
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(new Set(report.failures.map((failure) => failure.name)),
+    new Set(['missing', 'duplicate', 'publication', 'full-profile', 'extra-authority']));
 });

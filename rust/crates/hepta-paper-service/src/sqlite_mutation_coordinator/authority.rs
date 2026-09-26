@@ -178,6 +178,33 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
         self.configuration.assert_current()?;
         self.public_key_document.assert_current()
     }
+    /// Rewrap only the untrusted transport while preserving the exact pinned
+    /// configuration/key owner. The product composition uses this to keep
+    /// migration-process and installed-socket paths on one state machine.
+    pub(crate) fn assert_transport_current_v1(
+        &self,
+        check: impl FnOnce(&T) -> Result<()>,
+    ) -> Result<()> {
+        self.current()?;
+        check(&self.transport)?;
+        self.current()
+    }
+    pub(crate) fn inspect_transport_v1<R>(&self, inspect: impl FnOnce(&T) -> R) -> R {
+        inspect(&self.transport)
+    }
+    pub(crate) fn map_transport<U: MutationAuthorityTransportV1>(
+        self,
+        map: impl FnOnce(T) -> U,
+    ) -> PinnedMutationAuthorityV1<U> {
+        PinnedMutationAuthorityV1 {
+            trust: self.trust,
+            configuration_hash: self.configuration_hash,
+            configuration: self.configuration,
+            public_key_document: self.public_key_document,
+            public_key: self.public_key,
+            transport: map(self.transport),
+        }
+    }
     fn signature(&self, receipt: &Value) -> bool {
         let Some(encoded) = receipt["signature"].as_str() else {
             return false;
@@ -423,6 +450,21 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
         }))
     }
 }
+impl
+    PinnedMutationAuthorityV1<
+        crate::local_state_authority_client::LocalStateAuthoritySocketTransportV1,
+    >
+{
+    /// Recheck the pinned verifier inputs and the original kernel socket origin
+    /// without sending a request. Actual RPCs still perform per-connection
+    /// same-origin verification and preserve unknown outcomes after any write.
+    pub(crate) fn assert_socket_current_v1(&self) -> Result<()> {
+        self.current()?;
+        self.transport.assert_origin_current_v1()?;
+        self.current()
+    }
+}
+
 impl PinnedMutationAuthorityV1<ProcessMutationAuthorityTransportV1> {
     /// Revalidate the verifier pins and this concrete process configuration and
     /// executable without invoking the external authority.

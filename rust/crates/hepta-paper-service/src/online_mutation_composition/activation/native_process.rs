@@ -435,6 +435,14 @@ pub(crate) fn native_reconciliation_implementation_hash_v1() -> Sha256Digest {
             include_bytes!("admission_hashes.rs"),
         ),
         (
+            "online_mutation_composition/activation/authority_transport.rs",
+            include_bytes!("authority_transport.rs"),
+        ),
+        (
+            "online_mutation_composition/activation/installation.rs",
+            include_bytes!("installation.rs"),
+        ),
+        (
             "online_mutation_composition/activation/execution.rs",
             include_bytes!("execution.rs"),
         ),

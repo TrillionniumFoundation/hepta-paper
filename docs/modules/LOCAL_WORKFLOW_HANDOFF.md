@@ -22,7 +22,7 @@ prior committed result -> hash-verified CAS bytes -> explicit JSON-pointer bindi
 -> NativeJobV1 decode and capability validation -> current snapshot and candidate
 -> fsynced immutable step configuration -> run_service_v1
 -> registry / policy / planner / allocator / ServiceExecutorV1
--> native kernel OR exact executable/code-bound local process
+-> native kernel OR exact executable/code-bound local process OR bound broker backend
 -> prepared results -> independent content verifier -> SQLite commit sequencer
 -> read-only chain recomputation -> optional exact-subject routing gate
 ```
@@ -62,8 +62,10 @@ Resources are conservatively summed across the entire immutable definition;
 checked arithmetic and the initial capacity/budget bound prevent composition of
 individually valid steps into an over-budget workflow. Memory sums are deliberately
 conservative, not measured peaks. Worker accounting remains the existing admitted
-upper-bound accounting, not OS resource metering. Provider calls, external actions
-and central-writer requests in step vectors must be zero in this local surface.
+upper-bound accounting, not OS resource metering or a provider invoice. Native,
+process and prepared-only backends require zero provider calls; the explicitly
+selected broker execution backend requires exactly one. External actions and
+central-writer requests remain forbidden in this local surface.
 
 ## Command examples
 
@@ -102,8 +104,10 @@ unknown state. The lock is nonblocking and bound to a regular private inode.
 This is cooperative same-principal integrity, NOT hostile same-UID isolation.
 
 A step configuration is fsynced before the service's durable dispatch intent.
-A crash before invocation may replay that same plan. A prepared result can resume
-through the existing byte-verified cache. A committed result advances only through
+A crash before invocation may replay that same plan. A native/process prepared result can resume
+through the existing byte-verified cache. An uncommitted broker result additionally
+requires current query-only admission of its original request and exact receipt;
+its cache is not an authorization grant. A committed result advances only through
 the original SQLite log, without re-execution or a second debit. Started work with
 no complete prepared result remains ambiguous and cannot automatically retry.
 Saved plan mutation, CAS corruption, missing objects, unknown journal entries,
@@ -146,8 +150,9 @@ external effects are not claimed equivalent. No per-command parity row is promot
 The original 57 command routes and all argument-dependent modes remain the audit
 inventory, not seven local-kernel jobs.
 
-Next implementation work is actual authorized author/reviewer broker integration,
-model-driven revision and repair rounds, qualification of scientific/runtime and
+Next implementation work is the dynamic trusted role-request producer and
+ordinary independent author/reviewer/revision composition, measured provider
+settlement and commit-bound signed acknowledgement, qualification of scientific/runtime and
 manuscript compilation adapters, full operator/maintenance mapping and accepted
 capability replay. Remote
 credentials, target-host isolation, private historical corpus, storage soak,
@@ -186,6 +191,15 @@ consistent; `atomicAcrossWorkflows=false`. There is no host-wide discovery.
 plans, receipts and actual CAS bytes under the existing cooperative workflow lock.
 It does not acquire a writer lease. Inspection remains available after lease
 expiry. It never recreates missing artifacts or performs lifecycle recovery.
+
+`hepta-local-workflow cancel-node STATE HASH STEP_ID REVISION [NOW]` is the
+bounded compatibility path for the incumbent node-cancel command. The local
+topology is strictly sequential: a committed step is already terminal and
+replays as an unchanged no-op; an uncommitted step owns the complete remaining
+suffix, so cancellation terminally fences the workflow. Unknown steps, stale
+revisions and later execution fail closed. A pending/prepared attempt is
+preserved for normal reconciliation rather than deleted or refunded. This is
+not a claim of arbitrary DAG cancellation or production worker teardown.
 
 | Command | Input | Output and boundary |
 |---|---|---|
@@ -407,3 +421,297 @@ replay preserving earlier committed steps. This is not a live model fixture.
 cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
 cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --lib
 ```
+
+## Broker-prepared result consumption
+
+The existing service and local workflow now accept `WorkerBindingV1::BrokerPrepared`
+(`kind: broker_prepared`, `source: BrokerPreparedSourceV1`) with a matching
+`NativeJobV1::BrokerPrepared` (`kind: broker_prepared`, `input: BrokerPreparedInputV1`).
+The implementation is `rust/crates/hepta-paper-service/src/broker_prepared.rs`.
+Its registry execution is `InProcess`, with the hash returned by
+`broker_prepared_implementation_hash_v1(&source)`, not the native-kernel hash.
+There is no subprocess or provider dispatch in this backend.
+
+The source closes the absolute broker socket, its expected UID/GID, canonical
+request directory and its owner UID/GID, role, runtime identity and 1–30000 ms
+query deadline. The input closes version 1, task kind, prompt-envelope hash,
+workspace and mutation-policy hashes, output-schema hash and the desired input
+manifest. That manifest is bounded to 1 MiB of Serde JSON; its SHA-256 must match
+the original broker request. Previous workflow artifacts can enter it through
+ordinary `/input/inputManifest/...` bindings. Roles are Author/Repairer for
+CAP-AUTHOR, Reviewer for CAP-REVIEW and FormalReviewer for CAP-FORMAL.
+
+The selected request owner publishes the original canonical signed request as
+`hex(SHA256(local_attempt_id_utf8)).json` in the configured request directory.
+`broker_prepared_request_filename_v1` supplies the exact filename. The operation
+ID and attempt ID must both equal the actual selected local attempt; campaign,
+step, planning revision and writer generation must match the existing service.
+Request files must be single-link regular files, mode 0400 or 0440. Original
+file descriptors and directory identity are retained through the query.
+Publishing a request after plan selection avoids putting an attempt-dependent
+signature into the very payload from which that attempt is derived.
+
+The client checks the socket object and kernel peer before sending the existing
+read-only result-query frame. Connection backlog pressure fails immediately;
+subsequent I/O uses the shared monotonic transport deadline described below. The
+broker retains signature/currentness checks and never turns this query into a
+reservation or execution. Request, directory and socket identities are checked
+again after the reply. Interrupted queries cannot be accepted locally and never
+become execution permission.
+
+Returned output is verified by the existing broker decoder, stored as one CAS
+artifact, independently read by the service verifier, then committed by the
+existing SQLite sequencer. The original broker receipt and token observation
+remain in private CAS evidence. A source without an explicit billing authority
+continues to charge the admitted candidate upper bound and labels it conservative.
+A source with `costSettlement` must instead capture a current independently signed
+provider settlement, bind it to the exact request, prepared-receipt hash and token
+usage, and pass its actual micro-USD value to the same prepared result and SQLite
+budget transaction. Settlement freshness uses the already-selected service
+admission/commit clock; it does not open a second wall-clock trust path. Request
+cost and token hints may not exceed admission. Reopening a committed result
+neither queries again nor charges again.
+
+An uncommitted `.prepared` file is different. At restart the original SQLite
+sequencer verifies its durable log and exposes an opaque read-only result index;
+only an exact result already in that index may replay without IPC. Otherwise the
+consumer reopens the original pinned request, asks the current broker through
+query-only admission, and compares the complete original evidence and output.
+A withdrawn request, current refusal, changed receipt or changed output cannot
+fall back to cache. Failure retains the exact prepared bytes and start identity;
+a subsequent valid query can commit once without provider re-execution. Query
+currentness is the existing broker's admission boundary, not an atomic distributed
+revocation-and-SQL-COMMIT protocol or a lifetime authorization grant.
+
+A provider result prepared before a failed commit is still unsettled at the
+campaign writer even when it carries a valid billing receipt. The existing
+recovery lock refuses a different incoming plan until the exact prior result and
+actual cost are durably committed. Dependency waves within the same
+already-admitted atomic plan may continue under its existing reservation; a wave
+boundary is not a new plan. The lock does not release budget merely because paired
+`.started`/`.prepared` files exist. Original-plan query recovery remains available.
+No missing or rejected billing receipt is interpreted as a refund or permission
+to re-execute.
+
+Only an exact incoming broker-query identity may revisit its own unresolved
+`.started` record. Other unresolved native/process attempts still fence admission.
+A missing, expired or unprepared result never causes automatic model execution.
+Partial local record/CAS writes still follow the existing inspection-required
+rules; this addition does not claim arbitrary torn-write repair.
+
+This is a local result consumer, not a model planner, operation/request signer,
+provider launcher, billing signer, scientific acceptance, production writer or
+commit-bound ACK sender. The production API continues to refuse this backend.
+Real role-principal, billing-principal and deployment qualification, request
+issuance and author/reviewer canaries are still separate work. The consumer tests
+use labelled local protocol and billing fixtures plus real Unix sockets, CAS,
+SQLite and the ordinary CLI; the existing broker delivery tests separately cover
+the actual signed journal and live query-admission path.
+
+Run `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
+--test broker_prepared_consumer` for this consumer regression target.
+
+The [checked-in input example](examples/broker-prepared-input.v1.json) is consumed
+by the executable consumer tests. Its digest strings bind named local fixture
+inputs, not real credentials or accepted scientific evidence. It is only the
+job's `input` body, not a complete service configuration or signed request.
+
+## Signed provider-cost settlement
+
+`ProviderCostSettlementV1` is the single machine contract for measured broker
+cost. The billing authority signs domain-separated bytes containing the exact
+operation/request/prepared-receipt identities, campaign/node/attempt, writer generation, campaign revision, settlement and
+authority-domain identifiers, trust-store generation, complete optional
+`TokenUsage`, actual micro-USD charge, issue time and signer key. Verification
+requires the prepared receipt's own hash to validate, exact token equality, a
+charge no greater than the signed request cap, a current bounded time window and
+a non-weak current Ed25519 key. The configured trust store fixes one expected
+authority-domain identifier; a valid key cannot silently sign for another billing
+domain. An older trust generation, unknown/revoked key, future/expired receipt,
+over-cap charge, changed usage or any subject substitution fails closed.
+
+The configured billing-authority settlement directory is canonical, no-follow
+and not writable by group/other. Files are single-link mode 0400/0440 and named
+`hex(SHA256(attempt_id_utf8)).cost.json`. The service holds only public keys; no
+billing private key enters a workflow or worker configuration. These source
+ownership checks do not prove a distinct installed principal or independent key
+custody; those remain target-host qualification requirements. File, directory
+and request identities are rechecked before the measured charge enters the
+prepared-result evidence. If dispatch has already become uncertain and the
+settlement is missing, recovery remains the original HEPTAQX1 query and cannot
+send another execution. A different later valid settlement cannot rewrite an
+existing uncommitted prepared cache; a durable commit remains replayable after
+the broker and settlement file disappear.
+
+`cost_settlement.rs` in the broker crate covers signature, generation, expiry,
+usage, cap and substitution failures. The service consumer submodule of the same
+name drives the ordinary `run` entry through broker transport, private CAS and
+SQLite: a signed cost of 6 under an admitted cap of 10 leaves budget 94, is stored
+in both result JSON and the control log, and replays without another debit. It
+also covers delayed settlement/query-only recovery, signed over-cap refusal and
+post-preparation settlement replacement, and a future settlement under the
+service clock followed by query-only recovery when that same clock advances.
+Fixture keys and peers are not a live provider billing principal or target-host
+acceptance.
+
+## Explicit signed broker execution and recovery
+
+`WorkerBindingV1::BrokerExecute` and `NativeJobV1::BrokerExecute` use wire kind
+`broker_execute`. They reuse the source/input types and exact signed-request
+ownership rules above, but the registry must bind
+`broker_execution_implementation_hash_v1`, never the prepared-only hash. A step
+reserves exactly one `provider_calls` unit; the local workflow still forbids
+external actions and central-writer turns. Native and prepared-only backends
+retain their zero-provider-call contract. The real broker, not the service JSON,
+verifies the independently supplied signature, current capability and qualified
+product operation before a provider can start.
+
+On a fresh attempt, the service captures and validates the signed request,
+connects the selected endpoint and authenticates its kernel peer before writing
+any dispatch intent. A missing, malformed or mismatched request, missing/stale
+socket or denied peer leaves no `.started` record and may be retried with the
+same immutable operation. Only after these local checks does it fsync the
+existing `.started` record, revalidate the held request and cancellation, and
+send one execution frame. No error after intent persistence deletes that record
+or authorizes a second execution. `dispatch_signed_operation` requires the
+expected kernel peer and exact operation/request response binding. Reservation,
+running or rejected state is not a prepared result. On a prepared response it
+opens another connection, requests the bytes using the original read-only query,
+and verifies the same prepared receipt before the existing CAS/verifier/SQLite
+path can accept it. Request-file and socket identities stay pinned; elapsed
+request capture, execution response and result query share a 1–30000 ms budget.
+The normal `run` and stdin `serve` entrypoints choose the live host clock for this
+backend, reusing post-lock, per-dispatch and commit checks. Serialized old time
+cannot make an expired writer lease current.
+
+Any restart or error after `.started` exists selects query-only recovery. It
+never resends the execution frame, even when a request was not delivered or an
+initial busy reply arrived. Missing/unprepared results remain unresolved until
+an explicit owning reconciliation; no guessed failure releases the identity.
+Other unresolved native/process/broker attempts still fence new admission. The
+backend identity participates in the existing attempt hash, so changing a worker
+kind cannot convert an ambiguous effect into a fresh query or another execution.
+A completed local commit replays without IPC or another debit. An uncommitted
+prepared cache must instead pass the current query-only checks above.
+
+Both broker backends use `with_interruptible_transport` for execution responses
+and result queries. One monotonic deadline covers the complete exchange,
+including partial frames, rather than restarting on each read. A scoped watcher
+checks the existing sticky cancellation token at intervals of at most 10 ms and
+shuts down only this invocation's Unix transport on interruption or deadline.
+The watcher is joined before returning; completed exchanges leave no task that
+could close a later use of the socket. Scheduling latency is host-dependent, not
+a hard real-time guarantee. A final interruption check refuses a raced success.
+
+The ordinary autonomous CLI already forwards SIGINT/SIGTERM through this token;
+it can now leave a blocked broker wait without waiting for the socket timeout.
+The durable `.started` record survives. A new process queries the original
+operation, commits the recovered bytes through the existing verifier/sequencer,
+and replays without IPC or another debit. Closing IPC is not a remote cancel ACK,
+proof of provider termination, settled failure, or permission to refund/reissue.
+The observed provider usage is retained. Accounting consumes a verified measured
+charge only when the source names the signed billing authority above; otherwise
+it explicitly retains the admitted upper bound. No request/operation or billing
+signing owner, dynamic author/reviewer request producer, scientific quality
+acceptance, commit-bound ACK or installed production acceptance is synthesized.
+Both broker backends remain refused by the existing full production-writer API.
+
+The `broker_prepared_consumer` target exercises both ordinary CLI/workflow
+backends, first execution, query-only recovery after lost response, malformed
+response identity, reservation-only refusal, stale CLI clock and unrelated
+ambiguity. It also exercises cancellation of execution/query waits through the
+normal workflow and SIGINT/SIGTERM through the actual autonomous CLI, followed
+by independent-process query-only recovery, durable commit and replay. Unit
+tests cover an interrupted partial frame, watcher lifetime and cancellation
+racing a successful response. Its protocol peer is explicitly a fixture. The broker's
+`service_lifecycle` target separately exercises the new typed client against the
+actual signed admission, SQLite journal, supervised fixture process and restart.
+The `cache_admission` submodule drives real service preparation followed by a
+failing precommit clock, then exercises withdrawal, current refusal, exact
+receipt/output preservation, query-only recovery, cross-plan provider fencing and
+offline durable replay. `cost_settlement` separately binds the actual charge and
+proves the existing sequencer debits and replays that value. These are source
+tests, not a live model or billing canary.
+
+
+The process-crash fixtures strip debug sections only from their private copied
+Rust executable before binding its hash and read/execute-only mode. The service's
+256 MiB executable bound and all actual crash, pending-intent and non-reexecution
+assertions remain enforced. Shared Cargo executables are never modified. The
+`plan_waves` broker regression separately uses the actual ordinary CLI to commit
+two provider dependency waves in one atomic plan and replay both without IPC.
+This is a labelled local protocol fixture, not independent live research review.
+
+## Attempt-record count admission
+
+The existing dispatch-directory lock now protects capacity preflight for the
+complete incoming execution batch, before its first worker or broker connection.
+`worker_recovery.rs::require_record_capacity` first scans and validates only the
+immutable record names, then counts those records plus both missing records for
+each distinct new attempt. A cached replay consumes no new slot; an
+already-started query-only recovery requires only its missing prepared slot.
+Only a capacity-admissible directory proceeds to full record and evidence-object
+validation, followed by a second name-set check under the same flock. The
+existing hard record bound is not raised, and admission does not delete
+historical evidence or turn an ambiguous provider attempt into a refund/retry.
+
+`capacity_admission.rs` runs the ordinary `hepta-paper-rust run` entry against a
+full, structurally valid inert history and proves no broker connection or new
+start record. At the exact last-pair boundary, actual broker-protocol output goes
+through CAS and SQLite, then the now-full journal replays the committed result
+offline. The inert history is a capacity fixture, not fabricated scientific or
+billing acceptance. Unit cases separately cover multiple incoming attempts,
+duplicate identities, cached results and a query's final prepared slot.
+
+This closes record-count admission for one execution batch, not unlimited
+retention or whole-plan cross-wave storage reservation. The existing aggregate
+byte/read limits, safe compaction, long-running retention and installed recovery
+qualification remain separate constraints. No capacity failure grants provider
+termination, actual cost settlement, production activation or Node retirement.
+
+## Restricted research service profile
+
+`run_research_service_v1` is a separate, non-serializable composition around the
+existing service, CAS, dispatcher and SQLite sequencer. The caller must provide
+the opaque `VerifiedResearchQualificationV3`; receipt JSON, profile strings and
+booleans cannot construct or replace that value. The exact repository/commit/tree
+subject and qualified Codex runtime identity are cross-bound before any state
+operation. Qualification currentness is checked once before filesystem mutation
+and again on every existing service clock observation through dispatch and
+commit. The public cancellation form forwards the same sticky cooperative token;
+a pre-cancelled run creates no campaign database. A time-window or cancellation
+failure therefore follows the same prepared-result and inspection/recovery rules
+rather than authorizing a fresh effect or claiming provider termination.
+
+The profile admits only `TargetHost` research modules in the selected canary or
+established research stage. Registered or selected release verification,
+submission, migration/cutover, external-effect, central-writer module, Process
+worker and legacy Node adapter paths fail closed. Native workers retain their
+existing conservative accounting. Qualified broker prepared/execute workers must
+also name the signed read-only cost-settlement source above; a matching runtime
+identity without that owner is rejected. Both forms reuse the existing
+implementation hashes, request binding, CAS verification and single sequencer.
+An established receipt is authoritative only for its private research state; its
+canonical body keeps `productionActivation`, `releaseAuthority`,
+`submissionAuthority` and automatic activation false.
+
+This is a source composition, not installed acceptance. It does not make a test
+qualification externally real, bind the currently running executable to a host
+package, provision independent author/reviewer or billing credentials, add live
+trust-store distribution/revocation callbacks, or send commit-bound broker ACKs.
+The source can verify and persist an externally signed actual invoice; a real
+installed billing principal and its revocation/availability evidence remain
+outside the test fixture. The full production API continues to require the
+distinct V1/V2 closure and cannot accept the V3 research type.
+
+## Versioned broker manuscript repair
+
+The existing amendment owner now admits the bounded broker manuscript revision
+contract described in [the amendment handoff](WORKFLOW_AMENDMENT_HANDOFF.md#broker-manuscript-revision-contract).
+The ordinary autonomous entry binds the rejected assessment and previous
+manuscript into a fresh author/revise input, then requires the unchanged reviewer
+contract over the revised bytes. It preserves rejection, committed history,
+query-only uncertain recovery and the existing resource ceilings. Its broker
+sources may use the measured settlement contract, but this does not close dynamic
+request issuance, independent installed role/billing canaries, commit-bound ACK
+or installed research/retirement acceptance.

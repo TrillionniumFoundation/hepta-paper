@@ -81,7 +81,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
 
     // Generic fixture core is visible only within activation_binding. The
     // crate-visible API below always supplies actual process transport checks.
-    pub(super) fn retain_native_store_with_pins<'a, T: MutationAuthorityTransportV1>(
+    pub(crate) fn retain_native_store_with_pins<'a, T: MutationAuthorityTransportV1>(
         &self,
         binding: &'a VerifiedRecoverabilityActivationBindingV1,
         guard: &'a NativeStoreTransactionInventoryGuardV1<'a>,
@@ -144,7 +144,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         Ok(token)
     }
 
-    pub(super) fn assert_native_store_with_pins<T: MutationAuthorityTransportV1>(
+    pub(crate) fn assert_native_store_with_pins<T: MutationAuthorityTransportV1>(
         &self,
         token: &RetainedNativeStoreRecoverabilityV1<'_>,
         authority: &PinnedMutationAuthorityV1<T>,
@@ -214,7 +214,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         checked.map_err(|e| self.native_transaction_failure(token, e))
     }
 
-    pub(super) fn assert_native_store_time(
+    pub(crate) fn assert_native_store_time(
         &self,
         token: &RetainedNativeStoreRecoverabilityV1<'_>,
         now: i64,

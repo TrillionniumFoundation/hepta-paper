@@ -1,19 +1,24 @@
-//! Bounded native preflight for the historical partial-runtime-root repair.
+//! Native historical 5+5 partial-runtime repair.
 //!
-//! The incumbent route can acquire SQLite locks, create a rescue bundle and
-//! publish five missing databases.  Those writes and their external authority
-//! boundary are intentionally not represented here.  This module only reads
-//! bounded local inputs, checks their identity and lease/quiescence envelope,
-//! and emits a blocked observation. Complete SQLite schema, business-state and
-//! lease validation remain unported, so no executable plan identity is issued.
-//! `execute` remains fail-closed without touching runtime or rescue roots.
+//! Planning is read-only and binds exact SQLite/schema/business state, retained
+//! configuration/profile/dataset observations, writer quiescence and the rescue
+//! destination. Execute requires the exact plan identity, locks all five existing
+//! databases, creates and restore-verifies a rescue bundle, constructs the five
+//! missing business databases, repairs only the historical supervisor journal
+//! gap, and publishes without clobbering. Crash recovery distinguishes rolled
+//! back pre-commit attempts from committed repair and persists an exact terminal
+//! receipt. It never invokes a provider, activates the online writer, or retires
+//! Node; the independently authorized online schema transition remains separate.
 
 #![forbid(unsafe_code)]
 
+mod execution;
+mod plan;
+
 use crate::{
+    autonomous_state_provision::files::Snapshot,
     journal_connector_coverage::qualification::canonical_instant_millis,
     sqlite_mutation_coordinator::manifest::writer_manifest_hash_v1,
-    state_backup_authority::manifest::state_database_scope_hash_v1,
     state_recoverability::cli::state_backup_writer_manifest_v1,
 };
 use hepta_legacy_compatibility::production_hash_record_v1;
@@ -29,7 +34,6 @@ use std::{
 use thiserror::Error;
 
 const SHA256_PREFIX: &str = "sha256:";
-const EXECUTE_BLOCKER: &str = "rust_autonomous_state_partial_root_maintenance_execute_not_ported";
 const EXISTING_ROLES: &[&str] = &[
     "external-qualification",
     "native-store",
@@ -59,6 +63,21 @@ pub type Result<T> = std::result::Result<T, AutonomousStatePartialRootMaintenanc
 fn error(code: impl Into<String>) -> AutonomousStatePartialRootMaintenanceError {
     AutonomousStatePartialRootMaintenanceError(code.into())
 }
+impl From<std::io::Error> for AutonomousStatePartialRootMaintenanceError {
+    fn from(value: std::io::Error) -> Self {
+        Self(format!("autonomous_state_partial_root_io:{value}"))
+    }
+}
+impl From<rusqlite::Error> for AutonomousStatePartialRootMaintenanceError {
+    fn from(value: rusqlite::Error) -> Self {
+        Self(format!("autonomous_state_partial_root_sqlite:{value}"))
+    }
+}
+impl From<serde_json::Error> for AutonomousStatePartialRootMaintenanceError {
+    fn from(value: serde_json::Error) -> Self {
+        Self(format!("autonomous_state_partial_root_json:{value}"))
+    }
+}
 
 pub const AUTONOMOUS_STATE_PARTIAL_ROOT_MAINTENANCE_USAGE: &str = r#"Usage: autonomous-state-partial-root-maintenance --action plan|execute [options]
 
@@ -70,9 +89,13 @@ Required: --rescue-root PATH --writer-quiescence-receipt PATH
 Optional: --runtime-root PATH --action plan|execute --execute
           --maintenance-plan-id sha256:...
 
-Plan returns a blocked read-only observation, not an executable plan. Execute is
-deliberately fail-closed until rescue, lock, schema-repair, rollback and
-external-authority contracts have a reviewed native implementation."#;
+Plan performs read-only SQLite/schema/business-state and input identity checks
+and returns a stable executable plan for the exact historical 5+5 closure.
+Execute requires the exact plan ID, locks all five existing databases, creates
+and restore-verifies a rescue bundle, constructs the five missing business
+databases from the same native schema owner used by fresh provisioning, repairs
+only the historical supervisor journal gap and publishes without clobbering.
+It does not invoke providers, activate the online writer or retire Node."#;
 
 #[derive(Clone, Debug)]
 pub struct AutonomousStatePartialRootMaintenanceOptions {
@@ -314,19 +337,6 @@ fn record_hash(kind: &str, value: &Value) -> Result<String> {
         .map_err(|_| error(format!("autonomous_state_partial_root_{kind}_hash_failed")))
 }
 
-fn metadata(path: &Path, key: &str) -> Result<Value> {
-    let value = fs::symlink_metadata(path)
-        .map_err(|_| error(format!("autonomous_state_partial_root_{key}_missing")))?;
-    if !value.is_file() || value.file_type().is_symlink() || value.nlink() != 1 {
-        return Err(error(format!(
-            "autonomous_state_partial_root_{key}_identity_invalid"
-        )));
-    }
-    Ok(
-        json!({"device": value.dev(), "inode": value.ino(), "mode": value.mode() & 0o7777, "links": value.nlink(), "bytes": value.len()}),
-    )
-}
-
 fn manifest(root: &Path) -> Result<Value> {
     let path = root.join("paper-core/config/autonomous-research-state-databases.v1.json");
     let snapshot =
@@ -350,56 +360,6 @@ fn manifest(root: &Path) -> Result<Value> {
         return Err(error("autonomous_state_partial_root_manifest_invalid"));
     }
     Ok(value)
-}
-
-fn database_observations(
-    runtime: &Path,
-    manifest: &Value,
-) -> Result<(Vec<Value>, Vec<String>, Vec<String>)> {
-    let rows = manifest["databases"]
-        .as_array()
-        .ok_or_else(|| error("autonomous_state_partial_root_manifest_invalid"))?;
-    let mut instances = Vec::new();
-    let mut existing = Vec::new();
-    let mut missing = Vec::new();
-    for row in rows {
-        let role = row["role"]
-            .as_str()
-            .ok_or_else(|| error("autonomous_state_partial_root_manifest_invalid"))?;
-        let relative = row["relativePath"]
-            .as_str()
-            .ok_or_else(|| error("autonomous_state_partial_root_manifest_invalid"))?;
-        let relative_path = Path::new(relative);
-        let path = runtime.join(relative_path);
-        if relative_path.is_absolute()
-            || relative_path
-                .components()
-                .any(|component| !matches!(component, std::path::Component::Normal(_)))
-        {
-            return Err(error("autonomous_state_partial_root_database_path_invalid"));
-        }
-        match (fs::symlink_metadata(&path), role) {
-            (Ok(_), _) => {
-                let file_meta = metadata(&path, &format!("database:{role}"))?;
-                let bytes = read_regular(&path, &format!("database:{role}"))?;
-                let source_sha256 = hash_bytes(&bytes);
-                instances.push(json!({"instanceId":role,"role":role,"sourceRelativePath":relative,"sourceSha256":source_sha256,"sourceFileIdentity":file_meta}));
-                existing.push(role.to_owned());
-            }
-            (Err(cause), _) if cause.kind() == std::io::ErrorKind::NotFound => {
-                missing.push(role.to_owned())
-            }
-            (Err(_), _) => {
-                return Err(error(format!(
-                    "autonomous_state_partial_root_database_missing:{role}"
-                )));
-            }
-        }
-    }
-    existing.sort();
-    missing.sort();
-    instances.sort_by(|left, right| left["role"].as_str().cmp(&right["role"].as_str()));
-    Ok((instances, existing, missing))
 }
 
 fn observed_at_millis() -> Result<i64> {
@@ -487,118 +447,30 @@ fn receipt(root: &Path, path: &Path, scope: &str, writer_hash: &str) -> Result<V
     Ok(value)
 }
 
-fn plan_payload(options: &AutonomousStatePartialRootMaintenanceOptions) -> Result<Value> {
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let runtime = options.runtime_root.clone();
-    let rescue = options.rescue_root.clone();
-    let runtime_meta = safe_root(&runtime, "runtime_root")?;
-    let rescue_meta = safe_root(&rescue, "rescue_root")?;
-    if runtime.starts_with(&rescue)
-        || rescue.starts_with(&runtime)
-        || runtime_meta.dev() != rescue_meta.dev()
-    {
-        return Err(error("autonomous_state_partial_root_rescue_root_invalid"));
-    }
-    let manifest = manifest(&workspace_root)?;
-    let (instances, mut existing, mut missing) = database_observations(&runtime, &manifest)?;
-    existing.sort();
-    missing.sort();
-    if existing != EXISTING_ROLES || missing != MISSING_ROLES {
-        return Err(error("autonomous_state_partial_root_role_closure_invalid"));
-    }
-    let machine = read_json(&options.machine_intake_config, "machine_intake_config")?;
-    let topic = read_json(&options.topic_producer_profile, "topic_producer_profile")?;
-    if machine["version"] != 2 || !machine.is_object() || !topic.is_object() {
-        return Err(error("autonomous_state_partial_root_input_shape_invalid"));
-    }
-    let dataset_meta = safe_root(&options.dataset_root, "dataset_root")?;
-    let scope = state_database_scope_hash_v1(&json!(instances))
-        .map_err(|_| error("autonomous_state_partial_root_database_scope_invalid"))?;
-    let writer_manifest = state_backup_writer_manifest_v1()
-        .map_err(|_| error("autonomous_state_partial_root_writer_manifest_invalid"))?;
-    let writer_hash = writer_manifest_hash_v1(&writer_manifest)
-        .map_err(|_| error("autonomous_state_partial_root_writer_manifest_invalid"))?;
-    let quiescence = receipt(
-        &runtime,
-        &options.writer_quiescence_receipt,
-        &scope,
-        &writer_hash,
-    )?;
-    let manifest_hash = record_hash("AutonomousResearchStateDatabaseManifest", &manifest)?;
-    let machine_hash = record_hash("AutonomousResearchMachineIntakeConfiguration", &machine)?;
-    let topic_hash = record_hash("AutonomousResearchTopicProducerProfile", &topic)?;
-    let policy = json!({"maximumAttemptsPerEpoch":options.maximum_attempts_per_epoch,"maximumCostUsdPerEpoch":options.maximum_cost_usd_per_epoch});
-    let policy_hash = record_hash("RuntimeReproducibilityRefreshPolicy", &policy)?;
-    let mut payload = json!({
-        "version":1,
-        "kind":"AutonomousResearchStatePartialRootMaintenanceObservation",
-        "status":"autonomous_research_state_partial_root_maintenance_preflight_blocked",
-        "ready":false,
-        "maintenancePlanId":null,
-        "maintenancePlanVerified":false,
-        "sqliteSchemaAndBusinessStateVerified":false,
-        "writerLeaseStateVerified":false,
-        "configurationSemanticIdentityVerified":false,
-        "runtimeMutated":false,
-        "rescueBundleCreated":false,
-        "externalAuthorityInvoked":false,
-        "blockers":[
-            "rust_autonomous_state_partial_root_sqlite_schema_business_state_and_lease_validation_not_ported",
-            "rust_autonomous_state_partial_root_configuration_semantic_identity_not_ported",
-            EXECUTE_BLOCKER
-        ],
-        "protocol":"offline-partial-native-root-pre-transition-business-repair-v1",
-        "runtimeRoot":runtime,
-        "rescueRoot":rescue,
-        "stateDatabaseManifestHash":manifest_hash,
-        "databaseScopeHash":scope,
-        "existingRoles":EXISTING_ROLES,
-        "missingRoles":MISSING_ROLES,
-        "instances":instances,
-        "machineIntakeConfiguration":{"path":options.machine_intake_config,"hash":machine_hash},
-        "topicProducerProfile":{"path":options.topic_producer_profile,"hash":topic_hash},
-        "datasetRoot":{"path":options.dataset_root,"device":dataset_meta.dev(),"inode":dataset_meta.ino()},
-        "runtimeReproducibilityPolicy":policy,
-        "runtimeReproducibilityPolicyHash":policy_hash,
-        "writerQuiescenceReceiptHash":quiescence["receiptHash"],
-        "writerQuiescenceEnvelopeVerified":true,
-        "writerManifestHash":writer_hash,
-        "writerManifestBinding":"compiled-original-writer-manifest-data",
-        "rescueBundleAndCopyRestoreVerificationRequired":true,
-        "exclusiveDatabaseLocksRequired":true,
-        "onlineSchemaTransitionRequired":true,
-        "externalAuthorityInvocationAllowed":false,
-    });
-    let observation_hash = record_hash(
-        "AutonomousResearchStatePartialRootMaintenanceObservation",
-        &payload,
-    )?;
-    payload["observationHash"] = json!(observation_hash);
-    Ok(payload)
-}
-
 pub fn inspect_autonomous_state_partial_root_maintenance_v1(
     options: &AutonomousStatePartialRootMaintenanceOptions,
 ) -> Result<Value> {
-    plan_payload(options)
+    Ok(plan::build(options)?.plan)
 }
 
 pub fn execute_autonomous_state_partial_root_maintenance_v1(
     options: &AutonomousStatePartialRootMaintenanceOptions,
 ) -> Result<Value> {
-    let observation = inspect_autonomous_state_partial_root_maintenance_v1(options)?;
-    Ok(json!({
-        "version":1,
-        "kind":"AutonomousResearchStatePartialRootMaintenanceReceipt",
-        "status":"autonomous_research_state_partial_root_maintenance_blocked",
-        "ready":false,
-        "maintenancePlanId":null,
-        "maintenancePlanVerified":false,
-        "requestedMaintenancePlanId":options.expected_maintenance_plan_id,
-        "observation":observation,
-        "externalAuthorityInvoked":false,
-        "runtimeMutated":false,
-        "rescueBundleCreated":false,
-        "blockers":[EXECUTE_BLOCKER],
-    }))
+    if options.action != "execute" || !options.execute {
+        return Err(error(
+            "autonomous_state_partial_root_execute_confirmation_required",
+        ));
+    }
+    let expected = options
+        .expected_maintenance_plan_id
+        .as_deref()
+        .ok_or_else(|| error("autonomous_state_partial_root_plan_id_required"))?;
+    if let Some(receipt) = execution::recover_or_replay(options, expected)? {
+        return Ok(receipt);
+    }
+    let state = plan::build(options)?;
+    if state.plan["maintenancePlanId"].as_str() != Some(expected) {
+        return Err(error("autonomous_state_partial_root_plan_mismatch"));
+    }
+    execution::execute(options, state)
 }

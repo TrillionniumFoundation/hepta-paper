@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "kind": "ManuscriptReviewInputV1",
+  "manuscript": "",
+  "manuscriptHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "policy": {
+    "version": 1,
+    "rubric": "Check every substantive claim against the supplied manuscript; report reasons and the exact manuscriptHash."
+  }
+}

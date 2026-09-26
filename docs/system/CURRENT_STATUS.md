@@ -57,8 +57,9 @@ source now exists: `qualification_subject_v3.py` and
 produce and revalidate the V3-bound artifact. The dedicated V3 workflows execute
 `run-qualification-subject-v3.sh`, including raw collection/projection checks.
 
-`QUAL-001` through `QUAL-005` remain conservative machine-truth acceptance items.
-Their open status must not be described as proof that the V3 code is absent.
+`QUAL-001` through `QUAL-004` remain conservative machine-truth acceptance
+items; `QUAL-005` is retired under the single-maintainer policy. Their open
+status must not be described as proof that the V3 code is absent.
 Closure still needs the full current producer matrix, retained raw evidence,
 live V3 currentness and maintainer verification of exact tested source. A green legacy
 `source-qualification-current` check alone does not establish the V3 subject.
@@ -170,7 +171,7 @@ passes its required workflows before maintainer integration.
 5. Complete remaining G2 SDK/conformance work and qualify production composition
    from the runnable G3 local/shadow service, including live identities and adapters.
 6. Complete G4 hierarchy/starvation qualification, G5 capability migration, and the remaining G6 Pareto/optimizer/calibration work.
-7. Provision G7 team ownership and exact-host performance evidence.
+7. Complete G7 exact-host performance evidence; team-scale ownership remains optional.
 8. Complete G8 external packages, then G9 shadow/canary/rollback and G10 atomic
    authority transfer/Node retirement.
 

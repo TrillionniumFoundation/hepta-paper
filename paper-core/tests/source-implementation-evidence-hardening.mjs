@@ -253,11 +253,18 @@ function assertRegistryDelta(base, target, evidenceRecords) {
   const stageCapabilities = base.capabilities;
   const targetCapabilities = target.capabilities;
   const expectedCapabilities = structuredClone(stageCapabilities);
-  if (targetWork?.items?.['GAP-GOV-003']?.state === 'retired') {
-    for (const capability of Object.values(expectedCapabilities.capabilities ?? {})) {
-      if (Array.isArray(capability.externalBlockerIds)) {
-        capability.externalBlockerIds = capability.externalBlockerIds.filter((id) => id !== 'GAP-GOV-003');
-      }
+  // Owner-retired human-approval/staffing prerequisites are not external
+  // operational authorities. Once retired in machine truth, they must not remain
+  // active capability blockers. No other blocker, authority or capability field
+  // is permitted to change through this policy exception.
+  const retiredGovernanceBlockers = new Set(
+    ['GAP-GOV-003', 'QUAL-005', 'MOD-007']
+      .filter((id) => targetWork?.items?.[id]?.state === 'retired'),
+  );
+  for (const capability of Object.values(expectedCapabilities.capabilities ?? {})) {
+    if (Array.isArray(capability.externalBlockerIds)) {
+      capability.externalBlockerIds = capability.externalBlockerIds
+        .filter((id) => !retiredGovernanceBlockers.has(id));
     }
   }
   if (!equal(expectedCapabilities, targetCapabilities)) fail('candidate_registry_drift', CAPABILITIES);
@@ -399,7 +406,16 @@ function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   if (matches.length !== 1) fail('cargo_declared_test_not_unique_live', `${entry.path}:${symbol.name}:${matches.length}`);
 
   const discoveryArgs = [...discoveryPrefix, selector, '--', '--exact', '--list'];
-  const stdout = run(runtime.cargo.path, discoveryArgs, { cwd: path.join(root, 'rust'), timeout: command.timeoutSeconds * 1000 });
+  // Discovery may be the first Cargo command in a clean prospective-merge target.
+  // Keep the exact selector/list proof, but give cold dependency + test-harness
+  // compilation enough time instead of inheriting a historical 300s per-test
+  // execution budget. The enclosing workflow still has its independent job
+  // deadline, so this does not turn a hung discovery into an unbounded pass.
+  const discoveryTimeoutMs = Math.max(command.timeoutSeconds * 1000, 600_000);
+  const stdout = run(runtime.cargo.path, discoveryArgs, {
+    cwd: path.join(root, 'rust'),
+    timeout: discoveryTimeoutMs,
+  });
   const discovered = stdout.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.endsWith(': test'));
   if (discovered.length !== 1 || discovered[0] !== `${selector}: test`) {
     fail('cargo_discovery_binding_failed', `${selector}:${JSON.stringify(discovered)}`);
@@ -478,17 +494,22 @@ function selfTest() {
     /cargo_integration_test_selector_missing/u,
   );
   const policyBase = structuredClone(base);
-  policyBase.work.items['GAP-GOV-003'] = {
-    state: 'blocked_external', evidenceTier: 'external_authority', moduleId: 'module.example',
-  };
-  policyBase.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = ['GAP-GOV-003', 'GAP-HOST-001'];
+  for (const id of ['GAP-GOV-003', 'QUAL-005', 'MOD-007']) {
+    policyBase.work.items[id] = {
+      state: 'blocked_external', evidenceTier: 'external_authority', moduleId: 'module.example',
+    };
+  }
+  policyBase.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = [
+    'GAP-GOV-003', 'QUAL-005', 'MOD-007', 'GAP-HOST-001',
+  ];
   const retired = structuredClone(policyBase);
-  retired.work.items['GAP-GOV-003'].state = 'retired';
+  for (const id of ['GAP-GOV-003', 'QUAL-005', 'MOD-007']) retired.work.items[id].state = 'retired';
   retired.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = ['GAP-HOST-001'];
   assert.doesNotThrow(() => assertRegistryDelta(policyBase, retired, records));
   for (const change of [
     (candidate) => { candidate.work.items['GAP-GOV-003'].state = 'source_qualified'; },
-    (candidate) => { candidate.work.items['GAP-GOV-003'].evidenceTier = 'source'; },
+    (candidate) => { candidate.work.items['QUAL-005'].evidenceTier = 'source'; },
+    (candidate) => { candidate.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds.push('MOD-007'); },
     (candidate) => { candidate.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = []; },
     (candidate) => { candidate.modules.modules['module.example'].activation = 'authoritative'; },
     (candidate) => { candidate.work.items['TEST-001'].state = 'retired'; },

@@ -12,6 +12,79 @@ independent evidence requirements remain in force. New local compatibility
 contracts preserve earlier public data formats without replacing current
 operational owners or silently redirecting command routes.
 
+## Current candidate and callable entrypoints
+
+The sole current continuation is PR #142,
+`codex/native-product-recovery-20260924`, targeting
+`codex/full-rust-replacement-progress-20260916`. The #139/#141 source and the
+comparisons below are historical inputs, not competing completion candidates.
+Read the current PR head/base and exact workflow subject before integration;
+never copy a predecessor's green checks into the current candidate's status.
+
+`hepta-paper-rust autonomous-research` remains the bounded local workflow entry.
+`hepta-codex-broker <absolute-config.json>` is the separate installed
+broker entry, using the existing configuration loader, dispatcher and journal.
+A running broker is not a complete author/reviewer/revision workflow, and a
+local workflow receipt is not a provider execution receipt. Their remaining
+composition and command-mode gaps stay in the existing migration ledger.
+
+The independent `rust-product-targets` workflow compiles every Rust workspace
+library, binary, example and test target on both exact-head and deterministic
+prospective-merge subjects. It runs independently of formatting and service-only
+migration selection. Its evidence is compilation evidence, not executed tests,
+provider qualification, production activation or Node retirement. Existing
+runtime, recovery, source-evidence and strict-lint checks remain required.
+
+## Signed delivery and current-source verification
+
+Delivery continues on the same #142 head, not a new full-Rust branch. Preserve
+all worktree changes before fetching; query the actual PR head/base and live
+protection rather than treating a historical SHA or this document as current.
+
+```sh
+git fetch origin
+gh pr view 142 --repo TrillionniumFoundation/hepta-paper --json headRefName,headRefOid,baseRefName,baseRefOid,state
+gh api repos/TrillionniumFoundation/hepta-paper/branches/codex%2Ffull-rust-replacement-progress-20260916/protection
+```
+
+The delivery operation must bind the exact expected predecessor. GitHub's signed
+`createCommitOnBranch` path is suitable when its returned commit has a verified
+signature and its tree equals the locally reviewed tree. A failed/uncertain API
+response requires reading the actual ref before retrying; it never permits a
+force update, unsigned fallback or disabling required checks/signatures. Local
+uncommitted changes and reference-only forks must not be reset to achieve a
+nominally clean submission.
+
+Every delivered head gets new exact-head and deterministic prospective-merge
+verification against the freshly fetched integration base. These are different
+subjects even when their trees match. Passing historical checks, source inventory
+bindings or a signed delivery commit do not establish executed tests, independent
+scientific review, installed cutover or release/submission authority. The
+existing branch-convergence auditor records complete two-tree content comparisons
+and explicit dispositions; its binding check is not independent acceptance.
+
+## Archived content revalidation
+
+`docs/tools/revalidate-history-dispositions.py` reads the archived **complete**
+remote-head snapshot and original source-decision ledger from the selected commit,
+not from mutable working files. The existing branch-inventory workflow publishes
+its `history-content.json` beside the live inventory. It compares every recorded
+tip directly to the current tree, deduplicates unique-tip comparisons, and binds
+all old source blobs to the current selected paths. Historical ancestors are not
+automatically classified as absorbed. Byte-identical content can be selected;
+changed successors, unverified compatibility ports and missing objects remain
+explicit references. Rejected prototypes are not resurrected by merge ancestry.
+
+The standalone report's `completeContentObservation` is explicit. The CI entry
+first fetches only missing commit OIDs listed in the frozen snapshot from `origin`
+and then requires a complete observation. Fetching writes no branch, executes no
+historical code and grants no merge authority. A failed or incomplete fetch retains
+the exact missing OIDs and makes the gate fail, rather than labelling the inventory
+complete. Tree/tag objects cannot substitute for archived commits. All runtime,
+independent-review and activation fields stay false. Existing source/call-chain
+tests and both current validation subjects remain required; this inventory is not
+a new acceptance authority or duplicate test run.
+
 ## Review and recovery record
 
 The pre-cleanup inventory contained 228 remote heads, 49 ancestors, one matching
@@ -135,11 +208,12 @@ are retained in the recovery record. They are superseded by source
 consolidation, not recorded as merged, qualified or accepted. No old PR review
 or check result transfers to this integration commit.
 
-## Current PR convergence: 2026-09-23
+## Historical PR convergence: 2026-09-23
 
-The active review lane is #139, `codex/full-rust-final-closure-20260923`,
-targeting the retained Rust integration branch. `main` remains the Node baseline.
-This is a review routing decision, not a claim that the candidate is qualified.
+On 2026-09-23 the review lane was #139,
+`codex/full-rust-final-closure-20260923`, targeting the retained Rust integration
+branch. PR #142 now continues that source. `main` remains the Node baseline.
+This historical routing decision does not qualify a later candidate.
 
 PR #137 head `aa1749db011af350a1245a12ea168b82ce169e35` is an ancestor of
 #139's reviewed starting head `655d3265cd3fd9b2c1d2958969a515cead02226b`.
@@ -179,8 +253,9 @@ product PR or execution owner is maintained by these retained names.
 | `rust-convergence-20260923` | `ae0f263d82028f88811ee0812252e8ba0e6ca746` | Supersede. Product control-plane manifest and public exports already match its prototype removal. Retain current autonomous owner, owned scientific outputs, installed-tool evidence and exact current source bindings rather than older replacements. |
 | `scientific-tools-upload-45065ffb` | `3793c382c17a1ab4a5ab01a8f27af062f4bd99fd` | Supersede active source; retain transport reference. Current scientific tests include the real-tool cases plus private input ownership. Do not restore ambient-permission dependence, prototype re-export or volatile human-report hashes from its older tree. |
 
-Ancestor heads are already reachable through the retained candidate history.
-No whole-tree merge, force push, branch deletion or administrative review bypass
-is needed to implement these source decisions. Any future code recovered from a
-transport archive still requires an ordinary source review and new exact-head
-tests; the archive's name or prior validation does not authorize it.
+These records describe their original comparison subjects; current ancestry and
+changed paths must be rechecked against the current PR head. No whole-tree merge,
+force push, branch deletion or administrative review bypass is needed to preserve
+these decisions. Any future code recovered from a transport archive still requires
+ordinary source review and new exact-head tests; an archive's name or predecessor
+validation does not authorize it.

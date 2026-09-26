@@ -630,7 +630,9 @@ fn concrete_process_pin_checks_reject_replaced_inputs_without_invoking_commands(
         fence.assert_process_subject_current(&client).unwrap();
         assert!(
             fence
-                .observe_activation_binding_v1(&inventory(&fixture), &client)
+                .observe_activation_binding_with_pins(&inventory(&fixture), &client, || {
+                    fence.assert_process_subject_current(&client)
+                })
                 .is_err()
         );
         // The same verifier does not make different command invocation

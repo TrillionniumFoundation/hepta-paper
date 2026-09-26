@@ -27,7 +27,7 @@
   "acceptance": {
     "currentBuildClosureVerificationRequired": true,
     "exactHeadBaseMergeRequired": true,
-    "independentReviewRequired": true,
+    "independentReviewRequired": false,
     "targetHostQualificationRequired": true
   },
   "authority": {

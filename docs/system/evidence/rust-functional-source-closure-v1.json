@@ -1,1 +1,3913 @@
-{"$schema":"../schemas/source-implementation-evidence-v1.schema.json","schemaVersion":1,"kind":"RepositorySourceImplementationEvidenceV1","repository":"TrillionniumFoundation/hepta-paper","subjectPolicy":"current_clean_git_head_tree_and_exact_blobs","promotionPolicy":"semantic_registry_binding_plus_exact_git_blobs_plus_executable_owner_tests","registries":{"workItems":"docs/system/truth/work-items.v2.json","modules":"docs/system/truth/modules.v1.json","capabilities":"docs/system/truth/capabilities.v1.json"},"bundles":{"control-plane-functional-source":{"description":"Exact canonical hepta-control-plane snapshot, candidate routing, observability and performance aggregation implementations selected by the product control-plane surface, with executable owner tests. The standalone hepta-orchestration-kernel compatibility/experimental crate is intentionally not product evidence.","files":[{"path":"rust/crates/hepta-control-plane/src/source_closure.rs","role":"implementation","gitBlob":"72304fe626bbbb2ff6f25e382ffb7c802f9ff838","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"build_snapshot_v1"},{"kind":"function","name":"route_candidates_v1"}]},{"path":"rust/crates/hepta-control-plane/src/observability.rs","role":"implementation","gitBlob":"2f07244b87c33f5a334a66d74626e37dfa26fa11","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"ObservabilityJournalV1"}]},{"path":"rust/crates/hepta-control-plane/src/performance_qualification.rs","role":"implementation","gitBlob":"f972c629d386fd3e86d48531da491b0d93c02012","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"qualify_performance_v1"}]},{"path":"rust/crates/hepta-control-plane/tests/canonical_product_owners.rs","role":"test","gitBlob":"37941aee72708dc8b45b99830b9a95de25c3a964","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"snapshot_and_candidate_router_bind_exact_registry_and_deduplicate"},{"kind":"test","name":"observability_is_content_bounded_replay_safe_and_non_authorizing"},{"kind":"test","name":"performance_qualification_binds_exact_subject_without_granting_authority"}]}],"verificationCommands":[{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","--test","canonical_product_owners","snapshot_and_candidate_router_bind_exact_registry_and_deduplicate","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/canonical_product_owners.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","--test","canonical_product_owners","observability_is_content_bounded_replay_safe_and_non_authorizing","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/canonical_product_owners.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","--test","canonical_product_owners","performance_qualification_binds_exact_subject_without_granting_authority","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/canonical_product_owners.rs"]}]},"planner-functional-source":{"description":"Exact bounded optimizer, deterministic fallback, certificate recomputation and stale-snapshot rejection implementation.","files":[{"path":"rust/crates/hepta-control-plane/src/planner.rs","role":"implementation","gitBlob":"7c2b8db23d16e4b4e3028195278e8c488882e76e","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"select_plan_v1"}]},{"path":"rust/crates/hepta-control-plane/tests/planner_source_closure.rs","role":"test","gitBlob":"a27b83cd4250dbc04d9bbf57d493ab93f37062ff","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"source_closure_planner_exact_and_fallback_certificates_are_recomputable"}]}],"verificationCommands":[{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","source_closure_planner_exact_and_fallback_certificates_are_recomputable","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/planner_source_closure.rs"]}]},"hierarchical-resource-source":{"description":"Rust hierarchical ceiling, fairness and bounded-accounting components plus a separate durable lease journal. Tests cover local recovery; mandatory product dispatch integration and trusted terminal reconciliation remain unproved.","files":[{"path":"rust/crates/hepta-control-plane/src/hierarchical_resource.rs","role":"implementation","gitBlob":"0cabe629c3cbde79cadb346dace92da83f5bb19c","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"HierarchicalResourceAllocatorV1"}]},{"path":"rust/crates/hepta-control-plane/src/durable_resource.rs","role":"implementation","gitBlob":"6f382e473be22fa7c84336780738d0aff660cb91","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"DurableResourceLeaseLedgerV1"}]},{"path":"rust/crates/hepta-control-plane/tests/source_closure_owner.rs","role":"test","gitBlob":"5f9eafb7797581029f4e5bf4fcb9c36c0718513f","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"hierarchical_resource_accounting_is_exact_and_bounded"}]},{"path":"rust/crates/hepta-control-plane/tests/durable_resource_source.rs","role":"test","gitBlob":"b4c44407960a13e3c9c1db50c30a2f709c1550a0","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"durable_resource_recovery_retains_ambiguous_capacity_until_reconciled"}]}],"verificationCommands":[{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","hierarchical_resource_accounting_is_exact_and_bounded","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_closure_owner.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","durable_resource_recovery_retains_ambiguous_capacity_until_reconciled","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/durable_resource_source.rs"]}]},"production-composition-source":{"description":"Executable local workflow composition over the existing SQLite/CAS, dispatch and commit owners. Exact CLI regressions cover preparation, seven-step execution, absolute replay, revision-bound lifecycle, changed definitions, real Rust children and crash/no-relaunch. This is local workflow source evidence, not full autonomous research, live-model authorship, production composition or Node parity. The autonomous CLI now supplies a live clock through the existing workflow/service/sequencer/SQLite owner; expiry after preparation must retain prepared bytes without commit or relaunch, and earlier committed steps survive later expiry. Explicit local amendment and lease extension also use the same writer with live post-lock/precommit checks against the previous lease; exact replay does not reapply budget or renewal. The CLI additionally propagates SIGINT/SIGTERM through the same existing process-group supervisor and precommit checks; actual-binary tests verify worker/descendant termination, retained ambiguity, no relaunch and prepared replay. This is not automatic renewal, native-kernel preemption, escaped-process containment, remote settlement or full role parity.","files":[{"path":"rust/crates/hepta-paper-service/src/production.rs","role":"implementation","gitBlob":"29e9d9dea03d23265d0ccfc69e7a37331bf3e6f5","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"run_production_service_v1"}]},{"path":"rust/crates/hepta-paper-service/src/deployment.rs","role":"implementation","gitBlob":"30a871b9654490be1cc64cb4b2a755bc0bc04731","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"verify_production_deployment_v1"}]},{"path":"rust/crates/hepta-paper-service/tests/durable_service.rs","role":"test","gitBlob":"812bf17d96cdf55bdf540dd782fec368d233d049","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"production_boolean_and_backend_substitution_rejected"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_research.rs","role":"implementation","gitBlob":"7a1de691b81386a7a089c1105c91a80fa344ada9","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"parse_autonomous_research_arguments"},{"kind":"function","name":"execute_autonomous_research_v1"},{"kind":"function","name":"inspect_autonomous_research_v1"},{"kind":"function","name":"execute_autonomous_research_with_cancellation_v1"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_research/local.rs","role":"implementation","gitBlob":"c8b08b46cbcc964f2ccca497b7106678534d3222","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"run"}]},{"path":"rust/crates/hepta-paper-service/src/workflow.rs","role":"implementation","gitBlob":"2f2b4d7e67e12051d3f2250fff5291a06576fcbd","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"initialize_local_workflow_v1"},{"kind":"function","name":"operate_local_workflow_v1"},{"kind":"function","name":"operate_local_workflow_with_clock_v1"},{"kind":"function","name":"operate_local_workflow_with_clock_and_cancellation_v1"}]},{"path":"rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs","role":"test","gitBlob":"be1a1a71ae490b4df48173e904b7fabfad6bf10c","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"autonomous_prepare_launch_replay_and_converge_use_the_existing_owner"},{"kind":"test","name":"autonomous_pause_resume_cancel_are_revision_bound_and_terminal"},{"kind":"test","name":"autonomous_rejects_changed_definition_and_foreign_campaign_without_dispatch"},{"kind":"test","name":"autonomous_local_authority_and_request_bounds_fail_before_state_creation"},{"kind":"test","name":"autonomous_executes_real_rust_workers_without_claiming_external_observation"},{"kind":"test","name":"autonomous_worker_crash_is_not_reexecuted_after_cli_restart"}]},{"path":"rust/crates/hepta-paper-service/src/lib.rs","role":"implementation","gitBlob":"9308ed9d433e45f7501320936f6b979933bcd34e","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"run_service_with_clock_v1"},{"kind":"function","name":"run_service_with_clock_and_cancellation_v1"}]},{"path":"rust/crates/hepta-paper-service/tests/local_workflow.rs","role":"test","gitBlob":"6ebcc10e1ed774e7dfb31b9a33f5385a383cc67c","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"actual_artifacts_flow_through_all_seven_documented_steps"}]},{"path":"rust/crates/hepta-paper-service/tests/local_workflow/clock.rs","role":"test","gitBlob":"81964e724b3a5be788dd095e08a285eaee2d308a","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"workflow_clock_expires_after_real_preparation_without_a_commit_or_relaunch"},{"kind":"test","name":"workflow_samples_clock_between_steps_and_preserves_prior_commit"},{"kind":"test","name":"readonly_workflow_does_not_need_a_clock_and_live_success_preserves_all_steps"},{"kind":"test","name":"workflow_amendment_revalidates_old_lease_and_preserves_history_on_late_failure"},{"kind":"test","name":"workflow_live_amendment_replays_without_clock_and_continues_after_old_expiry"},{"kind":"test","name":"local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"}]},{"path":"rust/crates/hepta-paper-service/src/workflow/amendment.rs","role":"implementation","gitBlob":"5804ce05c6fb7f9b8a607a15fc5a58d5cef7b83e","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"amend_local_workflow_with_clock_v1"}]},{"path":"rust/crates/hepta-campaign-writer/src/workflow_amendment.rs","role":"implementation","gitBlob":"a7fac867b71f24171771747d34355a9fe94250f3","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"apply_local_workflow_change_with_clock"}]},{"path":"rust/crates/hepta-paper-service/src/workflow/inspection.rs","role":"implementation","gitBlob":"0e2e98ca7a6f91bb65efc0bd4c4035edd8824b1f","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"read_current_local_workflow_v1"}]},{"path":"rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs","role":"test","gitBlob":"65f9f237a9750b4abfea47388e7aae993bbf5c00","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy"},{"kind":"test","name":"autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"},{"kind":"test","name":"autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes"},{"kind":"test","name":"autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"},{"kind":"test","name":"autonomous_amendment_private_request_bounds_and_aliases_do_not_mutate"}]},{"path":"rust/crates/hepta-paper-service/src/worker.rs","role":"implementation","gitBlob":"28bc08b3ce35e5aca9b00af770defdc156290fd6","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"run_process"}]},{"path":"rust/crates/hepta-codex-runtime/src/process/unix.rs","role":"implementation","gitBlob":"9d71b6898da8c6d257f74e6d90ec99511ec32ba2","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"run_bounded_process_with_cancellation"}]},{"path":"rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs","role":"test","gitBlob":"37d18c11d3e2f0f1c70682f50d498fe5bc8eef5c","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"cancellation_before_dispatch_creates_no_attempt_and_status_stays_read_only"},{"kind":"test","name":"cancellation_after_preparation_preserves_commits_and_replays_without_relaunch"},{"kind":"test","name":"sigint_stops_real_worker_group_and_blocks_ambiguous_relaunch"},{"kind":"test","name":"sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch"}]},{"path":"rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs","role":"implementation","gitBlob":"527e2bc3dc29cac91317ff09df97808bdace221d","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"command"}]}],"verificationCommands":[{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","production_boolean_and_backend_substitution_rejected","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-paper-service/tests/durable_service.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_entrypoint::autonomous_prepare_launch_replay_and_converge_use_the_existing_owner","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_entrypoint::autonomous_pause_resume_cancel_are_revision_bound_and_terminal","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_entrypoint::autonomous_rejects_changed_definition_and_foreign_campaign_without_dispatch","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_entrypoint::autonomous_local_authority_and_request_bounds_fail_before_state_creation","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_entrypoint::autonomous_executes_real_rust_workers_without_claiming_external_observation","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_entrypoint::autonomous_worker_crash_is_not_reexecuted_after_cli_restart","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","clock::workflow_clock_expires_after_real_preparation_without_a_commit_or_relaunch","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","clock::workflow_samples_clock_between_steps_and_preserves_prior_commit","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","clock::readonly_workflow_does_not_need_a_clock_and_live_success_preserves_all_steps","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","clock::workflow_amendment_revalidates_old_lease_and_preserves_history_on_late_failure","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","clock::workflow_live_amendment_replays_without_clock_and_continues_after_old_expiry","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","clock::local_cli_uses_live_time_for_explicit_renewal_and_lifecycle","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_amendment::autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_amendment::autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_amendment::autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_amendment::autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_amendment::autonomous_amendment_private_request_bounds_and_aliases_do_not_mutate","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","interruption::cancellation_before_dispatch_creates_no_attempt_and_status_stays_read_only","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","interruption::cancellation_after_preparation_preserves_commits_and_replays_without_relaunch","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","interruption::sigint_stops_real_worker_group_and_blocks_ambiguous_relaunch","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","interruption::sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"]}]},"legacy-adapter-functional-source":{"description":"Exact Node legacy adapter planning, prepared-result execution, replay, cancellation and authority-escalation rejection implementation.","files":[{"path":"rust/crates/hepta-module-platform/src/legacy_adapter.rs","role":"implementation","gitBlob":"e560460538440cf429e208d15d26bedfef1fba35","mode":"100644","language":"rust","symbols":[{"kind":"constant","name":"NODE_LEGACY_ADAPTER_MODULE_ID_V1"}]},{"path":"rust/crates/hepta-module-platform/src/legacy_adapter/model.rs","role":"implementation","gitBlob":"7e8b3c121d67de74fe0a9effa7100ca81d651e7f","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"NodeLegacyAdapterV1"}]},{"path":"rust/crates/hepta-module-platform/src/legacy_adapter/engine.rs","role":"implementation","gitBlob":"e4809b4587186a38658066c63f3455897e8d342f","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"plan"}]},{"path":"rust/crates/hepta-module-platform/src/legacy_adapter/support.rs","role":"implementation","gitBlob":"cb8023c3808e0539b73a82ad5370759e442bf224","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"validate_observation"}]},{"path":"rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs","role":"test","gitBlob":"3a54d2234222596beae9f6b1eefc5dd717657453","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"execution_and_exact_replay_are_idempotent"},{"kind":"test","name":"authority_claims_are_rejected"},{"kind":"test","name":"conflicting_replays_fail_closed"}]}],"verificationCommands":[{"program":"cargo","args":["test","--locked","-p","hepta-module-platform","legacy_adapter::tests::execution_and_exact_replay_are_idempotent","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-module-platform","legacy_adapter::tests::authority_claims_are_rejected","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-module-platform","legacy_adapter::tests::conflicting_replays_fail_closed","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"]}]},"scheduler-boundary-regressions-source":{"description":"Exact Rust hard-rate arithmetic, calibration integrity, dependency-safe Pareto reduction and bounded planner regression tests.","files":[{"path":"rust/crates/hepta-control-plane/src/optimizer_v2.rs","role":"implementation","gitBlob":"ab05f9aa0ec5858abd9d65c2ac3caf8e24fec094","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"assess_calibration_v1"}]},{"path":"rust/crates/hepta-control-plane/src/pareto.rs","role":"implementation","gitBlob":"b80ae3617f10c820da7fd38a28ca22123245ae73","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"contextual_pareto_frontier_preserving_dependencies_v2"}]},{"path":"rust/crates/hepta-control-plane/src/model_selection.rs","role":"implementation","gitBlob":"f4c50a8c41f5845e16c95a032779d1dd87e53935","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"select_planner_champion_v1"}]},{"path":"rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs","role":"test","gitBlob":"fb7be20fa122f936abb047dc34f4e3ba38b19515","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"calibration_must_not_clip_large_errors_to_an_acceptable_threshold"},{"kind":"test","name":"calibration_must_round_up_just_over_the_hard_limit"},{"kind":"test","name":"zero_actual_cost_with_positive_prediction_is_not_a_finite_relative_error"},{"kind":"test","name":"duplicate_observation_ids_cannot_satisfy_minimum_sample_count"},{"kind":"test","name":"singleton_exact_search_does_not_exceed_a_one_evaluation_budget"},{"kind":"test","name":"legacy_pareto_entrypoint_must_preserve_incoming_dependency_targets"},{"kind":"test","name":"planner_promotion_margin_is_not_weakened_by_integer_saturation"},{"kind":"test","name":"modified_calibration_body_is_rejected_before_planner_selection"}]},{"path":"rust/crates/hepta-control-plane/tests/calibration_recompute.rs","role":"test","gitBlob":"13dd6106c23a01a407bb01b581efc5756cf3dd07","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"calibration_receipt_recomputes_policy_and_observations"}]}],"verificationCommands":[{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","calibration_must_not_clip_large_errors_to_an_acceptable_threshold","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","calibration_must_round_up_just_over_the_hard_limit","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","zero_actual_cost_with_positive_prediction_is_not_a_finite_relative_error","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","duplicate_observation_ids_cannot_satisfy_minimum_sample_count","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","singleton_exact_search_does_not_exceed_a_one_evaluation_budget","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","legacy_pareto_entrypoint_must_preserve_incoming_dependency_targets","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","planner_promotion_margin_is_not_weakened_by_integer_saturation","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","modified_calibration_body_is_rejected_before_planner_selection","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-control-plane","calibration_receipt_recomputes_policy_and_observations","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":300,"expectedTargets":["rust/crates/hepta-control-plane/tests/calibration_recompute.rs"]}]},"native-state-provisioning-source":{"description":"Actual pinned-external-genesis native fresh-state initialization through the existing CLI: ten canonical business databases, genuine supplied-public-key signature verification, original Node constructor comparison with Node removed from Rust execution PATH, no-clobber publication and process-crash outcomes. Prepared records cannot claim installation; separately persisted terminal receipts bind actual publication. This does not activate a writer, qualify independent principals, adopt abandoned stages or retire Node.","files":[{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision.rs","role":"implementation","gitBlob":"40b3a4a0c5059e94b45c476e557fd1c016df6b47","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"inspect_autonomous_state_provisioning_v1"},{"kind":"function","name":"execute_autonomous_state_provisioning_v1"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs","role":"implementation","gitBlob":"2c1de9e2a851a6aa8b276b22f3aefbf38eb7d1bc","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"execute"},{"kind":"function","name":"plan"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs","role":"implementation","gitBlob":"1e527bc1c22f648516719854ac8a97f707e5a4d0","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"load"},{"kind":"function","name":"assert_current"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs","role":"implementation","gitBlob":"5182523a837cea34d5bfbe01e269cff6af26243d","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"build"},{"kind":"function","name":"seed_genesis"},{"kind":"constant","name":"TEMPLATES"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision/publication.rs","role":"implementation","gitBlob":"0136a1f4586fde3864477359f18d5fd931852ab1","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"publish"},{"kind":"function","name":"publish_with_hook"}]},{"path":"rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs","role":"test","gitBlob":"c8dba8ea416f87bfbc1f8b63d9e5688c27f1fb3c","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"native_cli_creates_all_ten_canonical_databases_without_node_at_execution"},{"kind":"test","name":"genuine_genesis_verifier_rejects_bad_signatures_and_wrong_subjects_before_publication"},{"kind":"test","name":"direct_api_cannot_bypass_positive_budget_or_execution_confirmation"},{"kind":"test","name":"real_ten_database_stage_is_quarantined_by_the_cli_without_node_or_byte_loss"},{"kind":"test","name":"recovery_cli_rejects_unknown_fields_and_unconfirmed_mutation"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs","role":"test","gitBlob":"57d6cd75c6259bb86f4bf004ff3ed88ece8b7d48","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"process_death_on_either_side_of_rename_preserves_recoverable_evidence"},{"kind":"test","name":"published_receipt_is_issued_only_after_observed_installation"},{"kind":"test","name":"failure_before_terminal_receipt_preserves_published_not_success_claim"},{"kind":"test","name":"publisher_is_excluded_by_the_same_parent_lock_as_recovery"},{"kind":"test","name":"preobserved_target_rechecks_retained_staging_after_obtaining_the_owner_lock"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery.rs","role":"implementation","gitBlob":"68875fabb7f2840c9153c018c0135ccaacdfbf70","mode":"100644","language":"rust","symbols":[{"kind":"function","name":"recover_staging_cli_v1"},{"kind":"function","name":"recover"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/inventory.rs","role":"implementation","gitBlob":"d808f5cf08e855915f608d12a71eb79730a4d1ef","mode":"100644","language":"rust","symbols":[{"kind":"type","name":"Snapshot"},{"kind":"function","name":"capture"},{"kind":"function","name":"verify"}]},{"path":"rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs","role":"test","gitBlob":"0c524ab9166cfab37021e78e643ff76ed66f2db8","mode":"100644","language":"rust","symbols":[{"kind":"test","name":"real_process_crash_on_every_quarantine_boundary_recovers_without_losing_bytes"},{"kind":"test","name":"recovery_and_publication_use_the_same_nonblocking_parent_owner"},{"kind":"test","name":"changed_bytes_and_byte_identical_inode_replacement_invalidate_the_selected_plan"}]}],"verificationCommands":[{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","--test","autonomous_state_provision_execution","native_cli_creates_all_ten_canonical_databases_without_node_at_execution","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","--test","autonomous_state_provision_execution","genuine_genesis_verifier_rejects_bad_signatures_and_wrong_subjects_before_publication","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","--test","autonomous_state_provision_execution","direct_api_cannot_bypass_positive_budget_or_execution_confirmation","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_state_provision::publication::tests::process_death_on_either_side_of_rename_preserves_recoverable_evidence","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_state_provision::publication::tests::published_receipt_is_issued_only_after_observed_installation","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_state_provision::publication::tests::failure_before_terminal_receipt_preserves_published_not_success_claim","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","--test","autonomous_state_provision_execution","real_ten_database_stage_is_quarantined_by_the_cli_without_node_or_byte_loss","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","--test","autonomous_state_provision_execution","recovery_cli_rejects_unknown_fields_and_unconfirmed_mutation","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_state_provision::recovery::tests::real_process_crash_on_every_quarantine_boundary_recovers_without_losing_bytes","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_state_provision::recovery::tests::recovery_and_publication_use_the_same_nonblocking_parent_owner","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs"]},{"program":"cargo","args":["test","--locked","-p","hepta-paper-service","autonomous_state_provision::recovery::tests::changed_bytes_and_byte_identical_inode_replacement_invalidate_the_selected_plan","--","--exact","--nocapture"],"workdir":"rust","expectedExitCode":0,"timeoutSeconds":600,"expectedTargets":["rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs"]}]}},"records":{"CTL-001":{"workItemId":"CTL-001","moduleId":"module.rust-control-plane-service","capabilityIds":["CAP-CTL-SNAPSHOT","CAP-CTL-POLICY","CAP-EXE-DISPATCH"],"evidenceTier":"source","bundleIds":["production-composition-source","native-state-provisioning-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"CTL-002":{"workItemId":"CTL-002","moduleId":"module.snapshot-builder","capabilityIds":["CAP-CTL-SNAPSHOT"],"evidenceTier":"source","bundleIds":["control-plane-functional-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"CTL-004":{"workItemId":"CTL-004","moduleId":"module.candidate-router","capabilityIds":["CAP-MOD-CANDIDATES"],"evidenceTier":"source","bundleIds":["control-plane-functional-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"MIG-001":{"workItemId":"MIG-001","moduleId":"module.node-legacy-adapter","capabilityIds":["CAP-CMP-LEGACY"],"evidenceTier":"source","bundleIds":["legacy-adapter-functional-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"MIG-004":{"workItemId":"MIG-004","moduleId":"module.node-legacy-adapter","capabilityIds":["CAP-CMP-LEGACY"],"evidenceTier":"source","bundleIds":["legacy-adapter-functional-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"MOD-002":{"workItemId":"MOD-002","moduleId":"module.candidate-router","capabilityIds":["CAP-MOD-CANDIDATES"],"evidenceTier":"source","bundleIds":["control-plane-functional-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"OBS-001":{"workItemId":"OBS-001","moduleId":"module.observability","capabilityIds":["CAP-OBS-TELEMETRY"],"evidenceTier":"source","bundleIds":["control-plane-functional-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"OBS-002":{"workItemId":"OBS-002","moduleId":"module.observability","capabilityIds":["CAP-OBS-TELEMETRY"],"evidenceTier":"source","bundleIds":["control-plane-functional-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"PERF-001":{"workItemId":"PERF-001","moduleId":"module.performance-qualification","capabilityIds":["CAP-PERF-QUALIFICATION"],"evidenceTier":"source","bundleIds":["control-plane-functional-source","scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"PERF-002":{"workItemId":"PERF-002","moduleId":"module.performance-qualification","capabilityIds":["CAP-PERF-QUALIFICATION"],"evidenceTier":"source","bundleIds":["control-plane-functional-source","scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"PERF-003":{"workItemId":"PERF-003","moduleId":"module.performance-qualification","capabilityIds":["CAP-PERF-QUALIFICATION"],"evidenceTier":"source","bundleIds":["control-plane-functional-source","scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"RES-001":{"workItemId":"RES-001","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"RES-002":{"workItemId":"RES-002","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"RES-003":{"workItemId":"RES-003","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"RES-004":{"workItemId":"RES-004","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"RES-005":{"workItemId":"RES-005","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"RES-006":{"workItemId":"RES-006","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"RES-007":{"workItemId":"RES-007","moduleId":"module.resource-allocator","capabilityIds":["CAP-RES-ALLOCATE"],"evidenceTier":"source","bundleIds":["hierarchical-resource-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"SCH-001":{"workItemId":"SCH-001","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["planner-functional-source","hierarchical-resource-source","scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"SCH-002":{"workItemId":"SCH-002","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"SCH-003":{"workItemId":"SCH-003","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["planner-functional-source","scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"SCH-005":{"workItemId":"SCH-005","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"SCH-006":{"workItemId":"SCH-006","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["planner-functional-source","scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}},"SCH-007":{"workItemId":"SCH-007","moduleId":"module.scheduler-core","capabilityIds":["CAP-SCH-PLAN"],"evidenceTier":"source","bundleIds":["planner-functional-source","scheduler-boundary-regressions-source"],"promotionRequested":false,"authorityClaims":{"externalAuthorityGranted":false,"nodeRetirementAuthorized":false,"productionActivated":false,"targetHostQualified":false,"writerCutoverAuthorized":false}}}}
+{
+  "$schema": "../schemas/source-implementation-evidence-v1.schema.json",
+  "schemaVersion": 1,
+  "kind": "RepositorySourceImplementationEvidenceV1",
+  "repository": "TrillionniumFoundation/hepta-paper",
+  "subjectPolicy": "current_clean_git_head_tree_and_exact_blobs",
+  "promotionPolicy": "semantic_registry_binding_plus_exact_git_blobs_plus_executable_owner_tests",
+  "registries": {
+    "workItems": "docs/system/truth/work-items.v2.json",
+    "modules": "docs/system/truth/modules.v1.json",
+    "capabilities": "docs/system/truth/capabilities.v1.json"
+  },
+  "bundles": {
+    "control-plane-functional-source": {
+      "description": "Exact canonical hepta-control-plane snapshot, candidate routing, observability and performance aggregation implementations selected by the product control-plane surface, with executable owner tests. The standalone hepta-orchestration-kernel compatibility/experimental crate is intentionally not product evidence.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/source_closure.rs",
+          "role": "implementation",
+          "gitBlob": "72304fe626bbbb2ff6f25e382ffb7c802f9ff838",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "build_snapshot_v1"
+            },
+            {
+              "kind": "function",
+              "name": "route_candidates_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/observability.rs",
+          "role": "implementation",
+          "gitBlob": "2f07244b87c33f5a334a66d74626e37dfa26fa11",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "type",
+              "name": "ObservabilityJournalV1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/performance_qualification.rs",
+          "role": "implementation",
+          "gitBlob": "f972c629d386fd3e86d48531da491b0d93c02012",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "qualify_performance_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/tests/canonical_product_owners.rs",
+          "role": "test",
+          "gitBlob": "37941aee72708dc8b45b99830b9a95de25c3a964",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "snapshot_and_candidate_router_bind_exact_registry_and_deduplicate"
+            },
+            {
+              "kind": "test",
+              "name": "observability_is_content_bounded_replay_safe_and_non_authorizing"
+            },
+            {
+              "kind": "test",
+              "name": "performance_qualification_binds_exact_subject_without_granting_authority"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "--test",
+            "canonical_product_owners",
+            "snapshot_and_candidate_router_bind_exact_registry_and_deduplicate",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/canonical_product_owners.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "--test",
+            "canonical_product_owners",
+            "observability_is_content_bounded_replay_safe_and_non_authorizing",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/canonical_product_owners.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "--test",
+            "canonical_product_owners",
+            "performance_qualification_binds_exact_subject_without_granting_authority",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/canonical_product_owners.rs"
+          ]
+        }
+      ]
+    },
+    "planner-functional-source": {
+      "description": "Exact bounded optimizer, deterministic fallback, certificate recomputation and stale-snapshot rejection implementation.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/planner.rs",
+          "role": "implementation",
+          "gitBlob": "7c2b8db23d16e4b4e3028195278e8c488882e76e",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "select_plan_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/tests/planner_source_closure.rs",
+          "role": "test",
+          "gitBlob": "a27b83cd4250dbc04d9bbf57d493ab93f37062ff",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "source_closure_planner_exact_and_fallback_certificates_are_recomputable"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "source_closure_planner_exact_and_fallback_certificates_are_recomputable",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/planner_source_closure.rs"
+          ]
+        }
+      ]
+    },
+    "hierarchical-resource-source": {
+      "description": "Rust hierarchical ceiling, fairness and bounded-accounting components plus a separate durable lease journal. Tests cover local recovery; mandatory product dispatch integration and trusted terminal reconciliation remain unproved.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/hierarchical_resource.rs",
+          "role": "implementation",
+          "gitBlob": "0cabe629c3cbde79cadb346dace92da83f5bb19c",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "type",
+              "name": "HierarchicalResourceAllocatorV1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/durable_resource.rs",
+          "role": "implementation",
+          "gitBlob": "6f382e473be22fa7c84336780738d0aff660cb91",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "type",
+              "name": "DurableResourceLeaseLedgerV1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/tests/source_closure_owner.rs",
+          "role": "test",
+          "gitBlob": "5f9eafb7797581029f4e5bf4fcb9c36c0718513f",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "hierarchical_resource_accounting_is_exact_and_bounded"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/tests/durable_resource_source.rs",
+          "role": "test",
+          "gitBlob": "b4c44407960a13e3c9c1db50c30a2f709c1550a0",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "durable_resource_recovery_retains_ambiguous_capacity_until_reconciled"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "hierarchical_resource_accounting_is_exact_and_bounded",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_closure_owner.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "durable_resource_recovery_retains_ambiguous_capacity_until_reconciled",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/durable_resource_source.rs"
+          ]
+        }
+      ]
+    },
+    "production-composition-source": {
+      "description": "Existing ordinary service/autonomous/local-workflow composition over the original registry, planner, dispatch lock, CAS verifier and SQLite sequencer. Named executable regressions cover actual local workers, chained artifacts, lifecycle/amendment/cancellation, live clocks, broker dispatch, current query-only recovery and durable replay. Prepared broker bytes are not admission: only the verified durable commit index permits IPC-free historical replay; uncommitted recovery must retain the original request/receipt/output and an unsettled provider preparation fences a different plan. The commit index is a read-only shared view of the existing owner, not another ledger. Broker peers are explicit protocol fixtures; separate broker tests verify real signed admission. An explicitly configured billing authority now signs actual provider cost against the exact request, prepared receipt and token usage; the ordinary service persists that value through its existing prepared result and SQLite budget transaction, while absent configuration remains a labelled upper bound. Dynamic trusted role issuance, independent live scientific review/revision, an installed provider-billing principal, commit-bound signed ACK, installed research/production qualification and Node retirement remain open. Later dependency waves of the same already-admitted atomic plan retain their original reservation; an unrelated new plan remains fenced. Private crash-worker copies have debug sections stripped before hashing, without changing the actual worker code, shared Cargo executable or product admission bound. The same amendment owner now supports the closed version-1 broker manuscript revision inputs: a fresh author/revise binds both original manuscript and retained rejection bytes/digests; the existing reviewer template, resource ceiling and gate remain unchanged. Ordinary-CLI regressions reject twelve semantic substitutions, preserve rejection until bound review, and recover lost responses query-only. These protocol fixtures still do not certify live independent roles or supply request, billing or ACK private-key authority.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/production.rs",
+          "role": "implementation",
+          "gitBlob": "f5ebe9a5494880d198e7670cf03045994bc68da7",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "run_production_service_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/deployment.rs",
+          "role": "implementation",
+          "gitBlob": "30a871b9654490be1cc64cb4b2a755bc0bc04731",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "verify_production_deployment_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/durable_service.rs",
+          "role": "test",
+          "gitBlob": "247fc0e7ed8c69c6781b92c6c8d333b0b95d9380",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "production_boolean_and_backend_substitution_rejected"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research.rs",
+          "role": "implementation",
+          "gitBlob": "7a1de691b81386a7a089c1105c91a80fa344ada9",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "parse_autonomous_research_arguments"
+            },
+            {
+              "kind": "function",
+              "name": "execute_autonomous_research_v1"
+            },
+            {
+              "kind": "function",
+              "name": "inspect_autonomous_research_v1"
+            },
+            {
+              "kind": "function",
+              "name": "execute_autonomous_research_with_cancellation_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_research/local.rs",
+          "role": "implementation",
+          "gitBlob": "c8b08b46cbcc964f2ccca497b7106678534d3222",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "run"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow.rs",
+          "role": "implementation",
+          "gitBlob": "0a1c5bbd1f2356cc28aec7e949fc12a1e654e6cb",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "initialize_local_workflow_v1"
+            },
+            {
+              "kind": "function",
+              "name": "operate_local_workflow_v1"
+            },
+            {
+              "kind": "function",
+              "name": "operate_local_workflow_with_clock_v1"
+            },
+            {
+              "kind": "function",
+              "name": "operate_local_workflow_with_clock_and_cancellation_v1"
+            },
+            {
+              "kind": "function",
+              "name": "cancel_local_workflow_node_v1"
+            },
+            {
+              "kind": "function",
+              "name": "cancel_local_workflow_node_with_clock_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs",
+          "role": "test",
+          "gitBlob": "be1a1a71ae490b4df48173e904b7fabfad6bf10c",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "autonomous_prepare_launch_replay_and_converge_use_the_existing_owner"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_pause_resume_cancel_are_revision_bound_and_terminal"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_rejects_changed_definition_and_foreign_campaign_without_dispatch"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_local_authority_and_request_bounds_fail_before_state_creation"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_executes_real_rust_workers_without_claiming_external_observation"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_worker_crash_is_not_reexecuted_after_cli_restart"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/lib.rs",
+          "role": "implementation",
+          "gitBlob": "4182b01bc1b116388ebd983db6b0c9350b2d1998",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "run_service_with_clock_v1"
+            },
+            {
+              "kind": "function",
+              "name": "run_service_with_clock_and_cancellation_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow.rs",
+          "role": "test",
+          "gitBlob": "545b4006cf97ab6568052c4563fbc9c65ec326f8",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "actual_artifacts_flow_through_all_seven_documented_steps"
+            },
+            {
+              "kind": "test",
+              "name": "cancel_node_preserves_committed_steps_and_cancels_the_uncommitted_suffix"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs",
+          "role": "test",
+          "gitBlob": "81964e724b3a5be788dd095e08a285eaee2d308a",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "workflow_clock_expires_after_real_preparation_without_a_commit_or_relaunch"
+            },
+            {
+              "kind": "test",
+              "name": "workflow_samples_clock_between_steps_and_preserves_prior_commit"
+            },
+            {
+              "kind": "test",
+              "name": "readonly_workflow_does_not_need_a_clock_and_live_success_preserves_all_steps"
+            },
+            {
+              "kind": "test",
+              "name": "workflow_amendment_revalidates_old_lease_and_preserves_history_on_late_failure"
+            },
+            {
+              "kind": "test",
+              "name": "workflow_live_amendment_replays_without_clock_and_continues_after_old_expiry"
+            },
+            {
+              "kind": "test",
+              "name": "local_cli_uses_live_time_for_explicit_renewal_and_lifecycle"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/amendment.rs",
+          "role": "implementation",
+          "gitBlob": "f5ecf3ecc6f631f472588b053c516ae929be2692",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "amend_local_workflow_with_clock_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/workflow_amendment.rs",
+          "role": "implementation",
+          "gitBlob": "a7fac867b71f24171771747d34355a9fe94250f3",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "apply_local_workflow_change_with_clock"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/inspection.rs",
+          "role": "implementation",
+          "gitBlob": "0e2e98ca7a6f91bb65efc0bd4c4035edd8824b1f",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "read_current_local_workflow_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs",
+          "role": "test",
+          "gitBlob": "65f9f237a9750b4abfea47388e7aae993bbf5c00",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_amendment_private_request_bounds_and_aliases_do_not_mutate"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/worker.rs",
+          "role": "implementation",
+          "gitBlob": "c7af3a1d887e5b25caeeee5bd9ed67ff13ded360",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "run_process"
+            },
+            {
+              "kind": "function",
+              "name": "revalidate_cached_broker_result"
+            },
+            {
+              "kind": "function",
+              "name": "execute_one"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+          "role": "implementation",
+          "gitBlob": "9d71b6898da8c6d257f74e6d90ec99511ec32ba2",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "run_bounded_process_with_cancellation"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs",
+          "role": "test",
+          "gitBlob": "37d18c11d3e2f0f1c70682f50d498fe5bc8eef5c",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "cancellation_before_dispatch_creates_no_attempt_and_status_stays_read_only"
+            },
+            {
+              "kind": "test",
+              "name": "cancellation_after_preparation_preserves_commits_and_replays_without_relaunch"
+            },
+            {
+              "kind": "test",
+              "name": "sigint_stops_real_worker_group_and_blocks_ambiguous_relaunch"
+            },
+            {
+              "kind": "test",
+              "name": "sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
+          "role": "implementation",
+          "gitBlob": "1dc34faaccc605d8332e8a12a5af3cae69f3de73",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "command"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
+          "role": "implementation",
+          "gitBlob": "816f76c9148ff76690cdde93124b0e0b9aad8e13",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "execute"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/broker_prepared.rs",
+          "role": "implementation",
+          "gitBlob": "da009779f451c117efb44d8f24dceb9088ca441e",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "consume"
+            },
+            {
+              "kind": "function",
+              "name": "broker_execution_implementation_hash_v1"
+            },
+            {
+              "kind": "function",
+              "name": "broker_cost_settlement_filename_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs",
+          "role": "test",
+          "gitBlob": "4352d06633625471c2fc02d9b37c41e36b3a8610",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "original_output_enters_existing_cas_sqlite_and_replays_without_ipc_or_debit"
+            },
+            {
+              "kind": "test",
+              "name": "normal_workflow_uses_broker_backend_and_retains_committed_prefix"
+            },
+            {
+              "kind": "test",
+              "name": "ordinary_run_dispatches_once_then_queries_commits_and_replays_without_ipc"
+            },
+            {
+              "kind": "test",
+              "name": "lost_execution_response_recovers_by_query_without_resending_execution"
+            },
+            {
+              "kind": "test",
+              "name": "ordinary_execution_cli_rejects_a_stale_serialized_writer_clock_before_ipc"
+            },
+            {
+              "kind": "test",
+              "name": "normal_workflow_uses_explicit_execution_backend_and_retains_committed_prefix"
+            },
+            {
+              "kind": "test",
+              "name": "preflight_rejection_preserves_fresh_execution_for_the_ordinary_cli"
+            },
+            {
+              "kind": "test",
+              "name": "invalid_execution_request_does_not_create_an_ambiguous_dispatch"
+            },
+            {
+              "kind": "test",
+              "name": "failed_broker_connection_preserves_fresh_dispatch"
+            },
+            {
+              "kind": "test",
+              "name": "malformed_request_preflight_is_retryable_without_dispatch"
+            },
+            {
+              "kind": "test",
+              "name": "cancelled_broker_dispatch_unblocks_and_workflow_recovery_queries_only"
+            },
+            {
+              "kind": "test",
+              "name": "cancelled_prepared_query_unblocks_and_workflow_recovery_queries_only"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_cli_sigterm_interrupts_broker_and_restarts_query_only"
+            },
+            {
+              "kind": "test",
+              "name": "autonomous_cli_sigint_interrupts_broker_and_restarts_query_only"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/fixture.rs",
+          "role": "test",
+          "gitBlob": "e3c66ad24afabbab13312b1e660c948df01385ba",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "prepared_response"
+            },
+            {
+              "kind": "function",
+              "name": "publish_cost_settlement"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/cli_commands.rs",
+          "role": "implementation",
+          "mode": "100644",
+          "language": "rust",
+          "gitBlob": "e03bd6be5540c9af4858cbd2842b686669eb4ba7",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "parse"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/cli_command_catalog.rs",
+          "role": "test",
+          "mode": "100644",
+          "language": "rust",
+          "gitBlob": "40e01491397c9dd5fa9e4c7fce496e416e438e46",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "ordinary_binary_help_json_is_the_compiled_catalog"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/worker_recovery.rs",
+          "role": "implementation",
+          "gitBlob": "ff9668d62ca1d4af3b8912ec4525f4d54259ff7d",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "acquire"
+            },
+            {
+              "kind": "function",
+              "name": "require_record_capacity"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/commit.rs",
+          "role": "implementation",
+          "gitBlob": "757cf8e34d5f0797d2640772b6ec39d2e7a86c1d",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "committed_result_snapshot"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs",
+          "role": "test",
+          "gitBlob": "7af3ee8681ec8a6ddece7a9ba01cc18f6818ebfc",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "withdrawn_request_cannot_be_bypassed_by_an_uncommitted_prepared_cache"
+            },
+            {
+              "kind": "test",
+              "name": "cached_query_requires_current_broker_and_retains_exact_evidence"
+            },
+            {
+              "kind": "test",
+              "name": "cached_query_cannot_replace_original_receipt_or_output"
+            },
+            {
+              "kind": "test",
+              "name": "unsettled_provider_preparation_fences_a_different_plan_before_ipc"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/plan_waves.rs",
+          "role": "test",
+          "gitBlob": "c91039ad5a01c76eb25002082adffd3ab69a71bf",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "prepared_provider_result_allows_later_wave_of_same_atomic_plan"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/workflow/amendment/broker_revision.rs",
+          "role": "implementation",
+          "mode": "100644",
+          "language": "rust",
+          "gitBlob": "023be1a56c2bf3a3e37ad5b3d7d60aa4ad828438",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "validate"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/revision.rs",
+          "role": "test",
+          "mode": "100644",
+          "language": "rust",
+          "gitBlob": "1f3e7acf7988e4bea1e743ec0c7f5c51dbd1f433",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "broker_revision_cli_preserves_policy_cas_inputs_rejection_and_exact_replay"
+            },
+            {
+              "kind": "test",
+              "name": "broker_revision_cli_rejects_rubric_identity_input_and_scope_substitution"
+            },
+            {
+              "kind": "test",
+              "name": "broker_revision_lost_response_recovers_query_only_and_second_rejection_is_durable"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
+          "role": "test",
+          "mode": "100644",
+          "language": "rust",
+          "gitBlob": "f198fc9603af65a76c47918c904da4ebb07fdd9c",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "full_attempt_journal_rejects_before_any_broker_connection_or_start_record"
+            },
+            {
+              "kind": "test",
+              "name": "last_attempt_pair_commits_and_full_journal_replays_without_broker"
+            },
+            {
+              "kind": "test",
+              "name": "batch_reserves_all_result_pairs_before_its_first_broker_connection"
+            },
+            {
+              "kind": "test",
+              "name": "final_prepared_slot_recovers_a_lost_response_without_reissuing_execution"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "role": "implementation",
+          "gitBlob": "baf842975fba271c24f4127c2755df83d116eee6",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "run_research_service_v1"
+            },
+            {
+              "kind": "function",
+              "name": "validate_research_service_policy_v1"
+            },
+            {
+              "kind": "function",
+              "name": "run_research_service_with_cancellation_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_service_profile.rs",
+          "role": "test",
+          "gitBlob": "5ae34fdd01dfef83f8429eaa151f2792a4ebe720",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "research_policy_accepts_target_host_private_state_without_release_authority"
+            },
+            {
+              "kind": "test",
+              "name": "research_policy_rejects_release_submission_cutover_and_external_effects"
+            },
+            {
+              "kind": "test",
+              "name": "research_policy_rejects_source_process_activation_and_runtime_substitution"
+            },
+            {
+              "kind": "test",
+              "name": "research_broker_requires_current_signed_cost_owner_without_release_authority"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/src/cost_settlement.rs",
+          "role": "implementation",
+          "gitBlob": "f447f923cce4be3a2dd8bff27c2365697678ca61",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "provider_cost_settlement_signing_bytes"
+            },
+            {
+              "kind": "function",
+              "name": "verify_provider_cost_settlement"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+          "role": "test",
+          "gitBlob": "5d6478e09b2d143af2ace6a6c907f51f4073d2d2",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "signed_actual_cost_binds_request_prepared_receipt_usage_and_generation"
+            },
+            {
+              "kind": "test",
+              "name": "substitutions_expiry_and_over_cap_cost_fail_closed"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "role": "test",
+          "gitBlob": "dc3e61559f4bf438820b5a7fb08e7affc8865cf3",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "signed_actual_cost_is_debited_by_the_normal_sequencer_and_replays_offline"
+            },
+            {
+              "kind": "test",
+              "name": "missing_settlement_preserves_query_only_recovery_and_commits_when_authority_arrives"
+            },
+            {
+              "kind": "test",
+              "name": "valid_signature_over_a_cost_above_the_signed_request_cap_never_commits"
+            },
+            {
+              "kind": "test",
+              "name": "changed_signed_settlement_cannot_replace_an_uncommitted_prepared_cache"
+            },
+            {
+              "kind": "test",
+              "name": "settlement_uses_the_service_admission_clock_and_recovers_after_time_advances"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "production_boolean_and_backend_substitution_rejected",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/durable_service.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_entrypoint::autonomous_prepare_launch_replay_and_converge_use_the_existing_owner",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_entrypoint::autonomous_pause_resume_cancel_are_revision_bound_and_terminal",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_entrypoint::autonomous_rejects_changed_definition_and_foreign_campaign_without_dispatch",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_entrypoint::autonomous_local_authority_and_request_bounds_fail_before_state_creation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_entrypoint::autonomous_executes_real_rust_workers_without_claiming_external_observation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_entrypoint::autonomous_worker_crash_is_not_reexecuted_after_cli_restart",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_entrypoint.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "clock::workflow_clock_expires_after_real_preparation_without_a_commit_or_relaunch",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "clock::workflow_samples_clock_between_steps_and_preserves_prior_commit",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "clock::readonly_workflow_does_not_need_a_clock_and_live_success_preserves_all_steps",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "clock::workflow_amendment_revalidates_old_lease_and_preserves_history_on_late_failure",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "clock::workflow_live_amendment_replays_without_clock_and_continues_after_old_expiry",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "clock::local_cli_uses_live_time_for_explicit_renewal_and_lifecycle",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/clock.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_amendment::autonomous_persisted_reference_renews_replays_and_completes_without_definition_copy",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_amendment::autonomous_persisted_reference_uses_renewed_owner_lease_not_expired_original",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_amendment::autonomous_amendment_rejects_substitution_wrong_revision_and_terminal_writes",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_amendment::autonomous_persisted_reference_is_identity_bound_and_inspection_cannot_amend",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_amendment::autonomous_amendment_private_request_bounds_and_aliases_do_not_mutate",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/autonomous_amendment.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "interruption::cancellation_before_dispatch_creates_no_attempt_and_status_stays_read_only",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "interruption::cancellation_after_preparation_preserves_commits_and_replays_without_relaunch",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "interruption::sigint_stops_real_worker_group_and_blocks_ambiguous_relaunch",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "interruption::sigterm_stops_real_worker_group_and_blocks_ambiguous_relaunch",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow/interruption.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "local_workflow",
+            "cancel_node_preserves_committed_steps_and_cancels_the_uncommitted_suffix",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/local_workflow.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "original_output_enters_existing_cas_sqlite_and_replays_without_ipc_or_debit",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "normal_workflow_uses_broker_backend_and_retains_committed_prefix",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "ordinary_run_dispatches_once_then_queries_commits_and_replays_without_ipc",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "lost_execution_response_recovers_by_query_without_resending_execution",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "ordinary_execution_cli_rejects_a_stale_serialized_writer_clock_before_ipc",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "normal_workflow_uses_explicit_execution_backend_and_retains_committed_prefix",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "cli_command_catalog",
+            "ordinary_binary_help_json_is_the_compiled_catalog",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/cli_command_catalog.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "preflight_rejection_preserves_fresh_execution_for_the_ordinary_cli",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "invalid_execution_request_does_not_create_an_ambiguous_dispatch",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "failed_broker_connection_preserves_fresh_dispatch",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "malformed_request_preflight_is_retryable_without_dispatch",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cancelled_broker_dispatch_unblocks_and_workflow_recovery_queries_only",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cancelled_prepared_query_unblocks_and_workflow_recovery_queries_only",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "autonomous_cli_sigterm_interrupts_broker_and_restarts_query_only",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "autonomous_cli_sigint_interrupts_broker_and_restarts_query_only",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "cache_admission::withdrawn_request_cannot_be_bypassed_by_an_uncommitted_prepared_cache",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "cache_admission::cached_query_requires_current_broker_and_retains_exact_evidence",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "cache_admission::cached_query_cannot_replace_original_receipt_or_output",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "cache_admission::unsettled_provider_preparation_fences_a_different_plan_before_ipc",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "plan_waves::prepared_provider_result_allows_later_wave_of_same_atomic_plan",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/plan_waves.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "revision::broker_revision_cli_preserves_policy_cas_inputs_rejection_and_exact_replay",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/revision.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "revision::broker_revision_cli_rejects_rubric_identity_input_and_scope_substitution",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/revision.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "revision::broker_revision_lost_response_recovers_query_only_and_second_rejection_is_durable",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/revision.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "capacity_admission::full_attempt_journal_rejects_before_any_broker_connection_or_start_record",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "capacity_admission::last_attempt_pair_commits_and_full_journal_replays_without_broker",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "capacity_admission::batch_reserves_all_result_pairs_before_its_first_broker_connection",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "capacity_admission::final_prepared_slot_recovers_a_lost_response_without_reissuing_execution",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "research_service_profile",
+            "research_policy_accepts_target_host_private_state_without_release_authority",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "research_service_profile",
+            "research_policy_rejects_release_submission_cutover_and_external_effects",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "research_service_profile",
+            "research_policy_rejects_source_process_activation_and_runtime_substitution",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-codex-broker",
+            "signed_actual_cost_binds_request_prepared_receipt_usage_and_generation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-codex-broker",
+            "substitutions_expiry_and_over_cap_cost_fail_closed",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::signed_actual_cost_is_debited_by_the_normal_sequencer_and_replays_offline",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::missing_settlement_preserves_query_only_recovery_and_commits_when_authority_arrives",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::valid_signature_over_a_cost_above_the_signed_request_cap_never_commits",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::changed_signed_settlement_cannot_replace_an_uncommitted_prepared_cache",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "research_service_profile",
+            "research_broker_requires_current_signed_cost_owner_without_release_authority",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::settlement_uses_the_service_admission_clock_and_recovers_after_time_advances",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        }
+      ]
+    },
+    "legacy-adapter-functional-source": {
+      "description": "Exact Node legacy adapter planning, prepared-result execution, replay, cancellation and authority-escalation rejection implementation.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter.rs",
+          "role": "implementation",
+          "gitBlob": "e560460538440cf429e208d15d26bedfef1fba35",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "constant",
+              "name": "NODE_LEGACY_ADAPTER_MODULE_ID_V1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter/model.rs",
+          "role": "implementation",
+          "gitBlob": "7e8b3c121d67de74fe0a9effa7100ca81d651e7f",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "type",
+              "name": "NodeLegacyAdapterV1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter/engine.rs",
+          "role": "implementation",
+          "gitBlob": "e4809b4587186a38658066c63f3455897e8d342f",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "plan"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter/support.rs",
+          "role": "implementation",
+          "gitBlob": "cb8023c3808e0539b73a82ad5370759e442bf224",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "validate_observation"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs",
+          "role": "test",
+          "gitBlob": "3a54d2234222596beae9f6b1eefc5dd717657453",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "execution_and_exact_replay_are_idempotent"
+            },
+            {
+              "kind": "test",
+              "name": "authority_claims_are_rejected"
+            },
+            {
+              "kind": "test",
+              "name": "conflicting_replays_fail_closed"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-module-platform",
+            "legacy_adapter::tests::execution_and_exact_replay_are_idempotent",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-module-platform",
+            "legacy_adapter::tests::authority_claims_are_rejected",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-module-platform",
+            "legacy_adapter::tests::conflicting_replays_fail_closed",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-module-platform/src/legacy_adapter/tests.rs"
+          ]
+        }
+      ]
+    },
+    "scheduler-boundary-regressions-source": {
+      "description": "Exact Rust hard-rate arithmetic, calibration integrity, dependency-safe Pareto reduction and bounded planner regression tests.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/optimizer_v2.rs",
+          "role": "implementation",
+          "gitBlob": "ab05f9aa0ec5858abd9d65c2ac3caf8e24fec094",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "assess_calibration_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/pareto.rs",
+          "role": "implementation",
+          "gitBlob": "b80ae3617f10c820da7fd38a28ca22123245ae73",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "contextual_pareto_frontier_preserving_dependencies_v2"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/model_selection.rs",
+          "role": "implementation",
+          "gitBlob": "f4c50a8c41f5845e16c95a032779d1dd87e53935",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "select_planner_champion_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs",
+          "role": "test",
+          "gitBlob": "fb7be20fa122f936abb047dc34f4e3ba38b19515",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "calibration_must_not_clip_large_errors_to_an_acceptable_threshold"
+            },
+            {
+              "kind": "test",
+              "name": "calibration_must_round_up_just_over_the_hard_limit"
+            },
+            {
+              "kind": "test",
+              "name": "zero_actual_cost_with_positive_prediction_is_not_a_finite_relative_error"
+            },
+            {
+              "kind": "test",
+              "name": "duplicate_observation_ids_cannot_satisfy_minimum_sample_count"
+            },
+            {
+              "kind": "test",
+              "name": "singleton_exact_search_does_not_exceed_a_one_evaluation_budget"
+            },
+            {
+              "kind": "test",
+              "name": "legacy_pareto_entrypoint_must_preserve_incoming_dependency_targets"
+            },
+            {
+              "kind": "test",
+              "name": "planner_promotion_margin_is_not_weakened_by_integer_saturation"
+            },
+            {
+              "kind": "test",
+              "name": "modified_calibration_body_is_rejected_before_planner_selection"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/tests/calibration_recompute.rs",
+          "role": "test",
+          "gitBlob": "13dd6106c23a01a407bb01b581efc5756cf3dd07",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "calibration_receipt_recomputes_policy_and_observations"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "calibration_must_not_clip_large_errors_to_an_acceptable_threshold",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "calibration_must_round_up_just_over_the_hard_limit",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "zero_actual_cost_with_positive_prediction_is_not_a_finite_relative_error",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "duplicate_observation_ids_cannot_satisfy_minimum_sample_count",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "singleton_exact_search_does_not_exceed_a_one_evaluation_budget",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "legacy_pareto_entrypoint_must_preserve_incoming_dependency_targets",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "planner_promotion_margin_is_not_weakened_by_integer_saturation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "modified_calibration_body_is_rejected_before_planner_selection",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/source_correctness_regressions.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-control-plane",
+            "calibration_receipt_recomputes_policy_and_observations",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 300,
+          "expectedTargets": [
+            "rust/crates/hepta-control-plane/tests/calibration_recompute.rs"
+          ]
+        }
+      ]
+    },
+    "native-state-provisioning-source": {
+      "description": "Native ten-database provisioning plus the exact historical 5+5 partial-root repair. The repair binds an exact read-only plan, exclusive locks on all five existing databases, restore-verified rescue, canonical construction of five missing business databases, scoped supervisor-journal repair, no-clobber publication and deterministic crash reconciliation. These source paths remain non-authorizing: online writer activation, target-host qualification and Node retirement are separate.",
+      "files": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision.rs",
+          "role": "implementation",
+          "gitBlob": "9d6d03a11b4794e6a777e11fe546ddda5b32aaab",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "inspect_autonomous_state_provisioning_v1"
+            },
+            {
+              "kind": "function",
+              "name": "execute_autonomous_state_provisioning_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/execution.rs",
+          "role": "implementation",
+          "gitBlob": "2c1de9e2a851a6aa8b276b22f3aefbf38eb7d1bc",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "execute"
+            },
+            {
+              "kind": "function",
+              "name": "plan"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/inputs.rs",
+          "role": "implementation",
+          "gitBlob": "1e527bc1c22f648516719854ac8a97f707e5a4d0",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "load"
+            },
+            {
+              "kind": "function",
+              "name": "assert_current"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/schema.rs",
+          "role": "implementation",
+          "gitBlob": "e93ade22bc5b3e8bc121933f2f89c9ad8cf7ea37",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "build"
+            },
+            {
+              "kind": "function",
+              "name": "seed_genesis"
+            },
+            {
+              "kind": "constant",
+              "name": "TEMPLATES"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication.rs",
+          "role": "implementation",
+          "gitBlob": "34647a67ca42f766a44766ea6d7ef03a43b0f564",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "publish"
+            },
+            {
+              "kind": "function",
+              "name": "publish_with_hook"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs",
+          "role": "test",
+          "gitBlob": "e0c6612ff99ef82e7bbb22b58cc1a1c3827010e6",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "native_cli_creates_all_ten_canonical_databases_without_node_at_execution"
+            },
+            {
+              "kind": "test",
+              "name": "genuine_genesis_verifier_rejects_bad_signatures_and_wrong_subjects_before_publication"
+            },
+            {
+              "kind": "test",
+              "name": "direct_api_cannot_bypass_positive_budget_or_execution_confirmation"
+            },
+            {
+              "kind": "test",
+              "name": "real_ten_database_stage_is_quarantined_by_the_cli_without_node_or_byte_loss"
+            },
+            {
+              "kind": "test",
+              "name": "recovery_cli_rejects_unknown_fields_and_unconfirmed_mutation"
+            },
+            {
+              "kind": "test",
+              "name": "published_ten_database_cli_recovers_missing_terminal_without_database_writes_or_node"
+            },
+            {
+              "kind": "test",
+              "name": "published_recovery_cli_refuses_new_sql_state_and_keeps_it_unchanged"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs",
+          "role": "test",
+          "gitBlob": "57d6cd75c6259bb86f4bf004ff3ed88ece8b7d48",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "process_death_on_either_side_of_rename_preserves_recoverable_evidence"
+            },
+            {
+              "kind": "test",
+              "name": "published_receipt_is_issued_only_after_observed_installation"
+            },
+            {
+              "kind": "test",
+              "name": "failure_before_terminal_receipt_preserves_published_not_success_claim"
+            },
+            {
+              "kind": "test",
+              "name": "publisher_is_excluded_by_the_same_parent_lock_as_recovery"
+            },
+            {
+              "kind": "test",
+              "name": "preobserved_target_rechecks_retained_staging_after_obtaining_the_owner_lock"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery.rs",
+          "role": "implementation",
+          "gitBlob": "fa4fde7116fb6420a5d6fe8365337819d34f913c",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "recover_staging_cli_v1"
+            },
+            {
+              "kind": "function",
+              "name": "recover"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/inventory.rs",
+          "role": "implementation",
+          "gitBlob": "1cf206cc6786904640d5a7ea89bec70486ec8cdb",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "type",
+              "name": "Snapshot"
+            },
+            {
+              "kind": "function",
+              "name": "capture"
+            },
+            {
+              "kind": "function",
+              "name": "verify"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs",
+          "role": "test",
+          "gitBlob": "0c524ab9166cfab37021e78e643ff76ed66f2db8",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "real_process_crash_on_every_quarantine_boundary_recovers_without_losing_bytes"
+            },
+            {
+              "kind": "test",
+              "name": "recovery_and_publication_use_the_same_nonblocking_parent_owner"
+            },
+            {
+              "kind": "test",
+              "name": "changed_bytes_and_byte_identical_inode_replacement_invalidate_the_selected_plan"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication_recovery.rs",
+          "role": "implementation",
+          "gitBlob": "d48b99266106ef1d7e9e829bbab0101b1a66c959",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "reconcile_publication_cli_v1"
+            },
+            {
+              "kind": "function",
+              "name": "verify_prepared"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication_recovery/tests.rs",
+          "role": "test",
+          "gitBlob": "a7cc71d5ec6489173142c8960be34c803797e506",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "real_process_death_before_after_and_after_verified_terminal_is_reconciled"
+            },
+            {
+              "kind": "test",
+              "name": "newer_database_bytes_are_not_repaired_or_replaced"
+            },
+            {
+              "kind": "test",
+              "name": "original_terminal_replays_without_rewriting_its_identity"
+            },
+            {
+              "kind": "test",
+              "name": "native_recovery_plan_distinguishes_adjacent_u64_kernel_identities"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance.rs",
+          "role": "implementation",
+          "gitBlob": "1c9c7044d70dfd2b2228fee75dfd5998856c54e5",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "execute_autonomous_state_partial_root_maintenance_v1"
+            },
+            {
+              "kind": "function",
+              "name": "inspect_autonomous_state_partial_root_maintenance_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/plan.rs",
+          "role": "implementation",
+          "gitBlob": "2e8b2f7e83158b8c9f30f951d6f7882790838e0e",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "build"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/autonomous_state_partial_root_maintenance/execution.rs",
+          "role": "implementation",
+          "gitBlob": "bdf49d18746c547369f46167ec692361b9dc0248",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "execute"
+            },
+            {
+              "kind": "function",
+              "name": "recover_or_replay"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs",
+          "role": "test",
+          "gitBlob": "a54fb6809cfff1d8b90a98fdd102721be62037a4",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "real_five_plus_five_repair_runs_without_node_and_preserves_existing_business_bytes"
+            },
+            {
+              "kind": "test",
+              "name": "target_appearance_after_plan_fails_before_rescue_or_existing_mutation"
+            },
+            {
+              "kind": "test",
+              "name": "precommit_crash_rolls_back_owned_publication_and_fresh_fence_retries_once"
+            },
+            {
+              "kind": "test",
+              "name": "crash_after_supervisor_commit_recovers_success_without_duplicate_writes"
+            },
+            {
+              "kind": "test",
+              "name": "crash_after_terminal_replays_the_persisted_success_receipt"
+            }
+          ]
+        },
+        {
+          "path": "rust/oracle/partial-root-v1.mjs",
+          "role": "test",
+          "gitBlob": "0f716cb53aa7384e2b7b7d33ed87c1e0f485f18e",
+          "mode": "100644",
+          "language": "javascript",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "dropObject"
+            }
+          ]
+        }
+      ],
+      "verificationCommands": [
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_provision_execution",
+            "native_cli_creates_all_ten_canonical_databases_without_node_at_execution",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_provision_execution",
+            "genuine_genesis_verifier_rejects_bad_signatures_and_wrong_subjects_before_publication",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_provision_execution",
+            "direct_api_cannot_bypass_positive_budget_or_execution_confirmation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::publication::tests::process_death_on_either_side_of_rename_preserves_recoverable_evidence",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::publication::tests::published_receipt_is_issued_only_after_observed_installation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::publication::tests::failure_before_terminal_receipt_preserves_published_not_success_claim",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_provision_execution",
+            "real_ten_database_stage_is_quarantined_by_the_cli_without_node_or_byte_loss",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_provision_execution",
+            "recovery_cli_rejects_unknown_fields_and_unconfirmed_mutation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::recovery::tests::real_process_crash_on_every_quarantine_boundary_recovers_without_losing_bytes",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::recovery::tests::recovery_and_publication_use_the_same_nonblocking_parent_owner",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::recovery::tests::changed_bytes_and_byte_identical_inode_replacement_invalidate_the_selected_plan",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/recovery/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_provision_execution",
+            "published_ten_database_cli_recovers_missing_terminal_without_database_writes_or_node",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_provision_execution",
+            "published_recovery_cli_refuses_new_sql_state_and_keeps_it_unchanged",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_provision_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::publication_recovery::tests::real_process_death_before_after_and_after_verified_terminal_is_reconciled",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication_recovery/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::publication_recovery::tests::newer_database_bytes_are_not_repaired_or_replaced",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication_recovery/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::publication_recovery::tests::original_terminal_replays_without_rewriting_its_identity",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication_recovery/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "autonomous_state_provision::publication_recovery::tests::native_recovery_plan_distinguishes_adjacent_u64_kernel_identities",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/src/autonomous_state_provision/publication_recovery/tests.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_partial_root_maintenance_execution",
+            "real_five_plus_five_repair_runs_without_node_and_preserves_existing_business_bytes",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_partial_root_maintenance_execution",
+            "target_appearance_after_plan_fails_before_rescue_or_existing_mutation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_partial_root_maintenance_execution",
+            "precommit_crash_rolls_back_owned_publication_and_fresh_fence_retries_once",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_partial_root_maintenance_execution",
+            "crash_after_supervisor_commit_recovers_success_without_duplicate_writes",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "autonomous_state_partial_root_maintenance_execution",
+            "crash_after_terminal_replays_the_persisted_success_receipt",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/autonomous_state_partial_root_maintenance_execution.rs"
+          ]
+        }
+      ]
+    }
+  },
+  "records": {
+    "CTL-001": {
+      "workItemId": "CTL-001",
+      "moduleId": "module.rust-control-plane-service",
+      "capabilityIds": [
+        "CAP-CTL-SNAPSHOT",
+        "CAP-CTL-POLICY",
+        "CAP-EXE-DISPATCH"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "production-composition-source",
+        "native-state-provisioning-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "CTL-002": {
+      "workItemId": "CTL-002",
+      "moduleId": "module.snapshot-builder",
+      "capabilityIds": [
+        "CAP-CTL-SNAPSHOT"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "control-plane-functional-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "CTL-004": {
+      "workItemId": "CTL-004",
+      "moduleId": "module.candidate-router",
+      "capabilityIds": [
+        "CAP-MOD-CANDIDATES"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "control-plane-functional-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "MIG-001": {
+      "workItemId": "MIG-001",
+      "moduleId": "module.node-legacy-adapter",
+      "capabilityIds": [
+        "CAP-CMP-LEGACY"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "legacy-adapter-functional-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "MIG-004": {
+      "workItemId": "MIG-004",
+      "moduleId": "module.node-legacy-adapter",
+      "capabilityIds": [
+        "CAP-CMP-LEGACY"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "legacy-adapter-functional-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "MOD-002": {
+      "workItemId": "MOD-002",
+      "moduleId": "module.candidate-router",
+      "capabilityIds": [
+        "CAP-MOD-CANDIDATES"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "control-plane-functional-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "OBS-001": {
+      "workItemId": "OBS-001",
+      "moduleId": "module.observability",
+      "capabilityIds": [
+        "CAP-OBS-TELEMETRY"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "control-plane-functional-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "OBS-002": {
+      "workItemId": "OBS-002",
+      "moduleId": "module.observability",
+      "capabilityIds": [
+        "CAP-OBS-TELEMETRY"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "control-plane-functional-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "PERF-001": {
+      "workItemId": "PERF-001",
+      "moduleId": "module.performance-qualification",
+      "capabilityIds": [
+        "CAP-PERF-QUALIFICATION"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "control-plane-functional-source",
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "PERF-002": {
+      "workItemId": "PERF-002",
+      "moduleId": "module.performance-qualification",
+      "capabilityIds": [
+        "CAP-PERF-QUALIFICATION"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "control-plane-functional-source",
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "PERF-003": {
+      "workItemId": "PERF-003",
+      "moduleId": "module.performance-qualification",
+      "capabilityIds": [
+        "CAP-PERF-QUALIFICATION"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "control-plane-functional-source",
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "RES-001": {
+      "workItemId": "RES-001",
+      "moduleId": "module.resource-allocator",
+      "capabilityIds": [
+        "CAP-RES-ALLOCATE"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "hierarchical-resource-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "RES-002": {
+      "workItemId": "RES-002",
+      "moduleId": "module.resource-allocator",
+      "capabilityIds": [
+        "CAP-RES-ALLOCATE"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "hierarchical-resource-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "RES-003": {
+      "workItemId": "RES-003",
+      "moduleId": "module.resource-allocator",
+      "capabilityIds": [
+        "CAP-RES-ALLOCATE"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "hierarchical-resource-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "RES-004": {
+      "workItemId": "RES-004",
+      "moduleId": "module.resource-allocator",
+      "capabilityIds": [
+        "CAP-RES-ALLOCATE"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "hierarchical-resource-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "RES-005": {
+      "workItemId": "RES-005",
+      "moduleId": "module.resource-allocator",
+      "capabilityIds": [
+        "CAP-RES-ALLOCATE"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "hierarchical-resource-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "RES-006": {
+      "workItemId": "RES-006",
+      "moduleId": "module.resource-allocator",
+      "capabilityIds": [
+        "CAP-RES-ALLOCATE"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "hierarchical-resource-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "RES-007": {
+      "workItemId": "RES-007",
+      "moduleId": "module.resource-allocator",
+      "capabilityIds": [
+        "CAP-RES-ALLOCATE"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "hierarchical-resource-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "SCH-001": {
+      "workItemId": "SCH-001",
+      "moduleId": "module.scheduler-core",
+      "capabilityIds": [
+        "CAP-SCH-PLAN"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "planner-functional-source",
+        "hierarchical-resource-source",
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "SCH-002": {
+      "workItemId": "SCH-002",
+      "moduleId": "module.scheduler-core",
+      "capabilityIds": [
+        "CAP-SCH-PLAN"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "SCH-003": {
+      "workItemId": "SCH-003",
+      "moduleId": "module.scheduler-core",
+      "capabilityIds": [
+        "CAP-SCH-PLAN"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "planner-functional-source",
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "SCH-005": {
+      "workItemId": "SCH-005",
+      "moduleId": "module.scheduler-core",
+      "capabilityIds": [
+        "CAP-SCH-PLAN"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "SCH-006": {
+      "workItemId": "SCH-006",
+      "moduleId": "module.scheduler-core",
+      "capabilityIds": [
+        "CAP-SCH-PLAN"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "planner-functional-source",
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    },
+    "SCH-007": {
+      "workItemId": "SCH-007",
+      "moduleId": "module.scheduler-core",
+      "capabilityIds": [
+        "CAP-SCH-PLAN"
+      ],
+      "evidenceTier": "source",
+      "bundleIds": [
+        "planner-functional-source",
+        "scheduler-boundary-regressions-source"
+      ],
+      "promotionRequested": false,
+      "authorityClaims": {
+        "externalAuthorityGranted": false,
+        "nodeRetirementAuthorized": false,
+        "productionActivated": false,
+        "targetHostQualified": false,
+        "writerCutoverAuthorized": false
+      }
+    }
+  }
+}

@@ -90,6 +90,9 @@ fn template(
         independent_reviewer: "TEAM-EVIDENCE".into(),
         rollback_version: "0.9.0".into(),
         execution: match &binding {
+            WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. } => {
+                panic!("this native/process fixture does not issue broker requests")
+            }
             WorkerBindingV1::Native => ModuleExecutionV1::InProcess {
                 implementation_hash: native_implementation_hash_v1()?,
             },

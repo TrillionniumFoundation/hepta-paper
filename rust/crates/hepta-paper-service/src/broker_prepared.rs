@@ -1,0 +1,841 @@
+//! Existing broker result ingestion, plus an explicitly selected signed-request
+//! dispatch backend. No private keys, second result store, or production grant.
+use crate::ServiceError;
+use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::VerifyingKey;
+use hepta_codex_broker::{
+    PeerPolicyV1, PeerPrincipalV1, ProviderCostSettlementPolicyV1,
+    ProviderCostSettlementTrustStoreV1, ProviderCostSettlementV1, query_prepared_result,
+    verify_provider_cost_settlement,
+};
+use hepta_codex_protocol::{AgentRole, CodexExecutionRequestV1, Sha256Digest};
+use hepta_control_plane::{ExecutionRequestV1, canonical_hash_v1};
+use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, connect, socket};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::{
+    fs::{self, File, OpenOptions},
+    io::Read,
+    os::{
+        fd::AsRawFd,
+        unix::{
+            fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
+            net::UnixStream,
+        },
+    },
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+};
+
+const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
+const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+
+/// Registry-bound local IPC endpoint and independently selected request owner.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerPreparedSourceV1 {
+    pub socket_path: PathBuf,
+    pub broker_uid: u32,
+    pub broker_gid: u32,
+    pub request_directory: PathBuf,
+    pub request_owner_uid: u32,
+    pub request_owner_gid: u32,
+    pub role: AgentRole,
+    pub runtime_identity_hash: Sha256Digest,
+    pub timeout_ms: u64,
+    /// Optional separately signed actual-cost owner. Absence retains the legacy
+    /// conservative admitted upper bound; it never invents a measured charge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_settlement: Option<BrokerCostSettlementSourceV1>,
+}
+
+/// One public billing-authority key. Private billing keys never enter service configuration.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerCostSettlementKeyV1 {
+    pub key_id: String,
+    pub public_key_base64: String,
+}
+
+/// Immutable billing receipt directory and current revocation generation.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerCostSettlementSourceV1 {
+    pub directory: PathBuf,
+    pub authority_domain_id: String,
+    pub authority_uid: u32,
+    pub authority_gid: u32,
+    pub trust_store_generation: u64,
+    pub maximum_age_ms: u64,
+    pub keys: Vec<BrokerCostSettlementKeyV1>,
+}
+
+/// Exact desired input bytes and output contract; this is not a signed permit.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerPreparedInputV1 {
+    pub version: u16,
+    pub input_manifest: Value,
+    pub task_kind: hepta_codex_protocol::TaskKind,
+    pub prompt_envelope_hash: Sha256Digest,
+    pub workspace_identity_hash: Sha256Digest,
+    pub mutation_policy_hash: Sha256Digest,
+    pub output_schema_hash: Sha256Digest,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BrokerConsumerContextV1 {
+    pub campaign_id: String,
+    pub campaign_revision: u64,
+    pub lease_generation: u64,
+    pub committed_results: hepta_control_plane::CommittedResultSnapshotV1,
+    pub current_time_unix_ms: Arc<AtomicU64>,
+}
+
+/// The authority publishes this filename after the real plan chooses its attempt.
+/// Keeping request bytes out of the planner definition avoids a circular hash.
+pub fn broker_prepared_request_filename_v1(attempt_id: &str) -> Result<String, ServiceError> {
+    if attempt_id.is_empty() || attempt_id.len() > 256 {
+        return Err(ServiceError::Configuration);
+    }
+    Ok(format!(
+        "{}.json",
+        hex::encode(Sha256::digest(attempt_id.as_bytes()))
+    ))
+}
+
+/// Billing authority publishes this immutable filename after the prepared receipt exists.
+pub fn broker_cost_settlement_filename_v1(attempt_id: &str) -> Result<String, ServiceError> {
+    if attempt_id.is_empty() || attempt_id.len() > 256 {
+        return Err(ServiceError::Configuration);
+    }
+    Ok(format!(
+        "{}.cost.json",
+        hex::encode(Sha256::digest(attempt_id.as_bytes()))
+    ))
+}
+
+pub fn broker_prepared_implementation_hash_v1(
+    source: &BrokerPreparedSourceV1,
+) -> Result<Sha256Digest, ServiceError> {
+    source.validate()?;
+    canonical_hash_v1(&(
+        "hepta-broker-prepared-consumer-v1",
+        include_str!("broker_prepared.rs"),
+        include_str!("worker.rs"),
+        include_str!("worker_recovery.rs"),
+        source,
+    ))
+    .map_err(|_| ServiceError::Configuration)
+}
+
+impl BrokerPreparedSourceV1 {
+    pub(crate) fn validate(&self) -> Result<(), ServiceError> {
+        if self.timeout_ms == 0
+            || self.timeout_ms > 30_000
+            || !self.socket_path.is_absolute()
+            || !self.request_directory.is_absolute()
+            || [&self.socket_path, &self.request_directory]
+                .iter()
+                .any(|path| {
+                    path.components()
+                        .any(|p| matches!(p, std::path::Component::ParentDir))
+                })
+        {
+            return Err(ServiceError::Configuration);
+        }
+        if let Some(cost) = &self.cost_settlement {
+            cost.validate()?;
+        }
+        Ok(())
+    }
+    pub(crate) fn matches_capability(&self, capability: &str) -> bool {
+        matches!(
+            (self.role, capability),
+            (AgentRole::Author | AgentRole::Repairer, "CAP-AUTHOR")
+                | (AgentRole::Reviewer, "CAP-REVIEW")
+                | (AgentRole::FormalReviewer, "CAP-FORMAL")
+        )
+    }
+}
+
+impl BrokerCostSettlementSourceV1 {
+    fn validate(&self) -> Result<(), ServiceError> {
+        if !self.directory.is_absolute()
+            || self
+                .directory
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+            || self.trust_store_generation == 0
+            || self.maximum_age_ms == 0
+            || self.maximum_age_ms > 30 * 24 * 60 * 60 * 1000
+            || self.keys.is_empty()
+            || self.keys.len() > 32
+        {
+            return Err(ServiceError::Configuration);
+        }
+        self.trust_store().map(|_| ())
+    }
+
+    fn trust_store(&self) -> Result<ProviderCostSettlementTrustStoreV1, ServiceError> {
+        let mut entries = Vec::with_capacity(self.keys.len());
+        for key in &self.keys {
+            let bytes = Base64UrlUnpadded::decode_vec(&key.public_key_base64)
+                .map_err(|_| ServiceError::Configuration)?;
+            if Base64UrlUnpadded::encode_string(&bytes) != key.public_key_base64 {
+                return Err(ServiceError::Configuration);
+            }
+            let bytes: [u8; 32] = bytes.try_into().map_err(|_| ServiceError::Configuration)?;
+            let verifying =
+                VerifyingKey::from_bytes(&bytes).map_err(|_| ServiceError::Configuration)?;
+            entries.push((key.key_id.clone(), verifying));
+        }
+        ProviderCostSettlementTrustStoreV1::new(
+            self.authority_domain_id.clone(),
+            self.trust_store_generation,
+            entries,
+        )
+        .map_err(|_| ServiceError::Configuration)
+    }
+}
+
+fn digest(bytes: &[u8]) -> Result<Sha256Digest, ServiceError> {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+        .parse()
+        .map_err(|_| ServiceError::Artifact)
+}
+fn same_node(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    a.dev() == b.dev()
+        && a.ino() == b.ino()
+        && a.uid() == b.uid()
+        && a.gid() == b.gid()
+        && a.mode() == b.mode()
+}
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    same_node(a, b)
+        && a.len() == b.len()
+        && a.nlink() == b.nlink()
+        && a.mtime() == b.mtime()
+        && a.mtime_nsec() == b.mtime_nsec()
+        && a.ctime() == b.ctime()
+        && a.ctime_nsec() == b.ctime_nsec()
+}
+
+struct CapturedRequest {
+    directory: File,
+    directory_metadata: fs::Metadata,
+    file: File,
+    file_metadata: fs::Metadata,
+    path: PathBuf,
+    request: CodexExecutionRequestV1,
+}
+impl CapturedRequest {
+    fn open(source: &BrokerPreparedSourceV1, attempt: &str) -> Result<Self, ServiceError> {
+        source.validate()?;
+        if fs::canonicalize(&source.request_directory).ok().as_ref()
+            != Some(&source.request_directory)
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+            .open(&source.request_directory)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let directory_metadata = directory.metadata().map_err(|_| ServiceError::Filesystem)?;
+        if !directory_metadata.is_dir()
+            || directory_metadata.uid() != source.request_owner_uid
+            || directory_metadata.gid() != source.request_owner_gid
+            || directory_metadata.mode() & 0o027 != 0
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let name = broker_prepared_request_filename_v1(attempt)?;
+        let path = source.request_directory.join(&name);
+        let anchored = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name);
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC | nix::libc::O_NONBLOCK)
+            .open(anchored)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let file_metadata = file.metadata().map_err(|_| ServiceError::Filesystem)?;
+        if !file_metadata.is_file()
+            || file_metadata.uid() != source.request_owner_uid
+            || file_metadata.gid() != source.request_owner_gid
+            || file_metadata.nlink() != 1
+            || !matches!(file_metadata.mode() & 0o7777, 0o400 | 0o440)
+            || file_metadata.len() == 0
+            || file_metadata.len() > MAX_REQUEST_BYTES
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file)
+            .take(MAX_REQUEST_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let request: CodexExecutionRequestV1 =
+            serde_json::from_slice(&bytes).map_err(|_| ServiceError::Configuration)?;
+        request
+            .validate()
+            .map_err(|_| ServiceError::Configuration)?;
+        if bytes.len() as u64 != file_metadata.len()
+            || serde_json::to_vec(&request).map_err(|_| ServiceError::Configuration)? != bytes
+        {
+            return Err(ServiceError::Configuration);
+        }
+        let captured = Self {
+            directory,
+            directory_metadata,
+            file,
+            file_metadata,
+            path,
+            request,
+        };
+        captured.revalidate(source)?;
+        Ok(captured)
+    }
+    fn revalidate(&self, source: &BrokerPreparedSourceV1) -> Result<(), ServiceError> {
+        let directory = self
+            .directory
+            .metadata()
+            .map_err(|_| ServiceError::Filesystem)?;
+        let named_directory = fs::symlink_metadata(&source.request_directory)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let opened = self.file.metadata().map_err(|_| ServiceError::Filesystem)?;
+        let named = fs::symlink_metadata(&self.path).map_err(|_| ServiceError::Filesystem)?;
+        if !same_node(&self.directory_metadata, &directory)
+            || !same_node(&directory, &named_directory)
+            || fs::canonicalize(&source.request_directory).ok().as_ref()
+                != Some(&source.request_directory)
+            || !same_file(&self.file_metadata, &opened)
+            || !same_file(&opened, &named)
+        {
+            return Err(ServiceError::Artifact);
+        }
+        Ok(())
+    }
+}
+
+struct CapturedSettlement {
+    directory: File,
+    directory_metadata: fs::Metadata,
+    file: File,
+    file_metadata: fs::Metadata,
+    path: PathBuf,
+    settlement: ProviderCostSettlementV1,
+}
+
+impl CapturedSettlement {
+    fn open(source: &BrokerCostSettlementSourceV1, attempt: &str) -> Result<Self, ServiceError> {
+        source.validate()?;
+        if fs::canonicalize(&source.directory).ok().as_ref() != Some(&source.directory) {
+            return Err(ServiceError::Artifact);
+        }
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+            .open(&source.directory)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let directory_metadata = directory.metadata().map_err(|_| ServiceError::Filesystem)?;
+        if !directory_metadata.is_dir()
+            || directory_metadata.uid() != source.authority_uid
+            || directory_metadata.gid() != source.authority_gid
+            || directory_metadata.mode() & 0o027 != 0
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let name = broker_cost_settlement_filename_v1(attempt)?;
+        let path = source.directory.join(&name);
+        let anchored = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name);
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC | nix::libc::O_NONBLOCK)
+            .open(anchored)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let file_metadata = file.metadata().map_err(|_| ServiceError::Filesystem)?;
+        if !file_metadata.is_file()
+            || file_metadata.uid() != source.authority_uid
+            || file_metadata.gid() != source.authority_gid
+            || file_metadata.nlink() != 1
+            || !matches!(file_metadata.mode() & 0o7777, 0o400 | 0o440)
+            || file_metadata.len() == 0
+            || file_metadata.len() > MAX_REQUEST_BYTES
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file)
+            .take(MAX_REQUEST_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let settlement: ProviderCostSettlementV1 =
+            serde_json::from_slice(&bytes).map_err(|_| ServiceError::Configuration)?;
+        if bytes.len() as u64 != file_metadata.len()
+            || serde_json::to_vec(&settlement).map_err(|_| ServiceError::Configuration)? != bytes
+        {
+            return Err(ServiceError::Configuration);
+        }
+        let captured = Self {
+            directory,
+            directory_metadata,
+            file,
+            file_metadata,
+            path,
+            settlement,
+        };
+        captured.revalidate(source)?;
+        Ok(captured)
+    }
+
+    fn revalidate(&self, source: &BrokerCostSettlementSourceV1) -> Result<(), ServiceError> {
+        let directory = self
+            .directory
+            .metadata()
+            .map_err(|_| ServiceError::Filesystem)?;
+        let named_directory =
+            fs::symlink_metadata(&source.directory).map_err(|_| ServiceError::Filesystem)?;
+        let opened = self.file.metadata().map_err(|_| ServiceError::Filesystem)?;
+        let named = fs::symlink_metadata(&self.path).map_err(|_| ServiceError::Filesystem)?;
+        if !same_node(&self.directory_metadata, &directory)
+            || !same_node(&directory, &named_directory)
+            || fs::canonicalize(&source.directory).ok().as_ref() != Some(&source.directory)
+            || !same_file(&self.file_metadata, &opened)
+            || !same_file(&opened, &named)
+        {
+            return Err(ServiceError::Artifact);
+        }
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_binding(
+    source: &BrokerPreparedSourceV1,
+    input: &BrokerPreparedInputV1,
+    execution: &ExecutionRequestV1,
+    context: &BrokerConsumerContextV1,
+    request: &CodexExecutionRequestV1,
+    maximum_output_bytes: u64,
+    execution_backend: bool,
+) -> Result<(), ServiceError> {
+    let manifest =
+        serde_json::to_vec(&input.input_manifest).map_err(|_| ServiceError::Configuration)?;
+    if input.version != 1
+        || manifest.len() > MAX_MANIFEST_BYTES
+        || !source.matches_capability(&execution.candidate.capability_id)
+        || request.codex_runtime_identity_hash != source.runtime_identity_hash
+        || request.task_kind != input.task_kind
+        || request.prompt_envelope_hash != input.prompt_envelope_hash
+        || request.workspace_identity_hash != input.workspace_identity_hash
+        || request.mutation_policy_hash != input.mutation_policy_hash
+        || request.role != source.role
+        || request.operation_id != execution.attempt_id
+        || request.attempt_id != execution.attempt_id
+        || request.campaign_id != context.campaign_id
+        || request.campaign_id != execution.reservation.tenant_id
+        || request.node_id != execution.candidate.candidate_id
+        || request.campaign_revision != context.campaign_revision
+        || request.lease_generation != context.lease_generation
+        || request.input_manifest_hash != digest(&manifest)?
+        || request.output_schema_hash != input.output_schema_hash
+        || request.maximum_output_bytes > maximum_output_bytes
+        || request.maximum_cost_microusd > execution.candidate.cost_microusd
+        || request
+            .remaining_token_hint
+            .is_some_and(|n| n > execution.candidate.resources.tokens)
+        || execution.candidate.resources.provider_calls != u64::from(execution_backend)
+        || execution.candidate.resources.external_actions != 0
+    {
+        return Err(ServiceError::Configuration);
+    }
+    Ok(())
+}
+
+fn connect_now(
+    source: &BrokerPreparedSourceV1,
+) -> Result<(UnixStream, fs::Metadata), ServiceError> {
+    if fs::canonicalize(&source.socket_path).ok().as_ref() != Some(&source.socket_path) {
+        return Err(ServiceError::Artifact);
+    }
+    let before = fs::symlink_metadata(&source.socket_path).map_err(|_| ServiceError::Filesystem)?;
+    if !before.file_type().is_socket()
+        || before.uid() != source.broker_uid
+        || before.gid() != source.broker_gid
+        || before.mode() & 0o007 != 0
+    {
+        return Err(ServiceError::Artifact);
+    }
+    let socket = socket(
+        AddressFamily::Unix,
+        SockType::Stream,
+        SockFlag::SOCK_NONBLOCK | SockFlag::SOCK_CLOEXEC,
+        None,
+    )
+    .map_err(|_| ServiceError::Execution)?;
+    let address = UnixAddr::new(&source.socket_path).map_err(|_| ServiceError::Configuration)?;
+    connect(socket.as_raw_fd(), &address).map_err(|_| ServiceError::Execution)?;
+    let stream = UnixStream::from(socket);
+    stream
+        .set_nonblocking(false)
+        .map_err(|_| ServiceError::Execution)?;
+    let named = fs::symlink_metadata(&source.socket_path).map_err(|_| ServiceError::Filesystem)?;
+    if !same_node(&before, &named) {
+        return Err(ServiceError::Artifact);
+    }
+    Ok((stream, before))
+}
+
+// Closing a cancelled transport is not proof that the provider stopped. The
+// existing durable intent remains ambiguous and recovery stays query-only.
+// One monotonic deadline covers the complete exchange, including partial frames.
+fn with_interruptible_transport<T>(
+    stream: &UnixStream,
+    cancelled: &AtomicBool,
+    deadline: std::time::Instant,
+    operation: impl FnOnce() -> Result<T, ServiceError>,
+) -> Result<T, ServiceError> {
+    use std::{
+        net::Shutdown,
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
+        return Err(ServiceError::Execution);
+    }
+    std::thread::scope(|scope| {
+        // Disconnect also wakes the watcher during unwinding. No detached task
+        // can outlive the borrowed stream or interfere with a later operation.
+        let (completed, completion) = mpsc::sync_channel::<()>(0);
+        let watcher = std::thread::Builder::new()
+            .name("hepta-broker-transport".into())
+            .spawn_scoped(scope, move || {
+                loop {
+                    let now = Instant::now();
+                    if cancelled.load(Ordering::Acquire) || now >= deadline {
+                        let _ = stream.shutdown(Shutdown::Both);
+                        return;
+                    }
+                    let wait = deadline.duration_since(now).min(Duration::from_millis(10));
+                    match completion.recv_timeout(wait) {
+                        Err(mpsc::RecvTimeoutError::Timeout) => (),
+                        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+            })
+            .map_err(|_| ServiceError::Execution)?;
+        let result = operation();
+        drop(completed);
+        watcher.join().map_err(|_| ServiceError::Execution)?;
+        if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(ServiceError::Execution);
+        }
+        result
+    })
+}
+
+/// The existing attempt journal selects this mode; request JSON cannot request
+/// a replay of an execution. All recovery modes use only HEPTAQX1.
+#[derive(Clone, Copy)]
+pub(crate) enum BrokerConsumeModeV1 {
+    PreparedOnly,
+    ExecuteOnce,
+    RecoverExecution,
+}
+
+/// Separate registry identity for a backend which may issue one signed request.
+pub fn broker_execution_implementation_hash_v1(
+    source: &BrokerPreparedSourceV1,
+) -> Result<Sha256Digest, ServiceError> {
+    source.validate()?;
+    hepta_control_plane::canonical_hash_v1(&(
+        "hepta-broker-execution-backend-v1",
+        broker_prepared_implementation_hash_v1(source)?,
+    ))
+    .map_err(|_| ServiceError::Configuration)
+}
+
+pub(crate) struct BrokerConsumedResultV1 {
+    pub output: Vec<u8>,
+    pub evidence: Value,
+    pub actual_cost_microusd: u64,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn consume(
+    source: &BrokerPreparedSourceV1,
+    input: &BrokerPreparedInputV1,
+    execution: &ExecutionRequestV1,
+    context: &BrokerConsumerContextV1,
+    maximum_output_bytes: u64,
+    cancelled: &AtomicBool,
+    mode: BrokerConsumeModeV1,
+    record_started: impl FnOnce() -> Result<(), ServiceError>,
+    refresh_current_time: &mut dyn FnMut() -> Result<(), ServiceError>,
+) -> Result<BrokerConsumedResultV1, ServiceError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(ServiceError::Execution);
+    }
+    let started_at = std::time::Instant::now();
+    let deadline = started_at
+        .checked_add(std::time::Duration::from_millis(source.timeout_ms))
+        .ok_or(ServiceError::Execution)?;
+    let execution_backend = !matches!(mode, BrokerConsumeModeV1::PreparedOnly);
+    let captured = CapturedRequest::open(source, &execution.attempt_id)?;
+    validate_binding(
+        source,
+        input,
+        execution,
+        context,
+        &captured.request,
+        maximum_output_bytes,
+        execution_backend,
+    )?;
+    let policy = PeerPolicyV1::new([PeerPrincipalV1 {
+        uid: source.broker_uid,
+        gid: source.broker_gid,
+    }])
+    .map_err(|_| ServiceError::Configuration)?;
+    let (stream, before) = connect_now(source)?;
+    let peer =
+        hepta_codex_broker::inspect_peer_identity(&stream).map_err(|_| ServiceError::Execution)?;
+    policy
+        .authorize(peer)
+        .map_err(|_| ServiceError::Execution)?;
+    captured.revalidate(source)?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(ServiceError::Execution);
+    }
+    let remaining = || -> Result<u64, ServiceError> {
+        let elapsed =
+            u64::try_from(started_at.elapsed().as_millis()).map_err(|_| ServiceError::Execution)?;
+        source
+            .timeout_ms
+            .checked_sub(elapsed)
+            .filter(|value| *value > 0)
+            .ok_or(ServiceError::Execution)
+    };
+    // Local request, binding, connection and peer failures are not ambiguous
+    // external results. Only now persist the intent, before any request frame.
+    // A failure from here on keeps the intent and cannot authorize re-execution.
+    remaining()?;
+    record_started()?;
+    captured.revalidate(source)?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(ServiceError::Execution);
+    }
+    let expected_prepared = if matches!(mode, BrokerConsumeModeV1::ExecuteOnce) {
+        let response = with_interruptible_transport(&stream, cancelled, deadline, || {
+            hepta_codex_broker::dispatch_signed_operation(
+                &stream,
+                &policy,
+                &captured.request,
+                remaining()?,
+            )
+            .map_err(|_| ServiceError::Execution)
+        })?;
+        captured.revalidate(source)?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(ServiceError::Execution);
+        }
+        Some(
+            response
+                .prepared_receipt_hash
+                .ok_or(ServiceError::Execution)?,
+        )
+    } else {
+        None
+    };
+    // The execution response carries metadata only. Fetch the original bytes
+    // through the existing read-only protocol and verify the same receipt.
+    let stream = if expected_prepared.is_some() {
+        drop(stream);
+        let (next, named) = connect_now(source)?;
+        if !same_node(&before, &named) {
+            return Err(ServiceError::Artifact);
+        }
+        next
+    } else {
+        stream
+    };
+    let delivery = with_interruptible_transport(&stream, cancelled, deadline, || {
+        query_prepared_result(&stream, &policy, &captured.request, remaining()?)
+            .map_err(|_| ServiceError::Execution)
+    })?;
+    if expected_prepared
+        .as_ref()
+        .is_some_and(|expected| expected != &delivery.receipt().prepared_receipt_hash)
+    {
+        return Err(ServiceError::Execution);
+    }
+    remaining()?;
+    captured.revalidate(source)?;
+    let named = fs::symlink_metadata(&source.socket_path).map_err(|_| ServiceError::Filesystem)?;
+    if !same_node(&before, &named) || cancelled.load(Ordering::Acquire) {
+        return Err(ServiceError::Execution);
+    }
+    if let Some(usage) = delivery.receipt().token_usage {
+        let total = usage
+            .input_tokens
+            .checked_add(usage.output_tokens)
+            .ok_or(ServiceError::Execution)?;
+        if usage.cached_input_tokens > usage.input_tokens
+            || usage.reasoning_output_tokens > usage.output_tokens
+            || total > execution.candidate.resources.tokens
+        {
+            return Err(ServiceError::Execution);
+        }
+    }
+    let (actual_cost_microusd, cost_evidence) = match &source.cost_settlement {
+        Some(cost_source) => {
+            // Provider completion may happen after the pre-dispatch observation.
+            // Reuse the owning service's admission clock after delivery rather
+            // than accepting a settlement against a stale or independent clock.
+            refresh_current_time()?;
+            if cancelled.load(Ordering::Acquire) {
+                return Err(ServiceError::Execution);
+            }
+            captured.revalidate(source)?;
+            let captured_cost = CapturedSettlement::open(cost_source, &execution.attempt_id)?;
+            let now_unix_ms = context.current_time_unix_ms.load(Ordering::Acquire);
+            if now_unix_ms == 0 {
+                return Err(ServiceError::Execution);
+            }
+            let verified = verify_provider_cost_settlement(
+                &captured_cost.settlement,
+                &captured.request,
+                delivery.receipt(),
+                now_unix_ms,
+                ProviderCostSettlementPolicyV1 {
+                    version: 1,
+                    maximum_age_ms: cost_source.maximum_age_ms,
+                },
+                &cost_source.trust_store()?,
+            )
+            .map_err(|_| ServiceError::Execution)?;
+            captured_cost.revalidate(cost_source)?;
+            if verified.actual_cost_microusd() > execution.candidate.cost_microusd {
+                return Err(ServiceError::Execution);
+            }
+            (
+                verified.actual_cost_microusd(),
+                serde_json::json!({
+                    "classification": "measured_signed_provider_settlement",
+                    "costMicrousd": verified.actual_cost_microusd(),
+                    "settlementHash": verified.settlement_hash(),
+                    "settlement": verified.settlement()
+                }),
+            )
+        }
+        None => (
+            execution.candidate.cost_microusd,
+            serde_json::json!({
+                "classification": "conservative_upper_bound",
+                "costMicrousd": execution.candidate.cost_microusd,
+                "settlementHash": null,
+                "settlement": null
+            }),
+        ),
+    };
+    let evidence = serde_json::json!({
+        "version": 1,
+        "brokerReceipt": delivery.receipt(),
+        "brokerSource": source,
+        "inputManifestHash": captured.request.input_manifest_hash,
+        "providerExecutionRequestedByConsumer": execution_backend,
+        "executionSentInThisInvocation": matches!(mode, BrokerConsumeModeV1::ExecuteOnce),
+        "recoveryProtocol": "query_only_no_provider_reissue",
+        "cost": cost_evidence,
+        "scientificAcceptance": false,
+        "scope": "authenticated_local_broker_result_not_production_activation"
+    });
+    if serde_json::to_vec(&evidence)
+        .map_err(|_| ServiceError::Artifact)?
+        .len() as u64
+        > maximum_output_bytes
+    {
+        return Err(ServiceError::Artifact);
+    }
+    Ok(BrokerConsumedResultV1 {
+        output: delivery.output().to_vec(),
+        evidence,
+        actual_cost_microusd,
+    })
+}
+
+#[cfg(test)]
+mod interruption_tests {
+    use super::*;
+    use std::{
+        io::{Read, Write},
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn monotonic_deadline_interrupts_a_partial_frame() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(b"x").unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let began = Instant::now();
+        let result = with_interruptible_transport(
+            &stream,
+            &AtomicBool::new(false),
+            began + Duration::from_millis(40),
+            || {
+                let mut frame = [0_u8; 2];
+                (&stream)
+                    .read_exact(&mut frame)
+                    .map_err(|_| ServiceError::Execution)
+            },
+        );
+        assert!(result.is_err());
+        assert!(began.elapsed() < Duration::from_millis(750));
+        assert_eq!(peer.read(&mut [0_u8; 1]).unwrap(), 0);
+    }
+
+    #[test]
+    fn completed_exchange_leaves_no_watcher_to_close_later_use() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let result = with_interruptible_transport(
+            &stream,
+            &cancelled,
+            Instant::now() + Duration::from_millis(40),
+            || Ok(7),
+        )
+        .unwrap();
+        assert_eq!(result, 7);
+        std::thread::sleep(Duration::from_millis(60));
+        (&stream).write_all(b"x").unwrap();
+        let mut byte = [0_u8; 1];
+        peer.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, *b"x");
+    }
+
+    #[test]
+    fn cancellation_never_returns_success_or_invokes_precancelled_work() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let result = with_interruptible_transport(&stream, &cancelled, deadline, || {
+            cancelled.store(true, Ordering::Release);
+            Ok(7)
+        });
+        assert!(result.is_err());
+        let called = std::cell::Cell::new(false);
+        assert!(
+            with_interruptible_transport(&stream, &cancelled, deadline, || {
+                called.set(true);
+                Ok(7)
+            })
+            .is_err()
+        );
+        assert!(!called.get());
+    }
+}

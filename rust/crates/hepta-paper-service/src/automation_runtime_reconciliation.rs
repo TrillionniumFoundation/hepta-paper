@@ -27,11 +27,11 @@ pub use scoped_execution::*;
 /// Fixed business bridge for the sealed owning composition. Callers cannot
 /// substitute SQL, a plan registry, an authority transport or a clock here.
 #[allow(dead_code)]
-pub(crate) fn execute_retained_online_reconciliation_v1(
+pub(crate) fn execute_retained_online_reconciliation_v1<
+    T: crate::sqlite_mutation_coordinator::authority::MutationAuthorityTransportV1,
+>(
     connection: &mut Connection,
-    coordinator: &mut crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorV1<
-        crate::sqlite_mutation_coordinator::authority::ProcessMutationAuthorityTransportV1,
-    >,
+    coordinator: &mut crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorV1<T>,
     binding: &OnlineReconciliationBindingV1,
     request: &OnlineReconciliationRequestV1,
     before_apply: impl FnOnce() -> crate::sqlite_mutation_coordinator::Result<()>,

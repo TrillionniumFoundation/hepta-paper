@@ -7,6 +7,12 @@ No inventory script, document, source commit or fixture can grant the latter
 three. The [migration strategy](NODE_RUST_MIGRATION.md), global machine records
 and independently verified evidence remain authoritative in their scopes.
 
+The [single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md) governs
+source integration: the maintainer may review and merge their own work. No
+second-person approval, team staffing or reviewer-headcount requirement applies.
+Scientific verification, exact machine execution and runtime authority isolation
+remain technical requirements, not human PR approvals.
+
 ## Priority 1: one reviewed source subject
 
 Retain `codex/full-rust-replacement-progress-20260916` as the Rust source
@@ -37,8 +43,7 @@ acceptance. Equal trees do not transfer CI or review. An ancestor's removed
 feature may still need a retirement decision in the capability inventory.
 
 For each divergent/descendant/unrelated tip record `absorb`, `supersede`,
-`retain_reference`, or `reject`, with exact changed paths, rationale, owner and
-independent review. Inspect exact two-tree changes; GitHub's merge-base compare
+`retain_reference`, or `reject`, with exact changed paths, rationale, owner and the maintainer's recorded source comparison. Inspect exact two-tree changes; GitHub's merge-base compare
 alone cannot prove another branch has no unique behavior. Retain disposition
 records and bind their digest to the qualification subject.
 
@@ -48,9 +53,10 @@ closed `BranchDispositionPlanV1` bound to the exact candidate commit/tree and
 complete two-tree `changes`, an absorb/supersede/retain_reference/reject decision,
 owner, rationale and review-evidence digest. Missing plans exit 2; stale subjects,
 new refs, missing paths, duplicates, unknown fields and boolean approvals fail.
-This checks source bindings only: `independentReviewVerified=false` remains false
-until the external review process verifies that evidence. No tool merges refs or
-reclassifies divergent branches as accepted from a digest-shaped string.
+This checks source bindings only. The legacy `independentReviewVerified=false`
+field makes no independent-review claim and is not a merge gate. The recorded
+comparison may be performed by the same maintainer; no external human-review
+process is required. A digest alone still cannot establish behavioral equivalence.
 
 Qualification CI must read the committed tree, never create a new commit, rewrite
 work-item status, or push its own generated tree back to the candidate. Bind
@@ -89,7 +95,7 @@ historical differential corpus or independent quality evaluation
 lease, cost, retry, crash, cancellation and ambiguity disposition
 read/write schema migration and rollback/forward-recovery boundary
 actual result-byte verification and independent scientific validation
-exact candidate, test runs, artifact hashes, owner and independent review
+exact candidate, test runs, artifact hashes and maintainer evaluation
 remaining external evidence, writer transfer and Node retirement checks
 ```
 
@@ -124,9 +130,10 @@ business-role scope.
 
 Start planning external collectors in parallel with source work, but run final
 qualification against the frozen candidate. The existing collectors remain:
-#25 governance, #28 private historical replay, #17 target host, #12 destructive
+#28 private historical replay, #17 target host, #12 destructive
 storage and 72-hour soak, #14 key custody/revocation, #21 separated real model
-principals, and #22 release/immutable-storage/submission authorities.
+principals, and #22 release/immutable-storage/submission authorities. The human
+repository-approval requirement in #25 is retired, not an external blocker.
 
 Use disposable production-shaped state for shadow first. Bound canary admission,
 resource budgets, stop conditions and owner responsibilities explicitly. No

@@ -86,7 +86,13 @@ fn read_record(path: &Path, owner: u32) -> Result<Vec<u8>, ServiceError> {
 }
 
 impl DispatchGuardV1 {
-    pub(super) fn acquire(objects: &ObjectStoreV1) -> Result<Self, ServiceError> {
+    pub(super) fn acquire(
+        objects: &ObjectStoreV1,
+        incoming: &BTreeSet<String>,
+        readonly_retries: &BTreeSet<String>,
+        active_plan: Option<&Sha256Digest>,
+        committed_results: Option<&hepta_control_plane::CommittedResultSnapshotV1>,
+    ) -> Result<Self, ServiceError> {
         let state = objects.root().parent().ok_or(ServiceError::Artifact)?;
         let owner = private_root(state)?.uid();
         let path = state.join("attempts");
@@ -107,9 +113,10 @@ impl DispatchGuardV1 {
             identity,
         };
         guard.validate()?;
-        let mut started = BTreeSet::new();
-        let mut prepared = BTreeSet::new();
-        let mut total_bytes = 0usize;
+        let mut entries = Vec::new();
+        let mut names = BTreeSet::new();
+        let mut named_started = BTreeSet::new();
+        let mut named_prepared = BTreeSet::new();
         for (index, entry) in fs::read_dir(&guard.path)
             .map_err(|_| ServiceError::Execution)?
             .enumerate()
@@ -131,18 +138,39 @@ impl DispatchGuardV1 {
             {
                 return Err(ServiceError::Execution);
             }
-            let bytes = read_record(&entry.path(), owner)?;
+            let identity = identity.to_owned();
+            let is_started = suffix == "started";
+            if !names.insert(name) {
+                return Err(ServiceError::Execution);
+            }
+            if is_started {
+                named_started.insert(identity.clone());
+            } else {
+                named_prepared.insert(identity.clone());
+            }
+            entries.push((entry.path(), identity, is_started));
+        }
+        // Capacity rejection needs only immutable record names. Reject before
+        // hashing thousands of retained evidence objects, but never accept on
+        // names alone: every surviving record is fully checked below.
+        require_record_capacity(&named_started, &named_prepared, incoming)?;
+
+        let mut started = BTreeSet::new();
+        let mut prepared = BTreeSet::new();
+        let mut total_bytes = 0usize;
+        for (path, identity, is_started) in entries {
+            let bytes = read_record(&path, owner)?;
             total_bytes = total_bytes
                 .checked_add(bytes.len())
                 .ok_or(ServiceError::Execution)?;
             if total_bytes > MAX_TOTAL_BYTES {
                 return Err(ServiceError::Execution);
             }
-            if suffix == "started" {
+            if is_started {
                 if bytes != format!("sha256:{identity}").as_bytes() {
                     return Err(ServiceError::Execution);
                 }
-                started.insert(identity.to_owned());
+                started.insert(identity);
             } else {
                 let result: PreparedResultV1 =
                     serde_json::from_slice(&bytes).map_err(|_| ServiceError::Execution)?;
@@ -167,18 +195,53 @@ impl DispatchGuardV1 {
                 let evidence: EvidenceRequestBindingV1 =
                     serde_json::from_slice(&evidence_bytes).map_err(|_| ServiceError::Execution)?;
                 if evidence.version != 1
-                    || evidence.request_hash.as_str().strip_prefix("sha256:") != Some(identity)
+                    || evidence.request_hash.as_str().strip_prefix("sha256:")
+                        != Some(identity.as_str())
                 {
                     return Err(ServiceError::Execution);
                 }
-                prepared.insert(identity.to_owned());
+                // A provider result is not settled just because its bytes were
+                // prepared. A different plan cannot spend the same still-held
+                // budget after a precommit failure. All dependency waves of one
+                // already-admitted plan share its reserved budget until atomic
+                // commit; they may continue without inventing a new plan.
+                // Otherwise prove the exact durable commit from the
+                // already-verified owner index; never refund or erase evidence.
+                if result.actual_resources.provider_calls > 0
+                    && active_plan != Some(&result.plan_hash)
+                {
+                    let result_hash = result.result_hash().map_err(|_| ServiceError::Execution)?;
+                    if !committed_results
+                        .is_some_and(|committed| committed.contains_result(&result_hash))
+                    {
+                        return Err(ServiceError::Execution);
+                    }
+                }
+                prepared.insert(identity);
             }
+        }
+        if started != named_started
+            || prepared != named_prepared
+            || directory_names(&guard.path)? != names
+        {
+            return Err(ServiceError::Execution);
         }
         // A different request/plan/campaign must not evade an earlier ambiguous
         // start. Do not delete records, synthesize results, or silently retry.
-        if started != prepared {
+        if !prepared.is_subset(&started)
+            || started
+                .difference(&prepared)
+                .any(|identity| !readonly_retries.contains(identity))
+        {
             return Err(ServiceError::Execution);
         }
+        // Reserve both immutable records for every distinct incoming attempt
+        // while holding the same directory flock. Checking only existing files
+        // can accept work whose prepared result makes the next reopen fail.
+        // Cached replay consumes no slots; an admitted query-only recovery of
+        // an existing start consumes just its missing prepared slot. A batch
+        // cannot run its first provider before room for its later outputs exists.
+        require_record_capacity(&started, &prepared, incoming)?;
         guard.validate()?;
         Ok(guard)
     }
@@ -190,5 +253,100 @@ impl DispatchGuardV1 {
             return Err(ServiceError::Execution);
         }
         Ok(())
+    }
+}
+
+fn directory_names(path: &Path) -> Result<BTreeSet<String>, ServiceError> {
+    let mut names = BTreeSet::new();
+    for (index, entry) in fs::read_dir(path)
+        .map_err(|_| ServiceError::Execution)?
+        .enumerate()
+    {
+        if index >= MAX_RECORDS {
+            return Err(ServiceError::Execution);
+        }
+        let name = entry
+            .map_err(|_| ServiceError::Execution)?
+            .file_name()
+            .into_string()
+            .map_err(|_| ServiceError::Execution)?;
+        if !names.insert(name) {
+            return Err(ServiceError::Execution);
+        }
+    }
+    Ok(names)
+}
+
+fn require_record_capacity(
+    started: &BTreeSet<String>,
+    prepared: &BTreeSet<String>,
+    incoming: &BTreeSet<String>,
+) -> Result<(), ServiceError> {
+    let required = started
+        .len()
+        .checked_add(prepared.len())
+        .and_then(|count| count.checked_add(incoming.difference(started).count()))
+        .and_then(|count| count.checked_add(incoming.difference(prepared).count()));
+    if required.is_none_or(|count| count > MAX_RECORDS) {
+        return Err(ServiceError::Execution);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    #[test]
+    fn capacity_reserves_a_whole_batch_and_counts_replays_once() {
+        let prepared: BTreeSet<_> = (0..2047).map(|n| format!("old-{n}")).collect();
+        let started = prepared.clone();
+        assert!(
+            require_record_capacity(
+                &started,
+                &prepared,
+                &BTreeSet::from(["new-a".into(), "new-b".into(),])
+            )
+            .is_err()
+        );
+        assert!(
+            require_record_capacity(
+                &started,
+                &prepared,
+                &BTreeSet::from(["new-a".into(), "new-a".into(), "old-1".into(),])
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn capacity_keeps_the_last_prepared_slot_for_query_only_recovery() {
+        let prepared: BTreeSet<_> = (0..2047).map(|n| format!("old-{n}")).collect();
+        let mut started = prepared.clone();
+        started.insert("pending".into());
+        assert!(
+            require_record_capacity(&started, &prepared, &BTreeSet::from(["pending".into(),]))
+                .is_ok()
+        );
+        assert!(
+            require_record_capacity(
+                &started,
+                &prepared,
+                &BTreeSet::from(["pending".into(), "new".into(),])
+            )
+            .is_err()
+        );
+        let prepared = started.clone();
+        assert!(
+            require_record_capacity(
+                &started,
+                &prepared,
+                &BTreeSet::from(["pending".into(), "old-1".into(),])
+            )
+            .is_ok()
+        );
+        assert!(
+            require_record_capacity(&started, &prepared, &BTreeSet::from(["new".into(),])).is_err()
+        );
     }
 }

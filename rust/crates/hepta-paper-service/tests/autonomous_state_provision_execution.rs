@@ -517,3 +517,105 @@ fn recovery_cli_rejects_unknown_fields_and_unconfirmed_mutation() {
         assert!(!fixture.runtime().exists());
     }
 }
+
+#[test]
+fn published_ten_database_cli_recovers_missing_terminal_without_database_writes_or_node() {
+    let fixture = Fixture::new();
+    let mut options = fixture.options();
+    let selected = plan(&options).unwrap();
+    options.action = "execute".into();
+    options.execute = true;
+    options.expected_plan_id = Some(selected["provisioningPlanId"].as_str().unwrap().into());
+    let published = execute(&options).unwrap();
+    let terminal = fixture
+        .runtime()
+        .join("native-provisioning-publication.json");
+    let original_terminal_bytes = fs::read(&terminal).unwrap();
+    // Real native database images; simulate the interrupted terminal-publication boundary.
+    // Separate subprocess tests exercise actual death at the corresponding cut points.
+    fs::remove_file(&terminal).unwrap();
+    let request_path = fixture.root.join("publication-recovery-request.json");
+    let mut request: Value = serde_json::from_str(include_str!(
+        "../../../../docs/modules/examples/publication-recovery-request.v1.json"
+    ))
+    .unwrap();
+    request["runtimeRoot"] = json!(fixture.runtime());
+    request["expectedPreparedReceiptHash"] = published["preparedReceiptHash"].clone();
+    let call = |body: &Value| {
+        fs::write(&request_path, serde_json::to_vec(body).unwrap()).unwrap();
+        fs::set_permissions(&request_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .args(["autonomous-state-provision", "--recover-publication"])
+            .arg(&request_path)
+            .env_clear()
+            .env("PATH", "/no-node-or-external-tools")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let inspected = call(&request);
+    assert_eq!(inspected["state"], "published_without_terminal");
+    assert_eq!(inspected["mutationPerformed"], false);
+    assert!(!terminal.exists());
+    request["action"] = json!("finalize");
+    request["execute"] = json!(true);
+    request["expectedPlanHash"] = inspected["plan"]["recoveryPlanHash"].clone();
+    let recovered = call(&request);
+    assert_eq!(recovered, published);
+    assert_eq!(call(&request), published);
+    assert_eq!(fs::read(&terminal).unwrap(), original_terminal_bytes);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(terminal).unwrap()).unwrap(),
+        published
+    );
+    for record in published["databaseInstances"].as_array().unwrap() {
+        let path = fixture
+            .runtime()
+            .join(record["sourceRelativePath"].as_str().unwrap());
+        assert_eq!(
+            format!("sha256:{:x}", Sha256::digest(fs::read(path).unwrap())),
+            record["sourceSha256"]
+        );
+    }
+}
+
+#[test]
+fn published_recovery_cli_refuses_new_sql_state_and_keeps_it_unchanged() {
+    let fixture = Fixture::new();
+    let mut options = fixture.options();
+    let selected = plan(&options).unwrap();
+    options.action = "execute".into();
+    options.execute = true;
+    options.expected_plan_id = Some(selected["provisioningPlanId"].as_str().unwrap().into());
+    let published = execute(&options).unwrap();
+    let terminal = fixture
+        .runtime()
+        .join("native-provisioning-publication.json");
+    fs::remove_file(&terminal).unwrap();
+    let dbpath = fixture.runtime().join("hepta-paper.sqlite");
+    let db = Connection::open(&dbpath).unwrap();
+    db.execute_batch("CREATE TABLE recovery_new_committed_state(value TEXT); INSERT INTO recovery_new_committed_state VALUES('preserve newer state');").unwrap();
+    db.close().unwrap();
+    let before = fs::read(&dbpath).unwrap();
+    let request_path = fixture.root.join("publication-recovery-request.json");
+    let request = json!({"version":1,"kind":"NativeStatePublicationRecoveryRequestV1","action":"inspect","runtimeRoot":fixture.runtime(),
+        "expectedPreparedReceiptHash":published["preparedReceiptHash"],"execute":false,"expectedPlanHash":null});
+    fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    fs::set_permissions(&request_path, fs::Permissions::from_mode(0o600)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .args(["autonomous-state-provision", "--recover-publication"])
+        .arg(&request_path)
+        .env_clear()
+        .env("PATH", "/no-external-tools")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("published_database_changed"));
+    assert_eq!(fs::read(dbpath).unwrap(), before);
+    assert!(!terminal.exists());
+}

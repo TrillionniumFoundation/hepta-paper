@@ -1,17 +1,21 @@
-# Local workflow amendments and structural revision handoff
+# Local workflow amendments and manuscript revision handoff
 
 ## Scope and source ownership
 
 `rust/crates/hepta-paper-service/src/workflow/amendment.rs` implements explicit
-local/shadow append, budget increase, lease renewal and structural review repair.
+local/shadow append, budget increase, lease renewal and bounded review repair.
+Its `amendment/broker_revision.rs` child validates the broker manuscript contract;
+it does not add a scheduler, writer, result database or signing authority.
 `rust/crates/hepta-campaign-writer/src/workflow_amendment.rs` owns their atomic
 storage in the existing campaign writer. Neither path opens a production writer,
 changes registry activation, grants provider credentials or makes Node retired.
 
 A structural repair uses caller-supplied manuscript content and the deterministic
 native reviewer. It is not an autonomous model revision loop or independent
-scientific review. Qualified broker/model and scientific-runtime integration
-remain separate implementation and evaluation requirements.
+scientific review. The broker contract below also supports explicit signed `author/revise` and
+`reviewer/review` tasks through the ordinary autonomous entry. Dynamic request
+issuance, independent installed principals, live-model acceptance, actual billing
+and commit-bound ACK remain separate requirements.
 
 ## API and executable command
 
@@ -76,7 +80,7 @@ from the actual local status; do not copy this into a production configuration.
 | `steps` | Ordinary mode appends; repair mode replaces only the uncommitted suffix. |
 | `additionalBudgetMicrousd` | Nonnegative integer; checked cumulative total/remaining amounts fit SQLite signed integers. Never a refund or provider-charge reconciliation. |
 | `leaseExpiresAtUnixMs` | Absolute expiry, not earlier than the current lease; generation/token remain unchanged. Expired leases cannot be revived. |
-| `repairRejectedReview` | Requires the latest committed step to be a rejected native structural review and the strict replacement round below. |
+| `repairRejectedReview` | Requires the latest committed step to be a rejected native structural or versioned broker manuscript review and the matching strict replacement round below. |
 
 The entire request and next definition are bounded to 16 MiB. Total steps remain
 at most 128 and all identifiers/dependencies/resource sums remain validated by
@@ -135,6 +139,46 @@ Only those two repair steps may run while the old rejection is unresolved.
 new structural review clears the routing rejection, not scientific acceptance.
 Another rejection closes the window and blocks all later packaging. A further
 repair needs a new operation ID, fresh step IDs and the new rejected boundary.
+
+## Broker manuscript revision contract
+
+The same `repairRejectedReview` amendment can select a broker round only when
+both original roles already use the frozen `broker_execute` or `broker_prepared`
+worker binding. The original author must be `author/draft` or `author/revise`;
+the replacement is `author/revise`, not a fresh unbound draft. The reviewer remains
+`reviewer/review` in the same module. Author and reviewer endpoints must differ;
+this is a routing check, **not proof of independent installed Unix principals**.
+
+The replacement author retains the original author module, output schema,
+workspace identity and mutation policy. Four mandatory CAS bindings provide the
+previous manuscript bytes and digest, plus the exact rejected assessment bytes
+and digest. The explicit version-1 input is
+[`broker-manuscript-revision-input.v1.json`](examples/broker-manuscript-revision-input.v1.json).
+The only free instruction field is text; unknown authority or other extra fields
+are rejected. The existing signed request still has to bind the resulting exact
+manifest, prompt, task, attempt, revision, lease and resource ceilings.
+
+The reviewer job template is byte-equivalent as a JSON value to the original,
+including its rubric, prompt, schema, workspace and mutation constraints. Its
+reserved resources and cost ceiling cannot be weakened. The version-1 input is
+[`broker-manuscript-review-input.v1.json`](examples/broker-manuscript-review-input.v1.json).
+Only the two source bindings change to the revised manuscript bytes and digest;
+the `/accepted` gate must report that exact digest in `/manuscriptHash`.
+
+The ordinary `autonomous-research --action amend` and `--action converge` paths
+use the existing SQLite amendment, prepared-result and commit owners. Rejection
+stays set after the revised author commits. Only the bound replacement assessment
+can clear it; a second rejection is durable and blocks the remaining suffix.
+A lost broker execution response remains query-only on restart. Amending or
+replaying a receipt cannot discard that uncertainty or issue another execution.
+
+The broker revision regression module imports both JSON examples directly and
+invokes the actual CLI. Its protocol peers are deliberately not real provider
+canaries: source integration does not certify scientific acceptance, independently
+controlled reviewers, installed research activation, measured provider settlement
+or commit-bound acknowledgement. Executable test selectors and exact source
+bindings are maintained in the canonical route ledger and source evidence bundle,
+not duplicated as an acceptance checklist here.
 
 ## Errors and recovery
 

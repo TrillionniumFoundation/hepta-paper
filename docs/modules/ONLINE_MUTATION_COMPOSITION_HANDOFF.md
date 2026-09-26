@@ -298,8 +298,12 @@ finalization recovery followed by historical replay, staged native-store DML,
 wrong equal-report guard origin, incorrect pre/post startup binding, byte-identical
 schema/checkpoint replacement, no new RPC, and independent-process SQLite locks.
 These checks leave all activation/retirement flags false. The internal owning
-source path described below now combines these prerequisites; the complete
-writable CLI and full genuine production-installation acceptance remain open.
+source path described below now combines these prerequisites. Its `InstalledV2`
+profile additionally retains the verified nine-role deployment, actual state-
+authority socket peer/pidfd and systemd manager observation, and maps both online
+and backup authority RPCs through that one installed Rust daemon. The complete
+writable CLI and full genuine target-host production-installation acceptance
+remain open.
 
 The retained owning suite passes 3/3 in 454.12 seconds (two complete signed
 composition scenarios and their actually invoked subprocess probe). Source/cache
@@ -361,10 +365,14 @@ the owner preserves the actual business result and returns committed=true, while
 rich pending/fatal/retryable business errors retain their complete original
 fields. Three targeted owner-result tests cover these reporting boundaries.
 
-These source and lower-layer results are not full production acceptance. Genuine
-root-owned service installation under its actual principal, all independently
-signed host/runtime packages, complete writable CLI and safe signed-transfer workflow, ongoing admission
-beyond the first exact preimage, and existing v1 cutover migration remain open.
+These source and lower-layer results are not full production acceptance. The
+`InstalledV2` source now checks the declared state-authority unit against the
+actual running socket peer and systemd manager state and retains that identity
+through fence and transaction revalidation. Genuine target-host installation
+qualification under the intended principals, all independently signed host/runtime
+packages, the complete writable CLI and safe signed-transfer workflow, ongoing
+admission beyond the first exact preimage, and existing v1 cutover migration
+remain open.
 No test constructor manufactures a genuine production deployment or marks
 acceptedParity, productionActivation or nodeRetirement true.
 
@@ -427,13 +435,15 @@ no unresolved reservation. The original three retained-composition tests also
 pass after the shared evidence-view refactor. Strict service Clippy passes.
 
 The generic online/backup process transports still accept pinned executable
-scripts for compatibility and differential fixtures. The closed native
-configuration binds their process/configuration hashes, but a separate
-native-only proof of both actual child command executables and their reviewed
-adapter/topology binding is still needed before claiming a fully Node-free
-process tree or exposing the complete native writer. The existing eight-role
-deployment observer alone does not establish that transitive command property.
-Production acceptance and retirement flags remain false.
+scripts for compatibility and differential fixtures. Production-oriented
+`InstalledV2` instead derives both transports from the same retained
+`LocalStateAuthoritySocketTransportV1`, whose original peer pidfd/credentials,
+public configuration and manager binding are rechecked across activation and the
+native-store transaction. That source path removes the process/script transport
+from the installed owner, but does not manufacture a real target-host deployment
+or an independently qualified build. Compatibility process transports remain
+available for their existing fixtures. Production acceptance and retirement
+flags remain false.
 
 ## Owning signed transfer and subsequent business execution
 
@@ -472,9 +482,18 @@ fencing, peer revision races, invalid storage/subject/preimage, existing sidecar
 DELETE/WAL lock retention, terminal expiry rollback and unwind. The cutover
 crate passes 51 tests. Four preview/binding tests, five epoch tests (including
 the real safe signed transfer), and three outcome tests pass; strict service
-Clippy and independent lifecycle review pass. No full production-native fixture
-is fabricated: installed native authority adapters, qualified topology and
-the public writable CLI remain separate required work.
+Clippy and independent lifecycle review pass. No full production-native fixture is fabricated: the `InstalledV2` authority
+adapters and retained manager/socket topology now exist in source, while genuine
+target-host qualification and the public writable CLI remain separate required
+work.
+
+## Installed V2 state-authority owner
+
+The production-oriented [installation binder](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/installation.rs) now consumes the closed `ProductionDeploymentManifestV2`, verifies and retains its static nine-role deployment, opens the declared native state-authority socket before any business SQLite connection, and binds the socket-origin pidfd/UID/GID to the actual systemd service observation. A replaced peer, manager identity, invocation, executable, cgroup, principal or any retained public deployment input invalidates the owner. Legacy Node runtime disposition must be `removed_from_production` before this path is constructed.
+
+The adjacent [closed transport wrapper](../../rust/crates/hepta-paper-service/src/online_mutation_composition/activation/authority_transport.rs) gives the owning composition exactly two profiles: historical pinned process transports for compatibility, or the installed socket transport for both online mutation and backup authority. `InstalledV2` keeps the retained installation proof beside the coordinator and rechecks it before activation binding, inside recoverability/fence checks and at the native-store transaction boundary. It never converts a manager report or a deployment manifest into a write grant: the same external qualification and independently signed cutover subject remain mandatory.
+
+Targeted source verification runs 44 online-mutation-composition cases under the exact Node 22.23.1 differential oracle, including the actual installed-profile identity/manager binding tests, signed business commit/abort paths, retained SQLite locks and stale/replaced process rejection. Strict all-target Clippy also passes. These are source results. The next product gap is a named public caller that loads the real external qualification and cutover authorities and then consumes this installed owner; no diagnostic JSON or caller-selected readiness flag may substitute for those opaque verified values.
 
 ## Retained authority child-command prerequisite
 

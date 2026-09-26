@@ -70,7 +70,7 @@ struct ObservedFile {
     metadata: Metadata,
     sha256: String,
 }
-pub(super) struct Snapshot {
+pub(in crate::autonomous_state_provision) struct Snapshot {
     dirs: BTreeMap<String, (File, Metadata)>,
     files: BTreeMap<String, ObservedFile>,
 }
@@ -99,12 +99,21 @@ fn allowed() -> Result<(BTreeSet<String>, BTreeSet<String>)> {
 }
 impl Snapshot {
     pub fn capture(root: &Path, device: u64) -> Result<Self> {
+        Self::capture_profile(root, device, false)
+    }
+    pub fn capture_published(root: &Path, device: u64) -> Result<Self> {
+        Self::capture_profile(root, device, true)
+    }
+    fn capture_profile(root: &Path, device: u64, published: bool) -> Result<Self> {
         let root_file = File::from(
             open(root, flags() | OFlag::O_DIRECTORY, Mode::empty()).map_err(|_| error(INVALID))?,
         );
         let root_meta = root_file.metadata()?;
         private(&root_meta, true, device)?;
-        let (allowed_dirs, allowed_files) = allowed()?;
+        let (allowed_dirs, mut allowed_files) = allowed()?;
+        if published {
+            allowed_files.insert("native-provisioning-publication.json".to_owned());
+        }
         let mut result = Self {
             dirs: BTreeMap::from([(String::new(), (root_file, root_meta))]),
             files: BTreeMap::new(),
@@ -154,7 +163,9 @@ impl Snapshot {
                     result.dirs.insert(full.clone(), (file, metadata));
                     queue.insert(full);
                 } else {
-                    let limit = if full == "native-provisioning-receipt.json" {
+                    let limit = if full == "native-provisioning-receipt.json"
+                        || full == "native-provisioning-publication.json"
+                    {
                         1024 * 1024
                     } else {
                         FILE_BOUND
@@ -183,6 +194,43 @@ impl Snapshot {
     pub fn observation(&self) -> Value {
         json!({"directories":self.dirs.iter().map(|(path,(_,meta))|json!({"path":path,"identity":identity(meta)})).collect::<Vec<_>>(),
             "files":self.files.iter().map(|(path,file)|json!({"path":path,"identity":file_identity(&file.metadata),"sha256":file.sha256})).collect::<Vec<_>>()})
+    }
+    pub fn publication_observation(&self) -> Value {
+        let mut value = self.observation();
+        if let Some(files) = value["files"].as_array_mut() {
+            files.retain(|file| file["path"] != "native-provisioning-publication.json");
+        }
+        value
+    }
+    pub fn read_document(&mut self, name: &str) -> Result<Option<Value>> {
+        let Some(file) = self.files.get_mut(name) else {
+            return Ok(None);
+        };
+        if file.metadata.len() > 1024 * 1024 {
+            return Err(error(INVALID));
+        }
+        file.file.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        (&mut file.file)
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 != file.metadata.len()
+            || format!("sha256:{:x}", Sha256::digest(&bytes)) != file.sha256
+        {
+            return Err(error(INVALID));
+        }
+        // Validate duplicate keys and bounded JSON first, then preserve the
+        // original serde number representation (1.0 must not become integer 1)
+        // so the recovered terminal is byte-identical to the original publisher.
+        crate::sqlite_mutation_coordinator::authority::files::parse(&bytes, INVALID)
+            .map_err(|_| error(INVALID))?;
+        Ok(Some(serde_json::from_slice(&bytes)?))
+    }
+    pub fn root_directory(&self) -> Result<&File> {
+        self.dirs
+            .get("")
+            .map(|(file, _)| file)
+            .ok_or_else(|| error(INVALID))
     }
     pub fn verify(&mut self, root: &Path) -> Result<()> {
         let expected = self

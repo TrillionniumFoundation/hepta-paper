@@ -42,53 +42,21 @@ documents the exact request, shared Node locks, receipt and rollback semantics,
 tests, the private signed online callbacks and precommit scope hook, and remaining
 production/online activation and admission gaps.
 
-`hepta-paper-rust` implements:
+The command names come from the compiled `CommandV1` catalog used by the
+actual dispatcher. Inspect the runnable interface without creating runtime state:
 
-| Command | Contract |
-|---|---|
-| `advanced-numerical-plugin REQUEST` | Execute the bounded native linear-algebra, monte-carlo or optimization reference candidate. This is not the signed ten-family plugin runner or independent oracle acceptance. |
-| `autonomous-empirical-plugin-release [OPTIONS]` | Parse template/plan/publish/inspect and inspect bounded public inputs. Publication remains fail-closed; no signer, immutable installation or activation is invoked. |
-| `autonomous-intake-authority-rotation [OPTIONS]` | Inspect the native authority-rotation preflight. Applying rotation remains fail-closed before generation CAS, journal publication or external effects. |
-| `autonomous-research [OPTIONS]` | With explicit `--workflow-file`, local prepare/launch/status/converge/pause/resume/cancel use the existing immutable workflow, SQLite/CAS and dispatch owner; lifecycle mutations bind `--expected-revision`. Without a workflow file it remains diagnostic-only. This is not automatic research planning, live-model authority or full Node parity. See the local workflow handoff. |
-| `autonomous-research-one-shot-campaign-attempt [OPTIONS]` | Inspect bounded plan/preflight/execute/status inputs and report blocked execution; no provider, journal or native writer is opened. |
-| `autonomous-state-partial-root-maintenance [OPTIONS]` | Inspect the bounded partial-root maintenance plan. Execute remains blocked; it does not copy, repair, restore or publish runtime state. |
-| `autonomous-state-provision [OPTIONS]` | Inspect source-bound state-provisioning inputs. Execute remains blocked before constructors, schema handoff and atomic runtime publication. |
-| `autonomous-submission-dispatcher [OPTIONS]` | Inspect the dispatcher input boundary without granting delivery, provider credentials or remote reconciliation authority. |
-| `autonomous-submission-dispatcher-challenge [OPTIONS]` | Inspect the challenge contract; a diagnostic does not execute the incumbent dispatcher or accept a remote outcome. |
-| `autonomous-supervisor [OPTIONS]` | The supported health action observes the native health surface. Other supervisor actions remain unported; health does not launch, stop or authorize a production runtime. |
-| `external-authority-intake [OPTIONS]` | Inspect external-intake inputs and readiness boundaries. The owning external-authority adapter remains unported; no receipt is manufactured into acceptance. |
-| `full-production-readiness [OPTIONS]` | Inspect the bounded native readiness surface and its explicit blockers. It does not activate production or replace missing installed observations. |
-| `release-attest REQUEST` | Inspect release-state and local archive preconditions. Release evidence remains not ready; no signing, release promotion or immutable publication is performed. |
-| `retirement-drill-attest REQUEST` | Inspect retirement-drill prerequisites. This does not run destructive target-host drills, issue independent acceptance or retire Node. |
-| `retirement-matrix [OPTIONS]` | Inspect the bounded retirement matrix and retained source inputs. A local projection does not authorize deletion or writer transfer. |
-| `strict-full-auto-acceptance [OPTIONS]` | Inspect the strict acceptance preflight and retain explicit nonacceptance when owning runtime, provider or external evidence is missing. |
-| `submission-handoff-export [OPTIONS]` | Inspect the submission-handoff export boundary. Complete authenticated export and downstream delivery acceptance remain separate; this route cannot authorize submission. |
-| `verify-architecture [OPTIONS]` | Run native architecture inspection and apply the requested strict result gate. This is repository structure analysis, not execution or business parity. |
-| `verify-critical [OPTIONS]` | Inspect critical-module coverage inputs and gate the projection. It does not execute the incumbent coverage harness or create missing test measurements. |
-| `verify-full [OPTIONS]` | Inspect full-suite verification prerequisites and report blocked execution. It does not run the complete Node or Rust test matrix. |
-| `native-identity` | Print the linked native-worker source identity. |
-| `put STATE FILE` | Insert up to 16 MiB of actual bytes and return their SHA-256. |
-| `run CONFIG` | Decode one closed `ServiceRunV1` JSON document and emit its run receipt. |
-| `serve` | Read one bounded JSON configuration per stdin line; emit one receipt per completed request. EOF shuts down. An invalid request exits nonzero. |
-| `inspect-db IMMUTABLE_DB` | Validate a real Node migration database and print the production-compatible logical report. |
-| `store-integrity [IMMUTABLE_DB]` | Emit the complete read-only Node logical-integrity report, including byte pre/post hashes, SQLite checks, receipt-ledger validation and fail-closed status. When omitted, the database resolves from `HEPTA_PAPER_RUNTIME_ROOT/hepta-paper.sqlite` with the installed sibling-runtime fallback used by the Node command. |
-| `store-status IMMUTABLE_DB [RUNTIME_ROOT]` | Emit the read-only `HeptaNativeStoreStatus` projection for an explicitly supplied canonical store, including metadata, table counts, evidence/job classifications, contamination and submission-handoff gates. It does not discover, migrate, repair or authorize a production store. |
-| `automation-status --help [--json]` | Emit the exact deterministic Node `AutomationStatusUsage` metadata. This is a bounded help-only route; readiness observers, handoff composition, deployment-environment loading, live provider/formal/release probes and authority actions remain unimplemented. |
-| `local-golden-dataset-provision --action plan|execute [options]` | Inspect a bounded, source-bound local golden-dataset plan for the checked-in `ml_algorithm_benchmark` profile. The plan validates private roots, immutable dataset/split/harness/semantics/trust inputs and hashes without writing. `execute` validates the plan ID then fails closed before reading a private key or publishing an envelope, trust store, mount or receipt; all-family contract normalization, signing, mount authorization and no-clobber publication remain open. |
-| `store-migrate NODE_DB [TARGET_VERSION]` | Apply the embedded Node schema migrations to a private local database, validating historical migration hashes and rejecting live leases/SQLite sidecars. Optional target is 1–25; this does not authorize a production write or retire Node. |
-| `verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE` | Read and validate an already drained immutable Node database against the exact source subject; print the freeze receipt. It does not drain the live database, activate a Rust writer, authorize rollback or retire Node. |
-| `repository-assets [ROOT MANIFEST] [--handoff] [--require-externalized]` | Verify repository asset identities, pinned external references, restore-drill receipts and gitlink bindings; omitted roots resolve the current deployment root when its canonical manifest is present, then the compiled source root. `--handoff` emits a non-authorizing migration handoff. Invalid boundaries exit 1; `--require-externalized` also exits 1 for sound boundaries still awaiting externalization. |
-| `command-surface ROOT [--write-package\|--check-package\|--npm-aliases\|--help-artifact\|--ci-matrix]` | Inspect or synchronize the local `package.json` command-script registry without invoking Node; write/check preserve Node's insertion order and JavaScript truthiness, including Object.keys/Object.entries coercion for malformed array/string `scripts` values, UTF-16 code-unit key ordering, and surrogate-safe JSON rewriting. Classify, help, aliases, and CI matrix are deterministic read-only projections backed by checked-in command-registry artifacts. |
-| `research-capability-matrix --request ABSOLUTE_JSON_PATH [--require-production-ready]` | Project an already-observed descriptive readiness document through the ten-capability matrix; the optional gate is fail-closed and never grants authority or activation. |
-| `research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]` | Project the actual passive Rust state-safety inspection and compare it with the Node diagnostic contract; `--require-ready` fails closed and the command performs no authority RPC or runtime write. Full automation-status observers and live activation remain outside this bounded route. |
-| `generic-domain-capability-evidence --action status\|converge --runtime-root ABSOLUTE_PATH` | Inspect only the explicit private `generic-domain-capability-evidence.json` file under the supplied runtime root, matching Node shape/hash/path checks. `status` is read-only; `converge` is a fail-closed diagnostic that never publishes, invokes external replay/authority, or changes service state. |
-| `personal-self-hosted-readiness [--root PATH] [--runtime-root PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO\|UNIX_MILLIS]` | Compose the read-only personal local observer: exact provenance, formal zero-skip evidence, tracked-source/runtime boundary, SQLite schema/lease and consistent-snapshot checks, anti-rollback ledger, backup/restore-drill receipts and CPU/optional GPU scientific receipts. Missing evidence stays blocked; the route never invokes external actors or grants authority. Hardware qualification, external authority, deployment and Node retirement remain open. |
-| `personal-gpu-operational-gate --check [--root PATH] [--runtime-root PATH] [--receipt PATH]` | Read and verify the existing personal GPU operational receipt with the Node-compatible shape, blocker normalization and production hash. Missing, malformed and blocked receipts fail closed; the route never runs `nvidia-smi`, Docker, PDE/DL workers, CPU or holdout oracles, and never writes a receipt. The execute gate, second hardware, external authority, production activation and Node retirement remain open. |
-| `retirement-reference ROOT` | Verify retirement snapshot receipts and archive hashes without consulting or mutating a live legacy runtime. |
-| `release-trust-gate REQUEST` | Evaluate the pure release trust-layer count gate from JSON input, including the covered JavaScript `String(value || '')` release-commit and bounded `Number(...)` count coercions (`0b`/`0o` forms); broader arbitrary JavaScript number behavior remains outside this bounded profile. It never creates external signatures or activates production. |
-| `release-state REQUEST` | Evaluate the pure package/document/tag release-state contract from JSON input, including omitted tag snapshots and deduplicated duplicate/newer-tag diagnostics; composite release verification remains separate. |
-| `retirement-status REQUEST` | Inspect the read-only legacy archive retirement status for explicit roots and version; destructive identity-bound execution remains disabled. |
-| `runtime-r-source-cas REPOSITORY_ROOT [--action status\|acquire] [--seed DIRECTORY]` | Verify the R lock closure, source-CAS manifest, indexes and archive hashes. `--action acquire --seed DIRECTORY` performs bounded offline acquisition (256 MiB per archive) with the host `tar` DESCRIPTION identity check, exact hashes, private staging and no-replace publication; network/CRAN acquisition remains unavailable. |
+```sh
+cargo run --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --bin hepta-paper-rust -- --help-json
+```
+
+The [canonical Node-to-Rust command map](../../../docs/migration/node-rust-command-map.v1.json)
+is the single machine source for route arguments, source call chains, regression
+cases and remaining acceptance boundaries. Its
+[generated gap ledger](../../../docs/migration/NODE_RUST_GAP_CLOSURE.md) is the
+human-readable view. This README does not maintain another command-status table.
+A compiled command name is not evidence that all Node argument modes, effects,
+recovery semantics or installed acceptance are complete.
 
 Separate native binaries inspect operational proof, owner acceptance, nested
 runtime qualification and journal connector coverage. Their inputs, signature
@@ -111,10 +79,12 @@ Snapshot, policy, manifest and frontier hashes are independently checked by the
 existing control-plane contracts. The worker must match the registry execution
 kind and identity; a missing worker never falls back to Node or a fixture.
 
-The clock is explicit to support reproducible drills. It is not a live clock:
-this executable must not be used as a production lease/timer supervisor. The
-initial campaign snapshot uses revision one; later plans bind the recovered
-state and the next revision. Exact historical replay remains a distinct case.
+The serialized clock supports reproducible local drills. The ordinary library,
+CLI and stdin service select a live host clock whenever a `BrokerExecute` worker
+is present; a stale serialized time cannot keep its writer lease valid. This
+does not make the executable a production lease/timer supervisor. The initial
+campaign snapshot uses revision one; later plans bind the recovered state and
+next revision. Exact historical replay remains a distinct case.
 
 ## Filesystem and SQLite state
 
@@ -133,10 +103,15 @@ See [the writer contract](../hepta-campaign-writer/README.md) and
 [the control-plane contract](../hepta-control-plane/README.md).
 
 The executor fsyncs a dispatch intent before work and persists the complete
-prepared result after writing artifacts. A committed or prepared exact attempt
-can replay. A started attempt with no complete prepared record is ambiguous and
-requires reconciliation; restart does not automatically run it again. Errors
-return bounded categories without echoing worker stdout, prompts or credentials.
+prepared result after writing artifacts. For broker work, request capture,
+semantic binding, endpoint connection and kernel-peer authorization precede the
+intent; failures in that local preflight cannot have sent request bytes and may
+be retried. The retained request is revalidated after intent persistence and
+before transport. From that point any failure keeps the intent: a started
+attempt without a complete prepared record is ambiguous and broker recovery
+only queries the original operation. Restart never automatically executes it
+again. A committed or prepared exact attempt can replay without another debit.
+Errors return bounded categories without echoing prompts or credentials.
 
 ## Native work and gradual process migration
 
@@ -176,64 +151,26 @@ production callback supplied by this executable.
 
 ## Verification and remaining production work
 
-`hepta-paper-rust external-authority-intake` is the bounded passive intake
-surface for the first external production dependency. Its `--help` payload,
-missing-input report, inspection hash and `--require-ready` exit status match
-the Node composition; supplied paths are pinned regular files (canonical,
-single-link, non-writable, owner-checked) and symlinks fail closed. The current
-Rust route deliberately reports `rust_external_authority_intake_adapter_not_ported`
-for configured material. It does not parse or trust author envelopes, release
-attestor v3/KMS hardware bundles, invoke signer processes, read private keys,
-or claim production readiness. Those independently reviewed authority adapters
-remain an open migration row in the command-gap ledger.
+The canonical command map and generated ledger above distinguish source behavior
+from route acceptance, production activation and Node retirement. Do not copy
+their changing status into a second narrative checklist. The
+[migration implementation report](../../../docs/rust/RUNTIME_MIGRATION_IMPLEMENTATION.md)
+links the current source, installation and acceptance owners.
 
-`hepta-paper-rust generic-domain-capability-evidence` deliberately covers a
-narrower local boundary than the incumbent generic-domain command. It accepts
-only an explicit absolute, canonical, private runtime root and reads its
-canonical `generic-domain-capability-evidence.json` with a no-follow file
-descriptor, stable identity/size/mtime checks, the 16 MiB bound, exact fourteen
-field shape and the production Node record hash. `status` reports that local
-inspection and never returns an authority decision. `converge` always exits
-with the fail-closed blocked result: persisted authority lineage, formal-domain
-replay, independent review, target-host qualification and the atomic
-publication writer are not represented by this adapter. No environment path,
-external authority, signer, replay, private key or runtime mutation is used.
-The [generic-domain evidence handoff](../../../docs/modules/GENERIC_DOMAIN_CAPABILITY_EVIDENCE_HANDOFF.md)
-defines the local `ready` field, exact input shape, exits, and remaining strong
-status/convergence call chain.
-
-`hepta-paper-rust personal-self-hosted-readiness` composes the seven local
-controls from the incumbent personal profile and matches the pinned Node report
-for missing evidence, GPU opt-in blocking and a safe schema-25 database with a
-valid anti-rollback ledger, backup and restore drill. The [personal readiness
-handoff](../../../docs/modules/PERSONAL_SELF_HOSTED_READINESS_HANDOFF.md)
-defines the private-file, SQLite snapshot, scientific-receipt and
-`--require-ready` boundaries. The route remains a source-level local observer;
-it never performs provider, network, signer, deployment or publication work.
-
-`hepta-paper-rust personal-gpu-operational-gate --check` is the bounded
-read-only counterpart for the incumbent private GPU gate. It accepts the same
-valid ready and blocked receipt wire format, verifies all nested GPU/PDE/deep
-learning/IR fields and the `personalGpuOperationalReceiptHash`, and emits the
-same exit class as Node (zero only for a valid personal-ready receipt; two for
-missing, malformed or blocked evidence). Receipt reads use a regular-file,
-single-link, no-follow descriptor, stable identity and 64 MiB bound. The Rust
-route does not claim to execute or authorize the real GPU gate: that still
-requires the pinned NVIDIA/Docker/PDE/DL/CPU-oracle/holdout chain and remains a
-separate migration and host-qualification gap.
+For the detailed observer contracts, use the
+[generic-domain evidence handoff](../../../docs/modules/GENERIC_DOMAIN_CAPABILITY_EVIDENCE_HANDOFF.md),
+[personal readiness handoff](../../../docs/modules/PERSONAL_SELF_HOSTED_READINESS_HANDOFF.md)
+and [module documentation index](../../../docs/modules/README.md).
+A passive inspection or bounded preflight does not establish that an external
+provider, signer, release attestor, portal or installed writer executed an action.
 
 `cargo test -p hepta-paper-service` covers executable configuration, actual CAS
 bytes, durable commit/replay, unsafe content rejection and authority refusal.
 Run the local service and cutover drills independently: one proves campaign
 orchestration; the other proves cooperative single-writer handoff. Their success
-does not establish a complete Node-to-Rust data migration.
-
-Production composition still needs a live clock and qualified runtime identity,
-real immutable deployment/source closure, validated provider authority, actual
-business workers and their capability replay corpora, Node schema translation
-and reverse compatibility, and retained target-host shadow/canary evidence.
-These conditions are tracked in the
-[migration implementation report](../../../docs/rust/RUNTIME_MIGRATION_IMPLEMENTATION.md).
+does not establish complete Node-to-Rust migration, production qualification or
+scientific acceptance. Retain exact-head and deterministic prospective-merge
+results separately; a source change invalidates the earlier source subject.
 
 ## Native bundle verification
 
@@ -442,3 +379,22 @@ and CAS byte coverage, identity checks, deadlines and test selection are not
 relaxed. This avoids spending most process-workflow feedback time in unoptimized
 hash compression of large debug executables. It is a development-build setting,
 not a production throughput or target-host qualification result.
+
+
+## Compiled command catalog and broker execution
+
+`hepta-paper-rust --help-json` returns `RustCommandCatalogV1` from the same typed
+`CommandV1` enum used by the actual dispatcher. It has no operational side
+effects and rejects extra arguments. The `cli_command_catalog` integration tests
+execute the real binary and compare its output to the compiled catalog; unit
+tests verify exact parsing and that canonical migration rows name real commands.
+Neither check depends on Markdown table formatting or Rust match-arm spelling.
+The catalog and migration ledger describe different interfaces: an executable
+entrypoint is not complete parity acceptance for a Node route.
+
+The [local workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#explicit-signed-broker-execution-and-recovery)
+defines `broker_execute` alongside the unchanged `broker_prepared` backend.
+It sends one original independently signed request, then uses the original
+query/CAS/SQLite path; unresolved retry is query-only. Actual execution CLI calls
+use the live host clock. Neither backend signs a request or grants production,
+release, submission or scientific-acceptance authority.

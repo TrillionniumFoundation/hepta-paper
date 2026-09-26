@@ -336,7 +336,8 @@ impl MutationManifestV1 {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MutationPolicyV1 {
     pub version: u16,
     pub read_only: bool,
@@ -392,6 +393,31 @@ impl MutationPolicyV1 {
         }
         Ok(())
     }
+}
+
+pub fn mutation_policy_hash_v1(policy: &MutationPolicyV1) -> Result<Sha256Digest, WorkspaceError> {
+    hash_serialized("HeptaMutationPolicyV1", policy)
+}
+
+pub fn workspace_identity_hash_v1(root: &WorkspaceRootV1) -> Result<Sha256Digest, WorkspaceError> {
+    hash_serialized("HeptaWorkspaceIdentityV1", root.identity())
+}
+
+/// Recomputes every workspace-preparation binding from retained source facts.
+/// A deserialized prepared record is never authority by itself.
+pub fn validate_prepared_workspace_result_v1(
+    prepared: &PreparedWorkspaceResultV1,
+    attempt: &AttemptWorkspaceV1,
+    root: &WorkspaceRootV1,
+    after: &TreeInventoryV1,
+    mutation: &MutationManifestV1,
+    policy: &MutationPolicyV1,
+) -> Result<(), WorkspaceError> {
+    let expected = PreparedWorkspaceResultV1::new(attempt, root, after, mutation, policy)?;
+    if prepared != &expected {
+        return Err(WorkspaceError::MutationPolicyRejected);
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -1708,6 +1734,27 @@ mod tests {
                 .expect("prepared result");
         assert_eq!(prepared.attempt_id, "attempt-1");
         assert_eq!(mutation.records.len(), 1);
+        assert_eq!(
+            prepared.workspace_identity_hash,
+            workspace_identity_hash_v1(&attempt_root).expect("workspace identity hash")
+        );
+        let policy_hash = mutation_policy_hash_v1(&policy).expect("policy hash");
+        let decoded: MutationPolicyV1 =
+            serde_json::from_slice(&serde_json::to_vec(&policy).expect("policy bytes"))
+                .expect("closed policy");
+        assert_eq!(
+            mutation_policy_hash_v1(&decoded).expect("decoded policy hash"),
+            policy_hash
+        );
+        validate_prepared_workspace_result_v1(
+            &prepared,
+            &attempt,
+            &attempt_root,
+            &after,
+            &mutation,
+            &policy,
+        )
+        .expect("prepared result recomputes");
     }
 
     #[test]

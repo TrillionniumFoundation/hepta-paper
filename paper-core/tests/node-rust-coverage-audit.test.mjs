@@ -109,7 +109,7 @@ test('canonical command ledger owns every campaign action mode and explicit gap'
   assert.equal(report.commandMappings.productionActivation, false);
   assert.equal(report.commandMappings.nodeRetirement, false);
   assert.equal(modes.length, 15);
-  assert.equal(modes.filter((row) => row.scope === 'partial_local_source').length, 14);
+  assert.equal(modes.filter((row) => row.scope === 'partial_local_source').length, 15);
   assert.equal(new Set(modes.map((row) => row.nodeAction)).size, modes.length);
   for (const action of ['gc', 'retention-recovery-readiness', 'provision-retention-recovery']) {
     const row = modes.find((entry) => entry.nodeAction === action);
@@ -117,8 +117,10 @@ test('canonical command ledger owns every campaign action mode and explicit gap'
     assert.ok(row.callChain.length > 0 && row.tests.length > 0);
     assert.ok(row.remaining.length > 80);
   }
-  assert.equal(modes.filter((row) => row.scope === 'unmapped').length, 1);
-  assert.equal(modes.find((row) => row.nodeAction === 'cancel-node').scope, 'unmapped');
+  assert.equal(modes.filter((row) => row.scope === 'unmapped').length, 0);
+  const cancelNode = modes.find((row) => row.nodeAction === 'cancel-node');
+  assert.equal(cancelNode.scope, 'partial_local_source');
+  assert.ok(cancelNode.callChain.length > 0 && cancelNode.tests.length > 0);
   assert.ok(modes.find((row) => row.nodeAction === 'resume').remaining.includes('not equivalent'));
   assert.equal(report.acceptedParityRows, 0);
 });

@@ -133,6 +133,9 @@ fn template(
         independent_reviewer: "TEAM-EVIDENCE".into(),
         rollback_version: "0.9.0".into(),
         execution: match &binding {
+            WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. } => {
+                panic!("this native/process fixture does not issue broker requests")
+            }
             WorkerBindingV1::Native => ModuleExecutionV1::InProcess {
                 implementation_hash: native_implementation_hash_v1()?,
             },
@@ -372,6 +375,108 @@ fn cancel_is_terminal_and_stale_or_rollback_commands_do_not_dispatch() {
 }
 
 #[test]
+fn cancel_node_preserves_committed_steps_and_cancels_the_uncommitted_suffix() {
+    let (temp, hash) = fixture();
+    let step_ids = steps().into_iter().map(|step| step.id).collect::<Vec<_>>();
+    let first = operate_local_workflow_v1(
+        &temp.state(),
+        &hash,
+        WorkflowActionV1::Advance { through_steps: 2 },
+        1100,
+    )
+    .unwrap();
+    let attempts = attempt_count(&temp);
+
+    // The incumbent returns a terminal node unchanged. A committed local step
+    // is therefore an idempotent no-op even if the caller retained an old
+    // campaign revision.
+    let committed =
+        cancel_local_workflow_node_v1(&temp.state(), &hash, &step_ids[0], 0, 1150).unwrap();
+    assert_eq!(committed.campaign_state, CampaignStateV1::Running);
+    assert_eq!(committed.campaign_revision, first.campaign_revision);
+    assert_eq!(committed.committed_steps, 2);
+    assert_eq!(attempt_count(&temp), attempts);
+
+    assert!(
+        cancel_local_workflow_node_v1(
+            &temp.state(),
+            &hash,
+            "missing-step",
+            first.campaign_revision,
+            1151,
+        )
+        .is_err()
+    );
+    assert!(
+        cancel_local_workflow_node_v1(
+            &temp.state(),
+            &hash,
+            &step_ids[2],
+            first.campaign_revision.saturating_sub(1),
+            1152,
+        )
+        .is_err()
+    );
+
+    let cancelled = cancel_local_workflow_node_v1(
+        &temp.state(),
+        &hash,
+        &step_ids[2],
+        first.campaign_revision,
+        1200,
+    )
+    .unwrap();
+    assert_eq!(cancelled.campaign_state, CampaignStateV1::Cancelled);
+    assert_eq!(cancelled.committed_steps, 2);
+    assert_eq!(attempt_count(&temp), attempts);
+
+    // Response-loss replay is exact and does not increment revision again.
+    let replay = cancel_local_workflow_node_v1(
+        &temp.state(),
+        &hash,
+        &step_ids[2],
+        first.campaign_revision,
+        1201,
+    )
+    .unwrap();
+    assert_eq!(replay.campaign_revision, cancelled.campaign_revision);
+    assert_eq!(attempt_count(&temp), attempts);
+    assert!(
+        operate_local_workflow_v1(
+            &temp.state(),
+            &hash,
+            WorkflowActionV1::Advance { through_steps: 3 },
+            1300,
+        )
+        .is_err()
+    );
+    assert_eq!(attempt_count(&temp), attempts);
+
+    let (cli, cli_hash) = fixture();
+    let binary = env!("CARGO_BIN_EXE_hepta-local-workflow");
+    let output = Command::new(binary)
+        .args([
+            "cancel-node",
+            cli.state().to_str().unwrap(),
+            cli_hash.as_str(),
+            step_ids[0].as_str(),
+            "0",
+            "1200",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["campaignState"], "cancelled");
+    assert_eq!(response["committedSteps"], 0);
+    assert_eq!(attempt_count(&cli), 0);
+}
+
+#[test]
 fn service_rejects_paused_cancelled_and_completed_before_dispatch() {
     for state in [
         CampaignStateV1::Paused,
@@ -576,6 +681,30 @@ fn process_binding(executable: PathBuf, cwd: PathBuf, arguments: Vec<String>) ->
     // executable policy or changing a shared Cargo artifact in place.
     let private_executable = cwd.join("pinned-worker");
     fs::copy(&executable, &private_executable).unwrap();
+    // A debug integration-test binary can exceed the actual 256 MiB worker
+    // admission bound. Strip only this private copy before hashing it, retaining
+    // the real Rust worker code and every crash/recovery assertion. Never widen
+    // the product bound or mutate Cargo's shared executable to make a test pass.
+    fs::set_permissions(&private_executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let before = fs::metadata(&private_executable).unwrap().len();
+    let stripped = Command::new("strip")
+        .arg("-S")
+        .arg(&private_executable)
+        .output()
+        .unwrap();
+    assert!(
+        stripped.status.success(),
+        "strip private fixture: {}",
+        String::from_utf8_lossy(&stripped.stderr)
+    );
+    let after = fs::metadata(&private_executable).unwrap().len();
+    assert!(
+        after <= 256 * 1024 * 1024,
+        "private worker still exceeds product bound: {after}"
+    );
+    eprintln!(
+        "private Rust worker before={before} after={after} bytes; shared executable unchanged"
+    );
     fs::set_permissions(&private_executable, fs::Permissions::from_mode(0o500)).unwrap();
     let executable = fs::canonicalize(private_executable).unwrap();
     WorkerBindingV1::Process {

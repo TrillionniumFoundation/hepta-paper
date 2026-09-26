@@ -221,9 +221,13 @@ or dereference to `VerifiedExternalQualificationClosureV1`; a compile-fail test
 protects that boundary. V1/V2 full producers still reject the five-package set,
 and the full production-writer API cannot accept this research type. This
 separates evidence intake and persistent acceptance, not a new production
-research writer. The named runtime consumer, real host evidence and explicit
-writer activation still require composition. No source fixture is external
-qualification, a provider credential, release permission or submission authority.
+research writer. The source consumer is now the distinct
+[`run_research_service_v1`](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#restricted-research-service-profile)
+composition; it reuses the existing private research-state writer while refusing
+release/submission/cutover authority. Real host evidence, installed executable
+binding, live revocation and explicit target-host activation still require the
+installed composition. No source fixture is external qualification, a provider
+credential, release permission or submission authority.
 
 `cargo test -p hepta-qualification-ingest --locked` runs actual fixture-signature
 acceptance, missing/extra package denial, cross-host/signature rejection,

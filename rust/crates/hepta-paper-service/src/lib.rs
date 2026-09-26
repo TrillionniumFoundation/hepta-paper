@@ -69,6 +69,7 @@ pub mod release_integrity_key;
 pub mod release_state;
 pub mod release_trust_gate;
 pub mod repository_assets;
+mod research;
 pub mod resident_prerequisites;
 pub mod retirement_matrix;
 pub mod retirement_reference;
@@ -138,6 +139,11 @@ pub use objects::ObjectStoreV1;
 pub use production::{
     ProductionActivationStageV1, ProductionServiceReceiptV1, ProductionServiceRunV1,
     run_production_service_v1,
+};
+pub use research::{
+    ResearchActivationStageV1, ResearchServiceReceiptV1, ResearchServiceRunV1,
+    run_research_service_v1, run_research_service_with_cancellation_v1,
+    validate_research_service_policy_v1,
 };
 pub use worker::{
     NativeJobV1, ServiceExecutorV1, WorkerBindingV1, WorkerResponseV1,

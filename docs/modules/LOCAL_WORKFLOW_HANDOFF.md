@@ -621,6 +621,38 @@ byte/read limits, safe compaction, long-running retention and installed recovery
 qualification remain separate constraints. No capacity failure grants provider
 termination, actual cost settlement, production activation or Node retirement.
 
+## Restricted research service profile
+
+`run_research_service_v1` is a separate, non-serializable composition around the
+existing service, CAS, dispatcher and SQLite sequencer. The caller must provide
+the opaque `VerifiedResearchQualificationV3`; receipt JSON, profile strings and
+booleans cannot construct or replace that value. The exact repository/commit/tree
+subject and qualified Codex runtime identity are cross-bound before any state
+operation. Qualification currentness is checked once before filesystem mutation
+and again on every existing service clock observation through dispatch and
+commit. The public cancellation form forwards the same sticky cooperative token;
+a pre-cancelled run creates no campaign database. A time-window or cancellation
+failure therefore follows the same prepared-result and inspection/recovery rules
+rather than authorizing a fresh effect or claiming provider termination.
+
+The profile admits only `TargetHost` research modules in the selected canary or
+established research stage. Registered or selected release verification,
+submission, migration/cutover, external-effect, central-writer module, Process
+worker and legacy Node adapter paths fail closed. Native workers and qualified
+broker prepared/execute workers still use the existing implementation hashes,
+request binding, CAS verification and single sequencer. An established receipt
+is authoritative only for its private research state; its canonical body keeps
+`productionActivation`, `releaseAuthority`, `submissionAuthority` and
+automatic activation false.
+
+This is a source composition, not installed acceptance. It does not make a test
+qualification externally real, bind the currently running executable to a host
+package, provision independent author/reviewer credentials, add live trust-store
+revocation callbacks, settle provider invoices or send commit-bound broker ACKs.
+Those facts still require the named installed composition and independently
+controlled evidence. The full production API continues to require the distinct
+V1/V2 closure and cannot accept the V3 research type.
+
 ## Versioned broker manuscript repair
 
 The existing amendment owner now admits the bounded broker manuscript revision

@@ -443,7 +443,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/lib.rs",
           "role": "implementation",
-          "gitBlob": "8e4da6a05169f73c2cca400bbfe8b3b0b935cecb",
+          "gitBlob": "781578d1e4a9effd46a5a258ba734a3f82fddb6f",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -901,6 +901,48 @@
             {
               "kind": "test",
               "name": "final_prepared_slot_recovers_a_lost_response_without_reissuing_execution"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "role": "implementation",
+          "gitBlob": "ca6e97e27786f9d6a50440fce0e634d968c193bb",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "run_research_service_v1"
+            },
+            {
+              "kind": "function",
+              "name": "validate_research_service_policy_v1"
+            },
+            {
+              "kind": "function",
+              "name": "run_research_service_with_cancellation_v1"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_service_profile.rs",
+          "role": "test",
+          "gitBlob": "53a9f2baf26df285b5c844cf07d3a482a6fa39ac",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "research_policy_accepts_target_host_private_state_without_release_authority"
+            },
+            {
+              "kind": "test",
+              "name": "research_policy_rejects_release_submission_cutover_and_external_effects"
+            },
+            {
+              "kind": "test",
+              "name": "research_policy_rejects_source_process_activation_and_runtime_substitution"
             }
           ]
         }
@@ -1886,6 +1928,69 @@
           "timeoutSeconds": 600,
           "expectedTargets": [
             "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "research_service_profile",
+            "research_policy_accepts_target_host_private_state_without_release_authority",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "research_service_profile",
+            "research_policy_rejects_release_submission_cutover_and_external_effects",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "research_service_profile",
+            "research_policy_rejects_source_process_activation_and_runtime_substitution",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
           ]
         }
       ]

@@ -3310,6 +3310,18 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker_recovery.rs",
           "symbol": "require_record_capacity"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "symbol": "run_research_service_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "symbol": "validate_research_service_policy_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "symbol": "run_research_service_with_cancellation_v1"
         }
       ],
       "tests": [
@@ -3324,9 +3336,11 @@
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs",
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/plan_waves.rs",
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/revision.rs",
-        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
+        "rust/crates/hepta-paper-service/src/research.rs",
+        "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
       ],
-      "remaining": "Bounded broker manuscript revision now uses the ordinary amendment/converge path with retained CAS manuscript/rejection inputs, an unchanged reviewer contract and query-only uncertain recovery; protocol fixtures are not live independent-role acceptance. The explicit local workflow path does not implement automatic research planning, dynamic trusted request issuance, independent live author/reviewer/revision roles, measured provider-invoice settlement, commit-bound signed ACK, automatic lease renewal, or all incumbent argument modes. Broker transport interruption does not prove provider termination or settle/refund an unknown result. Native in-process work is not preempted mid-calculation. Full role/command acceptance, installed restricted-research qualification, production activation, writer transfer and Node retirement remain unaccepted. Current contracts and runnable coverage are in docs/modules/LOCAL_WORKFLOW_HANDOFF.md; the call chain and named tests below are the machine source for implemented behavior.",
+      "remaining": "The explicit restricted-research library profile now consumes the opaque V3 qualification, rechecks currentness across the existing service/CAS/sequencer boundaries, and refuses release, submission, cutover, Process and legacy Node authority. The ordinary autonomous CLI does not construct V3 from JSON or establish an installed profile; live revocation callbacks and target-host activation remain open. Bounded broker manuscript revision now uses the ordinary amendment/converge path with retained CAS manuscript/rejection inputs, an unchanged reviewer contract and query-only uncertain recovery; protocol fixtures are not live independent-role acceptance. The explicit local workflow path does not implement automatic research planning, dynamic trusted request issuance, independent live author/reviewer/revision roles, measured provider-invoice settlement, commit-bound signed ACK, automatic lease renewal, or all incumbent argument modes. Broker transport interruption does not prove provider termination or settle/refund an unknown result. Native in-process work is not preempted mid-calculation. Full role/command acceptance, installed restricted-research qualification, production activation, writer transfer and Node retirement remain unaccepted. Current contracts and runnable coverage are in docs/modules/LOCAL_WORKFLOW_HANDOFF.md; the call chain and named tests below are the machine source for implemented behavior.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/autonomous_research.rs",
@@ -3346,7 +3360,8 @@
         "rust/crates/hepta-paper-service/src/broker_prepared.rs",
         "rust/crates/hepta-codex-broker/src/client.rs",
         "rust/crates/hepta-paper-service/src/worker_recovery.rs",
-        "rust/crates/hepta-paper-service/src/workflow/amendment/broker_revision.rs"
+        "rust/crates/hepta-paper-service/src/workflow/amendment/broker_revision.rs",
+        "rust/crates/hepta-paper-service/src/research.rs"
       ],
       "testCases": [
         {
@@ -3540,6 +3555,34 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
           "symbol": "final_prepared_slot_recovers_a_lost_response_without_reissuing_execution"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "symbol": "qualified_research_run_commits_and_replays_without_release_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "symbol": "expired_or_foreign_qualification_fails_before_campaign_database"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "symbol": "qualification_currentness_is_rechecked_across_service_boundaries"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_service_profile.rs",
+          "symbol": "research_policy_accepts_target_host_private_state_without_release_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_service_profile.rs",
+          "symbol": "research_policy_rejects_release_submission_cutover_and_external_effects"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_service_profile.rs",
+          "symbol": "research_policy_rejects_source_process_activation_and_runtime_substitution"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/research.rs",
+          "symbol": "pre_cancelled_research_run_creates_no_campaign_database"
         }
       ],
       "argumentModes": [

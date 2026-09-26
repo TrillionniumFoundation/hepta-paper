@@ -18,6 +18,7 @@ mod admission;
 mod capability;
 mod client;
 mod codex_dispatch;
+mod cost_settlement;
 mod delivery;
 mod dispatch_backup;
 mod dispatch_containment;
@@ -56,6 +57,11 @@ pub use capability::{
 pub use codex_dispatch::{
     CodexDispatchAuthorityV1, CodexDispatchAuthorizationPointV1, CodexDispatchError,
     CodexDispatchPlanV1, CodexDispatchResultV1, run_reserved_codex_operation,
+};
+pub use cost_settlement::{
+    ProviderCostSettlementError, ProviderCostSettlementPolicyV1,
+    ProviderCostSettlementTrustStoreV1, ProviderCostSettlementV1, VerifiedProviderCostSettlementV1,
+    provider_cost_settlement_signing_bytes, verify_provider_cost_settlement,
 };
 pub use dispatch_backup::{
     CodexDispatchBackupBundleReceiptV1, CodexDispatchBackupEntryV1, CodexDispatchBackupManifestV1,

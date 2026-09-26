@@ -1,6 +1,11 @@
 //! Local protocol peer fixture: not a live model or broker journal qualification.
+use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::{Signer, SigningKey};
 use hepta_campaign_writer::WriterLeaseV1;
-use hepta_codex_broker::{BrokerPreparedResultReceiptV1, BrokerResponseV1, write_response_frame};
+use hepta_codex_broker::{
+    BrokerPreparedResultReceiptV1, BrokerResponseV1, ProviderCostSettlementV1,
+    provider_cost_settlement_signing_bytes, write_response_frame,
+};
 use hepta_codex_protocol::*;
 use hepta_control_plane::*;
 use hepta_module_platform::*;
@@ -27,6 +32,7 @@ pub struct Fixture {
     pub request: CodexExecutionRequestV1,
     pub request_path: PathBuf,
     pub socket_path: PathBuf,
+    pub settlement_directory: Option<PathBuf>,
 }
 pub fn hash(bytes: &[u8]) -> Sha256Digest {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
@@ -44,12 +50,15 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub fn new() -> Self {
-        Self::with_execution(false)
+        Self::with_execution(false, false)
     }
     pub fn new_execution() -> Self {
-        Self::with_execution(true)
+        Self::with_execution(true, false)
     }
-    fn with_execution(execution: bool) -> Self {
+    pub fn new_settled_execution() -> Self {
+        Self::with_execution(true, true)
+    }
+    fn with_execution(execution: bool, settled: bool) -> Self {
         let now = if execution {
             u64::try_from(
                 std::time::SystemTime::now()
@@ -71,7 +80,13 @@ impl Fixture {
         private(&requests);
         let state = root.join("state");
         private(&state);
+        let settlement_directory = settled.then(|| {
+            let directory = root.join("cost-settlements");
+            private(&directory);
+            directory
+        });
         let owner = fs::metadata(&root).unwrap();
+        let billing_key = SigningKey::from_bytes(&[73; 32]);
         let source = BrokerPreparedSourceV1 {
             socket_path: root.join("broker.sock"),
             broker_uid: owner.uid(),
@@ -82,6 +97,22 @@ impl Fixture {
             role: AgentRole::Author,
             runtime_identity_hash: hash(b"test runtime"),
             timeout_ms: 30_000,
+            cost_settlement: settlement_directory.as_ref().map(|directory| {
+                BrokerCostSettlementSourceV1 {
+                    directory: directory.clone(),
+                    authority_domain_id: "fixture-billing-domain".into(),
+                    authority_uid: owner.uid(),
+                    authority_gid: owner.gid(),
+                    trust_store_generation: 1,
+                    maximum_age_ms: 60_000,
+                    keys: vec![BrokerCostSettlementKeyV1 {
+                        key_id: "fixture-billing-key".into(),
+                        public_key_base64: Base64UrlUnpadded::encode_string(
+                            billing_key.verifying_key().as_bytes(),
+                        ),
+                    }],
+                }
+            }),
         };
         let input: BrokerPreparedInputV1 = serde_json::from_slice(include_bytes!(
             "../../../../../docs/modules/examples/broker-prepared-input.v1.json"
@@ -293,6 +324,7 @@ impl Fixture {
             request,
             request_path,
             socket_path: source.socket_path,
+            settlement_directory,
         };
         fixture.publish(&fixture.request);
         fixture
@@ -304,6 +336,54 @@ impl Fixture {
         fs::write(&self.request_path, serde_json::to_vec(request).unwrap()).unwrap();
         fs::set_permissions(&self.request_path, fs::Permissions::from_mode(0o400)).unwrap();
     }
+    pub fn cost_settlement_path(&self) -> PathBuf {
+        self.settlement_directory
+            .as_ref()
+            .unwrap()
+            .join(broker_cost_settlement_filename_v1(&self.request.attempt_id).unwrap())
+    }
+
+    pub fn publish_cost_settlement(&self, output: &[u8], actual_cost_microusd: u64) {
+        let receipt = prepared_receipt(&self.request, output);
+        let now = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap();
+        let key = SigningKey::from_bytes(&[73; 32]);
+        let mut settlement = ProviderCostSettlementV1 {
+            version: 1,
+            operation_id: self.request.operation_id.clone(),
+            request_hash: receipt.request_hash.clone(),
+            prepared_receipt_hash: receipt.prepared_receipt_hash.clone(),
+            campaign_id: self.request.campaign_id.clone(),
+            node_id: self.request.node_id.clone(),
+            attempt_id: self.request.attempt_id.clone(),
+            lease_generation: self.request.lease_generation,
+            campaign_revision: self.request.campaign_revision,
+            settlement_id: "fixture-settlement-1".into(),
+            authority_domain_id: "fixture-billing-domain".into(),
+            trust_store_generation: 1,
+            token_usage: receipt.token_usage,
+            actual_cost_microusd,
+            issued_at_unix_ms: now,
+            signer_key_id: "fixture-billing-key".into(),
+            signature_base64: "AA".into(),
+        };
+        settlement.signature_base64 = Base64UrlUnpadded::encode_string(
+            &key.sign(&provider_cost_settlement_signing_bytes(&settlement).unwrap())
+                .to_bytes(),
+        );
+        let path = self.cost_settlement_path();
+        if path.exists() {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        fs::write(&path, serde_json::to_vec(&settlement).unwrap()).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o400)).unwrap();
+    }
+
     pub fn listener(&self) -> UnixListener {
         let listener = UnixListener::bind(&self.socket_path).unwrap();
         fs::set_permissions(&self.socket_path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -458,7 +538,10 @@ impl Fixture {
         })
     }
 }
-fn prepared_response(request: &CodexExecutionRequestV1, output: &[u8], corrupt: bool) -> Vec<u8> {
+fn prepared_receipt(
+    request: &CodexExecutionRequestV1,
+    output: &[u8],
+) -> BrokerPreparedResultReceiptV1 {
     let h = hash(b"local protocol fixture only");
     let mut receipt = BrokerPreparedResultReceiptV1 {
         version: 1,
@@ -503,6 +586,11 @@ fn prepared_response(request: &CodexExecutionRequestV1, output: &[u8], corrupt: 
     receipt.prepared_receipt_hash =
         hash(&serde_json::to_vec(&("HeptaBrokerPreparedResultV1", raw)).unwrap());
     receipt.verify_hash().unwrap();
+    receipt
+}
+
+fn prepared_response(request: &CodexExecutionRequestV1, output: &[u8], corrupt: bool) -> Vec<u8> {
+    let receipt = prepared_receipt(request, output);
     let receipt_bytes = serde_json::to_vec(&receipt).unwrap();
     let mut response = Vec::new();
     write_response_frame(

@@ -116,7 +116,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 use thiserror::Error;
@@ -259,6 +259,11 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
     observe: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    // Publish only values returned by the already-selected trusted composition
+    // clock. Broker-side auxiliary evidence must not open an independent clock
+    // path that can disagree with admission, cancellation or SQLite commit time.
+    let current_time_unix_ms = Arc::new(AtomicU64::new(0));
+    let observed_time = Arc::clone(&current_time_unix_ms);
     let mut checked_clock = || {
         if cancelled.load(Ordering::Acquire) {
             return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
@@ -267,6 +272,10 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         if cancelled.load(Ordering::Acquire) {
             return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
         }
+        if now == 0 {
+            return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
+        }
+        observed_time.store(now, Ordering::Release);
         Ok(now)
     };
     let clock = &mut checked_clock;
@@ -407,6 +416,7 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
             campaign_revision: config.snapshot.campaign_revision,
             lease_generation: writer_generation,
             committed_results,
+            current_time_unix_ms,
         })
         .with_cancellation(Arc::clone(&cancelled));
     let mut control = ControlPlaneV1::new(

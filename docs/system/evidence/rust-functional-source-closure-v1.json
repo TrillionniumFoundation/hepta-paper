@@ -295,7 +295,7 @@
       ]
     },
     "production-composition-source": {
-      "description": "Existing ordinary service/autonomous/local-workflow composition over the original registry, planner, dispatch lock, CAS verifier and SQLite sequencer. Named executable regressions cover actual local workers, chained artifacts, lifecycle/amendment/cancellation, live clocks, broker dispatch, current query-only recovery and durable replay. Prepared broker bytes are not admission: only the verified durable commit index permits IPC-free historical replay; uncommitted recovery must retain the original request/receipt/output and an unsettled provider preparation fences a different plan. The commit index is a read-only shared view of the existing owner, not another ledger. Broker peers are explicit protocol fixtures; separate broker tests verify real signed admission. Dynamic trusted role issuance, independent live scientific review/revision, measured provider invoicing, commit-bound signed ACK, installed research/production qualification and Node retirement remain open. Later dependency waves of the same already-admitted atomic plan retain their original reservation; an unrelated new plan remains fenced. Private crash-worker copies have debug sections stripped before hashing, without changing the actual worker code, shared Cargo executable or product admission bound. The same amendment owner now supports the closed version-1 broker manuscript revision inputs: a fresh author/revise binds both original manuscript and retained rejection bytes/digests; the existing reviewer template, resource ceiling and gate remain unchanged. Ordinary-CLI regressions reject twelve semantic substitutions, preserve rejection until bound review, and recover lost responses query-only. These protocol fixtures still do not certify live independent roles or supply signing, invoicing or ACK authority.",
+      "description": "Existing ordinary service/autonomous/local-workflow composition over the original registry, planner, dispatch lock, CAS verifier and SQLite sequencer. Named executable regressions cover actual local workers, chained artifacts, lifecycle/amendment/cancellation, live clocks, broker dispatch, current query-only recovery and durable replay. Prepared broker bytes are not admission: only the verified durable commit index permits IPC-free historical replay; uncommitted recovery must retain the original request/receipt/output and an unsettled provider preparation fences a different plan. The commit index is a read-only shared view of the existing owner, not another ledger. Broker peers are explicit protocol fixtures; separate broker tests verify real signed admission. An explicitly configured billing authority now signs actual provider cost against the exact request, prepared receipt and token usage; the ordinary service persists that value through its existing prepared result and SQLite budget transaction, while absent configuration remains a labelled upper bound. Dynamic trusted role issuance, independent live scientific review/revision, an installed provider-billing principal, commit-bound signed ACK, installed research/production qualification and Node retirement remain open. Later dependency waves of the same already-admitted atomic plan retain their original reservation; an unrelated new plan remains fenced. Private crash-worker copies have debug sections stripped before hashing, without changing the actual worker code, shared Cargo executable or product admission bound. The same amendment owner now supports the closed version-1 broker manuscript revision inputs: a fresh author/revise binds both original manuscript and retained rejection bytes/digests; the existing reviewer template, resource ceiling and gate remain unchanged. Ordinary-CLI regressions reject twelve semantic substitutions, preserve rejection until bound review, and recover lost responses query-only. These protocol fixtures still do not certify live independent roles or supply request, billing or ACK private-key authority.",
       "files": [
         {
           "path": "rust/crates/hepta-paper-service/src/production.rs",
@@ -443,7 +443,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/lib.rs",
           "role": "implementation",
-          "gitBlob": "781578d1e4a9effd46a5a258ba734a3f82fddb6f",
+          "gitBlob": "4182b01bc1b116388ebd983db6b0c9350b2d1998",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -578,7 +578,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker.rs",
           "role": "implementation",
-          "gitBlob": "be37b780025964e59f80b07492ca0d21f7692ff5",
+          "gitBlob": "c7af3a1d887e5b25caeeee5bd9ed67ff13ded360",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -589,6 +589,10 @@
             {
               "kind": "function",
               "name": "revalidate_cached_broker_result"
+            },
+            {
+              "kind": "function",
+              "name": "execute_one"
             }
           ]
         },
@@ -659,7 +663,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/broker_prepared.rs",
           "role": "implementation",
-          "gitBlob": "ba333855b16bf2e47ef53234a738ca42ecc964ff",
+          "gitBlob": "da009779f451c117efb44d8f24dceb9088ca441e",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -670,13 +674,17 @@
             {
               "kind": "function",
               "name": "broker_execution_implementation_hash_v1"
+            },
+            {
+              "kind": "function",
+              "name": "broker_cost_settlement_filename_v1"
             }
           ]
         },
         {
           "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs",
           "role": "test",
-          "gitBlob": "df3976d980eb9617c4636ba74c4c67e4a057fa1c",
+          "gitBlob": "4352d06633625471c2fc02d9b37c41e36b3a8610",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -741,13 +749,17 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/fixture.rs",
           "role": "test",
-          "gitBlob": "845cd796f20feb422aefc89b789fbc214720220c",
+          "gitBlob": "e3c66ad24afabbab13312b1e660c948df01385ba",
           "mode": "100644",
           "language": "rust",
           "symbols": [
             {
               "kind": "function",
               "name": "prepared_response"
+            },
+            {
+              "kind": "function",
+              "name": "publish_cost_settlement"
             }
           ]
         },
@@ -907,7 +919,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/research.rs",
           "role": "implementation",
-          "gitBlob": "ca6e97e27786f9d6a50440fce0e634d968c193bb",
+          "gitBlob": "baf842975fba271c24f4127c2755df83d116eee6",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -928,7 +940,7 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/research_service_profile.rs",
           "role": "test",
-          "gitBlob": "53a9f2baf26df285b5c844cf07d3a482a6fa39ac",
+          "gitBlob": "5ae34fdd01dfef83f8429eaa151f2792a4ebe720",
           "mode": "100644",
           "language": "rust",
           "symbols": [
@@ -943,6 +955,73 @@
             {
               "kind": "test",
               "name": "research_policy_rejects_source_process_activation_and_runtime_substitution"
+            },
+            {
+              "kind": "test",
+              "name": "research_broker_requires_current_signed_cost_owner_without_release_authority"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/src/cost_settlement.rs",
+          "role": "implementation",
+          "gitBlob": "f447f923cce4be3a2dd8bff27c2365697678ca61",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "function",
+              "name": "provider_cost_settlement_signing_bytes"
+            },
+            {
+              "kind": "function",
+              "name": "verify_provider_cost_settlement"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+          "role": "test",
+          "gitBlob": "5d6478e09b2d143af2ace6a6c907f51f4073d2d2",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "signed_actual_cost_binds_request_prepared_receipt_usage_and_generation"
+            },
+            {
+              "kind": "test",
+              "name": "substitutions_expiry_and_over_cap_cost_fail_closed"
+            }
+          ]
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "role": "test",
+          "gitBlob": "dc3e61559f4bf438820b5a7fb08e7affc8865cf3",
+          "mode": "100644",
+          "language": "rust",
+          "symbols": [
+            {
+              "kind": "test",
+              "name": "signed_actual_cost_is_debited_by_the_normal_sequencer_and_replays_offline"
+            },
+            {
+              "kind": "test",
+              "name": "missing_settlement_preserves_query_only_recovery_and_commits_when_authority_arrives"
+            },
+            {
+              "kind": "test",
+              "name": "valid_signature_over_a_cost_above_the_signed_request_cap_never_commits"
+            },
+            {
+              "kind": "test",
+              "name": "changed_signed_settlement_cannot_replace_an_uncommitted_prepared_cache"
+            },
+            {
+              "kind": "test",
+              "name": "settlement_uses_the_service_admission_clock_and_recovers_after_time_advances"
             }
           ]
         }
@@ -1991,6 +2070,170 @@
           "timeoutSeconds": 600,
           "expectedTargets": [
             "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-codex-broker",
+            "signed_actual_cost_binds_request_prepared_receipt_usage_and_generation",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-codex-broker",
+            "substitutions_expiry_and_over_cap_cost_fail_closed",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::signed_actual_cost_is_debited_by_the_normal_sequencer_and_replays_offline",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::missing_settlement_preserves_query_only_recovery_and_commits_when_authority_arrives",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::valid_signature_over_a_cost_above_the_signed_request_cap_never_commits",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::changed_signed_settlement_cannot_replace_an_uncommitted_prepared_cache",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "research_service_profile",
+            "research_broker_requires_current_signed_cost_owner_without_release_authority",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+          ]
+        },
+        {
+          "program": "cargo",
+          "args": [
+            "test",
+            "--locked",
+            "-p",
+            "hepta-paper-service",
+            "--test",
+            "broker_prepared_consumer",
+            "cost_settlement::settlement_uses_the_service_admission_clock_and_recovers_after_time_advances",
+            "--",
+            "--exact",
+            "--nocapture"
+          ],
+          "workdir": "rust",
+          "expectedExitCode": 0,
+          "timeoutSeconds": 600,
+          "expectedTargets": [
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
           ]
         }
       ]

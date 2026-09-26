@@ -168,8 +168,14 @@ pub fn validate_research_service_policy_v1(
         match worker {
             WorkerBindingV1::Native => {}
             WorkerBindingV1::BrokerExecute { source }
-            | WorkerBindingV1::BrokerPrepared { source }
-                if &source.runtime_identity_hash == qualified_runtime_identity => {}
+            | WorkerBindingV1::BrokerPrepared { source } => {
+                source.validate()?;
+                if &source.runtime_identity_hash != qualified_runtime_identity
+                    || source.cost_settlement.is_none()
+                {
+                    return Err(ServiceError::Configuration);
+                }
+            }
             _ => return Err(ServiceError::Configuration),
         }
     }

@@ -1,3 +1,5 @@
+use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::SigningKey;
 use hepta_campaign_writer::WriterLeaseV1;
 use hepta_codex_protocol::Sha256Digest;
 use hepta_control_plane::{
@@ -7,6 +9,9 @@ use hepta_module_platform::{
     ActionCandidateV1, ActivationStateV1, AuthorityClassV1, ModuleExecutionV1, ModuleGrantV1,
     ModuleKindV1, ModuleManifestV1, ModuleRegistryV1, QualificationTierV1, RegistryPolicyV1,
     ResourceVectorV1,
+};
+use hepta_paper_service::broker_prepared::{
+    BrokerCostSettlementKeyV1, BrokerCostSettlementSourceV1, BrokerPreparedSourceV1,
 };
 use hepta_paper_service::{
     NativeJobV1, ObjectStoreV1, ResearchActivationStageV1, ResearchServiceRunV1, ServiceRunV1,
@@ -219,6 +224,79 @@ fn research_policy_accepts_target_host_private_state_without_release_authority()
 }
 
 #[test]
+fn research_broker_requires_current_signed_cost_owner_without_release_authority() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = Temp::new();
+    let mut config = configuration(
+        &temp,
+        "CAP-BUILD",
+        QualificationTierV1::TargetHost,
+        ActivationStateV1::Canary,
+    );
+    let owner = fs::metadata(&temp.0).unwrap();
+    let requests = temp.0.join("requests");
+    let settlements = temp.0.join("settlements");
+    fs::create_dir(&requests).unwrap();
+    fs::create_dir(&settlements).unwrap();
+    fs::set_permissions(&requests, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&settlements, fs::Permissions::from_mode(0o700)).unwrap();
+    let key = SigningKey::from_bytes(&[74; 32]);
+    let module = config.service.workers.keys().next().unwrap().clone();
+    let mut source = BrokerPreparedSourceV1 {
+        socket_path: temp.0.join("broker.sock"),
+        broker_uid: owner.uid(),
+        broker_gid: owner.gid(),
+        request_directory: requests,
+        request_owner_uid: owner.uid(),
+        request_owner_gid: owner.gid(),
+        role: hepta_codex_protocol::AgentRole::Author,
+        runtime_identity_hash: digest(9),
+        timeout_ms: 1_000,
+        cost_settlement: None,
+    };
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: source.clone(),
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    source.cost_settlement = Some(BrokerCostSettlementSourceV1 {
+        directory: settlements,
+        authority_domain_id: "research-billing-domain".into(),
+        authority_uid: owner.uid(),
+        authority_gid: owner.gid(),
+        trust_store_generation: 1,
+        maximum_age_ms: 60_000,
+        keys: vec![BrokerCostSettlementKeyV1 {
+            key_id: "research-billing-key".into(),
+            public_key_base64: Base64UrlUnpadded::encode_string(key.verifying_key().as_bytes()),
+        }],
+    });
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: source.clone(),
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_ok());
+
+    let mut invalid = source;
+    invalid
+        .cost_settlement
+        .as_mut()
+        .unwrap()
+        .trust_store_generation = 0;
+    config
+        .service
+        .workers
+        .insert(module, WorkerBindingV1::BrokerExecute { source: invalid });
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+}
+
+#[test]
 fn research_policy_rejects_release_submission_cutover_and_external_effects() {
     for capability in ["CAP-REL-VERIFY", "CAP-SUBMIT", "CAP-MIG-CUTOVER"] {
         let temp = Temp::new();
@@ -308,6 +386,7 @@ fn research_policy_rejects_source_process_activation_and_runtime_substitution() 
                 role: hepta_codex_protocol::AgentRole::Author,
                 runtime_identity_hash: digest(8),
                 timeout_ms: 1_000,
+                cost_settlement: None,
             },
         },
     );

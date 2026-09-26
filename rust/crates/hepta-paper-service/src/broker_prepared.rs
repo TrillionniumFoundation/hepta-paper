@@ -1,7 +1,13 @@
 //! Existing broker result ingestion, plus an explicitly selected signed-request
 //! dispatch backend. No private keys, second result store, or production grant.
 use crate::ServiceError;
-use hepta_codex_broker::{PeerPolicyV1, PeerPrincipalV1, query_prepared_result};
+use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::VerifyingKey;
+use hepta_codex_broker::{
+    PeerPolicyV1, PeerPrincipalV1, ProviderCostSettlementPolicyV1,
+    ProviderCostSettlementTrustStoreV1, ProviderCostSettlementV1, query_prepared_result,
+    verify_provider_cost_settlement,
+};
 use hepta_codex_protocol::{AgentRole, CodexExecutionRequestV1, Sha256Digest};
 use hepta_control_plane::{ExecutionRequestV1, canonical_hash_v1};
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, connect, socket};
@@ -19,7 +25,10 @@ use std::{
         },
     },
     path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 
 const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
@@ -38,6 +47,31 @@ pub struct BrokerPreparedSourceV1 {
     pub role: AgentRole,
     pub runtime_identity_hash: Sha256Digest,
     pub timeout_ms: u64,
+    /// Optional separately signed actual-cost owner. Absence retains the legacy
+    /// conservative admitted upper bound; it never invents a measured charge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_settlement: Option<BrokerCostSettlementSourceV1>,
+}
+
+/// One public billing-authority key. Private billing keys never enter service configuration.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerCostSettlementKeyV1 {
+    pub key_id: String,
+    pub public_key_base64: String,
+}
+
+/// Immutable billing receipt directory and current revocation generation.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerCostSettlementSourceV1 {
+    pub directory: PathBuf,
+    pub authority_domain_id: String,
+    pub authority_uid: u32,
+    pub authority_gid: u32,
+    pub trust_store_generation: u64,
+    pub maximum_age_ms: u64,
+    pub keys: Vec<BrokerCostSettlementKeyV1>,
 }
 
 /// Exact desired input bytes and output contract; this is not a signed permit.
@@ -59,6 +93,7 @@ pub(crate) struct BrokerConsumerContextV1 {
     pub campaign_revision: u64,
     pub lease_generation: u64,
     pub committed_results: hepta_control_plane::CommittedResultSnapshotV1,
+    pub current_time_unix_ms: Arc<AtomicU64>,
 }
 
 /// The authority publishes this filename after the real plan chooses its attempt.
@@ -69,6 +104,17 @@ pub fn broker_prepared_request_filename_v1(attempt_id: &str) -> Result<String, S
     }
     Ok(format!(
         "{}.json",
+        hex::encode(Sha256::digest(attempt_id.as_bytes()))
+    ))
+}
+
+/// Billing authority publishes this immutable filename after the prepared receipt exists.
+pub fn broker_cost_settlement_filename_v1(attempt_id: &str) -> Result<String, ServiceError> {
+    if attempt_id.is_empty() || attempt_id.len() > 256 {
+        return Err(ServiceError::Configuration);
+    }
+    Ok(format!(
+        "{}.cost.json",
         hex::encode(Sha256::digest(attempt_id.as_bytes()))
     ))
 }
@@ -102,6 +148,9 @@ impl BrokerPreparedSourceV1 {
         {
             return Err(ServiceError::Configuration);
         }
+        if let Some(cost) = &self.cost_settlement {
+            cost.validate()?;
+        }
         Ok(())
     }
     pub(crate) fn matches_capability(&self, capability: &str) -> bool {
@@ -111,6 +160,46 @@ impl BrokerPreparedSourceV1 {
                 | (AgentRole::Reviewer, "CAP-REVIEW")
                 | (AgentRole::FormalReviewer, "CAP-FORMAL")
         )
+    }
+}
+
+impl BrokerCostSettlementSourceV1 {
+    fn validate(&self) -> Result<(), ServiceError> {
+        if !self.directory.is_absolute()
+            || self
+                .directory
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+            || self.trust_store_generation == 0
+            || self.maximum_age_ms == 0
+            || self.maximum_age_ms > 30 * 24 * 60 * 60 * 1000
+            || self.keys.is_empty()
+            || self.keys.len() > 32
+        {
+            return Err(ServiceError::Configuration);
+        }
+        self.trust_store().map(|_| ())
+    }
+
+    fn trust_store(&self) -> Result<ProviderCostSettlementTrustStoreV1, ServiceError> {
+        let mut entries = Vec::with_capacity(self.keys.len());
+        for key in &self.keys {
+            let bytes = Base64UrlUnpadded::decode_vec(&key.public_key_base64)
+                .map_err(|_| ServiceError::Configuration)?;
+            if Base64UrlUnpadded::encode_string(&bytes) != key.public_key_base64 {
+                return Err(ServiceError::Configuration);
+            }
+            let bytes: [u8; 32] = bytes.try_into().map_err(|_| ServiceError::Configuration)?;
+            let verifying =
+                VerifyingKey::from_bytes(&bytes).map_err(|_| ServiceError::Configuration)?;
+            entries.push((key.key_id.clone(), verifying));
+        }
+        ProviderCostSettlementTrustStoreV1::new(
+            self.authority_domain_id.clone(),
+            self.trust_store_generation,
+            entries,
+        )
+        .map_err(|_| ServiceError::Configuration)
     }
 }
 
@@ -223,6 +312,98 @@ impl CapturedRequest {
             || !same_node(&directory, &named_directory)
             || fs::canonicalize(&source.request_directory).ok().as_ref()
                 != Some(&source.request_directory)
+            || !same_file(&self.file_metadata, &opened)
+            || !same_file(&opened, &named)
+        {
+            return Err(ServiceError::Artifact);
+        }
+        Ok(())
+    }
+}
+
+struct CapturedSettlement {
+    directory: File,
+    directory_metadata: fs::Metadata,
+    file: File,
+    file_metadata: fs::Metadata,
+    path: PathBuf,
+    settlement: ProviderCostSettlementV1,
+}
+
+impl CapturedSettlement {
+    fn open(source: &BrokerCostSettlementSourceV1, attempt: &str) -> Result<Self, ServiceError> {
+        source.validate()?;
+        if fs::canonicalize(&source.directory).ok().as_ref() != Some(&source.directory) {
+            return Err(ServiceError::Artifact);
+        }
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+            .open(&source.directory)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let directory_metadata = directory.metadata().map_err(|_| ServiceError::Filesystem)?;
+        if !directory_metadata.is_dir()
+            || directory_metadata.uid() != source.authority_uid
+            || directory_metadata.gid() != source.authority_gid
+            || directory_metadata.mode() & 0o027 != 0
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let name = broker_cost_settlement_filename_v1(attempt)?;
+        let path = source.directory.join(&name);
+        let anchored = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name);
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC | nix::libc::O_NONBLOCK)
+            .open(anchored)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let file_metadata = file.metadata().map_err(|_| ServiceError::Filesystem)?;
+        if !file_metadata.is_file()
+            || file_metadata.uid() != source.authority_uid
+            || file_metadata.gid() != source.authority_gid
+            || file_metadata.nlink() != 1
+            || !matches!(file_metadata.mode() & 0o7777, 0o400 | 0o440)
+            || file_metadata.len() == 0
+            || file_metadata.len() > MAX_REQUEST_BYTES
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file)
+            .take(MAX_REQUEST_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let settlement: ProviderCostSettlementV1 =
+            serde_json::from_slice(&bytes).map_err(|_| ServiceError::Configuration)?;
+        if bytes.len() as u64 != file_metadata.len()
+            || serde_json::to_vec(&settlement).map_err(|_| ServiceError::Configuration)? != bytes
+        {
+            return Err(ServiceError::Configuration);
+        }
+        let captured = Self {
+            directory,
+            directory_metadata,
+            file,
+            file_metadata,
+            path,
+            settlement,
+        };
+        captured.revalidate(source)?;
+        Ok(captured)
+    }
+
+    fn revalidate(&self, source: &BrokerCostSettlementSourceV1) -> Result<(), ServiceError> {
+        let directory = self
+            .directory
+            .metadata()
+            .map_err(|_| ServiceError::Filesystem)?;
+        let named_directory =
+            fs::symlink_metadata(&source.directory).map_err(|_| ServiceError::Filesystem)?;
+        let opened = self.file.metadata().map_err(|_| ServiceError::Filesystem)?;
+        let named = fs::symlink_metadata(&self.path).map_err(|_| ServiceError::Filesystem)?;
+        if !same_node(&self.directory_metadata, &directory)
+            || !same_node(&directory, &named_directory)
+            || fs::canonicalize(&source.directory).ok().as_ref() != Some(&source.directory)
             || !same_file(&self.file_metadata, &opened)
             || !same_file(&opened, &named)
         {
@@ -378,6 +559,12 @@ pub fn broker_execution_implementation_hash_v1(
     .map_err(|_| ServiceError::Configuration)
 }
 
+pub(crate) struct BrokerConsumedResultV1 {
+    pub output: Vec<u8>,
+    pub evidence: Value,
+    pub actual_cost_microusd: u64,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn consume(
     source: &BrokerPreparedSourceV1,
@@ -388,7 +575,8 @@ pub(crate) fn consume(
     cancelled: &AtomicBool,
     mode: BrokerConsumeModeV1,
     record_started: impl FnOnce() -> Result<(), ServiceError>,
-) -> Result<(Vec<u8>, Value), ServiceError> {
+    refresh_current_time: &mut dyn FnMut() -> Result<(), ServiceError>,
+) -> Result<BrokerConsumedResultV1, ServiceError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(ServiceError::Execution);
     }
@@ -502,6 +690,57 @@ pub(crate) fn consume(
             return Err(ServiceError::Execution);
         }
     }
+    let (actual_cost_microusd, cost_evidence) = match &source.cost_settlement {
+        Some(cost_source) => {
+            // Provider completion may happen after the pre-dispatch observation.
+            // Reuse the owning service's admission clock after delivery rather
+            // than accepting a settlement against a stale or independent clock.
+            refresh_current_time()?;
+            if cancelled.load(Ordering::Acquire) {
+                return Err(ServiceError::Execution);
+            }
+            captured.revalidate(source)?;
+            let captured_cost = CapturedSettlement::open(cost_source, &execution.attempt_id)?;
+            let now_unix_ms = context.current_time_unix_ms.load(Ordering::Acquire);
+            if now_unix_ms == 0 {
+                return Err(ServiceError::Execution);
+            }
+            let verified = verify_provider_cost_settlement(
+                &captured_cost.settlement,
+                &captured.request,
+                delivery.receipt(),
+                now_unix_ms,
+                ProviderCostSettlementPolicyV1 {
+                    version: 1,
+                    maximum_age_ms: cost_source.maximum_age_ms,
+                },
+                &cost_source.trust_store()?,
+            )
+            .map_err(|_| ServiceError::Execution)?;
+            captured_cost.revalidate(cost_source)?;
+            if verified.actual_cost_microusd() > execution.candidate.cost_microusd {
+                return Err(ServiceError::Execution);
+            }
+            (
+                verified.actual_cost_microusd(),
+                serde_json::json!({
+                    "classification": "measured_signed_provider_settlement",
+                    "costMicrousd": verified.actual_cost_microusd(),
+                    "settlementHash": verified.settlement_hash(),
+                    "settlement": verified.settlement()
+                }),
+            )
+        }
+        None => (
+            execution.candidate.cost_microusd,
+            serde_json::json!({
+                "classification": "conservative_upper_bound",
+                "costMicrousd": execution.candidate.cost_microusd,
+                "settlementHash": null,
+                "settlement": null
+            }),
+        ),
+    };
     let evidence = serde_json::json!({
         "version": 1,
         "brokerReceipt": delivery.receipt(),
@@ -510,8 +749,7 @@ pub(crate) fn consume(
         "providerExecutionRequestedByConsumer": execution_backend,
         "executionSentInThisInvocation": matches!(mode, BrokerConsumeModeV1::ExecuteOnce),
         "recoveryProtocol": "query_only_no_provider_reissue",
-        "costClassification": "conservative_upper_bound",
-        "costMicrousd": execution.candidate.cost_microusd,
+        "cost": cost_evidence,
         "scientificAcceptance": false,
         "scope": "authenticated_local_broker_result_not_production_activation"
     });
@@ -522,7 +760,11 @@ pub(crate) fn consume(
     {
         return Err(ServiceError::Artifact);
     }
-    Ok((delivery.output().to_vec(), evidence))
+    Ok(BrokerConsumedResultV1 {
+        output: delivery.output().to_vec(),
+        evidence,
+        actual_cost_microusd,
+    })
 }
 
 #[cfg(test)]

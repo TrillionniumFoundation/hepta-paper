@@ -3322,6 +3322,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/research.rs",
           "symbol": "run_research_service_with_cancellation_v1"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/src/cost_settlement.rs",
+          "symbol": "verify_provider_cost_settlement"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/broker_prepared.rs",
+          "symbol": "broker_cost_settlement_filename_v1"
         }
       ],
       "tests": [
@@ -3338,9 +3346,11 @@
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/revision.rs",
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
         "rust/crates/hepta-paper-service/src/research.rs",
-        "rust/crates/hepta-paper-service/tests/research_service_profile.rs"
+        "rust/crates/hepta-paper-service/tests/research_service_profile.rs",
+        "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs"
       ],
-      "remaining": "The explicit restricted-research library profile now consumes the opaque V3 qualification, rechecks currentness across the existing service/CAS/sequencer boundaries, and refuses release, submission, cutover, Process and legacy Node authority. The ordinary autonomous CLI does not construct V3 from JSON or establish an installed profile; live revocation callbacks and target-host activation remain open. Bounded broker manuscript revision now uses the ordinary amendment/converge path with retained CAS manuscript/rejection inputs, an unchanged reviewer contract and query-only uncertain recovery; protocol fixtures are not live independent-role acceptance. The explicit local workflow path does not implement automatic research planning, dynamic trusted request issuance, independent live author/reviewer/revision roles, measured provider-invoice settlement, commit-bound signed ACK, automatic lease renewal, or all incumbent argument modes. Broker transport interruption does not prove provider termination or settle/refund an unknown result. Native in-process work is not preempted mid-calculation. Full role/command acceptance, installed restricted-research qualification, production activation, writer transfer and Node retirement remain unaccepted. Current contracts and runnable coverage are in docs/modules/LOCAL_WORKFLOW_HANDOFF.md; the call chain and named tests below are the machine source for implemented behavior.",
+      "remaining": "The explicit restricted-research library profile now consumes the opaque V3 qualification, rechecks currentness across the existing service/CAS/sequencer boundaries, and refuses release, submission, cutover, Process and legacy Node authority. The ordinary autonomous CLI does not construct V3 from JSON or establish an installed profile; live revocation callbacks and target-host activation remain open. Bounded broker manuscript revision now uses the ordinary amendment/converge path with retained CAS manuscript/rejection inputs, an unchanged reviewer contract and query-only uncertain recovery; protocol fixtures are not live independent-role acceptance. The ordinary broker path can now verify a separately signed actual-cost settlement, persist that cost through the existing prepared result and sequencer, and recover a delayed settlement without provider re-execution. The explicit local workflow path still does not implement automatic research planning, dynamic trusted request issuance, independent live author/reviewer/revision roles, an installed provider-billing principal, commit-bound signed ACK, automatic lease renewal, or all incumbent argument modes. Broker transport interruption does not prove provider termination or settle/refund an unknown result. Native in-process work is not preempted mid-calculation. Full role/command acceptance, installed restricted-research qualification, production activation, writer transfer and Node retirement remain unaccepted. Current contracts and runnable coverage are in docs/modules/LOCAL_WORKFLOW_HANDOFF.md; the call chain and named tests below are the machine source for implemented behavior.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/autonomous_research.rs",
@@ -3361,7 +3371,8 @@
         "rust/crates/hepta-codex-broker/src/client.rs",
         "rust/crates/hepta-paper-service/src/worker_recovery.rs",
         "rust/crates/hepta-paper-service/src/workflow/amendment/broker_revision.rs",
-        "rust/crates/hepta-paper-service/src/research.rs"
+        "rust/crates/hepta-paper-service/src/research.rs",
+        "rust/crates/hepta-codex-broker/src/cost_settlement.rs"
       ],
       "testCases": [
         {
@@ -3583,6 +3594,38 @@
         {
           "path": "rust/crates/hepta-paper-service/src/research.rs",
           "symbol": "pre_cancelled_research_run_creates_no_campaign_database"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+          "symbol": "signed_actual_cost_binds_request_prepared_receipt_usage_and_generation"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+          "symbol": "substitutions_expiry_and_over_cap_cost_fail_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "signed_actual_cost_is_debited_by_the_normal_sequencer_and_replays_offline"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "missing_settlement_preserves_query_only_recovery_and_commits_when_authority_arrives"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "valid_signature_over_a_cost_above_the_signed_request_cap_never_commits"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "changed_signed_settlement_cannot_replace_an_uncommitted_prepared_cache"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/research_service_profile.rs",
+          "symbol": "research_broker_requires_current_signed_cost_owner_without_release_authority"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "settlement_uses_the_service_admission_clock_and_recovers_after_time_advances"
         }
       ],
       "argumentModes": [
@@ -7467,6 +7510,14 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker_recovery.rs",
           "symbol": "require_record_capacity"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/src/cost_settlement.rs",
+          "symbol": "verify_provider_cost_settlement"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/broker_prepared.rs",
+          "symbol": "broker_cost_settlement_filename_v1"
         }
       ],
       "tests": [
@@ -7482,9 +7533,11 @@
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs",
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/plan_waves.rs",
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/revision.rs",
-        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
+        "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs"
       ],
-      "remaining": "Bounded broker manuscript revision now uses the ordinary amendment/converge path with retained CAS manuscript/rejection inputs, an unchanged reviewer contract and query-only uncertain recovery; protocol fixtures are not live independent-role acceptance. The sequential local workflow does not implement arbitrary-DAG projection, all incumbent campaign command/effect modes, or authoritative remote/infrastructure cancellation. Preserving a committed step or ambiguous attempt is not settlement of an external result. Dynamic trusted role request issuance, independent scientific review, measured provider cost, commit-bound signed ACK, installed writer/cutover acceptance and Node retirement remain open. See docs/modules/LOCAL_WORKFLOW_HANDOFF.md for current lifecycle and broker interruption/recovery contracts.",
+      "remaining": "Bounded broker manuscript revision now uses the ordinary amendment/converge path with retained CAS manuscript/rejection inputs, an unchanged reviewer contract and query-only uncertain recovery; protocol fixtures are not live independent-role acceptance. The sequential local workflow does not implement arbitrary-DAG projection, all incumbent campaign command/effect modes, or authoritative remote/infrastructure cancellation. Preserving a committed step or ambiguous attempt is not settlement of an external result. A configured billing authority now supplies a signed measured provider cost to the existing durable result transaction; missing, replaced and over-cap settlements fail closed and query-only recovery remains intact. Dynamic trusted role request issuance, independent scientific review, an installed billing principal, commit-bound signed ACK, installed writer/cutover acceptance and Node retirement remain open. See docs/modules/LOCAL_WORKFLOW_HANDOFF.md for current lifecycle and broker interruption/recovery contracts.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow.rs",
@@ -7510,7 +7563,8 @@
         "rust/crates/hepta-codex-broker/src/client.rs",
         "rust/crates/hepta-paper-service/src/worker_recovery.rs",
         "rust/crates/hepta-control-plane/src/commit.rs",
-        "rust/crates/hepta-paper-service/src/workflow/amendment/broker_revision.rs"
+        "rust/crates/hepta-paper-service/src/workflow/amendment/broker_revision.rs",
+        "rust/crates/hepta-codex-broker/src/cost_settlement.rs"
       ],
       "testCases": [
         {
@@ -7740,6 +7794,34 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
           "symbol": "final_prepared_slot_recovers_a_lost_response_without_reissuing_execution"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+          "symbol": "signed_actual_cost_binds_request_prepared_receipt_usage_and_generation"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+          "symbol": "substitutions_expiry_and_over_cap_cost_fail_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "signed_actual_cost_is_debited_by_the_normal_sequencer_and_replays_offline"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "missing_settlement_preserves_query_only_recovery_and_commits_when_authority_arrives"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "valid_signature_over_a_cost_above_the_signed_request_cap_never_commits"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "changed_signed_settlement_cannot_replace_an_uncommitted_prepared_cache"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "settlement_uses_the_service_admission_clock_and_recovers_after_time_advances"
         }
       ],
       "argumentModes": [
@@ -8476,6 +8558,18 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker_recovery.rs",
           "symbol": "require_record_capacity"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/src/cost_settlement.rs",
+          "symbol": "verify_provider_cost_settlement"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/broker_prepared.rs",
+          "symbol": "broker_cost_settlement_filename_v1"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/lib.rs",
+          "symbol": "run_service_with_clock_and_cancellation_v1"
         }
       ],
       "tests": [
@@ -8484,9 +8578,11 @@
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs",
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cache_admission.rs",
         "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/plan_waves.rs",
-        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs"
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
+        "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+        "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs"
       ],
-      "remaining": "The bounded local workflow does not implement full incumbent batch/provider scheduling semantics. The copied control-plane inspection diagnostic is not durable whole-plan resource accounting across restart. Dynamic trusted role issuance, independent scientific review, measured provider-invoice settlement, commit-bound signed ACK and installed acceptance remain open. Broker interruption retains the original unresolved identity and permits query-only recovery, not a second execution or refund. Full command parity, production activation and Node retirement remain unaccepted; current behavior is specified in docs/modules/LOCAL_WORKFLOW_HANDOFF.md.",
+      "remaining": "The bounded local workflow does not implement full incumbent batch/provider scheduling semantics. The copied control-plane inspection diagnostic is not durable whole-plan resource accounting across restart. The bounded broker batch path can now debit a separately signed actual provider cost through the existing sequencer; the conservative upper bound remains explicit when no billing authority is configured. Dynamic trusted role issuance, independent scientific review, an installed billing principal, commit-bound signed ACK and installed acceptance remain open. Broker interruption retains the original unresolved identity and permits query-only recovery, not a second execution or refund. Full command parity, production activation and Node retirement remain unaccepted; current behavior is specified in docs/modules/LOCAL_WORKFLOW_HANDOFF.md.",
       "rustSources": [
         "rust/crates/hepta-paper-service/src/bin/hepta-local-workflow.rs",
         "rust/crates/hepta-paper-service/src/workflow.rs",
@@ -8495,7 +8591,9 @@
         "rust/crates/hepta-codex-broker/src/client.rs",
         "rust/crates/hepta-paper-service/src/worker_recovery.rs",
         "rust/crates/hepta-paper-service/src/worker.rs",
-        "rust/crates/hepta-control-plane/src/commit.rs"
+        "rust/crates/hepta-control-plane/src/commit.rs",
+        "rust/crates/hepta-codex-broker/src/cost_settlement.rs",
+        "rust/crates/hepta-paper-service/src/lib.rs"
       ],
       "testCases": [
         {
@@ -8593,6 +8691,34 @@
         {
           "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/capacity_admission.rs",
           "symbol": "final_prepared_slot_recovers_a_lost_response_without_reissuing_execution"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+          "symbol": "signed_actual_cost_binds_request_prepared_receipt_usage_and_generation"
+        },
+        {
+          "path": "rust/crates/hepta-codex-broker/tests/provider_cost_settlement.rs",
+          "symbol": "substitutions_expiry_and_over_cap_cost_fail_closed"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "signed_actual_cost_is_debited_by_the_normal_sequencer_and_replays_offline"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "missing_settlement_preserves_query_only_recovery_and_commits_when_authority_arrives"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "valid_signature_over_a_cost_above_the_signed_request_cap_never_commits"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "changed_signed_settlement_cannot_replace_an_uncommitted_prepared_cache"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs",
+          "symbol": "settlement_uses_the_service_admission_clock_and_recovers_after_time_advances"
         }
       ]
     },

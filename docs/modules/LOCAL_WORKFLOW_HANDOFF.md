@@ -462,10 +462,15 @@ become execution permission.
 Returned output is verified by the existing broker decoder, stored as one CAS
 artifact, independently read by the service verifier, then committed by the
 existing SQLite sequencer. The original broker receipt and token observation
-remain in private CAS evidence. The service charges the admitted candidate cost
-upper bound once; this is not a measured provider invoice. Request cost and token
-hints may not exceed admission, and reported input/output tokens are checked.
-Reopening a committed result neither queries again nor charges again.
+remain in private CAS evidence. A source without an explicit billing authority
+continues to charge the admitted candidate upper bound and labels it conservative.
+A source with `costSettlement` must instead capture a current independently signed
+provider settlement, bind it to the exact request, prepared-receipt hash and token
+usage, and pass its actual micro-USD value to the same prepared result and SQLite
+budget transaction. Settlement freshness uses the already-selected service
+admission/commit clock; it does not open a second wall-clock trust path. Request
+cost and token hints may not exceed admission. Reopening a committed result
+neither queries again nor charges again.
 
 An uncommitted `.prepared` file is different. At restart the original SQLite
 sequencer verifies its durable log and exposes an opaque read-only result index;
@@ -478,13 +483,15 @@ a subsequent valid query can commit once without provider re-execution. Query
 currentness is the existing broker's admission boundary, not an atomic distributed
 revocation-and-SQL-COMMIT protocol or a lifetime authorization grant.
 
-A provider result prepared before a failed commit is still unsettled. The
-existing recovery lock refuses a different incoming plan until the exact prior
-result is durably committed. Dependency waves within the same already-admitted
-atomic plan may continue under its existing reservation; a wave boundary is not
-a new plan. The lock does not release budget merely because paired
+A provider result prepared before a failed commit is still unsettled at the
+campaign writer even when it carries a valid billing receipt. The existing
+recovery lock refuses a different incoming plan until the exact prior result and
+actual cost are durably committed. Dependency waves within the same
+already-admitted atomic plan may continue under its existing reservation; a wave
+boundary is not a new plan. The lock does not release budget merely because paired
 `.started`/`.prepared` files exist. Original-plan query recovery remains available.
-This conservative fence does not implement provider invoicing or refunds.
+No missing or rejected billing receipt is interpreted as a refund or permission
+to re-execute.
 
 Only an exact incoming broker-query identity may revisit its own unresolved
 `.started` record. Other unresolved native/process attempts still fence admission.
@@ -493,12 +500,13 @@ Partial local record/CAS writes still follow the existing inspection-required
 rules; this addition does not claim arbitrary torn-write repair.
 
 This is a local result consumer, not a model planner, operation/request signer,
-provider launcher, scientific acceptance, production writer or commit-bound ACK
-sender. The production API continues to refuse this backend. Real role-principal
-and deployment qualification, request issuance and author/reviewer canaries are
-still separate work. The consumer tests use a labelled local protocol peer plus
-real Unix sockets, CAS, SQLite and the ordinary CLI; the existing broker delivery
-tests separately cover the actual signed journal and live query-admission path.
+provider launcher, billing signer, scientific acceptance, production writer or
+commit-bound ACK sender. The production API continues to refuse this backend.
+Real role-principal, billing-principal and deployment qualification, request
+issuance and author/reviewer canaries are still separate work. The consumer tests
+use labelled local protocol and billing fixtures plus real Unix sockets, CAS,
+SQLite and the ordinary CLI; the existing broker delivery tests separately cover
+the actual signed journal and live query-admission path.
 
 Run `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
 --test broker_prepared_consumer` for this consumer regression target.
@@ -508,6 +516,43 @@ by the executable consumer tests. Its digest strings bind named local fixture
 inputs, not real credentials or accepted scientific evidence. It is only the
 job's `input` body, not a complete service configuration or signed request.
 
+## Signed provider-cost settlement
+
+`ProviderCostSettlementV1` is the single machine contract for measured broker
+cost. The billing authority signs domain-separated bytes containing the exact
+operation/request/prepared-receipt identities, campaign/node/attempt, writer generation, campaign revision, settlement and
+authority-domain identifiers, trust-store generation, complete optional
+`TokenUsage`, actual micro-USD charge, issue time and signer key. Verification
+requires the prepared receipt's own hash to validate, exact token equality, a
+charge no greater than the signed request cap, a current bounded time window and
+a non-weak current Ed25519 key. The configured trust store fixes one expected
+authority-domain identifier; a valid key cannot silently sign for another billing
+domain. An older trust generation, unknown/revoked key, future/expired receipt,
+over-cap charge, changed usage or any subject substitution fails closed.
+
+The configured billing-authority settlement directory is canonical, no-follow
+and not writable by group/other. Files are single-link mode 0400/0440 and named
+`hex(SHA256(attempt_id_utf8)).cost.json`. The service holds only public keys; no
+billing private key enters a workflow or worker configuration. These source
+ownership checks do not prove a distinct installed principal or independent key
+custody; those remain target-host qualification requirements. File, directory
+and request identities are rechecked before the measured charge enters the
+prepared-result evidence. If dispatch has already become uncertain and the
+settlement is missing, recovery remains the original HEPTAQX1 query and cannot
+send another execution. A different later valid settlement cannot rewrite an
+existing uncommitted prepared cache; a durable commit remains replayable after
+the broker and settlement file disappear.
+
+`cost_settlement.rs` in the broker crate covers signature, generation, expiry,
+usage, cap and substitution failures. The service consumer submodule of the same
+name drives the ordinary `run` entry through broker transport, private CAS and
+SQLite: a signed cost of 6 under an admitted cap of 10 leaves budget 94, is stored
+in both result JSON and the control log, and replays without another debit. It
+also covers delayed settlement/query-only recovery, signed over-cap refusal and
+post-preparation settlement replacement, and a future settlement under the
+service clock followed by query-only recovery when that same clock advances.
+Fixture keys and peers are not a live provider billing principal or target-host
+acceptance.
 
 ## Explicit signed broker execution and recovery
 
@@ -564,8 +609,9 @@ The durable `.started` record survives. A new process queries the original
 operation, commits the recovered bytes through the existing verifier/sequencer,
 and replays without IPC or another debit. Closing IPC is not a remote cancel ACK,
 proof of provider termination, settled failure, or permission to refund/reissue.
-The observed provider usage is retained; accounting still charges the admitted
-upper bound, not a measured provider invoice. No request/operation
+The observed provider usage is retained. Accounting consumes a verified measured
+charge only when the source names the signed billing authority above; otherwise
+it explicitly retains the admitted upper bound. No request/operation or billing
 signing owner, dynamic author/reviewer request producer, scientific quality
 acceptance, commit-bound ACK or installed production acceptance is synthesized.
 Both broker backends remain refused by the existing full production-writer API.
@@ -583,7 +629,9 @@ actual signed admission, SQLite journal, supervised fixture process and restart.
 The `cache_admission` submodule drives real service preparation followed by a
 failing precommit clock, then exercises withdrawal, current refusal, exact
 receipt/output preservation, query-only recovery, cross-plan provider fencing and
-offline durable replay. These are source tests, not a live model canary.
+offline durable replay. `cost_settlement` separately binds the actual charge and
+proves the existing sequencer debits and replays that value. These are source
+tests, not a live model or billing canary.
 
 
 The process-crash fixtures strip debug sections only from their private copied
@@ -638,20 +686,23 @@ rather than authorizing a fresh effect or claiming provider termination.
 The profile admits only `TargetHost` research modules in the selected canary or
 established research stage. Registered or selected release verification,
 submission, migration/cutover, external-effect, central-writer module, Process
-worker and legacy Node adapter paths fail closed. Native workers and qualified
-broker prepared/execute workers still use the existing implementation hashes,
-request binding, CAS verification and single sequencer. An established receipt
-is authoritative only for its private research state; its canonical body keeps
-`productionActivation`, `releaseAuthority`, `submissionAuthority` and
-automatic activation false.
+worker and legacy Node adapter paths fail closed. Native workers retain their
+existing conservative accounting. Qualified broker prepared/execute workers must
+also name the signed read-only cost-settlement source above; a matching runtime
+identity without that owner is rejected. Both forms reuse the existing
+implementation hashes, request binding, CAS verification and single sequencer.
+An established receipt is authoritative only for its private research state; its
+canonical body keeps `productionActivation`, `releaseAuthority`,
+`submissionAuthority` and automatic activation false.
 
 This is a source composition, not installed acceptance. It does not make a test
 qualification externally real, bind the currently running executable to a host
-package, provision independent author/reviewer credentials, add live trust-store
-revocation callbacks, settle provider invoices or send commit-bound broker ACKs.
-Those facts still require the named installed composition and independently
-controlled evidence. The full production API continues to require the distinct
-V1/V2 closure and cannot accept the V3 research type.
+package, provision independent author/reviewer or billing credentials, add live
+trust-store distribution/revocation callbacks, or send commit-bound broker ACKs.
+The source can verify and persist an externally signed actual invoice; a real
+installed billing principal and its revocation/availability evidence remain
+outside the test fixture. The full production API continues to require the
+distinct V1/V2 closure and cannot accept the V3 research type.
 
 ## Versioned broker manuscript repair
 
@@ -660,6 +711,7 @@ contract described in [the amendment handoff](WORKFLOW_AMENDMENT_HANDOFF.md#brok
 The ordinary autonomous entry binds the rejected assessment and previous
 manuscript into a fresh author/revise input, then requires the unchanged reviewer
 contract over the revised bytes. It preserves rejection, committed history,
-query-only uncertain recovery and the existing resource ceilings. This does not
-close dynamic request issuance, independent installed role canaries, measured
-provider billing, commit-bound ACK or installed research/retirement acceptance.
+query-only uncertain recovery and the existing resource ceilings. Its broker
+sources may use the measured settlement contract, but this does not close dynamic
+request issuance, independent installed role/billing canaries, commit-bound ACK
+or installed research/retirement acceptance.

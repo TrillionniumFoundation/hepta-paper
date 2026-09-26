@@ -170,6 +170,7 @@ impl ServiceExecutorV1 {
         binding: &WorkerBindingV1,
         result: &PreparedResultV1,
         identity: &Sha256Digest,
+        refresh_current_time: &mut dyn FnMut() -> Result<(), ServiceError>,
     ) -> Result<(), ServiceError> {
         use crate::broker_prepared::BrokerConsumeModeV1;
         let (source, mode) = match binding {
@@ -191,7 +192,6 @@ impl ServiceExecutorV1 {
         }
         if result.artifact_hashes.len() != 1
             || result.actual_resources != request.candidate.resources
-            || result.actual_cost_microusd != request.candidate.cost_microusd
         {
             return Err(ServiceError::Artifact);
         }
@@ -215,7 +215,7 @@ impl ServiceExecutorV1 {
             }
             _ => return Err(ServiceError::Configuration),
         };
-        let (bytes, mut evidence) = crate::broker_prepared::consume(
+        let mut consumed = crate::broker_prepared::consume(
             source,
             &input,
             request,
@@ -224,19 +224,27 @@ impl ServiceExecutorV1 {
             &self.cancelled,
             mode,
             || Ok(()),
+            refresh_current_time,
         )?;
         // The original invocation may have dispatched once; this one never did.
         // Retain that historical fact rather than rewriting the evidence hash.
-        evidence["executionSentInThisInvocation"] = Value::Bool(sent);
+        consumed.evidence["executionSentInThisInvocation"] = Value::Bool(sent);
         let expected = json!({"version":1,"requestHash":identity,
-            "verifier":"broker_prepared_consumer", "workerEvidence":evidence});
-        if cached != expected || self.objects.read(&result.artifact_hashes[0])? != bytes {
+            "verifier":"broker_prepared_consumer", "workerEvidence":consumed.evidence});
+        if result.actual_cost_microusd != consumed.actual_cost_microusd
+            || cached != expected
+            || self.objects.read(&result.artifact_hashes[0])? != consumed.output
+        {
             return Err(ServiceError::Artifact);
         }
         Ok(())
     }
 
-    fn execute_one(&self, request: &ExecutionRequestV1) -> Result<PreparedResultV1, ServiceError> {
+    fn execute_one(
+        &self,
+        request: &ExecutionRequestV1,
+        refresh_current_time: &mut dyn FnMut() -> Result<(), ServiceError>,
+    ) -> Result<PreparedResultV1, ServiceError> {
         if self.cancelled.load(Ordering::Acquire) {
             return Err(ServiceError::Execution);
         }
@@ -269,7 +277,13 @@ impl ServiceExecutorV1 {
             {
                 self.objects.read(hash)?;
             }
-            self.revalidate_cached_broker_result(request, binding, &result, &identity)?;
+            self.revalidate_cached_broker_result(
+                request,
+                binding,
+                &result,
+                &identity,
+                refresh_current_time,
+            )?;
             return Ok(result);
         }
         let started = self.objects.attempt_path(&identity, "started");
@@ -309,7 +323,7 @@ impl ServiceExecutorV1 {
         if !readonly_query {
             record_started()?;
         }
-        let (mut artifacts, evidence) = match (binding, job) {
+        let (mut artifacts, evidence, actual_cost_microusd) = match (binding, job) {
             (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
             | (WorkerBindingV1::BrokerExecute { source }, NativeJobV1::BrokerExecute { input }) => {
                 let mode = match binding {
@@ -325,7 +339,7 @@ impl ServiceExecutorV1 {
                     .broker_context
                     .as_ref()
                     .ok_or(ServiceError::Configuration)?;
-                let (bytes, evidence) = crate::broker_prepared::consume(
+                let consumed = crate::broker_prepared::consume(
                     source,
                     &input,
                     request,
@@ -334,11 +348,13 @@ impl ServiceExecutorV1 {
                     &self.cancelled,
                     mode,
                     record_started,
+                    refresh_current_time,
                 )?;
                 (
-                    vec![self.objects.put(&bytes)?],
+                    vec![self.objects.put(&consumed.output)?],
                     json!({"version":1,"requestHash":identity,
-                    "verifier":"broker_prepared_consumer", "workerEvidence": evidence}),
+                    "verifier":"broker_prepared_consumer", "workerEvidence": consumed.evidence}),
+                    consumed.actual_cost_microusd,
                 )
             }
             (WorkerBindingV1::Native, NativeJobV1::ArtifactInventory { artifacts }) => {
@@ -355,6 +371,7 @@ impl ServiceExecutorV1 {
                 (
                     vec![self.objects.put(&bytes)?],
                     json!({"version":1,"verifier":"native_artifact_inventory","requestHash":identity}),
+                    request.candidate.cost_microusd,
                 )
             }
             (
@@ -382,6 +399,7 @@ impl ServiceExecutorV1 {
                     vec![self.objects.put(&bytes)?],
                     json!({"version":1,"verifier":"native_sqlite_inspector","requestHash":identity,
                     "databaseContentHash":expected_database_hash,"replayScope":"historical_pinned_database_input"}),
+                    request.candidate.cost_microusd,
                 )
             }
             (WorkerBindingV1::Native, NativeJobV1::Business { job }) => {
@@ -404,6 +422,7 @@ impl ServiceExecutorV1 {
                         "workerEvidence": output.evidence,
                         "scope": "prepared_result_only_no_external_authority"
                     }),
+                    request.candidate.cost_microusd,
                 )
             }
             (WorkerBindingV1::Process { .. }, NativeJobV1::Process { input }) => {
@@ -424,6 +443,7 @@ impl ServiceExecutorV1 {
                     hashes,
                     json!({"version":1,"requestHash":identity,"workerBinding":binding,"workerEvidence":response.evidence,
                     "scope":"content_integrity_not_scientific_or_production_authority"}),
+                    request.candidate.cost_microusd,
                 )
             }
             _ => return Err(ServiceError::Configuration),
@@ -448,9 +468,10 @@ impl ServiceExecutorV1 {
             module_version: request.candidate.module_version.clone(),
             status: PreparedResultStatusV1::Prepared,
             artifact_hashes: artifacts,
-            // Conservatively charge the admitted upper bound; no invented actual resource metering.
+            // Resources remain conservative unless independently measured. Broker
+            // cost may be a separately signed actual settlement under its source policy.
             actual_resources: request.candidate.resources,
-            actual_cost_microusd: request.candidate.cost_microusd,
+            actual_cost_microusd,
             evidence_hash: evidence,
             external_action_may_have_started: false,
         };
@@ -526,8 +547,10 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
                 // particular request to the worker. The preceding worker can
                 // advance time, so a wave-wide check cannot replace this one.
                 revalidate_admission()?;
+                let mut refresh_current_time =
+                    || revalidate_admission().map_err(|_| ServiceError::Execution);
                 let result = self
-                    .execute_one(request)
+                    .execute_one(request, &mut refresh_current_time)
                     .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
                 guard
                     .validate()

@@ -1061,7 +1061,7 @@
         {
           "path": "rust/crates/hepta-paper-service/src/worker.rs",
           "role": "implementation",
-          "gitBlob": "be37b780025964e59f80b07492ca0d21f7692ff5",
+          "gitBlob": "c7af3a1d887e5b25caeeee5bd9ed67ff13ded360",
           "mode": "100644",
           "language": "rust",
           "symbols": [

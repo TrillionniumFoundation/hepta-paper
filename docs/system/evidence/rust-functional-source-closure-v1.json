@@ -2117,8 +2117,6 @@
             "--locked",
             "-p",
             "hepta-paper-service",
-            "--test",
-            "broker_prepared_consumer",
             "cost_settlement::signed_actual_cost_is_debited_by_the_normal_sequencer_and_replays_offline",
             "--",
             "--exact",
@@ -2128,7 +2126,7 @@
           "expectedExitCode": 0,
           "timeoutSeconds": 600,
           "expectedTargets": [
-            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs"
           ]
         },
         {
@@ -2138,8 +2136,6 @@
             "--locked",
             "-p",
             "hepta-paper-service",
-            "--test",
-            "broker_prepared_consumer",
             "cost_settlement::missing_settlement_preserves_query_only_recovery_and_commits_when_authority_arrives",
             "--",
             "--exact",
@@ -2149,7 +2145,7 @@
           "expectedExitCode": 0,
           "timeoutSeconds": 600,
           "expectedTargets": [
-            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs"
           ]
         },
         {
@@ -2159,8 +2155,6 @@
             "--locked",
             "-p",
             "hepta-paper-service",
-            "--test",
-            "broker_prepared_consumer",
             "cost_settlement::valid_signature_over_a_cost_above_the_signed_request_cap_never_commits",
             "--",
             "--exact",
@@ -2170,7 +2164,7 @@
           "expectedExitCode": 0,
           "timeoutSeconds": 600,
           "expectedTargets": [
-            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs"
           ]
         },
         {
@@ -2180,8 +2174,6 @@
             "--locked",
             "-p",
             "hepta-paper-service",
-            "--test",
-            "broker_prepared_consumer",
             "cost_settlement::changed_signed_settlement_cannot_replace_an_uncommitted_prepared_cache",
             "--",
             "--exact",
@@ -2191,7 +2183,7 @@
           "expectedExitCode": 0,
           "timeoutSeconds": 600,
           "expectedTargets": [
-            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs"
           ]
         },
         {
@@ -2222,8 +2214,6 @@
             "--locked",
             "-p",
             "hepta-paper-service",
-            "--test",
-            "broker_prepared_consumer",
             "cost_settlement::settlement_uses_the_service_admission_clock_and_recovers_after_time_advances",
             "--",
             "--exact",
@@ -2233,7 +2223,7 @@
           "expectedExitCode": 0,
           "timeoutSeconds": 600,
           "expectedTargets": [
-            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer.rs"
+            "rust/crates/hepta-paper-service/tests/broker_prepared_consumer/cost_settlement.rs"
           ]
         }
       ]

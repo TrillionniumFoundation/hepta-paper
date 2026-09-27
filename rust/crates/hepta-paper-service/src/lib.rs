@@ -369,6 +369,7 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         return Err(ServiceError::Persistence);
     }
     let writer_generation = config.writer_lease.generation;
+    let writer_lease_expires_at_unix_ms = config.writer_lease.expires_at_unix_ms;
     let writer = store
         .acquire_writer(config.writer_lease, observed_at)
         .map_err(|_| ServiceError::Persistence)?;
@@ -422,6 +423,7 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
             lease_generation: writer_generation,
             committed_results,
             current_time_unix_ms,
+            writer_lease_expires_at_unix_ms,
         })
         .with_cancellation(Arc::clone(&cancelled));
     let broker_commit_targets = executor.broker_commit_targets();

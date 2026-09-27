@@ -1,6 +1,7 @@
 //! Ordinary CLI, SQLite and CAS integration against explicit local IPC fixtures.
-//! These peers do not certify live models, independent installed principals,
-//! request issuance or installed billing/acknowledgement principals.
+//! These peers do not certify live models or independently installed principals.
+//! The product-chain case does exercise the real hepta-core request signer,
+//! signed billing, durable commit and commit-bound acknowledgement paths.
 use super::*;
 use hepta_codex_protocol::{AgentRole, SandboxPolicy, Sha256Digest};
 use hepta_control_plane::{canonical_hash_v1, select_plan_v1};
@@ -47,7 +48,7 @@ impl RevisionFixture {
 
     fn with_product_chain(product_chain: bool) -> Self {
         let peer = if product_chain {
-            Fixture::new_acknowledged_execution()
+            Fixture::new_issued_acknowledged_execution()
         } else {
             Fixture::new_execution()
         };
@@ -186,9 +187,9 @@ impl RevisionFixture {
         );
         serde_json::from_slice::<Value>(&output.stdout).unwrap()["workflow"].clone()
     }
-    // The signed request producer is deliberately external to this test. Its
-    // protocol fixture reads the plan actually frozen by the ordinary entry,
-    // rather than supplying a second planner/executor/commit implementation.
+    // Compatibility cases retain an explicitly supplied signed request. The
+    // product-chain case below instead reads the request issued by the ordinary
+    // service entry; neither case supplies another planner/executor/commit owner.
     fn publish_selected(&mut self, index: usize) -> Value {
         let config: ServiceRunV1 = serde_json::from_slice(
             &fs::read(
@@ -257,6 +258,75 @@ impl RevisionFixture {
         self.peer.config = config;
         input.input_manifest
     }
+
+    fn capture_issued_selected(&mut self, index: usize) -> Value {
+        let config: ServiceRunV1 = serde_json::from_slice(
+            &fs::read(
+                self.definition
+                    .template
+                    .state_directory
+                    .join(format!("step-{index:04}.json")),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let plan = select_plan_v1(
+            &config.snapshot,
+            &config.frontier,
+            &config.hard_policy,
+            &config.planner_policy,
+        )
+        .unwrap();
+        let candidate = &config.frontier.candidates[0];
+        let job: NativeJobV1 = serde_json::from_slice(
+            &ObjectStoreV1::open(&config.state_directory)
+                .unwrap()
+                .read(&candidate.payload_hash)
+                .unwrap(),
+        )
+        .unwrap();
+        let NativeJobV1::BrokerExecute { input } = job else {
+            panic!("broker job")
+        };
+        let WorkerBindingV1::BrokerExecute { source } = &config.workers[&candidate.module_id]
+        else {
+            panic!("broker source")
+        };
+        let attempt_id = format!("{}:attempt:1", plan.plan_hash.as_str());
+        self.peer.socket_path = source.socket_path.clone();
+        self.peer.request_path = source
+            .request_directory
+            .join(broker_prepared_request_filename_v1(&attempt_id).unwrap());
+        assert!(
+            self.peer.request_path.exists(),
+            "ordinary entry must publish the selected signed request"
+        );
+        self.peer.request = self.peer.published_request();
+        assert_eq!(self.peer.request.operation_id, attempt_id);
+        assert_eq!(self.peer.request.idempotency_key, plan.plan_hash);
+        assert_eq!(self.peer.request.node_id, candidate.candidate_id);
+        assert_eq!(
+            self.peer.request.campaign_revision,
+            config.snapshot.campaign_revision
+        );
+        assert_eq!(
+            self.peer.request.lease_generation,
+            config.writer_lease.generation
+        );
+        assert_eq!(self.peer.request.role, source.role);
+        assert_eq!(self.peer.request.task_kind, input.task_kind);
+        assert_eq!(
+            self.peer.request.codex_runtime_identity_hash,
+            source.runtime_identity_hash
+        );
+        assert_eq!(
+            self.peer.request.input_manifest_hash,
+            hash(&serde_json::to_vec(&input.input_manifest).unwrap())
+        );
+        self.peer.config = config;
+        input.input_manifest
+    }
+
     fn stage(&mut self, index: usize, output: &[u8], response_mode: u8) -> (Value, Value) {
         assert_eq!(
             self.advance(index + 1)["ready"],
@@ -276,9 +346,9 @@ impl RevisionFixture {
         assert_eq!(
             self.advance(index + 1)["ready"],
             false,
-            "missing authority request must reject"
+            "missing broker endpoint must retain the ordinary issued request"
         );
-        let manifest = self.publish_selected(index);
+        let manifest = self.capture_issued_selected(index);
         self.peer.publish_cost_settlement(output, 6);
         let execution = self.peer.serve_execution(self.peer.listener(), output, 0);
         let committed = self.advance(index + 1);

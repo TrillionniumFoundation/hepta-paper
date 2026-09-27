@@ -151,11 +151,13 @@ The static module state is `source_implemented`, matching the Identity section a
 
 The [native business handoff](../NATIVE_BUSINESS_HANDOFF.md) defines the seven bounded kernels, actual wire examples, output contracts and executable documentation tests. These kernels must not be counted as full Node business-role parity. The [full replacement acceptance contract](../../migration/FULL_REPLACEMENT_ACCEPTANCE.md) defines the remaining command, capability, branch and operational evidence chain.
 
-The ordinary service and local workflow can now import an existing broker result
-through the [broker-prepared consumer](../LOCAL_WORKFLOW_HANDOFF.md#broker-prepared-result-consumption).
-It uses the existing CAS, verifier and SQLite sequencer without dispatching a
-provider or sending an ACK. This closes the local result-consumer slice only;
-request issuance, live role canaries and production activation remain separate.
+The ordinary service and local workflow can import an existing broker result or
+execute the selected broker operation through the [local workflow contract](../LOCAL_WORKFLOW_HANDOFF.md).
+The prepared-only form uses the existing CAS, verifier and SQLite sequencer
+without dispatch. The execute form may use the hepta-core short-lived request-
+capability signer, signed measured cost and post-commit V2 acknowledgement while
+preserving query-only recovery. Provider credentials, product-operation authority,
+live independent role canaries and production activation remain separate.
 
 ## Rollout and rollback
 

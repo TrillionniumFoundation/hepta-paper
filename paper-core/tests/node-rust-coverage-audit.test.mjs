@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { auditCurrentCoverage, auditNodeRustCommandMap, buildCoverageInventory, loadCurrentNodeRustCommandMapV2 } from '../../docs/tools/audit-node-rust-coverage.mjs';
@@ -11,9 +10,10 @@ function loadEncodedCommandMap() {
   return loadCurrentNodeRustCommandMapV2().map;
 }
 
+
 const report = auditCurrentCoverage();
 const loadedCommandMap = loadCurrentNodeRustCommandMapV2();
-const encodedCommandMap = loadedCommandMap.map;
+const encodedCommandMap = loadEncodedCommandMap();
 
 test('sharded V2 manifest binds every canonical ledger byte exactly once', () => {
   assert.equal(loadedCommandMap.manifest.kind, 'NodeRustCommandCompatibilityMapManifestV2');

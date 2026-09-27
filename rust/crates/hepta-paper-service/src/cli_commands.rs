@@ -83,17 +83,95 @@ mod tests {
             assert_eq!(CommandV1::parse(unknown), None);
         }
     }
+    use sha2::{Digest, Sha256};
+
+    const LEDGER_MANIFEST: &str =
+        include_str!("../../../../docs/migration/node-rust-command-map.v2.json");
+    const LEDGER_SHARDS: &[(&str, &str)] = &[
+        (
+            "docs/migration/node-rust-command-map.v2.paths.json",
+            include_str!("../../../../docs/migration/node-rust-command-map.v2.paths.json"),
+        ),
+        (
+            "docs/migration/node-rust-command-map.v2.symbols.0.json",
+            include_str!("../../../../docs/migration/node-rust-command-map.v2.symbols.0.json"),
+        ),
+        (
+            "docs/migration/node-rust-command-map.v2.symbols.1.json",
+            include_str!("../../../../docs/migration/node-rust-command-map.v2.symbols.1.json"),
+        ),
+        (
+            "docs/migration/node-rust-command-map.v2.commands.0.json",
+            include_str!("../../../../docs/migration/node-rust-command-map.v2.commands.0.json"),
+        ),
+        (
+            "docs/migration/node-rust-command-map.v2.commands.1.json",
+            include_str!("../../../../docs/migration/node-rust-command-map.v2.commands.1.json"),
+        ),
+    ];
+
+    fn canonical_ledger_rows() -> Vec<serde_json::Value> {
+        let manifest: serde_json::Value = serde_json::from_str(LEDGER_MANIFEST).unwrap();
+        assert_eq!(manifest["schemaVersion"], 2);
+        assert_eq!(
+            manifest["kind"],
+            "NodeRustCommandCompatibilityMapManifestV2"
+        );
+        assert_eq!(manifest["ledgerKind"], "NodeRustCommandCompatibilityMapV2");
+        assert_eq!(manifest["acceptedParity"], false);
+        assert_eq!(manifest["productionActivation"], false);
+        assert_eq!(manifest["nodeRetirement"], false);
+        let mut path_count = 0_u64;
+        let mut symbol_count = 0_u64;
+        let mut rows = Vec::new();
+        for shard in manifest["shards"].as_array().unwrap() {
+            let path = shard["path"].as_str().unwrap();
+            let text = LEDGER_SHARDS
+                .iter()
+                .find_map(|(candidate, text)| (*candidate == path).then_some(*text))
+                .expect("manifest named an uncompiled ledger shard");
+            assert_eq!(
+                shard["sha256"].as_str().unwrap(),
+                format!("sha256:{}", hex::encode(Sha256::digest(text.as_bytes())))
+            );
+            let values: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+            assert_eq!(shard["count"].as_u64().unwrap(), values.len() as u64);
+            match shard["kind"].as_str().unwrap() {
+                "paths" => {
+                    assert_eq!(shard["offset"].as_u64().unwrap(), path_count);
+                    path_count += values.len() as u64;
+                }
+                "symbols" => {
+                    assert_eq!(shard["offset"].as_u64().unwrap(), symbol_count);
+                    symbol_count += values.len() as u64;
+                }
+                "commands" => {
+                    assert_eq!(shard["offset"].as_u64().unwrap(), rows.len() as u64);
+                    rows.extend(values);
+                }
+                kind => panic!("unexpected ledger shard kind: {kind}"),
+            }
+        }
+        assert_eq!(path_count, manifest["pathCount"].as_u64().unwrap());
+        assert_eq!(symbol_count, manifest["symbolCount"].as_u64().unwrap());
+        assert_eq!(
+            rows.len() as u64,
+            manifest["commandCount"].as_u64().unwrap()
+        );
+        assert_eq!(
+            LEDGER_SHARDS.len(),
+            manifest["shards"].as_array().unwrap().len()
+        );
+        rows
+    }
+
     #[test]
     fn canonical_migration_ledger_uses_real_compiled_entrypoints() {
-        let ledger: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../docs/migration/node-rust-command-map.v2.json"
-        ))
-        .unwrap();
-        let rows = ledger["commands"].as_array().unwrap();
+        let rows = canonical_ledger_rows();
         assert!(!rows.is_empty());
         let mut seen = BTreeSet::new();
         let mut native_rows = 0;
-        for row in rows {
+        for row in &rows {
             let id = row["id"].as_str().unwrap();
             assert!(seen.insert(id), "duplicate canonical route: {id}");
             let mut words = row["rustEntrypoint"].as_str().unwrap().split_whitespace();

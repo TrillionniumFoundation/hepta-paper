@@ -93,6 +93,96 @@ export function buildCoverageInventory(routes, catalog, globalCapabilities, modu
   };
 }
 
+const COMMAND_MAP_V2_MANIFEST = 'docs/migration/node-rust-command-map.v2.json';
+const COMMAND_MAP_V2_MANIFEST_KEYS = Object.freeze([
+  'acceptedParity', 'commandCount', 'kind', 'ledgerKind', 'nodeRetirement',
+  'pathCount', 'productionActivation', 'schemaVersion', 'scope', 'shards', 'symbolCount',
+]);
+const COMMAND_MAP_V2_SHARD_KEYS = Object.freeze(['count', 'kind', 'offset', 'path', 'sha256']);
+
+function readBoundLedgerFile(relative) {
+  if (typeof relative !== 'string' || path.isAbsolute(relative)
+      || !relative.startsWith('docs/migration/node-rust-command-map.v2.')
+      || !relative.endsWith('.json') || relative.includes('\\')
+      || relative.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error(`noncanonical command-map shard: ${String(relative)}`);
+  }
+  let current = ROOT;
+  for (const part of relative.split('/')) {
+    current = path.join(current, part);
+    if (fs.lstatSync(current).isSymbolicLink()) throw new Error(`command-map shard symlink: ${relative}`);
+  }
+  const stat = fs.lstatSync(current);
+  if (!stat.isFile() || stat.nlink !== 1 || stat.size === 0 || stat.size > 1024 * 1024) {
+    throw new Error(`invalid command-map shard: ${relative}`);
+  }
+  return fs.readFileSync(current);
+}
+
+export function loadCurrentNodeRustCommandMapV2() {
+  const manifestBytes = readBoundLedgerFile(COMMAND_MAP_V2_MANIFEST);
+  const manifest = JSON.parse(manifestBytes);
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)
+      || Object.keys(manifest).sort().join(',') !== [...COMMAND_MAP_V2_MANIFEST_KEYS].sort().join(',')
+      || manifest.schemaVersion !== 2
+      || manifest.kind !== 'NodeRustCommandCompatibilityMapManifestV2'
+      || manifest.ledgerKind !== 'NodeRustCommandCompatibilityMapV2'
+      || manifest.scope !== 'source_call_chain_mapping_not_parity_acceptance'
+      || manifest.acceptedParity !== false || manifest.productionActivation !== false
+      || manifest.nodeRetirement !== false
+      || !Number.isSafeInteger(manifest.pathCount) || manifest.pathCount <= 0
+      || !Number.isSafeInteger(manifest.symbolCount) || manifest.symbolCount <= 0
+      || !Number.isSafeInteger(manifest.commandCount) || manifest.commandCount <= 0
+      || !Array.isArray(manifest.shards) || manifest.shards.length < 3) {
+    throw new Error('invalid sharded Node/Rust command map manifest');
+  }
+  const tables = { paths: [], symbols: [], commands: [] };
+  const sourcePaths = [COMMAND_MAP_V2_MANIFEST];
+  const seenPaths = new Set(sourcePaths);
+  for (const [index, shard] of manifest.shards.entries()) {
+    if (!shard || typeof shard !== 'object' || Array.isArray(shard)
+        || Object.keys(shard).sort().join(',') !== [...COMMAND_MAP_V2_SHARD_KEYS].sort().join(',')
+        || !Object.hasOwn(tables, shard.kind)
+        || !Number.isSafeInteger(shard.offset) || shard.offset < 0
+        || !Number.isSafeInteger(shard.count) || shard.count <= 0
+        || typeof shard.sha256 !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(shard.sha256)
+        || seenPaths.has(shard.path)) {
+      throw new Error(`invalid command-map shard manifest entry: ${index}`);
+    }
+    const target = tables[shard.kind];
+    if (shard.offset !== target.length) throw new Error(`noncontiguous command-map shard: ${shard.path}`);
+    const bytes = readBoundLedgerFile(shard.path);
+    if (sha256(bytes) !== shard.sha256) throw new Error(`command-map shard digest mismatch: ${shard.path}`);
+    const rows = JSON.parse(bytes);
+    if (!Array.isArray(rows) || rows.length !== shard.count) {
+      throw new Error(`command-map shard count mismatch: ${shard.path}`);
+    }
+    target.push(...rows);
+    seenPaths.add(shard.path);
+    sourcePaths.push(shard.path);
+  }
+  if (tables.paths.length !== manifest.pathCount
+      || tables.symbols.length !== manifest.symbolCount
+      || tables.commands.length !== manifest.commandCount) {
+    throw new Error('sharded Node/Rust command map total count mismatch');
+  }
+  return {
+    map: {
+      schemaVersion: 2,
+      kind: manifest.ledgerKind,
+      scope: manifest.scope,
+      acceptedParity: manifest.acceptedParity,
+      productionActivation: manifest.productionActivation,
+      nodeRetirement: manifest.nodeRetirement,
+      paths: tables.paths,
+      symbols: tables.symbols,
+      commands: tables.commands,
+    },
+    manifest,
+    sourcePaths,
+  };
+}
+
 function actionModesFromNodeRoute(route) {
   // Raw registry routes use argv; projected inventory rows use nodeArgv.
   // Never silently pick one when a caller supplies contradictory identities.
@@ -137,6 +227,107 @@ function actionModesFromRustEntrypoint(row) {
   if (typeof row.rustEntrypoint !== 'string') return [];
   const match = /--action\s+([a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]+)+)/.exec(row.rustEntrypoint);
   return match ? match[1].split('|').sort(compare) : [];
+}
+
+const COMMAND_MAP_V2_KEYS = Object.freeze([
+  'acceptedParity', 'commands', 'kind', 'nodeRetirement', 'paths',
+  'productionActivation', 'schemaVersion', 'scope', 'symbols',
+]);
+
+function decodeNodeRustCommandMapV2(raw, encodedRequired) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+      || raw.schemaVersion !== 2 || raw.kind !== 'NodeRustCommandCompatibilityMapV2') {
+    throw new Error('invalid Node/Rust command map scope');
+  }
+  const encoded = Array.isArray(raw.paths) && Array.isArray(raw.symbols);
+  if (!encoded) {
+    if (encodedRequired || raw.paths !== undefined || raw.symbols !== undefined) {
+      throw new Error('indexed Node/Rust command map tables missing');
+    }
+    return raw;
+  }
+  if (Object.keys(raw).sort().join(',') !== [...COMMAND_MAP_V2_KEYS].sort().join(',')) {
+    throw new Error('indexed Node/Rust command map top-level fields drifted');
+  }
+  if (raw.paths.length === 0 || raw.symbols.length === 0
+      || raw.paths.some((value) => typeof value !== 'string' || value.length === 0)
+      || new Set(raw.paths).size !== raw.paths.length
+      || JSON.stringify(raw.paths) !== JSON.stringify([...raw.paths].sort(compare))) {
+    throw new Error('indexed Node/Rust command map path table invalid');
+  }
+  const symbols = raw.symbols.map((entry, index) => {
+    if (!Array.isArray(entry) || entry.length !== 2
+        || !Number.isSafeInteger(entry[0]) || entry[0] < 0 || entry[0] >= raw.paths.length
+        || typeof entry[1] !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(entry[1])) {
+      throw new Error(`indexed Node/Rust command map symbol invalid: ${index}`);
+    }
+    return { path: raw.paths[entry[0]], symbol: entry[1], pathIndex: entry[0] };
+  });
+  const symbolIdentities = symbols.map((entry) => `${entry.path}:${entry.symbol}`);
+  if (new Set(symbolIdentities).size !== symbolIdentities.length
+      || JSON.stringify(symbolIdentities) !== JSON.stringify([...symbolIdentities].sort(compare))) {
+    throw new Error('indexed Node/Rust command map symbol table invalid');
+  }
+  const usedPaths = new Set();
+  const usedSymbols = new Set();
+  const indexes = (values, maximum, label) => {
+    if (!Array.isArray(values) || values.some((value) => !Number.isSafeInteger(value)
+      || value < 0 || value >= maximum) || new Set(values).size !== values.length) {
+      throw new Error(`invalid indexed Node/Rust command binding: ${label}`);
+    }
+    return values;
+  };
+  const expandPaths = (values, label) => indexes(values, raw.paths.length, label).map((index) => {
+    usedPaths.add(index);
+    return raw.paths[index];
+  });
+  const expandSymbols = (values, label) => indexes(values, symbols.length, label).map((index) => {
+    const entry = symbols[index];
+    usedSymbols.add(index);
+    usedPaths.add(entry.pathIndex);
+    return { path: entry.path, symbol: entry.symbol };
+  });
+  if (!Array.isArray(raw.commands)) throw new Error('indexed Node/Rust command rows missing');
+  const commands = raw.commands.map((row, rowIndex) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error(`invalid indexed Node/Rust command row: ${rowIndex}`);
+    }
+    const expanded = {
+      ...row,
+      tests: expandPaths(row.tests, `${rowIndex}:tests`),
+      rustSources: expandPaths(row.rustSources, `${rowIndex}:rustSources`),
+      callChain: expandSymbols(row.callChain, `${rowIndex}:callChain`),
+      testCases: expandSymbols(row.testCases, `${rowIndex}:testCases`),
+    };
+    if (row.argumentModes !== undefined) {
+      if (!Array.isArray(row.argumentModes)) {
+        throw new Error(`invalid indexed Node/Rust argument modes: ${rowIndex}`);
+      }
+      expanded.argumentModes = row.argumentModes.map((mode, modeIndex) => {
+        if (!mode || typeof mode !== 'object' || Array.isArray(mode)) {
+          throw new Error(`invalid indexed Node/Rust argument mode: ${rowIndex}:${modeIndex}`);
+        }
+        return {
+          ...mode,
+          callChain: expandSymbols(mode.callChain, `${rowIndex}:${modeIndex}:callChain`),
+          tests: expandSymbols(mode.tests, `${rowIndex}:${modeIndex}:tests`),
+        };
+      });
+    }
+    return expanded;
+  });
+  if (usedPaths.size !== raw.paths.length || usedSymbols.size !== symbols.length) {
+    throw new Error('indexed Node/Rust command map contains unused table entries');
+  }
+  return {
+    schemaVersion: raw.schemaVersion,
+    kind: raw.kind,
+    scope: raw.scope,
+    acceptedParity: raw.acceptedParity,
+    productionActivation: raw.productionActivation,
+    nodeRetirement: raw.nodeRetirement,
+    commands,
+  };
 }
 
 function validateCommandArgumentModes(row, route) {
@@ -203,9 +394,12 @@ function validateCommandArgumentModes(row, route) {
 // Rust command candidates (or an explicit unmapped decision), so that command
 // coverage cannot silently disappear while the migration is in progress.
 export function auditNodeRustCommandMap(routes, suppliedMap = null) {
-  const relative = 'docs/migration/node-rust-command-map.v1.json';
-  const map = suppliedMap ?? JSON.parse(fs.readFileSync(path.join(ROOT, relative), 'utf8'));
-  if (map.schemaVersion !== 1 || map.kind !== 'NodeRustCommandCompatibilityMapV1'
+  const loaded = suppliedMap === null
+    ? loadCurrentNodeRustCommandMapV2()
+    : { map: suppliedMap, sourcePaths: [] };
+  const raw = loaded.map;
+  const map = decodeNodeRustCommandMapV2(raw, suppliedMap === null);
+  if (map.schemaVersion !== 2 || map.kind !== 'NodeRustCommandCompatibilityMapV2'
       || map.scope !== 'source_call_chain_mapping_not_parity_acceptance'
       || map.acceptedParity !== false || map.productionActivation !== false
       || map.nodeRetirement !== false || !Array.isArray(map.commands)) {
@@ -277,7 +471,7 @@ export function auditNodeRustCommandMap(routes, suppliedMap = null) {
     sourceSymbolsValidated: true,
     callGraphVerified: false,
     testsExecutedByThisValidator: false,
-    sourceBindings: [relative, ...argumentModeSources,
+    sourceBindings: [...loaded.sourcePaths, ...argumentModeSources,
       ...map.commands.flatMap((row) => [...row.tests, ...row.rustSources])]
       .filter((value, index, values) => values.indexOf(value) === index)
       .sort(compare).map(readSource),

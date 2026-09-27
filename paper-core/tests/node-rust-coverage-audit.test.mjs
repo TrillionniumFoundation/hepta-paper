@@ -1,12 +1,52 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { auditCurrentCoverage, auditNodeRustCommandMap, buildCoverageInventory } from '../../docs/tools/audit-node-rust-coverage.mjs';
+import { auditCurrentCoverage, auditNodeRustCommandMap, buildCoverageInventory, loadCurrentNodeRustCommandMapV2 } from '../../docs/tools/audit-node-rust-coverage.mjs';
 import { COMMAND_REGISTRY_ROUTES } from '../src/command-registry-routes.mjs';
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 
+function loadEncodedCommandMap() {
+  return loadCurrentNodeRustCommandMapV2().map;
+}
+
 const report = auditCurrentCoverage();
+const loadedCommandMap = loadCurrentNodeRustCommandMapV2();
+const encodedCommandMap = loadedCommandMap.map;
+
+test('sharded V2 manifest binds every canonical ledger byte exactly once', () => {
+  assert.equal(loadedCommandMap.manifest.kind, 'NodeRustCommandCompatibilityMapManifestV2');
+  assert.equal(loadedCommandMap.manifest.commandCount, 57);
+  assert.equal(loadedCommandMap.sourcePaths.length, 6);
+  assert.equal(new Set(loadedCommandMap.sourcePaths).size, loadedCommandMap.sourcePaths.length);
+  assert.ok(loadedCommandMap.manifest.shards.every((row) => /^sha256:[0-9a-f]{64}$/.test(row.sha256)));
+});
+
+test('indexed V2 command ledger expands to the complete validated route contract', () => {
+  assert.equal(encodedCommandMap.schemaVersion, 2);
+  assert.equal(encodedCommandMap.kind, 'NodeRustCommandCompatibilityMapV2');
+  assert.equal(new Set(encodedCommandMap.paths).size, encodedCommandMap.paths.length);
+  assert.equal(new Set(encodedCommandMap.symbols.map((entry) => JSON.stringify(entry))).size,
+    encodedCommandMap.symbols.length);
+  assert.ok(encodedCommandMap.commands.every((row) => row.tests.every(Number.isSafeInteger)
+    && row.rustSources.every(Number.isSafeInteger)
+    && row.callChain.every(Number.isSafeInteger)
+    && row.testCases.every(Number.isSafeInteger)));
+  const expanded = auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, encodedCommandMap);
+  assert.deepEqual(expanded.commands, report.commandMappings.commands);
+
+  const outOfRange = structuredClone(encodedCommandMap);
+  outOfRange.commands[0].tests[0] = outOfRange.paths.length;
+  assert.throws(() => auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, outOfRange),
+    /invalid indexed Node\/Rust command binding/);
+
+  const stale = structuredClone(encodedCommandMap);
+  stale.paths.push('zz-unused-source.rs');
+  assert.throws(() => auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, stale),
+    /unused table entries/);
+});
+
 test('inventory retains every command and every argument-dependent effect', () => {
   assert.equal(report.commands.length, COMMAND_REGISTRY_ROUTES.length);
   for (const route of COMMAND_REGISTRY_ROUTES) {

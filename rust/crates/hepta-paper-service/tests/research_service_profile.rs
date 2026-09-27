@@ -1,5 +1,8 @@
 use base64ct::{Base64UrlUnpadded, Encoding};
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{
+    SigningKey,
+    pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
+};
 use hepta_campaign_writer::WriterLeaseV1;
 use hepta_codex_protocol::Sha256Digest;
 use hepta_control_plane::{
@@ -13,6 +16,7 @@ use hepta_module_platform::{
 use hepta_paper_service::broker_prepared::{
     BrokerCommitAcknowledgementKeyV2, BrokerCommitAcknowledgementSourceV2,
     BrokerCostSettlementKeyV1, BrokerCostSettlementSourceV1, BrokerPreparedSourceV1,
+    BrokerRequestSignerSourceV1,
 };
 use hepta_paper_service::{
     NativeJobV1, ObjectStoreV1, ResearchActivationStageV1, ResearchServiceRunV1, ServiceRunV1,
@@ -245,6 +249,14 @@ fn research_broker_requires_current_signed_cost_owner_without_release_authority(
     fs::set_permissions(&requests, fs::Permissions::from_mode(0o700)).unwrap();
     fs::set_permissions(&settlements, fs::Permissions::from_mode(0o700)).unwrap();
     fs::set_permissions(&acknowledgements, fs::Permissions::from_mode(0o700)).unwrap();
+    let request_key = SigningKey::from_bytes(&[73; 32]);
+    let request_key_path = temp.0.join("request-capability-key.pem");
+    fs::write(
+        &request_key_path,
+        request_key.to_pkcs8_pem(LineEnding::LF).unwrap().as_bytes(),
+    )
+    .unwrap();
+    fs::set_permissions(&request_key_path, fs::Permissions::from_mode(0o600)).unwrap();
     let key = SigningKey::from_bytes(&[74; 32]);
     let acknowledgement_key = SigningKey::from_bytes(&[75; 32]);
     let module = config.service.workers.keys().next().unwrap().clone();
@@ -258,9 +270,30 @@ fn research_broker_requires_current_signed_cost_owner_without_release_authority(
         role: hepta_codex_protocol::AgentRole::Author,
         runtime_identity_hash: digest(9),
         timeout_ms: 1_000,
+        request_signer: None,
         cost_settlement: None,
         commit_acknowledgement: None,
     };
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: source.clone(),
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    source.request_signer = Some(BrokerRequestSignerSourceV1 {
+        private_key_path: request_key_path,
+        private_key_owner_uid: owner.uid(),
+        private_key_owner_gid: owner.gid(),
+        signer_key_id: "research-request-key".into(),
+        public_key_base64: Base64UrlUnpadded::encode_string(request_key.verifying_key().as_bytes()),
+        model_selector: "qualified-research-model".into(),
+        maximum_lifetime_ms: 60_000,
+        maximum_output_bytes: 4096,
+        maximum_event_count: 100,
+        remaining_token_hint: Some(100),
+    });
     config.service.workers.insert(
         module.clone(),
         WorkerBindingV1::BrokerExecute {
@@ -310,6 +343,32 @@ fn research_broker_requires_current_signed_cost_owner_without_release_authority(
         },
     );
     assert!(validate_research_service_policy_v1(&config, &digest(9)).is_ok());
+
+    let mut missing_request_signer = source.clone();
+    missing_request_signer.request_signer = None;
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: missing_request_signer,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut shared_request_key = source.clone();
+    shared_request_key
+        .request_signer
+        .as_mut()
+        .unwrap()
+        .public_key_base64 = shared_request_key.cost_settlement.as_ref().unwrap().keys[0]
+        .public_key_base64
+        .clone();
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: shared_request_key,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
 
     let mut shared_domain = source.clone();
     shared_domain
@@ -477,6 +536,7 @@ fn research_policy_rejects_source_process_activation_and_runtime_substitution() 
                 role: hepta_codex_protocol::AgentRole::Author,
                 runtime_identity_hash: digest(8),
                 timeout_ms: 1_000,
+                request_signer: None,
                 cost_settlement: None,
                 commit_acknowledgement: None,
             },

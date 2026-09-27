@@ -1,6 +1,6 @@
 //! Ordinary CLI, SQLite and CAS integration against explicit local IPC fixtures.
 //! These peers do not certify live models, independent installed principals,
-//! request issuance, billing or commit-bound acknowledgements.
+//! request issuance or installed billing/acknowledgement principals.
 use super::*;
 use hepta_codex_protocol::{AgentRole, SandboxPolicy, Sha256Digest};
 use hepta_control_plane::{canonical_hash_v1, select_plan_v1};
@@ -38,7 +38,19 @@ struct RevisionFixture {
 }
 impl RevisionFixture {
     fn new() -> Self {
-        let peer = Fixture::new_execution();
+        Self::with_product_chain(false)
+    }
+
+    fn new_product_chain() -> Self {
+        Self::with_product_chain(true)
+    }
+
+    fn with_product_chain(product_chain: bool) -> Self {
+        let peer = if product_chain {
+            Fixture::new_acknowledged_execution()
+        } else {
+            Fixture::new_execution()
+        };
         let mut definition = broker_workflow_definition(&peer, &peer.root.join("revision-state"));
         let author = definition.steps[0].clone();
         let registry: Value = serde_json::from_str(&definition.template.registry_json).unwrap();
@@ -240,6 +252,9 @@ impl RevisionFixture {
             .request_directory
             .join(broker_prepared_request_filename_v1(&request.attempt_id).unwrap());
         self.peer.publish(&self.peer.request);
+        // The selected ordinary step, not the fixture's bootstrap service, owns
+        // the canonical campaign database used by settlement and ACK authority.
+        self.peer.config = config;
         input.input_manifest
     }
     fn stage(&mut self, index: usize, output: &[u8], response_mode: u8) -> (Value, Value) {
@@ -257,6 +272,48 @@ impl RevisionFixture {
         fs::remove_file(&self.peer.socket_path).unwrap();
         (report, manifest)
     }
+    fn stage_product(&mut self, index: usize, output: &[u8]) -> (Value, Value) {
+        assert_eq!(
+            self.advance(index + 1)["ready"],
+            false,
+            "missing authority request must reject"
+        );
+        let manifest = self.publish_selected(index);
+        self.peer.publish_cost_settlement(output, 6);
+        let execution = self.peer.serve_execution(self.peer.listener(), output, 0);
+        let committed = self.advance(index + 1);
+        execution.join().unwrap();
+        fs::remove_file(&self.peer.socket_path).unwrap();
+        assert_eq!(
+            committed["ready"], false,
+            "commit must wait for the separately signed ACK: {committed}"
+        );
+        let acknowledgement = self.peer.publish_commit_acknowledgement(output);
+        let delivery =
+            self.peer
+                .serve_commit_acknowledgement(self.peer.listener(), acknowledgement, false);
+        let report = self.advance(index + 1);
+        delivery.join().unwrap();
+        fs::remove_file(&self.peer.socket_path).unwrap();
+        (report, manifest)
+    }
+
+    fn reject_product(&mut self) -> Vec<u8> {
+        assert_eq!(self.stage_product(0, DRAFT).0["ready"], true);
+        let review = Self::assessment(DRAFT, false);
+        let (report, manifest) = self.stage_product(1, &review);
+        assert_eq!(
+            manifest["manuscript"],
+            String::from_utf8(DRAFT.to_vec()).unwrap()
+        );
+        assert_eq!(manifest["manuscriptHash"], json!(hash(DRAFT)));
+        assert_eq!(report["error"], "local_workflow_review_gate_rejected");
+        let status = self.status();
+        assert_eq!(status["committedSteps"], 2);
+        assert_eq!(status["gateRejected"], true);
+        review
+    }
+
     fn assessment(manuscript: &[u8], accepted: bool) -> Vec<u8> {
         serde_json::to_vec(&json!({"accepted":accepted,"manuscriptHash":hash(manuscript),"reasons":["retained protocol assessment"]})).unwrap()
     }
@@ -453,4 +510,49 @@ fn broker_revision_lost_response_recovers_query_only_and_second_rejection_is_dur
             .join("step-0004.json")
             .exists()
     );
+}
+
+#[test]
+fn ordinary_product_revision_chain_settles_and_acknowledges_every_role_commit() {
+    let mut f = RevisionFixture::new_product_chain();
+    let author_socket = match &f.definition.template.workers["module.broker-author"] {
+        WorkerBindingV1::BrokerExecute { source } => source.socket_path.clone(),
+        _ => panic!("author broker source"),
+    };
+    let reviewer_socket = match &f.definition.template.workers["module.broker-reviewer"] {
+        WorkerBindingV1::BrokerExecute { source } => source.socket_path.clone(),
+        _ => panic!("reviewer broker source"),
+    };
+    assert_ne!(author_socket, reviewer_socket);
+
+    let rejection = f.reject_product();
+    let request = f.amendment();
+    let report = f.amend(&request);
+    assert_eq!(report["ready"], true, "{report}");
+    f.current_hash = report["definitionHash"].as_str().unwrap().parse().unwrap();
+
+    let (report, manifest) = f.stage_product(2, REVISED);
+    assert_eq!(report["ready"], true, "{report}");
+    assert_eq!(
+        manifest["previousManuscript"],
+        String::from_utf8(DRAFT.to_vec()).unwrap()
+    );
+    assert_eq!(manifest["previousManuscriptHash"], json!(hash(DRAFT)));
+    assert_eq!(
+        manifest["review"],
+        String::from_utf8(rejection.clone()).unwrap()
+    );
+    assert_eq!(manifest["reviewHash"], json!(hash(&rejection)));
+    assert_eq!(f.status()["gateRejected"], true);
+
+    let accepted = RevisionFixture::assessment(REVISED, true);
+    let (report, manifest) = f.stage_product(3, &accepted);
+    assert_eq!(report["ready"], true, "{report}");
+    assert_eq!(manifest["manuscriptHash"], json!(hash(REVISED)));
+    let status = f.status();
+    assert_eq!(status["gateRejected"], false);
+    assert_eq!(status["committedSteps"], 4);
+    assert_eq!(status["budgetRemainingMicrousd"], 76);
+    assert_eq!(report["scientificAcceptance"], false);
+    assert_eq!(report["productionActivation"], false);
 }

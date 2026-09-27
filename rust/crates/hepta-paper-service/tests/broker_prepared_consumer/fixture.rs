@@ -1,10 +1,12 @@
 //! Local protocol peer fixture: not a live model or broker journal qualification.
 use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::{Signer, SigningKey};
-use hepta_campaign_writer::WriterLeaseV1;
+use hepta_campaign_writer::{CampaignWriterPolicyV1, CampaignWriterStoreV1, WriterLeaseV1};
 use hepta_codex_broker::{
-    BrokerPreparedResultReceiptV1, BrokerResponseV1, ProviderCostSettlementV1,
-    provider_cost_settlement_signing_bytes, write_response_frame,
+    BrokerPreparedResultReceiptV1, BrokerResponseV1, CommitBoundPreparedResultAcknowledgementV2,
+    ProviderCostSettlementV1, commit_bound_acknowledgement_hash_v2,
+    commit_bound_acknowledgement_signing_bytes_v2, provider_cost_settlement_signing_bytes,
+    write_commit_bound_acknowledgement_frame, write_response_frame,
 };
 use hepta_codex_protocol::*;
 use hepta_control_plane::*;
@@ -33,6 +35,7 @@ pub struct Fixture {
     pub request_path: PathBuf,
     pub socket_path: PathBuf,
     pub settlement_directory: Option<PathBuf>,
+    pub acknowledgement_directory: Option<PathBuf>,
 }
 pub fn hash(bytes: &[u8]) -> Sha256Digest {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
@@ -50,15 +53,18 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub fn new() -> Self {
-        Self::with_execution(false, false)
+        Self::with_execution(false, false, false)
     }
     pub fn new_execution() -> Self {
-        Self::with_execution(true, false)
+        Self::with_execution(true, false, false)
     }
     pub fn new_settled_execution() -> Self {
-        Self::with_execution(true, true)
+        Self::with_execution(true, true, false)
     }
-    fn with_execution(execution: bool, settled: bool) -> Self {
+    pub fn new_acknowledged_execution() -> Self {
+        Self::with_execution(true, true, true)
+    }
+    fn with_execution(execution: bool, settled: bool, acknowledged: bool) -> Self {
         let now = if execution {
             u64::try_from(
                 std::time::SystemTime::now()
@@ -85,8 +91,14 @@ impl Fixture {
             private(&directory);
             directory
         });
+        let acknowledgement_directory = acknowledged.then(|| {
+            let directory = root.join("commit-acknowledgements");
+            private(&directory);
+            directory
+        });
         let owner = fs::metadata(&root).unwrap();
         let billing_key = SigningKey::from_bytes(&[73; 32]);
+        let acknowledgement_key = SigningKey::from_bytes(&[75; 32]);
         let source = BrokerPreparedSourceV1 {
             socket_path: root.join("broker.sock"),
             broker_uid: owner.uid(),
@@ -109,6 +121,22 @@ impl Fixture {
                         key_id: "fixture-billing-key".into(),
                         public_key_base64: Base64UrlUnpadded::encode_string(
                             billing_key.verifying_key().as_bytes(),
+                        ),
+                    }],
+                }
+            }),
+            commit_acknowledgement: acknowledgement_directory.as_ref().map(|directory| {
+                BrokerCommitAcknowledgementSourceV2 {
+                    directory: directory.clone(),
+                    authority_domain_id: "fixture-commit-domain".into(),
+                    authority_uid: owner.uid(),
+                    authority_gid: owner.gid(),
+                    trust_store_generation: 1,
+                    maximum_age_ms: 60_000,
+                    keys: vec![BrokerCommitAcknowledgementKeyV2 {
+                        key_id: "fixture-commit-key".into(),
+                        public_key_base64: Base64UrlUnpadded::encode_string(
+                            acknowledgement_key.verifying_key().as_bytes(),
                         ),
                     }],
                 }
@@ -325,6 +353,7 @@ impl Fixture {
             request_path,
             socket_path: source.socket_path,
             settlement_directory,
+            acknowledgement_directory,
         };
         fixture.publish(&fixture.request);
         fixture
@@ -382,6 +411,126 @@ impl Fixture {
         }
         fs::write(&path, serde_json::to_vec(&settlement).unwrap()).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o400)).unwrap();
+    }
+
+    pub fn commit_acknowledgement_path(&self) -> PathBuf {
+        self.acknowledgement_directory
+            .as_ref()
+            .unwrap()
+            .join(broker_commit_acknowledgement_filename_v2(&self.request.attempt_id).unwrap())
+    }
+
+    pub fn publish_commit_acknowledgement(
+        &self,
+        output: &[u8],
+    ) -> CommitBoundPreparedResultAcknowledgementV2 {
+        let owner = fs::metadata(&self.config.state_directory).unwrap().uid();
+        let (_, log, _) = CampaignWriterStoreV1::read_local_control_snapshot(
+            self.config.state_directory.join("campaign.sqlite"),
+            CampaignWriterPolicyV1::strict(owner),
+            &self.config.snapshot.campaign_id,
+        )
+        .unwrap();
+        let entry = log
+            .entries
+            .iter()
+            .find(|entry| entry.attempt_id == self.request.attempt_id)
+            .expect("current attempt is durably committed");
+        let result: PreparedResultV1 = serde_json::from_str(&entry.result_json).unwrap();
+        let commit: CommitReceiptV1 = serde_json::from_str(&entry.receipt_json).unwrap();
+        let prepared = prepared_receipt(&self.request, output);
+        assert_eq!(commit.result_hash, result.result_hash().unwrap());
+        let now = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap();
+        let key = SigningKey::from_bytes(&[75; 32]);
+        let mut acknowledgement = CommitBoundPreparedResultAcknowledgementV2 {
+            version: 2,
+            authority_domain_id: "fixture-commit-domain".into(),
+            trust_store_generation: 1,
+            operation_id: self.request.operation_id.clone(),
+            request_hash: prepared.request_hash,
+            prepared_receipt_hash: prepared.prepared_receipt_hash,
+            campaign_id: self.request.campaign_id.clone(),
+            node_id: self.request.node_id.clone(),
+            attempt_id: self.request.attempt_id.clone(),
+            campaign_revision: self.request.campaign_revision,
+            lease_generation: self.request.lease_generation,
+            plan_hash: commit.plan_hash,
+            sequence: commit.sequence,
+            result_hash: commit.result_hash,
+            verifier_hash: commit.verifier_hash,
+            verification_receipt_hash: commit.verification_receipt_hash,
+            committed_state_hash: commit.committed_state_hash,
+            actual_cost_microusd: result.actual_cost_microusd,
+            acknowledged_at_unix_ms: now,
+            signer_key_id: "fixture-commit-key".into(),
+            signature_base64: "AA".into(),
+        };
+        acknowledgement.signature_base64 = Base64UrlUnpadded::encode_string(
+            &key.sign(&commit_bound_acknowledgement_signing_bytes_v2(&acknowledgement).unwrap())
+                .to_bytes(),
+        );
+        let path = self.commit_acknowledgement_path();
+        if path.exists() {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        fs::write(&path, serde_json::to_vec(&acknowledgement).unwrap()).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o400)).unwrap();
+        acknowledgement
+    }
+
+    pub fn serve_commit_acknowledgement(
+        &self,
+        listener: UnixListener,
+        acknowledgement: CommitBoundPreparedResultAcknowledgementV2,
+        lose_response: bool,
+    ) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(std::time::Instant::now() < deadline, "expected commit ACK");
+                        thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    Err(error) => panic!("commit ACK listener: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+                .unwrap();
+            let mut expected = Vec::new();
+            write_commit_bound_acknowledgement_frame(
+                &mut expected,
+                &acknowledgement,
+                Default::default(),
+            )
+            .unwrap();
+            let mut actual = vec![0; expected.len()];
+            stream.read_exact(&mut actual).unwrap();
+            assert_eq!(actual, expected, "service must send the exact signed ACK");
+            if lose_response {
+                return;
+            }
+            write_response_frame(
+                &mut stream,
+                &BrokerResponseV1::acknowledged(
+                    acknowledgement.operation_id.clone(),
+                    acknowledgement.request_hash.clone(),
+                    acknowledgement.prepared_receipt_hash.clone(),
+                    commit_bound_acknowledgement_hash_v2(&acknowledgement).unwrap(),
+                ),
+                Default::default(),
+            )
+            .unwrap();
+        })
     }
 
     pub fn listener(&self) -> UnixListener {

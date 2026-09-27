@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn canonical_migration_ledger_uses_real_compiled_entrypoints() {
         let ledger: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../docs/migration/node-rust-command-map.v1.json"
+            "../../../../docs/migration/node-rust-command-map.v2.json"
         ))
         .unwrap();
         let rows = ledger["commands"].as_array().unwrap();

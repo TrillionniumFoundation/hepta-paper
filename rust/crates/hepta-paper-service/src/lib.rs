@@ -204,6 +204,10 @@ pub enum ServiceError {
     /// Scheduling, verification or commit rejected operation.
     #[error("control-plane operation rejected")]
     Control,
+    /// The campaign commit is durable, but its broker acknowledgement has not
+    /// been confirmed. Retry may resend only the identical signed acknowledgement.
+    #[error("campaign commit is durable but broker acknowledgement requires recovery")]
+    PostCommitAcknowledgement,
     /// An invoked control-plane executor requires inspection; automatic retry is unsafe.
     ///
     /// The diagnostic is copied before the local runtime owner is dropped. It is
@@ -345,7 +349,8 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
             return Err(ServiceError::Configuration);
         }
     }
-    let objects = ObjectStoreV1::open(&config.state_directory)?;
+    let state_directory = config.state_directory.clone();
+    let objects = ObjectStoreV1::open(&state_directory)?;
     // Outlive both executor and SQLite sequencer, irrespective of their field drop order.
     let _state_access = objects.clone();
     let owner = fs::metadata(&config.state_directory)
@@ -419,6 +424,7 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
             current_time_unix_ms,
         })
         .with_cancellation(Arc::clone(&cancelled));
+    let broker_commit_targets = executor.broker_commit_targets();
     let mut control = ControlPlaneV1::new(
         registry,
         config.hard_policy.registry_policy_hash.clone(),
@@ -431,9 +437,39 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         BoundedEventLogV1::new(100_000, 100_000).map_err(|_| ServiceError::Control)?,
     )
     .map_err(|_| ServiceError::Control)?;
-    control
+    let receipt = control
         .run_with_clock(&config.snapshot, &config.frontier, &tenant, clock)
-        .map_err(|error| control_error::map_control_run_error(error, control.inspection_required()))
+        .map_err(|error| {
+            control_error::map_control_run_error(error, control.inspection_required())
+        })?;
+    let targets = broker_commit_targets
+        .lock()
+        .map_err(|_| ServiceError::PostCommitAcknowledgement)?
+        .clone();
+    if !targets.is_empty() {
+        let now_unix_ms = clock().map_err(|_| ServiceError::PostCommitAcknowledgement)?;
+        for commit_receipt in &receipt.commit_receipts {
+            if let Some(target) = targets.get(&commit_receipt.result_hash) {
+                broker_prepared::acknowledge_committed_result(
+                    &state_directory,
+                    target,
+                    commit_receipt,
+                    now_unix_ms,
+                    &cancelled,
+                )
+                .map_err(|_| ServiceError::PostCommitAcknowledgement)?;
+            }
+        }
+        if targets.keys().any(|result_hash| {
+            !receipt
+                .commit_receipts
+                .iter()
+                .any(|r| &r.result_hash == result_hash)
+        }) {
+            return Err(ServiceError::PostCommitAcknowledgement);
+        }
+    }
+    Ok(receipt)
 }
 
 /// Hash the full run configuration, for external binding and review.

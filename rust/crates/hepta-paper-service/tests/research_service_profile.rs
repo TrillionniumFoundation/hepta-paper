@@ -11,6 +11,7 @@ use hepta_module_platform::{
     ResourceVectorV1,
 };
 use hepta_paper_service::broker_prepared::{
+    BrokerCommitAcknowledgementKeyV2, BrokerCommitAcknowledgementSourceV2,
     BrokerCostSettlementKeyV1, BrokerCostSettlementSourceV1, BrokerPreparedSourceV1,
 };
 use hepta_paper_service::{
@@ -237,11 +238,15 @@ fn research_broker_requires_current_signed_cost_owner_without_release_authority(
     let owner = fs::metadata(&temp.0).unwrap();
     let requests = temp.0.join("requests");
     let settlements = temp.0.join("settlements");
+    let acknowledgements = temp.0.join("acknowledgements");
     fs::create_dir(&requests).unwrap();
     fs::create_dir(&settlements).unwrap();
+    fs::create_dir(&acknowledgements).unwrap();
     fs::set_permissions(&requests, fs::Permissions::from_mode(0o700)).unwrap();
     fs::set_permissions(&settlements, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&acknowledgements, fs::Permissions::from_mode(0o700)).unwrap();
     let key = SigningKey::from_bytes(&[74; 32]);
+    let acknowledgement_key = SigningKey::from_bytes(&[75; 32]);
     let module = config.service.workers.keys().next().unwrap().clone();
     let mut source = BrokerPreparedSourceV1 {
         socket_path: temp.0.join("broker.sock"),
@@ -254,6 +259,7 @@ fn research_broker_requires_current_signed_cost_owner_without_release_authority(
         runtime_identity_hash: digest(9),
         timeout_ms: 1_000,
         cost_settlement: None,
+        commit_acknowledgement: None,
     };
     config.service.workers.insert(
         module.clone(),
@@ -281,7 +287,92 @@ fn research_broker_requires_current_signed_cost_owner_without_release_authority(
             source: source.clone(),
         },
     );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    source.commit_acknowledgement = Some(BrokerCommitAcknowledgementSourceV2 {
+        directory: acknowledgements,
+        authority_domain_id: "research-commit-domain".into(),
+        authority_uid: owner.uid(),
+        authority_gid: owner.gid(),
+        trust_store_generation: 1,
+        maximum_age_ms: 60_000,
+        keys: vec![BrokerCommitAcknowledgementKeyV2 {
+            key_id: "research-commit-key".into(),
+            public_key_base64: Base64UrlUnpadded::encode_string(
+                acknowledgement_key.verifying_key().as_bytes(),
+            ),
+        }],
+    });
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: source.clone(),
+        },
+    );
     assert!(validate_research_service_policy_v1(&config, &digest(9)).is_ok());
+
+    let mut shared_domain = source.clone();
+    shared_domain
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .authority_domain_id = shared_domain
+        .cost_settlement
+        .as_ref()
+        .unwrap()
+        .authority_domain_id
+        .clone();
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: shared_domain,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut shared_directory = source.clone();
+    shared_directory
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .directory = shared_directory
+        .cost_settlement
+        .as_ref()
+        .unwrap()
+        .directory
+        .clone();
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: shared_directory,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut shared_key = source.clone();
+    shared_key.commit_acknowledgement.as_mut().unwrap().keys[0].public_key_base64 =
+        shared_key.cost_settlement.as_ref().unwrap().keys[0]
+            .public_key_base64
+            .clone();
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute { source: shared_key },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut invalid_acknowledgement = source.clone();
+    invalid_acknowledgement
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .trust_store_generation = 0;
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: invalid_acknowledgement,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
 
     let mut invalid = source;
     invalid
@@ -387,6 +478,7 @@ fn research_policy_rejects_source_process_activation_and_runtime_substitution() 
                 runtime_identity_hash: digest(8),
                 timeout_ms: 1_000,
                 cost_settlement: None,
+                commit_acknowledgement: None,
             },
         },
     );

@@ -12,6 +12,8 @@ mod cost_settlement;
 mod fixture;
 #[path = "broker_prepared_consumer/plan_waves.rs"]
 mod plan_waves;
+#[path = "broker_prepared_consumer/request_signing.rs"]
+mod request_signing;
 #[path = "broker_prepared_consumer/revision.rs"]
 mod revision;
 use fixture::*;

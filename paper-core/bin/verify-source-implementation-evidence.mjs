@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
+const MAX_COMMAND_DIAGNOSTIC_BYTES = 8 * 1024;
 const SHA1_PATTERN = /^[0-9a-f]{40}$/;
 const MODULE_PATTERN = /^module\.[a-z0-9-]+$/;
 const CAPABILITY_PATTERN = /^CAP-[A-Z0-9-]+$/;
@@ -289,6 +290,17 @@ function hashBytes(bytes) {
   return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
 }
 
+function commandDiagnostic(value) {
+  const bytes = Buffer.from(value ?? '', 'utf8');
+  const tail = bytes.subarray(Math.max(0, bytes.length - MAX_COMMAND_DIAGNOSTIC_BYTES));
+  return {
+    byteCount: bytes.length,
+    sha256: hashBytes(bytes),
+    tailBase64: tail.toString('base64'),
+    truncated: tail.length !== bytes.length,
+  };
+}
+
 function trackedBlob(root, relative) {
   const output = git(root, ['ls-files', '-s', '--', relative]);
   const match = /^(\d{6}) ([0-9a-f]{40}) 0\t(.+)$/u.exec(output);
@@ -375,6 +387,22 @@ function checkedFile(root, entry, globalPaths, bundleLabel) {
   return { ...entry, relative, absolute };
 }
 
+function scopedCargoTestTarget(expectedTarget) {
+  const direct = /^rust\/crates\/([^/]+)\/tests\/([^/]+)\.rs$/u.exec(expectedTarget);
+  if (direct !== null) return { packageName: direct[1], testTarget: direct[2] };
+  const nested = /^rust\/crates\/([^/]+)\/tests\/([^/]+)\/(?:[^/]+\/)*[^/]+\.rs$/u.exec(
+    expectedTarget,
+  );
+  if (nested === null) return null;
+  return { packageName: nested[1], testTarget: nested[2] };
+}
+
+function scopedCargoLibraryTarget(expectedTarget) {
+  const match = /^rust\/crates\/([^/]+)\/src\/(?:[^/]+\/)*[^/]+\.rs$/u.exec(expectedTarget);
+  if (match === null) return null;
+  return { packageName: match[1] };
+}
+
 function validateCommand(command, label, testPaths) {
   exactKeys(command, COMMAND_KEYS, label);
   requireString(command.program, `${label}.program`);
@@ -401,19 +429,10 @@ function validateCommand(command, label, testPaths) {
     if (!allowed) fail('node_command_not_allowlisted', label);
   } else if (command.program === 'cargo') {
     const args = command.args;
-    const unscoped = args.length === 8
-      && args[0] === 'test'
-      && args[1] === '--locked'
-      && args[2] === '-p'
-      && SAFE_PACKAGE_PATTERN.test(args[3])
-      && SAFE_RUST_TEST_PATTERN.test(args[4])
-      && args[5] === '--'
-      && args[6] === '--exact'
-      && args[7] === '--nocapture';
-    const scopedTarget = command.expectedTargets.length === 1
-      ? /^rust\/crates\/([^/]+)\/tests\/([^/]+)\.rs$/u.exec(command.expectedTargets[0])
+    const integrationTarget = command.expectedTargets.length === 1
+      ? scopedCargoTestTarget(command.expectedTargets[0])
       : null;
-    const scoped = args.length === 10
+    const integrationScoped = args.length === 10
       && args[0] === 'test'
       && args[1] === '--locked'
       && args[2] === '-p'
@@ -424,10 +443,27 @@ function validateCommand(command, label, testPaths) {
       && args[7] === '--'
       && args[8] === '--exact'
       && args[9] === '--nocapture'
-      && scopedTarget !== null
-      && scopedTarget[1] === args[3]
-      && scopedTarget[2] === args[5];
-    if ((!unscoped && !scoped) || workdir !== 'rust') fail('cargo_command_not_allowlisted', label);
+      && integrationTarget !== null
+      && integrationTarget.packageName === args[3]
+      && integrationTarget.testTarget === args[5];
+    const libraryTarget = command.expectedTargets.length === 1
+      ? scopedCargoLibraryTarget(command.expectedTargets[0])
+      : null;
+    const libraryScoped = args.length === 9
+      && args[0] === 'test'
+      && args[1] === '--locked'
+      && args[2] === '-p'
+      && SAFE_PACKAGE_PATTERN.test(args[3])
+      && args[4] === '--lib'
+      && SAFE_RUST_TEST_PATTERN.test(args[5])
+      && args[6] === '--'
+      && args[7] === '--exact'
+      && args[8] === '--nocapture'
+      && libraryTarget !== null
+      && libraryTarget.packageName === args[3];
+    if ((!integrationScoped && !libraryScoped) || workdir !== 'rust') {
+      fail('cargo_command_not_allowlisted', label);
+    }
   } else {
     fail('command_program_not_allowlisted', `${label}:${command.program}`);
   }
@@ -600,7 +636,7 @@ function safeExecutionEnvironment() {
 function assertTestExecution(command, bundle, stdout, label) {
   const text = stdout.replace(/\x1b\[[0-9;]*m/gu, '');
   if (command.program === 'cargo') {
-    const selector = command.args[4] === '--test' ? command.args[6] : command.args[4];
+    const selector = command.args[4] === '--test' ? command.args[6] : command.args[5];
     const resultRows = text.split(/\r?\n/u)
       .filter((line) => line.startsWith(`test ${selector} ... `));
     const summaries = [...text.matchAll(
@@ -670,7 +706,19 @@ function executeCommands(root, bundles) {
       };
       observations.push(observation);
       if (result.status !== command.expectedExitCode) {
-        fail('verification_command_failed', `${bundleId}:${index}:status=${String(result.status)}`);
+        fail('verification_command_failed', JSON.stringify({
+          args: command.args,
+          bundleId,
+          expectedExitCode: command.expectedExitCode,
+          index,
+          program: command.program,
+          signal: result.signal ?? null,
+          status: result.status,
+          stderr: commandDiagnostic(result.stderr),
+          stdout: commandDiagnostic(result.stdout),
+          timedOut: result.signal === 'SIGTERM' && result.status === null,
+          workdir: command.workdir,
+        }));
       }
       assertTestExecution(command, bundle, result.stdout ?? '', `${bundleId}:${index}`);
     }

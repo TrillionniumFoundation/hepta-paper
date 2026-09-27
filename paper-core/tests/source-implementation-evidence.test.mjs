@@ -193,6 +193,50 @@ test('exact source evidence executes a typed owner test and emits no authority',
   assert.deepEqual(receipt.authorityClaims, authorityClaims());
 });
 
+test('failed owner command preserves a bounded exact transcript diagnostic', () => {
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'test/feature.test.mjs', [
+      "import assert from 'node:assert/strict';",
+      "import test from 'node:test';",
+      "test('feature_test', () => assert.fail('functional-evidence-failure-marker'));",
+      '',
+    ].join('\n'));
+    evidence.bundles['example-source'].files[1].gitBlob = command(
+      root,
+      'git',
+      'hash-object',
+      'test/feature.test.mjs',
+    );
+  });
+  assert.throws(
+    () => verifyRepositorySourceEvidence({
+      root: fixture.root,
+      execute: true,
+      expectedHead: fixture.head,
+      expectedTree: fixture.tree,
+    }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      const prefix = 'verification_command_failed: ';
+      assert.ok(error.message.startsWith(prefix));
+      const diagnostic = JSON.parse(error.message.slice(prefix.length));
+      assert.equal(diagnostic.bundleId, 'example-source');
+      assert.equal(diagnostic.index, 0);
+      assert.equal(diagnostic.status, 1);
+      assert.equal(diagnostic.signal, null);
+      assert.equal(diagnostic.timedOut, false);
+      assert.equal(diagnostic.stdout.truncated, false);
+      assert.match(diagnostic.stdout.sha256, /^sha256:[0-9a-f]{64}$/u);
+      assert.match(
+        Buffer.from(diagnostic.stdout.tailBase64, 'base64').toString('utf8'),
+        /functional-evidence-failure-marker/u,
+      );
+      assert.match(diagnostic.stderr.sha256, /^sha256:[0-9a-f]{64}$/u);
+      return true;
+    },
+  );
+});
+
 test('module identity must be a registered string', () => {
   assertRejected((evidence) => {
     evidence.records['TEST-001'].moduleId = 1;
@@ -309,19 +353,22 @@ test('work-item keys, modules, capabilities and source state are closed-world', 
 
 // These exercise the actual verifier process boundary. The synthetic Cargo
 // executable tests transcript policy only; it is not Rust execution evidence.
-function executableCargoFixture(t, transcript) {
+function executableCargoFixture(t, transcript, { unscoped = false } = {}) {
   const fixture = createFixture((evidence, root) => {
-    write(root, 'rust/tests/selected.rs', '#[test]\nfn selected_owner_test() {}\n');
+    const expectedTarget = 'rust/crates/fixture/src/tests.rs';
+    write(root, expectedTarget, '#[test]\nfn selected_owner_test() {}\n');
     const bundle = evidence.bundles['example-source'];
     bundle.files[1] = {
-      path: 'rust/tests/selected.rs', role: 'test', mode: '100644', language: 'rust',
-      gitBlob: command(root, 'git', 'hash-object', 'rust/tests/selected.rs'),
+      path: expectedTarget, role: 'test', mode: '100644', language: 'rust',
+      gitBlob: command(root, 'git', 'hash-object', expectedTarget),
       symbols: [{ kind: 'test', name: 'selected_owner_test' }],
     };
     bundle.verificationCommands[0] = {
       program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 10,
-      args: ['test', '--locked', '-p', 'fixture', 'selected_owner_test', '--', '--exact', '--nocapture'],
-      expectedTargets: ['rust/tests/selected.rs'],
+      args: unscoped
+        ? ['test', '--locked', '-p', 'fixture', 'selected_owner_test', '--', '--exact', '--nocapture']
+        : ['test', '--locked', '-p', 'fixture', '--lib', 'selected_owner_test', '--', '--exact', '--nocapture'],
+      expectedTargets: [expectedTarget],
     };
   });
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-test-transcript-'));
@@ -366,6 +413,67 @@ test('Cargo exact selected execution permits other binaries with zero matching t
   assert.equal(receipt.commandObservations.length, 1);
   assert.equal(receipt.commandObservations[0].status, 0);
   assert.deepEqual(receipt.authorityClaims, authorityClaims());
+});
+
+test('Cargo owner commands cannot fall back to package-wide unscoped execution', (t) => {
+  const fixture = executableCargoFixture(t, '', { unscoped: true });
+  assert.throws(
+    () => verifyRepositorySourceEvidence({ root: fixture.root, execute: false }),
+    /cargo_command_not_allowlisted/u,
+  );
+});
+
+function nestedScopedCargoFixture(t, testTarget = 'owner_suite') {
+  const expectedTarget = 'rust/crates/fixture/tests/owner_suite/nested.rs';
+  const fixture = createFixture((evidence, root) => {
+    write(root, expectedTarget, '#[test]\nfn selected_owner_test() {}\n');
+    const bundle = evidence.bundles['example-source'];
+    bundle.files[1] = {
+      path: expectedTarget, role: 'test', mode: '100644', language: 'rust',
+      gitBlob: command(root, 'git', 'hash-object', expectedTarget),
+      symbols: [{ kind: 'test', name: 'selected_owner_test' }],
+    };
+    bundle.verificationCommands[0] = {
+      program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 10,
+      args: [
+        'test', '--locked', '-p', 'fixture', '--test', testTarget,
+        'selected_owner_test', '--', '--exact', '--nocapture',
+      ],
+      expectedTargets: [expectedTarget],
+    };
+  });
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-nested-test-transcript-'));
+  const launcher = path.join(bin, 'cargo');
+  const transcript = `test selected_owner_test ... ok\n${oneCargoSummary}`;
+  fs.writeFileSync(
+    launcher,
+    `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(transcript)});\n`,
+    { mode: 0o700 },
+  );
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${oldPath ?? ''}`;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    fs.rmSync(bin, { recursive: true, force: true });
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  });
+  return fixture;
+}
+
+test('nested Rust owner modules bind their exact Cargo integration-test binary', (t) => {
+  const fixture = nestedScopedCargoFixture(t);
+  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+});
+
+test('nested Rust owner modules cannot bind a different Cargo integration-test binary', (t) => {
+  const fixture = nestedScopedCargoFixture(t, 'other_suite');
+  assert.throws(
+    () => verifyRepositorySourceEvidence({ root: fixture.root, execute: false }),
+    /cargo_command_not_allowlisted/u,
+  );
 });
 
 for (const [name, body] of [

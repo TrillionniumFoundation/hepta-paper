@@ -748,9 +748,13 @@ fn check_broker_cli_signal(signal: nix::sys::signal::Signal) {
     hepta_codex_broker::write_request_frame(&mut expected, &f.request, Default::default()).unwrap();
     let listener = f.listener();
     listener.set_nonblocking(true).unwrap();
+    // Process startup is only a precondition for the cancellation assertion.
+    // Keep it tolerant of a loaded shared builder while the actual signal and
+    // IPC-close deadlines below remain strict and unchanged.
+    let startup_timeout = Duration::from_secs(30);
     let (ready, request_observed) = mpsc::sync_channel(1);
     let server = thread::spawn(move || {
-        let until = Instant::now() + Duration::from_secs(15);
+        let until = Instant::now() + startup_timeout;
         let mut stream = loop {
             match listener.accept() {
                 Ok((stream, _)) => break stream,
@@ -787,10 +791,7 @@ fn check_broker_cli_signal(signal: nix::sys::signal::Signal) {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    if request_observed
-        .recv_timeout(Duration::from_secs(15))
-        .is_err()
-    {
+    if request_observed.recv_timeout(startup_timeout).is_err() {
         let _ = child.kill();
         let output = child.wait_with_output().unwrap();
         panic!(

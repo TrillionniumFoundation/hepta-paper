@@ -499,16 +499,20 @@ A missing, expired or unprepared result never causes automatic model execution.
 Partial local record/CAS writes still follow the existing inspection-required
 rules; this addition does not claim arbitrary torn-write repair.
 
-This is a local result consumer, not a model planner, operation/request signer,
+The prepared-only form remains a local result consumer, not a model planner,
 provider launcher, billing signer, scientific acceptance or production writer.
-When `commitAcknowledgement` is configured, the existing service sends only the
-post-commit V2 acknowledgement described below; it does not mint its signature or
-replace the sequencer. The production API continues to refuse this backend. Real
-role, billing, acknowledgement and deployment principals, request issuance and
-live author/reviewer canaries remain separate qualification work. Consumer tests
-use labelled protocol/signing fixtures plus real Unix sockets, CAS, SQLite and the
-ordinary CLI; broker lifecycle tests separately cover signed admission, canonical
-commit resolution and journal transition/restart behavior.
+The execute form may use the separately configured hepta-core request signer
+described below, but that signer grants neither product-operation admission nor
+provider credentials: the role broker still verifies the signed request, its own
+qualified operation descriptor and its own credential/runtime identity before
+release. When `commitAcknowledgement` is configured, the existing service sends
+only the post-commit V2 acknowledgement described below; it never mints that
+external signature or replaces the sequencer. The production API continues to
+refuse this backend. Real installed role, billing, acknowledgement and deployment
+principals and live author/reviewer canaries remain separate qualification work.
+Consumer tests use labelled protocol/signing fixtures plus real Unix sockets,
+CAS, SQLite and the ordinary CLI; broker lifecycle tests separately cover signed
+admission, canonical commit resolution and journal transition/restart behavior.
 
 Run `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
 --test broker_prepared_consumer` for this consumer regression target.
@@ -517,6 +521,47 @@ The [checked-in input example](examples/broker-prepared-input.v1.json) is consum
 by the executable consumer tests. Its digest strings bind named local fixture
 inputs, not real credentials or accepted scientific evidence. It is only the
 job's `input` body, not a complete service configuration or signed request.
+
+## Hepta-core request-capability issuance
+
+`BrokerRequestSignerSourceV1` is an optional owner on `BrokerExecute`. Its
+configuration contains only an absolute PKCS#8 key path, expected key owner and
+public key, signer identifier, model selector and closed time/output/event/token
+ceilings. Private key bytes are never serialized into workflow JSON, CAS evidence
+or broker frames. The key file is opened no-follow, single-link, owner-only and
+bounded; metadata is compared before and after the read, decoded bytes are held
+in zeroizing storage, and the derived public key must equal the configured key.
+The service principal may hold this campaign request-capability key, but it still
+holds no Codex/provider credential, operation descriptor authority, billing key,
+ACK key, release key or submission authority.
+
+Only a fresh `ExecuteOnce` attempt may invoke this owner. It constructs the
+request from the already selected immutable execution: operation/attempt/plan,
+campaign/node/revision/lease, role/task, runtime and model identities, every
+prompt/input/workspace/schema/mutation hash, provider-call count, cost cap, token
+hint and writer-lease-bounded deadline. Network is fixed to none, approval to
+never and the sandbox follows the closed author/repairer versus reviewer role.
+The capability binds the actual kernel peer UID/GID and is locally verified with
+the same broker contract before publication.
+
+Publication holds the existing request-directory flock and uses descriptor-
+relative `openat`, owner/mode/link checks, file and directory fsync, and
+`renameat2(RENAME_NOREPLACE)`. A conflicting or aliased pending file fails closed;
+a valid final file is subsequently reopened by the existing captured-request
+owner. The signer runs before any broker connection and before `.started`
+persistence. After `.started` exists, recovery is query-only and never remints a
+missing request, even when the private key still exists. A committed result
+replays after both the key and broker disappear.
+
+`request_signing.rs` exercises ordinary `hepta-paper-rust run` issuance, actual
+Ed25519 verification at the kernel-authenticated fixture peer, durable commit and
+offline replay; lost-response query-only recovery without the key; writable,
+mismatched or differently signed requests; pending symlink refusal; and refusal
+to remint after durable intent. The complete author -> reviewer -> revised author -> replacement reviewer
+ordinary autonomous workflow uses this same owner for all four signed requests,
+then independently settles cost, commits SQLite and obtains a V2 commit-bound ACK
+for each result. Fixture keys and peers do not establish independent installed
+principal custody or a live provider canary.
 
 ## Signed provider-cost settlement
 
@@ -622,17 +667,22 @@ ownership rules above, but the registry must bind
 `broker_execution_implementation_hash_v1`, never the prepared-only hash. A step
 reserves exactly one `provider_calls` unit; the local workflow still forbids
 external actions and central-writer turns. Native and prepared-only backends
-retain their zero-provider-call contract. The real broker, not the service JSON,
-verifies the independently supplied signature, current capability and qualified
-product operation before a provider can start.
+retain their zero-provider-call contract. The request may be pre-published by an
+external authority only when `requestSigner` is absent, or generated by the
+optional hepta-core owner above. When that owner is configured, an already
+published request must verify under the same configured public key and exact
+attempt/plan/role/cost/lease bindings; another otherwise broker-trusted signer
+cannot bypass the selected owner. In every case the real broker, not service JSON,
+verifies the current capability and separately qualified product operation before
+a provider can start.
 
-On a fresh attempt, the service captures and validates the signed request,
-connects the selected endpoint and authenticates its kernel peer before writing
-any dispatch intent. A missing, malformed or mismatched request, missing/stale
-socket or denied peer leaves no `.started` record and may be retried with the
-same immutable operation. Only after these local checks does it fsync the
-existing `.started` record, revalidate the held request and cancellation, and
-send one execution frame. No error after intent persistence deletes that record
+On a fresh attempt, the optional signer first publishes the exact immutable
+request. The service then captures and validates it, connects the selected
+endpoint and authenticates its kernel peer before writing any dispatch intent. A
+missing, malformed or mismatched request, missing/stale socket or denied peer
+leaves no `.started` record and may be retried with the same immutable operation.
+Only after these local checks does it fsync the existing `.started` record,
+revalidate the held request and cancellation, and send one execution frame. No error after intent persistence deletes that record
 or authorizes a second execution. `dispatch_signed_operation` requires the
 expected kernel peer and exact operation/request response binding. Reservation,
 running or rejected state is not a prepared result. On a prepared response it
@@ -671,11 +721,12 @@ and replays without IPC or another debit. Closing IPC is not a remote cancel ACK
 proof of provider termination, settled failure, or permission to refund/reissue.
 The observed provider usage is retained. Accounting consumes a verified measured
 charge only when the source names the signed billing authority above; otherwise
-it explicitly retains the admitted upper bound. No request, billing or
-acknowledgement signing material, dynamic author/reviewer request producer,
-scientific quality acceptance or installed production acceptance is synthesized.
-A configured ACK is post-commit and independently resolved as specified above.
-Both broker backends remain refused by the existing full production-writer API.
+it explicitly retains the admitted upper bound. The optional request-capability
+key is the only local signing material in this path; billing and acknowledgement
+signatures remain external, and no scientific quality, release/submission or
+installed production acceptance is synthesized. A configured ACK is post-commit
+and independently resolved as specified above. Both broker backends remain
+refused by the existing full production-writer API.
 
 The `broker_prepared_consumer` target exercises both ordinary CLI/workflow
 backends, first execution, query-only recovery after lost response, malformed
@@ -693,7 +744,8 @@ receipt/output preservation, query-only recovery, cross-plan provider fencing an
 offline durable replay. `cost_settlement` separately binds the actual charge and
 proves the existing sequencer debits and replays that value.
 `commit_acknowledgement` then binds the same committed result to the broker
-terminal state and covers lost responses and substitution. These are source
+terminal state and covers lost responses and substitution. `request_signing`
+checks the fresh-only hepta-core issuer and filesystem boundary. These are source
 tests, not live model, billing or ACK canaries.
 
 
@@ -752,9 +804,11 @@ submission, migration/cutover, external-effect, central-writer module, Process
 worker and legacy Node adapter paths fail closed. Native workers retain their
 existing conservative accounting. Qualified broker prepared/execute workers must
 name both the signed read-only cost-settlement source and commit-acknowledgement
-source above; a matching runtime identity without either owner is rejected. Both
-forms reuse the existing implementation hashes, request binding, CAS verification
-and single sequencer.
+source above; an execute worker must additionally name the hepta-core request
+signer. A matching runtime identity without the required owner is rejected, and
+the request, billing and ACK public keys/directories may not alias. Prepared-only
+recovery does not gain request-signing authority. Both forms reuse the existing
+implementation hashes, request binding, CAS verification and single sequencer.
 An established receipt is authoritative only for its private research state; its
 canonical body keeps `productionActivation`, `releaseAuthority`,
 `submissionAuthority` and automatic activation false.
@@ -777,6 +831,7 @@ The ordinary autonomous entry binds the rejected assessment and previous
 manuscript into a fresh author/revise input, then requires the unchanged reviewer
 contract over the revised bytes. It preserves rejection, committed history,
 query-only uncertain recovery and the existing resource ceilings. Its broker
-sources may use the measured settlement and commit-bound ACK contracts, but this
-does not close dynamic request issuance, independent installed role/billing/ACK
-canaries or installed research/retirement acceptance.
+sources may use the hepta-core request signer, measured settlement and
+commit-bound ACK contracts. This closes repository-local request issuance for the
+normal path, but not independent installed role/billing/ACK canaries, live
+revocation/availability evidence or installed research/retirement acceptance.

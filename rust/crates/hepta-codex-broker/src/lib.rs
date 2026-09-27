@@ -18,6 +18,7 @@ mod admission;
 mod capability;
 mod client;
 mod codex_dispatch;
+mod commit_acknowledgement;
 mod cost_settlement;
 mod delivery;
 mod dispatch_backup;
@@ -58,6 +59,16 @@ pub use codex_dispatch::{
     CodexDispatchAuthorityV1, CodexDispatchAuthorizationPointV1, CodexDispatchError,
     CodexDispatchPlanV1, CodexDispatchResultV1, run_reserved_codex_operation,
 };
+pub use commit_acknowledgement::{
+    CommitBindingDatabaseScopeV2, CommitBindingResolverV2, CommitBoundAcknowledgementError,
+    CommitBoundAcknowledgementPolicyV2, CommitBoundAcknowledgementTrustStoreV2,
+    CommitBoundPreparedResultAcknowledgementV2, PreparedResultAcknowledgementSubjectV2,
+    PreparedResultCommitBindingV2, SqliteCommitBindingResolverV2,
+    VerifiedCommitBoundAcknowledgementV2, apply_commit_bound_acknowledgement_v2,
+    commit_bound_acknowledgement_hash_v2, commit_bound_acknowledgement_signing_bytes_v2,
+    verify_commit_bound_acknowledgement_subject_v2,
+    verify_persisted_commit_bound_acknowledgement_v2,
+};
 pub use cost_settlement::{
     ProviderCostSettlementError, ProviderCostSettlementPolicyV1,
     ProviderCostSettlementTrustStoreV1, ProviderCostSettlementV1, VerifiedProviderCostSettlementV1,
@@ -74,8 +85,9 @@ pub use fake_execution::{
     run_reserved_fake_operation,
 };
 pub use frame::{
-    BrokerFrameError, BrokerFramePolicyV1, DecodedRequestFrameV1, read_request_frame,
-    write_request_frame, write_result_query_frame,
+    BrokerFrameError, BrokerFramePolicyV1, DecodedCommitAcknowledgementFrameV2,
+    DecodedRequestFrameV1, read_commit_bound_acknowledgement_frame, read_request_frame,
+    write_commit_bound_acknowledgement_frame, write_request_frame, write_result_query_frame,
 };
 pub use journal::{
     BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerJournalError, BrokerJournalPolicyV1,
@@ -102,6 +114,7 @@ pub use product_daemon::{
     LoadedProductCodexBrokerConfigurationV1, ProductBundleAuthorityKeyV1,
     ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationIdentityV1,
     ProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError,
+    ProductCommitAcknowledgementConfigurationV2, ProductCommitBindingSourceV2,
     ProductJournalConfigurationV1, ProductListenerConfigurationV1,
     ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
     ProductServerConfigurationV1, compose_product_codex_broker,
@@ -135,4 +148,7 @@ pub use delivery::{
     write_prepared_delivery_frame,
 };
 
-pub use client::{BrokerResultClientError, dispatch_signed_operation, query_prepared_result};
+pub use client::{
+    BrokerResultClientError, acknowledge_committed_result_v2, dispatch_signed_operation,
+    query_prepared_result,
+};

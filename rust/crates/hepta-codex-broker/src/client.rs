@@ -3,8 +3,10 @@
 use crate::{
     BrokerFrameError, BrokerFramePolicyV1, BrokerMachineCodeV1, BrokerPreparedDeliveryV1,
     BrokerResponseError, BrokerResponseFramePolicyV1, BrokerResponseKindV1, CodexDispatchError,
-    PeerAuthorizationError, PeerPolicyV1, inspect_peer_identity, read_prepared_delivery_frame,
-    read_response_frame, write_result_query_frame,
+    CommitBoundAcknowledgementError, CommitBoundPreparedResultAcknowledgementV2,
+    PeerAuthorizationError, PeerPolicyV1, commit_bound_acknowledgement_hash_v2,
+    inspect_peer_identity, read_prepared_delivery_frame, read_response_frame,
+    write_commit_bound_acknowledgement_frame, write_result_query_frame,
 };
 use hepta_codex_protocol::CodexExecutionRequestV1;
 use std::{
@@ -104,6 +106,50 @@ pub fn dispatch_signed_operation(
     Ok(response)
 }
 
+/// Sends one independently signed statement that an exact prepared result has
+/// already been durably committed by the campaign sequencer. A transport error
+/// is indeterminate: callers may resend only the identical acknowledgement.
+pub fn acknowledge_committed_result_v2(
+    stream: &UnixStream,
+    expected_broker: &PeerPolicyV1,
+    acknowledgement: &CommitBoundPreparedResultAcknowledgementV2,
+    timeout_ms: u64,
+) -> Result<crate::BrokerResponseV1, BrokerResultClientError> {
+    if timeout_ms == 0 || timeout_ms > 30_000 {
+        return Err(BrokerResultClientError::InvalidTimeout);
+    }
+    let peer = inspect_peer_identity(stream)?;
+    expected_broker.authorize(peer)?;
+    let expected_acknowledgement_hash = commit_bound_acknowledgement_hash_v2(acknowledgement)?;
+    let mut io = DeadlineIo {
+        stream,
+        started: Instant::now(),
+        timeout: Duration::from_millis(timeout_ms),
+    };
+    write_commit_bound_acknowledgement_frame(
+        &mut io,
+        acknowledgement,
+        BrokerFramePolicyV1::default(),
+    )?;
+    let (response, _) = read_response_frame(&mut io, BrokerResponseFramePolicyV1::default())?;
+    if matches!(
+        response.kind,
+        BrokerResponseKindV1::Rejected | BrokerResponseKindV1::Busy
+    ) {
+        return Err(BrokerResultClientError::Rejected(response.error_code));
+    }
+    if response.kind != BrokerResponseKindV1::Acknowledged
+        || response.operation_id.as_deref() != Some(acknowledgement.operation_id.as_str())
+        || response.request_hash.as_ref() != Some(&acknowledgement.request_hash)
+        || response.prepared_receipt_hash.as_ref() != Some(&acknowledgement.prepared_receipt_hash)
+        || response.acknowledgement_hash.as_ref() != Some(&expected_acknowledgement_hash)
+        || inspect_peer_identity(stream)? != peer
+    {
+        return Err(BrokerResultClientError::ResponseBinding);
+    }
+    Ok(response)
+}
+
 struct DeadlineIo<'a> {
     stream: &'a UnixStream,
     started: Instant,
@@ -157,6 +203,8 @@ pub enum BrokerResultClientError {
     Peer(#[from] PeerAuthorizationError),
     #[error(transparent)]
     Request(#[from] BrokerFrameError),
+    #[error(transparent)]
+    CommitAcknowledgement(#[from] CommitBoundAcknowledgementError),
     #[error(transparent)]
     Response(#[from] BrokerResponseError),
     #[error(transparent)]

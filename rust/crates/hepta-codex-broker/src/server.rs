@@ -17,11 +17,17 @@ use crate::{
     BrokerListenerError, BrokerListenerQualificationV1, BrokerListenerV1, BrokerMachineCodeV1,
     BrokerProcessReconciliationV1, BrokerResponseError, BrokerResponseFramePolicyV1,
     BrokerResponseV1, BrokerStateError, BrokerTelemetrySnapshotV1, BrokerTelemetryV1,
-    CapabilityTrustBundleManagerV1, FaultInjectionPointV1, PeerAuthorizationError, PeerPolicyV1,
+    CapabilityTrustBundleManagerV1, CommitBindingResolverV2, CommitBoundAcknowledgementError,
+    CommitBoundAcknowledgementPolicyV2, CommitBoundAcknowledgementTrustStoreV2,
+    FaultInjectionPointV1, PeerAuthorizationError, PeerPolicyV1,
     ProcessReconciliationDispositionV1, ReservationOutcomeV1, TrustBundleError,
+    apply_commit_bound_acknowledgement_v2, verify_persisted_commit_bound_acknowledgement_v2,
     verify_request_capability, write_response_frame,
 };
-use crate::{admission::read_unix_request, service::reserve_authenticated_request_revalidated};
+use crate::{
+    admission::{PendingBrokerMessageV1, read_unix_request},
+    service::reserve_authenticated_request_revalidated,
+};
 
 mod result_query;
 
@@ -135,6 +141,13 @@ pub trait BrokerOperationDispatcherV1: Send + Sync {
     }
 }
 
+#[derive(Clone)]
+struct CommitBoundAcknowledgementServerV2 {
+    policy: CommitBoundAcknowledgementPolicyV2,
+    trust_store: CommitBoundAcknowledgementTrustStoreV2,
+    resolver: Arc<dyn CommitBindingResolverV2>,
+}
+
 /// Role-specific service; reservation-only by default, with explicit qualified dispatch opt-in.
 pub struct BrokerServerV1 {
     listener: BrokerListenerV1,
@@ -149,6 +162,7 @@ pub struct BrokerServerV1 {
     shutdown: Arc<AtomicBool>,
     telemetry: Arc<BrokerTelemetryV1>,
     dispatcher: Option<Arc<dyn BrokerOperationDispatcherV1>>,
+    commit_acknowledgement: Option<CommitBoundAcknowledgementServerV2>,
 }
 
 impl BrokerServerV1 {
@@ -182,6 +196,7 @@ impl BrokerServerV1 {
             shutdown,
             telemetry: Arc::new(BrokerTelemetryV1::default()),
             dispatcher: None,
+            commit_acknowledgement: None,
         })
     }
 
@@ -196,6 +211,23 @@ impl BrokerServerV1 {
     #[must_use]
     pub fn with_dispatcher(mut self, dispatcher: Arc<dyn BrokerOperationDispatcherV1>) -> Self {
         self.dispatcher = Some(dispatcher);
+        self
+    }
+
+    /// Enables the separately administered version-two commit acknowledgement route.
+    /// Absence is fail-closed and leaves execution/query behavior unchanged.
+    #[must_use]
+    pub fn with_commit_acknowledgement_v2(
+        mut self,
+        policy: CommitBoundAcknowledgementPolicyV2,
+        trust_store: CommitBoundAcknowledgementTrustStoreV2,
+        resolver: Arc<dyn CommitBindingResolverV2>,
+    ) -> Self {
+        self.commit_acknowledgement = Some(CommitBoundAcknowledgementServerV2 {
+            policy,
+            trust_store,
+            resolver,
+        });
         self
     }
 
@@ -252,6 +284,7 @@ impl BrokerServerV1 {
                 self.server_policy.write_timeout_ms,
                 self.telemetry.clone(),
                 self.dispatcher.clone(),
+                self.commit_acknowledgement.clone(),
             ) {
                 Ok(handle) => worker_handles.push(handle),
                 Err(error) => {
@@ -437,6 +470,7 @@ fn spawn_worker(
     write_timeout_ms: u64,
     telemetry: Arc<BrokerTelemetryV1>,
     dispatcher: Option<Arc<dyn BrokerOperationDispatcherV1>>,
+    commit_acknowledgement: Option<CommitBoundAcknowledgementServerV2>,
 ) -> Result<thread::JoinHandle<Result<(), BrokerServerError>>, BrokerServerError> {
     let builder = thread::Builder::new().name("hepta-broker-worker".to_owned());
     let handle = builder.spawn(move || {
@@ -468,6 +502,74 @@ fn spawn_worker(
                         response_policy,
                     ) {
                         telemetry.response_write_failed();
+                    }
+                    continue;
+                }
+            };
+            let pending = match pending {
+                PendingBrokerMessageV1::Request(pending) => pending,
+                PendingBrokerMessageV1::CommitAcknowledgement(acknowledgement) => {
+                    let Some(configuration) = commit_acknowledgement.as_ref() else {
+                        telemetry.admission_rejected();
+                        if !write_rejection(
+                            &mut stream,
+                            BrokerMachineCodeV1::AdmissionRejected,
+                            response_policy,
+                        ) {
+                            telemetry.response_write_failed();
+                        }
+                        continue;
+                    };
+                    let now = clock.now_unix_ms()?;
+                    let result = configuration
+                        .resolver
+                        .resolve_commit_binding(&acknowledgement.subject())
+                        .and_then(|commit| {
+                            verify_persisted_commit_bound_acknowledgement_v2(
+                                &journal,
+                                &acknowledgement,
+                                &commit,
+                                now,
+                                configuration.policy,
+                                &configuration.trust_store,
+                            )
+                            .and_then(|verified| {
+                                apply_commit_bound_acknowledgement_v2(
+                                    &mut journal,
+                                    &verified,
+                                    &commit,
+                                    FaultInjectionPointV1::None,
+                                )
+                            })
+                        });
+                    match result {
+                        Ok(observed) => {
+                            let response = response_from_durable_journal(&observed, false)?;
+                            telemetry.existing();
+                            if write_response_frame(&mut stream, &response, response_policy)
+                                .is_err()
+                            {
+                                telemetry.response_write_failed();
+                            }
+                        }
+                        Err(error) => {
+                            let (code, fatal) = classify_commit_acknowledgement_error(&error);
+                            match code {
+                                BrokerMachineCodeV1::AdmissionRejected => {
+                                    telemetry.admission_rejected()
+                                }
+                                BrokerMachineCodeV1::JournalConflict => {
+                                    telemetry.journal_conflict()
+                                }
+                                _ => telemetry.journal_failure(),
+                            }
+                            if fatal {
+                                shutdown.store(true, Ordering::Release);
+                            }
+                            if !write_rejection(&mut stream, code, response_policy) {
+                                telemetry.response_write_failed();
+                            }
+                        }
                     }
                     continue;
                 }
@@ -717,6 +819,30 @@ fn classify_state_error(error: &BrokerStateError) -> (BrokerMachineCodeV1, bool)
             | BrokerJournalError::ConcurrentStateChange,
         ) => (BrokerMachineCodeV1::JournalConflict, false),
         BrokerStateError::Journal(_) => (BrokerMachineCodeV1::JournalUnavailable, true),
+    }
+}
+
+fn classify_commit_acknowledgement_error(
+    error: &CommitBoundAcknowledgementError,
+) -> (BrokerMachineCodeV1, bool) {
+    match error {
+        CommitBoundAcknowledgementError::OperationNotPrepared
+        | CommitBoundAcknowledgementError::PreparedReceiptMissing
+        | CommitBoundAcknowledgementError::SubjectMismatch => {
+            (BrokerMachineCodeV1::JournalConflict, false)
+        }
+        CommitBoundAcknowledgementError::Journal(
+            BrokerJournalError::IdempotencyConflict
+            | BrokerJournalError::OperationIdentityConflict
+            | BrokerJournalError::CapabilityNonceReplay
+            | BrokerJournalError::StateConflict { .. }
+            | BrokerJournalError::ConcurrentStateChange,
+        ) => (BrokerMachineCodeV1::JournalConflict, false),
+        CommitBoundAcknowledgementError::Journal(_)
+        | CommitBoundAcknowledgementError::CommitBindingUnavailable => {
+            (BrokerMachineCodeV1::JournalUnavailable, true)
+        }
+        _ => (BrokerMachineCodeV1::AdmissionRejected, false),
     }
 }
 

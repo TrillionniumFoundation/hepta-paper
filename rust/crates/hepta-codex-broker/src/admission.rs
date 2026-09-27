@@ -5,11 +5,12 @@ use hepta_codex_protocol::{
 };
 use thiserror::Error;
 
-use crate::frame::{DeadlineSocketReader, DecodedRequestFrameV1};
+use crate::frame::{DeadlineSocketReader, DecodedRequestFrameV1, DecodedServerFrameV1};
 use crate::{
     BrokerFrameError, BrokerFramePolicyV1, CapabilityPolicyV1, CapabilityTrustStoreV1,
-    CapabilityVerificationError, PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1,
-    VerifiedCapabilityV1, inspect_peer_identity, verify_request_capability,
+    CapabilityVerificationError, CommitBoundPreparedResultAcknowledgementV2,
+    PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1, VerifiedCapabilityV1,
+    inspect_peer_identity, verify_request_capability,
 };
 
 const HARD_MAXIMUM_READ_TIMEOUT_MS: u64 = 30_000;
@@ -161,11 +162,22 @@ pub fn admit_unix_stream(
     now_unix_ms: u64,
     policy: AdmissionPolicyV1,
 ) -> Result<AuthenticatedBrokerRequestV1, AdmissionError> {
-    let pending = read_unix_request(stream, peer_policy, policy)?;
-    if pending.is_result_query() {
-        return Err(AdmissionError::ReadOnlyQuery);
+    match read_unix_request(stream, peer_policy, policy)? {
+        PendingBrokerMessageV1::Request(pending) => {
+            if pending.is_result_query() {
+                return Err(AdmissionError::ReadOnlyQuery);
+            }
+            pending.authenticate(trust_store, now_unix_ms)
+        }
+        PendingBrokerMessageV1::CommitAcknowledgement(_) => {
+            Err(AdmissionError::CommitAcknowledgementRoute)
+        }
     }
-    pending.authenticate(trust_store, now_unix_ms)
+}
+
+pub(crate) enum PendingBrokerMessageV1 {
+    Request(PendingBrokerRequestV1),
+    CommitAcknowledgement(CommitBoundPreparedResultAcknowledgementV2),
 }
 
 /// A real peer and complete canonical frame, still awaiting capability checks.
@@ -209,7 +221,7 @@ pub(crate) fn read_unix_request(
     stream: &UnixStream,
     peer_policy: &PeerPolicyV1,
     policy: AdmissionPolicyV1,
-) -> Result<PendingBrokerRequestV1, AdmissionError> {
+) -> Result<PendingBrokerMessageV1, AdmissionError> {
     let policy = policy.validate()?;
     let peer = inspect_peer_identity(stream).map_err(AdmissionError::Peer)?;
     peer_policy.authorize(peer).map_err(AdmissionError::Peer)?;
@@ -218,15 +230,31 @@ pub(crate) fn read_unix_request(
         .map_err(|error| AdmissionError::SocketConfiguration(error.kind()))?;
     let mut reader =
         DeadlineSocketReader::new(stream, Duration::from_millis(policy.read_timeout_ms));
-    let (frame, result_query) = crate::frame::read_server_request_frame(&mut reader, policy.frame)
+    let frame = crate::frame::read_server_frame(&mut reader, policy.frame)
         .map_err(AdmissionError::Frame)?;
-    policy.role.authorize(&frame.request)?;
-    Ok(PendingBrokerRequestV1 {
-        frame,
-        peer,
-        capability_policy: policy.capability,
-        result_query,
-    })
+    match frame {
+        DecodedServerFrameV1::Execution(frame) => {
+            policy.role.authorize(&frame.request)?;
+            Ok(PendingBrokerMessageV1::Request(PendingBrokerRequestV1 {
+                frame,
+                peer,
+                capability_policy: policy.capability,
+                result_query: false,
+            }))
+        }
+        DecodedServerFrameV1::ResultQuery(frame) => {
+            policy.role.authorize(&frame.request)?;
+            Ok(PendingBrokerMessageV1::Request(PendingBrokerRequestV1 {
+                frame,
+                peer,
+                capability_policy: policy.capability,
+                result_query: true,
+            }))
+        }
+        DecodedServerFrameV1::CommitAcknowledgement(frame) => Ok(
+            PendingBrokerMessageV1::CommitAcknowledgement(frame.acknowledgement),
+        ),
+    }
 }
 
 /// Peer, frame, capability, or socket-policy rejection.
@@ -234,6 +262,8 @@ pub(crate) fn read_unix_request(
 pub enum AdmissionError {
     #[error("read-only result query cannot enter execution admission")]
     ReadOnlyQuery,
+    #[error("commit-bound acknowledgement cannot enter execution admission")]
+    CommitAcknowledgementRoute,
     #[error("admission policy is invalid")]
     InvalidPolicy,
     #[error("peer admission failed: {0}")]

@@ -500,13 +500,15 @@ Partial local record/CAS writes still follow the existing inspection-required
 rules; this addition does not claim arbitrary torn-write repair.
 
 This is a local result consumer, not a model planner, operation/request signer,
-provider launcher, billing signer, scientific acceptance, production writer or
-commit-bound ACK sender. The production API continues to refuse this backend.
-Real role-principal, billing-principal and deployment qualification, request
-issuance and author/reviewer canaries are still separate work. The consumer tests
-use labelled local protocol and billing fixtures plus real Unix sockets, CAS,
-SQLite and the ordinary CLI; the existing broker delivery tests separately cover
-the actual signed journal and live query-admission path.
+provider launcher, billing signer, scientific acceptance or production writer.
+When `commitAcknowledgement` is configured, the existing service sends only the
+post-commit V2 acknowledgement described below; it does not mint its signature or
+replace the sequencer. The production API continues to refuse this backend. Real
+role, billing, acknowledgement and deployment principals, request issuance and
+live author/reviewer canaries remain separate qualification work. Consumer tests
+use labelled protocol/signing fixtures plus real Unix sockets, CAS, SQLite and the
+ordinary CLI; broker lifecycle tests separately cover signed admission, canonical
+commit resolution and journal transition/restart behavior.
 
 Run `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
 --test broker_prepared_consumer` for this consumer regression target.
@@ -553,6 +555,64 @@ post-preparation settlement replacement, and a future settlement under the
 service clock followed by query-only recovery when that same clock advances.
 Fixture keys and peers are not a live provider billing principal or target-host
 acceptance.
+
+## Commit-bound prepared-result acknowledgement
+
+`CommitBoundPreparedResultAcknowledgementV2` is the single V2 machine contract
+for closing a broker operation after campaign commit. The acknowledgement signs
+the exact original operation, request and prepared-receipt identities, campaign,
+node, attempt, revision and lease generation together with the complete durable
+`CommitReceiptV1` identity and the settled `actualCostMicrousd`. Its authority
+domain, trust-store generation, current bounded time and Ed25519 key are also
+bound. The call-local `newlyCommitted` replay bit is deliberately excluded; it
+cannot change the durable transition identity.
+
+The normal service crosses the existing SQLite sequencer transaction first. Only
+then does it capture the authority-owned mode-0400/0440 acknowledgement file,
+compare every signed field with the actual prepared result and returned commit
+receipt, and send the canonical `HEPTAAX2` frame to the original kernel-authenticated
+role broker. Failure before commit sends no acknowledgement. Missing authority,
+invalid bytes or an uncertain reply returns `PostCommitAcknowledgement` while
+retaining the successful commit. The local-workflow owner does not treat that
+committed prefix as ACK completion: on `advance` it reopens each frozen step plan,
+reconstructs the exact target from retained CAS evidence and durable receipt, and
+retries the identical acknowledgement before gate handling or later-step
+admission. This path never calls the provider or debits cost again. A private
+durable marker is written only after a bound broker response, allowing later
+offline replay without claiming that an unobserved reply succeeded.
+
+The broker does not trust the acknowledgement's commit fields merely because its
+signature is valid. `SqliteCommitBindingResolverV2` opens the configured canonical
+campaign-writer database read-only, checks owner/mode/link/schema and the explicit
+`local_only` or `activated_rust_writer` scope, then uses
+`replay_control_log_v1` to recompute the entire sequencer receipt chain. The exact
+attempt's resolved plan, sequence, result, verifier, verification receipt,
+committed state and cost must equal the signed body before the existing
+`ResultPrepared -> Acknowledged` transition can commit. Local state cannot be
+presented as an activated writer, and a re-signed substituted commit is rejected.
+This is a read of the existing owner, not a second commit ledger or a source-text
+shape check.
+
+Installed product configuration must therefore provide both public ACK trust and
+`commitBindingSource` with an absolute database path, expected owner, bounded
+SQLite policy and explicit scope. Absence is fail-closed. When measured billing
+and commit acknowledgement are both configured, the service also rejects a
+shared authority domain, shared immutable-receipt directory or overlapping
+public signing key. This enforces distinct logical authorities in source; the
+fixtures may still share one Unix account, so distinct installed principals and
+key custody remain target-host qualification requirements. File access for a
+separately installed broker principal remains a target-host permission and
+revocation qualification requirement; source code does not weaken the campaign
+database's mode to make the test pass.
+
+The service `commit_acknowledgement` regressions drive actual execution, signed
+cost settlement, CAS, durable SQLite commit, ACK loss/restart, expired and
+revoked-generation refusal, substitution rejection and offline replay through
+the ordinary entry. The revision regression
+commits and acknowledges author, reviewer, revised-author and replacement-reviewer
+steps. Broker lifecycle tests cover response loss and terminal idempotence with
+real signed admission and journal persistence. Fixture keys and peers are not
+installed independent principals or external-authority acceptance.
 
 ## Explicit signed broker execution and recovery
 
@@ -611,9 +671,10 @@ and replays without IPC or another debit. Closing IPC is not a remote cancel ACK
 proof of provider termination, settled failure, or permission to refund/reissue.
 The observed provider usage is retained. Accounting consumes a verified measured
 charge only when the source names the signed billing authority above; otherwise
-it explicitly retains the admitted upper bound. No request/operation or billing
-signing owner, dynamic author/reviewer request producer, scientific quality
-acceptance, commit-bound ACK or installed production acceptance is synthesized.
+it explicitly retains the admitted upper bound. No request, billing or
+acknowledgement signing material, dynamic author/reviewer request producer,
+scientific quality acceptance or installed production acceptance is synthesized.
+A configured ACK is post-commit and independently resolved as specified above.
 Both broker backends remain refused by the existing full production-writer API.
 
 The `broker_prepared_consumer` target exercises both ordinary CLI/workflow
@@ -630,8 +691,10 @@ The `cache_admission` submodule drives real service preparation followed by a
 failing precommit clock, then exercises withdrawal, current refusal, exact
 receipt/output preservation, query-only recovery, cross-plan provider fencing and
 offline durable replay. `cost_settlement` separately binds the actual charge and
-proves the existing sequencer debits and replays that value. These are source
-tests, not a live model or billing canary.
+proves the existing sequencer debits and replays that value.
+`commit_acknowledgement` then binds the same committed result to the broker
+terminal state and covers lost responses and substitution. These are source
+tests, not live model, billing or ACK canaries.
 
 
 The process-crash fixtures strip debug sections only from their private copied
@@ -688,20 +751,22 @@ established research stage. Registered or selected release verification,
 submission, migration/cutover, external-effect, central-writer module, Process
 worker and legacy Node adapter paths fail closed. Native workers retain their
 existing conservative accounting. Qualified broker prepared/execute workers must
-also name the signed read-only cost-settlement source above; a matching runtime
-identity without that owner is rejected. Both forms reuse the existing
-implementation hashes, request binding, CAS verification and single sequencer.
+name both the signed read-only cost-settlement source and commit-acknowledgement
+source above; a matching runtime identity without either owner is rejected. Both
+forms reuse the existing implementation hashes, request binding, CAS verification
+and single sequencer.
 An established receipt is authoritative only for its private research state; its
 canonical body keeps `productionActivation`, `releaseAuthority`,
 `submissionAuthority` and automatic activation false.
 
 This is a source composition, not installed acceptance. It does not make a test
 qualification externally real, bind the currently running executable to a host
-package, provision independent author/reviewer or billing credentials, add live
-trust-store distribution/revocation callbacks, or send commit-bound broker ACKs.
-The source can verify and persist an externally signed actual invoice; a real
-installed billing principal and its revocation/availability evidence remain
-outside the test fixture. The full production API continues to require the
+package, provision independent author/reviewer, billing or acknowledgement
+credentials, or add live trust-store distribution/revocation callbacks. The source
+can verify and persist an externally signed actual invoice and send a commit-bound
+ACK whose commit fact is independently resolved; real installed billing/ACK
+principals and their revocation/availability evidence remain outside the test
+fixture. The full production API continues to require the
 distinct V1/V2 closure and cannot accept the V3 research type.
 
 ## Versioned broker manuscript repair
@@ -712,6 +777,6 @@ The ordinary autonomous entry binds the rejected assessment and previous
 manuscript into a fresh author/revise input, then requires the unchanged reviewer
 contract over the revised bytes. It preserves rejection, committed history,
 query-only uncertain recovery and the existing resource ceilings. Its broker
-sources may use the measured settlement contract, but this does not close dynamic
-request issuance, independent installed role/billing canaries, commit-bound ACK
-or installed research/retirement acceptance.
+sources may use the measured settlement and commit-bound ACK contracts, but this
+does not close dynamic request issuance, independent installed role/billing/ACK
+canaries or installed research/retirement acceptance.

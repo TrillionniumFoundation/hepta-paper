@@ -72,6 +72,14 @@ pub struct DurableControlLogV1 {
     pub entries: Vec<DurableControlEntryV1>,
 }
 
+/// Explicit read-only control-log origin. The caller cannot silently treat a
+/// disposable local database as an activated Rust writer, or vice versa.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlSnapshotScopeV1 {
+    LocalOnly,
+    ActivatedRustWriter,
+}
+
 impl CampaignWriterStoreV1 {
     /// Read one consistent local-only campaign/control snapshot without acquiring
     /// a writer or changing campaign data. SQLite may coordinate existing WAL
@@ -81,9 +89,52 @@ impl CampaignWriterStoreV1 {
         policy: CampaignWriterPolicyV1,
         campaign_id: &str,
     ) -> Result<(CampaignSnapshotV1, DurableControlLogV1, u64), CampaignWriterError> {
-        let (campaign, log, clock, _) =
-            Self::read_local_workflow_snapshot(path, policy, campaign_id)?;
-        Ok((campaign, log, clock))
+        Self::read_control_snapshot(path, policy, campaign_id, ControlSnapshotScopeV1::LocalOnly)
+    }
+
+    /// Reads and verifies the canonical durable control stream without opening a
+    /// writer. The scope is explicit: local-only state requires its marker;
+    /// activated Rust-writer state rejects that marker. This does not authorize
+    /// a commit, acknowledge a broker operation, or create another ledger.
+    pub fn read_control_snapshot(
+        path: impl AsRef<Path>,
+        policy: CampaignWriterPolicyV1,
+        campaign_id: &str,
+        scope: ControlSnapshotScopeV1,
+    ) -> Result<(CampaignSnapshotV1, DurableControlLogV1, u64), CampaignWriterError> {
+        let policy = policy.validate()?;
+        validate_identifier(campaign_id)?;
+        inspect_database_file(path.as_ref(), policy)?;
+        let before = fs::symlink_metadata(path.as_ref())
+            .map_err(|error| CampaignWriterError::Filesystem("control_read", error.kind()))?;
+        let connection = Connection::open_with_flags(
+            path.as_ref(),
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        connection.busy_timeout(Duration::from_millis(policy.busy_timeout_ms))?;
+        connection.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; BEGIN;")?;
+        verify_schema(&connection)?;
+        match scope {
+            ControlSnapshotScopeV1::LocalOnly => assert_local_marker(&connection)?,
+            ControlSnapshotScopeV1::ActivatedRustWriter => {
+                assert_activated_writer_scope(&connection)?;
+            }
+        }
+        validate_event_chain(&connection)?;
+        let campaign = load_campaign_from(&connection, campaign_id)?;
+        let log = load_log(&connection, campaign_id)?;
+        let clock_floor = from_i64(connection.query_row(
+            "SELECT updated_at_unix_ms FROM campaigns WHERE campaign_id=?1",
+            [campaign_id],
+            |row| row.get(0),
+        )?)?;
+        connection.execute_batch("COMMIT;")?;
+        let after = fs::symlink_metadata(path.as_ref())
+            .map_err(|error| CampaignWriterError::Filesystem("control_recheck", error.kind()))?;
+        if !same_database_identity(&before, &after) {
+            return Err(CampaignWriterError::DatabasePreimageChanged);
+        }
+        Ok((campaign, log, clock_floor))
     }
 
     /// Consistent local snapshot including event-bound workflow amendments.
@@ -383,6 +434,18 @@ impl CampaignWriterStoreV1 {
         tx.commit()?;
         Ok(final_time)
     }
+}
+
+fn assert_activated_writer_scope(connection: &Connection) -> Result<(), CampaignWriterError> {
+    let local_count: i64 = connection.query_row(
+        "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='local_writer_identity_v1'",
+        [],
+        |row| row.get(0),
+    )?;
+    if local_count != 0 {
+        return Err(CampaignWriterError::ControlSnapshotScopeMismatch);
+    }
+    Ok(())
 }
 
 pub(crate) fn assert_local_marker(connection: &Connection) -> Result<(), CampaignWriterError> {

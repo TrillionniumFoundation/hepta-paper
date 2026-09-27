@@ -4,13 +4,18 @@ use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::SigningKey;
 use hepta_codex_protocol::{AgentRole, Sha256Digest};
 
-use crate::{PeerPrincipalV1, TrustBundleError};
+use crate::{
+    CommitBindingDatabaseScopeV2, CommitBoundAcknowledgementError, PeerPrincipalV1,
+    ProductCommitBindingSourceV2, TrustBundleError,
+};
 
 use super::{
     ProductBundleAuthorityKeyV1, ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationV1,
-    ProductCodexBrokerDaemonError, ProductJournalConfigurationV1, ProductListenerConfigurationV1,
+    ProductCodexBrokerDaemonError, ProductCommitAcknowledgementConfigurationV2,
+    ProductJournalConfigurationV1, ProductListenerConfigurationV1,
     ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
-    ProductServerConfigurationV1, compose::decode_bundle_authority,
+    ProductServerConfigurationV1,
+    compose::{decode_bundle_authority, decode_commit_acknowledgement_trust},
     config::validate_configuration_shape,
 };
 
@@ -35,6 +40,7 @@ fn configuration() -> ProductCodexBrokerConfigurationV1 {
             key_id: "authority-key-1".to_owned(),
             public_key_base64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
         }],
+        commit_acknowledgement: None,
         allowed_peers: vec![PeerPrincipalV1 {
             uid: 1006,
             gid: 1007,
@@ -109,6 +115,28 @@ fn configuration() -> ProductCodexBrokerConfigurationV1 {
     }
 }
 
+fn commit_acknowledgement_configuration() -> ProductCommitAcknowledgementConfigurationV2 {
+    let key = SigningKey::from_bytes(&[8_u8; 32]).verifying_key();
+    ProductCommitAcknowledgementConfigurationV2 {
+        version: 2,
+        authority_domain_id: "campaign-writer".into(),
+        trust_store_generation: 1,
+        maximum_age_ms: 5 * 60 * 1000,
+        authority_keys: vec![ProductBundleAuthorityKeyV1 {
+            key_id: "campaign-writer-key-1".into(),
+            public_key_base64: Base64UrlUnpadded::encode_string(key.as_bytes()),
+        }],
+        commit_binding_source: ProductCommitBindingSourceV2 {
+            version: 2,
+            database_path: "/var/lib/hepta-paper/campaign.sqlite".into(),
+            database_owner_uid: 1000,
+            busy_timeout_ms: 5_000,
+            maximum_database_bytes: 4 * 1024 * 1024 * 1024,
+            scope: CommitBindingDatabaseScopeV2::ActivatedRustWriter,
+        },
+    }
+}
+
 #[test]
 fn configuration_json_is_closed_and_absolute() {
     let configuration = configuration();
@@ -176,6 +204,108 @@ fn authority_key_decoder_preserves_duplicate_and_weak_key_denials() {
         decode_bundle_authority(&weak),
         Err(ProductCodexBrokerDaemonError::TrustBundle(
             TrustBundleError::WeakAuthorityKey(_)
+        ))
+    ));
+}
+
+#[test]
+fn absent_commit_acknowledgement_configuration_stays_fail_closed() {
+    let configuration = configuration();
+    let value = serde_json::to_value(&configuration).unwrap();
+    assert!(value.get("commitAcknowledgement").is_none());
+    let decoded: ProductCodexBrokerConfigurationV1 = serde_json::from_value(value).unwrap();
+    assert!(decoded.commit_acknowledgement.is_none());
+    validate_configuration_shape(&decoded).unwrap();
+}
+
+#[test]
+fn commit_acknowledgement_shape_is_versioned_bounded_and_closed() {
+    let mut configuration = configuration();
+    configuration.commit_acknowledgement = Some(commit_acknowledgement_configuration());
+    validate_configuration_shape(&configuration).unwrap();
+
+    let mut invalid = configuration.clone();
+    invalid.commit_acknowledgement.as_mut().unwrap().version = 1;
+    assert!(validate_configuration_shape(&invalid).is_err());
+
+    let mut invalid = configuration.clone();
+    invalid
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .trust_store_generation = 0;
+    assert!(validate_configuration_shape(&invalid).is_err());
+
+    let mut invalid = configuration.clone();
+    invalid
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .authority_domain_id = "bad domain".into();
+    assert!(validate_configuration_shape(&invalid).is_err());
+
+    let mut invalid = configuration.clone();
+    invalid
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .maximum_age_ms = 24 * 60 * 60 * 1000 + 1;
+    assert!(validate_configuration_shape(&invalid).is_err());
+
+    let mut invalid = configuration.clone();
+    invalid
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .commit_binding_source
+        .database_path = "relative.sqlite".into();
+    assert!(validate_configuration_shape(&invalid).is_err());
+
+    let mut invalid = configuration.clone();
+    invalid
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .commit_binding_source
+        .busy_timeout_ms = 0;
+    assert!(validate_configuration_shape(&invalid).is_err());
+
+    let mut value = serde_json::to_value(configuration).unwrap();
+    value["commitAcknowledgement"]["unknown"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<ProductCodexBrokerConfigurationV1>(value).is_err());
+}
+
+#[test]
+fn commit_acknowledgement_key_decoder_is_canonical_and_preserves_denials() {
+    let valid = commit_acknowledgement_configuration();
+    assert!(decode_commit_acknowledgement_trust(&valid).is_ok());
+
+    for encoded in ["", "AA", "not_base64!"] {
+        let mut invalid = valid.clone();
+        invalid.authority_keys[0].public_key_base64 = encoded.into();
+        assert!(matches!(
+            decode_commit_acknowledgement_trust(&invalid),
+            Err(ProductCodexBrokerDaemonError::CommitAcknowledgementAuthorityKeys)
+        ));
+    }
+
+    let mut duplicate = valid.clone();
+    duplicate
+        .authority_keys
+        .push(duplicate.authority_keys[0].clone());
+    assert!(matches!(
+        decode_commit_acknowledgement_trust(&duplicate),
+        Err(ProductCodexBrokerDaemonError::CommitAcknowledgement(
+            CommitBoundAcknowledgementError::DuplicateSignerKey(_)
+        ))
+    ));
+
+    let mut weak = valid;
+    weak.authority_keys[0].public_key_base64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into();
+    assert!(matches!(
+        decode_commit_acknowledgement_trust(&weak),
+        Err(ProductCodexBrokerDaemonError::CommitAcknowledgement(
+            CommitBoundAcknowledgementError::WeakSignerKey(_)
         ))
     ));
 }

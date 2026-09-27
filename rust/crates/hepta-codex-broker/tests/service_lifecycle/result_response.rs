@@ -4,9 +4,13 @@ use hepta_codex_broker::{
     BrokerMachineCodeV1, BrokerOperationDispatcherV1, BrokerResponseFramePolicyV1,
     BrokerResponseKindV1, BrokerResponseV1, BrokerServerError, BrokerServerPolicyV1,
     BrokerServerV1, CapabilityBundleAuthorityV1, CapabilityTrustBundleManagerV1,
-    CapabilityTrustBundleV1, CapabilityTrustKeyV1, CodexDispatchError,
-    SignedCapabilityTrustBundleV1, read_response_frame, trust_bundle_signing_bytes,
-    verify_capability_trust_bundle,
+    CapabilityTrustBundleV1, CapabilityTrustKeyV1, CodexDispatchError, CommitBindingResolverV2,
+    CommitBoundAcknowledgementError, CommitBoundAcknowledgementPolicyV2,
+    CommitBoundAcknowledgementTrustStoreV2, CommitBoundPreparedResultAcknowledgementV2,
+    PreparedResultAcknowledgementSubjectV2, PreparedResultCommitBindingV2,
+    SignedCapabilityTrustBundleV1, acknowledge_committed_result_v2,
+    commit_bound_acknowledgement_signing_bytes_v2, read_response_frame, trust_bundle_signing_bytes,
+    verify_capability_trust_bundle, write_commit_bound_acknowledgement_frame,
 };
 use std::{
     sync::{Arc, atomic::AtomicBool},
@@ -14,10 +18,28 @@ use std::{
     time::Duration,
 };
 
-struct Clock;
+struct FixtureCommitResolver;
+impl CommitBindingResolverV2 for FixtureCommitResolver {
+    fn resolve_commit_binding(
+        &self,
+        _: &PreparedResultAcknowledgementSubjectV2,
+    ) -> Result<PreparedResultCommitBindingV2, CommitBoundAcknowledgementError> {
+        Ok(PreparedResultCommitBindingV2 {
+            plan_hash: digest('a'),
+            sequence: 1,
+            result_hash: digest('b'),
+            verifier_hash: digest('c'),
+            verification_receipt_hash: digest('d'),
+            committed_state_hash: digest('f'),
+            actual_cost_microusd: 6,
+        })
+    }
+}
+
+struct Clock(u64);
 impl BrokerClockV1 for Clock {
     fn now_unix_ms(&self) -> Result<u64, BrokerServerError> {
-        Ok(12_000)
+        Ok(self.0)
     }
 }
 
@@ -81,6 +103,16 @@ fn manager() -> Arc<CapabilityTrustBundleManagerV1> {
     Arc::new(CapabilityTrustBundleManagerV1::new(verified))
 }
 
+fn acknowledgement_trust() -> CommitBoundAcknowledgementTrustStoreV2 {
+    let key = SigningKey::from_bytes(&[12; 32]);
+    CommitBoundAcknowledgementTrustStoreV2::new(
+        "campaign-writer".into(),
+        1,
+        [("campaign-writer-key-1".into(), key.verifying_key())],
+    )
+    .expect("commit acknowledgement trust")
+}
+
 fn request(fixture: &TempTree) -> CodexExecutionRequestV1 {
     signed_request(
         fixture.owner_uid,
@@ -89,6 +121,54 @@ fn request(fixture: &TempTree) -> CodexExecutionRequestV1 {
         "response-nonce",
         &SigningKey::from_bytes(&[11; 32]),
     )
+}
+
+fn signed_commit_acknowledgement(
+    request: &CodexExecutionRequestV1,
+    prepared: &BrokerResponseV1,
+) -> CommitBoundPreparedResultAcknowledgementV2 {
+    let mut acknowledgement = CommitBoundPreparedResultAcknowledgementV2 {
+        version: 2,
+        authority_domain_id: "campaign-writer".into(),
+        trust_store_generation: 1,
+        operation_id: request.operation_id.clone(),
+        request_hash: prepared
+            .request_hash
+            .clone()
+            .expect("prepared request hash"),
+        prepared_receipt_hash: prepared
+            .prepared_receipt_hash
+            .clone()
+            .expect("prepared receipt hash"),
+        campaign_id: request.campaign_id.clone(),
+        node_id: request.node_id.clone(),
+        attempt_id: request.attempt_id.clone(),
+        campaign_revision: request.campaign_revision,
+        lease_generation: request.lease_generation,
+        plan_hash: digest('a'),
+        sequence: 1,
+        result_hash: digest('b'),
+        verifier_hash: digest('c'),
+        verification_receipt_hash: digest('d'),
+        committed_state_hash: digest('f'),
+        actual_cost_microusd: 6,
+        acknowledged_at_unix_ms: 13_000,
+        signer_key_id: "campaign-writer-key-1".into(),
+        signature_base64: "AA".into(),
+    };
+    resign_commit_acknowledgement(&mut acknowledgement);
+    acknowledgement
+}
+
+fn resign_commit_acknowledgement(acknowledgement: &mut CommitBoundPreparedResultAcknowledgementV2) {
+    let key = SigningKey::from_bytes(&[12; 32]);
+    acknowledgement.signature_base64 = Base64UrlUnpadded::encode_string(
+        &key.sign(
+            &commit_bound_acknowledgement_signing_bytes_v2(acknowledgement)
+                .expect("commit acknowledgement signing bytes"),
+        )
+        .to_bytes(),
+    );
 }
 
 fn exchange(
@@ -166,11 +246,16 @@ fn exchange_using<T>(
             ..BrokerServerPolicyV1::default()
         },
         BrokerResponseFramePolicyV1::default(),
-        Arc::new(Clock),
+        Arc::new(Clock(if generation == 1 { 12_000 } else { 13_001 })),
         Arc::new(AtomicBool::new(false)),
     )
     .unwrap()
-    .with_dispatcher(dispatcher);
+    .with_dispatcher(dispatcher)
+    .with_commit_acknowledgement_v2(
+        CommitBoundAcknowledgementPolicyV2::default(),
+        acknowledgement_trust(),
+        Arc::new(FixtureCommitResolver),
+    );
     let handle = thread::spawn(move || server.run());
     let mut client = UnixStream::connect(socket).unwrap();
     // The fixture includes real SQLite fsync and process reconciliation on a
@@ -263,6 +348,100 @@ fn acknowledged_response_carries_both_original_durable_hashes() {
 }
 
 #[test]
+fn typed_commit_bound_acknowledgement_closes_the_exact_durable_commit() {
+    let fixture = Arc::new(TempTree::new());
+    let dispatcher = dispatcher(fixture.clone(), false);
+    let request = request(&fixture);
+    let prepared = exchange(&fixture, 1, &request, dispatcher.clone(), false).unwrap();
+    let acknowledgement = signed_commit_acknowledgement(&request, &prepared);
+    let observed = exchange_using(&fixture, 2, dispatcher.clone(), |client, peers| {
+        acknowledge_committed_result_v2(client, peers, &acknowledgement, 30_000)
+    })
+    .unwrap();
+    assert_eq!(observed.kind, BrokerResponseKindV1::Acknowledged);
+    assert_eq!(
+        observed.acknowledgement_hash,
+        Some(hepta_codex_broker::commit_bound_acknowledgement_hash_v2(&acknowledgement).unwrap())
+    );
+    let replay = exchange_using(&fixture, 3, dispatcher.clone(), |client, peers| {
+        acknowledge_committed_result_v2(client, peers, &acknowledgement, 30_000)
+    })
+    .unwrap();
+    assert_eq!(replay, observed);
+    assert_eq!(dispatcher.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .open_journal()
+            .load_journal(&request.operation_id)
+            .unwrap()
+            .current_state,
+        OperationState::Acknowledged,
+    );
+}
+
+#[test]
+fn lost_commit_acknowledgement_response_replays_without_provider_dispatch() {
+    let fixture = Arc::new(TempTree::new());
+    let dispatcher = dispatcher(fixture.clone(), false);
+    let request = request(&fixture);
+    let prepared = exchange(&fixture, 1, &request, dispatcher.clone(), false).unwrap();
+    let acknowledgement = signed_commit_acknowledgement(&request, &prepared);
+    exchange_using(&fixture, 2, dispatcher.clone(), |client, _peers| {
+        write_commit_bound_acknowledgement_frame(
+            client,
+            &acknowledgement,
+            BrokerFramePolicyV1::default(),
+        )
+        .unwrap();
+    });
+    assert_eq!(
+        fixture
+            .open_journal()
+            .load_journal(&request.operation_id)
+            .unwrap()
+            .current_state,
+        OperationState::Acknowledged,
+    );
+    let recovered = exchange_using(&fixture, 3, dispatcher.clone(), |client, peers| {
+        acknowledge_committed_result_v2(client, peers, &acknowledgement, 30_000)
+    })
+    .unwrap();
+    assert_eq!(recovered.kind, BrokerResponseKindV1::Acknowledged);
+    assert_eq!(dispatcher.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn conflicting_commit_fact_cannot_replace_an_acknowledged_subject() {
+    let fixture = Arc::new(TempTree::new());
+    let dispatcher = dispatcher(fixture.clone(), false);
+    let request = request(&fixture);
+    let prepared = exchange(&fixture, 1, &request, dispatcher.clone(), false).unwrap();
+    let acknowledgement = signed_commit_acknowledgement(&request, &prepared);
+    exchange_using(&fixture, 2, dispatcher.clone(), |client, peers| {
+        acknowledge_committed_result_v2(client, peers, &acknowledgement, 30_000)
+    })
+    .unwrap();
+    let mut conflicting = acknowledgement.clone();
+    conflicting.committed_state_hash = digest('0');
+    resign_commit_acknowledgement(&mut conflicting);
+    let rejected = exchange_using(&fixture, 3, dispatcher.clone(), |client, peers| {
+        acknowledge_committed_result_v2(client, peers, &conflicting, 30_000)
+    });
+    assert!(matches!(
+        rejected,
+        Err(hepta_codex_broker::BrokerResultClientError::Rejected(Some(
+            BrokerMachineCodeV1::JournalConflict
+        )))
+    ));
+    let recovered = exchange_using(&fixture, 4, dispatcher.clone(), |client, peers| {
+        acknowledge_committed_result_v2(client, peers, &acknowledgement, 30_000)
+    })
+    .unwrap();
+    assert_eq!(recovered.kind, BrokerResponseKindV1::Acknowledged);
+    assert_eq!(dispatcher.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn conflicting_signed_retry_cannot_read_or_replace_the_prepared_subject() {
     let fixture = Arc::new(TempTree::new());
     let dispatcher = dispatcher(fixture.clone(), false);
@@ -306,17 +485,22 @@ fn rejected_dispatch_never_becomes_a_prepared_response_or_reexecutes() {
 }
 
 #[test]
-fn typed_execution_client_uses_real_signed_admission_and_durable_response() {
+fn typed_execution_client_replays_real_signed_admission_and_durable_response() {
     let fixture = Arc::new(TempTree::new());
     let dispatcher = dispatcher(fixture.clone(), false);
     let request = request(&fixture);
-    let first = exchange_using(&fixture, 1, dispatcher.clone(), |client, peers| {
+    // Stage the actual supervised operation outside the typed client's bounded
+    // transport window. Cross-test gate-copy/fsync contention is not broker
+    // latency and must not make this client framing/replay test nondeterministic.
+    let prepared = exchange(&fixture, 1, &request, dispatcher.clone(), false).unwrap();
+    let first = exchange_using(&fixture, 2, dispatcher.clone(), |client, peers| {
         hepta_codex_broker::dispatch_signed_operation(client, peers, &request, 30_000)
     })
     .unwrap();
+    assert_eq!(first, prepared);
     assert_eq!(first.kind, BrokerResponseKindV1::Prepared);
     assert_eq!(first.prepared_receipt_hash, Some(digest('e')));
-    let second = exchange_using(&fixture, 2, dispatcher.clone(), |client, peers| {
+    let second = exchange_using(&fixture, 3, dispatcher.clone(), |client, peers| {
         hepta_codex_broker::dispatch_signed_operation(client, peers, &request, 30_000)
     })
     .unwrap();

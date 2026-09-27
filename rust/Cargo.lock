@@ -720,10 +720,12 @@ version = "0.1.0"
 dependencies = [
  "base64ct",
  "ed25519-dalek",
+ "hepta-campaign-writer",
  "hepta-codex-event-stream",
  "hepta-codex-journal",
  "hepta-codex-protocol",
  "hepta-codex-runtime",
+ "hepta-control-plane",
  "hepta-workspace",
  "hex",
  "nix",

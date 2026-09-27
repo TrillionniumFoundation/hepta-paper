@@ -1,12 +1,16 @@
 //! Local protocol peer fixture: not a live model or broker journal qualification.
 use base64ct::{Base64UrlUnpadded, Encoding};
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{
+    Signer, SigningKey, VerifyingKey,
+    pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
+};
 use hepta_campaign_writer::{CampaignWriterPolicyV1, CampaignWriterStoreV1, WriterLeaseV1};
 use hepta_codex_broker::{
-    BrokerPreparedResultReceiptV1, BrokerResponseV1, CommitBoundPreparedResultAcknowledgementV2,
-    ProviderCostSettlementV1, commit_bound_acknowledgement_hash_v2,
-    commit_bound_acknowledgement_signing_bytes_v2, provider_cost_settlement_signing_bytes,
-    write_commit_bound_acknowledgement_frame, write_response_frame,
+    BrokerFramePolicyV1, BrokerPreparedResultReceiptV1, BrokerResponseV1, CapabilityPolicyV1,
+    CapabilityTrustStoreV1, CommitBoundPreparedResultAcknowledgementV2, ProviderCostSettlementV1,
+    commit_bound_acknowledgement_hash_v2, commit_bound_acknowledgement_signing_bytes_v2,
+    inspect_peer_identity, provider_cost_settlement_signing_bytes, read_request_frame,
+    verify_request_capability, write_commit_bound_acknowledgement_frame, write_response_frame,
 };
 use hepta_codex_protocol::*;
 use hepta_control_plane::*;
@@ -36,6 +40,8 @@ pub struct Fixture {
     pub socket_path: PathBuf,
     pub settlement_directory: Option<PathBuf>,
     pub acknowledgement_directory: Option<PathBuf>,
+    pub request_signer_key_path: Option<PathBuf>,
+    pub request_signer_verifying_key: Option<VerifyingKey>,
 }
 pub fn hash(bytes: &[u8]) -> Sha256Digest {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
@@ -53,18 +59,24 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub fn new() -> Self {
-        Self::with_execution(false, false, false)
+        Self::with_execution(false, false, false, false)
     }
     pub fn new_execution() -> Self {
-        Self::with_execution(true, false, false)
+        Self::with_execution(true, false, false, false)
+    }
+    pub fn new_issued_execution() -> Self {
+        Self::with_execution(true, false, false, true)
+    }
+    pub fn new_issued_acknowledged_execution() -> Self {
+        Self::with_execution(true, true, true, true)
     }
     pub fn new_settled_execution() -> Self {
-        Self::with_execution(true, true, false)
+        Self::with_execution(true, true, false, false)
     }
     pub fn new_acknowledged_execution() -> Self {
-        Self::with_execution(true, true, true)
+        Self::with_execution(true, true, true, false)
     }
-    fn with_execution(execution: bool, settled: bool, acknowledged: bool) -> Self {
+    fn with_execution(execution: bool, settled: bool, acknowledged: bool, issued: bool) -> Self {
         let now = if execution {
             u64::try_from(
                 std::time::SystemTime::now()
@@ -97,6 +109,14 @@ impl Fixture {
             directory
         });
         let owner = fs::metadata(&root).unwrap();
+        let request_signing_key = issued.then(|| SigningKey::from_bytes(&[71; 32]));
+        let request_signer_key_path = request_signing_key.as_ref().map(|key| {
+            let path = root.join("request-capability-key.pem");
+            let pem = key.to_pkcs8_pem(LineEnding::LF).unwrap();
+            fs::write(&path, pem.as_bytes()).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            path
+        });
         let billing_key = SigningKey::from_bytes(&[73; 32]);
         let acknowledgement_key = SigningKey::from_bytes(&[75; 32]);
         let source = BrokerPreparedSourceV1 {
@@ -109,6 +129,22 @@ impl Fixture {
             role: AgentRole::Author,
             runtime_identity_hash: hash(b"test runtime"),
             timeout_ms: 30_000,
+            request_signer: request_signing_key
+                .as_ref()
+                .map(|key| BrokerRequestSignerSourceV1 {
+                    private_key_path: request_signer_key_path.clone().unwrap(),
+                    private_key_owner_uid: owner.uid(),
+                    private_key_owner_gid: owner.gid(),
+                    signer_key_id: "fixture-core-request-key".into(),
+                    public_key_base64: Base64UrlUnpadded::encode_string(
+                        key.verifying_key().as_bytes(),
+                    ),
+                    model_selector: "local-test-model".into(),
+                    maximum_lifetime_ms: 60_000,
+                    maximum_output_bytes: 4096,
+                    maximum_event_count: 100,
+                    remaining_token_hint: Some(100),
+                }),
             cost_settlement: settlement_directory.as_ref().map(|directory| {
                 BrokerCostSettlementSourceV1 {
                     directory: directory.clone(),
@@ -354,8 +390,14 @@ impl Fixture {
             socket_path: source.socket_path,
             settlement_directory,
             acknowledgement_directory,
+            request_signer_key_path,
+            request_signer_verifying_key: request_signing_key
+                .as_ref()
+                .map(SigningKey::verifying_key),
         };
-        fixture.publish(&fixture.request);
+        if !issued {
+            fixture.publish(&fixture.request);
+        }
         fixture
     }
     pub fn publish(&self, request: &CodexExecutionRequestV1) {
@@ -533,6 +575,93 @@ impl Fixture {
         })
     }
 
+    pub fn published_request(&self) -> CodexExecutionRequestV1 {
+        serde_json::from_slice(&fs::read(&self.request_path).unwrap()).unwrap()
+    }
+
+    /// Accept one dynamically issued request, verify its real Ed25519 capability,
+    /// and then serve the existing execution/query protocol fixture.
+    pub fn serve_issued_execution(
+        &self,
+        listener: UnixListener,
+        output: &[u8],
+        lose_execution_response: bool,
+    ) -> thread::JoinHandle<CodexExecutionRequestV1> {
+        let expected = self.request.clone();
+        let verifying_key = self.request_signer_verifying_key.unwrap();
+        let output = output.to_vec();
+        thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let accept = || {
+                let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            stream
+                                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                                .unwrap();
+                            return stream;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < until, "expected issued request");
+                            thread::sleep(std::time::Duration::from_millis(2));
+                        }
+                        Err(error) => panic!("issued broker accept: {error}"),
+                    }
+                }
+            };
+            let mut stream = accept();
+            let peer = inspect_peer_identity(&stream).unwrap();
+            let decoded = read_request_frame(&mut stream, BrokerFramePolicyV1::default()).unwrap();
+            let request = decoded.request;
+            assert_request_body_matches(&expected, &request);
+            let now = u64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis(),
+            )
+            .unwrap();
+            verify_request_capability(
+                &request,
+                peer,
+                now,
+                CapabilityPolicyV1 {
+                    maximum_lifetime_ms: 60_000,
+                    maximum_future_skew_ms: 5_000,
+                },
+                &CapabilityTrustStoreV1::new([("fixture-core-request-key".into(), verifying_key)])
+                    .unwrap(),
+            )
+            .unwrap();
+            if lose_execution_response {
+                return request;
+            }
+            let response = prepared_response(&request, &output, false);
+            let mut cursor = std::io::Cursor::new(&response);
+            let (initial, _) =
+                hepta_codex_broker::read_response_frame(&mut cursor, Default::default()).unwrap();
+            write_response_frame(&mut stream, &initial, Default::default()).unwrap();
+            drop(stream);
+            let mut stream = accept();
+            let mut expected_query = Vec::new();
+            hepta_codex_broker::write_result_query_frame(
+                &mut expected_query,
+                &request,
+                Default::default(),
+            )
+            .unwrap();
+            let mut actual = vec![0; expected_query.len()];
+            stream.read_exact(&mut actual).unwrap();
+            assert_eq!(
+                actual, expected_query,
+                "issued operation must recover by query"
+            );
+            stream.write_all(&response).unwrap();
+            request
+        })
+    }
+
     pub fn listener(&self) -> UnixListener {
         let listener = UnixListener::bind(&self.socket_path).unwrap();
         fs::set_permissions(&self.socket_path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -687,6 +816,63 @@ impl Fixture {
         })
     }
 }
+fn assert_request_body_matches(
+    expected: &CodexExecutionRequestV1,
+    actual: &CodexExecutionRequestV1,
+) {
+    assert_eq!(actual.version, expected.version);
+    assert_eq!(actual.operation_id, expected.operation_id);
+    assert_eq!(actual.idempotency_key, expected.idempotency_key);
+    assert_eq!(actual.campaign_id, expected.campaign_id);
+    assert_eq!(actual.node_id, expected.node_id);
+    assert_eq!(actual.attempt_id, expected.attempt_id);
+    assert_eq!(actual.lease_generation, expected.lease_generation);
+    assert_eq!(actual.campaign_revision, expected.campaign_revision);
+    assert_eq!(actual.role, expected.role);
+    assert_eq!(actual.task_kind, expected.task_kind);
+    assert_eq!(
+        actual.codex_runtime_identity_hash,
+        expected.codex_runtime_identity_hash
+    );
+    assert_eq!(actual.model_selector, expected.model_selector);
+    assert_eq!(actual.transport, expected.transport);
+    assert_eq!(actual.session_policy, expected.session_policy);
+    assert_eq!(actual.prompt_envelope_hash, expected.prompt_envelope_hash);
+    assert_eq!(actual.input_manifest_hash, expected.input_manifest_hash);
+    assert_eq!(
+        actual.workspace_identity_hash,
+        expected.workspace_identity_hash
+    );
+    assert_eq!(actual.output_schema_hash, expected.output_schema_hash);
+    assert_eq!(actual.mutation_policy_hash, expected.mutation_policy_hash);
+    assert_eq!(actual.sandbox_policy, expected.sandbox_policy);
+    assert_eq!(actual.network_policy, NetworkPolicy::None);
+    assert_eq!(actual.approval_policy, ApprovalPolicy::Never);
+    assert_eq!(actual.maximum_output_bytes, expected.maximum_output_bytes);
+    assert_eq!(actual.maximum_event_count, expected.maximum_event_count);
+    assert_eq!(actual.maximum_cost_microusd, expected.maximum_cost_microusd);
+    assert_eq!(actual.remaining_token_hint, expected.remaining_token_hint);
+    assert_eq!(
+        actual.request_capability.signer_key_id,
+        "fixture-core-request-key"
+    );
+    assert_eq!(
+        actual.request_capability.peer_uid,
+        nix::unistd::geteuid().as_raw()
+    );
+    assert_eq!(
+        actual.request_capability.peer_gid,
+        nix::unistd::getegid().as_raw()
+    );
+    assert!(
+        actual.request_capability.expires_at_unix_ms > actual.request_capability.issued_at_unix_ms
+    );
+    assert_eq!(
+        actual.request_capability.expires_at_unix_ms,
+        actual.absolute_deadline_unix_ms
+    );
+}
+
 fn prepared_receipt(
     request: &CodexExecutionRequestV1,
     output: &[u8],

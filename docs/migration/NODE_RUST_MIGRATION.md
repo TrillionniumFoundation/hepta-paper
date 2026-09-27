@@ -101,7 +101,7 @@ A `source_implemented` migration item does not establish production parity,
 writer transfer, or retirement. The [full replacement acceptance contract](FULL_REPLACEMENT_ACCEPTANCE.md)
 requires command/mode and capability-specific evidence before those transitions.
 
-The generated [Node/Rust command compatibility map](node-rust-command-map.v1.json)
+The generated [Node/Rust command compatibility map](node-rust-command-map.v2.json)
 is the **single migration ledger**. It keeps every registered command route and,
 where a command has a multi-action surface, its reviewed argument-mode rows
 bound to either a Rust candidate or an explicit unmapped decision. No second
@@ -111,6 +111,15 @@ activation or Node retirement. The map is checked by
 `docs/tools/audit-node-rust-coverage.mjs`, which verifies live command/action
 inventory coverage plus the declared Rust function and executable-test symbols.
 Source symbol existence is not call-graph verification or evidence that tests passed.
+
+Encoding version 2 stores each canonical source path and `(path, symbol)` binding
+once in sorted index tables; route and argument-mode rows refer to those indexes.
+The auditor fail-closes on missing, duplicate, out-of-range, unsorted, or unused
+table entries, expands the indexes before applying the unchanged route/mode and
+source/test checks, and exposes only the expanded contract to report consumers.
+This removes repeated evidence text without removing a route, test, source,
+remaining gap, or authority boundary. The generated Markdown remains the human
+projection; it is not a second source of truth.
 The [command gap closure ledger](NODE_RUST_GAP_CLOSURE.md) retains every route,
 including partial candidates, with its Node entrypoint, remaining implementation
 work and required acceptance evidence;

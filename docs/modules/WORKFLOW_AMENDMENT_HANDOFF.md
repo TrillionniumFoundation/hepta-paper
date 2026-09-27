@@ -14,8 +14,10 @@ A structural repair uses caller-supplied manuscript content and the deterministi
 native reviewer. It is not an autonomous model revision loop or independent
 scientific review. The broker contract below also supports explicit signed `author/revise` and
 `reviewer/review` tasks through the ordinary autonomous entry. Dynamic request
-issuance, independent installed principals, live-model acceptance, actual billing
-and commit-bound ACK remain separate requirements.
+issuance, independent installed principals and live-model acceptance remain
+separate requirements. Broker sources may use the ordinary signed measured-cost
+and commit-bound ACK owners; installed billing/ACK principal qualification remains
+external.
 
 ## API and executable command
 
@@ -175,8 +177,10 @@ replaying a receipt cannot discard that uncertainty or issue another execution.
 The broker revision regression module imports both JSON examples directly and
 invokes the actual CLI. Its protocol peers are deliberately not real provider
 canaries: source integration does not certify scientific acceptance, independently
-controlled reviewers, installed research activation, measured provider settlement
-or commit-bound acknowledgement. Executable test selectors and exact source
+controlled reviewers, installed research activation, or real installed billing
+and acknowledgement principals. The ordinary regression does exercise signed
+settlement, sequencer commit and commit-bound ACK for each role transition.
+Executable test selectors and exact source
 bindings are maintained in the canonical route ledger and source evidence bundle,
 not duplicated as an acceptance checklist here.
 

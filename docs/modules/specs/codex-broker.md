@@ -137,8 +137,19 @@ for lost-response/restart behavior and actual test commands. The explicit
 actual output through the existing role broker without reservation or dispatch.
 The normal execution wire stays unchanged. The consumer checks the expected
 broker peer and exact request/receipt/output; current authority is rechecked
-before output chunks. Expired-request recovery authority, the full
-campaign consumer and commit-bound ACK transport remain separate.
+before output chunks. Expired-request recovery authority remains separate.
+
+The explicit `HEPTAAX2` route accepts a V2 acknowledgement only after the broker
+independently resolves the named attempt from the canonical campaign-writer
+SQLite control stream. The resolver checks the configured database owner, mode,
+link, schema and explicit local-only/activated-writer scope, then invokes the
+existing control-plane replay kernel over the complete sequencer chain. Every
+resolved commit field and actual cost must match the signed acknowledgement and
+the original broker request/prepared receipt before the existing
+`ResultPrepared -> Acknowledged` journal transition. A signature cannot replace
+this commit observation. Lost replies replay the same immutable ACK; conflicting
+or re-signed substituted commits fail closed. The resolver is read-only and does
+not introduce another campaign ledger or writer.
 
 Before listener readiness call `recover_codex_dispatch_containment`, then the
 normal journal reconciliation. A replaced cgroup or unresolved released
@@ -169,8 +180,14 @@ See the [Codex dispatch implementation and operations contract](../../../rust/cr
 The ordinary service and local workflow can now import an existing broker result
 through the [broker-prepared consumer](../LOCAL_WORKFLOW_HANDOFF.md#broker-prepared-result-consumption).
 It uses the existing CAS, verifier and SQLite sequencer without dispatching a
-provider or sending an ACK. This closes the local result-consumer slice only;
-request issuance, live role canaries and production activation remain separate.
+provider. When the source names a commit-acknowledgement authority, the ordinary
+service sends the post-commit V2 frame and recovers an uncertain reply without
+provider re-execution or another debit. A broker source that also enables signed
+measured billing must use a different authority domain, receipt directory and
+public key for billing and ACK; shared logical authority is rejected before
+execution. This closes the source call chain only; distinct installed
+request/billing/ACK principals, live role canaries and production activation
+remain separate.
 
 ## Rollout and rollback
 

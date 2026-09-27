@@ -50,7 +50,7 @@ cargo run --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
   --bin hepta-paper-rust -- --help-json
 ```
 
-The [canonical Node-to-Rust command map](../../../docs/migration/node-rust-command-map.v1.json)
+The [canonical Node-to-Rust command map](../../../docs/migration/node-rust-command-map.v2.json)
 is the single machine source for route arguments, source call chains, regression
 cases and remaining acceptance boundaries. Its
 [generated gap ledger](../../../docs/migration/NODE_RUST_GAP_CLOSURE.md) is the

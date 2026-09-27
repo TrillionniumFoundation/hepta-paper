@@ -134,11 +134,50 @@ revocation; the API returns a result only after verifying the entire frame.
 Lost replies are recovered by an explicit identical query under still-current
 capability authority, including after listener restart or acknowledgement.
 The query intentionally does not add an expired-request bypass. Long-running
-operations needing fresh recovery authority, full writer-issued author/reviewer
-inputs and commit-bound ACK transport remain separate product integration work.
-The ordinary service now supplies durable consumer/CAS commit and an explicit
-signed-request execution backend; see its
-[workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#explicit-signed-broker-execution-and-recovery). No live model or full Node parity is claimed.
+operations needing fresh recovery authority and full writer-issued
+author/reviewer inputs remain separate product integration work. The ordinary
+service supplies durable consumer/CAS commit, explicit signed-request execution,
+measured cost and post-commit acknowledgement; see its
+[workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#explicit-signed-broker-execution-and-recovery).
+No live model or full Node parity is claimed.
+
+## Campaign-commit-bound acknowledgement
+
+`HEPTAAX2` is a separate framed message from execution and result query. Its
+canonical JSON body is `CommitBoundPreparedResultAcknowledgementV2`: authority
+domain and trust generation, exact original operation/request/prepared receipt,
+campaign/node/attempt/revision/lease generation, the complete durable sequencer
+commit identity, settled micro-USD cost, acknowledgement time, signer key and
+Ed25519 signature. The call-local `newlyCommitted` replay observation is not in
+the signed body.
+
+A valid signature is necessary but not sufficient. Before writing the broker
+journal terminal transition, `SqliteCommitBindingResolverV2` opens the configured
+canonical campaign-writer database read-only with `SQLITE_OPEN_NOFOLLOW`, checks
+the expected owner/mode/link and exact schema, enforces the configured
+`local_only` or `activated_rust_writer` scope, validates the event chain and
+replays the full control stream through `replay_control_log_v1`. The exact
+attempt must resolve to one plan, sequence, result, verifier, verification
+receipt, committed state and actual cost identical to the signed body. A local
+writer marker is rejected under activated-writer scope; a validly re-signed
+substitution therefore cannot manufacture a production commit.
+
+Only after that independent observation does the existing journal perform the
+`ResultPrepared -> Acknowledged` transition. An already acknowledged operation
+is idempotent only when the original signed-body digest and terminal timestamp
+match. Lost responses replay the same immutable acknowledgement and never
+redispatch the provider or debit campaign budget again. The owning local workflow
+reconstructs this retry from its frozen plan, retained CAS evidence and durable
+sequencer receipt before accepting a review gate or starting the next step.
+Commit-resolution or SQLite uncertainty remains `journal_unavailable`; it is not
+converted into success. The resolver is not another writer or ledger.
+
+Installed product configuration enables this path only by providing both public
+ACK trust and a closed `commitBindingSource` with absolute database path,
+expected owner, bounded SQLite policy and explicit scope. Omitting the block is
+fail-closed. Granting a separately installed broker principal read access to the
+campaign database, rotating/revoking the ACK key and proving availability are
+target-host qualification work; source composition does not weaken file modes.
 
 The `codex_dispatch::tests::delivery` cases use real Unix sockets, Ed25519
 admission, SQLite, original sidecars and credential-free supervised processes.

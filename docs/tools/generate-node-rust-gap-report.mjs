@@ -68,9 +68,9 @@ export function renderNodeRustGapReport(report) {
   const lines = [
     '# Node/Rust command gap closure ledger',
     '',
-    '> Generated from `docs/migration/node-rust-command-map.v1.json` and the live command registry. Unmapped and partially implemented commands remain open. This ledger does not grant parity, production activation, or Node retirement.',
+    '> Generated from the digest-bound shard manifest `docs/migration/node-rust-command-map.v2.json` and the live command registry. Unmapped and partially implemented commands remain open. This ledger does not grant parity, production activation, or Node retirement.',
     '',
-    '- Source of truth: `docs/migration/node-rust-command-map.v1.json` + live command registry',
+    '- Source of truth: digest-bound `docs/migration/node-rust-command-map.v2.json` manifest + shards + live command registry',
     `- Total command routes: **${report.commands.length}**`,
     `- Unmapped commands: **${unmapped}**`,
     `- Partial source candidates: **${partial}**`,

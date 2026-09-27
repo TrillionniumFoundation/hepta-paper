@@ -4,6 +4,8 @@
 mod cache_admission;
 #[path = "broker_prepared_consumer/capacity_admission.rs"]
 mod capacity_admission;
+#[path = "broker_prepared_consumer/commit_acknowledgement.rs"]
+mod commit_acknowledgement;
 #[path = "broker_prepared_consumer/cost_settlement.rs"]
 mod cost_settlement;
 #[path = "broker_prepared_consumer/fixture.rs"]

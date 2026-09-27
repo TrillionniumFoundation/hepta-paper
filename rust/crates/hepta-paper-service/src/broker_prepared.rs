@@ -1,6 +1,9 @@
 //! Existing broker result ingestion, plus an explicitly selected signed-request
-//! dispatch backend. No private keys, second result store, or production grant.
+//! dispatch backend. The optional hepta-core request signer holds no provider credentials,
+//! second result store, release authority, or production grant.
 use crate::{ObjectStoreV1, ServiceError};
+#[path = "broker_prepared/request_signer.rs"]
+mod request_signer;
 use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::VerifyingKey;
 use hepta_codex_broker::{
@@ -15,6 +18,7 @@ use hepta_codex_protocol::{AgentRole, CodexExecutionRequestV1, Sha256Digest};
 use hepta_control_plane::{CommitReceiptV1, ExecutionRequestV1, canonical_hash_v1};
 use hepta_module_platform::PreparedResultV1;
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, connect, socket};
+pub use request_signer::BrokerRequestSignerSourceV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -51,6 +55,10 @@ pub struct BrokerPreparedSourceV1 {
     pub role: AgentRole,
     pub runtime_identity_hash: Sha256Digest,
     pub timeout_ms: u64,
+    /// Optional hepta-core short-lived request-capability signer. The path is
+    /// bound in configuration; private key bytes are never serialized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_signer: Option<BrokerRequestSignerSourceV1>,
     /// Optional separately signed actual-cost owner. Absence retains the legacy
     /// conservative admitted upper bound; it never invents a measured charge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -124,6 +132,7 @@ pub(crate) struct BrokerConsumerContextV1 {
     pub lease_generation: u64,
     pub committed_results: hepta_control_plane::CommittedResultSnapshotV1,
     pub current_time_unix_ms: Arc<AtomicU64>,
+    pub writer_lease_expires_at_unix_ms: u64,
 }
 
 /// The authority publishes this filename after the real plan chooses its attempt.
@@ -166,6 +175,7 @@ pub fn broker_prepared_implementation_hash_v1(
     canonical_hash_v1(&(
         "hepta-broker-prepared-consumer-v1",
         include_str!("broker_prepared.rs"),
+        include_str!("broker_prepared/request_signer.rs"),
         include_str!("worker.rs"),
         include_str!("worker_recovery.rs"),
         source,
@@ -188,6 +198,12 @@ impl BrokerPreparedSourceV1 {
         {
             return Err(ServiceError::Configuration);
         }
+        if let Some(signer) = &self.request_signer {
+            signer.validate()?;
+            if signer.private_key_owner_uid != self.request_owner_uid {
+                return Err(ServiceError::Configuration);
+            }
+        }
         if let Some(cost) = &self.cost_settlement {
             cost.validate()?;
         }
@@ -202,6 +218,26 @@ impl BrokerPreparedSourceV1 {
                     acknowledgement.keys.iter().any(|acknowledgement_key| {
                         cost_key.public_key_base64 == acknowledgement_key.public_key_base64
                     })
+                }))
+        {
+            return Err(ServiceError::Configuration);
+        }
+        if let Some(signer) = &self.request_signer
+            && (self.cost_settlement.as_ref().is_some_and(|cost| {
+                signer.private_key_path.parent() == Some(cost.directory.as_path())
+                    || cost
+                        .keys
+                        .iter()
+                        .any(|key| key.public_key_base64 == signer.public_key_base64)
+            }) || self
+                .commit_acknowledgement
+                .as_ref()
+                .is_some_and(|acknowledgement| {
+                    signer.private_key_path.parent() == Some(acknowledgement.directory.as_path())
+                        || acknowledgement
+                            .keys
+                            .iter()
+                            .any(|key| key.public_key_base64 == signer.public_key_base64)
                 }))
         {
             return Err(ServiceError::Configuration);
@@ -777,6 +813,21 @@ pub(crate) fn consume(
         .checked_add(std::time::Duration::from_millis(source.timeout_ms))
         .ok_or(ServiceError::Execution)?;
     let execution_backend = !matches!(mode, BrokerConsumeModeV1::PreparedOnly);
+    if matches!(mode, BrokerConsumeModeV1::ExecuteOnce)
+        && let Some(signer) = &source.request_signer
+    {
+        refresh_current_time()?;
+        let now_unix_ms = context.current_time_unix_ms.load(Ordering::Acquire);
+        request_signer::ensure_signed_request(
+            source,
+            signer,
+            input,
+            execution,
+            context,
+            maximum_output_bytes,
+            now_unix_ms,
+        )?;
+    }
     let captured = CapturedRequest::open(source, &execution.attempt_id)?;
     validate_binding(
         source,

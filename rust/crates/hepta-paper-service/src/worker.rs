@@ -26,7 +26,7 @@ use std::{
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -128,6 +128,8 @@ pub struct ServiceExecutorV1 {
     workers: BTreeMap<String, WorkerBindingV1>,
     cancelled: Arc<AtomicBool>,
     broker_context: Option<crate::broker_prepared::BrokerConsumerContextV1>,
+    broker_commit_targets:
+        Arc<Mutex<BTreeMap<Sha256Digest, crate::broker_prepared::BrokerCommitTargetV2>>>,
 }
 
 impl ServiceExecutorV1 {
@@ -144,6 +146,7 @@ impl ServiceExecutorV1 {
             workers,
             cancelled: Arc::new(AtomicBool::new(false)),
             broker_context: None,
+            broker_commit_targets: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -158,6 +161,36 @@ impl ServiceExecutorV1 {
     pub(crate) fn with_cancellation(mut self, cancelled: Arc<AtomicBool>) -> Self {
         self.cancelled = cancelled;
         self
+    }
+
+    pub(crate) fn broker_commit_targets(
+        &self,
+    ) -> Arc<Mutex<BTreeMap<Sha256Digest, crate::broker_prepared::BrokerCommitTargetV2>>> {
+        Arc::clone(&self.broker_commit_targets)
+    }
+
+    fn record_broker_commit_target(
+        &self,
+        target: crate::broker_prepared::BrokerCommitTargetV2,
+    ) -> Result<(), ServiceError> {
+        if target.source.commit_acknowledgement.is_none() {
+            return Ok(());
+        }
+        let result_hash = target
+            .result
+            .result_hash()
+            .map_err(|_| ServiceError::Artifact)?;
+        let mut targets = self
+            .broker_commit_targets
+            .lock()
+            .map_err(|_| ServiceError::Execution)?;
+        if let Some(existing) = targets.get(&result_hash)
+            && (existing.subject != target.subject || existing.result != target.result)
+        {
+            return Err(ServiceError::Artifact);
+        }
+        targets.insert(result_hash, target);
+        Ok(())
     }
 
     // Prepared bytes are not durable commit evidence. Only the index restored
@@ -187,9 +220,6 @@ impl ServiceExecutorV1 {
             .as_ref()
             .ok_or(ServiceError::Configuration)?;
         let result_hash = result.result_hash().map_err(|_| ServiceError::Artifact)?;
-        if context.committed_results.contains_result(&result_hash) {
-            return Ok(());
-        }
         if result.artifact_hashes.len() != 1
             || result.actual_resources != request.candidate.resources
         {
@@ -197,6 +227,16 @@ impl ServiceExecutorV1 {
         }
         let cached: Value = serde_json::from_slice(&self.objects.read(&result.evidence_hash)?)
             .map_err(|_| ServiceError::Artifact)?;
+        if let Some(target) = crate::broker_prepared::broker_commit_target_from_persisted_result(
+            &self.objects,
+            source,
+            result,
+        )? {
+            self.record_broker_commit_target(target)?;
+        }
+        if context.committed_results.contains_result(&result_hash) {
+            return Ok(());
+        }
         let sent = cached
             .get("workerEvidence")
             .and_then(|value| value.get("executionSentInThisInvocation"))
@@ -323,7 +363,7 @@ impl ServiceExecutorV1 {
         if !readonly_query {
             record_started()?;
         }
-        let (mut artifacts, evidence, actual_cost_microusd) = match (binding, job) {
+        let (mut artifacts, evidence, actual_cost_microusd, broker_commit) = match (binding, job) {
             (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
             | (WorkerBindingV1::BrokerExecute { source }, NativeJobV1::BrokerExecute { input }) => {
                 let mode = match binding {
@@ -355,6 +395,7 @@ impl ServiceExecutorV1 {
                     json!({"version":1,"requestHash":identity,
                     "verifier":"broker_prepared_consumer", "workerEvidence": consumed.evidence}),
                     consumed.actual_cost_microusd,
+                    Some((source.clone(), consumed.acknowledgement_subject)),
                 )
             }
             (WorkerBindingV1::Native, NativeJobV1::ArtifactInventory { artifacts }) => {
@@ -372,6 +413,7 @@ impl ServiceExecutorV1 {
                     vec![self.objects.put(&bytes)?],
                     json!({"version":1,"verifier":"native_artifact_inventory","requestHash":identity}),
                     request.candidate.cost_microusd,
+                    None,
                 )
             }
             (
@@ -400,6 +442,7 @@ impl ServiceExecutorV1 {
                     json!({"version":1,"verifier":"native_sqlite_inspector","requestHash":identity,
                     "databaseContentHash":expected_database_hash,"replayScope":"historical_pinned_database_input"}),
                     request.candidate.cost_microusd,
+                    None,
                 )
             }
             (WorkerBindingV1::Native, NativeJobV1::Business { job }) => {
@@ -423,6 +466,7 @@ impl ServiceExecutorV1 {
                         "scope": "prepared_result_only_no_external_authority"
                     }),
                     request.candidate.cost_microusd,
+                    None,
                 )
             }
             (WorkerBindingV1::Process { .. }, NativeJobV1::Process { input }) => {
@@ -444,6 +488,7 @@ impl ServiceExecutorV1 {
                     json!({"version":1,"requestHash":identity,"workerBinding":binding,"workerEvidence":response.evidence,
                     "scope":"content_integrity_not_scientific_or_production_authority"}),
                     request.candidate.cost_microusd,
+                    None,
                 )
             }
             _ => return Err(ServiceError::Configuration),
@@ -475,6 +520,13 @@ impl ServiceExecutorV1 {
             evidence_hash: evidence,
             external_action_may_have_started: false,
         };
+        if let Some((source, subject)) = broker_commit {
+            self.record_broker_commit_target(crate::broker_prepared::BrokerCommitTargetV2 {
+                source,
+                subject,
+                result: result.clone(),
+            })?;
+        }
         self.objects.record(
             &prepared,
             &serde_json::to_vec(&result).map_err(|_| ServiceError::Artifact)?,

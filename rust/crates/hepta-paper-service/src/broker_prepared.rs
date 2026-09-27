@@ -1,30 +1,34 @@
 //! Existing broker result ingestion, plus an explicitly selected signed-request
 //! dispatch backend. No private keys, second result store, or production grant.
-use crate::ServiceError;
+use crate::{ObjectStoreV1, ServiceError};
 use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::VerifyingKey;
 use hepta_codex_broker::{
-    PeerPolicyV1, PeerPrincipalV1, ProviderCostSettlementPolicyV1,
-    ProviderCostSettlementTrustStoreV1, ProviderCostSettlementV1, query_prepared_result,
-    verify_provider_cost_settlement,
+    CommitBoundAcknowledgementPolicyV2, CommitBoundAcknowledgementTrustStoreV2,
+    CommitBoundPreparedResultAcknowledgementV2, PeerPolicyV1, PeerPrincipalV1,
+    PreparedResultAcknowledgementSubjectV2, PreparedResultCommitBindingV2,
+    ProviderCostSettlementPolicyV1, ProviderCostSettlementTrustStoreV1, ProviderCostSettlementV1,
+    acknowledge_committed_result_v2, query_prepared_result,
+    verify_commit_bound_acknowledgement_subject_v2, verify_provider_cost_settlement,
 };
 use hepta_codex_protocol::{AgentRole, CodexExecutionRequestV1, Sha256Digest};
-use hepta_control_plane::{ExecutionRequestV1, canonical_hash_v1};
+use hepta_control_plane::{CommitReceiptV1, ExecutionRequestV1, canonical_hash_v1};
+use hepta_module_platform::PreparedResultV1;
 use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, connect, socket};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::Read,
+    io::{Read, Write},
     os::{
         fd::AsRawFd,
         unix::{
-            fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
+            fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt},
             net::UnixStream,
         },
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -51,6 +55,11 @@ pub struct BrokerPreparedSourceV1 {
     /// conservative admitted upper bound; it never invents a measured charge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_settlement: Option<BrokerCostSettlementSourceV1>,
+    /// Optional independently signed post-commit acknowledgement owner. The
+    /// service holds public verification material only and contacts the same
+    /// broker after the campaign sequencer has durably committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_acknowledgement: Option<BrokerCommitAcknowledgementSourceV2>,
 }
 
 /// One public billing-authority key. Private billing keys never enter service configuration.
@@ -72,6 +81,27 @@ pub struct BrokerCostSettlementSourceV1 {
     pub trust_store_generation: u64,
     pub maximum_age_ms: u64,
     pub keys: Vec<BrokerCostSettlementKeyV1>,
+}
+
+/// Public commit-acknowledgement authority key. The signer stays outside the service.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerCommitAcknowledgementKeyV2 {
+    pub key_id: String,
+    pub public_key_base64: String,
+}
+
+/// Immutable signed acknowledgement directory and current revocation generation.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerCommitAcknowledgementSourceV2 {
+    pub directory: PathBuf,
+    pub authority_domain_id: String,
+    pub authority_uid: u32,
+    pub authority_gid: u32,
+    pub trust_store_generation: u64,
+    pub maximum_age_ms: u64,
+    pub keys: Vec<BrokerCommitAcknowledgementKeyV2>,
 }
 
 /// Exact desired input bytes and output contract; this is not a signed permit.
@@ -119,6 +149,16 @@ pub fn broker_cost_settlement_filename_v1(attempt_id: &str) -> Result<String, Se
     ))
 }
 
+pub fn broker_commit_acknowledgement_filename_v2(attempt_id: &str) -> Result<String, ServiceError> {
+    if attempt_id.is_empty() || attempt_id.len() > 256 {
+        return Err(ServiceError::Configuration);
+    }
+    Ok(format!(
+        "{}.commit-ack-v2.json",
+        hex::encode(Sha256::digest(attempt_id.as_bytes()))
+    ))
+}
+
 pub fn broker_prepared_implementation_hash_v1(
     source: &BrokerPreparedSourceV1,
 ) -> Result<Sha256Digest, ServiceError> {
@@ -151,6 +191,21 @@ impl BrokerPreparedSourceV1 {
         if let Some(cost) = &self.cost_settlement {
             cost.validate()?;
         }
+        if let Some(acknowledgement) = &self.commit_acknowledgement {
+            acknowledgement.validate()?;
+        }
+        if let (Some(cost), Some(acknowledgement)) =
+            (&self.cost_settlement, &self.commit_acknowledgement)
+            && (cost.directory == acknowledgement.directory
+                || cost.authority_domain_id == acknowledgement.authority_domain_id
+                || cost.keys.iter().any(|cost_key| {
+                    acknowledgement.keys.iter().any(|acknowledgement_key| {
+                        cost_key.public_key_base64 == acknowledgement_key.public_key_base64
+                    })
+                }))
+        {
+            return Err(ServiceError::Configuration);
+        }
         Ok(())
     }
     pub(crate) fn matches_capability(&self, capability: &str) -> bool {
@@ -160,6 +215,46 @@ impl BrokerPreparedSourceV1 {
                 | (AgentRole::Reviewer, "CAP-REVIEW")
                 | (AgentRole::FormalReviewer, "CAP-FORMAL")
         )
+    }
+}
+
+impl BrokerCommitAcknowledgementSourceV2 {
+    fn validate(&self) -> Result<(), ServiceError> {
+        if !self.directory.is_absolute()
+            || self
+                .directory
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+            || self.trust_store_generation == 0
+            || self.maximum_age_ms == 0
+            || self.maximum_age_ms > 24 * 60 * 60 * 1000
+            || self.keys.is_empty()
+            || self.keys.len() > 32
+        {
+            return Err(ServiceError::Configuration);
+        }
+        self.trust_store().map(|_| ())
+    }
+
+    fn trust_store(&self) -> Result<CommitBoundAcknowledgementTrustStoreV2, ServiceError> {
+        let mut entries = Vec::with_capacity(self.keys.len());
+        for key in &self.keys {
+            let bytes = Base64UrlUnpadded::decode_vec(&key.public_key_base64)
+                .map_err(|_| ServiceError::Configuration)?;
+            if Base64UrlUnpadded::encode_string(&bytes) != key.public_key_base64 {
+                return Err(ServiceError::Configuration);
+            }
+            let bytes: [u8; 32] = bytes.try_into().map_err(|_| ServiceError::Configuration)?;
+            let verifying =
+                VerifyingKey::from_bytes(&bytes).map_err(|_| ServiceError::Configuration)?;
+            entries.push((key.key_id.clone(), verifying));
+        }
+        CommitBoundAcknowledgementTrustStoreV2::new(
+            self.authority_domain_id.clone(),
+            self.trust_store_generation,
+            entries,
+        )
+        .map_err(|_| ServiceError::Configuration)
     }
 }
 
@@ -328,6 +423,102 @@ struct CapturedSettlement {
     file_metadata: fs::Metadata,
     path: PathBuf,
     settlement: ProviderCostSettlementV1,
+}
+
+struct CapturedCommitAcknowledgement {
+    directory: File,
+    directory_metadata: fs::Metadata,
+    file: File,
+    file_metadata: fs::Metadata,
+    path: PathBuf,
+    acknowledgement: CommitBoundPreparedResultAcknowledgementV2,
+}
+
+impl CapturedCommitAcknowledgement {
+    fn open(
+        source: &BrokerCommitAcknowledgementSourceV2,
+        attempt: &str,
+    ) -> Result<Self, ServiceError> {
+        source.validate()?;
+        if fs::canonicalize(&source.directory).ok().as_ref() != Some(&source.directory) {
+            return Err(ServiceError::Artifact);
+        }
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+            .open(&source.directory)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let directory_metadata = directory.metadata().map_err(|_| ServiceError::Filesystem)?;
+        if !directory_metadata.is_dir()
+            || directory_metadata.uid() != source.authority_uid
+            || directory_metadata.gid() != source.authority_gid
+            || directory_metadata.mode() & 0o027 != 0
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let name = broker_commit_acknowledgement_filename_v2(attempt)?;
+        let path = source.directory.join(&name);
+        let anchored = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name);
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC | nix::libc::O_NONBLOCK)
+            .open(anchored)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let file_metadata = file.metadata().map_err(|_| ServiceError::Filesystem)?;
+        if !file_metadata.is_file()
+            || file_metadata.uid() != source.authority_uid
+            || file_metadata.gid() != source.authority_gid
+            || file_metadata.nlink() != 1
+            || !matches!(file_metadata.mode() & 0o7777, 0o400 | 0o440)
+            || file_metadata.len() == 0
+            || file_metadata.len() > MAX_REQUEST_BYTES
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file)
+            .take(MAX_REQUEST_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ServiceError::Filesystem)?;
+        let acknowledgement: CommitBoundPreparedResultAcknowledgementV2 =
+            serde_json::from_slice(&bytes).map_err(|_| ServiceError::Configuration)?;
+        if bytes.len() as u64 != file_metadata.len()
+            || serde_json::to_vec(&acknowledgement).map_err(|_| ServiceError::Configuration)?
+                != bytes
+        {
+            return Err(ServiceError::Configuration);
+        }
+        let captured = Self {
+            directory,
+            directory_metadata,
+            file,
+            file_metadata,
+            path,
+            acknowledgement,
+        };
+        captured.revalidate(source)?;
+        Ok(captured)
+    }
+
+    fn revalidate(&self, source: &BrokerCommitAcknowledgementSourceV2) -> Result<(), ServiceError> {
+        let directory = self
+            .directory
+            .metadata()
+            .map_err(|_| ServiceError::Filesystem)?;
+        let named_directory =
+            fs::symlink_metadata(&source.directory).map_err(|_| ServiceError::Filesystem)?;
+        let opened = self.file.metadata().map_err(|_| ServiceError::Filesystem)?;
+        let named = fs::symlink_metadata(&self.path).map_err(|_| ServiceError::Filesystem)?;
+        if !same_node(&self.directory_metadata, &directory)
+            || !same_node(&directory, &named_directory)
+            || fs::canonicalize(&source.directory).ok().as_ref() != Some(&source.directory)
+            || !same_file(&self.file_metadata, &opened)
+            || !same_file(&opened, &named)
+        {
+            return Err(ServiceError::Artifact);
+        }
+        Ok(())
+    }
 }
 
 impl CapturedSettlement {
@@ -563,6 +754,7 @@ pub(crate) struct BrokerConsumedResultV1 {
     pub output: Vec<u8>,
     pub evidence: Value,
     pub actual_cost_microusd: u64,
+    pub acknowledgement_subject: PreparedResultAcknowledgementSubjectV2,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -741,9 +933,20 @@ pub(crate) fn consume(
             }),
         ),
     };
+    let acknowledgement_subject = PreparedResultAcknowledgementSubjectV2 {
+        operation_id: captured.request.operation_id.clone(),
+        request_hash: delivery.receipt().request_hash.clone(),
+        prepared_receipt_hash: delivery.receipt().prepared_receipt_hash.clone(),
+        campaign_id: captured.request.campaign_id.clone(),
+        node_id: captured.request.node_id.clone(),
+        attempt_id: captured.request.attempt_id.clone(),
+        campaign_revision: captured.request.campaign_revision,
+        lease_generation: captured.request.lease_generation,
+    };
     let evidence = serde_json::json!({
         "version": 1,
         "brokerReceipt": delivery.receipt(),
+        "acknowledgementSubject": acknowledgement_subject,
         "brokerSource": source,
         "inputManifestHash": captured.request.input_manifest_hash,
         "providerExecutionRequestedByConsumer": execution_backend,
@@ -764,7 +967,266 @@ pub(crate) fn consume(
         output: delivery.output().to_vec(),
         evidence,
         actual_cost_microusd,
+        acknowledgement_subject,
     })
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BrokerCommitAcknowledgementMarkerV2 {
+    version: u16,
+    result_hash: Sha256Digest,
+    acknowledgement: CommitBoundPreparedResultAcknowledgementV2,
+}
+
+fn marker_path(state_directory: &Path, result_hash: &Sha256Digest) -> PathBuf {
+    state_directory
+        .join("commit-acknowledgements-v2")
+        .join(format!(
+            "{}.json",
+            result_hash.as_str().trim_start_matches("sha256:")
+        ))
+}
+
+fn ensure_marker_directory(state_directory: &Path) -> Result<PathBuf, ServiceError> {
+    let state = fs::symlink_metadata(state_directory).map_err(|_| ServiceError::Filesystem)?;
+    let directory = state_directory.join("commit-acknowledgements-v2");
+    if !directory.exists() {
+        match fs::DirBuilder::new().mode(0o700).create(&directory) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(_) => return Err(ServiceError::Filesystem),
+        }
+    }
+    let metadata = fs::symlink_metadata(&directory).map_err(|_| ServiceError::Filesystem)?;
+    if !metadata.is_dir()
+        || metadata.uid() != state.uid()
+        || metadata.gid() != state.gid()
+        || metadata.mode() & 0o077 != 0
+        || fs::canonicalize(&directory).ok().as_deref() != Some(directory.as_path())
+    {
+        return Err(ServiceError::Artifact);
+    }
+    Ok(directory)
+}
+
+fn read_marker(
+    state_directory: &Path,
+    result_hash: &Sha256Digest,
+) -> Result<Option<BrokerCommitAcknowledgementMarkerV2>, ServiceError> {
+    let directory = state_directory.join("commit-acknowledgements-v2");
+    if !directory.exists() {
+        return Ok(None);
+    }
+    ensure_marker_directory(state_directory)?;
+    let path = marker_path(state_directory, result_hash);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let state = fs::symlink_metadata(state_directory).map_err(|_| ServiceError::Filesystem)?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC | nix::libc::O_NONBLOCK)
+        .open(&path)
+        .map_err(|_| ServiceError::Filesystem)?;
+    let before = file.metadata().map_err(|_| ServiceError::Filesystem)?;
+    if !before.is_file()
+        || before.uid() != state.uid()
+        || before.gid() != state.gid()
+        || before.nlink() != 1
+        || before.mode() & 0o7777 != 0o600
+        || before.len() == 0
+        || before.len() > MAX_REQUEST_BYTES
+    {
+        return Err(ServiceError::Artifact);
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(MAX_REQUEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ServiceError::Filesystem)?;
+    let after = file.metadata().map_err(|_| ServiceError::Filesystem)?;
+    let named = fs::symlink_metadata(&path).map_err(|_| ServiceError::Filesystem)?;
+    let marker: BrokerCommitAcknowledgementMarkerV2 =
+        serde_json::from_slice(&bytes).map_err(|_| ServiceError::Artifact)?;
+    if marker.version != 2
+        || &marker.result_hash != result_hash
+        || bytes.len() as u64 != before.len()
+        || !same_file(&before, &after)
+        || !same_file(&after, &named)
+        || serde_json::to_vec(&marker).map_err(|_| ServiceError::Artifact)? != bytes
+    {
+        return Err(ServiceError::Artifact);
+    }
+    Ok(Some(marker))
+}
+
+fn store_marker(
+    state_directory: &Path,
+    result_hash: Sha256Digest,
+    acknowledgement: &CommitBoundPreparedResultAcknowledgementV2,
+) -> Result<(), ServiceError> {
+    let directory = ensure_marker_directory(state_directory)?;
+    let marker = BrokerCommitAcknowledgementMarkerV2 {
+        version: 2,
+        result_hash: result_hash.clone(),
+        acknowledgement: acknowledgement.clone(),
+    };
+    let bytes = serde_json::to_vec(&marker).map_err(|_| ServiceError::Artifact)?;
+    let path = marker_path(state_directory, &result_hash);
+    if path.exists() {
+        let observed = read_marker(state_directory, &result_hash)?.ok_or(ServiceError::Artifact)?;
+        if observed.acknowledgement != *acknowledgement {
+            return Err(ServiceError::Artifact);
+        }
+        return Ok(());
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(&path)
+        .map_err(|_| ServiceError::Filesystem)?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| ServiceError::Filesystem)?;
+    File::open(&directory)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| ServiceError::Filesystem)?;
+    let observed = read_marker(state_directory, &result_hash)?.ok_or(ServiceError::Artifact)?;
+    if observed.acknowledgement != *acknowledgement {
+        return Err(ServiceError::Artifact);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BrokerCommitTargetV2 {
+    pub source: BrokerPreparedSourceV1,
+    pub subject: PreparedResultAcknowledgementSubjectV2,
+    pub result: PreparedResultV1,
+}
+
+/// Reconstructs the post-commit target only from persisted CAS evidence and the
+/// exact registry source. Executor replay and workflow recovery share this path.
+pub(crate) fn broker_commit_target_from_persisted_result(
+    objects: &ObjectStoreV1,
+    source: &BrokerPreparedSourceV1,
+    result: &PreparedResultV1,
+) -> Result<Option<BrokerCommitTargetV2>, ServiceError> {
+    if source.commit_acknowledgement.is_none() {
+        return Ok(None);
+    }
+    let evidence: Value = serde_json::from_slice(&objects.read(&result.evidence_hash)?)
+        .map_err(|_| ServiceError::Artifact)?;
+    let subject = serde_json::from_value(
+        evidence
+            .get("workerEvidence")
+            .and_then(|value| value.get("acknowledgementSubject"))
+            .cloned()
+            .ok_or(ServiceError::Artifact)?,
+    )
+    .map_err(|_| ServiceError::Artifact)?;
+    Ok(Some(BrokerCommitTargetV2 {
+        source: source.clone(),
+        subject,
+        result: result.clone(),
+    }))
+}
+
+pub(crate) fn acknowledge_committed_result(
+    state_directory: &Path,
+    target: &BrokerCommitTargetV2,
+    receipt: &CommitReceiptV1,
+    now_unix_ms: u64,
+    cancelled: &AtomicBool,
+) -> Result<(), ServiceError> {
+    let Some(acknowledgement_source) = &target.source.commit_acknowledgement else {
+        return Ok(());
+    };
+    if now_unix_ms == 0 || cancelled.load(Ordering::Acquire) {
+        return Err(ServiceError::Execution);
+    }
+    let result_hash = target
+        .result
+        .result_hash()
+        .map_err(|_| ServiceError::Artifact)?;
+    if receipt.plan_hash != target.result.plan_hash
+        || receipt.result_hash != result_hash
+        || receipt.production_activation
+    {
+        return Err(ServiceError::Artifact);
+    }
+    let commit = PreparedResultCommitBindingV2 {
+        plan_hash: receipt.plan_hash.clone(),
+        sequence: receipt.sequence,
+        result_hash: receipt.result_hash.clone(),
+        verifier_hash: receipt.verifier_hash.clone(),
+        verification_receipt_hash: receipt.verification_receipt_hash.clone(),
+        committed_state_hash: receipt.committed_state_hash.clone(),
+        actual_cost_microusd: target.result.actual_cost_microusd,
+    };
+    if let Some(marker) = read_marker(state_directory, &result_hash)? {
+        verify_commit_bound_acknowledgement_subject_v2(
+            &marker.acknowledgement,
+            &target.subject,
+            &commit,
+            marker.acknowledgement.acknowledged_at_unix_ms,
+            CommitBoundAcknowledgementPolicyV2 {
+                version: 2,
+                maximum_age_ms: acknowledgement_source.maximum_age_ms,
+            },
+            &acknowledgement_source.trust_store()?,
+        )
+        .map_err(|_| ServiceError::Artifact)?;
+        return Ok(());
+    }
+    let captured =
+        CapturedCommitAcknowledgement::open(acknowledgement_source, &target.result.attempt_id)?;
+    verify_commit_bound_acknowledgement_subject_v2(
+        &captured.acknowledgement,
+        &target.subject,
+        &commit,
+        now_unix_ms,
+        CommitBoundAcknowledgementPolicyV2 {
+            version: 2,
+            maximum_age_ms: acknowledgement_source.maximum_age_ms,
+        },
+        &acknowledgement_source.trust_store()?,
+    )
+    .map_err(|_| ServiceError::Execution)?;
+    captured.revalidate(acknowledgement_source)?;
+    let peer_policy = PeerPolicyV1::new([PeerPrincipalV1 {
+        uid: target.source.broker_uid,
+        gid: target.source.broker_gid,
+    }])
+    .map_err(|_| ServiceError::Configuration)?;
+    let (stream, socket_identity) = connect_now(&target.source)?;
+    let started = std::time::Instant::now();
+    let deadline = started
+        .checked_add(std::time::Duration::from_millis(target.source.timeout_ms))
+        .ok_or(ServiceError::Execution)?;
+    with_interruptible_transport(&stream, cancelled, deadline, || {
+        let elapsed =
+            u64::try_from(started.elapsed().as_millis()).map_err(|_| ServiceError::Execution)?;
+        let remaining = target
+            .source
+            .timeout_ms
+            .checked_sub(elapsed)
+            .filter(|value| *value > 0)
+            .ok_or(ServiceError::Execution)?;
+        acknowledge_committed_result_v2(&stream, &peer_policy, &captured.acknowledgement, remaining)
+            .map_err(|_| ServiceError::Execution)
+    })?;
+    captured.revalidate(acknowledgement_source)?;
+    let named =
+        fs::symlink_metadata(&target.source.socket_path).map_err(|_| ServiceError::Filesystem)?;
+    if !same_node(&socket_identity, &named) || cancelled.load(Ordering::Acquire) {
+        return Err(ServiceError::Execution);
+    }
+    store_marker(state_directory, result_hash, &captured.acknowledgement)?;
+    Ok(())
 }
 
 #[cfg(test)]

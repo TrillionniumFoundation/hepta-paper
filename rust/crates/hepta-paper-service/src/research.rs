@@ -172,6 +172,7 @@ pub fn validate_research_service_policy_v1(
                 source.validate()?;
                 if &source.runtime_identity_hash != qualified_runtime_identity
                     || source.cost_settlement.is_none()
+                    || source.commit_acknowledgement.is_none()
                 {
                     return Err(ServiceError::Configuration);
                 }

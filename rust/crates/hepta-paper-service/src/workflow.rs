@@ -634,6 +634,54 @@ struct History {
     active_definition: LocalWorkflowV1,
     changes: Vec<amendment::AppliedLocalWorkflowChangeV1>,
 }
+
+fn recover_committed_broker_acknowledgements(
+    root: &Path,
+    owner: u32,
+    history: &History,
+    objects: &ObjectStoreV1,
+    clock: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    cancelled: &AtomicBool,
+) -> Result<(), WorkflowError> {
+    if history.results.len() != history.receipts.len() {
+        return Err(WorkflowError::History);
+    }
+    for (index, (result, receipt)) in history.results.iter().zip(&history.receipts).enumerate() {
+        let saved: ServiceRunV1 =
+            serde_json::from_slice(&read_record(&plan_path(root, index), owner)?)
+                .map_err(|_| WorkflowError::History)?;
+        let [candidate] = saved.frontier.candidates.as_slice() else {
+            return Err(WorkflowError::History);
+        };
+        if saved.state_directory != root
+            || candidate.module_id != result.module_id
+            || candidate
+                .candidate_hash()
+                .map_err(|_| WorkflowError::History)?
+                != result.candidate_hash
+        {
+            return Err(WorkflowError::History);
+        }
+        let source = match saved.workers.get(&candidate.module_id) {
+            Some(WorkerBindingV1::BrokerPrepared { source })
+            | Some(WorkerBindingV1::BrokerExecute { source }) => source,
+            Some(WorkerBindingV1::Native | WorkerBindingV1::Process { .. }) => continue,
+            None => return Err(WorkflowError::History),
+        };
+        let Some(target) = crate::broker_prepared::broker_commit_target_from_persisted_result(
+            objects, source, result,
+        )?
+        else {
+            continue;
+        };
+        let now = clock().map_err(|_| ServiceError::PostCommitAcknowledgement)?;
+        crate::broker_prepared::acknowledge_committed_result(
+            root, &target, receipt, now, cancelled,
+        )
+        .map_err(|_| ServiceError::PostCommitAcknowledgement)?;
+    }
+    Ok(())
+}
 fn history(
     definition: &LocalWorkflowV1,
     owner: u32,
@@ -1041,6 +1089,13 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
             if through_steps == 0 || through_steps > definition.steps.len() {
                 return Err(WorkflowError::Definition);
             }
+            // A sequencer commit can outlive an ACK response. Reconcile every
+            // committed broker fact before gate handling or later-step admission.
+            // This path reads the frozen plan and CAS evidence, never dispatches
+            // a provider, and writes only the existing post-commit ACK marker.
+            recover_committed_broker_acknowledgements(
+                root, owner, &observed, &objects, &mut clock, &cancelled,
+            )?;
             if observed.rejected
                 && observed
                     .repair_end

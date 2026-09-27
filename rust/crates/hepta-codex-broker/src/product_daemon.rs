@@ -17,10 +17,10 @@ pub use compose::{compose_product_codex_broker, run_product_codex_broker};
 pub use config::{
     LoadedProductCodexBrokerConfigurationV1, ProductBundleAuthorityKeyV1,
     ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationIdentityV1,
-    ProductCodexBrokerConfigurationV1, ProductJournalConfigurationV1,
-    ProductListenerConfigurationV1, ProductProcessLimitsConfigurationV1,
-    ProductRuntimeConfigurationV1, ProductServerConfigurationV1,
-    load_product_codex_broker_configuration,
+    ProductCodexBrokerConfigurationV1, ProductCommitAcknowledgementConfigurationV2,
+    ProductCommitBindingSourceV2, ProductJournalConfigurationV1, ProductListenerConfigurationV1,
+    ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
+    ProductServerConfigurationV1, load_product_codex_broker_configuration,
 };
 
 #[derive(Debug, Error)]
@@ -41,6 +41,8 @@ pub enum ProductCodexBrokerDaemonError {
     BrokerPrincipal,
     #[error("trust-bundle authority keys are invalid")]
     AuthorityKeys,
+    #[error("commit-acknowledgement authority keys are invalid")]
+    CommitAcknowledgementAuthorityKeys,
     #[error("restricted broker environment is invalid")]
     Environment,
     #[error("digest construction failed")]
@@ -55,6 +57,8 @@ pub enum ProductCodexBrokerDaemonError {
     TrustSource(#[from] crate::TrustBundleSourceError),
     #[error(transparent)]
     TrustBundle(#[from] crate::TrustBundleError),
+    #[error(transparent)]
+    CommitAcknowledgement(#[from] crate::CommitBoundAcknowledgementError),
     #[error(transparent)]
     Peer(#[from] crate::PeerAuthorizationError),
     #[error(transparent)]

@@ -13,13 +13,14 @@ use nix::unistd::{Gid, Uid};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::PeerPrincipalV1;
+use crate::{CommitBindingDatabaseScopeV2, PeerPrincipalV1};
 
 use super::ProductCodexBrokerDaemonError;
 
 const MAXIMUM_CONFIGURATION_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_AUTHORITY_KEYS: usize = 64;
 const MAXIMUM_PEERS: usize = 64;
+const HARD_MAXIMUM_ACKNOWLEDGEMENT_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 const EXPECTED_CONFIGURATION_MODE: u32 = 0o440;
 const EXPECTED_CONFIGURATION_PARENT_MODE: u32 = 0o750;
 
@@ -28,6 +29,28 @@ const EXPECTED_CONFIGURATION_PARENT_MODE: u32 = 0o750;
 pub struct ProductBundleAuthorityKeyV1 {
     pub key_id: String,
     pub public_key_base64: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProductCommitBindingSourceV2 {
+    pub version: u16,
+    pub database_path: PathBuf,
+    pub database_owner_uid: u32,
+    pub busy_timeout_ms: u64,
+    pub maximum_database_bytes: u64,
+    pub scope: CommitBindingDatabaseScopeV2,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProductCommitAcknowledgementConfigurationV2 {
+    pub version: u16,
+    pub authority_domain_id: String,
+    pub trust_store_generation: u64,
+    pub maximum_age_ms: u64,
+    pub authority_keys: Vec<ProductBundleAuthorityKeyV1>,
+    pub commit_binding_source: ProductCommitBindingSourceV2,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -131,6 +154,8 @@ pub struct ProductCodexBrokerConfigurationV1 {
     pub trust_bundle_authority_uid: u32,
     pub trust_bundle_reader_gid: u32,
     pub trust_bundle_authority_keys: Vec<ProductBundleAuthorityKeyV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_acknowledgement: Option<ProductCommitAcknowledgementConfigurationV2>,
     pub allowed_peers: Vec<PeerPrincipalV1>,
     pub listener: ProductListenerConfigurationV1,
     pub journal: ProductJournalConfigurationV1,
@@ -309,6 +334,27 @@ pub(super) fn validate_configuration_shape(
     {
         return Err(ProductCodexBrokerDaemonError::ConfigurationPolicy);
     }
+    if let Some(acknowledgement) = &configuration.commit_acknowledgement
+        && (acknowledgement.version != 2
+            || !valid_identifier(&acknowledgement.authority_domain_id)
+            || acknowledgement.trust_store_generation == 0
+            || acknowledgement.maximum_age_ms == 0
+            || acknowledgement.maximum_age_ms > HARD_MAXIMUM_ACKNOWLEDGEMENT_AGE_MS
+            || acknowledgement.authority_keys.is_empty()
+            || acknowledgement.authority_keys.len() > MAXIMUM_AUTHORITY_KEYS
+            || acknowledgement.commit_binding_source.version != 2
+            || !acknowledgement
+                .commit_binding_source
+                .database_path
+                .is_absolute()
+            || acknowledgement.commit_binding_source.busy_timeout_ms == 0
+            || acknowledgement.commit_binding_source.busy_timeout_ms > 30_000
+            || acknowledgement.commit_binding_source.maximum_database_bytes == 0
+            || acknowledgement.commit_binding_source.maximum_database_bytes
+                > 16 * 1024 * 1024 * 1024)
+    {
+        return Err(ProductCodexBrokerDaemonError::ConfigurationPolicy);
+    }
     for path in [
         &configuration.operation_directory,
         &configuration.trust_bundle_path,
@@ -319,12 +365,27 @@ pub(super) fn validate_configuration_shape(
         &configuration.gate_executable,
         &configuration.gate_state_directory,
         &configuration.cgroup.delegated_root,
-    ] {
+    ]
+    .into_iter()
+    .chain(
+        configuration
+            .commit_acknowledgement
+            .iter()
+            .map(|value| &value.commit_binding_source.database_path),
+    ) {
         if !path.is_absolute() {
             return Err(ProductCodexBrokerDaemonError::ConfigurationPath);
         }
     }
     Ok(())
+}
+
+fn valid_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 fn sha256_digest(bytes: &[u8]) -> Result<Sha256Digest, ProductCodexBrokerDaemonError> {

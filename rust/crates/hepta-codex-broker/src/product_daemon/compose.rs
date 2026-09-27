@@ -21,14 +21,15 @@ use crate::{
     BrokerListenerAccessModeV1, BrokerListenerPolicyV1, BrokerListenerV1,
     BrokerResponseFramePolicyV1, BrokerRolePolicyV1, BrokerServerPolicyV1,
     BrokerServerRunSummaryV1, BrokerServerV1, CapabilityBundleAuthorityV1,
-    CapabilityTrustBundleManagerV1, CapabilityTrustBundleSourcePolicyV1, PeerPolicyV1,
-    ProductCodexDispatcherConfigurationV1, ProductCodexDispatcherV1, SystemBrokerClockV1,
-    load_signed_capability_trust_bundle, verify_capability_trust_bundle,
+    CapabilityTrustBundleManagerV1, CapabilityTrustBundleSourcePolicyV1,
+    CommitBoundAcknowledgementPolicyV2, CommitBoundAcknowledgementTrustStoreV2, PeerPolicyV1,
+    ProductCodexDispatcherConfigurationV1, ProductCodexDispatcherV1, SqliteCommitBindingResolverV2,
+    SystemBrokerClockV1, load_signed_capability_trust_bundle, verify_capability_trust_bundle,
 };
 
 use super::{
     LoadedProductCodexBrokerConfigurationV1, ProductCodexBrokerConfigurationV1,
-    ProductCodexBrokerDaemonError,
+    ProductCodexBrokerDaemonError, ProductCommitAcknowledgementConfigurationV2,
 };
 
 pub fn compose_product_codex_broker(
@@ -176,12 +177,12 @@ pub fn compose_product_codex_broker(
         maximum_connections: configuration.server.maximum_connections,
         startup_process_limits: configuration.process_limits.into(),
     };
-    Ok(BrokerServerV1::new(
+    let mut server = BrokerServerV1::new(
         listener,
         peer_policy,
         trust_manager,
         admission_policy,
-        configuration.journal.path,
+        configuration.journal.path.clone(),
         journal_policy,
         server_policy,
         BrokerResponseFramePolicyV1 {
@@ -190,7 +191,24 @@ pub fn compose_product_codex_broker(
         clock,
         shutdown,
     )?
-    .with_dispatcher(dispatcher))
+    .with_dispatcher(dispatcher);
+    if let Some(acknowledgement) = &configuration.commit_acknowledgement {
+        server = server.with_commit_acknowledgement_v2(
+            CommitBoundAcknowledgementPolicyV2 {
+                version: acknowledgement.version,
+                maximum_age_ms: acknowledgement.maximum_age_ms,
+            },
+            decode_commit_acknowledgement_trust(acknowledgement)?,
+            Arc::new(SqliteCommitBindingResolverV2::new(
+                acknowledgement.commit_binding_source.database_path.clone(),
+                acknowledgement.commit_binding_source.database_owner_uid,
+                acknowledgement.commit_binding_source.busy_timeout_ms,
+                acknowledgement.commit_binding_source.maximum_database_bytes,
+                acknowledgement.commit_binding_source.scope,
+            )?),
+        );
+    }
+    Ok(server)
 }
 
 pub fn run_product_codex_broker(
@@ -223,6 +241,31 @@ pub(super) fn decode_bundle_authority(
         keys.push((entry.key_id.clone(), key));
     }
     CapabilityBundleAuthorityV1::new(keys).map_err(ProductCodexBrokerDaemonError::TrustBundle)
+}
+
+pub(super) fn decode_commit_acknowledgement_trust(
+    configuration: &ProductCommitAcknowledgementConfigurationV2,
+) -> Result<CommitBoundAcknowledgementTrustStoreV2, ProductCodexBrokerDaemonError> {
+    let mut keys = Vec::with_capacity(configuration.authority_keys.len());
+    for entry in &configuration.authority_keys {
+        let bytes = Base64UrlUnpadded::decode_vec(&entry.public_key_base64)
+            .map_err(|_| ProductCodexBrokerDaemonError::CommitAcknowledgementAuthorityKeys)?;
+        if Base64UrlUnpadded::encode_string(&bytes) != entry.public_key_base64 {
+            return Err(ProductCodexBrokerDaemonError::CommitAcknowledgementAuthorityKeys);
+        }
+        let value: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| ProductCodexBrokerDaemonError::CommitAcknowledgementAuthorityKeys)?;
+        let key = VerifyingKey::from_bytes(&value)
+            .map_err(|_| ProductCodexBrokerDaemonError::CommitAcknowledgementAuthorityKeys)?;
+        keys.push((entry.key_id.clone(), key));
+    }
+    CommitBoundAcknowledgementTrustStoreV2::new(
+        configuration.authority_domain_id.clone(),
+        configuration.trust_store_generation,
+        keys,
+    )
+    .map_err(ProductCodexBrokerDaemonError::CommitAcknowledgement)
 }
 
 fn hash_path(domain: &str, path: &Path) -> Result<Sha256Digest, ProductCodexBrokerDaemonError> {

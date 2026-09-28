@@ -3,8 +3,11 @@
 #[cfg(not(unix))]
 compile_error!("hepta-qualification-ingest requires Unix file identity semantics");
 
+extern crate self as hepta_qualification_ingest;
+
 mod closure;
 mod package_payload;
+pub mod qualification_closure;
 
 pub use closure::{
     ExternalQualificationCandidateV1, ExternalQualificationClosureSubjectV1,

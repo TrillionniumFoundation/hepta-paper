@@ -22,6 +22,7 @@
     "replayLedgerSchemaVersion",
     "trustStoreGeneration",
     "trustStoreHash",
+    "researchWorkflowProfile",
     "replayProtection",
     "replayLedgerCommitted",
     "receiptHash"
@@ -225,6 +226,71 @@
     },
     "trustStoreHash": {
       "$ref": "#/$defs/sha256"
+    },
+    "researchWorkflowProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "stage",
+        "repository",
+        "commit",
+        "tree",
+        "qualificationBindingHash",
+        "qualificationTrustStoreGeneration",
+        "qualificationExpiresAtUnixMs",
+        "qualifiedCodexRuntimeIdentityHash",
+        "automaticActivation",
+        "productionActivation",
+        "releaseAuthority",
+        "submissionAuthority"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "stage": {
+          "const": "canary"
+        },
+        "repository": {
+          "const": "TrillionniumFoundation/hepta-paper"
+        },
+        "commit": {
+          "$ref": "#/$defs/gitHash"
+        },
+        "tree": {
+          "$ref": "#/$defs/gitHash"
+        },
+        "qualificationBindingHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "qualificationTrustStoreGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "qualificationExpiresAtUnixMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "qualifiedCodexRuntimeIdentityHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "automaticActivation": {
+          "const": false
+        },
+        "productionActivation": {
+          "const": false
+        },
+        "releaseAuthority": {
+          "const": false
+        },
+        "submissionAuthority": {
+          "const": false
+        }
+      },
+      "description": "Directly reusable LocalWorkflowV1 researchProfile template. It is diagnostic only; advancing still requires the matching opaque V3 authority."
     },
     "replayProtection": {
       "const": "durable_sqlite_v2"

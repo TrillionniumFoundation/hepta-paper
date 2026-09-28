@@ -611,6 +611,30 @@ impl AcceptanceFixture {
         verify_and_commit_closure(&self.request, &self.signed.candidates, &trust, now)
     }
 
+    fn accept_expected(
+        &self,
+        now: u64,
+        expected: &ResearchQualificationExpectationV3,
+    ) -> Result<ExternalQualificationClosureReceiptV1, ClosureError> {
+        let trust = VerifiedClosureTrustContextV1 {
+            generation: 1,
+            hash: &self.signed.trust_hash,
+            previous_hash: None,
+            store: &self.signed.trust,
+            issued_at_unix_ms: NOW - 86_400_000,
+            expires_at_unix_ms: NOW + 86_400_000,
+        };
+        verify_and_commit_closure_with_clock_and_expectation(
+            &self.request,
+            &self.signed.candidates,
+            &trust,
+            Some(expected),
+            now,
+            || Ok(now),
+        )
+        .map(|accepted| accepted.receipt)
+    }
+
     fn snapshot(&self) -> Vec<(String, Vec<Vec<SqlValue>>)> {
         let connection = Connection::open_with_flags(
             &self.request.replay_ledger.path,
@@ -1053,6 +1077,33 @@ fn research_profile_accepts_five_signed_packages_without_publication_authority()
         &fixture.signed.trust,
     )
     .unwrap();
+    let template = first
+        .body
+        .research_workflow_profile
+        .as_ref()
+        .expect("V3 receipt exposes a directly reusable canary profile");
+    assert_eq!(template.version, 1);
+    assert_eq!(template.stage, "canary");
+    assert_eq!(template.repository, REQUIRED_REPOSITORY);
+    assert_eq!(template.commit, COMMIT);
+    assert_eq!(template.tree, TREE);
+    assert_eq!(template.qualification_binding_hash, verified.binding_hash());
+    assert_eq!(
+        template.qualification_trust_store_generation,
+        verified.trust_store_generation()
+    );
+    assert_eq!(
+        template.qualification_expires_at_unix_ms,
+        verified.expires_at_unix_ms()
+    );
+    assert_eq!(
+        template.qualified_codex_runtime_identity_hash,
+        verified.runtime_facts().codex_runtime_identity_hash
+    );
+    assert!(!template.automatic_activation);
+    assert!(!template.production_activation);
+    assert!(!template.release_authority);
+    assert!(!template.submission_authority);
     assert!(
         verified
             .package(QualificationPackageIdV1::ExtAuthoritySet001)
@@ -1084,6 +1135,64 @@ fn research_profile_accepts_five_signed_packages_without_publication_authority()
         )
         .is_err()
     );
+}
+
+#[test]
+fn research_profile_mismatch_consumes_no_nonce_or_ledger_state() {
+    let fixture = research_only(AcceptanceFixture::new("research-profile-binding"));
+    let subject = ExternalQualificationClosureSubjectV1 {
+        repository: REQUIRED_REPOSITORY.into(),
+        commit: COMMIT.into(),
+        tree: TREE.into(),
+    };
+    let verified = verify_research_qualification_v3(
+        &fixture.signed.candidates,
+        &subject,
+        NOW,
+        1,
+        &fixture.signed.trust,
+    )
+    .unwrap();
+    let expected = ResearchQualificationExpectationV3 {
+        subject: subject.clone(),
+        qualification_binding_hash: verified.binding_hash().to_owned(),
+        qualification_trust_store_generation: verified.trust_store_generation(),
+        qualification_expires_at_unix_ms: verified.expires_at_unix_ms(),
+        qualified_codex_runtime_identity_hash: verified
+            .runtime_facts()
+            .codex_runtime_identity_hash
+            .clone(),
+    };
+    let mut wrong = expected.clone();
+    wrong.subject.tree = "c".repeat(40);
+    assert!(matches!(
+        fixture.accept_expected(NOW, &wrong),
+        Err(ClosureError::ResearchProfileMismatch)
+    ));
+    fixture.assert_no_ledger();
+
+    let first = fixture.accept_expected(NOW, &expected).unwrap();
+    let after_first = fixture.snapshot();
+    let replay = fixture
+        .accept_expected(NOW + 1, &expected)
+        .expect("same exact signed evidence remains the durable profile subject");
+    assert_eq!(
+        serde_json::to_vec(&first).unwrap(),
+        serde_json::to_vec(&replay).unwrap()
+    );
+    let after_replay = fixture.snapshot();
+    assert_eq!(after_first[0], after_replay[0]);
+    assert_ne!(after_first[1], after_replay[1]);
+    assert_eq!(after_first[2], after_replay[2]);
+    assert_eq!(after_first[3], after_replay[3]);
+
+    wrong = expected;
+    wrong.qualified_codex_runtime_identity_hash = hash(99);
+    assert!(matches!(
+        fixture.accept_expected(NOW + 1, &wrong),
+        Err(ClosureError::ResearchProfileMismatch)
+    ));
+    assert_eq!(after_replay, fixture.snapshot());
 }
 
 #[test]

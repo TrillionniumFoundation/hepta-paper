@@ -19,10 +19,13 @@ use hepta_paper_service::broker_prepared::{
     BrokerRequestSignerSourceV1,
 };
 use hepta_paper_service::{
-    NativeJobV1, ObjectStoreV1, ResearchActivationStageV1, ResearchServiceRunV1, ServiceRunV1,
-    WorkerBindingV1, native_implementation_hash_v1, validate_research_service_policy_v1,
+    NativeJobV1, ObjectStoreV1, ResearchActivationStageV1, ResearchServiceRunV1,
+    ResearchWorkflowProfileV1, ServiceRunV1, WorkerBindingV1, native_implementation_hash_v1,
+    validate_research_service_policy_v1,
 };
-use hepta_qualification_ingest::ExternalQualificationClosureSubjectV1;
+use hepta_qualification_ingest::{
+    ExternalQualificationClosureSubjectV1, qualification_closure::ResearchWorkflowProfileTemplateV1,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -213,6 +216,44 @@ fn configuration(
         },
         subject: subject(),
         service,
+    }
+}
+
+#[test]
+fn canonical_receipt_profile_template_is_directly_reusable_and_non_authorizing() {
+    let template = ResearchWorkflowProfileTemplateV1 {
+        version: 1,
+        stage: "canary".into(),
+        repository: "TrillionniumFoundation/hepta-paper".into(),
+        commit: "a".repeat(40),
+        tree: "b".repeat(40),
+        qualification_binding_hash: digest(1).to_string(),
+        qualification_trust_store_generation: 7,
+        qualification_expires_at_unix_ms: 90_000,
+        qualified_codex_runtime_identity_hash: digest(2).to_string(),
+        automatic_activation: false,
+        production_activation: false,
+        release_authority: false,
+        submission_authority: false,
+    };
+    let profile = ResearchWorkflowProfileV1::from_template(&template).unwrap();
+    assert_eq!(profile.stage, ResearchActivationStageV1::Canary);
+    assert_eq!(
+        serde_json::to_value(&template).unwrap(),
+        serde_json::to_value(&profile).unwrap()
+    );
+    assert!(profile.is_well_formed());
+
+    for mutation in 0..5 {
+        let mut changed = template.clone();
+        match mutation {
+            0 => changed.stage = "established".into(),
+            1 => changed.automatic_activation = true,
+            2 => changed.production_activation = true,
+            3 => changed.release_authority = true,
+            _ => changed.submission_authority = true,
+        }
+        assert!(ResearchWorkflowProfileV1::from_template(&changed).is_err());
     }
 }
 

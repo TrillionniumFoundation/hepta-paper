@@ -70,6 +70,7 @@ pub mod release_state;
 pub mod release_trust_gate;
 pub mod repository_assets;
 mod research;
+mod research_profile;
 pub mod resident_prerequisites;
 pub mod retirement_matrix;
 pub mod retirement_reference;
@@ -141,10 +142,11 @@ pub use production::{
     run_production_service_v1,
 };
 pub use research::{
-    ResearchActivationStageV1, ResearchServiceReceiptV1, ResearchServiceRunV1,
-    run_research_service_v1, run_research_service_with_cancellation_v1,
-    validate_research_service_policy_v1,
+    ResearchServiceReceiptV1, ResearchServiceRunV1, ResearchWorkflowReceiptV1,
+    operate_research_local_workflow_with_clock_and_cancellation_v1, run_research_service_v1,
+    run_research_service_with_cancellation_v1, validate_research_service_policy_v1,
 };
+pub use research_profile::{ResearchActivationStageV1, ResearchWorkflowProfileV1};
 pub use worker::{
     NativeJobV1, ServiceExecutorV1, WorkerBindingV1, WorkerResponseV1,
     native_implementation_hash_v1,

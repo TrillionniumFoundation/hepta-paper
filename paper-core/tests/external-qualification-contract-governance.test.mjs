@@ -168,8 +168,16 @@ test('external qualification payload anti-forgery surface is complete and every 
 });
 
 test('external qualification closure replay clock ledger and non-activation surface is mutation-sensitive', () => {
-  const source = read('rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs');
+  const source = read('rust/crates/hepta-qualification-ingest/src/qualification_closure.rs');
+  const entry = read('rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs');
   requireTokens(source, closureTokens);
+  assert.equal(
+    entry,
+    '//! Thin executable over the canonical qualification-closure owner.\n\n'
+      + 'fn main() -> std::process::ExitCode {\n'
+      + '    hepta_qualification_ingest::qualification_closure::qualification_closure_main_v1()\n'
+      + '}\n',
+  );
   assert.ok(!source.includes('durable_sqlite_v1'));
   assert.ok(!source.includes('request.now_unix_ms'));
   for (const token of closureTokens) {
@@ -318,6 +326,14 @@ test('research V3 schemas reject full-scope substitution and missing packages', 
   assert.equal(receipt.properties.kind.const, 'ResearchQualificationReceiptV3');
   assert.equal(receipt.properties.productionActivation.const, false);
   assert.equal(receipt.properties.automaticActivation.const, false);
+  assert.ok(receipt.required.includes('researchWorkflowProfile'));
+  const profileSchema = receipt.properties.researchWorkflowProfile;
+  assert.equal(profileSchema.properties.version.const, 1);
+  assert.equal(profileSchema.properties.stage.const, 'canary');
+  assert.equal(profileSchema.properties.automaticActivation.const, false);
+  assert.equal(profileSchema.properties.productionActivation.const, false);
+  assert.equal(profileSchema.properties.releaseAuthority.const, false);
+  assert.equal(profileSchema.properties.submissionAuthority.const, false);
   const valid = {
     version: 3, repository: 'TrillionniumFoundation/hepta-paper',
     commit: 'a'.repeat(40), tree: 'b'.repeat(40), consumerUid: 1000,
@@ -327,7 +343,37 @@ test('research V3 schemas reject full-scope substitution and missing packages', 
       path: `/authority/envelope-${index}.json`, ownerUid: 0,
       payloadPath: `/authority/payload-${index}.json`, payloadOwnerUid: 0 })),
   };
-  const rows = [{ name: 'valid', schema, instance: JSON.stringify(valid) }];
+  const sha = `sha256:${'a'.repeat(64)}`;
+  const validReceipt = {
+    version: 3, kind: 'ResearchQualificationReceiptV3',
+    status: 'research_only_qualification_set_verified',
+    repository: 'TrillionniumFoundation/hepta-paper',
+    commit: 'a'.repeat(40), tree: 'b'.repeat(40),
+    packages: ids.map((packageId, index) => ({
+      packageId, payloadHash: sha, authorityDomainId: `authority-${index}`,
+      signerKeyId: `key-${index}`, nonce: `nonce-${index}`, signingMessageHash: sha,
+    })),
+    authorityGroups: {
+      target_host: ['authority-0', 'authority-1'], key_owner: ['authority-2'],
+      codex_account: ['authority-3'], release_and_cutover: ['authority-4'],
+    },
+    allPackagesVerified: true, automaticActivation: false, productionActivation: false,
+    sourceStatusUnchanged: true, payloadSemantics: 'strict_package_v1',
+    clockRollbackProtection: true, replayLedgerSchemaVersion: 2,
+    trustStoreGeneration: 7, trustStoreHash: sha,
+    researchWorkflowProfile: {
+      version: 1, stage: 'canary', repository: 'TrillionniumFoundation/hepta-paper',
+      commit: 'a'.repeat(40), tree: 'b'.repeat(40), qualificationBindingHash: sha,
+      qualificationTrustStoreGeneration: 7, qualificationExpiresAtUnixMs: 1_800_000_000_000,
+      qualifiedCodexRuntimeIdentityHash: sha, automaticActivation: false,
+      productionActivation: false, releaseAuthority: false, submissionAuthority: false,
+    },
+    replayProtection: 'durable_sqlite_v2', replayLedgerCommitted: true, receiptHash: sha,
+  };
+  const rows = [
+    { name: 'valid', schema, instance: JSON.stringify(valid) },
+    { name: 'valid-receipt', schema: JSON.stringify(receipt), instance: JSON.stringify(validReceipt) },
+  ];
   for (const [name, mutate] of [
     ['missing', (value) => value.envelopes.pop()],
     ['duplicate', (value) => { value.envelopes[1].packageId = value.envelopes[0].packageId; }],
@@ -339,11 +385,22 @@ test('research V3 schemas reject full-scope substitution and missing packages', 
     mutate(value);
     rows.push({ name, schema, instance: JSON.stringify(value) });
   }
+  for (const [name, mutate] of [
+    ['receipt-stage', (value) => { value.researchWorkflowProfile.stage = 'established'; }],
+    ['receipt-release', (value) => { value.researchWorkflowProfile.releaseAuthority = true; }],
+    ['receipt-submission', (value) => { value.researchWorkflowProfile.submissionAuthority = true; }],
+    ['receipt-missing-profile', (value) => { delete value.researchWorkflowProfile; }],
+  ]) {
+    const value = structuredClone(validReceipt);
+    mutate(value);
+    rows.push({ name, schema: JSON.stringify(receipt), instance: JSON.stringify(value) });
+  }
   const result = spawnSync('python3', ['docs/rust/tools/strict_json_schema.py', '--batch-stdin'], {
     cwd: repositoryRoot, input: JSON.stringify(rows), encoding: 'utf8', timeout: 30_000,
   });
   assert.equal(result.status, 1, result.stderr || result.stdout);
   const report = JSON.parse(result.stdout);
   assert.deepEqual(new Set(report.failures.map((failure) => failure.name)),
-    new Set(['missing', 'duplicate', 'publication', 'full-profile', 'extra-authority']));
+    new Set(['missing', 'duplicate', 'publication', 'full-profile', 'extra-authority',
+      'receipt-stage', 'receipt-release', 'receipt-submission', 'receipt-missing-profile']));
 });

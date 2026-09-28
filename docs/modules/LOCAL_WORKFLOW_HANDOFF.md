@@ -271,6 +271,38 @@ a closed `LocalWorkflowV1`, not another plan, ledger or provider authorization.
 `autonomous-research:<paper-id>`. Files are bounded to 16 MiB, private, current-UID,
 single-link, canonical and stable across the read. Unknown typed fields fail.
 
+A definition may carry one versioned `researchProfile`. That record is only a
+persisted identity constraint: it contains the exact V3 subject, opaque closure
+hash, trust generation, exclusive expiry and qualified runtime identity. It also
+contains explicit `automaticActivation`, `productionActivation`,
+`releaseAuthority` and `submissionAuthority` fields, all of which must be false.
+The canonical V3 receipt emits `researchWorkflowProfile`, a directly reusable
+**canary-only** object with exactly that closed shape. This removes the bootstrap
+cycle: first run `hepta-qualification-closure`, copy only that object into the
+workflow definition, and retain the same request for the advancing invocation.
+The receipt object is diagnostic identity, not authority, and it cannot mint the
+`established` stage.
+
+For `launch` or `converge`, a profile-bound definition requires
+`--research-qualification-request ABSOLUTE_JSON_PATH`. The command calls the
+canonical qualification-closure owner, verifies the five independently signed
+V3 packages, and compares the fully verified opaque value with the persisted
+profile before the replay-ledger transaction. A mismatch consumes no nonce and
+advances no trust or verifier-clock state. Receipt JSON is never deserialized
+into authority; every new dispatch receives and rechecks the opaque Rust value.
+
+The ordinary workflow runner refuses to advance a profile-bound definition.
+Only `operate_research_local_workflow_with_clock_and_cancellation_v1` can supply
+the exact opaque value to the existing owner and wrap each newly dispatched
+service wave in the restricted policy. Read-only status and revision-bound
+pause/resume/cancel remain available through the original owner without turning
+the persisted profile into authority, including after qualification expiry while
+the separate writer lease remains live. These lifecycle operations neither debit
+execution budget nor create attempts; exact cancellation replay is idempotent and
+cannot reopen the terminal campaign. Exact committed replay performs no new
+service dispatch. Missing, wrong-scope, stale, revoked or mismatched
+qualification requests fail before workflow initialization or another effect.
+
 `--action prepare` validates and hashes the definition without opening or
 creating campaign state. `launch` initializes only an absent state root through
 `initialize_local_workflow_v1`, then uses `operate_local_workflow_with_clock_and_cancellation_v1`; an existing
@@ -328,8 +360,9 @@ cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --tes
 reuses the existing workflow fixtures. It checks seven-step durable progress,
 absolute-endpoint retries, shared status with `hepta-local-workflow`, budget
 conservation, stale-revision rejection, pause/resume/terminal cancel, request
-substitution, private/oversize/symlink refusal, actual pinned Rust workers and a
-crashing child that is not relaunched by repeated fresh CLI processes. These
+substitution, private/oversize/symlink refusal, profile-bound refusal before
+state creation, actual pinned Rust workers and a crashing child that is not
+relaunched by repeated fresh CLI processes. These
 are local composition tests, not live author/reviewer scientific evaluation,
 independent command acceptance, installed host qualification or Node cutover.
 
@@ -786,17 +819,22 @@ termination, actual cost settlement, production activation or Node retirement.
 
 ## Restricted research service profile
 
-`run_research_service_v1` is a separate, non-serializable composition around the
-existing service, CAS, dispatcher and SQLite sequencer. The caller must provide
-the opaque `VerifiedResearchQualificationV3`; receipt JSON, profile strings and
-booleans cannot construct or replace that value. The exact repository/commit/tree
-subject and qualified Codex runtime identity are cross-bound before any state
-operation. Qualification currentness is checked once before filesystem mutation
-and again on every existing service clock observation through dispatch and
-commit. The public cancellation form forwards the same sticky cooperative token;
-a pre-cancelled run creates no campaign database. A time-window or cancellation
-failure therefore follows the same prepared-result and inspection/recovery rules
-rather than authorizing a fresh effect or claiming provider termination.
+`run_research_service_v1` and
+`operate_research_local_workflow_with_clock_and_cancellation_v1` are
+non-serializable compositions around the existing workflow, service, CAS,
+dispatcher and SQLite sequencer. The caller must provide the opaque
+`VerifiedResearchQualificationV3`; receipt JSON, profile strings and booleans
+cannot construct or replace that value. The normal autonomous CLI obtains it
+only from the canonical authority-file verifier/replay owner above. The exact
+repository/commit/tree subject, opaque closure identity, trust generation,
+exclusive expiry and qualified Codex runtime identity are cross-bound before a
+new service dispatch. Qualification currentness is checked before filesystem
+mutation and again on every existing service clock observation through dispatch
+and commit. The public cancellation form forwards the same sticky cooperative
+token; a pre-cancelled run creates no campaign database. A time-window or
+cancellation failure therefore follows the same prepared-result and
+inspection/recovery rules rather than authorizing a fresh effect or claiming
+provider termination.
 
 The profile admits only `TargetHost` research modules in the selected canary or
 established research stage. Registered or selected release verification,

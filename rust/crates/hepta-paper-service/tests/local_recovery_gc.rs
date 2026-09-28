@@ -46,6 +46,7 @@ fn steps() -> Vec<WorkflowStepV1> {
 fn definition(temp: &Temp) -> LocalWorkflowV1 {
     LocalWorkflowV1 {
         version: 1,
+        research_profile: None,
         template: template(&temp.state(), WorkerBindingV1::Native).unwrap(),
         steps: steps(),
     }

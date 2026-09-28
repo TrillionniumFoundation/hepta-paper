@@ -17,9 +17,14 @@ lease, native deployment qualification or Node retirement authority.
   `VerifiedExternalQualificationClosureV1`. Only the factory establishes the
   complete set and its cross-package runtime facts; the opaque value has no
   deserialization constructor.
+- [`src/qualification_closure.rs`](src/qualification_closure.rs): Linux consumer
+  identity, strict file ingestion, joint verification, canonical report,
+  transactional replay ledger, and the opaque V3 research handoff API. The
+  expected workflow profile is compared after complete signature/payload
+  verification and before the replay transaction, so a mismatch consumes no
+  nonce or trust/clock generation.
 - [`src/bin/hepta-qualification-closure.rs`](src/bin/hepta-qualification-closure.rs):
-  Linux consumer identity, strict file ingestion, joint verification, canonical
-  report and transactional replay ledger. Invoke
+  a thin executable over that single owner. Invoke
   `hepta-qualification-closure <closure-request.json>`; `--help` is read-only.
 
 The [request schema](../../../docs/rust/qualification/external-qualification-closure-request-v1.schema.json),
@@ -28,8 +33,11 @@ and [trust store schema](../../../docs/rust/qualification/qualification-trust-st
 describe the unchanged historical V1 profile. Current
 [request V2](../../../docs/rust/qualification/external-qualification-closure-request-v2.schema.json)
 and [receipt V2](../../../docs/rust/qualification/external-qualification-closure-receipt-v2.schema.json)
-remove only the repository-review package. The durable ledger schema is V2. The report digest and the opaque
-closure digest are separate domains and are not interchangeable.
+remove only the repository-review package. Request version 3 is the fixed
+five-package restricted-research profile: it excludes governance and
+release/submission authority while retaining host, storage, key-owner, role and
+cutover-safety evidence. The durable ledger schema is V2. The report digest and
+the stable opaque binding digest are separate domains and are not interchangeable.
 
 ## File and resource contract
 
@@ -37,7 +45,8 @@ The request is a canonical absolute path to a singly linked regular file,
 owned by the effective consumer UID, mode `0400` or `0600`, under its private
 `0700` directory. Its declared consumer UID must match the actual Linux process.
 Request and trust documents are limited to 1 MiB each. Exactly six declared
-envelope/payload pairs are required for current V2 (seven for historical V1), with distinct paths that do not alias the
+envelope/payload pairs are required for current V2, seven for historical V1,
+and five for restricted-research V3, with distinct paths that do not alias the
 declared trust-store or ledger path.
 
 Trust, envelope and payload files must be owned by the declared external UID,
@@ -77,9 +86,12 @@ bytes, not total process RSS: parsed JSON and signature structures add overhead.
    and cutover/soak packages must agree on `databaseIdentityHash`. The factory
    also derives service identity, Codex runtime identity and writer-transfer
    receipt identity from the verified payloads.
-5. Build the versioned V1 or V2 report from records obtained through the opaque
-   closure's `package()` accessors. Joint verification failure occurs before
-   opening, creating or advancing the replay ledger.
+5. For a profile-bound V3 workflow, compare repository/commit/tree, opaque
+   qualification hash, trust generation, exclusive expiry and qualified runtime
+   identity with the durable workflow profile. Then build the versioned V1, V2
+   or V3 report from records obtained through opaque `package()` accessors.
+   Joint verification or profile mismatch occurs before opening, creating or
+   advancing the replay ledger.
 6. Acquire `BEGIN IMMEDIATE`, which may wait behind another writer. Before any
    clock/trust advancement or nonce query, sample the actual system clock again,
    reject regression from step 3 and recheck both the original trust window and
@@ -115,8 +127,9 @@ Time regression, trust rollback, skipped generations and chain forks are
 rejected; a new ledger starts at trust generation 1. No migration of older
 ledger schemas is implicit.
 
-Valid CLI report field order, bytes, receipt digest and replay keys remain unchanged.
-The separate opaque closure digest includes its derived expiry: it changes for
+Valid V1/V2 CLI report field order, bytes, receipt digest and replay keys remain
+unchanged; V3 has its separately versioned research-only report.
+The separate stable opaque binding digest includes its derived expiry: it changes for
 inputs whose payload or inner receipt narrows the previously envelope-only
 window. This correction requires downstream signatures binding that digest to
 be regenerated; the envelope and nested-signature formats do not change.
@@ -146,7 +159,7 @@ activation permit and carries no separate observation-time field.
 
 ## Verification and remaining integration
 
-Run `cargo test -p hepta-qualification-ingest --all-features --locked` from the
+Run `cargo test -p hepta-qualification-ingest --all-targets --locked` from the
 Rust workspace. Existing tests cover envelope signatures, payload semantics,
 replay, trust generations, clock rollback and malformed SQLite schema. Joint
 closure tests use seven genuinely signed fixture packages and actual SQLite to
@@ -169,8 +182,17 @@ change. The actual CLI always selects `system_unix_ms`; explicit-time test
 wrappers are absent from production builds. Fixture keys supply test evidence
 only; the helper tests do not claim an installed cross-UID file-ingestion pass.
 
-The public opaque factory remains the input boundary for a later owning native
-activation loader. A CLI report cannot be deserialized into that authority.
+The public opaque factory remains the input boundary. The canonical V3 report
+contains one `researchWorkflowProfile` object: a directly reusable canary-only
+identity template whose automatic, production, release and submission fields are
+all false. It exists only to bootstrap the closed workflow definition and cannot
+be deserialized into authority or select the established stage. The normal
+`autonomous-research` workflow calls this owner directly from an external-UID
+package request, persists that non-authorizing identity, and requires the exact
+opaque value again before every new service dispatch. The ordinary workflow
+runner cannot advance a V3-bound definition, while status, pause, cancellation
+and committed-result recovery remain available through the existing durable
+owner.
 `serviceUnitHash` is a signed commitment; ingest does not independently observe
 service-manager objects, ELF build provenance, mounts or legacy-runtime scans.
 Complete native deployment and independently controlled production packages
@@ -207,8 +229,11 @@ The existing CLI also accepts the closed
 [research request V3](../../../docs/rust/qualification/research-qualification-request-v3.schema.json)
 and emits the distinct
 [research receipt V3](../../../docs/rust/qualification/research-qualification-receipt-v3.schema.json).
-It requires exactly the host/cgroup, destructive-storage, key-owner, separate-role
-Codex and cutover/soak packages. Repository-review and irreversible-action
+The receipt includes the exact `researchWorkflowProfile` canary template derived
+from the opaque qualification; V1/V2 receipts omit that field and retain their
+existing bytes. It requires exactly the host/cgroup, destructive-storage,
+key-owner, separate-role Codex and cutover/soak packages. Repository-review and
+irreversible-action
 publication/submission packages are neither required nor accepted in this scope.
 Actual signatures, nested payload validation, cross-host/database identities,
 expiry, authority separation, bounded external file intake, post-lock clock

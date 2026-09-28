@@ -5,8 +5,8 @@
 //! workers are trusted local code, not a security sandbox or live-model grant.
 
 use crate::{
-    NativeJobV1, ObjectStoreV1, ServiceError, ServiceRunV1, WorkerBindingV1,
-    run_service_with_clock_and_cancellation_v1,
+    NativeJobV1, ObjectStoreV1, ResearchWorkflowProfileV1, ServiceError, ServiceRunV1,
+    WorkerBindingV1, run_service_with_clock_and_cancellation_v1,
 };
 use hepta_campaign_writer::{
     CampaignSnapshotV1, CampaignStateV1, CampaignWriterPolicyV1, CampaignWriterStoreV1,
@@ -60,6 +60,10 @@ const MAX_STEPS: usize = 128;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalWorkflowV1 {
     pub version: u16,
+    /// Optional durable research-only identity. The record is not authority;
+    /// every advancing invocation must present the matching opaque V3 value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_profile: Option<ResearchWorkflowProfileV1>,
     /// Initial local service configuration with an empty frontier.
     pub template: ServiceRunV1,
     pub steps: Vec<WorkflowStepV1>,
@@ -170,6 +174,8 @@ pub enum WorkflowError {
     Reconciliation,
     #[error("workflow routing gate rejected")]
     GateRejected,
+    #[error("workflow research qualification missing, stale, or mismatched")]
+    Qualification,
     #[error("workflow service execution failed")]
     Service(#[from] ServiceError),
 }
@@ -208,6 +214,10 @@ impl LocalWorkflowV1 {
     pub fn validate(&self) -> Result<(), WorkflowError> {
         let t = &self.template;
         if self.version != 1
+            || self
+                .research_profile
+                .as_ref()
+                .is_some_and(|profile| !profile.is_well_formed())
             || t.version != 1
             || t.production_activation
             || t.hard_policy.external_actions_authorized
@@ -579,7 +589,11 @@ fn configuration(
             utility_micros: 1,
             cost_microusd: step.cost_microusd,
             uncertainty_ppm: 0,
-            evidence_tier: QualificationTierV1::Source,
+            evidence_tier: if definition.research_profile.is_some() {
+                QualificationTierV1::TargetHost
+            } else {
+                QualificationTierV1::Source
+            },
             payload_hash: format!("sha256:{}", hex::encode(Sha256::digest(bytes(&job)?)))
                 .parse()
                 .map_err(|_| WorkflowError::Definition)?,
@@ -1046,6 +1060,35 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
     observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<WorkflowProgressV1, WorkflowError> {
+    operate_local_workflow_with_service_runner_v1(
+        root,
+        expected_definition,
+        action,
+        observe,
+        cancelled,
+        None,
+        |config, clock, cancelled| {
+            run_service_with_clock_and_cancellation_v1(config, clock, cancelled).map(|_| ())
+        },
+    )
+}
+
+pub(crate) fn operate_local_workflow_with_service_runner_v1<F>(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    action: WorkflowActionV1,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+    research_profile: Option<&ResearchWorkflowProfileV1>,
+    mut service_runner: F,
+) -> Result<WorkflowProgressV1, WorkflowError>
+where
+    F: FnMut(
+        ServiceRunV1,
+        &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+        Arc<AtomicBool>,
+    ) -> Result<(), ServiceError>,
+{
     let owner = private_root(root)?;
     let _guard = lock(root, owner)?;
     let definition: LocalWorkflowV1 =
@@ -1064,6 +1107,13 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
     let definition = observed.active_definition.clone();
     if &hash(&definition)? != expected_definition {
         return Err(WorkflowError::Definition);
+    }
+    if matches!(action, WorkflowActionV1::Advance { .. }) {
+        match (&definition.research_profile, research_profile) {
+            (None, None) => {}
+            (Some(expected), Some(actual)) if expected == actual => {}
+            _ => return Err(WorkflowError::Qualification),
+        }
     }
     let mut last = observed.clock_floor;
     let mut clock = || {
@@ -1142,11 +1192,7 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
                     write_record(&path, &bytes(&config)?)?;
                 }
                 config.observed_at_unix_ms = now;
-                run_service_with_clock_and_cancellation_v1(
-                    config,
-                    &mut clock,
-                    Arc::clone(&cancelled),
-                )?;
+                service_runner(config, &mut clock, Arc::clone(&cancelled))?;
                 observed = history(&original, owner, &objects)?;
                 if observed.results.len() != index + 1 {
                     return Err(WorkflowError::History);

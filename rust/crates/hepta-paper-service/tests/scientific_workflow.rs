@@ -334,6 +334,7 @@ fn definition_for_job(
     );
     LocalWorkflowV1 {
         version: 1,
+        research_profile: None,
         template: t,
         steps: vec![empirical, author, build],
     }

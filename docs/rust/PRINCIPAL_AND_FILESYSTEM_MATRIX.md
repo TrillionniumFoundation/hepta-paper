@@ -7,7 +7,7 @@ installation-specific; relationships and permissions are not.
 
 | Principal | May hold | Must never hold |
 |---|---|---|
-| `hepta-core` | campaign request signer/client capability; owner-only PKCS#8 request key and no-replace request publication | Codex credential files, broker journal, billing/ACK keys, release/submission keys |
+| `hepta-core` | campaign request signer/client capability; owner-only PKCS#8 request key and no-replace request publication; consumer-owned V3 request/replay ledger and transient opaque research qualification | Codex credential files, broker journal, billing/ACK keys, external qualification signing keys, release/submission keys |
 | `hepta-broker-<role>` | one listener, one broker journal, role runtime identity | campaign DB writer, role-peer home, release/submission authority |
 | `hepta-codex-<role>` | one role Codex home and attempt/bundle access | broker journal, trust signing key, campaign/release authority |
 | `hepta-trust-owner` | capability trust-bundle publication/signing authority | broker or Codex execution identity |
@@ -19,6 +19,13 @@ installation-specific; relationships and permissions are not.
 Author, reviewer, formal-reviewer and repairer roles use separate broker and
 Codex principals in production. Shared UID deployment cannot claim role
 isolation.
+
+
+The consumer UID for a V3 request must differ from every declared trust,
+envelope and payload owner UID. Durable workflow state stores only the exact
+non-authorizing profile identity; signed package bytes and external signing keys
+never enter the campaign database or CAS. Release/submission authority packages
+are neither required nor accepted by the V3 profile.
 
 ## Listener access modes
 
@@ -76,6 +83,10 @@ A qualification is invalid unless it proves both:
 | Role Codex home | `/var/lib/hepta/codex-author/home` | codex-author:codex-author | 0700 | codex-author |
 | Attempt workspace | deployment-specific COW root | workspace owner | policy-specific | author/repair role only |
 | Frozen review bundle | immutable review root | workspace owner:review-read | 0550/0440 | no reviewer write |
+| Research V3 request | deployment-specific private request | workflow consumer:consumer | 0400/0600 | consumer only before admission |
+| Research replay ledger | deployment-specific private SQLite | workflow consumer:consumer | 0600 under 0700 parent | consumer only |
+| Research trust store | deployment-specific authority root | external trust owner:consumer-read | 0400/0440 | external trust owner |
+| Research envelope/payload | deployment-specific authority roots | independent external authority:consumer-read | 0400/0440 | declared external owner |
 
 Every ancestor from `/` to the leaf is inspected for canonical path, real
 object type, owner and write permissions. A trusted leaf under a writable or

@@ -121,6 +121,7 @@ pub struct VerifiedExternalQualificationClosureV1 {
     profile: QualificationClosureProfile,
     subject: ExternalQualificationClosureSubjectV1,
     receipt_hash: String,
+    binding_hash: String,
     trust_store_generation: u64,
     verified_at_unix_ms: u64,
     expires_at_unix_ms: u64,
@@ -142,10 +143,21 @@ impl VerifiedExternalQualificationClosureV1 {
         &self.subject
     }
 
-    /// Deterministic hash of the complete ordered closure body.
+    /// Deterministic hash of the complete ordered verification receipt. It
+    /// includes the verification observation time and therefore identifies one
+    /// concrete verification event rather than a durable recovery subject.
     #[must_use]
     pub fn receipt_hash(&self) -> &str {
         &self.receipt_hash
+    }
+
+    /// Stable domain-separated identity of the exact signed evidence set. It
+    /// excludes only the verification observation time while retaining profile,
+    /// subject, trust generation, derived expiry, package records, authority
+    /// separation and cross-package runtime facts.
+    #[must_use]
+    pub fn binding_hash(&self) -> &str {
+        &self.binding_hash
     }
 
     /// Monotonic external trust-store generation used for payload verification.
@@ -247,9 +259,13 @@ impl VerifiedResearchQualificationV3 {
     pub fn subject(&self) -> &ExternalQualificationClosureSubjectV1 {
         self.inner.subject()
     }
-    /// Domain-separated research-only closure hash.
+    /// Domain-separated research-only verification receipt hash.
     pub fn receipt_hash(&self) -> &str {
         self.inner.receipt_hash()
+    }
+    /// Stable domain-separated research binding for durable workflow recovery.
+    pub fn binding_hash(&self) -> &str {
+        self.inner.binding_hash()
     }
     /// Currentness over every original envelope and payload expiry.
     pub fn assert_current(&self, now_unix_ms: u64) -> Result<(), QualificationClosureError> {
@@ -475,17 +491,42 @@ fn assemble_verified_closure(
             })
         })
         .collect::<Result<Vec<_>, QualificationClosureError>>()?;
+    let version = profile.version();
+    let receipt_kind = match profile {
+        QualificationClosureProfile::LegacySevenPackageV1 => {
+            "VerifiedExternalQualificationClosureV1"
+        }
+        QualificationClosureProfile::SingleMaintainerV2 => "VerifiedExternalQualificationClosureV2",
+        QualificationClosureProfile::RestrictedResearchV3 => "VerifiedResearchQualificationV3",
+    };
+    let binding_kind = match profile {
+        QualificationClosureProfile::LegacySevenPackageV1 => {
+            "VerifiedExternalQualificationBindingV1"
+        }
+        QualificationClosureProfile::SingleMaintainerV2 => "VerifiedExternalQualificationBindingV2",
+        QualificationClosureProfile::RestrictedResearchV3 => {
+            "VerifiedResearchQualificationBindingV3"
+        }
+    };
+    let binding_body = ClosureBindingBodyV1 {
+        version,
+        kind: binding_kind,
+        subject,
+        trust_store_generation,
+        expires_at_unix_ms,
+        packages: ordered_packages.clone(),
+        authority_groups: &authority_groups,
+        runtime_facts: &runtime_facts,
+        automatic_activation: false,
+        production_activation: false,
+    };
+    let binding_hash = hash_bytes(
+        &serde_json::to_vec(&binding_body)
+            .map_err(|_| QualificationClosureError::EncodingInvalid)?,
+    );
     let body = ClosureBodyV1 {
-        version: profile.version(),
-        kind: match profile {
-            QualificationClosureProfile::LegacySevenPackageV1 => {
-                "VerifiedExternalQualificationClosureV1"
-            }
-            QualificationClosureProfile::SingleMaintainerV2 => {
-                "VerifiedExternalQualificationClosureV2"
-            }
-            QualificationClosureProfile::RestrictedResearchV3 => "VerifiedResearchQualificationV3",
-        },
+        version,
+        kind: receipt_kind,
         subject,
         trust_store_generation,
         verified_at_unix_ms,
@@ -503,6 +544,7 @@ fn assemble_verified_closure(
         profile,
         subject: subject.clone(),
         receipt_hash,
+        binding_hash,
         trust_store_generation,
         verified_at_unix_ms,
         expires_at_unix_ms,
@@ -584,6 +626,21 @@ fn hash_bytes(value: &[u8]) -> String {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ClosureBindingBodyV1<'a> {
+    version: u16,
+    kind: &'static str,
+    subject: &'a ExternalQualificationClosureSubjectV1,
+    trust_store_generation: u64,
+    expires_at_unix_ms: u64,
+    packages: Vec<ClosurePackageBodyV1<'a>>,
+    authority_groups: &'a BTreeMap<String, Vec<String>>,
+    runtime_facts: &'a ExternalQualificationRuntimeFactsV1,
+    automatic_activation: bool,
+    production_activation: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ClosureBodyV1<'a> {
     version: u16,
     kind: &'static str,
@@ -598,7 +655,7 @@ struct ClosureBodyV1<'a> {
     production_activation: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClosurePackageBodyV1<'a> {
     package_id: &'static str,
@@ -746,6 +803,7 @@ mod tests {
             format!("sha256:{}", "1".repeat(64))
         );
         assert!(valid_sha256(verified.receipt_hash()));
+        assert!(valid_sha256(verified.binding_hash()));
         assert_eq!(verified.expires_at_unix_ms(), 2_000);
         assert!(verified.assert_current(1_500).is_ok());
         assert!(matches!(
@@ -762,6 +820,19 @@ mod tests {
         )
         .expect("repeat closure");
         assert_eq!(verified.receipt_hash(), repeated.receipt_hash());
+        assert_eq!(verified.binding_hash(), repeated.binding_hash());
+
+        let later = assemble_verified_closure(
+            QualificationClosureProfile::LegacySevenPackageV1,
+            &subject(),
+            7,
+            1_001,
+            2_000,
+            complete_records(),
+        )
+        .expect("same evidence verified later");
+        assert_ne!(verified.receipt_hash(), later.receipt_hash());
+        assert_eq!(verified.binding_hash(), later.binding_hash());
     }
 
     #[test]

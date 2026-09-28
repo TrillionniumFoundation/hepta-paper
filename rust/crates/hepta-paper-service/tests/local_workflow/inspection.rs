@@ -18,6 +18,7 @@ fn actual_workflow_worker_failure_survives_typed_source_chain_and_cli_projection
     );
     let mut definition = LocalWorkflowV1 {
         version: 1,
+        research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),
     };

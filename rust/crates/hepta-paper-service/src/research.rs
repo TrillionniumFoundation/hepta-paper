@@ -6,6 +6,7 @@
 //! external effects remain structurally unavailable.
 
 use std::{
+    path::Path,
     str::FromStr,
     sync::{
         Arc,
@@ -16,9 +17,10 @@ use std::{
 
 use hepta_codex_protocol::Sha256Digest;
 use hepta_control_plane::{ControlPlaneError, ControlPlaneRunReceiptV1, canonical_hash_v1};
+#[cfg(test)]
+use hepta_module_platform::ActivationStateV1;
 use hepta_module_platform::{
-    ActivationStateV1, AuthorityClassV1, ModuleKindV1, ModuleRegistryArtifactV1,
-    QualificationTierV1,
+    AuthorityClassV1, ModuleKindV1, ModuleRegistryArtifactV1, QualificationTierV1,
 };
 use hepta_qualification_ingest::{
     ExternalQualificationClosureSubjectV1, ExternalQualificationRuntimeFactsV1,
@@ -27,31 +29,16 @@ use hepta_qualification_ingest::{
 use serde::Serialize;
 
 use crate::{
-    ServiceError, ServiceRunV1, WorkerBindingV1, run_service_with_clock_and_cancellation_v1,
-    service_configuration_hash_v1,
+    ResearchActivationStageV1, ResearchWorkflowProfileV1, ServiceError, ServiceRunV1,
+    WorkerBindingV1, run_service_with_clock_and_cancellation_v1, service_configuration_hash_v1,
+    workflow::{
+        WorkflowActionV1, WorkflowError, WorkflowProgressV1,
+        operate_local_workflow_with_service_runner_v1,
+    },
 };
 
 const FORBIDDEN_RESEARCH_CAPABILITIES: [&str; 3] =
     ["CAP-REL-VERIFY", "CAP-SUBMIT", "CAP-MIG-CUTOVER"];
-
-/// Activation is authoritative only inside the private research-state owner.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchActivationStageV1 {
-    /// Bounded research canary.
-    Canary,
-    /// Current research-state implementation, never a production/release grant.
-    Established,
-}
-
-impl ResearchActivationStageV1 {
-    const fn module_activation(self) -> ActivationStateV1 {
-        match self {
-            Self::Canary => ActivationStateV1::Canary,
-            Self::Established => ActivationStateV1::Authoritative,
-        }
-    }
-}
 
 /// Non-serializable research run. The opaque qualification is supplied separately.
 #[derive(Clone, Debug)]
@@ -90,9 +77,131 @@ pub struct ResearchServiceReceiptV1 {
     pub receipt_hash: Sha256Digest,
 }
 
+/// One workflow operation performed under a durable research-only profile.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchWorkflowReceiptV1 {
+    /// Exact non-authorizing profile persisted in the workflow definition.
+    pub profile: ResearchWorkflowProfileV1,
+    /// Existing workflow owner result.
+    pub workflow: WorkflowProgressV1,
+    /// Receipts only for service boundaries entered during this invocation.
+    pub service_receipts: Vec<ResearchServiceReceiptV1>,
+    /// Research state may advance under the profile.
+    pub research_activation: bool,
+    /// This path never grants release authority.
+    pub release_authority: bool,
+    /// This path never grants submission authority.
+    pub submission_authority: bool,
+    /// This path never grants production activation.
+    pub production_activation: bool,
+}
+
+/// Advance or recover an existing local workflow through the same durable owner,
+/// while requiring the exact opaque V3 qualification for every new service dispatch.
+/// Read-only/lifecycle recovery remains in the ordinary workflow API and cannot
+/// turn the persisted profile into release or submission authority.
+pub fn operate_research_local_workflow_with_clock_and_cancellation_v1(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    action: WorkflowActionV1,
+    profile: &ResearchWorkflowProfileV1,
+    qualification: &VerifiedResearchQualificationV3,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<ResearchWorkflowReceiptV1, WorkflowError> {
+    operate_research_local_workflow_with_authority_clock_and_cancellation_v1(
+        root,
+        expected_definition,
+        action,
+        profile,
+        qualification,
+        observe,
+        cancelled,
+    )
+}
+
+fn profile_from_authority<A: ResearchQualificationAuthorityV1>(
+    stage: ResearchActivationStageV1,
+    qualification: &A,
+) -> Result<ResearchWorkflowProfileV1, ServiceError> {
+    Ok(ResearchWorkflowProfileV1 {
+        version: 1,
+        stage,
+        repository: qualification.subject().repository.clone(),
+        commit: qualification.subject().commit.clone(),
+        tree: qualification.subject().tree.clone(),
+        qualification_binding_hash: parse_digest(qualification.binding_hash())
+            .map_err(|_| ServiceError::Configuration)?,
+        qualification_trust_store_generation: qualification.trust_store_generation(),
+        qualification_expires_at_unix_ms: qualification.expires_at_unix_ms(),
+        qualified_codex_runtime_identity_hash: parse_digest(
+            &qualification.runtime_facts().codex_runtime_identity_hash,
+        )
+        .map_err(|_| ServiceError::Configuration)?,
+        automatic_activation: false,
+        production_activation: false,
+        release_authority: false,
+        submission_authority: false,
+    })
+}
+
+fn operate_research_local_workflow_with_authority_clock_and_cancellation_v1<
+    A: ResearchQualificationAuthorityV1,
+>(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    action: WorkflowActionV1,
+    profile: &ResearchWorkflowProfileV1,
+    qualification: &A,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<ResearchWorkflowReceiptV1, WorkflowError> {
+    let actual_profile = profile_from_authority(profile.stage, qualification)?;
+    if !profile.is_well_formed() || actual_profile != *profile {
+        return Err(WorkflowError::Qualification);
+    }
+    let mut service_receipts = Vec::new();
+    let subject = qualification.subject().clone();
+    let workflow = operate_local_workflow_with_service_runner_v1(
+        root,
+        expected_definition,
+        action,
+        observe,
+        cancelled,
+        Some(profile),
+        |service, clock, cancelled| {
+            let receipt = run_research_service_with_authority_clock_and_cancellation_v1(
+                ResearchServiceRunV1 {
+                    version: 1,
+                    stage: profile.stage,
+                    subject: subject.clone(),
+                    service,
+                },
+                qualification,
+                clock,
+                cancelled,
+            )?;
+            service_receipts.push(receipt);
+            Ok(())
+        },
+    )?;
+    let research_activation = !service_receipts.is_empty();
+    Ok(ResearchWorkflowReceiptV1 {
+        profile: profile.clone(),
+        workflow,
+        service_receipts,
+        research_activation,
+        release_authority: false,
+        submission_authority: false,
+        production_activation: false,
+    })
+}
+
 trait ResearchQualificationAuthorityV1 {
     fn subject(&self) -> &ExternalQualificationClosureSubjectV1;
     fn receipt_hash(&self) -> &str;
+    fn binding_hash(&self) -> &str;
     fn trust_store_generation(&self) -> u64;
     fn expires_at_unix_ms(&self) -> u64;
     fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1;
@@ -105,6 +214,9 @@ impl ResearchQualificationAuthorityV1 for VerifiedResearchQualificationV3 {
     }
     fn receipt_hash(&self) -> &str {
         self.receipt_hash()
+    }
+    fn binding_hash(&self) -> &str {
+        self.binding_hash()
     }
     fn trust_store_generation(&self) -> u64 {
         self.trust_store_generation()
@@ -404,6 +516,10 @@ fn parse_digest(value: &str) -> Result<Sha256Digest, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow::{
+        LocalWorkflowV1, WorkflowStepV1, initialize_local_workflow_v1,
+        operate_local_workflow_with_clock_and_cancellation_v1,
+    };
     use crate::{NativeJobV1, ObjectStoreV1, native_implementation_hash_v1};
     use hepta_campaign_writer::WriterLeaseV1;
     use hepta_control_plane::{
@@ -460,6 +576,7 @@ mod tests {
         subject: ExternalQualificationClosureSubjectV1,
         facts: ExternalQualificationRuntimeFactsV1,
         receipt_hash: String,
+        binding_hash: String,
         generation: u64,
         expires_at: u64,
         reject_check: Option<u64>,
@@ -478,6 +595,7 @@ mod tests {
                     writer_transfer_receipt_hash: digest(5).to_string(),
                 },
                 receipt_hash: digest(6).to_string(),
+                binding_hash: digest(7).to_string(),
                 generation: 7,
                 expires_at: 90_000,
                 reject_check: None,
@@ -492,6 +610,9 @@ mod tests {
         }
         fn receipt_hash(&self) -> &str {
             &self.receipt_hash
+        }
+        fn binding_hash(&self) -> &str {
+            &self.binding_hash
         }
         fn trust_store_generation(&self) -> u64 {
             self.generation
@@ -658,6 +779,37 @@ mod tests {
         }
     }
 
+    fn workflow_definition(temp: &Temp, qualification: &TestQualification) -> LocalWorkflowV1 {
+        let mut run = configuration(temp);
+        let candidate = run.service.frontier.candidates.remove(0);
+        let job: serde_json::Value = serde_json::from_slice(
+            &ObjectStoreV1::open(&run.service.state_directory)
+                .unwrap()
+                .read(&candidate.payload_hash)
+                .unwrap(),
+        )
+        .unwrap();
+        run.service.frontier.snapshot_hash = run.service.snapshot.snapshot_hash().unwrap();
+        run.service.state_directory = temp.0.join("workflow");
+        LocalWorkflowV1 {
+            version: 1,
+            research_profile: Some(
+                profile_from_authority(ResearchActivationStageV1::Canary, qualification).unwrap(),
+            ),
+            template: run.service,
+            steps: vec![WorkflowStepV1 {
+                id: "research-step-1".into(),
+                module_id: candidate.module_id,
+                capability_id: candidate.capability_id,
+                resources: candidate.resources,
+                cost_microusd: candidate.cost_microusd,
+                job_template: job,
+                bindings: vec![],
+                gate: None,
+            }],
+        }
+    }
+
     fn run_with_clock<A: ResearchQualificationAuthorityV1>(
         config: ResearchServiceRunV1,
         qualification: &A,
@@ -695,6 +847,63 @@ mod tests {
         // this invocation committed or replayed it instead of erasing that fact.
         assert_ne!(first.receipt_hash, replay.receipt_hash);
         assert!(qualification.checks.get() > 2);
+    }
+
+    #[test]
+    fn qualified_workflow_uses_existing_owner_and_cannot_fall_back_to_standard_runner() {
+        let temp = Temp::new();
+        let qualification = TestQualification::valid();
+        let definition = workflow_definition(&temp, &qualification);
+        let digest = initialize_local_workflow_v1(definition.clone()).unwrap();
+        let objects = ObjectStoreV1::open(&definition.template.state_directory).unwrap();
+        assert_eq!(
+            objects.put(b"research service initial state").unwrap(),
+            definition.template.initial_state_hash
+        );
+        objects.put(b"research service input artifact").unwrap();
+        let profile = definition.research_profile.as_ref().unwrap();
+        let mut clock = || Ok(1_000);
+
+        let standard = operate_local_workflow_with_clock_and_cancellation_v1(
+            &definition.template.state_directory,
+            &digest,
+            WorkflowActionV1::Advance { through_steps: 1 },
+            &mut clock,
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(matches!(standard, Err(WorkflowError::Qualification)));
+
+        let receipt = operate_research_local_workflow_with_authority_clock_and_cancellation_v1(
+            &definition.template.state_directory,
+            &digest,
+            WorkflowActionV1::Advance { through_steps: 1 },
+            profile,
+            &qualification,
+            &mut clock,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(receipt.workflow.committed_steps, 1);
+        assert_eq!(receipt.service_receipts.len(), 1);
+        assert!(!receipt.release_authority);
+        assert!(!receipt.submission_authority);
+        assert!(!receipt.production_activation);
+
+        let checks_after_commit = qualification.checks.get();
+        let replay = operate_research_local_workflow_with_authority_clock_and_cancellation_v1(
+            &definition.template.state_directory,
+            &digest,
+            WorkflowActionV1::Advance { through_steps: 1 },
+            profile,
+            &qualification,
+            &mut clock,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(replay.workflow.committed_steps, 1);
+        assert!(replay.service_receipts.is_empty());
+        assert!(!replay.research_activation);
+        assert_eq!(qualification.checks.get(), checks_after_commit);
     }
 
     #[test]

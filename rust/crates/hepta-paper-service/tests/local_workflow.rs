@@ -64,6 +64,7 @@ fn steps() -> Vec<WorkflowStepV1> {
 fn definition(temp: &Temp) -> LocalWorkflowV1 {
     LocalWorkflowV1 {
         version: 1,
+        research_profile: None,
         template: template(&temp.state(), WorkerBindingV1::Native).unwrap(),
         steps: steps(),
     }
@@ -734,6 +735,7 @@ fn actual_rust_process_workers_consume_dynamic_bound_artifacts() {
     );
     let mut def = LocalWorkflowV1 {
         version: 1,
+        research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),
     };
@@ -787,6 +789,7 @@ fn ambiguous_process_start_is_not_reexecuted_on_retry() {
     );
     let mut def = LocalWorkflowV1 {
         version: 1,
+        research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),
     };

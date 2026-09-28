@@ -21,7 +21,7 @@ impl SqliteWriter {
         let child = Command::new(env::current_exe().expect("actual test executable"))
             .args([
                 "--exact",
-                "tests::joint_closure::clock_wait::sqlite_writer_child",
+                "qualification_closure::tests::joint_closure::clock_wait::sqlite_writer_child",
                 "--ignored",
                 "--nocapture",
             ])
@@ -141,7 +141,8 @@ fn accept_after_writer_wait(
                         _ => panic!("unexpected clock sample"),
                     }
                 },
-            );
+            )
+            .map(|accepted| accepted.receipt);
             finished_tx.send(()).expect("completion witness");
             result
         });

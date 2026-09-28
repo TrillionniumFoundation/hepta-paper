@@ -2,13 +2,14 @@
 //! No additional scheduler, writer, dispatch journal or credential authority.
 
 use super::AutonomousResearchOptions;
-use crate::WorkerBindingV1;
 use crate::workflow::{
     LocalWorkflowV1, WorkflowActionV1, WorkflowAmendmentV1, WorkflowError,
     amend_local_workflow_with_clock_v1, initialize_local_workflow_v1, operate_local_workflow_v1,
     operate_local_workflow_with_clock_and_cancellation_v1, read_current_local_workflow_v1,
 };
+use crate::{WorkerBindingV1, operate_research_local_workflow_with_clock_and_cancellation_v1};
 use hepta_control_plane::canonical_hash_v1;
+use hepta_qualification_ingest::qualification_closure::verify_and_commit_expected_research_qualification_request_v3;
 use nix::fcntl::OFlag;
 use serde_json::{Value, json};
 use std::{
@@ -90,6 +91,7 @@ fn error_code(error: &WorkflowError) -> &'static str {
         WorkflowError::Conflict => "local_workflow_lifecycle_or_lease_conflict",
         WorkflowError::Reconciliation => "local_workflow_reconciliation_required",
         WorkflowError::GateRejected => "local_workflow_review_gate_rejected",
+        WorkflowError::Qualification => "local_workflow_research_qualification_rejected",
         WorkflowError::Service(_) => "local_workflow_service_requires_inspection",
     }
 }
@@ -127,13 +129,23 @@ pub(super) fn run(
         "networkIsolationEnforced": false,
         "externalActionMayHaveStarted": false,
         "reconciliationRequired": false,
+        "researchQualificationRequired": false,
+        "researchQualificationAccepted": false,
+        "researchActivation": false,
+        "releaseAuthority": false,
+        "submissionAuthority": false,
         "cancellationScope": "signal_process_group_and_commit_boundaries",
         "interruptionRequested": false,
         "rustBoundary": "existing_local_workflow_owner"
     });
     // Validate direct API inputs as well as parser-created options. Full research
     // readiness or production/golden admission cannot be satisfied by this path.
-    if options.help || options.launch_mode != "local-run" || options.require_full_ready {
+    if options.help
+        || options.launch_mode != "local-run"
+        || options.require_full_ready
+        || (options.research_qualification_request.is_some()
+            && !matches!(options.action.as_str(), "launch" | "converge"))
+    {
         report["error"] = json!("local_workflow_cannot_grant_requested_authority");
         return report;
     }
@@ -188,6 +200,12 @@ pub(super) fn run(
         definition.validate()?;
         if definition.template.snapshot.campaign_id != expected {
             return Err(WorkflowError::Definition);
+        }
+        let research_profile = definition.research_profile.clone();
+        report["researchQualificationRequired"] = json!(research_profile.is_some());
+        if let Some(profile) = &research_profile {
+            report["researchProfile"] =
+                serde_json::to_value(profile).map_err(|_| WorkflowError::Definition)?;
         }
         let current_digest =
             canonical_hash_v1(&definition).map_err(|_| WorkflowError::Definition)?;
@@ -261,23 +279,55 @@ pub(super) fn run(
         {
             return Err(WorkflowError::Conflict);
         }
-        if options.action == "launch" {
+        // Reject absent, foreign or stale local state before consuming an external
+        // qualification nonce. A fresh launch remains uninitialized until the
+        // matching opaque V3 authority has passed its own durable admission.
+        let needs_initialization = if options.action == "launch" {
             match fs::symlink_metadata(root) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    // The existing initializer refuses aliases/existing roots and
-                    // retains partial initialization; never overwrite or clean it.
-                    let initialized = initialize_local_workflow_v1(definition.clone())?;
-                    if initialized != digest {
-                        return Err(WorkflowError::History);
-                    }
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
                 Err(_) => return Err(WorkflowError::Filesystem),
-                Ok(_) => (),
+                Ok(_) => {
+                    operate_local_workflow_v1(root, &digest, WorkflowActionV1::Status, 0)?;
+                    false
+                }
             }
+        } else {
+            operate_local_workflow_v1(root, &digest, WorkflowActionV1::Status, 0)?;
+            false
+        };
+        let research_admission = if matches!(action, WorkflowActionV1::Advance { .. }) {
+            match (
+                research_profile.as_ref(),
+                options.research_qualification_request.as_deref(),
+            ) {
+                (Some(profile), Some(request_path)) => {
+                    let admission = verify_and_commit_expected_research_qualification_request_v3(
+                        request_path,
+                        &profile.qualification_expectation(),
+                    )
+                    .map_err(|_| WorkflowError::Qualification)?;
+                    report["qualificationReceipt"] = admission.receipt().clone();
+                    report["researchQualificationAccepted"] = json!(true);
+                    Some(admission)
+                }
+                (None, None) => None,
+                _ => return Err(WorkflowError::Qualification),
+            }
+        } else {
+            if options.research_qualification_request.is_some() {
+                return Err(WorkflowError::Qualification);
+            }
+            None
+        };
+        if needs_initialization {
+            // The existing initializer refuses aliases/existing roots and retains
+            // partial initialization; never overwrite or clean it.
+            let initialized = initialize_local_workflow_v1(definition.clone())?;
+            if initialized != digest {
+                return Err(WorkflowError::History);
+            }
+            operate_local_workflow_v1(root, &digest, WorkflowActionV1::Status, 0)?;
         }
-        // Bind an existing root under its owner's lock before any mutation.
-        // The owner repeats all definition/history checks for the action itself.
-        operate_local_workflow_v1(root, &digest, WorkflowActionV1::Status, 0)?;
         report["campaignPersisted"] = json!(true);
         if matches!(action, WorkflowActionV1::Advance { .. }) {
             execution_invoked = true;
@@ -295,15 +345,37 @@ pub(super) fn run(
                 report["externalActionMayHaveStarted"] = json!(true);
             }
         }
-        let progress = operate_local_workflow_with_clock_and_cancellation_v1(
-            root,
-            &digest,
-            action,
-            &mut || {
-                observe().map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
-            },
-            Arc::clone(cancelled),
-        )?;
+        let progress = if let (Some(profile), Some(admission)) =
+            (research_profile.as_ref(), research_admission.as_ref())
+        {
+            let receipt = operate_research_local_workflow_with_clock_and_cancellation_v1(
+                root,
+                &digest,
+                action,
+                profile,
+                admission.qualification(),
+                &mut || {
+                    observe()
+                        .map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+                },
+                Arc::clone(cancelled),
+            )?;
+            report["researchWorkflow"] =
+                serde_json::to_value(&receipt).map_err(|_| WorkflowError::History)?;
+            report["researchActivation"] = json!(receipt.research_activation);
+            receipt.workflow
+        } else {
+            operate_local_workflow_with_clock_and_cancellation_v1(
+                root,
+                &digest,
+                action,
+                &mut || {
+                    observe()
+                        .map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+                },
+                Arc::clone(cancelled),
+            )?
+        };
         report["workflow"] = serde_json::to_value(progress).map_err(|_| WorkflowError::History)?;
         report["status"] = json!("local_workflow_operation_completed");
         Ok(())

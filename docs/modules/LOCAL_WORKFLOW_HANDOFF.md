@@ -840,7 +840,9 @@ exclusive expiry and qualified Codex runtime identity are cross-bound before a
 new service dispatch. Qualification currentness is checked before filesystem
 mutation and again on every existing service clock observation through dispatch
 and commit. The accepted request retains the original trust-file descriptor and
-ancestor directory descriptors. Each new service boundary rechecks their exact
+ancestor directory descriptors. Linux directory identities use `O_PATH`, so an
+otherwise valid search-only ancestor does not acquire a new directory-read
+permission requirement. Each new service boundary rechecks their exact
 identities, permissions and bounded trust bytes; no authority filename is opened
 or closed while the existing SQLite owner is live. Removed/replaced/symlinked or
 hardlinked trust, changed trust contents, expiry, read failure or clock rollback

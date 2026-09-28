@@ -323,59 +323,6 @@ fn parse_personal_gpu_arguments(args: &[String]) -> Result<BTreeMap<String, Stri
     Ok(parsed)
 }
 
-// Apply Node's strict value and duplicate ordering to the native health subset.
-// `action` is a native selector; resident execution remains blocked below.
-fn parse_supervisor_health_arguments(args: &[String]) -> Result<BTreeMap<String, String>, String> {
-    let mut parsed = BTreeMap::new();
-    let mut index = 0;
-    while index < args.len() {
-        let token = args[index].as_str();
-        if token == "--" {
-            return Err("unexpected_cli_argument_separator".into());
-        }
-        let raw = token
-            .strip_prefix("--")
-            .ok_or_else(|| format!("unexpected_cli_positional:{token}"))?;
-        let (key, inline) = raw
-            .split_once('=')
-            .map_or((raw, None), |(key, value)| (key, Some(value)));
-        if key.is_empty() {
-            return Err("empty_cli_option".into());
-        }
-        let value = match key {
-            "help" | "require-startup-reconciliation" | "require-machine-intake-reconciliation" => {
-                if inline.is_some() {
-                    return Err(format!("boolean_cli_option_does_not_take_value:--{key}"));
-                }
-                "true"
-            }
-            "action" | "runtime-root" | "external-qualification-config" => {
-                let value = match inline {
-                    Some(value) => value,
-                    None => {
-                        index += 1;
-                        args.get(index)
-                            .filter(|value| !value.starts_with("--"))
-                            .map(String::as_str)
-                            .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?
-                    }
-                };
-                if value.is_empty() {
-                    return Err(format!("empty_cli_option_value:--{key}"));
-                }
-                value
-            }
-            _ => return Err(format!("unsupported_supervisor_mode:{token}")),
-        };
-        // Node validates a repeated value before reporting duplication.
-        if parsed.insert(key.to_owned(), value.to_owned()).is_some() {
-            return Err(format!("duplicate_cli_option:--{key}"));
-        }
-        index += 1;
-    }
-    Ok(parsed)
-}
-
 fn parse_dispatcher_challenge_arguments(
     args: &[String],
 ) -> Result<BTreeMap<String, String>, String> {
@@ -1745,44 +1692,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(CommandV1::AutonomousSupervisor) => {
-            let options = parse_supervisor_health_arguments(&args[1..])?;
-            let action = options
-                .get("action")
-                .map(String::as_str)
-                .unwrap_or("health");
-            let runtime_root = options.get("runtime-root").map(PathBuf::from);
-            let help = options.contains_key("help");
-            let require_startup = options.contains_key("require-startup-reconciliation");
-            let require_machine = options.contains_key("require-machine-intake-reconciliation");
-            if help {
-                println!(
-                    "{{\"version\":1,\"kind\":\"AutonomousSupervisorHealthUsage\",\"usage\":\"hepta-paper-rust autonomous-supervisor --action health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation]\",\"mutation\":\"none\"}}"
-                );
-                return Ok(());
-            }
-            if action != "health" {
-                return Err("rust_autonomous_supervisor_execution_not_ported".into());
-            }
-            let runtime_root = runtime_root
-                .or_else(|| env::var("HEPTA_PAPER_RUNTIME_ROOT").ok().map(PathBuf::from))
-                .unwrap_or_else(|| {
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("../../../../hepta-paper-runtime/native-runtime")
-                });
-            let report = hepta_paper_service::supervisor_health::inspect_supervisor_health_v1(
-                &lexical_absolute_path(runtime_root),
-                current_unix_millis()?,
-            )?;
-            println!("{}", serde_json::to_string(&report)?);
-            let passing = if require_machine {
-                report["ready"] == true
-            } else if require_startup {
-                report["startupReady"] == true
-            } else {
-                report["healthy"] == true
+            use hepta_paper_service::supervisor_health::cli::{
+                SupervisorHealthEntryV1, inspect_supervisor_health_command_v1,
             };
-            if !passing {
-                std::process::exit(2);
+            let result =
+                inspect_supervisor_health_command_v1(&args[1..], SupervisorHealthEntryV1::Unified)?;
+            println!("{}", serde_json::to_string(&result.report)?);
+            if result.exit_code != 0 {
+                std::process::exit(result.exit_code);
             }
         }
         Some(CommandV1::PersonalSelfHostedReadiness) => {

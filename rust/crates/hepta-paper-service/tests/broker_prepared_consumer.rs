@@ -733,7 +733,7 @@ fn cancelled_prepared_query_unblocks_and_workflow_recovery_queries_only() {
     interrupted_workflow_recovers_original_broker_result(false);
 }
 
-fn check_broker_cli_signal(signal: nix::sys::signal::Signal) {
+fn check_broker_cli_signal(signal: nix::sys::signal::Signal, execute: bool) {
     use std::{
         io::Read,
         process::Stdio,
@@ -741,14 +741,24 @@ fn check_broker_cli_signal(signal: nix::sys::signal::Signal) {
         thread,
         time::{Duration, Instant},
     };
-    let f = Fixture::new_execution();
+    let f = if execute {
+        Fixture::new_execution()
+    } else {
+        Fixture::new_live_prepared()
+    };
     let state = f.root.join("cli-interrupted-workflow");
     let definition = broker_workflow_definition(&f, &state);
     let path = f.root.join("workflow-input.json");
     fs::write(&path, serde_json::to_vec(&definition).unwrap()).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     let mut expected = Vec::new();
-    hepta_codex_broker::write_request_frame(&mut expected, &f.request, Default::default()).unwrap();
+    if execute {
+        hepta_codex_broker::write_request_frame(&mut expected, &f.request, Default::default())
+            .unwrap();
+    } else {
+        hepta_codex_broker::write_result_query_frame(&mut expected, &f.request, Default::default())
+            .unwrap();
+    }
     let listener = f.listener();
     listener.set_nonblocking(true).unwrap();
     // Process startup is only a precondition for the cancellation assertion.
@@ -822,6 +832,14 @@ fn check_broker_cli_signal(signal: nix::sys::signal::Signal) {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["interruptionRequested"], true);
     assert_eq!(report["reconciliationRequired"], true);
+    for field in [
+        "providerExecutionPerformed",
+        "externalActionPerformed",
+        "networkActionPerformed",
+    ] {
+        assert!(report[field].is_null(), "{field}: {report}");
+    }
+    assert_eq!(report["externalActionMayHaveStarted"], true);
     assert_eq!(report["productionActivation"], false);
     assert_eq!(server.join().unwrap().unwrap(), 0);
     let status = command().args(["--action", "status"]).output().unwrap();
@@ -829,6 +847,8 @@ fn check_broker_cli_signal(signal: nix::sys::signal::Signal) {
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status["workflow"]["committedSteps"], 0);
     assert_eq!(status["workflow"]["pendingStep"], true);
+    assert_eq!(status["providerExecutionPerformed"], false);
+    assert_eq!(status["externalActionMayHaveStarted"], false);
     fs::remove_file(&f.socket_path).unwrap();
     let recovery = f.serve(f.listener(), OUTPUT, false, false);
     let output = command().args(["--action", "converge"]).output().unwrap();
@@ -855,10 +875,12 @@ fn check_broker_cli_signal(signal: nix::sys::signal::Signal) {
 
 #[test]
 fn autonomous_cli_sigterm_interrupts_broker_and_restarts_query_only() {
-    check_broker_cli_signal(nix::sys::signal::Signal::SIGTERM);
+    check_broker_cli_signal(nix::sys::signal::Signal::SIGTERM, true);
+    check_broker_cli_signal(nix::sys::signal::Signal::SIGTERM, false);
 }
 
 #[test]
 fn autonomous_cli_sigint_interrupts_broker_and_restarts_query_only() {
-    check_broker_cli_signal(nix::sys::signal::Signal::SIGINT);
+    check_broker_cli_signal(nix::sys::signal::Signal::SIGINT, true);
+    check_broker_cli_signal(nix::sys::signal::Signal::SIGINT, false);
 }

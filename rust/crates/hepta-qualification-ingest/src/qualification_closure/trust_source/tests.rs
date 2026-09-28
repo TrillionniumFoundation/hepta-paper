@@ -199,3 +199,27 @@ fn rebound_trust_name_never_opens_or_releases_live_sqlite_writer_locks() {
         db.execute_batch("ROLLBACK").unwrap();
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn authority_ancestor_needs_search_permission_not_directory_read_permission() {
+    let f = Fixture::new();
+    let authority = fs::metadata(&f.path).unwrap().uid();
+    let consumer = authority.wrapping_add(1);
+    // Trusted ancestors need traversal, not enumeration. A readable authority
+    // document remains valid in a search-only directory.
+    fs::set_permissions(&f.root, fs::Permissions::from_mode(0o111)).unwrap();
+    let result = read_observed_authority_file(
+        &f.path,
+        authority,
+        consumer,
+        MAXIMUM_TRUST_STORE_BYTES,
+        None,
+    )
+    .and_then(|observed| {
+        RetainedResearchTrustSourceV3::retain(&f.path, consumer, observed, 500, 5_000, 1_000)
+    })
+    .and_then(|source| source.observe_current(1_000, || Ok(1_100)));
+    fs::set_permissions(&f.root, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(result.unwrap(), 1_100);
+}

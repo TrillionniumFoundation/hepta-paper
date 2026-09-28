@@ -45,6 +45,16 @@ fn same_directory(left: &fs::Metadata, right: &fs::Metadata) -> bool {
         && left.mode() == right.mode()
 }
 
+fn directory_pin_flags() -> i32 {
+    // Identity pins must not require directory enumeration permission. The
+    // production file intake currently admits only Linux effective identities.
+    #[cfg(target_os = "linux")]
+    let access = nix::libc::O_PATH;
+    #[cfg(not(target_os = "linux"))]
+    let access = nix::libc::O_RDONLY;
+    access | nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC
+}
+
 impl RetainedResearchTrustSourceV3 {
     pub(super) fn retain(
         path: &Path,
@@ -60,7 +70,7 @@ impl RetainedResearchTrustSourceV3 {
             let named = fs::symlink_metadata(parent)?;
             let file = OpenOptions::new()
                 .read(true)
-                .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+                .custom_flags(directory_pin_flags())
                 .open(parent)?;
             let identity = file.metadata()?;
             if !same_directory(&named, &identity) {

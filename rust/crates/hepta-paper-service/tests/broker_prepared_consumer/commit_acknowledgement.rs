@@ -107,6 +107,22 @@ fn ordinary_commit_waits_for_signed_commit_ack_then_replays_without_provider() {
         offline.commit_receipts[0].result_hash,
         recovered.commit_receipts[0].result_hash
     );
+    // Legacy valid V2 confirmations did not have an intent companion.
+    let hash = offline.commit_receipts[0]
+        .result_hash
+        .as_str()
+        .trim_start_matches("sha256:");
+    fs::remove_file(
+        f.config
+            .state_directory
+            .join("commit-acknowledgements-v2")
+            .join(format!("{hash}.intent.json")),
+    )
+    .unwrap();
+    assert!(
+        ack_cli(&f).status.success(),
+        "legacy completed replay remains offline"
+    );
 }
 
 #[test]
@@ -267,5 +283,151 @@ fn workflow_reopens_committed_prefix_and_recovers_lost_ack_without_provider() {
     )
     .unwrap();
     assert_eq!(offline.artifacts_by_step, completed.artifacts_by_step);
+    assert_eq!(durable_entry(&f).0, 94);
+}
+
+fn ack_command(f: &Fixture) -> Command {
+    let path = f.root.join("ack-recovery-run.json");
+    fs::write(&path, serde_json::to_vec(&f.config).unwrap()).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"));
+    command.arg("run").arg(path);
+    command
+}
+fn ack_cli(f: &Fixture) -> std::process::Output {
+    ack_command(f).output().unwrap()
+}
+
+#[test]
+fn lost_ack_pins_exact_signed_intent_before_cli_restart_and_rejects_resigning() {
+    let f = Fixture::new_acknowledged_execution();
+    commit_without_ack(&f);
+    let mut original = f.publish_commit_acknowledgement(OUTPUT);
+    let lost = f.serve_commit_acknowledgement(f.listener(), original.clone(), true);
+    assert!(!ack_cli(&f).status.success());
+    lost.join().unwrap();
+    fs::remove_file(&f.socket_path).unwrap();
+    let hash = durable_entry(&f).1.result_hash().unwrap();
+    let intent = f
+        .config
+        .state_directory
+        .join("commit-acknowledgements-v2")
+        .join(format!(
+            "{}.intent.json",
+            hash.as_str().trim_start_matches("sha256:")
+        ));
+    assert!(
+        intent.is_file(),
+        "exact signed ACK must be durable before transport"
+    );
+    let retained = fs::read(&intent).unwrap();
+    let authority_bytes = fs::read(f.commit_acknowledgement_path()).unwrap();
+    fs::remove_file(f.commit_acknowledgement_path()).unwrap();
+    assert!(
+        !ack_cli(&f).status.success(),
+        "local intent cannot replace authority input"
+    );
+    assert!(!f.socket_path.exists());
+    assert_eq!(fs::read(&intent).unwrap(), retained);
+    fs::write(f.commit_acknowledgement_path(), authority_bytes).unwrap();
+    fs::set_permissions(
+        f.commit_acknowledgement_path(),
+        fs::Permissions::from_mode(0o400),
+    )
+    .unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&retained).unwrap();
+    assert_eq!(
+        record["acknowledgement"],
+        serde_json::to_value(&original).unwrap()
+    );
+    let mut replaced = original.clone();
+    replaced.acknowledged_at_unix_ms -= 1;
+    write_resigned_acknowledgement(&f, &mut replaced);
+    let listener = f.listener();
+    listener.set_nonblocking(true).unwrap();
+    assert!(
+        !ack_cli(&f).status.success(),
+        "replacement is not the selected ACK"
+    );
+    assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    assert_eq!(fs::read(&intent).unwrap(), retained);
+    assert_eq!(durable_entry(&f).0, 94);
+    drop(listener);
+    fs::remove_file(&f.socket_path).unwrap();
+    write_resigned_acknowledgement(&f, &mut original);
+    let peer = f.serve_commit_acknowledgement(f.listener(), original, false);
+    assert!(ack_cli(&f).status.success());
+    peer.join().unwrap();
+    fs::remove_file(&f.socket_path).unwrap();
+    fs::remove_file(f.commit_acknowledgement_path()).unwrap();
+    assert!(ack_cli(&f).status.success(), "completed replay is IPC-free");
+    assert_eq!(durable_entry(&f).0, 94);
+    assert_eq!(fs::read(&intent).unwrap(), retained);
+}
+
+#[test]
+fn actual_cli_death_after_ack_send_recovers_original_ack_without_provider_or_debit() {
+    use std::{
+        io::Read,
+        os::unix::process::ExitStatusExt,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let f = Fixture::new_acknowledged_execution();
+    commit_without_ack(&f);
+    let acknowledgement = f.publish_commit_acknowledgement(OUTPUT);
+    let listener = f.listener();
+    listener.set_nonblocking(true).unwrap();
+    let mut child = ack_command(&f)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until =>
+            {
+                if let Some(status) = child.try_wait().unwrap() {
+                    panic!("CLI ended before ACK: {status}");
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("ACK was not sent: {error}");
+            }
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut expected = Vec::new();
+    hepta_codex_broker::write_commit_bound_acknowledgement_frame(
+        &mut expected,
+        &acknowledgement,
+        Default::default(),
+    )
+    .unwrap();
+    let mut received = vec![0; expected.len()];
+    let observed = stream.read_exact(&mut received);
+    // This is the owned test CLI only; the installed service is never signalled.
+    child.kill().unwrap();
+    assert_eq!(child.wait().unwrap().signal(), Some(9));
+    observed.unwrap();
+    assert_eq!(received, expected);
+    drop(stream);
+    drop(listener);
+    fs::remove_file(&f.socket_path).unwrap();
+    assert_eq!(durable_entry(&f).0, 94);
+    let peer = f.serve_commit_acknowledgement(f.listener(), acknowledgement, false);
+    assert!(ack_cli(&f).status.success());
+    peer.join().unwrap();
+    fs::remove_file(&f.socket_path).unwrap();
+    fs::remove_file(f.commit_acknowledgement_path()).unwrap();
+    assert!(ack_cli(&f).status.success());
     assert_eq!(durable_entry(&f).0, 94);
 }

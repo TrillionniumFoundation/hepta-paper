@@ -28,48 +28,6 @@ const supportSchemas = [
   'research-qualification-receipt-v3.schema.json',
 ];
 
-const payloadTokens = [
-  'validate_external_package_payload_v1',
-  'DecisionNotApproved',
-  'AuthorityMismatch',
-  'REQUIRED_GOVERNANCE_DENIALS',
-  'REQUIRED_HOST_CGROUP_DRILLS',
-  'REQUIRED_STORAGE_FAULTS',
-  'REQUIRED_KEY_DRILLS',
-  'REQUIRED_AUTHORITY_KINDS',
-  'string(root, "decision")? != "approved"',
-  'reviewer_matches(',
-  'authority_set_subject_hash_v1',
-  'HeptaExternalAuthorityReceiptV1',
-  'HeptaExternalAuthoritySetReviewV1',
-  'verify_authority_signature_v1',
-  'current_time_window(',
-  'SignatureInvalid',
-];
-
-const closureTokens = [
-  'validate_external_package_payload_v1(',
-  'QualificationPayloadError',
-  'PayloadHashMismatch',
-  'ReplayConflict',
-  'PartialReplay',
-  'TrustStoreRollback',
-  'TrustStoreFork',
-  'ClockRollback',
-  'VERIFIER_CLOCK_STATE_SCHEMA',
-  'normalize_sql',
-  'REPLAY_LEDGER_USER_VERSION: i32 = 2',
-  'payload_semantics: "strict_package_v1"',
-  'replay_protection: "durable_sqlite_v2"',
-  'clock_rollback_protection: true',
-  'replay_ledger_schema_version: 2',
-  'automatic_activation: false',
-  'production_activation: false',
-  'source_status_unchanged: true',
-  'replay_ledger_committed: true',
-  'system_unix_ms()',
-];
-
 function read(relativePath) {
   return fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8');
 }
@@ -78,15 +36,42 @@ function readSchema(name) {
   return JSON.parse(fs.readFileSync(path.join(qualificationRoot, name), 'utf8'));
 }
 
-function requireTokens(source, tokens) {
-  for (const token of tokens) assert.ok(source.includes(token), `missing contract token ${token}`);
+// This checks executable registration, not Rust behavior by source spelling.
+// The existing artifact job runs the native package; exact-source jobs execute
+// these exact selectors against their own immutable source subjects.
+function requireNativeOwners(evidence, names) {
+  const bundle = evidence.bundles['production-composition-source'];
+  for (const [file, selector] of names) {
+    const name = selector.split('::').at(-1);
+    const owner = bundle.files.find((item) => item.path === file && item.role === 'test');
+    assert.ok(owner?.symbols.some((symbol) => symbol.kind === 'test' && symbol.name === name),
+      `missing native test owner: ${selector}`);
+    const commands = bundle.verificationCommands.filter((command) => command.args.includes(selector));
+    assert.equal(commands.length, 1, `missing or ambiguous native command: ${selector}`);
+    const command = commands[0];
+    assert.equal(command.program, 'cargo');
+    assert.equal(command.workdir, 'rust');
+    assert.equal(command.expectedExitCode, 0);
+    assert.deepEqual(command.expectedTargets, [file]);
+    assert.deepEqual(command.args, ['test', '--locked', '-p', 'hepta-qualification-ingest',
+      '--lib', selector, '--', '--exact', '--nocapture']);
+  }
 }
 
-function removeAllOccurrences(source, token) {
-  assert.ok(source.includes(token), `cannot mutate absent contract token ${token}`);
-  const hostile = source.split(token).join(`removed_${token.length}`);
-  assert.ok(!hostile.includes(token), `contract token survived hostile mutation ${token}`);
-  return hostile;
+function checkNativeRegistration(names) {
+  const evidence = JSON.parse(read('docs/system/evidence/rust-functional-source-closure-v1.json'));
+  requireNativeOwners(evidence, names);
+  for (const [, selector] of names) {
+    for (const change of ['missing', 'wrong-package', 'nonzero-success']) {
+      const mutated = structuredClone(evidence);
+      const bundle = mutated.bundles['production-composition-source'];
+      const command = bundle.verificationCommands.find((item) => item.args.includes(selector));
+      if (change === 'missing') bundle.verificationCommands = bundle.verificationCommands.filter((item) => item !== command);
+      else if (change === 'wrong-package') command.args[3] = 'unrelated-package';
+      else command.expectedExitCode = 1;
+      assert.throws(() => requireNativeOwners(mutated, names), `${selector}:${change}`);
+    }
+  }
 }
 
 function assertStrictSchema(name, schema) {
@@ -158,35 +143,26 @@ test('external qualification package schemas preserve strict required fields und
   }
 });
 
-test('external qualification payload anti-forgery surface is complete and every marker is mutation-sensitive', () => {
-  const source = read('rust/crates/hepta-qualification-ingest/src/package_payload.rs');
-  requireTokens(source, payloadTokens);
-  for (const token of payloadTokens) {
-    const hostile = removeAllOccurrences(source, token);
-    assert.throws(() => requireTokens(hostile, payloadTokens), /missing contract token/);
-  }
+test('signed payload rejection has exact executable native owners, not source token proofs', () => {
+  const file = 'rust/crates/hepta-qualification-ingest/src/qualification_closure/tests/joint_closure.rs';
+  checkNativeRegistration([
+    [file, 'qualification_closure::tests::joint_closure::valid_individual_signatures_with_cross_package_drift_never_create_a_ledger'],
+    [file, 'qualification_closure::tests::joint_closure::invalid_real_envelope_signature_fails_before_replay_creation'],
+    [file, 'qualification_closure::tests::joint_closure::genuine_outer_signature_cannot_hide_invalid_nested_authority_signature'],
+  ]);
 });
 
-test('external qualification closure replay clock ledger and non-activation surface is mutation-sensitive', () => {
-  const source = read('rust/crates/hepta-qualification-ingest/src/qualification_closure.rs');
-  const entry = read('rust/crates/hepta-qualification-ingest/src/bin/hepta-qualification-closure.rs');
-  requireTokens(source, closureTokens);
-  assert.equal(
-    entry,
-    '//! Thin executable over the canonical qualification-closure owner.\n\n'
-      + 'fn main() -> std::process::ExitCode {\n'
-      + '    hepta_qualification_ingest::qualification_closure::qualification_closure_main_v1()\n'
-      + '}\n',
-  );
-  assert.ok(!source.includes('durable_sqlite_v1'));
-  assert.ok(!source.includes('request.now_unix_ms'));
-  for (const token of closureTokens) {
-    const hostile = removeAllOccurrences(source, token);
-    assert.throws(() => requireTokens(hostile, closureTokens), /missing contract token/);
-  }
+test('non-activation, replay and clock semantics have exact executable native owners', () => {
+  const file = 'rust/crates/hepta-qualification-ingest/src/qualification_closure/tests/joint_closure.rs';
+  checkNativeRegistration([
+    [file, 'qualification_closure::tests::joint_closure::cross_package_drift_does_not_advance_existing_nonce_trust_or_clock_state'],
+    [file, 'qualification_closure::tests::joint_closure::genuine_seven_package_closure_preserves_receipt_bytes_and_exact_replay'],
+    [file, 'qualification_closure::tests::joint_closure::genuine_changed_and_partial_replays_keep_existing_conflict_semantics'],
+    [file, 'qualification_closure::tests::joint_closure::single_maintainer_does_not_relax_signatures_cross_package_binding_or_replay_clock'],
+  ]);
 });
 
-test('external package mapping and Rust package-id projection reject gap or schema substitution', () => {
+test('external package mapping and versioned schemas reject gap or schema substitution', () => {
   const truth = JSON.parse(read('docs/rust/current-status.v1.json'));
   const externalGaps = Object.fromEntries(
     truth.gaps.filter((row) => row.external === true).map((row) => [row.id, row.issue]),
@@ -205,9 +181,9 @@ test('external package mapping and Rust package-id projection reject gap or sche
     assert.throws(() => validateMapping(hostileSchema, externalGaps));
   }
 
-  const runtime = read('rust/crates/hepta-qualification-ingest/src/lib.rs');
-  const projected = new Set([...runtime.matchAll(/=> "(EXT-[A-Z0-9-]+)"/g)].map((match) => match[1]));
-  assert.deepEqual(projected, new Set([...Object.keys(expectedPackages), 'EXT-GOV-MAIN-001']));
+  const legacy = readSchema('external-qualification-closure-request-v1.schema.json');
+  assert.deepEqual(new Set(legacy.$defs.packageId.enum),
+    new Set([...Object.keys(expectedPackages), 'EXT-GOV-MAIN-001']));
 });
 
 test('closure request receipt and authority signature schemas preserve replay and trust semantics', () => {

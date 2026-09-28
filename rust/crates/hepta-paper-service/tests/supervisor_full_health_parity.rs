@@ -177,6 +177,12 @@ fn compare(root: &Path, env: &BTreeMap<String, String>, extra: &[&str]) -> Value
     }
     let start = now();
     let expected_output = machine_intake_support::run(&mut original);
+    assert_eq!(
+        expected_output.status.code(),
+        Some(2),
+        "original Node command must produce its blocked report: {}",
+        String::from_utf8_lossy(&expected_output.stderr)
+    );
     let mut expected: Value = serde_json::from_slice(&expected_output.stdout).unwrap();
     normalize(&mut expected, start, now());
     let before = snapshot(root);

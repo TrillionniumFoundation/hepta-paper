@@ -1,7 +1,20 @@
 //! R runtime source archive CAS verification and offline seed acquisition.
+//!
+//! The existing publisher uses one nonblocking parent-directory lock. A new
+//! acquisition checks the original stage and lockfile before no-replace rename.
+//! Rename is a one-way publication boundary: errors never remove published
+//! archives. A valid retry verifies that exact set and synchronizes directories
+//! without reading seeds, invoking tar, overwriting files or minting authority.
+//! Unpublished crash residue is retained; another invocation may rebuild a new
+//! private stage but never adopts or removes that orphan. This is a cooperative
+//! local filesystem contract, not installed qualification or hostile-UID isolation.
+//! Network acquisition, tar-tool/signal qualification and orphan disposal are
+//! separate remaining boundaries. The command's actual recovery and Node
+//! comparisons are in `tests/runtime_r_source_cas_seed.rs`; syscall/crash owners
+//! are the private unit tests, not an alternative execution implementation.
 
 use hepta_legacy_compatibility::production_hash_record_v1;
-use nix::fcntl::{RenameFlags, renameat2};
+use nix::fcntl::{Flock, FlockArg, OFlag, RenameFlags, renameat2};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::os::fd::AsFd;
@@ -612,9 +625,55 @@ fn verify_seed_archive(entry: &Value, destination: &Path) -> Result<Value, Strin
     Ok(Value::Object(object))
 }
 
-fn publish_staging(staging: &Path, context: &Path) -> Result<(), String> {
-    let parent =
-        File::open(context).map_err(|_| "r_runtime_source_cas_publication_failed".to_owned())?;
+fn open_directory(path: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags((OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC).bits())
+        .open(path)
+        .map_err(|_| "r_runtime_source_cas_directory_invalid".to_owned())
+}
+
+fn retains_directory(path: &Path, retained: &File) -> bool {
+    let Ok(opened) = retained.metadata() else {
+        return false;
+    };
+    fs::symlink_metadata(path).is_ok_and(|named| {
+        named.is_dir()
+            && opened.is_dir()
+            && named.dev() == opened.dev()
+            && named.ino() == opened.ino()
+            && named.uid() == opened.uid()
+            && named.gid() == opened.gid()
+            && named.mode() == opened.mode()
+    })
+}
+
+fn require_parent(context: &Path, parent: &File) -> Result<(), String> {
+    if !retains_directory(context, parent) {
+        return Err("r_runtime_source_cas_parent_changed".to_owned());
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PublicationBoundary {
+    BeforePublish,
+    AfterRename,
+    AfterDirectorySync,
+}
+
+fn publish_staging(
+    staging: &Path,
+    context: &Path,
+    parent: &File,
+    stage: &File,
+    publication_attempted: &mut bool,
+    observe: &mut impl FnMut(PublicationBoundary, &Path) -> Result<(), String>,
+) -> Result<(), String> {
+    require_parent(context, parent)?;
+    if !retains_directory(staging, stage) {
+        return Err("r_runtime_source_cas_staging_changed".to_owned());
+    }
     let stage_name = staging
         .file_name()
         .ok_or_else(|| "r_runtime_source_cas_publication_failed".to_owned())?;
@@ -629,6 +688,13 @@ fn publish_staging(staging: &Path, context: &Path) -> Result<(), String> {
             .and_then(|file| file.sync_all())
             .map_err(|_| "r_runtime_source_cas_publication_failed".to_owned())?;
     }
+    require_parent(context, parent)?;
+    if !retains_directory(staging, stage) {
+        return Err("r_runtime_source_cas_staging_changed".to_owned());
+    }
+    // After attempting the publication syscall, an error or subsequent path
+    // movement is not permission to treat these bytes as unpublished garbage.
+    *publication_attempted = true;
     renameat2(
         parent.as_fd(),
         stage_name,
@@ -637,9 +703,11 @@ fn publish_staging(staging: &Path, context: &Path) -> Result<(), String> {
         RenameFlags::RENAME_NOREPLACE,
     )
     .map_err(|_| "r_runtime_source_cas_existing_invalid".to_owned())?;
+    observe(PublicationBoundary::AfterRename, staging)?;
     parent
         .sync_all()
-        .map_err(|_| "r_runtime_source_cas_publication_failed".to_owned())
+        .map_err(|_| "r_runtime_source_cas_publication_failed".to_owned())?;
+    observe(PublicationBoundary::AfterDirectorySync, staging)
 }
 
 /// Acquire the R source CAS exclusively from a caller-selected read-only seed.
@@ -652,23 +720,60 @@ pub fn acquire_runtime_source_cas_from_seed_v1(
     repository_root: &Path,
     seed_source_directory: &Path,
 ) -> Result<Value, String> {
+    acquire_with_observation(repository_root, seed_source_directory, &mut |_, _| Ok(()))
+}
+
+// Internal fault observations exercise this same publisher, not another owner.
+fn acquire_with_observation(
+    repository_root: &Path,
+    seed_source_directory: &Path,
+    observe: &mut impl FnMut(PublicationBoundary, &Path) -> Result<(), String>,
+) -> Result<Value, String> {
     let context = fs::canonicalize(repository_root.join("runtime-images/r-scientific"))
         .map_err(|_| "r_runtime_source_cas_unavailable".to_owned())?;
-    let current = inspect_runtime_source_cas_v1(repository_root);
-    if current["ready"] == Value::Bool(true) {
-        let mut report = current;
-        report["acquired"] = Value::Bool(false);
-        return Ok(report);
-    }
+    let parent = open_directory(&context)?;
+    // One advisory lock on the existing directory; no second journal, writer
+    // database or installation authority is created. Process death releases it.
+    let _lock = Flock::lock(
+        parent
+            .try_clone()
+            .map_err(|_| "r_runtime_source_cas_directory_invalid".to_owned())?,
+        FlockArg::LockExclusiveNonblock,
+    )
+    .map_err(|_| "r_runtime_source_cas_owner_busy".to_owned())?;
+    require_parent(&context, &parent)?;
     let destination = context.join("source-cas");
-    if fs::symlink_metadata(&destination).is_ok() {
-        return Err("r_runtime_source_cas_existing_invalid".to_owned());
+    match fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.is_dir() => {
+            let installed = open_directory(&destination)?;
+            let current = inspect_runtime_source_cas_v1(repository_root);
+            if current["ready"] != Value::Bool(true) || !retains_directory(&destination, &installed)
+            {
+                return Err("r_runtime_source_cas_existing_invalid".to_owned());
+            }
+            // A previous process may have died after rename but before parent
+            // fsync. Complete that barrier; never recopy, delete or republish.
+            installed
+                .sync_all()
+                .and_then(|()| parent.sync_all())
+                .map_err(|_| "r_runtime_source_cas_publication_failed".to_owned())?;
+            require_parent(&context, &parent)?;
+            if !retains_directory(&destination, &installed) {
+                return Err("r_runtime_source_cas_existing_invalid".to_owned());
+            }
+            let mut report = current;
+            report["acquired"] = Value::Bool(false);
+            return Ok(report);
+        }
+        Ok(_) => return Err("r_runtime_source_cas_existing_invalid".to_owned()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("r_runtime_source_cas_existing_invalid".to_owned()),
     }
     let (expected, lockfile_hash) = read_lock(&context.join("renv.lock"))?;
     let seeds = seed_archives(seed_source_directory)?;
     let staging = begin_staging(&context)?;
-    let staging_identity = fs::symlink_metadata(&staging)
-        .map_err(|_| "r_runtime_source_cas_staging_invalid".to_owned())?;
+    let stage = open_directory(&staging)?;
+    let mut publication_attempted = false;
     let result = (|| {
         let mut packages = Vec::with_capacity(expected.len());
         for entry in &expected {
@@ -711,16 +816,24 @@ pub fn acquire_runtime_source_cas_from_seed_v1(
             .map_err(|_| "r_runtime_source_cas_manifest_write_failed".to_owned())?;
         manifest_bytes.push(b'\n');
         write_new_file(&staging.join("manifest.json"), &manifest_bytes)?;
-        publish_staging(&staging, &context)?;
+        observe(PublicationBoundary::BeforePublish, &staging)?;
+        require_parent(&context, &parent)?;
+        if read_lock(&context.join("renv.lock"))?.1 != lockfile_hash {
+            return Err("r_runtime_source_cas_lock_changed".to_owned());
+        }
+        publish_staging(
+            &staging,
+            &context,
+            &parent,
+            &stage,
+            &mut publication_attempted,
+            observe,
+        )?;
         let verified = inspect_runtime_source_cas_v1(repository_root);
         if verified["ready"] != Value::Bool(true) {
-            if fs::symlink_metadata(&destination).is_ok_and(|current| {
-                current.is_dir()
-                    && current.dev() == staging_identity.dev()
-                    && current.ino() == staging_identity.ino()
-            }) {
-                let _ = fs::remove_dir_all(&destination);
-            }
+            // Rename is the publication boundary. A failed later observation
+            // cannot revoke or erase these potentially consumed bytes. Keep the
+            // exact target for inspection; a valid retry rechecks it in place.
             return Err(format!(
                 "r_runtime_source_cas_post_publish_invalid:{}",
                 verified["blockers"]
@@ -735,12 +848,25 @@ pub fn acquire_runtime_source_cas_from_seed_v1(
                     .unwrap_or_default()
             ));
         }
+        require_parent(&context, &parent)?;
+        if !retains_directory(&destination, &stage) {
+            return Err("r_runtime_source_cas_published_identity_changed".to_owned());
+        }
         let mut report = verified;
         report["acquired"] = Value::Bool(true);
         Ok(report)
     })();
-    if result.is_err() {
+    if result.is_err()
+        && !publication_attempted
+        && retains_directory(&context, &parent)
+        && retains_directory(&staging, &stage)
+    {
+        // Best-effort cleanup is limited to the original unpublished directory.
+        // Rebound names and already-published results are retained, never erased.
         let _ = fs::remove_dir_all(&staging);
     }
     result
 }
+
+#[cfg(test)]
+mod tests;

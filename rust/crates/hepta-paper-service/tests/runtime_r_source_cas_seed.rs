@@ -215,3 +215,63 @@ fn seed_acquisition_cli_accepts_seed_and_rejects_duplicate_flags() {
     assert!(String::from_utf8_lossy(&duplicate.stderr).contains("accepts ROOT"));
     remove(&root);
 }
+
+#[test]
+fn ordinary_cli_replay_needs_no_seed_or_tar_and_preserves_published_files() {
+    use std::{collections::BTreeMap, os::unix::fs::MetadataExt};
+    let (root, seed) = fixture("offline-replay", "demo", "1.0.0");
+    let binary = env!("CARGO_BIN_EXE_hepta-paper-rust");
+    let first = Command::new(binary)
+        .arg("runtime-r-source-cas")
+        .arg(&root)
+        .args(["--action", "acquire", "--seed"])
+        .arg(&seed)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first["acquired"], true);
+    let context = root.join("runtime-images/r-scientific");
+    let capture = || {
+        first["definitionPaths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|name| {
+                let name = name.as_str().unwrap();
+                let path = context.join(name);
+                let metadata = fs::symlink_metadata(&path).unwrap();
+                (
+                    name.to_owned(),
+                    (metadata.dev(), metadata.ino(), fs::read(path).unwrap()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let before = capture();
+    fs::remove_dir_all(&seed).unwrap();
+    let retry = Command::new(binary)
+        .env_clear()
+        .env("PATH", root.join("no-executables"))
+        .arg("runtime-r-source-cas")
+        .arg(&root)
+        .args(["--action", "acquire", "--seed"])
+        .arg(&seed)
+        .output()
+        .unwrap();
+    assert!(
+        retry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    let mut retry: Value = serde_json::from_slice(&retry.stdout).unwrap();
+    assert_eq!(retry["acquired"], false);
+    retry["acquired"] = Value::Bool(true);
+    assert_eq!(retry, first);
+    assert_eq!(capture(), before);
+    remove(&root);
+}

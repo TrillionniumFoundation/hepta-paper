@@ -53,13 +53,17 @@ path. No independent human approval or staff-availability ceremony is required.
 A verified final squash signature does not make unsigned incoming commits satisfy
 a signature-required branch. Produce GitHub-verified commits through the existing
 authenticated commit API or a registered signing identity before integration.
-When repairing the already unsigned #142 source line, preserve its original
+Only when an incoming source line is actually unsigned, preserve its original
 commits in an explicit archive/bundle, reconstruct the same reviewed source tree
 on the current integration parent, verify the signed tree byte-for-byte, and
 update only the existing unprotected PR head with an expected-old-head guard.
 This is a one-time signed delivery reconstruction, not a second implementation
 branch. Do not force-push the protected integration branch or relax its rules.
 The reconstructed SHA requires fresh exact-head and prospective-merge evidence.
+For the already verified canonical lineage, continue with append-only signed
+commits and expected-head CAS; the historical repair procedure is not an
+instruction to rewrite #142 again. Verify the actual incoming commit range and
+protection settings rather than assuming an old signature defect still exists.
 After integration, source artifacts keep their original subjects; the product
 head obtains its own applicable validation.
 

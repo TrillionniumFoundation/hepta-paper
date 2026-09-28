@@ -7,7 +7,7 @@ installation-specific; relationships and permissions are not.
 
 | Principal | May hold | Must never hold |
 |---|---|---|
-| `hepta-core` | campaign request signer/client capability; owner-only PKCS#8 request key and no-replace request publication; consumer-owned V3 request/replay ledger and transient opaque research qualification | Codex credential files, broker journal, billing/ACK keys, external qualification signing keys, release/submission keys |
+| `hepta-core` | campaign request signer/client capability; owner-only PKCS#8 request key and no-replace request publication; consumer-owned V3 request/replay ledger and transient request-bound research qualification with retained read-only trust descriptors | Codex credential files, broker journal, billing/ACK keys, external qualification signing keys, release/submission keys |
 | `hepta-broker-<role>` | one listener, one broker journal, role runtime identity | campaign DB writer, role-peer home, release/submission authority |
 | `hepta-codex-<role>` | one role Codex home and attempt/bundle access | broker journal, trust signing key, campaign/release authority |
 | `hepta-trust-owner` | capability trust-bundle publication/signing authority | broker or Codex execution identity |

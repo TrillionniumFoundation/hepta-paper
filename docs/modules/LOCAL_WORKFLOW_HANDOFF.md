@@ -828,14 +828,30 @@ termination, actual cost settlement, production activation or Node retirement.
 `operate_research_local_workflow_with_clock_and_cancellation_v1` are
 non-serializable compositions around the existing workflow, service, CAS,
 dispatcher and SQLite sequencer. The caller must provide the opaque
-`VerifiedResearchQualificationV3`; receipt JSON, profile strings and booleans
-cannot construct or replace that value. The normal autonomous CLI obtains it
-only from the canonical authority-file verifier/replay owner above. The exact
+`VerifiedResearchQualificationRequestV3`; receipt JSON, profile strings and
+booleans cannot construct or replace that value. The normal autonomous CLI obtains
+it only from the canonical authority-file verifier/replay owner above. The pure
+`VerifiedResearchQualificationV3` snapshot remains signature evidence, not a live
+execution input; extracting `qualification()` or `into_parts()` cannot satisfy
+these public execution APIs. This is enforced by Rust types and a compile-fail
+contract, not a new ready flag. The exact
 repository/commit/tree subject, opaque closure identity, trust generation,
 exclusive expiry and qualified Codex runtime identity are cross-bound before a
 new service dispatch. Qualification currentness is checked before filesystem
 mutation and again on every existing service clock observation through dispatch
-and commit. The public cancellation form forwards the same sticky cooperative
+and commit. The accepted request retains the original trust-file descriptor and
+ancestor directory descriptors. Each new service boundary rechecks their exact
+identities, permissions and bounded trust bytes; no authority filename is opened
+or closed while the existing SQLite owner is live. Removed/replaced/symlinked or
+hardlinked trust, changed trust contents, expiry, read failure or clock rollback
+closes that request lifetime. Clones share the invalidation latch; restoring an
+old file or clock cannot reopen a failed handle. A fresh invocation must use the
+original file/signature/replay admission again, not revive a cached receipt.
+The qualified clock returns the new time sampled after the last trust-file I/O,
+so the writer lease and precommit owner do not use an earlier timestamp. The
+normal CLI also checks the retained request before initial workflow creation.
+Signed payloads remain immutable verified evidence and are not repeatedly read
+as an additional evidence pipeline. The public cancellation form forwards the same sticky cooperative
 token; a pre-cancelled run creates no campaign database. A time-window or
 cancellation failure therefore follows the same prepared-result and
 inspection/recovery rules rather than authorizing a fresh effect or claiming
@@ -859,7 +875,12 @@ canonical body keeps `productionActivation`, `releaseAuthority`,
 This is a source composition, not installed acceptance. It does not make a test
 qualification externally real, bind the currently running executable to a host
 package, provision independent author/reviewer, billing or acknowledgement
-credentials, or add live trust-store distribution/revocation callbacks. The source
+credentials, or implement external trust-store distribution and durable global
+revocation observation. The retained-source guard detects local trusted-file
+changes at existing admission/dispatch/commit observations; it is not an atomic
+revocation-versus-effect transaction, a background watcher, or immediate native
+kernel/provider termination. Cross-restart rejection still requires current
+trusted-source delivery and the existing durable generation/replay owner. The source
 can verify and persist an externally signed actual invoice and send a commit-bound
 ACK whose commit fact is independently resolved; real installed billing/ACK
 principals and their revocation/availability evidence remain outside the test

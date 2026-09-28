@@ -653,8 +653,8 @@ cannot change the durable transition identity.
 The normal service crosses the existing SQLite sequencer transaction first. Only
 then does it capture the authority-owned mode-0400/0440 acknowledgement file,
 compare every signed field with the actual prepared result and returned commit
-receipt, and send the canonical `HEPTAAX2` frame to the original kernel-authenticated
-role broker. Failure before commit sends no acknowledgement. Missing authority,
+receipt, and durably select the exact signed ACK before sending the canonical
+`HEPTAAX2` frame to the original kernel-authenticated role broker. Failure before commit sends no acknowledgement. Missing authority,
 invalid bytes or an uncertain reply returns `PostCommitAcknowledgement` while
 retaining the successful commit. The local-workflow owner does not treat that
 committed prefix as ACK completion: on `advance` it reopens each frozen step plan,
@@ -663,6 +663,34 @@ retries the identical acknowledgement before gate handling or later-step
 admission. This path never calls the provider or debits cost again. A private
 durable marker is written only after a bound broker response, allowing later
 offline replay without claiming that an unobserved reply succeeded.
+
+The existing ACK owner stores `<result-hash>.intent.json` in its private
+`commit-acknowledgements-v2` directory before transport. Every retry reopens the
+current authority-owned receipt and rechecks signature, trust generation, expiry,
+subject and commit, then requires the exact selected signed bytes. A new valid
+signature or timestamp cannot replace an uncertain ACK. Missing authority input
+remains blocked: the local intent is not a replay authorization. Only the bound
+successful broker response permits `<result-hash>.json` confirmation. Old valid
+V2 confirmations without an intent companion remain historical replay inputs;
+a present conflicting or corrupt companion is never ignored.
+
+Both records use descriptor-relative exclusive staging, file fsync, no-replace
+rename, and directory/state fsync. A crash before rename leaves an unselected
+pending inode; retry uses a fresh stage and preserves the old bytes. A crash after
+rename reopens and synchronizes the exact final record. Truncated legacy final
+records and dangling links fail closed; this path never repairs, unlinks or adopts
+them. Parent/temporary inode replacement rejects publication and leaves foreign
+entries untouched. These are cooperative local-owner guarantees, not hostile
+same-UID filesystem isolation or permission to migrate the installed Node writer.
+Pending-file retention/cleanup and physical power-loss qualification remain
+separate maintenance and target-host concerns.
+
+The ordinary CLI regression kills its own ACK-sending child after the exact frame
+is observed, then restarts through the normal entry and resends only that ACK,
+with no provider dispatch or second debit. Storage-owner regressions exercise real
+SIGKILL at ten intent/confirmation publication checkpoints, retained partial bytes,
+conflicting selection, aliases and inode replacement. Neither a stored intent nor
+a test fixture claims installed signer custody, release or submission authority.
 
 The broker does not trust the acknowledgement's commit fields merely because its
 signature is valid. `SqliteCommitBindingResolverV2` opens the configured canonical

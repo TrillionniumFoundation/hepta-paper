@@ -59,25 +59,36 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub fn new() -> Self {
-        Self::with_execution(false, false, false, false)
+        Self::with_execution(false, false, false, false, false)
+    }
+    pub fn new_live_prepared() -> Self {
+        Self::with_execution(false, false, false, false, true)
     }
     pub fn new_execution() -> Self {
-        Self::with_execution(true, false, false, false)
+        Self::with_execution(true, false, false, false, false)
     }
     pub fn new_issued_execution() -> Self {
-        Self::with_execution(true, false, false, true)
+        Self::with_execution(true, false, false, true, false)
     }
     pub fn new_issued_acknowledged_execution() -> Self {
-        Self::with_execution(true, true, true, true)
+        Self::with_execution(true, true, true, true, false)
     }
     pub fn new_settled_execution() -> Self {
-        Self::with_execution(true, true, false, false)
+        Self::with_execution(true, true, false, false, false)
     }
     pub fn new_acknowledged_execution() -> Self {
-        Self::with_execution(true, true, true, false)
+        Self::with_execution(true, true, true, false, false)
     }
-    fn with_execution(execution: bool, settled: bool, acknowledged: bool, issued: bool) -> Self {
-        let now = if execution {
+    fn with_execution(
+        execution: bool,
+        settled: bool,
+        acknowledged: bool,
+        issued: bool,
+        live_prepared: bool,
+    ) -> Self {
+        // Backend choice does not imply a fixture clock: ordinary CLI prepared
+        // queries need a live lease without changing deterministic owner tests.
+        let now = if execution || live_prepared {
             u64::try_from(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

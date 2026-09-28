@@ -354,6 +354,16 @@ impl RevisionFixture {
         let committed = self.advance(index + 1);
         execution.join().unwrap();
         fs::remove_file(&self.peer.socket_path).unwrap();
+        // The ordinary broker executed and a durable commit exists even when
+        // the separate ACK is missing. A blocked command cannot claim no effect.
+        for field in [
+            "providerExecutionPerformed",
+            "externalActionPerformed",
+            "networkActionPerformed",
+        ] {
+            assert!(committed[field].is_null(), "{field}: {committed}");
+        }
+        assert_eq!(committed["externalActionMayHaveStarted"], true);
         assert_eq!(
             committed["ready"], false,
             "commit must wait for the separately signed ACK: {committed}"

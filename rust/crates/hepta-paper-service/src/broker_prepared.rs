@@ -24,11 +24,11 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::Read,
     os::{
         fd::AsRawFd,
         unix::{
-            fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt},
+            fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
             net::UnixStream,
         },
     },
@@ -176,6 +176,7 @@ pub fn broker_prepared_implementation_hash_v1(
         "hepta-broker-prepared-consumer-v1",
         include_str!("broker_prepared.rs"),
         include_str!("broker_prepared/request_signer.rs"),
+        include_str!("broker_prepared/ack_records.rs"),
         include_str!("worker.rs"),
         include_str!("worker_recovery.rs"),
         source,
@@ -1030,127 +1031,8 @@ struct BrokerCommitAcknowledgementMarkerV2 {
     acknowledgement: CommitBoundPreparedResultAcknowledgementV2,
 }
 
-fn marker_path(state_directory: &Path, result_hash: &Sha256Digest) -> PathBuf {
-    state_directory
-        .join("commit-acknowledgements-v2")
-        .join(format!(
-            "{}.json",
-            result_hash.as_str().trim_start_matches("sha256:")
-        ))
-}
-
-fn ensure_marker_directory(state_directory: &Path) -> Result<PathBuf, ServiceError> {
-    let state = fs::symlink_metadata(state_directory).map_err(|_| ServiceError::Filesystem)?;
-    let directory = state_directory.join("commit-acknowledgements-v2");
-    if !directory.exists() {
-        match fs::DirBuilder::new().mode(0o700).create(&directory) {
-            Ok(()) => (),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(_) => return Err(ServiceError::Filesystem),
-        }
-    }
-    let metadata = fs::symlink_metadata(&directory).map_err(|_| ServiceError::Filesystem)?;
-    if !metadata.is_dir()
-        || metadata.uid() != state.uid()
-        || metadata.gid() != state.gid()
-        || metadata.mode() & 0o077 != 0
-        || fs::canonicalize(&directory).ok().as_deref() != Some(directory.as_path())
-    {
-        return Err(ServiceError::Artifact);
-    }
-    Ok(directory)
-}
-
-fn read_marker(
-    state_directory: &Path,
-    result_hash: &Sha256Digest,
-) -> Result<Option<BrokerCommitAcknowledgementMarkerV2>, ServiceError> {
-    let directory = state_directory.join("commit-acknowledgements-v2");
-    if !directory.exists() {
-        return Ok(None);
-    }
-    ensure_marker_directory(state_directory)?;
-    let path = marker_path(state_directory, result_hash);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let state = fs::symlink_metadata(state_directory).map_err(|_| ServiceError::Filesystem)?;
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC | nix::libc::O_NONBLOCK)
-        .open(&path)
-        .map_err(|_| ServiceError::Filesystem)?;
-    let before = file.metadata().map_err(|_| ServiceError::Filesystem)?;
-    if !before.is_file()
-        || before.uid() != state.uid()
-        || before.gid() != state.gid()
-        || before.nlink() != 1
-        || before.mode() & 0o7777 != 0o600
-        || before.len() == 0
-        || before.len() > MAX_REQUEST_BYTES
-    {
-        return Err(ServiceError::Artifact);
-    }
-    let mut bytes = Vec::new();
-    Read::by_ref(&mut file)
-        .take(MAX_REQUEST_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| ServiceError::Filesystem)?;
-    let after = file.metadata().map_err(|_| ServiceError::Filesystem)?;
-    let named = fs::symlink_metadata(&path).map_err(|_| ServiceError::Filesystem)?;
-    let marker: BrokerCommitAcknowledgementMarkerV2 =
-        serde_json::from_slice(&bytes).map_err(|_| ServiceError::Artifact)?;
-    if marker.version != 2
-        || &marker.result_hash != result_hash
-        || bytes.len() as u64 != before.len()
-        || !same_file(&before, &after)
-        || !same_file(&after, &named)
-        || serde_json::to_vec(&marker).map_err(|_| ServiceError::Artifact)? != bytes
-    {
-        return Err(ServiceError::Artifact);
-    }
-    Ok(Some(marker))
-}
-
-fn store_marker(
-    state_directory: &Path,
-    result_hash: Sha256Digest,
-    acknowledgement: &CommitBoundPreparedResultAcknowledgementV2,
-) -> Result<(), ServiceError> {
-    let directory = ensure_marker_directory(state_directory)?;
-    let marker = BrokerCommitAcknowledgementMarkerV2 {
-        version: 2,
-        result_hash: result_hash.clone(),
-        acknowledgement: acknowledgement.clone(),
-    };
-    let bytes = serde_json::to_vec(&marker).map_err(|_| ServiceError::Artifact)?;
-    let path = marker_path(state_directory, &result_hash);
-    if path.exists() {
-        let observed = read_marker(state_directory, &result_hash)?.ok_or(ServiceError::Artifact)?;
-        if observed.acknowledgement != *acknowledgement {
-            return Err(ServiceError::Artifact);
-        }
-        return Ok(());
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
-        .open(&path)
-        .map_err(|_| ServiceError::Filesystem)?;
-    file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|_| ServiceError::Filesystem)?;
-    File::open(&directory)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| ServiceError::Filesystem)?;
-    let observed = read_marker(state_directory, &result_hash)?.ok_or(ServiceError::Artifact)?;
-    if observed.acknowledgement != *acknowledgement {
-        return Err(ServiceError::Artifact);
-    }
-    Ok(())
-}
+mod ack_records;
+use ack_records::{read_marker, select_intent, store_marker};
 
 #[derive(Clone, Debug)]
 pub(crate) struct BrokerCommitTargetV2 {
@@ -1247,6 +1129,12 @@ pub(crate) fn acknowledge_committed_result(
         &acknowledgement_source.trust_store()?,
     )
     .map_err(|_| ServiceError::Execution)?;
+    captured.revalidate(acknowledgement_source)?;
+    // Persist the exact verified signed fact before any transport. A valid
+    // replacement signature after response loss cannot select a second ACK.
+    // Every retry still reads the authority-owned receipt and verifies current
+    // trust/expiry; the local intent is not a substitute authorization source.
+    select_intent(state_directory, &result_hash, &captured.acknowledgement)?;
     captured.revalidate(acknowledgement_source)?;
     let peer_policy = PeerPolicyV1::new([PeerPrincipalV1 {
         uid: target.source.broker_uid,

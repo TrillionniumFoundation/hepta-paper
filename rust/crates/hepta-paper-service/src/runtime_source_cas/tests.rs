@@ -356,3 +356,47 @@ fn precancelled_acquisition_has_no_stage_or_publication() {
     );
     assert_eq!(snapshot(&f.root), before);
 }
+
+#[test]
+fn seed_scan_cancellation_stops_collection_and_never_returns_partial_inventory() {
+    // Interrupt the real directory walk's existing cooperative active check,
+    // rather than sleeping until an assumed scheduling/IO window.
+    let root = std::env::temp_dir().join(format!(
+        "hepta-seed-cancel-{}-{}",
+        std::process::id(),
+        super::random_nonce().unwrap()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    for index in 0..8 {
+        std::fs::write(root.join(format!("entry-{index}.tar.gz")), b"unused").unwrap();
+    }
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let mut checks = 0;
+    let mut output = std::collections::BTreeMap::new();
+    let mut remaining = super::MAX_SEED_ENTRIES;
+    let error = super::collect_seed_archives(
+        &root,
+        &mut output,
+        &mut || {
+            checks += 1;
+            if checks == 5 {
+                cancelled.store(true, std::sync::atomic::Ordering::Release);
+            }
+            super::require_active(&cancelled)
+        },
+        &mut remaining,
+        0,
+    )
+    .unwrap_err();
+    assert_eq!(error, "r_runtime_source_cas_cancelled");
+    assert_eq!(checks, 5);
+    assert_eq!(remaining, super::MAX_SEED_ENTRIES - 3);
+    assert!(output.is_empty());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 8);
+    // Already cancelled public discovery must not touch a missing path.
+    assert_eq!(
+        super::seed_archives(&root.join("absent"), &cancelled).unwrap_err(),
+        error
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

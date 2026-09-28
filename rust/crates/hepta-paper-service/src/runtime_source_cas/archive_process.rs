@@ -72,6 +72,8 @@ impl<'a> ArchiveExecution<'a> {
             .collect::<Vec<_>>();
         arguments.push(archive.as_os_str().to_owned());
         if let Some(trailing) = trailing {
+            // Archive-controlled member names are data, never tar options.
+            arguments.push("--".into());
             arguments.push(trailing.into());
         }
         let request = BoundedProcessRequestV1 {

@@ -287,13 +287,18 @@ fn ordinary_cli_signal_terminates_tar_after_stdout_closes_without_publishing() {
         thread,
         time::{Duration, Instant},
     };
-    for signal in [Signal::SIGINT, Signal::SIGTERM] {
+    for (signal, phase) in [
+        (Signal::SIGINT, "list"),
+        (Signal::SIGTERM, "list"),
+        (Signal::SIGINT, "description"),
+        (Signal::SIGTERM, "description"),
+    ] {
         let (root, seed) = fixture("tar-signal", "demo", "1.0.0");
         let tools = root.join("tools");
         fs::create_dir(&tools).unwrap();
         let pid_path = root.join("tar.pid");
         let tool = tools.join("tar");
-        fs::write(&tool, format!("#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec 1>&- 2>&-\ntrap '' TERM INT\nsleep 30\n", pid_path.display())).unwrap();
+        fs::write(&tool, format!("#!/bin/sh\nif [ '{phase}' = description ] && [ \"$1\" = -tzf ]; then printf 'demo/DESCRIPTION\\n'; exit 0; fi\nprintf '%s' \"$$\" > '{}'\nexec 1>&- 2>&-\ntrap '' TERM INT\nsleep 30\n", pid_path.display())).unwrap();
         fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
             .arg("runtime-r-source-cas")
@@ -340,6 +345,11 @@ fn ordinary_cli_signal_terminates_tar_after_stdout_closes_without_publishing() {
         assert!(exited, "CLI cancellation deadline");
         assert!(!tar_survived, "tar survived its ordinary CLI cancellation");
         assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("r_runtime_source_cas_cancelled"),
+            "{phase}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(!root.join("runtime-images/r-scientific/source-cas").exists());
         assert!(seed.join("demo_1.0.0.tar.gz").exists());
         remove(&root);
@@ -375,49 +385,186 @@ fn ordinary_cli_unknown_tar_cleanup_retains_original_unpublished_stage() {
         unistd::Pid,
     };
     use std::{os::unix::fs::PermissionsExt, thread, time::Duration};
-    let (root, seed) = fixture("tar-unknown", "demo", "1.0.0");
-    let tools = root.join("tools");
-    fs::create_dir(&tools).unwrap();
-    let pid_path = root.join("escaped.pid");
-    let tool = tools.join("tar");
-    fs::write(&tool, format!("#!/bin/sh\n/usr/bin/setsid /bin/sh -c 'echo $$ > \"{}\"; sleep 30' &\nwhile [ ! -s '{}' ]; do sleep 0.01; done\nexit 0\n", pid_path.display(), pid_path.display())).unwrap();
-    fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+    for phase in ["list", "description"] {
+        let (root, seed) = fixture("tar-unknown", "demo", "1.0.0");
+        let tools = root.join("tools");
+        fs::create_dir(&tools).unwrap();
+        let pid_path = root.join("escaped.pid");
+        let tool = tools.join("tar");
+        fs::write(&tool, format!("#!/bin/sh\nif [ '{phase}' = description ] && [ \"$1\" = -tzf ]; then printf 'demo/DESCRIPTION\\n'; exit 0; fi\n/usr/bin/setsid /bin/sh -c 'echo $$ > \"{}\"; sleep 30' &\nwhile [ ! -s '{}' ]; do sleep 0.01; done\nexit 0\n", pid_path.display(), pid_path.display())).unwrap();
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("runtime-r-source-cas")
+            .arg(&root)
+            .args(["--action", "acquire", "--seed"])
+            .arg(&seed)
+            .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
+            .output()
+            .unwrap();
+        let escaped = fs::read_to_string(&pid_path)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        let _ = killpg(Pid::from_raw(escaped), Signal::SIGKILL);
+        thread::sleep(Duration::from_millis(30));
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("r_runtime_source_cas_archive_cleanup_unverified")
+        );
+        let context = root.join("runtime-images/r-scientific");
+        assert!(!context.join("source-cas").exists());
+        let stages = fs::read_dir(&context)
+            .unwrap()
+            .map(|x| x.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".source-cas.staging-")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(stages.len(), 1, "unconfirmed cleanup must retain the stage");
+        assert_eq!(
+            fs::read(stages[0].join("src/contrib/demo_1.0.0.tar.gz")).unwrap(),
+            fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap()
+        );
+        remove(&root);
+    }
+}
+
+#[test]
+fn ordinary_cli_archive_member_is_data_even_when_it_starts_with_a_dash() {
+    let (root, seed) = fixture("member-option", "demo", "1.0.0");
+    let parent = root.join("member-input");
+    let member = parent.join("--hepta-owned-member");
+    fs::create_dir_all(&member).unwrap();
+    fs::write(
+        member.join("DESCRIPTION"),
+        b"Package: demo\nVersion: 1.0.0\n",
+    )
+    .unwrap();
+    let archive = seed.join("demo_1.0.0.tar.gz");
+    let packaged = Command::new("tar")
+        .arg("-czf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&parent)
+        .args(["--", "--hepta-owned-member"])
+        .status()
+        .unwrap();
+    assert!(packaged.success());
     let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
         .arg("runtime-r-source-cas")
         .arg(&root)
         .args(["--action", "acquire", "--seed"])
         .arg(&seed)
-        .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
         .output()
         .unwrap();
-    let escaped = fs::read_to_string(&pid_path)
-        .unwrap()
-        .trim()
-        .parse::<i32>()
-        .unwrap();
-    let _ = killpg(Pid::from_raw(escaped), Signal::SIGKILL);
-    thread::sleep(Duration::from_millis(30));
-    assert_eq!(output.status.code(), Some(1));
     assert!(
+        output.status.success(),
+        "member names cannot become tar options: {}",
         String::from_utf8_lossy(&output.stderr)
-            .contains("r_runtime_source_cas_archive_cleanup_unverified")
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["acquired"], true);
+    remove(&root);
+}
+
+fn scan_cli(root: &Path, seed: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("runtime-r-source-cas")
+        .arg(root)
+        .args(["--action", "acquire", "--seed"])
+        .arg(seed)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn ordinary_cli_seed_scan_depth_refuses_before_staging_and_retry_keeps_archive() {
+    let (root, seed) = fixture("scan-depth", "demo", "1.0.0");
+    let original = fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap();
+    let mut nested = seed.clone();
+    for _ in 0..65 {
+        nested.push("nested");
+        fs::create_dir(&nested).unwrap();
+    }
+    let rejected = scan_cli(&root, &seed);
+    assert_eq!(
+        rejected.status.code(),
+        Some(1),
+        "unbounded scan was admitted"
+    );
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("r_runtime_source_cas_seed_depth_exceeded")
     );
     let context = root.join("runtime-images/r-scientific");
-    assert!(!context.join("source-cas").exists());
-    let stages = fs::read_dir(&context)
-        .unwrap()
-        .map(|x| x.unwrap().path())
-        .filter(|p| {
-            p.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with(".source-cas.staging-")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(stages.len(), 1, "unconfirmed cleanup must retain the stage");
     assert_eq!(
-        fs::read(stages[0].join("src/contrib/demo_1.0.0.tar.gz")).unwrap(),
-        fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap()
+        fs::read_dir(&context).unwrap().count(),
+        1,
+        "no stage before admission"
     );
+    assert_eq!(fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap(), original);
+    fs::remove_dir(&nested).unwrap();
+    let accepted = scan_cli(&root, &seed);
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let report: Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(report["acquired"], true, "depth 64 remains supported");
+    assert_eq!(fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap(), original);
+    remove(&root);
+}
+
+#[test]
+fn ordinary_cli_seed_scan_aggregate_limit_counts_nested_and_irrelevant_entries() {
+    let (root, seed) = fixture("scan-count", "demo", "1.0.0");
+    let original = fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap();
+    for directory in ["junk/a", "junk/b"] {
+        let parent = seed.join(directory);
+        fs::create_dir_all(&parent).unwrap();
+        for i in 0..8190 {
+            fs::write(parent.join(format!("unused-{i:05}")), []).unwrap();
+        }
+    }
+    // Root: three entries; demo: one; junk: two; leaves: 16,380.
+    // Each directory is individually within the cap; the aggregate is not.
+    let rejected = scan_cli(&root, &seed);
+    assert_eq!(
+        rejected.status.code(),
+        Some(1),
+        "aggregate scan was admitted"
+    );
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("r_runtime_source_cas_seed_entry_limit_exceeded")
+    );
+    assert_eq!(
+        fs::read_dir(root.join("runtime-images/r-scientific"))
+            .unwrap()
+            .count(),
+        1
+    );
+    assert_eq!(fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap(), original);
+    for directory in ["junk/a", "junk/b"] {
+        fs::remove_file(seed.join(directory).join("unused-00000")).unwrap();
+    }
+    let accepted = scan_cli(&root, &seed);
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let report: Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(
+        report["acquired"], true,
+        "16,384 aggregate entries are allowed"
+    );
+    assert_eq!(fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap(), original);
     remove(&root);
 }

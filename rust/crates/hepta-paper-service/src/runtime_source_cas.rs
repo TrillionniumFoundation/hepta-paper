@@ -12,8 +12,13 @@
 //! not a second supervisor. Full stdout capture retains the existing 16 MiB /
 //! 4 MiB caps independently of bounded log tails. Children receive only fixed
 //! PATH/LC_ALL; stdin is closed, stderr is capped at 64 KiB and the 60-second
-//! deadline remains active after stdout EOF. CLI cancellation is checked before
-//! work, between archives and at publication boundaries. Failed group/pipe
+//! deadline remains active after stdout EOF. Archive member names follow `--`,
+//! never becoming options. Both listing and extraction preserve cancellation,
+//! timeout and unknown-cleanup diagnostics. CLI cancellation is checked before
+//! work, throughout a bounded seed walk, between archives and at publication
+//! boundaries. Seed discovery allows at most 16,384 aggregate directory entries
+//! and 64 nested directory levels before staging; larger seeds are explicit
+//! native profile refusals, not universal Node compatibility claims. Failed group/pipe
 //! cleanup retains the original unpublished stage rather than deleting live
 //! inputs. This is not kernel-I/O preemption or containment of escaped sessions.
 //! Network acquisition, tar-tool identity qualification and orphan disposal are
@@ -405,6 +410,10 @@ pub fn inspect_runtime_source_cas_v1(repository_root: &Path) -> Value {
 const MAX_TAR_LISTING_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DESCRIPTION_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
+// One aggregate bound covers directories and irrelevant files too. Limiting
+// only matching archives would still admit an unbounded pre-dispatch walk.
+const MAX_SEED_ENTRIES: usize = 16_384;
+const MAX_SEED_DEPTH: usize = 64;
 
 fn archive_description_identity(
     path: &Path,
@@ -430,7 +439,18 @@ fn archive_description_identity(
             Some(description.as_str()),
             MAX_DESCRIPTION_BYTES,
         )
-        .map_err(|_| "r_runtime_source_cas_description_invalid".to_owned())?;
+        .map_err(|error| {
+            if matches!(
+                error.as_str(),
+                "r_runtime_source_cas_cancelled"
+                    | "r_runtime_source_cas_archive_timeout"
+                    | "r_runtime_source_cas_archive_cleanup_unverified"
+            ) {
+                error
+            } else {
+                "r_runtime_source_cas_description_invalid".to_owned()
+            }
+        })?;
     let text = String::from_utf8(extracted)
         .map_err(|_| "r_runtime_source_cas_description_invalid".to_owned())?;
     let field = |name: &str| {
@@ -455,13 +475,28 @@ fn archive_file_name(name: &str) -> bool {
 fn collect_seed_archives(
     root: &Path,
     output: &mut BTreeMap<String, PathBuf>,
+    active: &mut dyn FnMut() -> Result<(), String>,
+    remaining_entries: &mut usize,
+    depth: usize,
 ) -> Result<(), String> {
-    let mut entries = fs::read_dir(root)
-        .map_err(|_| "r_runtime_source_cas_seed_unavailable".to_owned())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "r_runtime_source_cas_seed_unavailable".to_owned())?;
+    active()?;
+    if depth > MAX_SEED_DEPTH {
+        return Err("r_runtime_source_cas_seed_depth_exceeded".to_owned());
+    }
+    let directory =
+        fs::read_dir(root).map_err(|_| "r_runtime_source_cas_seed_unavailable".to_owned())?;
+    let mut entries = Vec::new();
+    for entry in directory {
+        active()?;
+        // Check before retaining another entry, not after an unbounded collect.
+        *remaining_entries = remaining_entries
+            .checked_sub(1)
+            .ok_or_else(|| "r_runtime_source_cas_seed_entry_limit_exceeded".to_owned())?;
+        entries.push(entry.map_err(|_| "r_runtime_source_cas_seed_unavailable".to_owned())?);
+    }
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
+        active()?;
         let path = entry.path();
         let metadata = fs::symlink_metadata(&path)
             .map_err(|_| "r_runtime_source_cas_seed_unavailable".to_owned())?;
@@ -469,7 +504,7 @@ fn collect_seed_archives(
             return Err("r_runtime_source_cas_seed_symlink_invalid".to_owned());
         }
         if metadata.is_dir() {
-            collect_seed_archives(&path, output)?;
+            collect_seed_archives(&path, output, active, remaining_entries, depth + 1)?;
         } else if metadata.is_file() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if archive_file_name(&name) && output.insert(name.clone(), path).is_some() {
@@ -477,10 +512,11 @@ fn collect_seed_archives(
             }
         }
     }
-    Ok(())
+    active()
 }
 
-fn seed_archives(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+fn seed_archives(root: &Path, cancelled: &AtomicBool) -> Result<BTreeMap<String, PathBuf>, String> {
+    require_active(cancelled)?;
     let root =
         fs::canonicalize(root).map_err(|_| "r_runtime_source_cas_seed_unavailable".to_owned())?;
     if !fs::symlink_metadata(&root)
@@ -490,7 +526,15 @@ fn seed_archives(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
         return Err("r_runtime_source_cas_seed_unavailable".to_owned());
     }
     let mut output = BTreeMap::new();
-    collect_seed_archives(&root, &mut output)?;
+    let mut remaining_entries = MAX_SEED_ENTRIES;
+    collect_seed_archives(
+        &root,
+        &mut output,
+        &mut || require_active(cancelled),
+        &mut remaining_entries,
+        0,
+    )?;
+    require_active(cancelled)?;
     Ok(output)
 }
 
@@ -764,7 +808,8 @@ fn acquire_with_controls(
         Err(_) => return Err("r_runtime_source_cas_existing_invalid".to_owned()),
     }
     let (expected, lockfile_hash) = read_lock(&context.join("renv.lock"))?;
-    let seeds = seed_archives(seed_source_directory)?;
+    let seeds = seed_archives(seed_source_directory, cancelled)?;
+    require_active(cancelled)?;
     let staging = begin_staging(&context)?;
     let stage = open_directory(&staging)?;
     let mut publication_attempted = false;

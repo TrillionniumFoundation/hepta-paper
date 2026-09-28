@@ -403,7 +403,7 @@ function scopedCargoLibraryTarget(expectedTarget) {
   return { packageName: match[1] };
 }
 
-function validateCommand(command, label, testPaths) {
+export function validateCommand(command, label, testPaths) {
   exactKeys(command, COMMAND_KEYS, label);
   requireString(command.program, `${label}.program`);
   if (!Array.isArray(command.args) || command.args.length < 2) fail('command_args_invalid', label);
@@ -461,9 +461,25 @@ function validateCommand(command, label, testPaths) {
       && args[8] === '--nocapture'
       && libraryTarget !== null
       && libraryTarget.packageName === args[3];
-    if ((!integrationScoped && !libraryScoped) || workdir !== 'rust') {
-      fail('cargo_command_not_allowlisted', label);
-    }
+    const ownerBinding = integrationScoped
+      ? {
+        discoveryPrefix: args.slice(0, 6),
+        packageName: args[3],
+        selector: args[6],
+        targetKind: 'integration',
+        testTarget: args[5],
+      }
+      : libraryScoped
+        ? {
+          discoveryPrefix: args.slice(0, 5),
+          packageName: args[3],
+          selector: args[5],
+          targetKind: 'library',
+          testTarget: null,
+        }
+        : null;
+    if (ownerBinding === null || workdir !== 'rust') fail('cargo_command_not_allowlisted', label);
+    return { ...command, workdir, ownerBinding };
   } else {
     fail('command_program_not_allowlisted', `${label}:${command.program}`);
   }

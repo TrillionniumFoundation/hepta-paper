@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { validateCommand } from '../bin/verify-source-implementation-evidence.mjs';
 
 const EVIDENCE = 'docs/system/evidence/repository-source-implementation-v1.json';
 const FUNCTIONAL_EVIDENCE = 'docs/system/evidence/rust-functional-source-closure-v1.json';
@@ -365,30 +366,16 @@ function assertRustSymbolOwnership(root, entry) {
   }
 }
 
-function parseCargoTestBinding(command) {
-  const args = command.args ?? [];
-  if (args[0] !== 'test') fail('cargo_command_not_test');
-  const packageIndex = args.indexOf('-p');
-  if (packageIndex < 0 || !args[packageIndex + 1]) fail('cargo_package_selector_missing');
-  const separatorIndex = args.indexOf('--');
-  const commandEnd = separatorIndex < 0 ? args.length : separatorIndex;
-  const testTargetIndex = args.indexOf('--test');
-  let selectorIndex = packageIndex + 2;
-  const discoveryPrefix = ['test', '--locked', '-p', args[packageIndex + 1]];
-  if (testTargetIndex >= 0 && testTargetIndex < commandEnd) {
-    const target = args[testTargetIndex + 1];
-    if (!target || testTargetIndex + 2 >= commandEnd) fail('cargo_integration_test_selector_missing');
-    discoveryPrefix.push('--test', target);
-    selectorIndex = testTargetIndex + 2;
-  }
-  const selector = args[selectorIndex];
-  if (!selector || selector.startsWith('-') || selectorIndex >= commandEnd) fail('cargo_test_selector_missing');
-  return { selector, discoveryPrefix };
-}
-
 function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   if (command.program !== 'cargo') return;
-  const { selector, discoveryPrefix } = parseCargoTestBinding(command);
+  const testPaths = new Set(bundle.files
+    .filter((entry) => entry.role === 'test')
+    .map((entry) => entry.path));
+  const { selector, discoveryPrefix } = validateCommand(
+    command,
+    `bundle.${bundleId}`,
+    testPaths,
+  ).ownerBinding;
   const targetEntries = bundle.files.filter((entry) => command.expectedTargets.includes(entry.path) && entry.role === 'test');
   if (targetEntries.length !== command.expectedTargets.length || targetEntries.length < 1) fail('cargo_target_cardinality', bundleId);
   const symbolName = selector.split('::').at(-1);
@@ -481,18 +468,45 @@ function selfTest() {
   const unrelated = structuredClone(base);
   unrelated.work.items['OTHER-001'] = structuredClone(base.work.items['TEST-001']);
   assert.throws(() => assertRegistryDelta(base, unrelated, records), /candidate_registry_drift/u);
-  assert.deepEqual(
-    parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', 'module::case', '--', '--exact'] }),
-    { selector: 'module::case', discoveryPrefix: ['test', '--locked', '-p', 'crate-a'] },
-  );
-  assert.deepEqual(
-    parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', 'case_a', '--', '--exact'] }),
-    { selector: 'case_a', discoveryPrefix: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a'] },
-  );
-  assert.throws(
-    () => parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', '--', '--exact'] }),
-    /cargo_integration_test_selector_missing/u,
-  );
+  assert.deepEqual(validateCommand({
+    args: ['test', '--locked', '-p', 'crate-a', '--lib', 'module::case', '--', '--exact', '--nocapture'],
+    expectedExitCode: 0,
+    expectedTargets: ['rust/crates/crate-a/src/module/tests.rs'],
+    program: 'cargo',
+    timeoutSeconds: 30,
+    workdir: 'rust',
+  }, 'library', new Set(['rust/crates/crate-a/src/module/tests.rs'])).ownerBinding, {
+    discoveryPrefix: ['test', '--locked', '-p', 'crate-a', '--lib'],
+    packageName: 'crate-a',
+    selector: 'module::case',
+    targetKind: 'library',
+    testTarget: null,
+  });
+  assert.deepEqual(validateCommand({
+    args: [
+      'test', '--locked', '-p', 'crate-a', '--test', 'integration_a',
+      'case_a', '--', '--exact', '--nocapture',
+    ],
+    expectedExitCode: 0,
+    expectedTargets: ['rust/crates/crate-a/tests/integration_a/nested.rs'],
+    program: 'cargo',
+    timeoutSeconds: 30,
+    workdir: 'rust',
+  }, 'integration', new Set(['rust/crates/crate-a/tests/integration_a/nested.rs'])).ownerBinding, {
+    discoveryPrefix: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a'],
+    packageName: 'crate-a',
+    selector: 'case_a',
+    targetKind: 'integration',
+    testTarget: 'integration_a',
+  });
+  assert.throws(() => validateCommand({
+    args: ['test', '--locked', '-p', 'crate-a', 'module::case', '--', '--exact', '--nocapture'],
+    expectedExitCode: 0,
+    expectedTargets: ['rust/crates/crate-a/src/module/tests.rs'],
+    program: 'cargo',
+    timeoutSeconds: 30,
+    workdir: 'rust',
+  }, 'unscoped', new Set(['rust/crates/crate-a/src/module/tests.rs'])), /cargo_command_not_allowlisted/u);
   const policyBase = structuredClone(base);
   for (const id of ['GAP-GOV-003', 'QUAL-005', 'MOD-007']) {
     policyBase.work.items[id] = {

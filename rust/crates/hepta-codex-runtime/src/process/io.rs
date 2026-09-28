@@ -22,6 +22,7 @@ pub(super) struct OutputObservation {
     pub(super) bytes: u64,
     pub(super) tail: Vec<u8>,
     pub(super) truncated: bool,
+    pub(super) captured: Option<Vec<u8>>,
 }
 
 pub(super) fn spawn_stdin_writer<W>(
@@ -46,25 +47,59 @@ where
 }
 
 pub(super) fn spawn_output_reader<R: Read + Send + 'static>(
+    reader: R,
+    stream: StreamKind,
+    maximum_bytes: u64,
+    maximum_tail_bytes: usize,
+    limit_sender: Sender<StreamKind>,
+) -> Receiver<Result<OutputObservation, io::ErrorKind>> {
+    spawn_output_reader_with_capture(
+        reader,
+        stream,
+        maximum_bytes,
+        maximum_tail_bytes,
+        limit_sender,
+        false,
+    )
+}
+
+pub(super) fn spawn_output_reader_with_capture<R: Read + Send + 'static>(
     mut reader: R,
     stream: StreamKind,
     maximum_bytes: u64,
     maximum_tail_bytes: usize,
     limit_sender: Sender<StreamKind>,
+    capture: bool,
 ) -> Receiver<Result<OutputObservation, io::ErrorKind>> {
     let (sender, receiver) = mpsc::channel();
     let _reader_handle = thread::spawn(move || {
         let mut hasher = Sha256::new();
         let mut total = 0_u64;
         let mut tail = Vec::new();
+        let mut captured = capture.then(Vec::new);
         let mut limit_reported = false;
         let mut buffer = [0_u8; 64 * 1024];
         let result = loop {
             let read = match reader.read(&mut buffer) {
-                Ok(0) => break digest_output(hasher, total, tail),
+                Ok(0) => {
+                    break digest_output(hasher, total, tail).map(|mut output| {
+                        output.captured = captured;
+                        output
+                    });
+                }
                 Ok(read) => read,
                 Err(error) => break Err(error.kind()),
             };
+            if let Some(bytes) = &mut captured {
+                // Retain at most the existing byte cap; continue draining and
+                // signal the same owner on overflow. Legacy callers allocate none.
+                let remaining = maximum_bytes.saturating_sub(bytes.len() as u64);
+                let count = read.min(usize::try_from(remaining).unwrap_or(usize::MAX));
+                if bytes.try_reserve_exact(count).is_err() {
+                    break Err(io::ErrorKind::OutOfMemory);
+                }
+                bytes.extend_from_slice(&buffer[..count]);
+            }
             hasher.update(&buffer[..read]);
             let read_bytes = match u64::try_from(read) {
                 Ok(value) => value,
@@ -143,6 +178,7 @@ fn digest_output(
         bytes,
         tail,
         truncated,
+        captured: None,
     })
 }
 

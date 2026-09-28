@@ -368,3 +368,93 @@ fn public_cancellation_uses_existing_group_cleanup() {
     );
     assert!(result.process_group_cleanup_verified);
 }
+
+#[test]
+fn full_stdout_capture_preserves_sixteen_mib_without_changing_tail_limits() {
+    use std::sync::atomic::AtomicBool;
+    let tree = TempTree::new();
+    let request = shell_request(&tree, "head -c 16777216 /dev/zero");
+    let limits = ProcessLimitsV1 {
+        maximum_stdout_bytes: 16 * 1024 * 1024,
+        maximum_tail_bytes: 128,
+        ..ProcessLimitsV1::default()
+    };
+    let result = super::run_bounded_process_capturing_stdout_with_cancellation(
+        &request,
+        limits,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(
+        result.process.termination_reason,
+        ProcessTerminationReason::Exited
+    );
+    assert_eq!(result.process.exit_code, Some(0));
+    assert!(result.process.process_group_cleanup_verified);
+    assert_eq!(result.stdout.len(), 16 * 1024 * 1024);
+    assert!(result.stdout.iter().all(|byte| *byte == 0));
+    assert_eq!(result.process.stdout_tail.len(), 128);
+    assert!(result.process.stdout_truncated);
+}
+
+#[test]
+fn full_stdout_capture_keeps_deadline_after_pipe_eof_and_cleans_group() {
+    use std::{sync::atomic::AtomicBool, time::Instant};
+    let tree = TempTree::new();
+    let request = shell_request(&tree, "exec 1>&-; trap '' TERM; sleep 30");
+    let limits = ProcessLimitsV1 {
+        timeout_ms: 150,
+        ..pressure_limits()
+    };
+    let start = Instant::now();
+    let result = super::run_bounded_process_capturing_stdout_with_cancellation(
+        &request,
+        limits,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(
+        result.process.termination_reason,
+        ProcessTerminationReason::TimedOut
+    );
+    assert!(result.process.process_group_cleanup_verified);
+    assert!(result.stdout.is_empty());
+    assert!(start.elapsed().as_millis() < 3000);
+}
+
+#[test]
+fn full_stdout_capture_rejects_overflow_and_cancellation_without_new_authority() {
+    use std::sync::atomic::AtomicBool;
+    let tree = TempTree::new();
+    for (script, reason) in [
+        (
+            "while :; do printf 0123456789abcdef; done",
+            ProcessTerminationReason::StdoutLimitExceeded,
+        ),
+        (
+            "while :; do printf 0123456789abcdef >&2; done",
+            ProcessTerminationReason::StderrLimitExceeded,
+        ),
+    ] {
+        let request = shell_request(&tree, script);
+        let result = super::run_bounded_process_capturing_stdout_with_cancellation(
+            &request,
+            pressure_limits(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(result.process.termination_reason, reason);
+        assert!(result.stdout.len() <= 256);
+        assert!(result.process.process_group_cleanup_verified);
+    }
+    let request = shell_request(&tree, "touch should-not-exist");
+    assert_eq!(
+        super::run_bounded_process_capturing_stdout_with_cancellation(
+            &request,
+            pressure_limits(),
+            &AtomicBool::new(true)
+        ),
+        Err(BoundedProcessError::CancelledBeforeSpawn)
+    );
+    assert!(!tree.0.join("should-not-exist").exists());
+}

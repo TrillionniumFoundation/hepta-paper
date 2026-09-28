@@ -112,6 +112,14 @@ pub struct BoundedProcessResultV1 {
     pub elapsed_ms: u64,
 }
 
+/// Opt-in full stdout, bounded by the existing maximum_stdout_bytes limit.
+/// An abnormal termination can retain a bounded prefix, never a complete-result claim.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapturedBoundedProcessResultV1 {
+    pub process: BoundedProcessResultV1,
+    pub stdout: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum BoundedProcessError {
     #[error("process cancellation requested before spawn")]

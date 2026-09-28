@@ -106,7 +106,9 @@ use hepta_paper_service::{
     retirement_reference::verify_retirement_reference_v1,
     retirement_status::inspect_retirement_status_v1,
     run_service_v1,
-    runtime_source_cas::{acquire_runtime_source_cas_from_seed_v1, inspect_runtime_source_cas_v1},
+    runtime_source_cas::{
+        acquire_runtime_source_cas_from_seed_with_cancellation_v1, inspect_runtime_source_cas_v1,
+    },
     state_recoverability::safety_inspection::{
         StateSafetyInspectionOptionsV1, inspect_autonomous_research_state_safety_v1,
     },
@@ -407,6 +409,16 @@ const DISPATCHER_CHALLENGE_USAGE: &str = r#"{
   "statusIsReadOnly": true,
   "residentDispatcherPrincipalRequired": true
 }"#;
+
+// One CLI signal adapter; libraries never change process-global handlers.
+fn command_cancellation_flag()
+-> Result<std::sync::Arc<std::sync::atomic::AtomicBool>, Box<dyn std::error::Error>> {
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+        signal_hook::flag::register(signal, std::sync::Arc::clone(&cancelled))?;
+    }
+    Ok(cancelled)
+}
 
 fn command() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -869,7 +881,12 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "status" => inspect_runtime_source_cas_v1(&repository_root),
                 "acquire" => {
                     let seed = seed.ok_or("runtime-r-source-cas acquire requires --seed")?;
-                    acquire_runtime_source_cas_from_seed_v1(&repository_root, &seed)?
+                    let cancelled = command_cancellation_flag()?;
+                    acquire_runtime_source_cas_from_seed_with_cancellation_v1(
+                        &repository_root,
+                        &seed,
+                        &cancelled,
+                    )?
                 }
                 _ => return Err("runtime-r-source-cas action must be status or acquire".into()),
             };
@@ -1515,13 +1532,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let report = if options.action == "prepare" || options.action == "status" {
                 inspect_autonomous_research_v1(&options)
             } else {
-                // Install only in this command process, before any worker or
-                // owner is opened. The atomic handlers survive until process exit;
-                // libraries never install handlers or change signal masks.
-                let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
-                    signal_hook::flag::register(signal, std::sync::Arc::clone(&cancelled))?;
-                }
+                let cancelled = command_cancellation_flag()?;
                 execute_autonomous_research_with_cancellation_v1(&options, cancelled)
             };
             println!("{}", serde_json::to_string_pretty(&report)?);

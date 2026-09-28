@@ -8,7 +8,15 @@
 //! Unpublished crash residue is retained; another invocation may rebuild a new
 //! private stage but never adopts or removes that orphan. This is a cooperative
 //! local filesystem contract, not installed qualification or hostile-UID isolation.
-//! Network acquisition, tar-tool/signal qualification and orphan disposal are
+//! Tar listing and DESCRIPTION use the existing bounded process-group owner,
+//! not a second supervisor. Full stdout capture retains the existing 16 MiB /
+//! 4 MiB caps independently of bounded log tails. Children receive only fixed
+//! PATH/LC_ALL; stdin is closed, stderr is capped at 64 KiB and the 60-second
+//! deadline remains active after stdout EOF. CLI cancellation is checked before
+//! work, between archives and at publication boundaries. Failed group/pipe
+//! cleanup retains the original unpublished stage rather than deleting live
+//! inputs. This is not kernel-I/O preemption or containment of escaped sessions.
+//! Network acquisition, tar-tool identity qualification and orphan disposal are
 //! separate remaining boundaries. The command's actual recovery and Node
 //! comparisons are in `tests/runtime_r_source_cas_seed.rs`; syscall/crash owners
 //! are the private unit tests, not an alternative execution implementation.
@@ -24,10 +32,11 @@ use std::{
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::mpsc,
-    time::Duration,
+    sync::atomic::AtomicBool,
 };
+
+mod archive_process;
+use archive_process::{ArchiveExecution, require_active};
 
 const SNAPSHOT: &str = "https://packagemanager.posit.co/cran/2024-11-01";
 
@@ -397,64 +406,11 @@ const MAX_TAR_LISTING_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DESCRIPTION_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 
-fn archive_tar_output(
-    args: &[&str],
-    archive: &Path,
-    trailing: Option<&str>,
-    limit: u64,
-) -> Result<Vec<u8>, String> {
-    let mut command = Command::new("tar");
-    command.args(args).arg(archive);
-    if let Some(trailing) = trailing {
-        command.arg(trailing);
-    }
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| "r_runtime_source_cas_archive_invalid".to_owned())?;
-    let stdout = match child.stdout.take() {
-        Some(stdout) => stdout,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("r_runtime_source_cas_archive_invalid".to_owned());
-        }
-    };
-    let (sender, receiver) = mpsc::sync_channel(1);
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = stdout.take(limit.saturating_add(1)).read_to_end(&mut bytes);
-        let _ = sender.send(result.map(|_| bytes));
-    });
-    let read = receiver.recv_timeout(Duration::from_secs(60));
-    let bytes = match read {
-        Ok(Ok(bytes)) => bytes,
-        _ => {
-            let _ = child.kill();
-            let _ = child.wait();
-            // tar's pipe closes on exit; no background archive work survives.
-            let _ = reader.join();
-            return Err("r_runtime_source_cas_archive_invalid".to_owned());
-        }
-    };
-    let _ = reader.join();
-    if bytes.len() as u64 > limit {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err("r_runtime_source_cas_archive_invalid".to_owned());
-    }
-    let status = child
-        .wait()
-        .map_err(|_| "r_runtime_source_cas_archive_invalid".to_owned())?;
-    if !status.success() {
-        return Err("r_runtime_source_cas_archive_invalid".to_owned());
-    }
-    Ok(bytes)
-}
-
-fn archive_description_identity(path: &Path) -> Result<(String, String), String> {
-    let listing = archive_tar_output(&["-tzf"], path, None, MAX_TAR_LISTING_BYTES)?;
+fn archive_description_identity(
+    path: &Path,
+    execution: &mut ArchiveExecution<'_>,
+) -> Result<(String, String), String> {
+    let listing = execution.output(&["-tzf"], path, None, MAX_TAR_LISTING_BYTES)?;
     let listing = String::from_utf8(listing)
         .map_err(|_| "r_runtime_source_cas_archive_invalid".to_owned())?;
     let description = listing
@@ -467,13 +423,14 @@ fn archive_description_identity(path: &Path) -> Result<(String, String), String>
         })
         .map(str::to_owned)
         .ok_or_else(|| "r_runtime_source_cas_description_missing".to_owned())?;
-    let extracted = archive_tar_output(
-        &["-xOzf"],
-        path,
-        Some(description.as_str()),
-        MAX_DESCRIPTION_BYTES,
-    )
-    .map_err(|_| "r_runtime_source_cas_description_invalid".to_owned())?;
+    let extracted = execution
+        .output(
+            &["-xOzf"],
+            path,
+            Some(description.as_str()),
+            MAX_DESCRIPTION_BYTES,
+        )
+        .map_err(|_| "r_runtime_source_cas_description_invalid".to_owned())?;
     let text = String::from_utf8(extracted)
         .map_err(|_| "r_runtime_source_cas_description_invalid".to_owned())?;
     let field = |name: &str| {
@@ -606,13 +563,17 @@ fn copy_seed_archive(source: &Path, destination: &Path) -> Result<(), String> {
     write_new_file(destination, &bytes)
 }
 
-fn verify_seed_archive(entry: &Value, destination: &Path) -> Result<Value, String> {
+fn verify_seed_archive(
+    entry: &Value,
+    destination: &Path,
+    execution: &mut ArchiveExecution<'_>,
+) -> Result<Value, String> {
     let bytes =
         fs::read(destination).map_err(|_| "r_runtime_source_cas_archive_invalid".to_owned())?;
     if bytes.len() < 100 {
         return Err("archive_too_small".to_owned());
     }
-    let (package, version) = archive_description_identity(destination)?;
+    let (package, version) = archive_description_identity(destination, execution)?;
     if package != entry["package"] || version != entry["version"] {
         return Err("description_identity_mismatch".to_owned());
     }
@@ -723,12 +684,45 @@ pub fn acquire_runtime_source_cas_from_seed_v1(
     acquire_with_observation(repository_root, seed_source_directory, &mut |_, _| Ok(()))
 }
 
+/// Ordinary CLI cancellation shares the same archive and publication owner.
+pub fn acquire_runtime_source_cas_from_seed_with_cancellation_v1(
+    repository_root: &Path,
+    seed_source_directory: &Path,
+    cancelled: &AtomicBool,
+) -> Result<Value, String> {
+    acquire_with_controls(
+        repository_root,
+        seed_source_directory,
+        cancelled,
+        &mut |_, _| Ok(()),
+    )
+}
+
 // Internal fault observations exercise this same publisher, not another owner.
 fn acquire_with_observation(
     repository_root: &Path,
     seed_source_directory: &Path,
     observe: &mut impl FnMut(PublicationBoundary, &Path) -> Result<(), String>,
 ) -> Result<Value, String> {
+    acquire_with_controls(
+        repository_root,
+        seed_source_directory,
+        &AtomicBool::new(false),
+        observe,
+    )
+}
+
+fn acquire_with_controls(
+    repository_root: &Path,
+    seed_source_directory: &Path,
+    cancelled: &AtomicBool,
+    observe: &mut impl FnMut(PublicationBoundary, &Path) -> Result<(), String>,
+) -> Result<Value, String> {
+    require_active(cancelled)?;
+    let mut observe = |boundary, path: &Path| {
+        observe(boundary, path)?;
+        require_active(cancelled)
+    };
     let context = fs::canonicalize(repository_root.join("runtime-images/r-scientific"))
         .map_err(|_| "r_runtime_source_cas_unavailable".to_owned())?;
     let parent = open_directory(&context)?;
@@ -774,9 +768,11 @@ fn acquire_with_observation(
     let staging = begin_staging(&context)?;
     let stage = open_directory(&staging)?;
     let mut publication_attempted = false;
+    let mut execution = ArchiveExecution::new(cancelled);
     let result = (|| {
         let mut packages = Vec::with_capacity(expected.len());
         for entry in &expected {
+            require_active(cancelled)?;
             let file = entry["file"]
                 .as_str()
                 .ok_or_else(|| "r_runtime_source_cas_lock_entry_invalid".to_owned())?;
@@ -785,7 +781,7 @@ fn acquire_with_observation(
                 .ok_or_else(|| format!("r_runtime_source_cas_seed_missing:{file}"))?;
             let target = staging.join("src/contrib").join(file);
             copy_seed_archive(source, &target)?;
-            packages.push(verify_seed_archive(entry, &target)?);
+            packages.push(verify_seed_archive(entry, &target, &mut execution)?);
         }
         let (sums, package_index) = expected_indexes(&packages);
         write_new_file(&staging.join("SHA256SUMS"), sums.as_bytes())?;
@@ -827,7 +823,7 @@ fn acquire_with_observation(
             &parent,
             &stage,
             &mut publication_attempted,
-            observe,
+            &mut observe,
         )?;
         let verified = inspect_runtime_source_cas_v1(repository_root);
         if verified["ready"] != Value::Bool(true) {
@@ -857,12 +853,13 @@ fn acquire_with_observation(
         Ok(report)
     })();
     if result.is_err()
+        && execution.cleanup_verified()
         && !publication_attempted
         && retains_directory(&context, &parent)
         && retains_directory(&staging, &stage)
     {
         // Best-effort cleanup is limited to the original unpublished directory.
-        // Rebound names and already-published results are retained, never erased.
+        // Rebound names, unknown process cleanup and published results are retained.
         let _ = fs::remove_dir_all(&staging);
     }
     result

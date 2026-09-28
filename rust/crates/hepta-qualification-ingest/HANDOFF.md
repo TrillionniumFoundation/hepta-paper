@@ -246,12 +246,19 @@ or dereference to `VerifiedExternalQualificationClosureV1`; a compile-fail test
 protects that boundary. V1/V2 full producers still reject the five-package set,
 and the full production-writer API cannot accept this research type. This
 separates evidence intake and persistent acceptance, not a new production
-research writer. The source consumer is now the distinct
-[`run_research_service_v1`](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#restricted-research-service-profile)
-composition; it reuses the existing private research-state writer while refusing
-release/submission/cutover authority. Real host evidence, installed executable
-binding, live revocation and explicit target-host activation still require the
-installed composition. No source fixture is external qualification, a provider
+research writer. Public research execution requires the complete
+`VerifiedResearchQualificationRequestV3` from the canonical file/replay factory,
+not this bare signed snapshot. The request retains its original trust-file and
+ancestor descriptors, shares irreversible currentness invalidation across clones,
+and returns a clock sample taken after authority-file checks. The existing
+[`research consumer`](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#restricted-research-service-profile)
+uses that request through normal dispatch/commit boundaries without reopening an
+authority filename while SQLite is live. The linked contract specifies the
+source-change, expiry, alias, clock, prepared recovery and non-authority boundaries
+once; neither `qualification()` nor `into_parts()` can satisfy the execution API.
+Real host evidence, installed executable binding, external trust distribution,
+durable distributed revocation and explicit target-host activation still require
+the installed composition. No source fixture is external qualification, a provider
 credential, release permission or submission authority.
 
 `cargo test -p hepta-qualification-ingest --locked` runs actual fixture-signature

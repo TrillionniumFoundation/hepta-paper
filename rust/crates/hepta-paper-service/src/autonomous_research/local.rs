@@ -319,6 +319,11 @@ pub(super) fn run(
             }
             None
         };
+        if let Some(admission) = &research_admission {
+            admission
+                .observe_current(observe()?)
+                .map_err(|_| WorkflowError::Qualification)?;
+        }
         if needs_initialization {
             // The existing initializer refuses aliases/existing roots and retains
             // partial initialization; never overwrite or clean it.
@@ -361,7 +366,7 @@ pub(super) fn run(
                 &digest,
                 action,
                 profile,
-                admission.qualification(),
+                admission,
                 &mut || {
                     observe()
                         .map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)

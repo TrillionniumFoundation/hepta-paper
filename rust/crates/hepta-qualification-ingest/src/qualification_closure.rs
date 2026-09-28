@@ -37,6 +37,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod trust_source;
+use std::sync::Arc;
+use trust_source::RetainedResearchTrustSourceV3;
+
 const MAXIMUM_REQUEST_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_TRUST_STORE_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_PAYLOAD_BYTES: u64 = 32 * 1024 * 1024;
@@ -283,6 +287,8 @@ pub enum ClosureError {
     AuthoritySeparationViolation,
     #[error("verified research qualification does not match the bound workflow profile")]
     ResearchProfileMismatch,
+    #[error("the retained research authority source is no longer current")]
+    ResearchAuthorityNotCurrent,
     #[error("external qualification envelope path does not match its declared package")]
     PackageBindingMismatch,
     #[error(transparent)]
@@ -354,13 +360,29 @@ impl ResearchQualificationExpectationV3 {
 pub struct VerifiedResearchQualificationRequestV3 {
     qualification: crate::VerifiedResearchQualificationV3,
     receipt: serde_json::Value,
+    trust_source: Arc<RetainedResearchTrustSourceV3>,
 }
 
 impl VerifiedResearchQualificationRequestV3 {
-    /// Independently verified, research-only authority.
+    /// Signed research snapshot. This borrowed value has no live file owner;
+    /// execution consumers require the complete request, not this snapshot.
     #[must_use]
     pub const fn qualification(&self) -> &crate::VerifiedResearchQualificationV3 {
         &self.qualification
+    }
+
+    /// Recheck the retained authority source and return a fresh clock sample
+    /// taken after the last file check. Callers must use this returned time for
+    /// their own lease/commit checks, rather than the earlier input sample.
+    pub fn observe_current(&self, observed_at_unix_ms: u64) -> Result<u64, ClosureError> {
+        self.trust_source.observe_current(observed_at_unix_ms, || {
+            // Run closure expiry checks inside the same sticky owner, so an
+            // observed stale snapshot cannot be revived by a later clock reset.
+            self.qualification.assert_current(observed_at_unix_ms)?;
+            let now = system_unix_ms()?;
+            self.qualification.assert_current(now)?;
+            Ok(now)
+        })
     }
 
     /// Canonical non-activating replay-ledger receipt.
@@ -377,7 +399,9 @@ impl VerifiedResearchQualificationRequestV3 {
         research_workflow_profile_template(&self.qualification)
     }
 
-    /// Move the opaque authority and its diagnostic receipt into one owning caller.
+    /// Extract only historical verified evidence and its diagnostic receipt.
+    /// The live request owner is dropped; these parts cannot satisfy a public
+    /// research execution API that requires the complete request.
     #[must_use]
     pub fn into_parts(self) -> (crate::VerifiedResearchQualificationV3, serde_json::Value) {
         (self.qualification, self.receipt)
@@ -430,6 +454,9 @@ pub fn verify_and_commit_research_qualification_request_v3(
         AcceptedClosure::Research(qualification) => Ok(VerifiedResearchQualificationRequestV3 {
             qualification,
             receipt,
+            trust_source: accepted
+                .trust_source
+                .ok_or(ClosureError::ResearchAuthorityNotCurrent)?,
         }),
         AcceptedClosure::Full(_) => Err(ClosureError::RequestInvalid),
     }
@@ -452,6 +479,9 @@ pub fn verify_and_commit_expected_research_qualification_request_v3(
         AcceptedClosure::Research(qualification) => Ok(VerifiedResearchQualificationRequestV3 {
             qualification,
             receipt,
+            trust_source: accepted
+                .trust_source
+                .ok_or(ClosureError::ResearchAuthorityNotCurrent)?,
         }),
         AcceptedClosure::Full(_) => Err(ClosureError::RequestInvalid),
     }
@@ -474,18 +504,20 @@ fn verify_and_commit_request_file_v1(
     }
     let now_unix_ms = system_unix_ms()?;
 
-    let trust_bytes = read_authority_file(
+    let trust_observation = read_observed_authority_file(
         &request.trust_store.path,
         request.trust_store.owner_uid,
         request.consumer_uid,
         MAXIMUM_TRUST_STORE_BYTES,
+        None,
     )?;
-    let trust_store_hash = hash_bytes(&trust_bytes);
+    let trust_bytes = &trust_observation.bytes;
+    let trust_store_hash = hash_bytes(trust_bytes);
     let trust_document: QualificationTrustStoreDocumentV1 =
-        serde_json::from_slice(&trust_bytes).map_err(|_| ClosureError::TrustStoreInvalid)?;
+        serde_json::from_slice(trust_bytes).map_err(|_| ClosureError::TrustStoreInvalid)?;
     let canonical_trust =
         serde_json::to_vec(&trust_document).map_err(|_| ClosureError::TrustStoreInvalid)?;
-    if canonical_trust != trust_bytes {
+    if canonical_trust != *trust_bytes {
         return Err(ClosureError::TrustStoreInvalid);
     }
     validate_trust_document(&trust_document, now_unix_ms)?;
@@ -494,6 +526,14 @@ fn verify_and_commit_request_file_v1(
     let trust_issued_at_unix_ms = trust_document.issued_at_unix_ms;
     let trust_expires_at_unix_ms = trust_document.expires_at_unix_ms;
     let previous_trust_store_hash = trust_document.previous_trust_store_hash.clone();
+    let trust_source = Arc::new(RetainedResearchTrustSourceV3::retain(
+        &request.trust_store.path,
+        request.consumer_uid,
+        trust_observation,
+        trust_issued_at_unix_ms,
+        trust_expires_at_unix_ms,
+        now_unix_ms,
+    )?);
     let mut trust_entries = Vec::with_capacity(trust_document.keys.len());
     for key in trust_document.keys {
         let decoded = Base64UrlUnpadded::decode_vec(&key.public_key_base64)
@@ -564,7 +604,7 @@ fn verify_and_commit_request_file_v1(
         });
     }
 
-    let accepted = verify_and_commit_closure_with_clock_and_expectation(
+    let mut accepted = verify_and_commit_closure_with_clock_and_expectation(
         &request,
         &candidates,
         &VerifiedClosureTrustContextV1 {
@@ -577,8 +617,9 @@ fn verify_and_commit_request_file_v1(
         },
         expected_research,
         now_unix_ms,
-        system_unix_ms,
+        || trust_source.observe_current(now_unix_ms, system_unix_ms),
     )?;
+    accepted.trust_source = Some(trust_source);
     Ok(accepted)
 }
 
@@ -607,6 +648,9 @@ enum AcceptedClosure {
 struct AcceptedClosureResult {
     verified: AcceptedClosure,
     receipt: ExternalQualificationClosureReceiptV1,
+    // Only the real file-boundary entry attaches this; post-file tests do not
+    // manufacture a current installed authority owner.
+    trust_source: Option<Arc<RetainedResearchTrustSourceV3>>,
 }
 impl AcceptedClosure {
     fn package(&self, id: QualificationPackageIdV1) -> Option<&VerifiedExternalQualificationV1> {
@@ -754,8 +798,9 @@ fn verify_and_commit_closure_with_clock_and_expectation(
         trust.previous_hash,
         || {
             // BEGIN IMMEDIATE and ledger opening may both have waited. Recheck
-            // the actual opaque and original validated trust window in memory;
-            // do not reopen authority files while the SQLite connection is live.
+            // the opaque and original trust window. The real file caller also
+            // checks retained descriptors before its clock sample; it never
+            // reopens/closes an authority file while SQLite is live.
             let now_unix_ms = sample_clock_after(&mut clock, verified_at_unix_ms)?;
             trust.assert_current(now_unix_ms)?;
             verified.assert_current(now_unix_ms)?;
@@ -763,7 +808,11 @@ fn verify_and_commit_closure_with_clock_and_expectation(
         },
         &receipt,
     )?;
-    Ok(AcceptedClosureResult { verified, receipt })
+    Ok(AcceptedClosureResult {
+        verified,
+        receipt,
+        trust_source: None,
+    })
 }
 
 fn sample_clock_after(
@@ -1422,15 +1471,6 @@ fn advance_trust_store_state(
     Ok(())
 }
 
-fn read_authority_file(
-    path: &Path,
-    expected_owner_uid: u32,
-    consumer_uid: u32,
-    maximum_bytes: u64,
-) -> Result<Vec<u8>, ClosureError> {
-    read_bounded_authority_file(path, expected_owner_uid, consumer_uid, maximum_bytes, None)
-}
-
 fn read_bounded_authority_file(
     path: &Path,
     expected_owner_uid: u32,
@@ -1438,6 +1478,29 @@ fn read_bounded_authority_file(
     maximum_bytes: u64,
     remaining_payload_bytes: Option<u64>,
 ) -> Result<Vec<u8>, ClosureError> {
+    read_observed_authority_file(
+        path,
+        expected_owner_uid,
+        consumer_uid,
+        maximum_bytes,
+        remaining_payload_bytes,
+    )
+    .map(|observation| observation.bytes)
+}
+
+struct AuthorityFileObservationV1 {
+    bytes: Vec<u8>,
+    file: fs::File,
+    identity: fs::Metadata,
+}
+
+fn read_observed_authority_file(
+    path: &Path,
+    expected_owner_uid: u32,
+    consumer_uid: u32,
+    maximum_bytes: u64,
+    remaining_payload_bytes: Option<u64>,
+) -> Result<AuthorityFileObservationV1, ClosureError> {
     if expected_owner_uid == consumer_uid || !path.is_absolute() {
         return Err(ClosureError::FileAuthorityInvalid);
     }
@@ -1492,7 +1555,11 @@ fn read_bounded_authority_file(
     if !same_file(&opened, &after_open) || !same_file(&after_open, &after_path) {
         return Err(ClosureError::FileChanged);
     }
-    Ok(bytes)
+    Ok(AuthorityFileObservationV1 {
+        bytes,
+        file,
+        identity: after_open,
+    })
 }
 
 fn inspect_ancestors(path: &Path, consumer_uid: u32) -> Result<(), ClosureError> {

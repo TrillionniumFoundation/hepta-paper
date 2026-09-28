@@ -1,6 +1,6 @@
 //! Restricted-research composition over the existing service/CAS/sequencer.
 //!
-//! This module consumes the opaque V3 qualification type. It cannot construct,
+//! This module consumes the complete canonical V3 file/replay request owner. It cannot construct,
 //! deserialize or promote that value into the full production closure. Research
 //! state may be established, but release, submission, cutover and irreversible
 //! external effects remain structurally unavailable.
@@ -22,9 +22,13 @@ use hepta_module_platform::ActivationStateV1;
 use hepta_module_platform::{
     AuthorityClassV1, ModuleKindV1, ModuleRegistryArtifactV1, QualificationTierV1,
 };
+#[cfg(test)]
+use hepta_qualification_ingest::QualificationClosureError;
+use hepta_qualification_ingest::qualification_closure::{
+    ClosureError, VerifiedResearchQualificationRequestV3,
+};
 use hepta_qualification_ingest::{
     ExternalQualificationClosureSubjectV1, ExternalQualificationRuntimeFactsV1,
-    QualificationClosureError, VerifiedResearchQualificationV3,
 };
 use serde::Serialize;
 
@@ -106,7 +110,7 @@ pub fn operate_research_local_workflow_with_clock_and_cancellation_v1(
     expected_definition: &Sha256Digest,
     action: WorkflowActionV1,
     profile: &ResearchWorkflowProfileV1,
-    qualification: &VerifiedResearchQualificationV3,
+    qualification: &VerifiedResearchQualificationRequestV3,
     observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<ResearchWorkflowReceiptV1, WorkflowError> {
@@ -205,30 +209,30 @@ trait ResearchQualificationAuthorityV1 {
     fn trust_store_generation(&self) -> u64;
     fn expires_at_unix_ms(&self) -> u64;
     fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1;
-    fn assert_current(&self, now_unix_ms: u64) -> Result<(), QualificationClosureError>;
+    fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError>;
 }
 
-impl ResearchQualificationAuthorityV1 for VerifiedResearchQualificationV3 {
+impl ResearchQualificationAuthorityV1 for VerifiedResearchQualificationRequestV3 {
     fn subject(&self) -> &ExternalQualificationClosureSubjectV1 {
-        self.subject()
+        self.qualification().subject()
     }
     fn receipt_hash(&self) -> &str {
-        self.receipt_hash()
+        self.qualification().receipt_hash()
     }
     fn binding_hash(&self) -> &str {
-        self.binding_hash()
+        self.qualification().binding_hash()
     }
     fn trust_store_generation(&self) -> u64 {
-        self.trust_store_generation()
+        self.qualification().trust_store_generation()
     }
     fn expires_at_unix_ms(&self) -> u64 {
-        self.expires_at_unix_ms()
+        self.qualification().expires_at_unix_ms()
     }
     fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1 {
-        self.runtime_facts()
+        self.qualification().runtime_facts()
     }
-    fn assert_current(&self, now_unix_ms: u64) -> Result<(), QualificationClosureError> {
-        self.assert_current(now_unix_ms)
+    fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError> {
+        self.observe_current(now_unix_ms)
     }
 }
 
@@ -326,9 +330,20 @@ pub fn validate_research_service_policy_v1(
 }
 
 /// Execute one current restricted-research plan through the existing owners.
+///
+/// A signed in-memory snapshot has no live authority-file owner and must not
+/// substitute for the canonical file/replay request at an execution boundary.
+///
+/// ```compile_fail
+/// use hepta_paper_service::{ResearchServiceRunV1, run_research_service_v1};
+/// use hepta_qualification_ingest::VerifiedResearchQualificationV3;
+/// fn snapshot_is_not_execution_authority(
+///     config: ResearchServiceRunV1, snapshot: &VerifiedResearchQualificationV3,
+/// ) { let _ = run_research_service_v1(config, snapshot); }
+/// ```
 pub fn run_research_service_v1(
     config: ResearchServiceRunV1,
-    qualification: &VerifiedResearchQualificationV3,
+    qualification: &VerifiedResearchQualificationRequestV3,
 ) -> Result<ResearchServiceReceiptV1, ServiceError> {
     run_research_service_with_cancellation_v1(
         config,
@@ -340,7 +355,7 @@ pub fn run_research_service_v1(
 /// Execute with the same sticky cooperative cancellation used by the service.
 pub fn run_research_service_with_cancellation_v1(
     config: ResearchServiceRunV1,
-    qualification: &VerifiedResearchQualificationV3,
+    qualification: &VerifiedResearchQualificationRequestV3,
     cancelled: Arc<AtomicBool>,
 ) -> Result<ResearchServiceReceiptV1, ServiceError> {
     let mut observe = || {
@@ -379,8 +394,8 @@ fn run_research_service_with_authority_clock_and_cancellation_v1<
     validate_research_service_policy_v1(&config, &runtime_identity_hash)?;
     let configuration_hash = service_configuration_hash_v1(&config.service)?;
     let preflight_now = observe().map_err(|_| ServiceError::Persistence)?;
-    qualification
-        .assert_current(preflight_now)
+    let preflight_now = qualification
+        .observe_current(preflight_now)
         .map_err(|_| ServiceError::Configuration)?;
     let stage = config.stage;
     let subject = config.subject.clone();
@@ -391,9 +406,8 @@ fn run_research_service_with_authority_clock_and_cancellation_v1<
             None => observe()?,
         };
         qualification
-            .assert_current(now)
-            .map_err(|_| ControlPlaneError::PersistenceInvalid)?;
-        Ok(now)
+            .observe_current(now)
+            .map_err(|_| ControlPlaneError::PersistenceInvalid)
     };
     let control_plane_receipt = run_service_with_clock_and_cancellation_v1(
         config.service,
@@ -580,6 +594,8 @@ mod tests {
         generation: u64,
         expires_at: u64,
         reject_check: Option<u64>,
+        reject_when_prepared: Option<std::path::PathBuf>,
+        post_io_delta_ms: u64,
         checks: Cell<u64>,
     }
 
@@ -599,6 +615,8 @@ mod tests {
                 generation: 7,
                 expires_at: 90_000,
                 reject_check: None,
+                reject_when_prepared: None,
+                post_io_delta_ms: 0,
                 checks: Cell::new(0),
             }
         }
@@ -623,15 +641,29 @@ mod tests {
         fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1 {
             &self.facts
         }
-        fn assert_current(&self, now_unix_ms: u64) -> Result<(), QualificationClosureError> {
+        fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError> {
             let check = self.checks.get().checked_add(1).unwrap();
             self.checks.set(check);
-            if now_unix_ms >= self.expires_at
+            let current = now_unix_ms.checked_add(self.post_io_delta_ms).unwrap();
+            let prepared = self.reject_when_prepared.as_ref().is_some_and(|root| {
+                std::fs::read_dir(root).is_ok_and(|mut entries| {
+                    entries.any(|entry| {
+                        entry.is_ok_and(|entry| {
+                            entry
+                                .path()
+                                .extension()
+                                .is_some_and(|extension| extension == "prepared")
+                        })
+                    })
+                })
+            });
+            if current >= self.expires_at
+                || prepared
                 || self.reject_check.is_some_and(|reject| check >= reject)
             {
-                return Err(QualificationClosureError::ClosureExpired);
+                return Err(QualificationClosureError::ClosureExpired.into());
             }
-            Ok(())
+            Ok(current)
         }
     }
 
@@ -972,4 +1004,6 @@ mod tests {
                 .exists()
         );
     }
+
+    mod currentness;
 }
